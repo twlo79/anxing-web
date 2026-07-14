@@ -36,3 +36,5 @@ Supabase Dashboard → Authentication → Add user,再到 SQL Editor:
 ```sql
 insert into profiles (id, name, role) values ('<user_uuid>', '名字', 'housekeeper|manager|super_admin');
 ```
+
+<!-- deploy test 20260714T094306 -->
