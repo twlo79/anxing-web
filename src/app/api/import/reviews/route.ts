@@ -3,6 +3,16 @@ import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
+const CORS = {
+  'Access-Control-Allow-Origin': 'https://www.airbnb.com',
+  'Access-Control-Allow-Headers': 'content-type, x-import-key',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
+
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: CORS });
+}
+
 const MONTHS: Record<string, number> = { Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6, Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12 };
 
 // "Jul 6 – 10, 2026" / "Jun 10 – Jul 8, 2026" / "Dec 28, 2025 – Jan 2, 2026"
@@ -41,19 +51,19 @@ function cleanTags(tags: any) {
 
 export async function POST(req: Request) {
   if (!process.env.IMPORT_KEY || req.headers.get('x-import-key') !== process.env.IMPORT_KEY) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401, headers: CORS });
   }
   if (!process.env.SUPABASE_SERVICE_KEY) {
-    return NextResponse.json({ error: 'SUPABASE_SERVICE_KEY not configured' }, { status: 500 });
+    return NextResponse.json({ error: 'SUPABASE_SERVICE_KEY not configured' }, { status: 500, headers: CORS });
   }
   const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY);
 
   const body = await req.json();
   const items: any[] = body.reviews ?? [];
-  if (!items.length) return NextResponse.json({ upserted: 0 });
+  if (!items.length) return NextResponse.json({ upserted: 0 }, { headers: CORS });
 
   const { data: props, error: pe } = await supabase.from('properties').select('id, airbnb_listing_id');
-  if (pe) return NextResponse.json({ error: pe.message }, { status: 500 });
+  if (pe) return NextResponse.json({ error: pe.message }, { status: 500, headers: CORS });
   const propByListing = Object.fromEntries((props ?? []).filter((p) => p.airbnb_listing_id).map((p) => [p.airbnb_listing_id, p.id]));
 
   const unmatched: Record<string, number> = {};
@@ -96,8 +106,8 @@ export async function POST(req: Request) {
   for (let i = 0; i < records.length; i += 500) {
     const batch = records.slice(i, i + 500);
     const { error } = await supabase.from('reviews').upsert(batch, { onConflict: 'airbnb_review_id' });
-    if (error) return NextResponse.json({ error: error.message, upserted }, { status: 500 });
+    if (error) return NextResponse.json({ error: error.message, upserted }, { status: 500, headers: CORS });
     upserted += batch.length;
   }
-  return NextResponse.json({ upserted, unmatched });
+  return NextResponse.json({ upserted, unmatched }, { headers: CORS });
 }
