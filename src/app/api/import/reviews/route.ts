@@ -102,6 +102,12 @@ export async function POST(req: Request) {
     };
   }).filter((r) => r.overall_rating != null);
 
+  // 先查哪些 id 已存在,回報時區分「新增」與「更新」
+  const ids = records.map((r) => r.airbnb_review_id);
+  const { data: existing } = await supabase.from('reviews').select('airbnb_review_id').in('airbnb_review_id', ids);
+  const existingSet = new Set((existing ?? []).map((e) => e.airbnb_review_id));
+  const inserted = ids.filter((id) => !existingSet.has(id)).length;
+
   let upserted = 0;
   for (let i = 0; i < records.length; i += 500) {
     const batch = records.slice(i, i + 500);
@@ -109,5 +115,5 @@ export async function POST(req: Request) {
     if (error) return NextResponse.json({ error: error.message, upserted }, { status: 500, headers: CORS });
     upserted += batch.length;
   }
-  return NextResponse.json({ upserted, unmatched }, { headers: CORS });
+  return NextResponse.json({ upserted, inserted, updated: upserted - inserted, unmatched }, { headers: CORS });
 }
