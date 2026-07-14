@@ -38,3 +38,4 @@ insert into profiles (id, name, role) values ('<user_uuid>', '名字', 'housekee
 ```
 
 <!-- deploy test 20260714T094306 -->
+<!-- deploy test 2 094921 -->
