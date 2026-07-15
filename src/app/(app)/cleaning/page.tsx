@@ -82,7 +82,7 @@ export default function CleaningPage() {
       all.push(...b);
       if (b.length < 1000) break;
     }
-    const header = ['記錄日', '物業', '房源', '填寫人', '身分', '備註', '詳細記錄'];
+    const header = ['記錄日', '物業', '房源', '填寫人', '身分', '備註', '表單'];
     const lines = [header.join(',')];
     for (const r of all) lines.push([
       r.record_date, r.estate_name, r.property_raw, r.staff_name, TYPE_LABEL[r.staff_type || 'other'],
@@ -186,7 +186,7 @@ export default function CleaningPage() {
               <th className="px-3 py-2.5">房源</th>
               <th className="px-3 py-2.5">填寫人</th>
               <th className="px-3 py-2.5">備註</th>
-              <th className="px-3 py-2.5 whitespace-nowrap">詳細記錄</th>
+              <th className="px-3 py-2.5 whitespace-nowrap">表單</th>
             </tr>
           </thead>
           <tbody>
@@ -200,7 +200,7 @@ export default function CleaningPage() {
                 <td className="px-3 py-2.5 whitespace-nowrap cursor-pointer" onClick={() => setDetail(r)}>{r.staff_name}<span className="ml-1 text-xs text-gray-400">{TYPE_LABEL[r.staff_type || 'other']}</span></td>
                 <td className="px-3 py-2.5 text-gray-600 min-w-64 cursor-pointer" onClick={() => setDetail(r)}><div className="line-clamp-2">{r.note ?? <span className="text-gray-300">（無備註）</span>}</div></td>
                 <td className="px-3 py-2.5 whitespace-nowrap">
-                  {r.doc_url ? <a href={r.doc_url} target="_blank" rel="noreferrer" className="text-mor-slate underline hover:text-mor-blue" onClick={(e) => e.stopPropagation()}>📄 開啟</a> : <span className="text-gray-300">—</span>}
+                  {r.doc_url ? <a href={r.doc_url} target="_blank" rel="noreferrer" className="text-mor-slate underline hover:text-mor-blue" onClick={(e) => e.stopPropagation()}>📄 詳細內容</a> : <span className="text-gray-300">—</span>}
                 </td>
               </tr>
             ))}
