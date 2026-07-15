@@ -75,6 +75,8 @@ export default function ReviewsPage() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [ratingFilter, setRatingFilter] = useState('');
+  const [kw, setKw] = useState('');
+  const [kwInput, setKwInput] = useState('');
   // Dashboard 獨立篩選
   const [statsFrom, setStatsFrom] = useState('');
   const [statsTo, setStatsTo] = useState('');
@@ -132,8 +134,9 @@ export default function ReviewsPage() {
     if (ratingFilter === '5') q = q.gte('overall_rating', 5);
     if (ratingFilter === '4') q = q.gte('overall_rating', 4).lt('overall_rating', 5);
     if (ratingFilter === 'low') q = q.lte('overall_rating', 3);
+    if (kw) q = q.or(`guest_name.ilike.%${kw}%,comment.ilike.%${kw}%,comment_original.ilike.%${kw}%,listing_name_raw.ilike.%${kw}%`);
     return q;
-  }, [supabase, estateId, propertyId, dateFrom, dateTo, ratingFilter, properties]);
+  }, [supabase, estateId, propertyId, dateFrom, dateTo, ratingFilter, kw, properties]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -144,7 +147,7 @@ export default function ReviewsPage() {
   }, [buildQuery, page]);
 
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { setPage(0); }, [estateId, propertyId, dateFrom, dateTo, ratingFilter]);
+  useEffect(() => { setPage(0); }, [estateId, propertyId, dateFrom, dateTo, ratingFilter, kw]);
   useEffect(() => { setPropertyId(''); }, [estateId]);
 
   // CSV 匯出(目前篩選的全部資料)
@@ -348,6 +351,14 @@ export default function ReviewsPage() {
             <option value="4">4 星</option>
             <option value="low">3 星以下(需關注)</option>
           </select>
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">關鍵字(旅客/留言/房源)</label>
+          <div className="flex gap-1">
+            <input value={kwInput} onChange={(e) => setKwInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') setKw(kwInput.trim()); }}
+              placeholder="含舊物業" className="rounded-lg border border-gray-300 px-2 py-1.5 w-32" />
+            <button onClick={() => setKw(kwInput.trim())} className="rounded-lg bg-mor-slate text-white px-3 hover:bg-mor-slatedark">搜尋</button>
+          </div>
         </div>
         {(estateId || propertyId || dateFrom || dateTo || ratingFilter) && (
           <button onClick={() => { setEstateId(''); setPropertyId(''); setDateFrom(''); setDateTo(''); setRatingFilter(''); }}
