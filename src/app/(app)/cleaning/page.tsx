@@ -31,6 +31,7 @@ export default function CleaningPage() {
   // filters
   const [estate, setEstate] = useState('');
   const [staff, setStaff] = useState('');
+  const [staffType, setStaffType] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [kw, setKw] = useState('');
@@ -48,18 +49,20 @@ export default function CleaningPage() {
       .then(({ data }) => setStats((data as StaffStat[]) ?? []));
   }, [supabase, statsFrom, statsTo]);
 
-  const totalCount = useMemo(() => stats.reduce((s, x) => s + Number(x.total), 0), [stats]);
+  const visibleStats = useMemo(() => stats.filter((s) => s.staff_type !== 'other').sort((a, b) => Number(b.total) - Number(a.total)), [stats]);
+  const totalCount = useMemo(() => visibleStats.reduce((s, x) => s + Number(x.total), 0), [visibleStats]);
 
   const buildQuery = useCallback((count: boolean) => {
     let q = supabase.from('cleaning_records').select('*', count ? { count: 'exact' } : undefined)
       .order('record_date', { ascending: false });
     if (estate) q = q.eq('estate_name', estate);
     if (staff) q = q.eq('staff_name', staff);
+    if (staffType) q = q.eq('staff_type', staffType);
     if (dateFrom) q = q.gte('record_date', dateFrom);
     if (dateTo) q = q.lte('record_date', dateTo);
     if (kw) q = q.or(`note.ilike.%${kw}%,property_raw.ilike.%${kw}%`);
     return q;
-  }, [supabase, estate, staff, dateFrom, dateTo, kw]);
+  }, [supabase, estate, staff, staffType, dateFrom, dateTo, kw]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -69,9 +72,9 @@ export default function CleaningPage() {
     setLoading(false);
   }, [buildQuery, page]);
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { setPage(0); }, [estate, staff, dateFrom, dateTo, kw]);
+  useEffect(() => { setPage(0); }, [estate, staff, staffType, dateFrom, dateTo, kw]);
 
-  const staffNames = useMemo(() => [...stats].sort((a, b) => Number(b.total) - Number(a.total)).map((s) => s.staff_name), [stats]);
+  const staffNames = useMemo(() => visibleStats.map((s) => s.staff_name), [visibleStats]);
 
   async function exportCsv() {
     setExporting(true);
@@ -117,13 +120,13 @@ export default function CleaningPage() {
           <div className="rounded-xl bg-mor-slate text-white p-5 flex flex-col justify-center">
             <div className="text-xs opacity-75">總清潔次數</div>
             <div className="text-4xl font-bold mt-1">{totalCount.toLocaleString()}</div>
-            <div className="text-xs opacity-75 mt-2">共 {stats.length} 位填寫人</div>
+            <div className="text-xs opacity-75 mt-2">共 {visibleStats.length} 位・{(statsFrom || statsTo) ? `${statsFrom || '起始'} ~ ${statsTo || '今'}` : '全部期間'}</div>
           </div>
           <div className="lg:col-span-2 rounded-xl bg-white border border-mor-line overflow-hidden">
             <div className="px-4 py-2.5 text-sm font-semibold border-b border-mor-line bg-mor-sand/40">依填寫人統計</div>
             <div className="max-h-56 overflow-y-auto">
-              {stats.map((m) => {
-                const max = Math.max(...stats.map((x) => Number(x.total))) || 1;
+              {visibleStats.map((m) => {
+                const max = Math.max(...visibleStats.map((x) => Number(x.total))) || 1;
                 return (
                   <div key={m.staff_name} className="px-4 py-2 flex items-center gap-3 text-sm border-b border-mor-line/50 last:border-0">
                     <span className="w-16 font-medium truncate">{m.staff_name}<span className="ml-1 text-xs text-gray-400">{TYPE_LABEL[m.staff_type]}</span></span>
@@ -152,6 +155,14 @@ export default function CleaningPage() {
           </select>
         </div>
         <div>
+          <label className="block text-xs text-gray-500 mb-1">職位</label>
+          <select value={staffType} onChange={(e) => setStaffType(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5 min-w-20">
+            <option value="">全部</option>
+            <option value="housekeeper">管家</option>
+            <option value="roomservice">房務</option>
+          </select>
+        </div>
+        <div>
           <label className="block text-xs text-gray-500 mb-1">日期(起)</label>
           <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5" />
         </div>
@@ -167,8 +178,8 @@ export default function CleaningPage() {
             <button onClick={() => setKw(kwInput.trim())} className="rounded-lg bg-mor-slate text-white px-3 hover:bg-mor-slatedark">搜尋</button>
           </div>
         </div>
-        {(estate || staff || dateFrom || dateTo || kw) && (
-          <button onClick={() => { setEstate(''); setStaff(''); setDateFrom(''); setDateTo(''); setKw(''); setKwInput(''); }} className="text-gray-500 underline pb-1.5">清除篩選</button>
+        {(estate || staff || staffType || dateFrom || dateTo || kw) && (
+          <button onClick={() => { setEstate(''); setStaff(''); setStaffType(''); setDateFrom(''); setDateTo(''); setKw(''); setKwInput(''); }} className="text-gray-500 underline pb-1.5">清除篩選</button>
         )}
         <div className="ml-auto flex items-end gap-3">
           <div className="text-xs text-gray-400 pb-1.5">共 {total.toLocaleString()} 筆</div>
