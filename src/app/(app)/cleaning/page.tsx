@@ -13,12 +13,6 @@ type Rec = {
 const PAGE_SIZE = 50;
 const TYPE_LABEL: Record<string, string> = { housekeeper: '管家', roomservice: '房務', other: '其他' };
 
-function starColor(n: number) {
-  return n >= 5 ? 'text-amber-400' : n === 4 ? 'text-orange-500' : n === 3 ? 'text-red-500' : n === 2 ? 'text-purple-600' : 'text-gray-900';
-}
-function Stars({ n }: { n: number }) {
-  return <span className={`font-semibold ${starColor(n)}`}>{'★'.repeat(n)}<span className="text-gray-300">{'★'.repeat(Math.max(0, 5 - n))}</span></span>;
-}
 function csvEsc(v: unknown) {
   if (v == null) return '';
   const s = String(v).replace(/\r\n/g, '\n');
@@ -37,7 +31,6 @@ export default function CleaningPage() {
   // filters
   const [estate, setEstate] = useState('');
   const [staff, setStaff] = useState('');
-  const [rating, setRating] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [kw, setKw] = useState('');
@@ -55,26 +48,18 @@ export default function CleaningPage() {
       .then(({ data }) => setStats((data as StaffStat[]) ?? []));
   }, [supabase, statsFrom, statsTo]);
 
-  const overall = useMemo(() => {
-    const total = stats.reduce((s, x) => s + Number(x.total), 0);
-    const rated = stats.reduce((s, x) => s + Number(x.rated), 0);
-    const low = stats.reduce((s, x) => s + Number(x.low_count), 0);
-    const sum = stats.reduce((s, x) => s + (Number(x.avg_rating) || 0) * Number(x.rated), 0);
-    return { total, avg: rated ? sum / rated : 0, low };
-  }, [stats]);
+  const totalCount = useMemo(() => stats.reduce((s, x) => s + Number(x.total), 0), [stats]);
 
   const buildQuery = useCallback((count: boolean) => {
     let q = supabase.from('cleaning_records').select('*', count ? { count: 'exact' } : undefined)
       .order('record_date', { ascending: false });
     if (estate) q = q.eq('estate_name', estate);
     if (staff) q = q.eq('staff_name', staff);
-    if (rating === 'low') q = q.lte('overall_rating', 4);
-    else if (rating) q = q.eq('overall_rating', parseInt(rating));
     if (dateFrom) q = q.gte('record_date', dateFrom);
     if (dateTo) q = q.lte('record_date', dateTo);
     if (kw) q = q.or(`note.ilike.%${kw}%,property_raw.ilike.%${kw}%`);
     return q;
-  }, [supabase, estate, staff, rating, dateFrom, dateTo, kw]);
+  }, [supabase, estate, staff, dateFrom, dateTo, kw]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -84,7 +69,7 @@ export default function CleaningPage() {
     setLoading(false);
   }, [buildQuery, page]);
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { setPage(0); }, [estate, staff, rating, dateFrom, dateTo, kw]);
+  useEffect(() => { setPage(0); }, [estate, staff, dateFrom, dateTo, kw]);
 
   const staffNames = useMemo(() => [...stats].sort((a, b) => Number(b.total) - Number(a.total)).map((s) => s.staff_name), [stats]);
 
@@ -97,11 +82,11 @@ export default function CleaningPage() {
       all.push(...b);
       if (b.length < 1000) break;
     }
-    const header = ['記錄日', '物業', '房源', '填寫人', '身分', '星等', '備註', '表單url'];
+    const header = ['記錄日', '物業', '房源', '填寫人', '身分', '備註', '詳細記錄'];
     const lines = [header.join(',')];
     for (const r of all) lines.push([
       r.record_date, r.estate_name, r.property_raw, r.staff_name, TYPE_LABEL[r.staff_type || 'other'],
-      r.overall_rating ?? '', r.note ?? '', r.doc_url ?? '',
+      r.note ?? '', r.doc_url ?? '',
     ].map(csvEsc).join(','));
     const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a');
@@ -131,11 +116,8 @@ export default function CleaningPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-stretch">
           <div className="rounded-xl bg-mor-slate text-white p-5 flex flex-col justify-center">
             <div className="text-xs opacity-75">總清潔次數</div>
-            <div className="text-3xl font-bold mt-1">{overall.total.toLocaleString()}</div>
-            <div className="flex gap-4 mt-3 text-xs opacity-90">
-              <span>平均 {overall.avg ? overall.avg.toFixed(2) : '—'} ★</span>
-              <span>需注意(≤4★)：{overall.low}</span>
-            </div>
+            <div className="text-4xl font-bold mt-1">{totalCount.toLocaleString()}</div>
+            <div className="text-xs opacity-75 mt-2">共 {stats.length} 位填寫人</div>
           </div>
           <div className="lg:col-span-2 rounded-xl bg-white border border-mor-line overflow-hidden">
             <div className="px-4 py-2.5 text-sm font-semibold border-b border-mor-line bg-mor-sand/40">依填寫人統計</div>
@@ -146,8 +128,7 @@ export default function CleaningPage() {
                   <div key={m.staff_name} className="px-4 py-2 flex items-center gap-3 text-sm border-b border-mor-line/50 last:border-0">
                     <span className="w-16 font-medium truncate">{m.staff_name}<span className="ml-1 text-xs text-gray-400">{TYPE_LABEL[m.staff_type]}</span></span>
                     <div className="flex-1 h-1.5 rounded-full bg-mor-sand overflow-hidden"><div className="h-full bg-mor-green" style={{ width: `${(Number(m.total) / max) * 100}%` }} /></div>
-                    <span className="w-20 text-right">{m.avg_rating != null ? <span className={`font-semibold ${Number(m.avg_rating) < 4.5 ? 'text-orange-600' : 'text-mor-ink'}`}>{Number(m.avg_rating).toFixed(2)} ★</span> : <span className="text-gray-300">無評分</span>}</span>
-                    <span className="w-20 text-right text-xs text-gray-400">{Number(m.total)} 次{Number(m.low_count) > 0 && <span className="text-orange-600">・{m.low_count}低</span>}</span>
+                    <span className="w-16 text-right text-xs text-gray-500">{Number(m.total)} 次</span>
                   </div>
                 );
               })}
@@ -171,12 +152,6 @@ export default function CleaningPage() {
           </select>
         </div>
         <div>
-          <label className="block text-xs text-gray-500 mb-1">星等</label>
-          <select value={rating} onChange={(e) => setRating(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
-            <option value="">全部</option><option value="5">5 星</option><option value="4">4 星</option><option value="low">≤4 星(需注意)</option>
-          </select>
-        </div>
-        <div>
           <label className="block text-xs text-gray-500 mb-1">日期(起)</label>
           <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5" />
         </div>
@@ -192,8 +167,8 @@ export default function CleaningPage() {
             <button onClick={() => setKw(kwInput.trim())} className="rounded-lg bg-mor-slate text-white px-3 hover:bg-mor-slatedark">搜尋</button>
           </div>
         </div>
-        {(estate || staff || rating || dateFrom || dateTo || kw) && (
-          <button onClick={() => { setEstate(''); setStaff(''); setRating(''); setDateFrom(''); setDateTo(''); setKw(''); setKwInput(''); }} className="text-gray-500 underline pb-1.5">清除篩選</button>
+        {(estate || staff || dateFrom || dateTo || kw) && (
+          <button onClick={() => { setEstate(''); setStaff(''); setDateFrom(''); setDateTo(''); setKw(''); setKwInput(''); }} className="text-gray-500 underline pb-1.5">清除篩選</button>
         )}
         <div className="ml-auto flex items-end gap-3">
           <div className="text-xs text-gray-400 pb-1.5">共 {total.toLocaleString()} 筆</div>
@@ -210,21 +185,23 @@ export default function CleaningPage() {
               <th className="px-3 py-2.5">物業</th>
               <th className="px-3 py-2.5">房源</th>
               <th className="px-3 py-2.5">填寫人</th>
-              <th className="px-3 py-2.5">星等</th>
               <th className="px-3 py-2.5">備註</th>
+              <th className="px-3 py-2.5 whitespace-nowrap">詳細記錄</th>
             </tr>
           </thead>
           <tbody>
             {loading ? <tr><td colSpan={6} className="px-4 py-10 text-center text-gray-400">載入中…</td></tr>
             : rows.length === 0 ? <tr><td colSpan={6} className="px-4 py-10 text-center text-gray-400">沒有符合條件的紀錄</td></tr>
             : rows.map((r) => (
-              <tr key={r.id} onClick={() => setDetail(r)} className="border-b border-mor-line/60 hover:bg-mor-bluelight/40 cursor-pointer align-top">
-                <td className="px-3 py-2.5 whitespace-nowrap text-gray-600">{r.record_date}</td>
-                <td className="px-3 py-2.5 whitespace-nowrap"><span className="inline-block rounded-md bg-mor-bluelight text-mor-slate px-2 py-0.5 text-xs font-medium">{r.estate_name ?? '—'}</span></td>
-                <td className="px-3 py-2.5 whitespace-nowrap">{r.property_raw ?? '—'}</td>
-                <td className="px-3 py-2.5 whitespace-nowrap">{r.staff_name}<span className="ml-1 text-xs text-gray-400">{TYPE_LABEL[r.staff_type || 'other']}</span></td>
-                <td className="px-3 py-2.5 whitespace-nowrap">{r.overall_rating ? <Stars n={r.overall_rating} /> : <span className="text-gray-300 text-xs">無</span>}</td>
-                <td className="px-3 py-2.5 text-gray-600 min-w-64"><div className="line-clamp-2">{r.note ?? <span className="text-gray-300">（無備註）</span>}</div></td>
+              <tr key={r.id} className="border-b border-mor-line/60 hover:bg-mor-bluelight/40 align-top">
+                <td className="px-3 py-2.5 whitespace-nowrap text-gray-600 cursor-pointer" onClick={() => setDetail(r)}>{r.record_date}</td>
+                <td className="px-3 py-2.5 whitespace-nowrap cursor-pointer" onClick={() => setDetail(r)}><span className="inline-block rounded-md bg-mor-bluelight text-mor-slate px-2 py-0.5 text-xs font-medium">{r.estate_name ?? '—'}</span></td>
+                <td className="px-3 py-2.5 whitespace-nowrap cursor-pointer" onClick={() => setDetail(r)}>{r.property_raw ?? '—'}</td>
+                <td className="px-3 py-2.5 whitespace-nowrap cursor-pointer" onClick={() => setDetail(r)}>{r.staff_name}<span className="ml-1 text-xs text-gray-400">{TYPE_LABEL[r.staff_type || 'other']}</span></td>
+                <td className="px-3 py-2.5 text-gray-600 min-w-64 cursor-pointer" onClick={() => setDetail(r)}><div className="line-clamp-2">{r.note ?? <span className="text-gray-300">（無備註）</span>}</div></td>
+                <td className="px-3 py-2.5 whitespace-nowrap">
+                  {r.doc_url ? <a href={r.doc_url} target="_blank" rel="noreferrer" className="text-mor-slate underline hover:text-mor-blue" onClick={(e) => e.stopPropagation()}>📄 開啟</a> : <span className="text-gray-300">—</span>}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -251,12 +228,11 @@ export default function CleaningPage() {
               <button onClick={() => setDetail(null)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
             </div>
             <div className="px-6 py-5 space-y-5 text-sm">
-              {detail.overall_rating && <div><Stars n={detail.overall_rating} /> <span className="ml-1 font-semibold">{detail.overall_rating} 星</span></div>}
               <div>
                 <div className="text-xs text-gray-500 mb-1.5 font-medium">備註</div>
                 <p className="whitespace-pre-wrap leading-relaxed">{detail.note ?? '（無）'}</p>
               </div>
-              {detail.doc_url && <a href={detail.doc_url} target="_blank" rel="noreferrer" className="inline-block rounded-lg bg-mor-bluelight text-mor-slate px-4 py-2 font-medium hover:bg-mor-blue hover:text-white">📄 開啟表單原始紀錄</a>}
+              {detail.doc_url && <a href={detail.doc_url} target="_blank" rel="noreferrer" className="inline-block rounded-lg bg-mor-bluelight text-mor-slate px-4 py-2 font-medium hover:bg-mor-blue hover:text-white">📄 開啟詳細記錄</a>}
             </div>
           </div>
         </div>
