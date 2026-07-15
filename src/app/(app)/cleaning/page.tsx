@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 
 type Estate = { id: string; name: string; sort: number };
-type StaffStat = { staff_name: string; staff_type: string; total: number; rated: number; avg_rating: number | null; low_count: number };
+type StaffStat = { staff_name: string; staff_type: string; active: boolean; total: number; rated: number; avg_rating: number | null; low_count: number };
 type Rec = {
   id: string; record_key: string; record_date: string; staff_name: string; staff_type: string | null;
   property_id: string | null; property_raw: string | null; estate_name: string | null;
@@ -52,7 +52,7 @@ export default function CleaningPage() {
       .then(({ data }) => setStats((data as StaffStat[]) ?? []));
   }, [supabase, statsFrom, statsTo]);
 
-  const visibleStats = useMemo(() => stats.filter((s) => s.staff_type !== 'other').sort((a, b) => Number(b.total) - Number(a.total)), [stats]);
+  const visibleStats = useMemo(() => stats.filter((s) => s.active).sort((a, b) => Number(b.total) - Number(a.total)), [stats]);
   const totalCount = useMemo(() => stats.reduce((s, x) => s + Number(x.total), 0), [stats]);
 
   const buildQuery = useCallback((count: boolean) => {
