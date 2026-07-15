@@ -40,9 +40,12 @@ export default function CleaningPage() {
   const [statsFrom, setStatsFrom] = useState('');
   const [statsTo, setStatsTo] = useState('');
   const [stats, setStats] = useState<StaffStat[]>([]);
+  const [minDate, setMinDate] = useState('');
 
   useEffect(() => {
     supabase.from('estates').select('id, name, sort').order('sort').then(({ data }) => setEstates(data ?? []));
+    supabase.from('cleaning_records').select('record_date').order('record_date', { ascending: true }).limit(1)
+      .then(({ data }) => { if (data && data[0]) setMinDate(data[0].record_date); });
   }, [supabase]);
   useEffect(() => {
     supabase.rpc('cleaning_staff_stats', { p_from: statsFrom || null, p_to: statsTo || null })
@@ -120,7 +123,7 @@ export default function CleaningPage() {
           <div className="rounded-xl bg-mor-slate text-white p-5 flex flex-col justify-center">
             <div className="text-xs opacity-75">總清潔次數</div>
             <div className="text-4xl font-bold mt-1">{totalCount.toLocaleString()}</div>
-            <div className="text-xs opacity-75 mt-2">共 {visibleStats.length} 位・{(statsFrom || statsTo) ? `${statsFrom || '起始'} ~ ${statsTo || '今'}` : '全部期間'}</div>
+            <div className="text-xs opacity-75 mt-2">共 {visibleStats.length} 位・{(statsFrom || statsTo) ? `${statsFrom || minDate || '起始'} ~ ${statsTo || '今'}` : (minDate ? `${minDate} ~ 今` : '全部期間')}</div>
           </div>
           <div className="lg:col-span-2 rounded-xl bg-white border border-mor-line overflow-hidden">
             <div className="px-4 py-2.5 text-sm font-semibold border-b border-mor-line bg-mor-sand/40">依填寫人統計</div>
