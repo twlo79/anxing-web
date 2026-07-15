@@ -99,25 +99,28 @@ export default function AdminPage() {
             </thead>
             <tbody>
               {staff.map((s) => (
-                <tr key={s.id} className="border-b border-mor-line/60 last:border-0">
+                <tr key={s.id} className={`border-b border-mor-line/60 last:border-0 ${s.active ? '' : 'opacity-50'}`}>
                   <td className="px-4 py-2 font-medium">{s.name}{s.aliases?.length ? <span className="ml-1 text-xs text-gray-400">({s.aliases.join('/')})</span> : null}</td>
                   <td className="px-4 py-2">
-                    <select value={s.staff_type} onChange={(e) => updateStaff(s.id, { staff_type: e.target.value })}
-                      className="rounded-lg border border-gray-300 px-2 py-1 text-sm">
-                      <option value="housekeeper">管家</option>
-                      <option value="roomservice">房務</option>
-                      <option value="other">其他/離職</option>
-                    </select>
+                    {s.staff_type === 'other' ? (
+                      <span className="text-gray-400 text-sm">—</span>
+                    ) : (
+                      <select value={s.staff_type} disabled={!s.active} onChange={(e) => updateStaff(s.id, { staff_type: e.target.value })}
+                        className="rounded-lg border border-gray-300 px-2 py-1 text-sm disabled:bg-gray-100 disabled:cursor-not-allowed">
+                        <option value="housekeeper">管家</option>
+                        <option value="roomservice">房務</option>
+                      </select>
+                    )}
                   </td>
                   <td className="px-4 py-2">
                     <span className={`inline-block rounded-full px-2 py-0.5 text-xs ${s.active ? 'bg-mor-greenlight text-mor-green' : 'bg-gray-100 text-gray-400'}`}>
-                      {s.active ? '在職' : '停用'}
+                      {s.active ? '在職' : '離職'}
                     </span>
                   </td>
                   <td className="px-4 py-2 text-right">
                     <button onClick={() => updateStaff(s.id, { active: !s.active })}
                       className="text-xs text-mor-slate underline hover:text-mor-blue">
-                      {s.active ? '設為停用/離職' : '恢復在職'}
+                      {s.active ? '設為離職' : '恢復在職'}
                     </button>
                   </td>
                 </tr>
