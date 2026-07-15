@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
 
 type Staff = { id: string; name: string; aliases: string[]; staff_type: string; active: boolean; sort: number };
-type Estate = { id: string; name: string; manager: string | null; sort: number };
+type Estate = { id: string; name: string; manager: string | null; sort: number; active: boolean };
 
 const TYPE_LABEL: Record<string, string> = { housekeeper: '管家', roomservice: '房務', other: '其他/離職' };
 
@@ -147,16 +147,17 @@ export default function AdminPage() {
                 <th className="px-4 py-2.5">物業</th>
                 <th className="px-4 py-2.5">負責管家</th>
                 <th className="px-4 py-2.5 w-20">排序</th>
+                <th className="px-4 py-2.5">狀態</th>
                 <th className="px-4 py-2.5 text-right">操作</th>
               </tr>
             </thead>
             <tbody>
               {estates.map((e) => (
-                <tr key={e.id} className="border-b border-mor-line/60 last:border-0">
+                <tr key={e.id} className={`border-b border-mor-line/60 last:border-0 ${e.active ? '' : 'opacity-50'}`}>
                   <td className="px-4 py-2 font-medium">{e.name}</td>
                   <td className="px-4 py-2">
-                    <select value={e.manager ?? ''} onChange={(ev) => updateEstate(e.id, { manager: ev.target.value || null })}
-                      className="rounded-lg border border-gray-300 px-2 py-1 text-sm min-w-24">
+                    <select value={e.manager ?? ''} disabled={!e.active} onChange={(ev) => updateEstate(e.id, { manager: ev.target.value || null })}
+                      className="rounded-lg border border-gray-300 px-2 py-1 text-sm min-w-24 disabled:bg-gray-100">
                       <option value="">未指派</option>
                       {activeHousekeepers.map((h) => <option key={h.id} value={h.name}>{h.name}</option>)}
                     </select>
@@ -165,7 +166,11 @@ export default function AdminPage() {
                     <input type="number" defaultValue={e.sort} onBlur={(ev) => { const v = parseInt(ev.target.value); if (v !== e.sort) updateEstate(e.id, { sort: v }); }}
                       className="rounded-lg border border-gray-300 px-2 py-1 w-16 text-sm" />
                   </td>
-                  <td className="px-4 py-2 text-right">
+                  <td className="px-4 py-2">
+                    <span className={`inline-block rounded-full px-2 py-0.5 text-xs ${e.active ? 'bg-mor-greenlight text-mor-green' : 'bg-gray-100 text-gray-400'}`}>{e.active ? '啟用' : '停用'}</span>
+                  </td>
+                  <td className="px-4 py-2 text-right space-x-3">
+                    <button onClick={() => updateEstate(e.id, { active: !e.active })} className="text-xs text-mor-slate underline hover:text-mor-blue">{e.active ? '停用' : '啟用'}</button>
                     <button onClick={() => deleteEstate(e.id, e.name)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
                   </td>
                 </tr>
@@ -178,7 +183,7 @@ export default function AdminPage() {
             <button onClick={addEstate} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 新增物業</button>
           </div>
         </div>
-        <p className="text-xs text-gray-400 mt-2">負責管家影響「評價」頁的管家評分:換人後該物業所有評價(含過去)歸現任負責人。排序數字越小越前面。</p>
+        <p className="text-xs text-gray-400 mt-2">停用物業:不顯示在評價/清潔的評分與篩選、也不需指派(紀錄仍保留)。負責管家換人後,該物業所有評價(含過去)歸現任。排序越小越前。</p>
       </section>
     </div>
   );

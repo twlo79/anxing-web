@@ -91,7 +91,7 @@ export default function ReviewsPage() {
   );
 
   useEffect(() => {
-    supabase.from('estates').select('id, name, manager, sort').order('sort').then(({ data }) => setEstates(data ?? []));
+    supabase.from('estates').select('id, name, manager, sort').eq('active', true).order('sort').then(({ data }) => setEstates(data ?? []));
     supabase.from('properties').select('id, name, active, estate_id').order('active', { ascending: false }).order('name')
       .then(({ data }) => setProperties(data ?? []));
   }, [supabase]);

@@ -43,7 +43,7 @@ export default function CleaningPage() {
   const [minDate, setMinDate] = useState('');
 
   useEffect(() => {
-    supabase.from('estates').select('id, name, sort').order('sort').then(({ data }) => setEstates(data ?? []));
+    supabase.from('estates').select('id, name, sort').eq('active', true).order('sort').then(({ data }) => setEstates(data ?? []));
     supabase.from('cleaning_records').select('record_date').order('record_date', { ascending: true }).limit(1)
       .then(({ data }) => { if (data && data[0]) setMinDate(data[0].record_date); });
   }, [supabase]);
