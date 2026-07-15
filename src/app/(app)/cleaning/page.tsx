@@ -53,7 +53,7 @@ export default function CleaningPage() {
   }, [supabase, statsFrom, statsTo]);
 
   const visibleStats = useMemo(() => stats.filter((s) => s.staff_type !== 'other').sort((a, b) => Number(b.total) - Number(a.total)), [stats]);
-  const totalCount = useMemo(() => visibleStats.reduce((s, x) => s + Number(x.total), 0), [visibleStats]);
+  const totalCount = useMemo(() => stats.reduce((s, x) => s + Number(x.total), 0), [stats]);
 
   const buildQuery = useCallback((count: boolean) => {
     let q = supabase.from('cleaning_records').select('*', count ? { count: 'exact' } : undefined)
