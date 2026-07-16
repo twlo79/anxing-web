@@ -93,8 +93,8 @@ export default function RevenuesPage() {
     const [fy, fm] = fromM.split('-').map(Number); const [ty, tm] = toM.split('-').map(Number);
     const pStart = `${fy}-${String(fm).padStart(2, '0')}-01`;
     const pEnd = new Date(Date.UTC(ty, tm, 1)).toISOString().slice(0, 10);
-    const { data: periodOrders } = await supabase.from('orders').select('*, estates(name)').gte('checkout', pStart).lt('checkout', pEnd).order('checkout');
-    const ordSheet = (periodOrders ?? []).map((o: any) => ({ 來源: SOURCE_LABEL[o.source] ?? o.source, 物業: o.estates?.name ?? '', 房源: o.property_raw ?? '', 客戶: o.guest_name ?? '', 起日: o.checkin, 迄日: o.checkout, 訂單總額: Math.round(o.amount), 總天數: o.nights, 押金: o.deposit || '', 帳戶: o.account || '', 備註: o.note || '' }));
+    const { data: periodOrders } = await supabase.from('orders').select('*, estates(name), properties(name)').gte('checkout', pStart).lt('checkout', pEnd).order('checkout');
+    const ordSheet = (periodOrders ?? []).map((o: any) => ({ 來源: SOURCE_LABEL[o.source] ?? o.source, 物業: o.estates?.name ?? '', 房源: o.properties?.name ?? o.property_raw ?? '', 客戶: o.guest_name ?? '', 起日: o.checkin, 迄日: o.checkout, 訂單總額: Math.round(o.amount), 總天數: o.nights, 押金: o.deposit || '', 帳戶: o.account || '', 備註: o.note || '' }));
     const detail = filtered.map((r) => ({ 來源: SOURCE_LABEL[r.source] ?? r.source, 物業: r.estate_name ?? '', 房源: r.property_raw ?? '', 客戶: r.guest_name ?? '', 起日: r.checkin, 迄日: r.checkout, 訂單總額: Math.round(r.total_amount), 當期天數: r.month_nights, 總天數: r.total_nights, 均價: r.month_nights ? Math.round(Number(r.month_amount) / r.month_nights) : 0, 當期認列: Math.round(r.month_amount) }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(pivot), '物業總覽');
