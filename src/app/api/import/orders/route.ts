@@ -32,19 +32,27 @@ export async function POST(req: Request) {
 
   const { data: estates } = await supabase.from('estates').select('id, name');
   const estateByName = Object.fromEntries((estates ?? []).map((e) => [e.name, e.id]));
-  const { data: props } = await supabase.from('properties').select('id, name, estate_id, estates(name)');
-  const propList = (props ?? []).map((p: any) => ({ id: p.id, name: p.name, estate: p.estates?.name }));
+  const { data: props } = await supabase.from('properties').select('id, name, estate_id, airbnb_listing_id, estates(name)');
+  const propList = (props ?? []).map((p: any) => ({ id: p.id, name: p.name, estate: p.estates?.name, estateId: p.estate_id, listingId: p.airbnb_listing_id }));
+  const propByListingId = Object.fromEntries(propList.filter((p) => p.listingId).map((p) => [p.listingId, p]));
 
   const unmatchedProp: Record<string, number> = {};
   const records = items.map((o) => {
-    const estateId = o.estate_name ? estateByName[o.estate_name] ?? null : null;
+    let estateId = o.estate_name ? estateByName[o.estate_name] ?? null : null;
     let propertyId: string | null = null;
-    const rawUnit = normUnit(o.property_raw || '');
-    const cand = propList.filter((p) => p.estate === o.estate_name);
-    let hit = cand.find((p) => normUnit(p.name) === rawUnit);
-    if (!hit && rawUnit) hit = cand.find((p) => normUnit(p.name).includes(rawUnit) || rawUnit.includes(normUnit(p.name)));
-    if (hit) propertyId = hit.id;
-    else if (o.property_raw) unmatchedProp[`${o.estate_name}/${o.property_raw}`] = (unmatchedProp[`${o.estate_name}/${o.property_raw}`] || 0) + 1;
+    // 優先:Airbnb listing_id 直接對應
+    if (o.airbnb_listing_id && propByListingId[String(o.airbnb_listing_id)]) {
+      const hitP = propByListingId[String(o.airbnb_listing_id)];
+      propertyId = hitP.id;
+      if (!estateId) estateId = hitP.estateId;
+    } else {
+      const rawUnit = normUnit(o.property_raw || '');
+      const cand = propList.filter((p) => p.estate === o.estate_name);
+      let hit = cand.find((p) => normUnit(p.name) === rawUnit);
+      if (!hit && rawUnit) hit = cand.find((p) => normUnit(p.name).includes(rawUnit) || rawUnit.includes(normUnit(p.name)));
+      if (hit) propertyId = hit.id;
+      else if (o.property_raw || o.airbnb_listing_id) unmatchedProp[`${o.estate_name || ''}/${o.property_raw || o.airbnb_listing_id}`] = (unmatchedProp[`${o.estate_name || ''}/${o.property_raw || o.airbnb_listing_id}`] || 0) + 1;
+    }
     const n = o.nights ?? nights(o.checkin, o.checkout);
     return {
       order_key: String(o.order_key),
