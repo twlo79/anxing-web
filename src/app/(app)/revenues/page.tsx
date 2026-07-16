@@ -79,27 +79,89 @@ export default function RevenuesPage() {
   const estateOptions = useMemo(() => Array.from(new Set(rows.map((r) => r.estate_name ?? "無"))).sort(), [rows]);
 
   async function exportXlsx() {
-    const estates = Array.from(new Set(filtered.map((r) => r.estate_name ?? '無物業')));
-    const srcs = SOURCE_ORDER.filter((s) => filtered.some((r) => r.source === s));
-    const pivot: any[] = [];
-    for (const e of estates) {
-      const row: any = { 物業: e }; let sum = 0;
-      for (const s of srcs) { const v = filtered.filter((r) => (r.estate_name ?? '無物業') === e && r.source === s).reduce((a, r) => a + Number(r.month_amount), 0); row[SOURCE_LABEL[s]] = Math.round(v); sum += v; }
-      row['合計'] = Math.round(sum); pivot.push(row);
+    const months = monthsInRange(fromM, toM).slice(0, 24);
+    const { data: estateRows } = await supabase.from('estates').select('name, manager, sort').order('sort');
+    const managerOf: Record<string, string> = {};
+    const estateSort: Record<string, number> = {};
+    (estateRows ?? []).forEach((e: any, i: number) => { if (e.manager) managerOf[e.name] = e.manager; estateSort[e.name] = i; });
+
+    const monthData: { ym: string; y: number; m: number; rows: Row[] }[] = [];
+    for (const [y, m] of months) {
+      const { data } = await supabase.rpc('monthly_revenue', { p_year: y, p_month: m });
+      monthData.push({ ym: `${y}${String(m).padStart(2, '0')}`, y, m, rows: ((data as Row[]) ?? []).filter((r) => Number(r.month_amount) !== 0) });
     }
-    const totalRow: any = { 物業: '總計' };
-    for (const s of srcs) totalRow[SOURCE_LABEL[s]] = Math.round(filtered.filter((r) => r.source === s).reduce((a, r) => a + Number(r.month_amount), 0));
-    totalRow['合計'] = Math.round(total); pivot.push(totalRow);
-    const [fy, fm] = fromM.split('-').map(Number); const [ty, tm] = toM.split('-').map(Number);
-    const pStart = `${fy}-${String(fm).padStart(2, '0')}-01`;
-    const pEnd = new Date(Date.UTC(ty, tm, 1)).toISOString().slice(0, 10);
-    const { data: periodOrders } = await supabase.from('orders').select('*, estates(name), properties(name)').gte('checkout', pStart).lt('checkout', pEnd).order('checkout');
-    const ordSheet = (periodOrders ?? []).map((o: any) => ({ 來源: SOURCE_LABEL[o.source] ?? o.source, 物業: o.estates?.name ?? '', 房源: o.properties?.name ?? o.property_raw ?? '', 客戶: o.guest_name ?? '', 起日: o.checkin, 迄日: o.checkout, 訂單總額: Math.round(o.amount), 總天數: o.nights, 押金: o.deposit || '', 帳戶: o.account || '', 備註: o.note || '' }));
-    const detail = filtered.map((r) => ({ 來源: SOURCE_LABEL[r.source] ?? r.source, 物業: r.estate_name ?? '', 房源: r.property_raw ?? '', 客戶: r.guest_name ?? '', 起日: r.checkin, 迄日: r.checkout, 訂單總額: Math.round(r.total_amount), 當期天數: r.month_nights, 總天數: r.total_nights, 均價: r.month_nights ? Math.round(Number(r.month_amount) / r.month_nights) : 0, 當期認列: Math.round(r.month_amount) }));
+
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(pivot), '物業總覽');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ordSheet), '期間內訂單');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detail), '月認列明細');
+    const AB = ['airbnb', 'partner', 'airbnb_cancelled', 'agoda'];
+    const eSort = (a: string, b: string) => (estateSort[a] ?? 99) - (estateSort[b] ?? 99);
+
+    // ===== 分頁1:營收總表(每月兩欄直式) =====
+    const blocks: any[][][] = [];
+    for (const md of monthData) {
+      const rs = md.rows;
+      const S = (f: (r: Row) => boolean) => Math.round(rs.filter(f).reduce((a, r) => a + Number(r.month_amount), 0));
+      const b: any[][] = [];
+      b.push([`${md.m}月份總收入`, S(() => true)]);
+      b.push(['AIRBNB', S((r) => AB.includes(r.source))]);
+      Array.from(new Set(rs.filter((r) => AB.includes(r.source)).map((r) => r.estate_name ?? '無物業'))).sort(eSort)
+        .forEach((e) => b.push([e, S((r) => AB.includes(r.source) && (r.estate_name ?? '無物業') === e)]));
+      b.push(['私下', S((r) => r.source === 'private')]);
+      Array.from(new Set(rs.filter((r) => r.source === 'private').map((r) => r.estate_name ?? '無物業'))).sort(eSort)
+        .forEach((e) => b.push([e, S((r) => r.source === 'private' && (r.estate_name ?? '無物業') === e)]));
+      b.push(['長租', S((r) => r.source === 'longterm' && r.estate_name !== '正隆')]);
+      Array.from(new Set(rs.filter((r) => r.source === 'longterm' && r.estate_name !== '正隆').map((r) => r.property_raw ?? '')))
+        .sort().forEach((pp) => b.push([pp, S((r) => r.source === 'longterm' && r.estate_name !== '正隆' && r.property_raw === pp)]));
+      b.push(['正隆官邸', S((r) => r.source === 'longterm' && r.estate_name === '正隆')]);
+      Array.from(new Set(rs.filter((r) => r.source === 'longterm' && r.estate_name === '正隆').map((r) => r.property_raw ?? '')))
+        .sort().forEach((pp) => b.push([pp, S((r) => r.source === 'longterm' && r.estate_name === '正隆' && r.property_raw === pp)]));
+      b.push(['辦公室租金', S((r) => r.source === 'office')]);
+      Array.from(new Set(rs.filter((r) => r.source === 'office').map((r) => r.guest_name ?? '')))
+        .forEach((g) => b.push([g, S((r) => r.source === 'office' && r.guest_name === g)]));
+      b.push(['公司登記', S((r) => r.source === 'company')]);
+      Array.from(new Set(rs.filter((r) => r.source === 'company').map((r) => r.guest_name ?? '')))
+        .forEach((g) => b.push([g, S((r) => r.source === 'company' && r.guest_name === g)]));
+      blocks.push(b);
+    }
+    const maxLen = Math.max(...blocks.map((b) => b.length));
+    const aoa: any[][] = [];
+    aoa.push(blocks.flatMap((_, i) => [`${monthData[i].m}月`, '']));
+    for (let i = 0; i < maxLen; i++) aoa.push(blocks.flatMap((b) => b[i] ?? ['', '']));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), '營收總表');
+
+    // ===== 各月明細分頁 =====
+    for (const md of monthData) {
+      const ms = `${md.y}-${String(md.m).padStart(2, '0')}-01`;
+      const me = new Date(Date.UTC(md.m === 12 ? md.y + 1 : md.y, md.m === 12 ? 0 : md.m, 1)).toISOString().slice(0, 10);
+      const { data: revs } = await supabase.from('reviews')
+        .select('guest_name, checkout_date, overall_rating, properties(name)')
+        .gte('checkout_date', ms).lt('checkout_date', me);
+      const ratingByKey: Record<string, number> = {};
+      const ratingByGuest: Record<string, number> = {};
+      for (const rv of (revs as any[]) ?? []) {
+        const pn = rv.properties?.name ?? '';
+        ratingByKey[`${pn}|${rv.checkout_date}`] = rv.overall_rating;
+        ratingByGuest[`${pn}|${(rv.guest_name || '').split(' ')[0]}`] = rv.overall_rating;
+      }
+      const header = ['姓名', '房源', '來源', '起日', '迄日', '訂單總金額', '當月收入', '當月天數', '總天數', '均價', '負責人', '評價', '入帳', '帳戶', '押金'];
+      const sheet: any[][] = [header];
+      const groups = Array.from(new Set(md.rows.map((r) => r.estate_name ?? '無物業'))).sort(eSort);
+      for (const e of groups) {
+        const grp = md.rows.filter((r) => (r.estate_name ?? '無物業') === e);
+        for (const r of grp) {
+          const pn = r.property_raw ?? '';
+          const rating = ratingByKey[`${pn}|${r.checkout}`] ?? ratingByGuest[`${pn}|${(r.guest_name || '').split(' ')[0]}`] ?? '';
+          sheet.push([
+            r.guest_name ?? '', pn, SOURCE_LABEL[r.source] ?? r.source, r.checkin, r.checkout,
+            Math.round(r.total_amount), Math.round(r.month_amount), r.month_nights, r.total_nights,
+            r.month_nights ? Math.round((Number(r.month_amount) / r.month_nights) * 100) / 100 : '',
+            managerOf[e] ?? '', rating, '', '', '',
+          ]);
+        }
+        sheet.push([`↑${e}`, '', '', '', '', '', Math.round(grp.reduce((a, r) => a + Number(r.month_amount), 0)), '', '', '', '', '', '', '', '']);
+        sheet.push([]);
+      }
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheet), md.ym);
+    }
     XLSX.writeFile(wb, `營收_${fromM}_${toM}.xlsx`);
   }
 
