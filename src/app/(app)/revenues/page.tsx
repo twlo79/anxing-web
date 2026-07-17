@@ -35,9 +35,10 @@ function csvEsc(v: unknown) { if (v == null) return ''; const s = String(v); ret
 export default function RevenuesPage() {
   const supabase = useMemo(() => createClient(), []);
   const now = new Date();
-  const cur = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  const [fromM, setFromM] = useState('2026-06');
-  const [toM, setToM] = useState('2026-06');
+  const lastM = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const lastYm = `${lastM.getFullYear()}-${String(lastM.getMonth() + 1).padStart(2, '0')}`;
+  const [fromM, setFromM] = useState(lastYm);
+  const [toM, setToM] = useState(lastYm);
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [estateFilter, setEstateFilter] = useState('');
@@ -45,17 +46,32 @@ export default function RevenuesPage() {
   const [kw, setKw] = useState('');
   const [kwInput, setKwInput] = useState('');
 
+  const fetchMonthRows = useCallback(async (y: number, m: number): Promise<Row[]> => {
+    const ym = `${y}${String(m).padStart(2, '0')}`;
+    if (ym < '202606') {
+      const { data } = await supabase.from('revenue_snapshots').select('*').eq('ym', ym).limit(2000);
+      return ((data as any[]) ?? []).map((r) => ({
+        order_id: r.id, source: r.source, estate_id: null, estate_name: r.estate_name,
+        property_raw: r.property_raw, guest_name: r.guest_name, checkin: r.checkin, checkout: r.checkout,
+        total_amount: Number(r.total_amount ?? r.month_amount), total_nights: r.total_nights ?? 0,
+        month_nights: r.month_nights ?? 0, month_amount: Number(r.month_amount),
+      }));
+    }
+    const { data } = await supabase.rpc('monthly_revenue', { p_year: y, p_month: m });
+    return ((data as Row[]) ?? []).filter((r) => Number(r.month_amount) !== 0);
+  }, [supabase]);
+
   const load = useCallback(async () => {
     setLoading(true);
     const months = monthsInRange(fromM, toM).slice(0, 24);
     const all: Row[] = [];
     for (const [y, m] of months) {
-      const { data } = await supabase.rpc('monthly_revenue', { p_year: y, p_month: m });
-      for (const r of (data as Row[]) ?? []) if (Number(r.month_amount) !== 0) all.push({ ...r, order_id: `${r.order_id}_${y}${m}` });
+      const list = await fetchMonthRows(y, m);
+      for (const r of list) all.push({ ...r, order_id: `${r.order_id}_${y}${m}` });
     }
     setRows(all);
     setLoading(false);
-  }, [supabase, fromM, toM]);
+  }, [supabase, fromM, toM, fetchMonthRows]);
   useEffect(() => { load(); }, [load]);
 
   const filtered = useMemo(() => rows.filter((r) => {
@@ -90,8 +106,7 @@ export default function RevenuesPage() {
 
     const monthData: { ym: string; y: number; m: number; rows: Row[] }[] = [];
     for (const [y, m] of months) {
-      const { data } = await supabase.rpc('monthly_revenue', { p_year: y, p_month: m });
-      monthData.push({ ym: `${y}${String(m).padStart(2, '0')}`, y, m, rows: ((data as Row[]) ?? []).filter((r) => Number(r.month_amount) !== 0) });
+      monthData.push({ ym: `${y}${String(m).padStart(2, '0')}`, y, m, rows: await fetchMonthRows(y, m) });
     }
 
     // ===== 樣式 =====
@@ -117,6 +132,9 @@ export default function RevenuesPage() {
       const S = (f: (r: Row) => boolean) => Math.round(rs.filter(f).reduce((a, r) => a + Number(r.month_amount), 0));
       const b: any[][] = [];
       b.push([T(`${md.m}月份總收入`, stTotal), T(S(() => true), stTotal)]);
+      b.push([T('總營收分類', stGroup), T('', stGroup)]);
+      for (const s0 of SOURCE_ORDER) { const v0 = S((r) => r.source === s0); if (v0) b.push([T(SOURCE_LABEL[s0], stCell), T(v0, stCell)]); }
+      b.push([T('', {}), T('', {})]);
       b.push([T('AIRBNB', stGroup), T(S((r) => AB.includes(r.source)), stGroup)]);
       Array.from(new Set(rs.filter((r) => AB.includes(r.source)).map((r) => r.estate_name ?? '無物業'))).sort(eSort)
         .forEach((e) => b.push([T(e, stCell), T(S((r) => AB.includes(r.source) && (r.estate_name ?? '無物業') === e), stCell)]));
