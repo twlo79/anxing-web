@@ -73,7 +73,10 @@ export default function RevenuesPage() {
   }, [filtered]);
   const byEstate = useMemo(() => {
     const m: Record<string, number> = {};
-    for (const r of filtered) { const k = r.estate_name ?? '無物業'; m[k] = (m[k] || 0) + Number(r.month_amount); }
+    for (const r of filtered) {
+      const k = r.estate_name ?? (r.source === 'company' ? '公司登記(無物業)' : r.source === 'other' ? '其他' : '無物業');
+      m[k] = (m[k] || 0) + Number(r.month_amount);
+    }
     return Object.entries(m).sort((a, b) => b[1] - a[1]);
   }, [filtered]);
   const estateOptions = useMemo(() => Array.from(new Set(rows.map((r) => r.estate_name ?? "無"))).sort(), [rows]);
@@ -211,7 +214,7 @@ export default function RevenuesPage() {
         </div>
         <div className="rounded-xl bg-white border border-mor-line overflow-hidden">
           <div className="px-4 py-2.5 text-sm font-semibold border-b border-mor-line bg-mor-sand/40">依來源</div>
-          <div className="max-h-56 overflow-y-auto">
+          <div>
             {bySource.map(([s, v]) => (
               <div key={s} onClick={() => setSourceFilter(sourceFilter === s ? '' : s)}
                 className={`px-4 py-2 flex items-center justify-between text-sm border-b border-mor-line/50 last:border-0 cursor-pointer hover:bg-mor-bluelight/40 ${sourceFilter === s ? 'bg-mor-bluelight/60' : ''}`}>
@@ -223,7 +226,7 @@ export default function RevenuesPage() {
         </div>
         <div className="rounded-xl bg-white border border-mor-line overflow-hidden">
           <div className="px-4 py-2.5 text-sm font-semibold border-b border-mor-line bg-mor-sand/40">依物業</div>
-          <div className="max-h-56 overflow-y-auto">
+          <div>
             {byEstate.map(([e, v]) => {
               const max = byEstate[0]?.[1] || 1;
               return (
