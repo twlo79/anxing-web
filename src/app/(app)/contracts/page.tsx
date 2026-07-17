@@ -190,19 +190,16 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
 
   const periods = useMemo(() => {
     if (!c.start_date || !c.end_date) return [];
-    const step = CAD_MONTHS[c.cadence] ?? 1;
-    const out: { start: Date; end: Date; months: string[]; amount: number }[] = [];
-    let cur = new Date(c.start_date + 'T00:00:00');
-    const end = new Date(c.end_date + 'T00:00:00');
+    const sd = new Date(c.start_date + 'T00:00:00'), ed = new Date(c.end_date + 'T00:00:00');
+    const out: { ym: string; label: string; amount: number }[] = [];
+    let cur = new Date(sd.getFullYear(), sd.getMonth(), 1);
+    const endMonthFirst = new Date(ed.getFullYear(), ed.getMonth(), 1);
     let guard = 0;
-    while (cur < end && guard++ < 60) {
-      const pEnd = addMonths(cur, step);
-      const months: string[] = [];
-      let mm = new Date(cur);
-      for (let i = 0; i < step; i++) { months.push(`${mm.getFullYear()}${String(mm.getMonth() + 1).padStart(2, '0')}`); mm = addMonths(mm, 1); }
-      out.push({ start: new Date(cur), end: pEnd, months, amount: (c.monthly_rent || 0) * step });
-      cur = pEnd;
+    while (cur < endMonthFirst && guard++ < 60) {
+      out.push({ ym: `${cur.getFullYear()}${String(cur.getMonth() + 1).padStart(2, '0')}`, label: `${cur.getFullYear()}年${cur.getMonth() + 1}月`, amount: c.monthly_rent || 0 });
+      cur = addMonths(cur, 1);
     }
+    if (out.length === 0) { const y = sd.getFullYear(), m = sd.getMonth() + 1; out.push({ ym: `${y}${String(m).padStart(2, '0')}`, label: `${y}年${m}月`, amount: c.monthly_rent || 0 }); }
     return out;
   }, [c]);
 
@@ -214,29 +211,26 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
   }, [supabase, c.room]);
   useEffect(() => { loadExisting(); }, [loadExisting]);
 
-  const isCollected = (p: any) => p.months.every((m: string) => existing.has(`LT_${c.room}_${m}`));
+  const isCollected = (p: any) => existing.has(`LT_${c.room}_${p.ym}`);
 
   async function confirmPeriod(p: any) {
-    setBusy(p.months[0]);
-    const rows = p.months.map((m: string) => {
-      const y = +m.slice(0, 4), mo = +m.slice(4);
-      const ms = new Date(Date.UTC(y, mo - 1, 1)), me = new Date(Date.UTC(mo === 12 ? y + 1 : y, mo === 12 ? 0 : mo, 1));
-      return {
-        order_key: `LT_${c.room}_${m}`, source: 'longterm', estate_id: c.estate_id, property_raw: c.room,
-        guest_name: c.tenant_name, checkin: ymd(ms), checkout: ymd(me),
-        nights: Math.round((me.getTime() - ms.getTime()) / 86400000), amount: c.monthly_rent || 0,
-        deposit: 0, note: '契約收租', imported_via: 'contract',
-      };
-    });
-    const { error } = await supabase.from('orders').upsert(rows, { onConflict: 'order_key' });
+    setBusy(p.ym);
+    const y = +p.ym.slice(0, 4), mo = +p.ym.slice(4);
+    const ms = new Date(Date.UTC(y, mo - 1, 1)), me = new Date(Date.UTC(mo === 12 ? y + 1 : y, mo === 12 ? 0 : mo, 1));
+    const { error } = await supabase.from('orders').upsert([{
+      order_key: `LT_${c.room}_${p.ym}`, source: 'longterm', estate_id: c.estate_id, property_raw: c.room,
+      guest_name: c.tenant_name, checkin: ymd(ms), checkout: ymd(me),
+      nights: Math.round((me.getTime() - ms.getTime()) / 86400000), amount: c.monthly_rent || 0,
+      deposit: 0, note: '契約收租', imported_via: 'contract',
+    }], { onConflict: 'order_key' });
     setBusy('');
     if (error) { alert('確認失敗:' + error.message); return; }
     loadExisting();
   }
   async function cancelPeriod(p: any) {
-    if (!confirm('取消這期收租?會刪除對應的營收認列。')) return;
-    setBusy(p.months[0]);
-    await supabase.from('orders').delete().in('order_key', p.months.map((m: string) => `LT_${c.room}_${m}`));
+    if (!confirm('取消這月收款?會刪除對應的營收認列。')) return;
+    setBusy(p.ym);
+    await supabase.from('orders').delete().eq('order_key', `LT_${c.room}_${p.ym}`);
     setBusy('');
     loadExisting();
   }
@@ -271,16 +265,16 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
               return (
                 <div key={i} className={`flex items-center justify-between rounded-xl border px-4 py-3 text-sm ${done ? 'border-mor-greenlight bg-mor-greenlight/30' : 'border-mor-line'}`}>
                   <div>
-                    <div className="font-medium">{ymd(p.start)} ~ {ymd(addMonths(p.end, 0))}</div>
-                    <div className="text-xs text-gray-500">認列 {p.months.map((m: string) => `${+m.slice(4)}月`).join('、')}・應收 ${Math.round(p.amount).toLocaleString()}</div>
+                    <div className="font-medium">{p.label}</div>
+                    <div className="text-xs text-gray-500">應收 ${Math.round(p.amount).toLocaleString()}</div>
                   </div>
                   {done
-                    ? <button onClick={() => cancelPeriod(p)} disabled={!!busy} className="rounded-lg bg-mor-greenlight text-mor-green px-3 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">✓ 已收租(點此取消)</button>
-                    : <button onClick={() => confirmPeriod(p)} disabled={!!busy} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">{busy === p.months[0] ? '處理中…' : '確認入帳'}</button>}
+                    ? <button onClick={() => cancelPeriod(p)} disabled={!!busy} className="rounded-lg bg-mor-greenlight text-mor-green px-3 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">✓ 已入帳(點此取消)</button>
+                    : <button onClick={() => confirmPeriod(p)} disabled={!!busy} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">{busy === p.ym ? '處理中…' : '確認入帳'}</button>}
                 </div>
               );
             })}
-            {periods.length === 0 && <div className="text-center text-gray-400 py-8 text-sm">無法產生繳費期(請確認租期與繳別)</div>}
+            {periods.length === 0 && <div className="text-center text-gray-400 py-8 text-sm">無法產生月份(請確認租期)</div>}
           </div>}
         </div>
       </div>
