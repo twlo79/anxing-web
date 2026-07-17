@@ -6,6 +6,7 @@ type Order = {
   id: string; order_key: string; source: string; estate_id: string | null; property_raw: string | null;
   guest_name: string | null; checkin: string; checkout: string; nights: number;
   amount: number; deposit: number | null; account: string | null; note: string | null;
+  properties?: { name: string } | null;
 };
 type Estate = { id: string; name: string; sort: number };
 
@@ -36,7 +37,7 @@ export default function ShortTermPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    let q = supabase.from('orders').select('*', { count: 'exact' }).in('source', SRC).order('checkout', { ascending: false });
+    let q = supabase.from('orders').select('*, properties(name)', { count: 'exact' }).in('source', SRC).order('checkout', { ascending: false });
     if (src) q = q.eq('source', src);
     if (kw) q = q.or(`guest_name.ilike.%${kw}%,property_raw.ilike.%${kw}%,note.ilike.%${kw}%`);
     const { data, count } = await q.range(page * PAGE, page * PAGE + PAGE - 1);
@@ -110,7 +111,7 @@ export default function ShortTermPage() {
               <tr key={o.id} className="border-b border-mor-line/60 hover:bg-mor-bluelight/30">
                 <td className="px-3 py-2 whitespace-nowrap"><span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${SRC_COLOR[o.source]}`}>{SRC_LABEL[o.source] ?? o.source}</span></td>
                 <td className="px-3 py-2 whitespace-nowrap">{o.estate_id ? estateName[o.estate_id] ?? '—' : '—'}</td>
-                <td className="px-3 py-2 whitespace-nowrap">{o.property_raw ?? '—'}</td>
+                <td className="px-3 py-2 whitespace-nowrap">{o.properties?.name ?? o.property_raw ?? '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap">{o.guest_name ?? '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-500">{o.checkin}~{o.checkout}</td>
                 <td className="px-3 py-2 text-right font-medium">${fmt(o.amount)}</td>
