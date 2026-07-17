@@ -21,6 +21,8 @@ export default function ContractsPage() {
   const [msg, setMsg] = useState('');
   const [estateFilter, setEstateFilter] = useState('');
   const [edit, setEdit] = useState<Contract | null>(null);
+  const [collect, setCollect] = useState<Contract | null>(null);
+  const [kw, setKw] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -34,7 +36,11 @@ export default function ContractsPage() {
   }, [supabase, load]);
   function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 2500); }
 
-  const filtered = useMemo(() => estateFilter ? rows.filter((r: any) => r.estates?.name === estateFilter) : rows, [rows, estateFilter]);
+  const filtered = useMemo(() => {
+    let out = estateFilter ? rows.filter((r: any) => r.estates?.name === estateFilter) : rows;
+    if (kw) { const k = kw.toLowerCase(); out = out.filter((r) => `${r.room ?? ''}${r.tenant_name ?? ''}${r.phone ?? ''}${r.note ?? ''}`.toLowerCase().includes(k)); }
+    return out;
+  }, [rows, estateFilter, kw]);
   const totalRent = useMemo(() => filtered.filter((r) => r.active).reduce((s, r) => s + (Number(r.monthly_rent) || 0), 0), [filtered]);
   const paidCount = useMemo(() => filtered.filter((r) => r.active && r.paid).length, [filtered]);
   const activeCount = useMemo(() => filtered.filter((r) => r.active).length, [filtered]);
@@ -86,6 +92,8 @@ export default function ContractsPage() {
         <select value={estateFilter} onChange={(e) => setEstateFilter(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
           <option value="">全部物業</option>{estates.map((e) => <option key={e.id} value={e.name}>{e.name}</option>)}
         </select>
+        <input value={kw} onChange={(e) => setKw(e.target.value)} placeholder="搜尋 房源/租戶/電話" className="rounded-lg border border-gray-300 px-2 py-1.5 w-48" />
+        {kw && <button onClick={() => setKw('')} className="text-gray-400 underline text-xs">清除</button>}
         <div className="text-xs text-gray-400">共 {filtered.length} 筆</div>
         <button onClick={() => setEdit(blank())} className="ml-auto rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 新增契約</button>
       </div>
@@ -116,6 +124,7 @@ export default function ContractsPage() {
                   </button>
                 </td>
                 <td className="px-3 py-2 text-right whitespace-nowrap space-x-2">
+                  <button onClick={() => setCollect(c)} className="text-xs text-mor-green underline hover:text-emerald-700 font-medium">收租</button>
                   <button onClick={() => setEdit(c)} className="text-xs text-mor-slate underline hover:text-mor-blue">編輯</button>
                   <button onClick={() => del(c)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
                 </td>
@@ -125,6 +134,7 @@ export default function ContractsPage() {
         </table>
       </div>
 
+      {collect && <CollectModal contract={collect} onClose={() => { setCollect(null); load(); }} supabase={supabase} />}
       {edit && (
         <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => setEdit(null)}>
           <div className="absolute inset-0 bg-black/30" />
@@ -155,6 +165,106 @@ export default function ContractsPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+
+const CAD_MONTHS: Record<string, number> = { monthly: 1, quarterly: 3, halfyear: 6, yearly: 12 };
+function addMonths(d: Date, n: number) { const x = new Date(d); x.setMonth(x.getMonth() + n); return x; }
+function ymd(d: Date) { return d.toISOString().slice(0, 10); }
+
+function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClose: () => void; supabase: any }) {
+  const [existing, setExisting] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState('');
+
+  const periods = useMemo(() => {
+    if (!c.start_date || !c.end_date) return [];
+    const step = CAD_MONTHS[c.cadence] ?? 1;
+    const out: { start: Date; end: Date; months: string[]; amount: number }[] = [];
+    let cur = new Date(c.start_date + 'T00:00:00');
+    const end = new Date(c.end_date + 'T00:00:00');
+    let guard = 0;
+    while (cur < end && guard++ < 60) {
+      const pEnd = addMonths(cur, step);
+      const months: string[] = [];
+      let mm = new Date(cur);
+      for (let i = 0; i < step; i++) { months.push(`${mm.getFullYear()}${String(mm.getMonth() + 1).padStart(2, '0')}`); mm = addMonths(mm, 1); }
+      out.push({ start: new Date(cur), end: pEnd, months, amount: (c.monthly_rent || 0) * step });
+      cur = pEnd;
+    }
+    return out;
+  }, [c]);
+
+  const loadExisting = useCallback(async () => {
+    setLoading(true);
+    const { data } = await supabase.from('orders').select('order_key').like('order_key', `LT_${c.room}_%`);
+    setExisting(new Set((data ?? []).map((o: any) => o.order_key)));
+    setLoading(false);
+  }, [supabase, c.room]);
+  useEffect(() => { loadExisting(); }, [loadExisting]);
+
+  const isCollected = (p: any) => p.months.every((m: string) => existing.has(`LT_${c.room}_${m}`));
+
+  async function confirmPeriod(p: any) {
+    setBusy(p.months[0]);
+    const rows = p.months.map((m: string) => {
+      const y = +m.slice(0, 4), mo = +m.slice(4);
+      const ms = new Date(Date.UTC(y, mo - 1, 1)), me = new Date(Date.UTC(mo === 12 ? y + 1 : y, mo === 12 ? 0 : mo, 1));
+      return {
+        order_key: `LT_${c.room}_${m}`, source: 'longterm', estate_id: c.estate_id, property_raw: c.room,
+        guest_name: c.tenant_name, checkin: ymd(ms), checkout: ymd(me),
+        nights: Math.round((me.getTime() - ms.getTime()) / 86400000), amount: c.monthly_rent || 0,
+        deposit: 0, note: '契約收租', imported_via: 'contract',
+      };
+    });
+    const { error } = await supabase.from('orders').upsert(rows, { onConflict: 'order_key' });
+    setBusy('');
+    if (error) { alert('確認失敗:' + error.message); return; }
+    loadExisting();
+  }
+  async function cancelPeriod(p: any) {
+    if (!confirm('取消這期收租?會刪除對應的營收認列。')) return;
+    setBusy(p.months[0]);
+    await supabase.from('orders').delete().in('order_key', p.months.map((m: string) => `LT_${c.room}_${m}`));
+    setBusy('');
+    loadExisting();
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/30" />
+      <div onClick={(e) => e.stopPropagation()} className="relative bg-white rounded-2xl shadow-xl w-full max-w-xl max-h-[85vh] overflow-y-auto">
+        <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 flex items-center justify-between">
+          <div>
+            <div className="font-bold">收租確認 — {c.room} {c.tenant_name}</div>
+            <div className="text-xs text-gray-500 mt-0.5">{CAD_LABEL[c.cadence]}・月租 ${Math.round(c.monthly_rent || 0).toLocaleString()}・租期 {c.start_date} ~ {c.end_date}</div>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+        </div>
+        <div className="px-6 py-4">
+          {!c.start_date || !c.end_date ? <div className="text-center text-orange-600 py-8 text-sm">此契約缺租期,請先編輯補上起訖日</div>
+          : loading ? <div className="text-center text-gray-400 py-8">載入中…</div>
+          : <div className="space-y-2">
+            {periods.map((p, i) => {
+              const done = isCollected(p);
+              return (
+                <div key={i} className={`flex items-center justify-between rounded-xl border px-4 py-3 text-sm ${done ? 'border-mor-greenlight bg-mor-greenlight/30' : 'border-mor-line'}`}>
+                  <div>
+                    <div className="font-medium">{ymd(p.start)} ~ {ymd(addMonths(p.end, 0))}</div>
+                    <div className="text-xs text-gray-500">認列 {p.months.map((m: string) => `${+m.slice(4)}月`).join('、')}・應收 ${Math.round(p.amount).toLocaleString()}</div>
+                  </div>
+                  {done
+                    ? <button onClick={() => cancelPeriod(p)} disabled={!!busy} className="rounded-lg bg-mor-greenlight text-mor-green px-3 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">✓ 已收租(點此取消)</button>
+                    : <button onClick={() => confirmPeriod(p)} disabled={!!busy} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">{busy === p.months[0] ? '處理中…' : '確認收租入賬'}</button>}
+                </div>
+              );
+            })}
+            {periods.length === 0 && <div className="text-center text-gray-400 py-8 text-sm">無法產生繳費期(請確認租期與繳別)</div>}
+          </div>}
+        </div>
+      </div>
     </div>
   );
 }
