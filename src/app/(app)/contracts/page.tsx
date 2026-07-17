@@ -77,7 +77,7 @@ export default function ContractsPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h1 className="text-xl font-bold">長租契約管理</h1>
+        <h1 className="text-xl font-bold">契約訂單與收款</h1>
         {msg && <span className="text-sm text-mor-green font-medium">{msg}</span>}
       </div>
 
@@ -178,6 +178,15 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
   const [existing, setExisting] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
+  const [depBusy, setDepBusy] = useState(false);
+  const [depReceived, setDepReceived] = useState(!!c.deposit_received);
+  async function setDep(v: boolean) {
+    setDepBusy(true);
+    const { error } = await supabase.from('contracts').update({ deposit_received: v, deposit_received_at: v ? new Date().toISOString().slice(0, 10) : null }).eq('id', c.id);
+    setDepBusy(false);
+    if (error) { alert('更新失敗:' + error.message); return; }
+    c.deposit_received = v; setDepReceived(v);
+  }
 
   const periods = useMemo(() => {
     if (!c.start_date || !c.end_date) return [];
@@ -244,6 +253,16 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
         </div>
         <div className="px-6 py-4">
+          <div className="mb-4">
+            <div className="text-xs font-semibold text-gray-500 mb-2">押金(暫收帳款)</div>
+            <div className={`flex items-center justify-between rounded-xl border px-4 py-3 text-sm ${depReceived ? 'border-amber-200 bg-amber-50/50' : 'border-mor-line'}`}>
+              <div><div className="font-medium">押金 ${Math.round(c.deposit || 0).toLocaleString()}</div><div className="text-xs text-gray-500">暫收帳款,不計入營收</div></div>
+              {depReceived
+                ? <button onClick={() => setDep(false)} disabled={depBusy} className="rounded-lg bg-amber-100 text-amber-700 px-3 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">✓ 已收(點此取消)</button>
+                : <button onClick={() => setDep(true)} disabled={depBusy} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">確認入帳</button>}
+            </div>
+          </div>
+          <div className="text-xs font-semibold text-gray-500 mb-2">租金收款(依繳別分期)</div>
           {!c.start_date || !c.end_date ? <div className="text-center text-orange-600 py-8 text-sm">此契約缺租期,請先編輯補上起訖日</div>
           : loading ? <div className="text-center text-gray-400 py-8">載入中…</div>
           : <div className="space-y-2">
@@ -257,7 +276,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
                   </div>
                   {done
                     ? <button onClick={() => cancelPeriod(p)} disabled={!!busy} className="rounded-lg bg-mor-greenlight text-mor-green px-3 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">✓ 已收租(點此取消)</button>
-                    : <button onClick={() => confirmPeriod(p)} disabled={!!busy} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">{busy === p.months[0] ? '處理中…' : '確認收租入賬'}</button>}
+                    : <button onClick={() => confirmPeriod(p)} disabled={!!busy} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">{busy === p.months[0] ? '處理中…' : '確認入帳'}</button>}
                 </div>
               );
             })}
