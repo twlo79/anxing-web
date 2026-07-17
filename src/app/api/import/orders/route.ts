@@ -69,6 +69,7 @@ export async function POST(req: Request) {
       account: o.account || null,
       note: o.note || null,
       imported_via: o.imported_via || 'excel',
+      paid: o.paid ?? false,
     };
   });
 

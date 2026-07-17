@@ -57,8 +57,13 @@ export default function RevenuesPage() {
         month_nights: r.month_nights ?? 0, month_amount: Number(r.month_amount),
       }));
     }
-    const { data } = await supabase.rpc('monthly_revenue', { p_year: y, p_month: m });
-    return ((data as Row[]) ?? []).filter((r) => Number(r.month_amount) !== 0);
+    const { data } = await supabase.from('revenue_recognitions').select('*').eq('ym', ym).limit(3000);
+    return ((data as any[]) ?? []).map((r) => ({
+      order_id: r.id, source: r.source, estate_id: r.estate_id, estate_name: r.estate_name,
+      property_raw: r.property_raw, guest_name: r.guest_name, checkin: r.checkin, checkout: r.checkout,
+      total_amount: Number(r.total_amount ?? 0), total_nights: r.total_nights ?? 0,
+      month_nights: r.month_nights ?? 0, month_amount: Number(r.month_amount),
+    })).filter((r) => r.month_amount !== 0);
   }, [supabase]);
 
   const load = useCallback(async () => {
