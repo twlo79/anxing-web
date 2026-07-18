@@ -6,6 +6,7 @@ import * as XLSX from 'xlsx-js-style';
 type Row = {
   order_id: string; source: string; estate_id: string | null; estate_name: string | null;
   property_raw: string | null; guest_name: string | null; checkin: string; checkout: string;
+  period_start: string | null; period_end: string | null;
   total_amount: number; total_nights: number; month_nights: number; month_amount: number;
 };
 
@@ -22,6 +23,7 @@ const SOURCE_COLOR: Record<string, string> = {
 const SOURCE_ORDER = ['airbnb', 'agoda', 'private', 'partner', 'airbnb_cancelled', 'longterm', 'office', 'company', 'other'];
 
 const fmt = (n: number) => Math.round(n).toLocaleString();
+const minus1 = (d: string) => { const dt = new Date(d + 'T00:00:00Z'); dt.setUTCDate(dt.getUTCDate() - 1); return dt.toISOString().slice(0, 10); };
 function monthsInRange(from: string, to: string) {
   const [fy, fm] = from.split('-').map(Number);
   const [ty, tm] = to.split('-').map(Number);
@@ -45,14 +47,22 @@ export default function RevenuesPage() {
   const [sourceFilter, setSourceFilter] = useState('');
   const [kw, setKw] = useState('');
   const [kwInput, setKwInput] = useState('');
+  const [contracts, setContracts] = useState<{ estate: string; room: string; start: string; end: string }[]>([]);
+  useEffect(() => { (async () => {
+    const { data } = await supabase.from('contracts').select('room, start_date, end_date, estates(name)');
+    setContracts(((data as any[]) ?? []).map((c) => ({ estate: (c.estates as any)?.name ?? '', room: c.room ?? '', start: c.start_date, end: c.end_date })).filter((c) => c.room && c.start && c.end));
+  })(); }, [supabase]);
 
   const fetchMonthRows = useCallback(async (y: number, m: number): Promise<Row[]> => {
     const ym = `${y}${String(m).padStart(2, '0')}`;
+    const pstart = `${ym.slice(0, 4)}-${ym.slice(4, 6)}-01`;
+    const pend = new Date(Date.UTC(m === 12 ? y + 1 : y, m === 12 ? 0 : m, 1)).toISOString().slice(0, 10);
     if (ym < '202606') {
       const { data } = await supabase.from('revenue_snapshots').select('*').eq('ym', ym).limit(2000);
       return ((data as any[]) ?? []).map((r) => ({
         order_id: r.id, source: r.source, estate_id: null, estate_name: r.estate_name,
         property_raw: r.property_raw, guest_name: r.guest_name, checkin: r.checkin, checkout: r.checkout,
+        period_start: r.period_start ?? pstart, period_end: r.period_end ?? pend,
         total_amount: Number(r.total_amount ?? r.month_amount), total_nights: r.total_nights ?? 0,
         month_nights: r.month_nights ?? 0, month_amount: Number(r.month_amount),
       }));
@@ -61,6 +71,7 @@ export default function RevenuesPage() {
     return ((data as any[]) ?? []).map((r) => ({
       order_id: r.id, source: r.source, estate_id: r.estate_id, estate_name: r.estate_name,
       property_raw: r.property_raw, guest_name: r.guest_name, checkin: r.checkin, checkout: r.checkout,
+      period_start: r.period_start ?? pstart, period_end: r.period_end ?? pend,
       total_amount: Number(r.total_amount ?? 0), total_nights: r.total_nights ?? 0,
       month_nights: r.month_nights ?? 0, month_amount: Number(r.month_amount),
     })).filter((r) => r.month_amount !== 0);
@@ -216,6 +227,16 @@ export default function RevenuesPage() {
     XLSX.writeFile(wb, `營收_${fromM}_${toM}.xlsx`);
   }
 
+  const orderRange = (r: Row) => {
+    if (r.source === 'longterm') {
+      const cands = contracts.filter((c) => c.room === r.property_raw && (!r.estate_name || c.estate === r.estate_name));
+      const c = cands.find((c) => !r.period_start || (c.start <= r.period_start && r.period_start <= c.end)) ?? cands[0];
+      if (c) return `${c.start}~${c.end}`;
+    }
+    return r.checkin && r.checkout ? `${r.checkin}~${r.checkout}` : '—';
+  };
+  const recogRange = (r: Row) => (r.period_start && r.period_end ? `${r.period_start}~${minus1(r.period_end)}` : '—');
+
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -300,21 +321,23 @@ export default function RevenuesPage() {
           <thead>
             <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/50">
               <th className="px-3 py-2.5">來源</th><th className="px-3 py-2.5">物業</th><th className="px-3 py-2.5">房源</th>
-              <th className="px-3 py-2.5">客戶</th><th className="px-3 py-2.5 whitespace-nowrap">起~迄</th>
-              <th className="px-3 py-2.5 text-right">訂單總額</th><th className="px-3 py-2.5 text-right whitespace-nowrap">當期天數</th>
+              <th className="px-3 py-2.5">客戶</th><th className="px-3 py-2.5 whitespace-nowrap">訂單起訖</th>
+              <th className="px-3 py-2.5 whitespace-nowrap">認列起訖</th>
+              <th className="px-3 py-2.5 text-right">訂單總額</th><th className="px-3 py-2.5 text-right whitespace-nowrap">認列天數</th>
               <th className="px-3 py-2.5 text-right">當期認列</th>
             </tr>
           </thead>
           <tbody>
-            {loading ? <tr><td colSpan={8} className="px-4 py-10 text-center text-gray-400">載入中…</td></tr>
-            : filtered.length === 0 ? <tr><td colSpan={8} className="px-4 py-10 text-center text-gray-400">此期間無認列營收</td></tr>
+            {loading ? <tr><td colSpan={9} className="px-4 py-10 text-center text-gray-400">載入中…</td></tr>
+            : filtered.length === 0 ? <tr><td colSpan={9} className="px-4 py-10 text-center text-gray-400">此期間無認列營收</td></tr>
             : filtered.sort((a, b) => Number(b.month_amount) - Number(a.month_amount)).map((r) => (
               <tr key={r.order_id} className="border-b border-mor-line/60 hover:bg-mor-bluelight/30">
                 <td className="px-3 py-2 whitespace-nowrap"><span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${SOURCE_COLOR[r.source]}`}>{SOURCE_LABEL[r.source] ?? r.source}</span></td>
                 <td className="px-3 py-2 whitespace-nowrap">{r.estate_name ?? '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap">{r.property_raw ?? '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap">{r.guest_name ?? '—'}</td>
-                <td className="px-3 py-2 whitespace-nowrap text-gray-500 text-xs">{r.checkin}~{r.checkout}</td>
+                <td className="px-3 py-2 whitespace-nowrap text-gray-500 text-xs">{orderRange(r)}</td>
+                <td className="px-3 py-2 whitespace-nowrap text-gray-500 text-xs">{recogRange(r)}</td>
                 <td className="px-3 py-2 text-right text-gray-500">${fmt(r.total_amount)}</td>
                 <td className="px-3 py-2 text-right text-gray-500 text-xs">{r.month_nights}/{r.total_nights}</td>
                 <td className="px-3 py-2 text-right font-semibold">${fmt(r.month_amount)}</td>
