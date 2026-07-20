@@ -121,7 +121,7 @@ export default function ShortTermPage() {
                 <td className="px-3 py-2 whitespace-nowrap text-gray-500">{o.account ?? '—'}</td>
                 <td className="px-3 py-2 text-right whitespace-nowrap space-x-2">
                   <button onClick={() => setEdit(o)} className="text-xs text-mor-slate underline hover:text-mor-blue">編輯</button>
-                  {(o.source === 'private' || o.source === 'oneoff') && <button onClick={() => del(o)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>}
+                  <button onClick={() => del(o)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
                 </td>
               </tr>
             ))}
@@ -142,8 +142,8 @@ export default function ShortTermPage() {
           <div onClick={(e) => e.stopPropagation()} className="relative bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[85vh] overflow-y-auto">
             <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 font-bold flex items-center justify-between">{edit.id ? '編輯訂單' : '新增訂單(私下/一次性)'}<button onClick={() => setEdit(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button></div>
             <div className="px-6 py-4 grid grid-cols-2 gap-3 text-sm">
-              <label className="flex flex-col gap-1">來源<select value={edit.source} onChange={(e) => setEdit({ ...edit, source: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5">{MANUAL_SRC.map((s) => <option key={s} value={s}>{SRC_LABEL[s]}</option>)}</select></label>
-              <label className="flex flex-col gap-1">物業<select value={edit.estate_id ?? ''} onChange={(e) => setEdit({ ...edit, estate_id: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option>{estates.filter((es) => es.active).map((es) => <option key={es.id} value={es.id}>{es.name}</option>)}</select></label>
+              <label className="flex flex-col gap-1">來源<select value={edit.source} onChange={(e) => setEdit({ ...edit, source: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5">{Array.from(new Set([...(edit.id ? [edit.source] : []), ...MANUAL_SRC])).map((s) => <option key={s} value={s}>{SRC_LABEL[s] ?? s}</option>)}</select></label>
+              <label className="flex flex-col gap-1">物業<select value={edit.estate_id ?? ''} onChange={(e) => setEdit({ ...edit, estate_id: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option>{estates.map((es) => <option key={es.id} value={es.id}>{es.name}{es.active ? '' : '(停用)'}</option>)}</select></label>
               <label className="flex flex-col gap-1">房源<input value={edit.property_raw ?? ''} onChange={(e) => setEdit({ ...edit, property_raw: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">客戶<input value={edit.guest_name ?? ''} onChange={(e) => setEdit({ ...edit, guest_name: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">{edit.source === 'oneoff' ? '日期(認列月份)' : '起日'}<input type="date" value={edit.checkin} onChange={(e) => setEdit({ ...edit, checkin: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
