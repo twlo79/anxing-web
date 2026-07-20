@@ -8,7 +8,7 @@ type Order = {
   amount: number; deposit: number | null; account: string | null; note: string | null;
   properties?: { name: string } | null;
 };
-type Estate = { id: string; name: string; sort: number };
+type Estate = { id: string; name: string; sort: number; active: boolean };
 
 const SRC = ['airbnb', 'agoda', 'private', 'oneoff', 'partner', 'airbnb_cancelled'];
 const MANUAL_SRC = ['private', 'oneoff'];  // 可手動新增的來源
@@ -33,7 +33,7 @@ export default function ShortTermPage() {
   const [kwIn, setKwIn] = useState('');
   const [edit, setEdit] = useState<Order | null>(null);
 
-  useEffect(() => { supabase.from('estates').select('id, name, sort').eq('active', true).order('sort').then(({ data }) => setEstates(data ?? [])); }, [supabase]);
+  useEffect(() => { supabase.from('estates').select('id, name, sort, active').order('sort').then(({ data }) => setEstates(data ?? [])); }, [supabase]);
   const estateName = useMemo(() => Object.fromEntries(estates.map((e) => [e.id, e.name])), [estates]);
 
   const load = useCallback(async () => {
@@ -113,7 +113,7 @@ export default function ShortTermPage() {
               <tr key={o.id} className="border-b border-mor-line/60 hover:bg-mor-bluelight/30">
                 <td className="px-3 py-2 whitespace-nowrap"><span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${SRC_COLOR[o.source]}`}>{SRC_LABEL[o.source] ?? o.source}</span></td>
                 <td className="px-3 py-2 whitespace-nowrap">{o.estate_id ? estateName[o.estate_id] ?? '—' : '—'}</td>
-                <td className="px-3 py-2 whitespace-nowrap">{o.properties?.name ?? o.property_raw ?? '—'}</td>
+                <td className="px-3 py-2 whitespace-nowrap">{o.property_raw ?? o.properties?.name ?? '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap">{o.guest_name ?? '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-500">{o.checkin}~{o.checkout}</td>
                 <td className="px-3 py-2 text-right font-medium">${fmt(o.amount)}</td>
@@ -143,7 +143,7 @@ export default function ShortTermPage() {
             <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 font-bold flex items-center justify-between">{edit.id ? '編輯訂單' : '新增訂單(私下/一次性)'}<button onClick={() => setEdit(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button></div>
             <div className="px-6 py-4 grid grid-cols-2 gap-3 text-sm">
               <label className="flex flex-col gap-1">來源<select value={edit.source} onChange={(e) => setEdit({ ...edit, source: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5">{MANUAL_SRC.map((s) => <option key={s} value={s}>{SRC_LABEL[s]}</option>)}</select></label>
-              <label className="flex flex-col gap-1">物業<select value={edit.estate_id ?? ''} onChange={(e) => setEdit({ ...edit, estate_id: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option>{estates.map((es) => <option key={es.id} value={es.id}>{es.name}</option>)}</select></label>
+              <label className="flex flex-col gap-1">物業<select value={edit.estate_id ?? ''} onChange={(e) => setEdit({ ...edit, estate_id: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option>{estates.filter((es) => es.active).map((es) => <option key={es.id} value={es.id}>{es.name}</option>)}</select></label>
               <label className="flex flex-col gap-1">房源<input value={edit.property_raw ?? ''} onChange={(e) => setEdit({ ...edit, property_raw: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">客戶<input value={edit.guest_name ?? ''} onChange={(e) => setEdit({ ...edit, guest_name: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">{edit.source === 'oneoff' ? '日期(認列月份)' : '起日'}<input type="date" value={edit.checkin} onChange={(e) => setEdit({ ...edit, checkin: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>

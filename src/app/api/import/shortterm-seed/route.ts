@@ -37,7 +37,7 @@ export async function POST(req: Request) {
     if (o.property_raw) {
       const rawUnit = normUnit(o.property_raw);
       const cand = propList.filter((p) => p.estate === o.estate_name);
-      let hit = cand.find((p) => normUnit(p.name) === rawUnit);
+      let hit = cand.find((p) => p.name === o.property_raw) || cand.find((p) => normUnit(p.name) === rawUnit);
       if (!hit && rawUnit) hit = cand.find((p) => normUnit(p.name).includes(rawUnit) || rawUnit.includes(normUnit(p.name)));
       if (hit) propertyId = hit.id;
       else unmatchedProp[`${o.estate_name || ''}/${o.property_raw}`] = (unmatchedProp[`${o.estate_name || ''}/${o.property_raw}`] || 0) + 1;

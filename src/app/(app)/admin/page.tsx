@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase';
 
 type Staff = { id: string; name: string; aliases: string[]; staff_type: string; active: boolean; sort: number };
 type Estate = { id: string; name: string; manager: string | null; sort: number; active: boolean };
+type Property = { id: string; name: string; estate_id: string | null };
 
 const TYPE_LABEL: Record<string, string> = { housekeeper: '管家', roomservice: '房務', other: '其他/離職' };
 
@@ -14,13 +15,19 @@ export default function AdminPage() {
   const [role, setRole] = useState<string | null>(null);
   const [staff, setStaff] = useState<Staff[]>([]);
   const [estates, setEstates] = useState<Estate[]>([]);
+  const [properties, setProperties] = useState<Property[]>([]);
+  const [selEstate, setSelEstate] = useState<string>('');
+  const [newPropName, setNewPropName] = useState('');
   const [msg, setMsg] = useState('');
 
   const load = useCallback(async () => {
     const { data: st } = await supabase.from('staff').select('*').order('sort').order('name');
     const { data: es } = await supabase.from('estates').select('*').order('sort').order('name');
+    const { data: pr } = await supabase.from('properties').select('id, name, estate_id').order('name');
     setStaff(st ?? []);
     setEstates(es ?? []);
+    setProperties(pr ?? []);
+    setSelEstate((cur) => cur || es?.[0]?.id || '');
   }, [supabase]);
 
   useEffect(() => {
@@ -71,6 +78,26 @@ export default function AdminPage() {
     if (!confirm(`確定刪除物業「${name}」?此物業下的房源會失去物業歸屬(評價/清潔紀錄仍保留)。`)) return;
     const { error } = await supabase.from('estates').delete().eq('id', id);
     if (error) return flash('刪除失敗(可能仍有房源綁定):' + error.message);
+    flash('已刪除'); load();
+  }
+
+  // ---- 房源 ----
+  async function addProperty() {
+    const name = newPropName.trim();
+    if (!name || !selEstate) return;
+    const { error } = await supabase.from('properties').insert({ name, estate_id: selEstate });
+    if (error) return flash('新增失敗:' + error.message);
+    setNewPropName(''); flash('已新增 ' + name); load();
+  }
+  async function updateProperty(id: string, patch: Partial<Property>) {
+    const { error } = await supabase.from('properties').update(patch).eq('id', id);
+    if (error) return flash('更新失敗:' + error.message);
+    flash('已更新'); load();
+  }
+  async function deleteProperty(id: string, name: string) {
+    if (!confirm(`確定刪除房源「${name}」?(訂單/評價/清潔的房源文字仍保留)`)) return;
+    const { error } = await supabase.from('properties').delete().eq('id', id);
+    if (error) return flash('刪除失敗(可能仍有紀錄綁定):' + error.message);
     flash('已刪除'); load();
   }
 
@@ -187,6 +214,50 @@ export default function AdminPage() {
           </div>
         </div>
         <p className="text-xs text-gray-400 mt-2">停用物業:不顯示在評價/清潔的評分與篩選、也不需指派(紀錄仍保留)。負責管家換人後,該物業所有評價(含過去)歸現任。排序越小越前。</p>
+      </section>
+
+      {/* ===== 房源管理 ===== */}
+      <section className="mt-8">
+        <h2 className="text-sm font-semibold text-gray-700 mb-2">房源管理</h2>
+        <div className="flex items-center gap-2 mb-2 text-sm">
+          <span className="text-xs text-gray-500">物業</span>
+          <select value={selEstate} onChange={(e) => setSelEstate(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
+            {estates.map((e) => <option key={e.id} value={e.id}>{e.name}{e.active ? '' : '(停用)'}</option>)}
+          </select>
+          <span className="text-xs text-gray-400">共 {properties.filter((p) => p.estate_id === selEstate).length} 間</span>
+        </div>
+        <div className="bg-white rounded-xl border border-mor-line overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/40">
+                <th className="px-4 py-2.5">房源名稱(點擊可改名)</th>
+                <th className="px-4 py-2.5 text-right">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {properties.filter((p) => p.estate_id === selEstate).map((p) => (
+                <tr key={p.id} className="border-b border-mor-line/60 last:border-0">
+                  <td className="px-4 py-2">
+                    <input defaultValue={p.name} onBlur={(ev) => { const v = ev.target.value.trim(); if (v && v !== p.name) updateProperty(p.id, { name: v }); }}
+                      className="rounded-lg border border-gray-300 px-2 py-1 w-64" />
+                  </td>
+                  <td className="px-4 py-2 text-right">
+                    <button onClick={() => deleteProperty(p.id, p.name)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
+                  </td>
+                </tr>
+              ))}
+              {properties.filter((p) => p.estate_id === selEstate).length === 0 && (
+                <tr><td colSpan={2} className="px-4 py-6 text-center text-gray-400">此物業尚無房源</td></tr>
+              )}
+            </tbody>
+          </table>
+          <div className="flex items-center gap-2 px-4 py-3 border-t border-mor-line bg-mor-sand/20 text-sm">
+            <input value={newPropName} onChange={(e) => setNewPropName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addProperty(); }}
+              placeholder="新房源名稱" className="rounded-lg border border-gray-300 px-2 py-1.5 w-40" />
+            <button onClick={addProperty} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 新增房源</button>
+          </div>
+        </div>
+        <p className="text-xs text-gray-400 mt-2">直接點房源名稱即可改名(改完點空白處儲存)。改名不影響已連結的訂單/評價(用 ID 綁定)。</p>
       </section>
     </div>
   );
