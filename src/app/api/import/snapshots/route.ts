@@ -16,7 +16,8 @@ export async function POST(req: Request) {
   const { error: de } = await supabase.from('revenue_snapshots').delete().gte('created_at', '2000-01-01');
   if (de) return NextResponse.json({ error: 'delete: ' + de.message }, { status: 500 });
 
-  const rows = snapshots as any[];
+  const SRC_MAP: Record<string, string> = { partner: 'airbnb', airbnb_cancelled: 'oneoff' };
+  const rows = (snapshots as any[]).map((r) => ({ ...r, source: SRC_MAP[r.source] ?? r.source }));
   let inserted = 0;
   for (let i = 0; i < rows.length; i += 500) {
     const { error } = await supabase.from('revenue_snapshots').insert(rows.slice(i, i + 500));

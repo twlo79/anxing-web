@@ -9,6 +9,9 @@ const CORS = {
 };
 export async function OPTIONS() { return new NextResponse(null, { status: 204, headers: CORS }); }
 
+// 來源正規化:搭檔併 airbnb、取消歸一次性其他收入
+const SRC_MAP: Record<string, string> = { partner: 'airbnb', airbnb_cancelled: 'oneoff' };
+
 // 房號正規化(與清潔一致)
 function normUnit(s: string) {
   return (s || '').toUpperCase()
@@ -56,7 +59,7 @@ export async function POST(req: Request) {
     const n = o.nights ?? nights(o.checkin, o.checkout);
     return {
       order_key: String(o.order_key),
-      source: o.source || 'private',
+      source: SRC_MAP[o.source] ?? o.source ?? 'private',
       estate_id: estateId,
       property_id: propertyId,
       property_raw: o.property_raw || null,

@@ -11,16 +11,18 @@ type Row = {
 };
 
 const SOURCE_LABEL: Record<string, string> = {
-  airbnb: 'Airbnb', agoda: 'Agoda', private: '私下', partner: '搭檔收款',
-  airbnb_cancelled: 'Airbnb取消', longterm: '長租', office: '辦公室租金', company: '公司登記', other: '其他',
+  airbnb: 'Airbnb', agoda: 'Agoda', private: '私下', longterm: '長租',
+  office: '辦公室租金', company: '公司登記', oneoff: '其他收入', other: '其他',
+  partner: '搭檔收款', airbnb_cancelled: 'Airbnb取消',
 };
 const SOURCE_COLOR: Record<string, string> = {
   airbnb: 'bg-mor-bluelight text-mor-slate', agoda: 'bg-purple-50 text-purple-700',
-  private: 'bg-mor-greenlight text-mor-green', partner: 'bg-teal-50 text-teal-700',
-  airbnb_cancelled: 'bg-red-50 text-red-600', longterm: 'bg-amber-50 text-amber-700',
-  office: 'bg-orange-50 text-orange-700', company: 'bg-gray-100 text-gray-600', other: 'bg-gray-100 text-gray-500',
+  private: 'bg-mor-greenlight text-mor-green', longterm: 'bg-amber-50 text-amber-700',
+  office: 'bg-orange-50 text-orange-700', company: 'bg-gray-100 text-gray-600',
+  oneoff: 'bg-rose-50 text-rose-600', other: 'bg-gray-100 text-gray-500',
+  partner: 'bg-teal-50 text-teal-700', airbnb_cancelled: 'bg-red-50 text-red-600',
 };
-const SOURCE_ORDER = ['airbnb', 'agoda', 'private', 'partner', 'airbnb_cancelled', 'longterm', 'office', 'company', 'other'];
+const SOURCE_ORDER = ['airbnb', 'agoda', 'private', 'longterm', 'office', 'company', 'oneoff', 'other'];
 
 const fmt = (n: number) => Math.round(n).toLocaleString();
 const minus1 = (d: string) => { const dt = new Date(d + 'T00:00:00Z'); dt.setUTCDate(dt.getUTCDate() - 1); return dt.toISOString().slice(0, 10); };
@@ -138,7 +140,7 @@ export default function RevenuesPage() {
     const T = (v: any, s: any) => ({ v, t: typeof v === 'number' ? 'n' : 's', s, z: typeof v === 'number' ? '#,##0' : undefined });
 
     const wb = XLSX.utils.book_new();
-    const AB = ['airbnb', 'partner', 'airbnb_cancelled', 'agoda'];
+    const AB = ['airbnb', 'agoda'];
     const eSort = (a: string, b: string) => (estateSort[a] ?? 99) - (estateSort[b] ?? 99);
 
     // ===== 分頁1:營收總表 =====
@@ -169,6 +171,9 @@ export default function RevenuesPage() {
       b.push([T('公司登記', stGroup), T(S((r) => r.source === 'company'), stGroup)]);
       Array.from(new Set(rs.filter((r) => r.source === 'company').map((r) => r.guest_name ?? '')))
         .forEach((g) => b.push([T(g, stCell), T(S((r) => r.source === 'company' && r.guest_name === g), stCell)]));
+      b.push([T('其他收入(一次性)', stGroup), T(S((r) => r.source === 'oneoff'), stGroup)]);
+      Array.from(new Set(rs.filter((r) => r.source === 'oneoff').map((r) => r.estate_name ?? '無物業'))).sort(eSort)
+        .forEach((e) => b.push([T(e, stCell), T(S((r) => r.source === 'oneoff' && (r.estate_name ?? '無物業') === e), stCell)]));
       blocks.push(b);
     }
     const maxLen = Math.max(...blocks.map((b) => b.length));
