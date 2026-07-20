@@ -50,8 +50,9 @@ export default function ShortTermPage() {
 
   async function save() {
     if (!edit) return;
-    const nights = Math.max(0, Math.round((new Date(edit.checkout).getTime() - new Date(edit.checkin).getTime()) / 86400000));
-    const payload = { source: edit.source, estate_id: edit.estate_id, property_raw: edit.property_raw, guest_name: edit.guest_name, checkin: edit.checkin, checkout: edit.checkout, nights, amount: edit.amount, deposit: edit.deposit, account: edit.account, note: edit.note };
+    const co = edit.source === 'oneoff' ? (edit.checkout || edit.checkin) : edit.checkout;
+    const nights = (edit.checkin && co) ? Math.max(0, Math.round((new Date(co).getTime() - new Date(edit.checkin).getTime()) / 86400000)) : 0;
+    const payload = { source: edit.source, estate_id: edit.estate_id, property_raw: edit.property_raw, guest_name: edit.guest_name, checkin: edit.checkin || null, checkout: co || null, nights, amount: edit.amount, deposit: edit.deposit, account: edit.account, note: edit.note };
     const { error } = edit.id
       ? await supabase.from('orders').update(payload).eq('id', edit.id)
       : await supabase.from('orders').insert({ ...payload, order_key: `${edit.source === 'oneoff' ? 'OO' : 'PV'}_${edit.checkin || 'na'}_${edit.property_raw ?? ''}_${edit.guest_name ?? ''}_${Date.now()}`, imported_via: 'manual' });
