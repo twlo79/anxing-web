@@ -3,11 +3,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
 
-type Staff = { id: string; name: string; aliases: string[]; staff_type: string; active: boolean; sort: number };
+type Staff = { id: string; name: string; aliases: string[]; staff_type: string; active: boolean; sort: number; role?: string; email?: string | null; auth_uid?: string | null };
 type Estate = { id: string; name: string; manager: string | null; sort: number; active: boolean };
 type Property = { id: string; name: string; estate_id: string | null };
 
 const TYPE_LABEL: Record<string, string> = { housekeeper: '管家', roomservice: '房務', other: '其他/離職' };
+const ROLE_LABEL: Record<string, string> = { super_admin: '管理員', manager: '主管', housekeeper: '一般' };
+const ROLE_OPTS = ['housekeeper', 'manager', 'super_admin'];
 
 export default function AdminPage() {
   const supabase = useMemo(() => createClient(), []);
@@ -19,6 +21,7 @@ export default function AdminPage() {
   const [selEstate, setSelEstate] = useState<string>('');
   const [newPropName, setNewPropName] = useState('');
   const [msg, setMsg] = useState('');
+  const [acct, setAcct] = useState<{ staffId: string; name: string; mode: 'create' | 'password'; email: string; password: string; role: string } | null>(null);
 
   const load = useCallback(async () => {
     const { data: st } = await supabase.from('staff').select('*').order('sort').order('name');
@@ -58,6 +61,30 @@ export default function AdminPage() {
     const { error } = await supabase.from('staff').update(patch).eq('id', id);
     if (error) return flash('更新失敗:' + error.message);
     flash('已更新'); load();
+  }
+  async function callAcct(payload: Record<string, unknown>): Promise<boolean> {
+    const { data: { session } } = await supabase.auth.getSession();
+    const r = await fetch('/api/admin/staff-account', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (session?.access_token || '') }, body: JSON.stringify(payload) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { flash('失敗:' + (j.error || r.status)); return false; }
+    flash('已更新'); load(); return true;
+  }
+  async function toggleActive(s: Staff) {
+    const { error } = await supabase.from('staff').update({ active: !s.active }).eq('id', s.id);
+    if (error) return flash('更新失敗:' + error.message);
+    if (s.auth_uid) await callAcct({ action: 'ban', staffId: s.id, ban: s.active });
+    else { flash(s.active ? '已設為離職' : '已恢復在職'); load(); }
+  }
+  async function saveAcct() {
+    if (!acct) return;
+    if (acct.mode === 'create') {
+      if (!acct.email.trim() || !acct.password) return flash('請填 email 與密碼');
+      if (acct.password.length < 6) return flash('密碼至少 6 碼');
+      if (await callAcct({ action: 'create', staffId: acct.staffId, email: acct.email.trim(), password: acct.password, role: acct.role })) setAcct(null);
+    } else {
+      if (acct.password.length < 6) return flash('密碼至少 6 碼');
+      if (await callAcct({ action: 'password', staffId: acct.staffId, password: acct.password })) setAcct(null);
+    }
   }
 
   // ---- 物業 ----
@@ -120,6 +147,8 @@ export default function AdminPage() {
               <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/40">
                 <th className="px-4 py-2.5">姓名</th>
                 <th className="px-4 py-2.5">職位</th>
+                <th className="px-4 py-2.5">權限</th>
+                <th className="px-4 py-2.5">帳號</th>
                 <th className="px-4 py-2.5">狀態</th>
                 <th className="px-4 py-2.5 text-right">操作</th>
               </tr>
@@ -140,12 +169,28 @@ export default function AdminPage() {
                     )}
                   </td>
                   <td className="px-4 py-2">
+                    <select value={s.role ?? 'housekeeper'} disabled={!s.active} onChange={(e) => callAcct({ action: 'role', staffId: s.id, role: e.target.value })}
+                      className="rounded-lg border border-gray-300 px-2 py-1 text-sm disabled:bg-gray-100">
+                      {ROLE_OPTS.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
+                    </select>
+                  </td>
+                  <td className="px-4 py-2">
+                    {s.auth_uid ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-500">{s.email}</span>
+                        <button onClick={() => setAcct({ staffId: s.id, name: s.name, mode: 'password', email: s.email ?? '', password: '', role: s.role ?? 'housekeeper' })} className="text-xs text-mor-slate underline hover:text-mor-blue">改密碼</button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setAcct({ staffId: s.id, name: s.name, mode: 'create', email: `u${s.id.slice(0, 8)}@justwork.oasisliving.tw`, password: '', role: s.role ?? 'housekeeper' })} className="text-xs text-mor-blue underline">建立登入</button>
+                    )}
+                  </td>
+                  <td className="px-4 py-2">
                     <span className={`inline-block rounded-full px-2 py-0.5 text-xs ${s.active ? 'bg-mor-greenlight text-mor-green' : 'bg-gray-100 text-gray-400'}`}>
                       {s.active ? '在職' : '離職'}
                     </span>
                   </td>
                   <td className="px-4 py-2 text-right">
-                    <button onClick={() => updateStaff(s.id, { active: !s.active })}
+                    <button onClick={() => toggleActive(s)}
                       className="text-xs text-mor-slate underline hover:text-mor-blue">
                       {s.active ? '設為離職' : '恢復在職'}
                     </button>
@@ -164,7 +209,7 @@ export default function AdminPage() {
             <button onClick={addStaff} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 新增人員</button>
           </div>
         </div>
-        <p className="text-xs text-gray-400 mt-2">停用=離職:紀錄保留、可查詢,但從統計列表排除;總數仍計入營運總量。</p>
+        <p className="text-xs text-gray-400 mt-2">停用=離職:紀錄保留、可查詢,但從統計列表排除;總數仍計入營運總量。離職會同時停用網站登入(封鎖帳號),恢復在職則解除。權限:管理員=全部含設定;主管=營收/評價/清潔/訂單;一般=只清潔/評價。</p>
       </section>
 
       {/* ===== 物業與負責人 ===== */}
@@ -259,6 +304,29 @@ export default function AdminPage() {
         </div>
         <p className="text-xs text-gray-400 mt-2">直接點房源名稱即可改名(改完點空白處儲存)。改名不影響已連結的訂單/評價(用 ID 綁定)。</p>
       </section>
+
+      {acct && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => setAcct(null)}>
+          <div className="absolute inset-0 bg-black/30" />
+          <div onClick={(e) => e.stopPropagation()} className="relative bg-white rounded-2xl shadow-xl w-full max-w-md">
+            <div className="border-b border-mor-line px-6 py-4 font-bold flex items-center justify-between">{acct.mode === 'create' ? `建立登入帳號 · ${acct.name}` : `更換密碼 · ${acct.name}`}<button onClick={() => setAcct(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button></div>
+            <div className="px-6 py-4 flex flex-col gap-3 text-sm">
+              {acct.mode === 'create' && (
+                <>
+                  <label className="flex flex-col gap-1">登入 email<input value={acct.email} onChange={(e) => setAcct({ ...acct, email: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" placeholder="name@justwork.oasisliving.tw" /></label>
+                  <label className="flex flex-col gap-1">權限<select value={acct.role} onChange={(e) => setAcct({ ...acct, role: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5">{ROLE_OPTS.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}</select></label>
+                </>
+              )}
+              <label className="flex flex-col gap-1">{acct.mode === 'create' ? '設定密碼' : '新密碼'}(至少 6 碼)<input type="text" value={acct.password} onChange={(e) => setAcct({ ...acct, password: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" placeholder="輸入密碼" autoComplete="new-password" /></label>
+              <p className="text-xs text-gray-400">密碼由你設定;人員用此 email + 密碼登入。之後可在此更換。</p>
+            </div>
+            <div className="border-t border-mor-line px-6 py-3 flex justify-end gap-2">
+              <button onClick={() => setAcct(null)} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>
+              <button onClick={saveAcct} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium hover:bg-mor-slatedark">{acct.mode === 'create' ? '建立帳號' : '更換密碼'}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
