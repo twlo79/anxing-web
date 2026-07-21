@@ -52,6 +52,9 @@ export async function POST(req: Request) {
     };
   });
 
+  // 乾淨重建:先清掉短租類訂單(觸發器連帶清應收),再灌入
+  await supabase.from('orders').delete().in('source', ['airbnb', 'agoda', 'private', 'oneoff', 'partner', 'airbnb_cancelled']);
+
   let done = 0;
   for (let i = 0; i < records.length; i += 500) {
     const { error } = await supabase.from('orders').upsert(records.slice(i, i + 500), { onConflict: 'order_key' });
