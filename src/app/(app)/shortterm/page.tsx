@@ -13,6 +13,7 @@ type Estate = { id: string; name: string; sort: number; active: boolean };
 
 const SRC = ['airbnb', 'agoda', 'private', 'oneoff', 'partner', 'airbnb_cancelled'];
 const MANUAL_SRC = ['private', 'oneoff'];  // 可手動新增的來源
+const FILTER_SRC = ['airbnb', 'agoda', 'private', 'oneoff'];  // 來源篩選下拉(搭檔已併airbnb、取消已併一次性)
 const SRC_LABEL: Record<string, string> = { airbnb: 'Airbnb', agoda: 'Agoda', private: '私下', oneoff: '其他收入(一次性)', partner: '搭檔收款', airbnb_cancelled: 'Airbnb取消' };
 const SRC_COLOR: Record<string, string> = {
   airbnb: 'bg-mor-bluelight text-mor-slate', agoda: 'bg-purple-50 text-purple-700',
@@ -103,7 +104,7 @@ export default function ShortTermPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h1 className="text-xl font-bold">短租訂單與收款</h1>
+        <h1 className="text-xl font-bold">短租訂單與收款 <span className="text-sm font-normal text-gray-400">Airbnb・Agoda・私下・一次性</span></h1>
         {msg && <span className="text-sm text-mor-green font-medium">{msg}</span>}
       </div>
 
@@ -140,7 +141,7 @@ export default function ShortTermPage() {
         <div>
           <label className="block text-xs text-gray-500 mb-1">來源</label>
           <select value={src} onChange={(e) => setSrc(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
-            <option value="">全部</option>{SRC.map((s) => <option key={s} value={s}>{SRC_LABEL[s]}</option>)}
+            <option value="">全部</option>{FILTER_SRC.map((s) => <option key={s} value={s}>{SRC_LABEL[s]}</option>)}
           </select>
         </div>
         <div>
