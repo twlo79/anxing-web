@@ -59,16 +59,7 @@ export default function RevenuesPage() {
     const ym = `${y}${String(m).padStart(2, '0')}`;
     const pstart = `${ym.slice(0, 4)}-${ym.slice(4, 6)}-01`;
     const pend = new Date(Date.UTC(m === 12 ? y + 1 : y, m === 12 ? 0 : m, 1)).toISOString().slice(0, 10);
-    if (ym < '202606') {
-      const { data } = await supabase.from('revenue_snapshots').select('*').eq('ym', ym).limit(2000);
-      return ((data as any[]) ?? []).map((r) => ({
-        order_id: r.id, source: r.source, estate_id: null, estate_name: r.estate_name,
-        property_raw: r.property_raw, guest_name: r.guest_name, checkin: r.checkin, checkout: r.checkout,
-        period_start: r.period_start ?? pstart, period_end: r.period_end ?? pend,
-        total_amount: Number(r.total_amount ?? r.month_amount), total_nights: r.total_nights ?? 0,
-        month_nights: r.month_nights ?? 0, month_amount: Number(r.month_amount),
-      }));
-    }
+    // 全部月份改讀 recognitions(訂單引擎),不再分界讀快照
     const { data } = await supabase.from('revenue_recognitions').select('*').eq('ym', ym).limit(3000);
     return ((data as any[]) ?? []).map((r) => ({
       order_id: r.id, source: r.source, estate_id: r.estate_id, estate_name: r.estate_name,
