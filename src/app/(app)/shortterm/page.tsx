@@ -6,6 +6,7 @@ type Order = {
   id: string; order_key: string; source: string; estate_id: string | null; property_raw: string | null;
   guest_name: string | null; checkin: string; checkout: string; nights: number;
   amount: number; deposit: number | null; account: string | null; note: string | null;
+  deposit_received?: boolean; deposit_returned?: boolean;
   properties?: { name: string } | null;
 };
 type Estate = { id: string; name: string; sort: number; active: boolean };
@@ -32,6 +33,8 @@ export default function ShortTermPage() {
   const [kw, setKw] = useState('');
   const [kwIn, setKwIn] = useState('');
   const [edit, setEdit] = useState<Order | null>(null);
+  const [estF, setEstF] = useState('');
+  const [agg, setAgg] = useState<any[]>([]);
 
   useEffect(() => { supabase.from('estates').select('id, name, sort, active').order('sort').then(({ data }) => setEstates(data ?? [])); }, [supabase]);
   const estateName = useMemo(() => Object.fromEntries(estates.map((e) => [e.id, e.name])), [estates]);
@@ -40,19 +43,37 @@ export default function ShortTermPage() {
     setLoading(true);
     let q = supabase.from('orders').select('*, properties(name)', { count: 'exact' }).in('source', SRC).order('checkout', { ascending: false });
     if (src) q = q.eq('source', src);
+    if (estF) q = q.eq('estate_id', estF);
     if (kw) q = q.or(`guest_name.ilike.%${kw}%,property_raw.ilike.%${kw}%,note.ilike.%${kw}%`);
     const { data, count } = await q.range(page * PAGE, page * PAGE + PAGE - 1);
     setRows((data as any) ?? []); setTotal(count ?? 0); setLoading(false);
-  }, [supabase, src, kw, page]);
+  }, [supabase, src, kw, estF, page]);
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { setPage(0); }, [src, kw]);
+  useEffect(() => { setPage(0); }, [src, kw, estF]);
+
+  const loadAgg = useCallback(async () => {
+    let all: any[] = []; let from = 0;
+    while (true) {
+      let q = supabase.from('orders').select('source, estate_id, amount, deposit, deposit_received, deposit_returned').in('source', SRC);
+      if (src) q = q.eq('source', src);
+      if (estF) q = q.eq('estate_id', estF);
+      if (kw) q = q.or(`guest_name.ilike.%${kw}%,property_raw.ilike.%${kw}%,note.ilike.%${kw}%`);
+      const { data } = await q.range(from, from + 999);
+      const chunk = (data as any[]) ?? [];
+      all = all.concat(chunk);
+      if (chunk.length < 1000) break;
+      from += 1000;
+    }
+    setAgg(all);
+  }, [supabase, src, kw, estF]);
+  useEffect(() => { loadAgg(); }, [loadAgg]);
   function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 2500); }
 
   async function save() {
     if (!edit) return;
     const co = edit.source === 'oneoff' ? (edit.checkout || edit.checkin) : edit.checkout;
     const nights = (edit.checkin && co) ? Math.max(0, Math.round((new Date(co).getTime() - new Date(edit.checkin).getTime()) / 86400000)) : 0;
-    const payload = { source: edit.source, estate_id: edit.estate_id, property_raw: edit.property_raw, guest_name: edit.guest_name, checkin: edit.checkin || null, checkout: co || null, nights, amount: edit.amount, deposit: edit.deposit, account: edit.account, note: edit.note };
+    const payload = { source: edit.source, estate_id: edit.estate_id, property_raw: edit.property_raw, guest_name: edit.guest_name, checkin: edit.checkin || null, checkout: co || null, nights, amount: edit.amount, deposit: edit.deposit, account: edit.account, note: edit.note, deposit_received: edit.deposit_received ?? false, deposit_returned: edit.deposit_returned ?? false };
     const { error } = edit.id
       ? await supabase.from('orders').update(payload).eq('id', edit.id)
       : await supabase.from('orders').insert({ ...payload, order_key: `${edit.source === 'oneoff' ? 'OO' : 'PV'}_${edit.checkin || 'na'}_${edit.property_raw ?? ''}_${edit.guest_name ?? ''}_${Date.now()}`, imported_via: 'manual' });
@@ -65,8 +86,12 @@ export default function ShortTermPage() {
     if (error) return flash('刪除失敗:' + error.message);
     flash('已刪除'); load();
   }
-  function blank(): Order { return { id: '', order_key: '', source: 'private', estate_id: null, property_raw: '', guest_name: '', checkin: '', checkout: '', nights: 0, amount: 0, deposit: 0, account: null, note: '' }; }
+  function blank(): Order { return { id: '', order_key: '', source: 'private', estate_id: null, property_raw: '', guest_name: '', checkin: '', checkout: '', nights: 0, amount: 0, deposit: 0, account: null, note: '', deposit_received: false, deposit_returned: false }; }
 
+  const totRevenue = useMemo(() => agg.reduce((a, o) => a + Number(o.amount || 0), 0), [agg]);
+  const heldDeposit = useMemo(() => agg.reduce((a, o) => a + (o.deposit_received && !o.deposit_returned ? Number(o.deposit || 0) : 0), 0), [agg]);
+  const bySource = useMemo(() => { const m: Record<string, number> = {}; for (const o of agg) m[o.source] = (m[o.source] || 0) + Number(o.amount || 0); return m; }, [agg]);
+  const byEstate = useMemo(() => { const m: Record<string, number> = {}; for (const o of agg) { const k = o.estate_id ? (estateName[o.estate_id] ?? '—') : '—'; m[k] = (m[k] || 0) + Number(o.amount || 0); } return Object.entries(m).sort((a, b) => b[1] - a[1]); }, [agg, estateName]);
   const pages = Math.max(1, Math.ceil(total / PAGE));
 
   return (
@@ -74,6 +99,35 @@ export default function ShortTermPage() {
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-xl font-bold">短租訂單與收款</h1>
         {msg && <span className="text-sm text-mor-green font-medium">{msg}</span>}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-4 items-stretch">
+        <div className="rounded-xl bg-mor-slate text-white p-5 flex flex-col justify-center">
+          <div className="text-xs opacity-75">當期營收(訂單總額)</div>
+          <div className="text-3xl font-bold mt-1">${fmt(totRevenue)}</div>
+          <div className="text-sm opacity-90 mt-2">佔收帳款(暫收押金) <span className="font-semibold">${fmt(heldDeposit)}</span></div>
+          <div className="text-xs opacity-60 mt-1">{total.toLocaleString()} 筆・押金非營收</div>
+        </div>
+        <div className="rounded-xl bg-white border border-mor-line overflow-hidden">
+          <div className="px-4 py-2.5 text-sm font-semibold border-b border-mor-line bg-mor-sand/40">依來源</div>
+          <div>
+            {SRC.filter((sc) => bySource[sc]).map((sc) => (
+              <div key={sc} onClick={() => setSrc(src === sc ? '' : sc)} className={`px-4 py-2 flex items-center justify-between text-sm border-b border-mor-line/50 last:border-0 cursor-pointer hover:bg-mor-bluelight/40 ${src === sc ? 'bg-mor-bluelight/60' : ''}`}>
+                <span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${SRC_COLOR[sc]}`}>{SRC_LABEL[sc]}</span>
+                <span className="font-semibold">${fmt(bySource[sc])}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="rounded-xl bg-white border border-mor-line overflow-hidden">
+          <div className="px-4 py-2.5 text-sm font-semibold border-b border-mor-line bg-mor-sand/40">依物業</div>
+          <div className="max-h-44 overflow-y-auto">
+            {byEstate.map(([e, v]) => { const id = estates.find((x) => x.name === e)?.id || ''; return (
+              <div key={e} onClick={() => setEstF(estF === id ? '' : id)} className={`px-4 py-1.5 flex items-center justify-between text-sm border-b border-mor-line/50 last:border-0 cursor-pointer hover:bg-mor-bluelight/40 ${estF && estF === id ? 'bg-mor-bluelight/60' : ''}`}>
+                <span className="truncate">{e}</span><span className="font-semibold whitespace-nowrap">${fmt(v as number)}</span>
+              </div>); })}
+          </div>
+        </div>
       </div>
 
       <div className="bg-white rounded-xl border border-mor-line p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
@@ -84,13 +138,19 @@ export default function ShortTermPage() {
           </select>
         </div>
         <div>
+          <label className="block text-xs text-gray-500 mb-1">物業</label>
+          <select value={estF} onChange={(e) => setEstF(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
+            <option value="">全部</option>{estates.map((es) => <option key={es.id} value={es.id}>{es.name}{es.active ? '' : '(停用)'}</option>)}
+          </select>
+        </div>
+        <div>
           <label className="block text-xs text-gray-500 mb-1">關鍵字(客戶/房源)</label>
           <div className="flex gap-1">
             <input value={kwIn} onChange={(e) => setKwIn(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') setKw(kwIn.trim()); }} placeholder="搜尋" className="rounded-lg border border-gray-300 px-2 py-1.5 w-36" />
             <button onClick={() => setKw(kwIn.trim())} className="rounded-lg bg-mor-slate text-white px-3 hover:bg-mor-slatedark">搜尋</button>
           </div>
         </div>
-        {(src || kw) && <button onClick={() => { setSrc(''); setKw(''); setKwIn(''); }} className="text-gray-500 underline pb-1.5">清除</button>}
+        {(src || kw || estF) && <button onClick={() => { setSrc(''); setKw(''); setKwIn(''); setEstF(''); }} className="text-gray-500 underline pb-1.5">清除</button>}
         <div className="ml-auto flex items-end gap-3">
           <div className="text-xs text-gray-400 pb-1.5">共 {total.toLocaleString()} 筆</div>
           <button onClick={() => setEdit(blank())} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 新增訂單</button>
@@ -150,6 +210,13 @@ export default function ShortTermPage() {
               {edit.source !== 'oneoff' && <label className="flex flex-col gap-1">迄日<input type="date" value={edit.checkout} onChange={(e) => setEdit({ ...edit, checkout: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>}
               <label className="flex flex-col gap-1">{edit.source === 'oneoff' ? '金額' : '訂單總額'}<input type="number" value={edit.amount} onChange={(e) => setEdit({ ...edit, amount: parseFloat(e.target.value) || 0 })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               {edit.source !== 'oneoff' && <label className="flex flex-col gap-1">押金<input type="number" value={edit.deposit ?? ''} onChange={(e) => setEdit({ ...edit, deposit: e.target.value ? parseFloat(e.target.value) : 0 })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>}
+              {edit.source !== 'oneoff' && (
+                <div className="col-span-2 flex flex-wrap items-center gap-5 text-sm bg-mor-sand/30 rounded-lg px-3 py-2">
+                  <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={!!edit.deposit_received} onChange={(e) => setEdit({ ...edit, deposit_received: e.target.checked })} />已收押金</label>
+                  <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={!!edit.deposit_returned} onChange={(e) => setEdit({ ...edit, deposit_returned: e.target.checked })} />退回押金</label>
+                  <span className="text-xs text-gray-400">押金為暫收(佔收帳款),非營收;退回後從佔收帳款扣除</span>
+                </div>
+              )}
               <label className="flex flex-col gap-1">入款帳號<select value={edit.account ?? ''} onChange={(e) => setEdit({ ...edit, account: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option><option value="8088">8088</option><option value="0564">0564</option><option value="4145">4145</option></select></label>
               <label className="flex flex-col gap-1 col-span-2">備註<input value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
             </div>
