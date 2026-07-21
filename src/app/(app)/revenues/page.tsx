@@ -94,7 +94,8 @@ export default function RevenuesPage() {
   const bySource = useMemo(() => {
     const m: Record<string, number> = {};
     for (const r of filtered) m[r.source] = (m[r.source] || 0) + Number(r.month_amount);
-    return SOURCE_ORDER.filter((s) => m[s]).map((s) => [s, m[s]] as [string, number]);
+    const CORE = ['airbnb', 'agoda', 'private', 'oneoff'];
+    return SOURCE_ORDER.filter((s) => m[s] || CORE.includes(s)).map((s) => [s, m[s] || 0] as [string, number]);
   }, [filtered]);
   const byEstate = useMemo(() => {
     const m: Record<string, number> = {};
@@ -235,14 +236,8 @@ export default function RevenuesPage() {
 
   return (
     <div>
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+      <div className="mb-4">
         <h1 className="text-xl font-bold">營收</h1>
-        <div className="flex items-center gap-2 text-sm">
-          <span className="text-xs text-gray-500">期間</span>
-          <input type="month" value={fromM} onChange={(e) => setFromM(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1" />
-          <span className="text-gray-400">~</span>
-          <input type="month" value={toM} onChange={(e) => setToM(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1" />
-        </div>
       </div>
 
       {/* Dashboard */}
@@ -284,6 +279,14 @@ export default function RevenuesPage() {
 
       {/* Filters */}
       <div className="bg-white rounded-xl border border-mor-line p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">期間(認列月份)</label>
+          <div className="flex items-center gap-1">
+            <input type="month" value={fromM} onChange={(e) => setFromM(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5" />
+            <span className="text-gray-400">~</span>
+            <input type="month" value={toM} onChange={(e) => setToM(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5" />
+          </div>
+        </div>
         <div>
           <label className="block text-xs text-gray-500 mb-1">物業</label>
           <select value={estateFilter} onChange={(e) => setEstateFilter(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5 min-w-24">
