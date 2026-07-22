@@ -10,6 +10,7 @@ type Order = {
   properties?: { name: string } | null;
 };
 type Estate = { id: string; name: string; sort: number; active: boolean };
+type Fee = { id?: string; date: string; type: string; amount: number; note: string };
 
 const SRC = ['airbnb', 'agoda', 'private', 'oneoff', 'partner', 'airbnb_cancelled'];
 const MANUAL_SRC = ['private', 'oneoff'];  // 可手動新增的來源
@@ -41,6 +42,15 @@ export default function ShortTermPage() {
 
   useEffect(() => { supabase.from('estates').select('id, name, sort, active').order('sort').then(({ data }) => setEstates(data ?? [])); }, [supabase]);
   const estateName = useMemo(() => Object.fromEntries(estates.map((e) => [e.id, e.name])), [estates]);
+  const [fees, setFees] = useState<Fee[]>([]);
+  useEffect(() => {
+    if (edit?.id) {
+      supabase.from('orders').select('id, checkin, amount, fee_type, note').eq('parent_order_id', edit.id).eq('source', 'oneoff').then(({ data }) => setFees((data ?? []).map((f: any) => ({ id: f.id, date: f.checkin ?? '', type: f.fee_type ?? '其他', amount: Number(f.amount) || 0, note: f.note ?? '' }))));
+    } else { setFees([]); }
+  }, [edit?.id, supabase]);
+  const addFee = () => setFees((fs) => [...fs, { date: edit?.checkout || edit?.checkin || '', type: '清潔費', amount: 0, note: '' }]);
+  const updFee = (i: number, patch: Partial<Fee>) => setFees((fs) => fs.map((f, idx) => idx === i ? { ...f, ...patch } : f));
+  const delFee = (i: number) => setFees((fs) => fs.filter((_, idx) => idx !== i));
   const [properties, setProperties] = useState<{ id: string; name: string; estate_id: string | null }[]>([]);
   useEffect(() => { supabase.from('properties').select('id, name, estate_id').order('name').then(({ data }) => setProperties(data ?? [])); }, [supabase]);
 
@@ -83,11 +93,27 @@ export default function ShortTermPage() {
     const co = edit.source === 'oneoff' ? (edit.checkout || edit.checkin) : edit.checkout;
     const nights = (edit.checkin && co) ? Math.max(0, Math.round((new Date(co).getTime() - new Date(edit.checkin).getTime()) / 86400000)) : 0;
     const payload = { source: edit.source, estate_id: edit.estate_id, property_id: edit.property_id ?? null, property_raw: edit.property_raw, guest_name: edit.guest_name, checkin: edit.checkin || null, checkout: co || null, nights, amount: edit.amount, deposit: edit.deposit, account: edit.account, note: edit.note, deposit_received: edit.deposit_received ?? false, deposit_returned: edit.deposit_returned ?? false };
-    const { error } = edit.id
-      ? await supabase.from('orders').update(payload).eq('id', edit.id)
-      : await supabase.from('orders').insert({ ...payload, order_key: `${edit.source === 'oneoff' ? 'OO' : 'PV'}_${edit.checkin || 'na'}_${edit.property_raw ?? ''}_${edit.guest_name ?? ''}_${Date.now()}`, imported_via: 'manual' });
-    if (error) return flash('儲存失敗:' + error.message);
-    flash('已儲存'); setEdit(null); load();
+    let orderId = edit.id;
+    if (edit.id) {
+      const { error } = await supabase.from('orders').update(payload).eq('id', edit.id);
+      if (error) return flash('儲存失敗:' + error.message);
+    } else {
+      const { data, error } = await supabase.from('orders').insert({ ...payload, order_key: `${edit.source === 'oneoff' ? 'OO' : 'PV'}_${edit.checkin || 'na'}_${edit.property_raw ?? ''}_${edit.guest_name ?? ''}_${Date.now()}`, imported_via: 'manual' }).select('id').single();
+      if (error || !data) return flash('儲存失敗:' + (error?.message || ''));
+      orderId = (data as any).id;
+    }
+    // 同步加費(oneoff 子訂單)
+    const keepIds = fees.filter((f) => f.id).map((f) => f.id);
+    const { data: curFees } = await supabase.from('orders').select('id').eq('parent_order_id', orderId).eq('source', 'oneoff');
+    const delIds = (curFees ?? []).filter((c: any) => !keepIds.includes(c.id)).map((c: any) => c.id);
+    if (delIds.length) await supabase.from('orders').delete().in('id', delIds);
+    for (const f of fees) {
+      if (!f.date || !f.amount) continue;
+      const row = { source: 'oneoff', estate_id: edit.estate_id, property_id: edit.property_id ?? null, property_raw: edit.property_raw, guest_name: edit.guest_name, checkin: f.date, checkout: f.date, nights: 0, amount: f.amount, fee_type: f.type, note: f.note || null, parent_order_id: orderId };
+      if (f.id) await supabase.from('orders').update(row).eq('id', f.id);
+      else await supabase.from('orders').insert({ ...row, order_key: `FEE_${String(orderId).slice(0, 8)}_${Date.now()}${Math.floor(Math.random() * 1000)}`, imported_via: 'manual' });
+    }
+    flash('已儲存'); setEdit(null); setFees([]); load();
   }
   async function del(o: Order) {
     if (!confirm(`刪除訂單「${o.guest_name} ${o.property_raw}」?`)) return;
@@ -234,8 +260,28 @@ export default function ShortTermPage() {
                   <span className="text-xs text-gray-400">押金為暫收(佔收帳款),非營收;退回後從佔收帳款扣除</span>
                 </div>
               )}
-              <label className="flex flex-col gap-1">入款帳號<select value={edit.account ?? ''} onChange={(e) => setEdit({ ...edit, account: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option><option value="8088">8088</option><option value="0564">0564</option><option value="4145">4145</option></select></label>
+              <label className="flex flex-col gap-1">入款帳號<select value={edit.account ?? ''} onChange={(e) => setEdit({ ...edit, account: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option><option value="8088">8088</option><option value="0564">0564</option><option value="4145">4145</option><option value="加密貨幣">加密貨幣</option></select></label>
               <label className="flex flex-col gap-1 col-span-2">備註<input value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+              {edit.source !== 'oneoff' && (
+                <div className="col-span-2 border-t border-mor-line pt-3 mt-1">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-medium">加費(一次性收入)</span>
+                    <button type="button" onClick={addFee} className="text-xs text-mor-blue underline hover:text-mor-slate">+ 新增加費</button>
+                  </div>
+                  {fees.length === 0 && <p className="text-xs text-gray-400">尚無加費。清潔費/修繕費等一次性費用,認列在該費用日期當月,並以「其他收入(一次性)」計入營收報表。</p>}
+                  <div className="flex flex-col gap-2">
+                    {fees.map((f, i) => (
+                      <div key={i} className="flex flex-wrap items-center gap-2 bg-mor-sand/30 rounded-lg px-2 py-2">
+                        <input type="date" value={f.date} onChange={(e) => updFee(i, { date: e.target.value })} className="rounded border border-gray-300 px-2 py-1 text-xs" />
+                        <select value={f.type} onChange={(e) => updFee(i, { type: e.target.value })} className="rounded border border-gray-300 px-2 py-1 text-xs"><option value="清潔費">清潔費</option><option value="修繕費">修繕費</option><option value="其他">其他</option></select>
+                        <input type="number" value={f.amount} onChange={(e) => updFee(i, { amount: parseFloat(e.target.value) || 0 })} placeholder="費用" className="rounded border border-gray-300 px-2 py-1 text-xs w-24" />
+                        <input value={f.note} onChange={(e) => updFee(i, { note: e.target.value })} placeholder="備註" className="rounded border border-gray-300 px-2 py-1 text-xs flex-1 min-w-[6rem]" />
+                        <button type="button" onClick={() => delFee(i)} className="text-xs text-red-500 underline">刪除</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
             <div className="sticky bottom-0 bg-white border-t border-mor-line px-6 py-3 flex justify-end gap-2">
               <button onClick={() => setEdit(null)} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>
