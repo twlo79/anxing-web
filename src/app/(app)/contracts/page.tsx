@@ -24,6 +24,7 @@ export default function ContractsPage() {
   const [collect, setCollect] = useState<Contract | null>(null);
   const [kw, setKw] = useState('');
   const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc');
+  const [properties, setProperties] = useState<{ id: string; name: string; estate_id: string | null }[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -33,6 +34,7 @@ export default function ContractsPage() {
   }, [supabase]);
   useEffect(() => {
     supabase.from('estates').select('id, name, sort').eq('active', true).order('sort').then(({ data }) => setEstates(data ?? []));
+    supabase.from('properties').select('id, name, estate_id').order('name').then(({ data }) => setProperties(data ?? []));
     load();
   }, [supabase, load]);
   function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 2500); }
@@ -147,8 +149,8 @@ export default function ContractsPage() {
               <button onClick={() => setEdit(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
             </div>
             <div className="px-6 py-4 grid grid-cols-2 gap-3 text-sm">
-              <label className="flex flex-col gap-1">物業<select value={edit.estate_id ?? ''} onChange={(e) => setEdit({ ...edit, estate_id: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option>{estates.map((es) => <option key={es.id} value={es.id}>{es.name}</option>)}</select></label>
-              <label className="flex flex-col gap-1">房源<input value={edit.room ?? ''} onChange={(e) => setEdit({ ...edit, room: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+              <label className="flex flex-col gap-1">物業<select value={edit.estate_id ?? ''} onChange={(e) => setEdit({ ...edit, estate_id: e.target.value || null, room: '' })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option>{estates.map((es) => <option key={es.id} value={es.id}>{es.name}</option>)}</select></label>
+              <label className="flex flex-col gap-1">房源<select value={edit.room ?? ''} onChange={(e) => setEdit({ ...edit, room: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option>{properties.filter((x) => x.estate_id === edit.estate_id).map((x) => <option key={x.id} value={x.name}>{x.name}</option>)}</select></label>
               <label className="flex flex-col gap-1">租戶<input value={edit.tenant_name ?? ''} onChange={(e) => setEdit({ ...edit, tenant_name: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">電話<input value={edit.phone ?? ''} onChange={(e) => setEdit({ ...edit, phone: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">繳別<select value={edit.cadence} onChange={(e) => setEdit({ ...edit, cadence: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="monthly">月繳</option><option value="quarterly">季繳</option><option value="halfyear">半年繳</option><option value="yearly">年繳</option></select></label>
@@ -178,47 +180,47 @@ function addMonths(d: Date, n: number) { const x = new Date(d); x.setMonth(x.get
 function ymd(d: Date) { return d.toISOString().slice(0, 10); }
 
 function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClose: () => void; supabase: any }) {
-  const [existing, setExisting] = useState<Record<string, boolean>>({});
+  const [existing, setExisting] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
-  const [depBusy, setDepBusy] = useState(false);
-  const [depReceived, setDepReceived] = useState(!!c.deposit_received);
+  const [dep, setDep] = useState({ received: !!c.deposit_received, receivedAt: c.deposit_received_at || '', returned: !!c.deposit_returned, returnedAt: c.deposit_returned_at || '' });
+  const today = () => new Date().toISOString().slice(0, 10);
+  const STEP = ({ monthly: 1, quarterly: 3, halfyear: 6, yearly: 12 } as any)[c.cadence] || 1;
 
-  async function setDep(v: boolean) {
-    setDepBusy(true);
-    const { error } = await supabase.from('contracts').update({ deposit_received: v, deposit_received_at: v ? new Date().toISOString().slice(0, 10) : null }).eq('id', c.id);
-    setDepBusy(false);
-    if (error) { alert('更新失敗:' + error.message); return; }
-    c.deposit_received = v; setDepReceived(v);
-  }
-
-  const periods = useMemo(() => {
-    if (!c.start_date || !c.end_date) return [];
+  const months = useMemo(() => {
+    if (!c.start_date || !c.end_date) return [] as { ym: string; y: number; m: number; label: string }[];
     const sd = new Date(c.start_date + 'T00:00:00'), ed = new Date(c.end_date + 'T00:00:00');
-    const out: { ym: string; label: string }[] = [];
+    const out: { ym: string; y: number; m: number; label: string }[] = [];
     let cur = new Date(sd.getFullYear(), sd.getMonth(), 1);
     const endFirst = new Date(ed.getFullYear(), ed.getMonth(), 1);
     let g = 0;
-    while (cur < endFirst && g++ < 72) {
-      out.push({ ym: `${cur.getFullYear()}${String(cur.getMonth() + 1).padStart(2, '0')}`, label: `${cur.getFullYear()}年${cur.getMonth() + 1}月` });
+    while (cur <= endFirst && g++ < 120) {
+      out.push({ ym: `${cur.getFullYear()}${String(cur.getMonth() + 1).padStart(2, '0')}`, y: cur.getFullYear(), m: cur.getMonth() + 1, label: `${cur.getFullYear()}/${cur.getMonth() + 1}` });
       cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1);
     }
     return out;
   }, [c]);
+  const cadPeriods = useMemo(() => { const out: any[] = []; for (let i = 0; i < months.length; i += STEP) out.push(months.slice(i, i + STEP)); return out; }, [months, STEP]);
 
   const loadExisting = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase.from('orders').select('order_key, paid, amount').like('order_key', `LT_${c.room}_%`);
+    const { data } = await supabase.from('orders').select('order_key, paid, amount, paid_at').like('order_key', `LT_${c.room}_%`);
     const m: Record<string, any> = {};
     (data ?? []).forEach((o: any) => { m[o.order_key] = o; });
-    setExisting(m);
-    setLoading(false);
+    setExisting(m); setLoading(false);
   }, [supabase, c.room]);
   useEffect(() => { loadExisting(); }, [loadExisting]);
 
-  async function setPaid(ym: string, v: boolean) {
-    setBusy(ym);
-    const { error } = await supabase.from('orders').update({ paid: v }).eq('order_key', `LT_${c.room}_${ym}`);
+  async function updDep(patch: any) {
+    const { error } = await supabase.from('contracts').update(patch).eq('id', c.id);
+    if (error) { alert('更新失敗:' + error.message); return; }
+    Object.assign(c, patch);
+    setDep({ received: !!c.deposit_received, receivedAt: c.deposit_received_at || '', returned: !!c.deposit_returned, returnedAt: c.deposit_returned_at || '' });
+  }
+  async function setPeriodPaid(chunk: any[], v: boolean) {
+    setBusy(chunk[0].ym);
+    const keys = chunk.map((mm) => `LT_${c.room}_${mm.ym}`);
+    const { error } = await supabase.from('orders').update({ paid: v, paid_at: v ? today() : null }).in('order_key', keys);
     if (error) alert('失敗:' + error.message);
     setBusy(''); loadExisting();
   }
@@ -230,35 +232,48 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
         <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 flex items-center justify-between">
           <div>
             <div className="font-bold">收款 — {c.room} {c.tenant_name}</div>
-            <div className="text-xs text-gray-500 mt-0.5">{CAD_LABEL[c.cadence]}・月租 ${Math.round(c.monthly_rent || 0).toLocaleString()}・租期 {c.start_date} ~ {c.end_date}・應收已自動認列整約各月</div>
+            <div className="text-xs text-gray-500 mt-0.5">{CAD_LABEL[c.cadence]}・月租 ${fmt(c.monthly_rent)}・每月 {c.pay_day ?? '?'} 號繳・租期 {c.start_date} ~ {c.end_date}・應收按月自動認列</div>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
         </div>
         <div className="px-6 py-4">
           <div className="mb-4">
-            <div className="text-xs font-semibold text-gray-500 mb-2">押金(暫收帳款)</div>
-            <div className={`flex items-center justify-between rounded-xl border px-4 py-3 text-sm ${depReceived ? 'border-amber-200 bg-amber-50/50' : 'border-mor-line'}`}>
-              <div><div className="font-medium">押金 ${Math.round(c.deposit || 0).toLocaleString()}</div><div className="text-xs text-gray-500">暫收帳款,不計入營收</div></div>
-              {depReceived
-                ? <button onClick={() => setDep(false)} disabled={depBusy} className="rounded-lg bg-amber-100 text-amber-700 px-3 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">✓ 已收(點此取消)</button>
-                : <button onClick={() => setDep(true)} disabled={depBusy} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">確認入帳</button>}
+            <div className="text-xs font-semibold text-gray-500 mb-2">押金(暫收帳款,不計入營收)</div>
+            <div className={`rounded-xl border px-4 py-3 text-sm ${dep.received && !dep.returned ? 'border-amber-200 bg-amber-50/50' : 'border-mor-line'}`}>
+              <div className="flex items-center justify-between">
+                <div className="font-medium">押金 ${fmt(c.deposit)}</div>
+                {!dep.received
+                  ? <button onClick={() => updDep({ deposit_received: true, deposit_received_at: today() })} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark">確認已收</button>
+                  : <div className="flex items-center gap-2">
+                      <span className="text-xs text-gray-600">已收 <input type="date" value={dep.receivedAt} onChange={(e) => updDep({ deposit_received_at: e.target.value || null })} className="rounded border border-gray-300 px-1.5 py-0.5 text-xs" /></span>
+                      {!dep.returned
+                        ? <button onClick={() => updDep({ deposit_returned: true, deposit_returned_at: today() })} className="rounded-lg bg-mor-slate text-white px-3 py-1.5 text-xs font-medium hover:bg-mor-slatedark">退回</button>
+                        : <span className="text-xs text-gray-600">已退 <input type="date" value={dep.returnedAt} onChange={(e) => updDep({ deposit_returned_at: e.target.value || null })} className="rounded border border-gray-300 px-1.5 py-0.5 text-xs" /></span>}
+                    </div>}
+              </div>
+              {dep.received && <div className="mt-1"><button onClick={() => updDep({ deposit_received: false, deposit_received_at: null, deposit_returned: false, deposit_returned_at: null })} className="text-xs text-gray-400 underline">清除押金狀態</button></div>}
             </div>
           </div>
-          <div className="text-xs font-semibold text-gray-500 mb-2">各月收款狀態</div>
+          <div className="text-xs font-semibold text-gray-500 mb-2">收款({CAD_LABEL[c.cadence]},每期確認)</div>
           {!c.start_date || !c.end_date ? <div className="text-center text-orange-600 py-8 text-sm">此契約缺租期,請先編輯補上起訖日</div>
           : loading ? <div className="text-center text-gray-400 py-8">載入中…</div>
           : <div className="space-y-2">
-            {periods.map((p, i) => {
-              const o: any = existing[`LT_${c.room}_${p.ym}`];
+            {cadPeriods.map((chunk: any[], i: number) => {
+              const os = chunk.map((mm) => existing[`LT_${c.room}_${mm.ym}`]).filter(Boolean);
+              const amount = os.reduce((a: number, o: any) => a + Number(o.amount || 0), 0);
+              const allPaid = os.length > 0 && os.every((o: any) => o.paid);
+              const paidAt = os.find((o: any) => o.paid_at)?.paid_at;
+              const first = chunk[0], last = chunk[chunk.length - 1];
+              const due = c.pay_day ? `${first.y}/${first.m}/${c.pay_day}` : '';
               return (
-                <div key={i} className={`flex items-center justify-between rounded-xl border px-4 py-2.5 text-sm ${o?.paid ? 'border-mor-greenlight bg-mor-greenlight/30' : 'border-mor-line'}`}>
+                <div key={i} className={`flex items-center justify-between rounded-xl border px-4 py-2.5 text-sm ${allPaid ? 'border-mor-greenlight bg-mor-greenlight/30' : 'border-mor-line'}`}>
                   <div>
-                    <div className="font-medium">{p.label}</div>
-                    <div className="text-xs text-gray-500">{o ? `應收 $${Math.round(o.amount).toLocaleString()}` : '無應收(月租為0或未生成)'}</div>
+                    <div className="font-medium">{first.label}{STEP > 1 ? `~${last.label}` : ''}{due ? <span className="ml-2 text-xs text-gray-400">應繳 {due}</span> : null}</div>
+                    <div className="text-xs text-gray-500">應收 ${fmt(amount)}{allPaid && paidAt ? ` · 已收 ${paidAt}` : ''}</div>
                   </div>
-                  {o && (o.paid
-                    ? <button onClick={() => setPaid(p.ym, false)} disabled={!!busy} className="rounded-lg bg-mor-greenlight text-mor-green px-3 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">✓ 已收款(點此取消)</button>
-                    : <button onClick={() => setPaid(p.ym, true)} disabled={!!busy} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">{busy === p.ym ? '…' : '確認收款'}</button>)}
+                  {os.length > 0 && (allPaid
+                    ? <button onClick={() => setPeriodPaid(chunk, false)} disabled={!!busy} className="rounded-lg bg-mor-greenlight text-mor-green px-3 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">✓ 已收款(取消)</button>
+                    : <button onClick={() => setPeriodPaid(chunk, true)} disabled={!!busy} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">{busy === first.ym ? '…' : '確認收款'}</button>)}
                 </div>
               );
             })}
