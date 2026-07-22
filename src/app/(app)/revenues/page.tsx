@@ -6,7 +6,7 @@ import * as XLSX from 'xlsx-js-style';
 type Row = {
   order_id: string; source: string; estate_id: string | null; estate_name: string | null;
   property_raw: string | null; guest_name: string | null; checkin: string; checkout: string;
-  period_start: string | null; period_end: string | null;
+  period_start: string | null; period_end: string | null; fee_type?: string | null;
   total_amount: number; total_nights: number; month_nights: number; month_amount: number;
 };
 
@@ -64,7 +64,7 @@ export default function RevenuesPage() {
     return ((data as any[]) ?? []).map((r) => ({
       order_id: r.id, source: r.source, estate_id: r.estate_id, estate_name: r.estate_name,
       property_raw: r.property_raw, guest_name: r.guest_name, checkin: r.checkin, checkout: r.checkout,
-      period_start: r.period_start ?? pstart, period_end: r.period_end ?? pend,
+      period_start: r.period_start ?? pstart, period_end: r.period_end ?? pend, fee_type: r.fee_type ?? null,
       total_amount: Number(r.total_amount ?? 0), total_nights: r.total_nights ?? 0,
       month_nights: r.month_nights ?? 0, month_amount: Number(r.month_amount),
     })).filter((r) => r.month_amount !== 0);
@@ -164,8 +164,8 @@ export default function RevenuesPage() {
       Array.from(new Set(rs.filter((r) => r.source === 'company').map((r) => r.guest_name ?? '')))
         .forEach((g) => b.push([T(g, stCell), T(S((r) => r.source === 'company' && r.guest_name === g), stCell)]));
       b.push([T('其他收入(一次性)', stGroup), T(S((r) => r.source === 'oneoff'), stGroup)]);
-      Array.from(new Set(rs.filter((r) => r.source === 'oneoff').map((r) => r.estate_name ?? '無物業'))).sort(eSort)
-        .forEach((e) => b.push([T(e, stCell), T(S((r) => r.source === 'oneoff' && (r.estate_name ?? '無物業') === e), stCell)]));
+      Array.from(new Set(rs.filter((r) => r.source === 'oneoff').map((r) => r.fee_type ?? '未分類'))).sort()
+        .forEach((ft) => b.push([T(ft, stCell), T(S((r) => r.source === 'oneoff' && (r.fee_type ?? '未分類') === ft), stCell)]));
       blocks.push(b);
     }
     const maxLen = Math.max(...blocks.map((b) => b.length));
@@ -206,7 +206,7 @@ export default function RevenuesPage() {
           const pn = r.property_raw ?? '';
           const rating = ratingByKey[`${pn}|${r.checkout}`] ?? ratingByGuest[`${pn}|${(r.guest_name || '').split(' ')[0]}`] ?? '';
           sheet.push([
-            T(r.guest_name ?? '', stCell), T(pn, stCell), T(SOURCE_LABEL[r.source] ?? r.source, stCell),
+            T(r.guest_name ?? '', stCell), T(pn, stCell), T(r.source === 'oneoff' ? `一次性·${r.fee_type ?? '其他'}` : (SOURCE_LABEL[r.source] ?? r.source), stCell),
             T(r.checkin, stCell), T(r.checkout, stCell), T(Math.round(r.total_amount), stCell), T(Math.round(r.month_amount), stCell),
             T(r.month_nights, stCell), T(r.total_nights, stCell),
             T(r.month_nights ? Math.round(Number(r.month_amount) / r.month_nights) : '', stCell),
@@ -331,7 +331,7 @@ export default function RevenuesPage() {
             : filtered.length === 0 ? <tr><td colSpan={9} className="px-4 py-10 text-center text-gray-400">此期間無認列營收</td></tr>
             : filtered.sort((a, b) => Number(b.month_amount) - Number(a.month_amount)).map((r) => (
               <tr key={r.order_id} className="border-b border-mor-line/60 hover:bg-mor-bluelight/30">
-                <td className="px-3 py-2 whitespace-nowrap"><span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${SOURCE_COLOR[r.source]}`}>{SOURCE_LABEL[r.source] ?? r.source}</span></td>
+                <td className="px-3 py-2 whitespace-nowrap"><span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${SOURCE_COLOR[r.source]}`}>{r.source === 'oneoff' ? `一次性·${r.fee_type ?? '其他'}` : (SOURCE_LABEL[r.source] ?? r.source)}</span></td>
                 <td className="px-3 py-2 whitespace-nowrap">{r.estate_name ?? '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap">{r.property_raw ?? '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap">{r.guest_name ?? '—'}</td>

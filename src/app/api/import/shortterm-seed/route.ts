@@ -48,7 +48,7 @@ export async function POST(req: Request) {
       property_raw: o.property_raw || null, guest_name: o.guest_name || null,
       checkin: o.checkin, checkout: o.checkout || null, nights: n,
       amount: o.amount ?? 0, deposit: o.deposit ?? 0, account: o.account || null,
-      note: o.note || null, imported_via: o.imported_via || 'excel', paid: o.paid ?? false,
+      note: o.note || null, fee_type: o.fee_type ?? null, imported_via: o.imported_via || 'excel', paid: o.paid ?? false,
     };
   });
 
