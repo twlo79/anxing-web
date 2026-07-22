@@ -11,6 +11,7 @@ type Contract = {
 type Estate = { id: string; name: string; sort: number };
 
 const CAD_LABEL: Record<string, string> = { monthly: '月繳', quarterly: '季繳', halfyear: '半年繳', yearly: '年繳' };
+const FEE_TYPES = ['水費', '電費', '網路費', '瓦斯費', '管理費', '清潔費', '修繕費', '其他'];
 const fmt = (n: number | null) => (n == null ? '' : Math.round(n).toLocaleString());
 
 export default function ContractsPage() {
@@ -184,6 +185,8 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
   const [dep, setDep] = useState({ received: !!c.deposit_received, receivedAt: c.deposit_received_at || '', returned: !!c.deposit_returned, returnedAt: c.deposit_returned_at || '' });
+  const [feeRows, setFeeRows] = useState<any[]>([]);
+  const [feeDraft, setFeeDraft] = useState<{ pi: number; date: string; type: string; amount: number } | null>(null);
   const today = () => new Date().toISOString().slice(0, 10);
   const STEP = ({ monthly: 1, quarterly: 3, halfyear: 6, yearly: 12 } as any)[c.cadence] || 1;
 
@@ -224,6 +227,18 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
     if (error) alert('失敗:' + error.message);
     setBusy(''); loadExisting();
   }
+  const loadFees = useCallback(async () => {
+    const { data } = await supabase.from('orders').select('id, checkin, amount, fee_type').eq('contract_id', c.id).eq('source', 'oneoff').order('checkin');
+    setFeeRows(data ?? []);
+  }, [supabase, c.id]);
+  useEffect(() => { loadFees(); }, [loadFees]);
+  async function saveFee() {
+    if (!feeDraft || !feeDraft.amount || !feeDraft.date) { alert('請填費用日期與金額'); return; }
+    const { error } = await supabase.from('orders').insert({ order_key: `CFEE_${String(c.id).slice(0, 8)}_${Date.now()}`, source: 'oneoff', contract_id: c.id, estate_id: c.estate_id, property_raw: c.room, guest_name: c.tenant_name, checkin: feeDraft.date, checkout: feeDraft.date, nights: 0, amount: feeDraft.amount, fee_type: feeDraft.type, note: '契約加費', imported_via: 'manual' });
+    if (error) { alert('失敗:' + error.message); return; }
+    setFeeDraft(null); loadFees();
+  }
+  async function delFee(id: string) { await supabase.from('orders').delete().eq('id', id); loadFees(); }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
@@ -265,15 +280,35 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
               const paidAt = os.find((o: any) => o.paid_at)?.paid_at;
               const first = chunk[0], last = chunk[chunk.length - 1];
               const due = c.pay_day ? `${first.y}/${first.m}/${c.pay_day}` : '';
+              const pfees = feeRows.filter((f: any) => f.checkin && chunk.some((mm: any) => (f.checkin.slice(0, 4) + f.checkin.slice(5, 7)) === mm.ym));
               return (
-                <div key={i} className={`flex items-center justify-between rounded-xl border px-4 py-2.5 text-sm ${allPaid ? 'border-mor-greenlight bg-mor-greenlight/30' : 'border-mor-line'}`}>
-                  <div>
-                    <div className="font-medium">{first.label}{STEP > 1 ? `~${last.label}` : ''}{due ? <span className="ml-2 text-xs text-gray-400">應繳 {due}</span> : null}</div>
-                    <div className="text-xs text-gray-500">應收 ${fmt(amount)}{allPaid && paidAt ? ` · 已收 ${paidAt}` : ''}</div>
+                <div key={i} className={`rounded-xl border px-4 py-2.5 text-sm ${allPaid ? 'border-mor-greenlight bg-mor-greenlight/30' : 'border-mor-line'}`}>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="font-medium">{first.label}{STEP > 1 ? `~${last.label}` : ''}{due ? <span className="ml-2 text-xs text-gray-400">應繳 {due}</span> : null}</div>
+                      <div className="text-xs text-gray-500">應收 ${fmt(amount)}{allPaid && paidAt ? ` · 已收 ${paidAt}` : ''}</div>
+                    </div>
+                    {os.length > 0 && (allPaid
+                      ? <button onClick={() => setPeriodPaid(chunk, false)} disabled={!!busy} className="rounded-lg bg-mor-greenlight text-mor-green px-3 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">✓ 已收款(取消)</button>
+                      : <button onClick={() => setPeriodPaid(chunk, true)} disabled={!!busy} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">{busy === first.ym ? '…' : '確認收款'}</button>)}
                   </div>
-                  {os.length > 0 && (allPaid
-                    ? <button onClick={() => setPeriodPaid(chunk, false)} disabled={!!busy} className="rounded-lg bg-mor-greenlight text-mor-green px-3 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">✓ 已收款(取消)</button>
-                    : <button onClick={() => setPeriodPaid(chunk, true)} disabled={!!busy} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">{busy === first.ym ? '…' : '確認收款'}</button>)}
+                  <div className="mt-2 border-t border-mor-line/50 pt-1.5">
+                    {pfees.map((f: any) => (
+                      <div key={f.id} className="flex items-center justify-between text-xs text-gray-600 py-0.5">
+                        <span>· {f.fee_type} ${fmt(f.amount)} <span className="text-gray-400">({f.checkin})</span></span>
+                        <button onClick={() => delFee(f.id)} className="text-red-400 underline">刪</button>
+                      </div>
+                    ))}
+                    {feeDraft?.pi === i ? (
+                      <div className="flex flex-wrap items-center gap-1 mt-1">
+                        <select value={feeDraft.type} onChange={(e) => setFeeDraft({ ...feeDraft, type: e.target.value })} className="rounded border border-gray-300 px-1.5 py-0.5 text-xs">{FEE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}</select>
+                        <input type="number" placeholder="金額" value={feeDraft.amount || ''} onChange={(e) => setFeeDraft({ ...feeDraft, amount: parseFloat(e.target.value) || 0 })} className="rounded border border-gray-300 px-1.5 py-0.5 text-xs w-20" />
+                        <input type="date" value={feeDraft.date} onChange={(e) => setFeeDraft({ ...feeDraft, date: e.target.value })} className="rounded border border-gray-300 px-1.5 py-0.5 text-xs" />
+                        <button onClick={saveFee} className="rounded bg-mor-slate text-white px-2 py-0.5 text-xs">儲存</button>
+                        <button onClick={() => setFeeDraft(null)} className="text-gray-400 underline text-xs">取消</button>
+                      </div>
+                    ) : <button onClick={() => setFeeDraft({ pi: i, date: `${first.y}-${String(first.m).padStart(2, '0')}-${String(c.pay_day || 1).padStart(2, '0')}`, type: '電費', amount: 0 })} className="text-xs text-mor-blue underline">+ 加費(認列營收)</button>}
+                  </div>
                 </div>
               );
             })}
