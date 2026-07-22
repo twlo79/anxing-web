@@ -27,11 +27,12 @@ const SOURCE_ORDER = ['airbnb', 'agoda', 'private', 'longterm', 'office', 'compa
 const fmt = (n: number) => Math.round(n).toLocaleString();
 const minus1 = (d: string) => { const dt = new Date(d + 'T00:00:00Z'); dt.setUTCDate(dt.getUTCDate() - 1); return dt.toISOString().slice(0, 10); };
 function monthsInRange(from: string, to: string) {
-  const [fy, fm] = from.split('-').map(Number);
-  const [ty, tm] = to.split('-').map(Number);
+  const [fy, fm] = (from || '').split('-').map(Number);
+  const [ty, tm] = (to || '').split('-').map(Number);
+  if (!fy || !fm || !ty || !tm) return [];
   const out: [number, number][] = [];
-  let y = fy, m = fm;
-  while (y < ty || (y === ty && m <= tm)) { out.push([y, m]); m++; if (m > 12) { m = 1; y++; } }
+  let y = fy, m = fm, guard = 0;
+  while ((y < ty || (y === ty && m <= tm)) && guard < 600) { out.push([y, m]); m++; if (m > 12) { m = 1; y++; } guard++; }
   return out;
 }
 function csvEsc(v: unknown) { if (v == null) return ''; const s = String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
@@ -91,6 +92,12 @@ export default function RevenuesPage() {
   }), [rows, estateFilter, sourceFilter, kw]);
 
   const total = useMemo(() => filtered.reduce((s, r) => s + Number(r.month_amount), 0), [filtered]);
+  const sorted = useMemo(() => [...filtered].sort((a, b) => Number(b.month_amount) - Number(a.month_amount)), [filtered]);
+  const ROWS = 100;
+  const [rowPage, setRowPage] = useState(0);
+  useEffect(() => { setRowPage(0); }, [fromM, toM, estateFilter, sourceFilter, kw]);
+  const rowPages = Math.max(1, Math.ceil(sorted.length / ROWS));
+  const pageRows = sorted.slice(rowPage * ROWS, rowPage * ROWS + ROWS);
   const bySource = useMemo(() => {
     const m: Record<string, number> = {};
     for (const r of filtered) m[r.source] = (m[r.source] || 0) + Number(r.month_amount);
@@ -329,7 +336,7 @@ export default function RevenuesPage() {
           <tbody>
             {loading ? <tr><td colSpan={9} className="px-4 py-10 text-center text-gray-400">載入中…</td></tr>
             : filtered.length === 0 ? <tr><td colSpan={9} className="px-4 py-10 text-center text-gray-400">此期間無認列營收</td></tr>
-            : filtered.sort((a, b) => Number(b.month_amount) - Number(a.month_amount)).map((r) => (
+            : pageRows.map((r) => (
               <tr key={r.order_id} className="border-b border-mor-line/60 hover:bg-mor-bluelight/30">
                 <td className="px-3 py-2 whitespace-nowrap"><span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${SOURCE_COLOR[r.source]}`}>{r.source === 'oneoff' ? `一次性·${r.fee_type ?? '其他'}` : (SOURCE_LABEL[r.source] ?? r.source)}</span></td>
                 <td className="px-3 py-2 whitespace-nowrap">{r.estate_name ?? '—'}</td>
@@ -344,6 +351,15 @@ export default function RevenuesPage() {
             ))}
           </tbody>
         </table>
+        {sorted.length > ROWS && (
+          <div className="flex items-center justify-between px-4 py-3 text-sm text-gray-500 border-t border-mor-line">
+            <div>{sorted.length.toLocaleString()} 筆・第 {rowPage + 1} / {rowPages} 頁</div>
+            <div className="flex gap-2">
+              <button disabled={rowPage === 0} onClick={() => setRowPage(rowPage - 1)} className="rounded-lg border border-gray-300 px-3 py-1 disabled:opacity-40">上一頁</button>
+              <button disabled={rowPage >= rowPages - 1} onClick={() => setRowPage(rowPage + 1)} className="rounded-lg border border-gray-300 px-3 py-1 disabled:opacity-40">下一頁</button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
