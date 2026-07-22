@@ -50,6 +50,7 @@ export default function RevenuesPage() {
   const [sourceFilter, setSourceFilter] = useState('');
   const [kw, setKw] = useState('');
   const [kwInput, setKwInput] = useState('');
+  const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc');
   const [contracts, setContracts] = useState<{ estate: string; room: string; start: string; end: string }[]>([]);
   useEffect(() => { (async () => {
     const { data } = await supabase.from('contracts').select('room, start_date, end_date, estates(name)');
@@ -92,10 +93,10 @@ export default function RevenuesPage() {
   }), [rows, estateFilter, sourceFilter, kw]);
 
   const total = useMemo(() => filtered.reduce((s, r) => s + Number(r.month_amount), 0), [filtered]);
-  const sorted = useMemo(() => [...filtered].sort((a, b) => Number(b.month_amount) - Number(a.month_amount)), [filtered]);
+  const sorted = useMemo(() => [...filtered].sort((a, b) => { const av = a.period_start || a.checkin || '', bv = b.period_start || b.checkin || ''; return sortDir === 'asc' ? (av > bv ? 1 : av < bv ? -1 : 0) : (av < bv ? 1 : av > bv ? -1 : 0); }), [filtered, sortDir]);
   const ROWS = 100;
   const [rowPage, setRowPage] = useState(0);
-  useEffect(() => { setRowPage(0); }, [fromM, toM, estateFilter, sourceFilter, kw]);
+  useEffect(() => { setRowPage(0); }, [fromM, toM, estateFilter, sourceFilter, kw, sortDir]);
   const rowPages = Math.max(1, Math.ceil(sorted.length / ROWS));
   const pageRows = sorted.slice(rowPage * ROWS, rowPage * ROWS + ROWS);
   const bySource = useMemo(() => {
@@ -305,6 +306,10 @@ export default function RevenuesPage() {
           <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
             <option value="">全部</option>{SOURCE_ORDER.map((s) => <option key={s} value={s}>{SOURCE_LABEL[s]}</option>)}
           </select>
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">排序(認列日期)</label>
+          <select value={sortDir} onChange={(e) => setSortDir(e.target.value as 'desc' | 'asc')} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="desc">新→舊</option><option value="asc">舊→新</option></select>
         </div>
         <div>
           <label className="block text-xs text-gray-500 mb-1">關鍵字(客戶/房源)</label>

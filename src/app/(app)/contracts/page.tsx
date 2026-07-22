@@ -23,6 +23,7 @@ export default function ContractsPage() {
   const [edit, setEdit] = useState<Contract | null>(null);
   const [collect, setCollect] = useState<Contract | null>(null);
   const [kw, setKw] = useState('');
+  const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -39,8 +40,9 @@ export default function ContractsPage() {
   const filtered = useMemo(() => {
     let out = estateFilter ? rows.filter((r: any) => r.estates?.name === estateFilter) : rows;
     if (kw) { const k = kw.toLowerCase(); out = out.filter((r) => `${r.room ?? ''}${r.tenant_name ?? ''}${r.phone ?? ''}${r.note ?? ''}`.toLowerCase().includes(k)); }
+    out = [...out].sort((a: any, b: any) => { const av = a.start_date || '', bv = b.start_date || ''; return sortDir === 'asc' ? (av > bv ? 1 : av < bv ? -1 : 0) : (av < bv ? 1 : av > bv ? -1 : 0); });
     return out;
-  }, [rows, estateFilter, kw]);
+  }, [rows, estateFilter, kw, sortDir]);
   const totalRent = useMemo(() => filtered.filter((r) => r.active).reduce((s, r) => s + (Number(r.monthly_rent) || 0), 0), [filtered]);
   const paidCount = useMemo(() => filtered.filter((r) => r.active && r.paid).length, [filtered]);
   const activeCount = useMemo(() => filtered.filter((r) => r.active).length, [filtered]);
@@ -94,6 +96,7 @@ export default function ContractsPage() {
         </select>
         <input value={kw} onChange={(e) => setKw(e.target.value)} placeholder="搜尋 房源/租戶/電話" className="rounded-lg border border-gray-300 px-2 py-1.5 w-48" />
         {kw && <button onClick={() => setKw('')} className="text-gray-400 underline text-xs">清除</button>}
+        <select value={sortDir} onChange={(e) => setSortDir(e.target.value as 'desc' | 'asc')} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="desc">新→舊</option><option value="asc">舊→新</option></select>
         <div className="text-xs text-gray-400">共 {filtered.length} 筆</div>
         <button onClick={() => setEdit(blank())} className="ml-auto rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 新增契約</button>
       </div>

@@ -44,6 +44,7 @@ export default function ShortTermPage() {
   const [estF, setEstF] = useState('');
   const [fromD, setFromD] = useState('');
   const [toD, setToD] = useState('');
+  const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc');
   const [agg, setAgg] = useState<any[]>([]);
 
   useEffect(() => { supabase.from('estates').select('id, name, sort, active').order('sort').then(({ data }) => setEstates(data ?? [])); }, [supabase]);
@@ -78,7 +79,7 @@ export default function ShortTermPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    let q = supabase.from('orders').select('*, properties(name)', { count: 'exact' }).in('source', SRC).order('checkout', { ascending: false });
+    let q = supabase.from('orders').select('*, properties(name)', { count: 'exact' }).in('source', SRC).order('checkin', { ascending: sortDir === 'asc' });
     if (src) q = q.eq('source', src);
     if (estF) q = q.eq('estate_id', estF);
     if (toD) q = q.lte('checkin', toD);
@@ -86,9 +87,9 @@ export default function ShortTermPage() {
     if (kw) q = q.or(`guest_name.ilike.%${kw}%,property_raw.ilike.%${kw}%,note.ilike.%${kw}%`);
     const { data, count } = await q.range(page * PAGE, page * PAGE + PAGE - 1);
     setRows((data as any) ?? []); setTotal(count ?? 0); setLoading(false);
-  }, [supabase, src, kw, estF, fromD, toD, page]);
+  }, [supabase, src, kw, estF, fromD, toD, sortDir, page]);
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { setPage(0); }, [src, kw, estF, fromD, toD]);
+  useEffect(() => { setPage(0); }, [src, kw, estF, fromD, toD, sortDir]);
 
   const loadAgg = useCallback(async () => {
     let all: any[] = []; let from = 0;
@@ -258,6 +259,12 @@ export default function ShortTermPage() {
           <label className="block text-xs text-gray-500 mb-1">來源</label>
           <select value={src} onChange={(e) => setSrc(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
             <option value="">全部</option>{FILTER_SRC.map((s) => <option key={s} value={s}>{SRC_LABEL[s]}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">排序</label>
+          <select value={sortDir} onChange={(e) => setSortDir(e.target.value as 'desc' | 'asc')} className="rounded-lg border border-gray-300 px-2 py-1.5">
+            <option value="desc">新→舊</option><option value="asc">舊→新</option>
           </select>
         </div>
         <div>
