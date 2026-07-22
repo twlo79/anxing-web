@@ -27,13 +27,19 @@ export default function ContractsPage() {
   const [sortMode, setSortMode] = useState<'date_desc' | 'date_asc' | 'room'>('date_desc');
   const [cadFilter, setCadFilter] = useState('');
   const [properties, setProperties] = useState<{ id: string; name: string; estate_id: string | null }[]>([]);
+  const [curLT, setCurLT] = useState<Record<string, { amount: number; paid: boolean }>>({});
+  const curFirst = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`; })();
 
   const load = useCallback(async () => {
     setLoading(true);
     const { data } = await supabase.from('contracts').select('*, estates(name)').order('room');
     setRows((data as any) ?? []);
+    const { data: lts } = await supabase.from('orders').select('property_raw, amount, paid').eq('source', 'longterm').eq('checkin', curFirst);
+    const m: Record<string, { amount: number; paid: boolean }> = {};
+    (lts ?? []).forEach((o: any) => { if (o.property_raw) m[o.property_raw] = { amount: Number(o.amount || 0), paid: !!o.paid }; });
+    setCurLT(m);
     setLoading(false);
-  }, [supabase]);
+  }, [supabase, curFirst]);
   useEffect(() => {
     supabase.from('estates').select('id, name, sort').eq('active', true).order('sort').then(({ data }) => setEstates(data ?? []));
     supabase.from('properties').select('id, name, estate_id').order('name').then(({ data }) => setProperties(data ?? []));
@@ -53,9 +59,9 @@ export default function ContractsPage() {
     });
     return out;
   }, [rows, estateFilter, cadFilter, kw, sortMode]);
-  const totalRent = useMemo(() => filtered.filter((r) => r.active).reduce((s, r) => s + (Number(r.monthly_rent) || 0), 0), [filtered]);
-  const paidCount = useMemo(() => filtered.filter((r) => r.active && r.paid).length, [filtered]);
   const activeCount = useMemo(() => filtered.filter((r) => r.active).length, [filtered]);
+  const monthAR = useMemo(() => filtered.filter((r) => r.active).reduce((s, r) => s + (curLT[r.room ?? '']?.amount ?? 0), 0), [filtered, curLT]);
+  const monthPaid = useMemo(() => filtered.filter((r) => r.active).reduce((s, r) => s + (curLT[r.room ?? '']?.paid ? (curLT[r.room ?? ''].amount) : 0), 0), [filtered, curLT]);
 
   async function togglePaid(c: Contract) {
     const { error } = await supabase.from('contracts').update({ paid: !c.paid }).eq('id', c.id);
@@ -95,9 +101,9 @@ export default function ContractsPage() {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
         <div className="rounded-xl bg-mor-slate text-white p-4"><div className="text-xs opacity-75">契約數(啟用)</div><div className="text-2xl font-bold mt-1">{activeCount}</div></div>
-        <div className="rounded-xl bg-white border border-mor-line p-4"><div className="text-xs text-gray-500">月租金合計</div><div className="text-2xl font-bold mt-1">${fmt(totalRent)}</div></div>
-        <div className="rounded-xl bg-white border border-mor-line p-4"><div className="text-xs text-gray-500">本期已收租</div><div className="text-2xl font-bold mt-1 text-mor-green">{paidCount}</div></div>
-        <div className="rounded-xl bg-white border border-mor-line p-4"><div className="text-xs text-gray-500">未收租</div><div className="text-2xl font-bold mt-1 text-orange-600">{activeCount - paidCount}</div></div>
+        <div className="rounded-xl bg-white border border-mor-line p-4"><div className="text-xs text-gray-500">本月應收</div><div className="text-2xl font-bold mt-1">${fmt(monthAR)}</div></div>
+        <div className="rounded-xl bg-white border border-mor-line p-4"><div className="text-xs text-gray-500">本月已收</div><div className="text-2xl font-bold mt-1 text-mor-green">${fmt(monthPaid)}</div></div>
+        <div className="rounded-xl bg-white border border-mor-line p-4"><div className="text-xs text-gray-500">本月未收</div><div className="text-2xl font-bold mt-1 text-orange-600">${fmt(monthAR - monthPaid)}</div></div>
       </div>
 
       <div className="flex items-center gap-3 mb-3 text-sm">
