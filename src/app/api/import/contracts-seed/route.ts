@@ -31,8 +31,8 @@ export async function POST(req: Request) {
   const contracts = rows.map((r) => ({
     estate_id: zl, room: r.room, tenant_name: r.tenant, phone: r.phone || null,
     cadence: r.cadence, monthly_rent: r.monthly_rent || 0, amount_per_period: (r.monthly_rent || 0) * (MULT[r.cadence] || 1), deposit: r.deposit || 0,
-    start_date: r.start || null, end_date: r.end || null, pay_day: r.pay_day || null,
-    account: null, note: r.note && r.note !== 'nan' ? r.note : null, active: true,
+    start_date: r.start || '2026-01-01', end_date: r.end || '2026-12-31', pay_day: r.pay_day || null,
+    account: null, note: ((!r.start || !r.end || !r.monthly_rent) ? '⚠待補租期/月租 ' : '') + (r.note && r.note !== 'nan' ? r.note : '') || null, active: !(!r.start || !r.end || !r.monthly_rent),
     deposit_received: !!r.dep_at, deposit_received_at: r.dep_at || null,
     name: `${r.tenant ?? ''}-${r.room}`,
   }));
