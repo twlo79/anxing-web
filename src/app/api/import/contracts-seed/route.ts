@@ -27,9 +27,10 @@ export async function POST(req: Request) {
   // 2) 清掉舊正隆契約(冪等),再灌
   await supabase.from('contracts').delete().eq('estate_id', zl);
 
+  const MULT: Record<string, number> = { monthly: 1, quarterly: 3, halfyear: 6, yearly: 12 };
   const contracts = rows.map((r) => ({
     estate_id: zl, room: r.room, tenant_name: r.tenant, phone: r.phone || null,
-    cadence: r.cadence, monthly_rent: r.monthly_rent || 0, deposit: r.deposit || 0,
+    cadence: r.cadence, monthly_rent: r.monthly_rent || 0, amount_per_period: (r.monthly_rent || 0) * (MULT[r.cadence] || 1), deposit: r.deposit || 0,
     start_date: r.start || null, end_date: r.end || null, pay_day: r.pay_day || null,
     account: null, note: r.note && r.note !== 'nan' ? r.note : null, active: true,
     deposit_received: !!r.dep_at, deposit_received_at: r.dep_at || null,
