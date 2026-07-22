@@ -24,7 +24,8 @@ export default function ContractsPage() {
   const [edit, setEdit] = useState<Contract | null>(null);
   const [collect, setCollect] = useState<Contract | null>(null);
   const [kw, setKw] = useState('');
-  const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc');
+  const [sortMode, setSortMode] = useState<'date_desc' | 'date_asc' | 'room'>('date_desc');
+  const [cadFilter, setCadFilter] = useState('');
   const [properties, setProperties] = useState<{ id: string; name: string; estate_id: string | null }[]>([]);
 
   const load = useCallback(async () => {
@@ -42,10 +43,16 @@ export default function ContractsPage() {
 
   const filtered = useMemo(() => {
     let out = estateFilter ? rows.filter((r: any) => r.estates?.name === estateFilter) : rows;
+    if (cadFilter) out = out.filter((r) => r.cadence === cadFilter);
     if (kw) { const k = kw.toLowerCase(); out = out.filter((r) => `${r.room ?? ''}${r.tenant_name ?? ''}${r.phone ?? ''}${r.note ?? ''}`.toLowerCase().includes(k)); }
-    out = [...out].sort((a: any, b: any) => { const av = a.start_date || '', bv = b.start_date || ''; return sortDir === 'asc' ? (av > bv ? 1 : av < bv ? -1 : 0) : (av < bv ? 1 : av > bv ? -1 : 0); });
+    const rk = (x: string) => { const m = String(x || '').match(/^(\d+)/); return [m ? parseInt(m[1]) : 999, String(x || '')] as [number, string]; };
+    out = [...out].sort((a: any, b: any) => {
+      if (sortMode === 'room') { const ka = rk(a.room), kb = rk(b.room); return ka[0] - kb[0] || (ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0); }
+      const av = a.start_date || '', bv = b.start_date || '';
+      return sortMode === 'date_asc' ? (av > bv ? 1 : av < bv ? -1 : 0) : (av < bv ? 1 : av > bv ? -1 : 0);
+    });
     return out;
-  }, [rows, estateFilter, kw, sortDir]);
+  }, [rows, estateFilter, cadFilter, kw, sortMode]);
   const totalRent = useMemo(() => filtered.filter((r) => r.active).reduce((s, r) => s + (Number(r.monthly_rent) || 0), 0), [filtered]);
   const paidCount = useMemo(() => filtered.filter((r) => r.active && r.paid).length, [filtered]);
   const activeCount = useMemo(() => filtered.filter((r) => r.active).length, [filtered]);
@@ -97,9 +104,10 @@ export default function ContractsPage() {
         <select value={estateFilter} onChange={(e) => setEstateFilter(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
           <option value="">全部物業</option>{estates.map((e) => <option key={e.id} value={e.name}>{e.name}</option>)}
         </select>
+        <select value={cadFilter} onChange={(e) => setCadFilter(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">全部繳別</option><option value="monthly">月繳</option><option value="quarterly">季繳</option><option value="halfyear">半年繳</option><option value="yearly">年繳</option></select>
         <input value={kw} onChange={(e) => setKw(e.target.value)} placeholder="搜尋 房源/租戶/電話" className="rounded-lg border border-gray-300 px-2 py-1.5 w-48" />
         {kw && <button onClick={() => setKw('')} className="text-gray-400 underline text-xs">清除</button>}
-        <select value={sortDir} onChange={(e) => setSortDir(e.target.value as 'desc' | 'asc')} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="desc">新→舊</option><option value="asc">舊→新</option></select>
+        <select value={sortMode} onChange={(e) => setSortMode(e.target.value as any)} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="date_desc">日期新→舊</option><option value="date_asc">日期舊→新</option><option value="room">房源</option></select>
         <div className="text-xs text-gray-400">共 {filtered.length} 筆</div>
         <button onClick={() => setEdit(blank())} className="ml-auto rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 新增契約</button>
       </div>
