@@ -7,6 +7,8 @@ type Order = {
   guest_name: string | null; checkin: string; checkout: string; nights: number;
   amount: number; deposit: number | null; account: string | null; note: string | null;
   deposit_received?: boolean; deposit_returned?: boolean;
+  fx_revenue?: { cur: string; amt: number; rate: number }[];
+  fx_deposit?: { cur: string; amt: number }[];
   properties?: { name: string } | null;
 };
 type Estate = { id: string; name: string; sort: number; active: boolean };
@@ -43,10 +45,26 @@ export default function ShortTermPage() {
   useEffect(() => { supabase.from('estates').select('id, name, sort, active').order('sort').then(({ data }) => setEstates(data ?? [])); }, [supabase]);
   const estateName = useMemo(() => Object.fromEntries(estates.map((e) => [e.id, e.name])), [estates]);
   const [fees, setFees] = useState<Fee[]>([]);
+  const [fxRev, setFxRev] = useState<{ cur: string; amt: number; rate: number }[]>([]);
+  const [fxDep, setFxDep] = useState<{ cur: string; amt: number }[]>([]);
+  const [twdBase, setTwdBase] = useState(0);
+  const revFxTwd = useMemo(() => fxRev.reduce((a, l) => a + (Number(l.amt) || 0) * (Number(l.rate) || 0), 0), [fxRev]);
+  const addFxRev = () => setFxRev((x) => [...x, { cur: 'USD', amt: 0, rate: 0 }]);
+  const updFxRev = (i: number, patch: Partial<{ cur: string; amt: number; rate: number }>) => setFxRev((x) => x.map((l, idx) => idx === i ? { ...l, ...patch } : l));
+  const delFxRev = (i: number) => setFxRev((x) => x.filter((_, idx) => idx !== i));
+  const addFxDep = () => setFxDep((x) => [...x, { cur: 'USD', amt: 0 }]);
+  const updFxDep = (i: number, patch: Partial<{ cur: string; amt: number }>) => setFxDep((x) => x.map((l, idx) => idx === i ? { ...l, ...patch } : l));
+  const delFxDep = (i: number) => setFxDep((x) => x.filter((_, idx) => idx !== i));
   useEffect(() => {
+    const fr = ((edit as any)?.fx_revenue ?? []) as { cur: string; amt: number; rate: number }[];
+    const fd = ((edit as any)?.fx_deposit ?? []) as { cur: string; amt: number }[];
+    setFxRev(fr); setFxDep(fd);
+    const fxTwd = fr.reduce((a, l) => a + (Number(l.amt) || 0) * (Number(l.rate) || 0), 0);
+    setTwdBase(Math.max(0, Number(edit?.amount || 0) - fxTwd));
     if (edit?.id) {
       supabase.from('orders').select('id, checkin, amount, fee_type, note').eq('parent_order_id', edit.id).eq('source', 'oneoff').then(({ data }) => setFees((data ?? []).map((f: any) => ({ id: f.id, date: f.checkin ?? '', type: f.fee_type ?? '其他', amount: Number(f.amount) || 0, note: f.note ?? '' }))));
     } else { setFees([]); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [edit?.id, supabase]);
   const addFee = () => setFees((fs) => [...fs, { date: edit?.checkout || edit?.checkin || '', type: '清潔費', amount: 0, note: '' }]);
   const updFee = (i: number, patch: Partial<Fee>) => setFees((fs) => fs.map((f, idx) => idx === i ? { ...f, ...patch } : f));
@@ -71,7 +89,7 @@ export default function ShortTermPage() {
   const loadAgg = useCallback(async () => {
     let all: any[] = []; let from = 0;
     while (true) {
-      let q = supabase.from('orders').select('source, estate_id, amount, deposit, deposit_received, deposit_returned').in('source', SRC);
+      let q = supabase.from('orders').select('source, estate_id, amount, deposit, deposit_received, deposit_returned, fx_deposit').in('source', SRC);
       if (src) q = q.eq('source', src);
       if (estF) q = q.eq('estate_id', estF);
       if (toD) q = q.lte('checkin', toD);
@@ -92,7 +110,7 @@ export default function ShortTermPage() {
     if (!edit) return;
     const co = edit.source === 'oneoff' ? (edit.checkout || edit.checkin) : edit.checkout;
     const nights = (edit.checkin && co) ? Math.max(0, Math.round((new Date(co).getTime() - new Date(edit.checkin).getTime()) / 86400000)) : 0;
-    const payload = { source: edit.source, estate_id: edit.estate_id, property_id: edit.property_id ?? null, property_raw: edit.property_raw, guest_name: edit.guest_name, checkin: edit.checkin || null, checkout: co || null, nights, amount: edit.amount, deposit: edit.deposit, account: edit.account, note: edit.note, deposit_received: edit.deposit_received ?? false, deposit_returned: edit.deposit_returned ?? false };
+    const payload = { source: edit.source, estate_id: edit.estate_id, property_id: edit.property_id ?? null, property_raw: edit.property_raw, guest_name: edit.guest_name, checkin: edit.checkin || null, checkout: co || null, nights, amount: (twdBase || 0) + revFxTwd, deposit: edit.deposit, account: edit.account, note: edit.note, deposit_received: edit.deposit_received ?? false, deposit_returned: edit.deposit_returned ?? false, fx_revenue: fxRev.filter((l) => l.cur && l.amt), fx_deposit: fxDep.filter((l) => l.cur && l.amt) };
     let orderId = edit.id;
     if (edit.id) {
       const { error } = await supabase.from('orders').update(payload).eq('id', edit.id);
@@ -121,10 +139,11 @@ export default function ShortTermPage() {
     if (error) return flash('刪除失敗:' + error.message);
     flash('已刪除'); load();
   }
-  function blank(): Order { return { id: '', order_key: '', source: 'private', estate_id: null, property_id: null, property_raw: '', guest_name: '', checkin: '', checkout: '', nights: 0, amount: 0, deposit: 0, account: null, note: '', deposit_received: false, deposit_returned: false }; }
+  function blank(): Order { return { id: '', order_key: '', source: 'private', estate_id: null, property_id: null, property_raw: '', guest_name: '', checkin: '', checkout: '', nights: 0, amount: 0, deposit: 0, account: null, note: '', deposit_received: false, deposit_returned: false, fx_revenue: [], fx_deposit: [] }; }
 
   const totRevenue = useMemo(() => agg.reduce((a, o) => a + Number(o.amount || 0), 0), [agg]);
-  const heldDeposit = useMemo(() => agg.reduce((a, o) => a + (o.deposit_received && !o.deposit_returned ? Number(o.deposit || 0) : 0), 0), [agg]);
+  const heldTwd = useMemo(() => agg.reduce((a, o) => a + (o.deposit_received && !o.deposit_returned ? Number(o.deposit || 0) : 0), 0), [agg]);
+  const heldFx = useMemo(() => { const m: Record<string, number> = {}; for (const o of agg) { if (o.deposit_received && !o.deposit_returned) { for (const l of (o.fx_deposit || [])) { const c = l.cur || '?'; m[c] = (m[c] || 0) + (Number(l.amt) || 0); } } } return m; }, [agg]);
   const bySource = useMemo(() => { const m: Record<string, number> = {}; for (const o of agg) m[o.source] = (m[o.source] || 0) + Number(o.amount || 0); return m; }, [agg]);
   const byEstate = useMemo(() => { const m: Record<string, number> = {}; for (const o of agg) { const k = o.estate_id ? (estateName[o.estate_id] ?? '—') : '—'; m[k] = (m[k] || 0) + Number(o.amount || 0); } return Object.entries(m).sort((a, b) => b[1] - a[1]); }, [agg, estateName]);
   const pages = Math.max(1, Math.ceil(total / PAGE));
@@ -140,7 +159,7 @@ export default function ShortTermPage() {
         <div className="rounded-xl bg-mor-slate text-white p-5 flex flex-col justify-center">
           <div className="text-xs opacity-75">當期營收(訂單總額)</div>
           <div className="text-3xl font-bold mt-1">${fmt(totRevenue)}</div>
-          <div className="text-sm opacity-90 mt-2">佔收帳款(暫收押金) <span className="font-semibold">${fmt(heldDeposit)}</span></div>
+          <div className="text-sm opacity-90 mt-2">佔收帳款(暫收) 台幣 <span className="font-semibold">${fmt(heldTwd)}</span>{Object.entries(heldFx).map(([c, v]) => <span key={c} className="ml-1">· {c} {fmt(v)}</span>)}</div>
           <div className="text-xs opacity-60 mt-1">{total.toLocaleString()} 筆・押金非營收</div>
         </div>
         <div className="rounded-xl bg-white border border-mor-line overflow-hidden">
@@ -251,13 +270,47 @@ export default function ShortTermPage() {
               <label className="flex flex-col gap-1">客戶<input value={edit.guest_name ?? ''} onChange={(e) => setEdit({ ...edit, guest_name: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">{edit.source === 'oneoff' ? '日期(認列月份)' : '起日'}<input type="date" value={edit.checkin} onChange={(e) => setEdit({ ...edit, checkin: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               {edit.source !== 'oneoff' && <label className="flex flex-col gap-1">迄日<input type="date" value={edit.checkout} onChange={(e) => setEdit({ ...edit, checkout: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>}
-              <label className="flex flex-col gap-1">{edit.source === 'oneoff' ? '金額' : '訂單總額'}<input type="number" value={edit.amount} onChange={(e) => setEdit({ ...edit, amount: parseFloat(e.target.value) || 0 })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
-              {edit.source !== 'oneoff' && <label className="flex flex-col gap-1">押金<input type="number" value={edit.deposit ?? ''} onChange={(e) => setEdit({ ...edit, deposit: e.target.value ? parseFloat(e.target.value) : 0 })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>}
+              <label className="flex flex-col gap-1">{edit.source === 'oneoff' ? '金額' : '訂單總額(台幣)'}<input type="number" value={twdBase} onChange={(e) => setTwdBase(parseFloat(e.target.value) || 0)} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+              {edit.source !== 'oneoff' && <label className="flex flex-col gap-1">押金(台幣)<input type="number" value={edit.deposit ?? ''} onChange={(e) => setEdit({ ...edit, deposit: e.target.value ? parseFloat(e.target.value) : 0 })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>}
+              {edit.source !== 'oneoff' && (
+                <div className="col-span-2 border-t border-mor-line pt-2">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs text-gray-500">訂單其他幣別(外幣營收,換匯併入營收)</span>
+                    <button type="button" onClick={addFxRev} className="text-xs text-mor-blue underline">+ 新增其他幣別</button>
+                  </div>
+                  {fxRev.map((l, i) => (
+                    <div key={i} className="flex flex-wrap items-center gap-2 mb-1">
+                      <input value={l.cur} onChange={(e) => updFxRev(i, { cur: e.target.value.toUpperCase() })} placeholder="幣別" className="rounded border border-gray-300 px-2 py-1 text-xs w-16" />
+                      <input type="number" value={l.amt} onChange={(e) => updFxRev(i, { amt: parseFloat(e.target.value) || 0 })} placeholder="金額" className="rounded border border-gray-300 px-2 py-1 text-xs w-24" />
+                      <span className="text-xs text-gray-400">× 匯率</span>
+                      <input type="number" value={l.rate} onChange={(e) => updFxRev(i, { rate: parseFloat(e.target.value) || 0 })} placeholder="匯率" className="rounded border border-gray-300 px-2 py-1 text-xs w-20" />
+                      <span className="text-xs text-gray-600">= ${fmt((Number(l.amt) || 0) * (Number(l.rate) || 0))}</span>
+                      <button type="button" onClick={() => delFxRev(i)} className="text-xs text-red-500 underline">刪除</button>
+                    </div>
+                  ))}
+                  <div className="text-xs text-gray-500 mt-1">營收合計(台幣):<span className="font-semibold text-mor-slate">${fmt((twdBase || 0) + revFxTwd)}</span>{revFxTwd ? ` (台幣 ${fmt(twdBase)} + 外幣換算 ${fmt(revFxTwd)})` : ''}</div>
+                </div>
+              )}
               {edit.source !== 'oneoff' && (
                 <div className="col-span-2 flex flex-wrap items-center gap-5 text-sm bg-mor-sand/30 rounded-lg px-3 py-2">
                   <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={!!edit.deposit_received} onChange={(e) => setEdit({ ...edit, deposit_received: e.target.checked })} />已收押金</label>
                   <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={!!edit.deposit_returned} onChange={(e) => setEdit({ ...edit, deposit_returned: e.target.checked })} />退回押金</label>
                   <span className="text-xs text-gray-400">押金為暫收(佔收帳款),非營收;退回後從佔收帳款扣除</span>
+                </div>
+              )}
+              {edit.source !== 'oneoff' && (
+                <div className="col-span-2">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs text-gray-500">押金其他幣別(暫收,原幣退還,不換匯)</span>
+                    <button type="button" onClick={addFxDep} className="text-xs text-mor-blue underline">+ 新增其他幣別</button>
+                  </div>
+                  {fxDep.map((l, i) => (
+                    <div key={i} className="flex flex-wrap items-center gap-2 mb-1">
+                      <input value={l.cur} onChange={(e) => updFxDep(i, { cur: e.target.value.toUpperCase() })} placeholder="幣別" className="rounded border border-gray-300 px-2 py-1 text-xs w-16" />
+                      <input type="number" value={l.amt} onChange={(e) => updFxDep(i, { amt: parseFloat(e.target.value) || 0 })} placeholder="金額" className="rounded border border-gray-300 px-2 py-1 text-xs w-24" />
+                      <button type="button" onClick={() => delFxDep(i)} className="text-xs text-red-500 underline">刪除</button>
+                    </div>
+                  ))}
                 </div>
               )}
               <label className="flex flex-col gap-1">入款方式<select value={edit.account ?? ''} onChange={(e) => setEdit({ ...edit, account: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option><option value="現金">現金</option><option value="8088">8088</option><option value="0564">0564</option><option value="4145">4145</option><option value="加密貨幣">加密貨幣</option></select></label>
