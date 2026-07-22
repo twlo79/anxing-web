@@ -206,7 +206,7 @@ export default function ShortTermPage() {
             <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/50">
               <th className="px-3 py-2.5">來源</th><th className="px-3 py-2.5">物業</th><th className="px-3 py-2.5">房源</th>
               <th className="px-3 py-2.5">客戶</th><th className="px-3 py-2.5 whitespace-nowrap">訂單起訖</th><th className="px-3 py-2.5 text-right">金額</th>
-              <th className="px-3 py-2.5 text-right">押金</th><th className="px-3 py-2.5">帳戶</th><th className="px-3 py-2.5 text-right">操作</th>
+              <th className="px-3 py-2.5 text-right">押金</th><th className="px-3 py-2.5">入款方式</th><th className="px-3 py-2.5 text-right">操作</th>
             </tr>
           </thead>
           <tbody>
@@ -260,7 +260,7 @@ export default function ShortTermPage() {
                   <span className="text-xs text-gray-400">押金為暫收(佔收帳款),非營收;退回後從佔收帳款扣除</span>
                 </div>
               )}
-              <label className="flex flex-col gap-1">入款帳號<select value={edit.account ?? ''} onChange={(e) => setEdit({ ...edit, account: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option><option value="8088">8088</option><option value="0564">0564</option><option value="4145">4145</option><option value="加密貨幣">加密貨幣</option></select></label>
+              <label className="flex flex-col gap-1">入款方式<select value={edit.account ?? ''} onChange={(e) => setEdit({ ...edit, account: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option><option value="現金">現金</option><option value="8088">8088</option><option value="0564">0564</option><option value="4145">4145</option><option value="加密貨幣">加密貨幣</option></select></label>
               <label className="flex flex-col gap-1 col-span-2">備註<input value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               {edit.source !== 'oneoff' && (
                 <div className="col-span-2 border-t border-mor-line pt-3 mt-1">
