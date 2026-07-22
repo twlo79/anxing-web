@@ -9,6 +9,7 @@ type Order = {
   deposit_received?: boolean; deposit_returned?: boolean;
   fx_revenue?: { cur: string; amt: number; rate: number }[];
   fx_deposit?: { cur: string; amt: number }[];
+  move_group?: string | null;
   properties?: { name: string } | null;
 };
 type Estate = { id: string; name: string; sort: number; active: boolean };
@@ -37,6 +38,7 @@ export default function ShortTermPage() {
   const [kw, setKw] = useState('');
   const [kwIn, setKwIn] = useState('');
   const [edit, setEdit] = useState<Order | null>(null);
+  const [move, setMove] = useState<{ order: Order; date: string; estateId: string | null; room: string; propertyId: string | null } | null>(null);
   const [estF, setEstF] = useState('');
   const [fromD, setFromD] = useState('');
   const [toD, setToD] = useState('');
@@ -138,6 +140,25 @@ export default function ShortTermPage() {
     const { error } = await supabase.from('orders').delete().eq('id', o.id);
     if (error) return flash('刪除失敗:' + error.message);
     flash('已刪除'); load();
+  }
+  async function doMove() {
+    if (!move) return;
+    const o = move.order;
+    if (!move.date || !move.room) return flash('請填移入日期與新房源');
+    const ci = new Date(o.checkin).getTime(), co = new Date(o.checkout).getTime(), md = new Date(move.date).getTime();
+    if (!(md > ci && md < co)) return flash('移入日期須在訂單期間內(不含首尾)');
+    const totalN = o.nights;
+    const n1 = Math.round((md - ci) / 86400000), n2 = totalN - n1;
+    if (n1 < 1 || n2 < 1) return flash('拆分後每段至少 1 晚');
+    const total = Number(o.amount) || 0;
+    const amt1 = Math.round(total * n1 / totalN), amt2 = total - amt1;
+    const grp = o.move_group || o.id;
+    const tag = `移房 ${o.property_raw ?? ''}>${move.room}`;
+    const { error: e1 } = await supabase.from('orders').update({ checkout: move.date, nights: n1, amount: amt1, fx_revenue: [], note: ((o.note || '') + ' ' + tag).trim(), move_group: grp }).eq('id', o.id);
+    if (e1) return flash('移房失敗:' + e1.message);
+    const { error: e2 } = await supabase.from('orders').insert({ order_key: `MOVE_${String(o.id).slice(0, 8)}_${Date.now()}`, source: o.source, estate_id: move.estateId, property_id: move.propertyId, property_raw: move.room, guest_name: o.guest_name, checkin: move.date, checkout: o.checkout, nights: n2, amount: amt2, deposit: 0, account: o.account, note: tag, move_group: grp, imported_via: 'manual' });
+    if (e2) return flash('新段建立失敗:' + e2.message);
+    flash('已移房,拆成兩段'); setMove(null); load();
   }
   function blank(): Order { return { id: '', order_key: '', source: 'private', estate_id: null, property_id: null, property_raw: '', guest_name: '', checkin: '', checkout: '', nights: 0, amount: 0, deposit: 0, account: null, note: '', deposit_received: false, deposit_returned: false, fx_revenue: [], fx_deposit: [] }; }
 
@@ -242,6 +263,7 @@ export default function ShortTermPage() {
                 <td className="px-3 py-2 text-right text-gray-500">{o.deposit ? '$' + fmt(o.deposit) : '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-500">{o.account ?? '—'}</td>
                 <td className="px-3 py-2 text-right whitespace-nowrap space-x-2">
+                  {o.source !== 'oneoff' && o.checkin && o.checkout && o.nights > 1 && <button onClick={() => setMove({ order: o, date: '', estateId: o.estate_id, room: '', propertyId: null })} className="text-xs text-mor-green underline hover:text-mor-greendark">移房</button>}
                   <button onClick={() => setEdit(o)} className="text-xs text-mor-slate underline hover:text-mor-blue">編輯</button>
                   <button onClick={() => del(o)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
                 </td>
@@ -339,6 +361,41 @@ export default function ShortTermPage() {
             <div className="sticky bottom-0 bg-white border-t border-mor-line px-6 py-3 flex justify-end gap-2">
               <button onClick={() => setEdit(null)} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>
               <button onClick={save} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium hover:bg-mor-slatedark">儲存</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {move && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => setMove(null)}>
+          <div className="absolute inset-0 bg-black/30" />
+          <div onClick={(e) => e.stopPropagation()} className="relative bg-white rounded-2xl shadow-xl w-full max-w-md">
+            <div className="border-b border-mor-line px-6 py-4 font-bold flex items-center justify-between">移房 · {move.order.guest_name ?? ''}<button onClick={() => setMove(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button></div>
+            <div className="px-6 py-4 flex flex-col gap-3 text-sm">
+              <div className="text-xs text-gray-500">目前:<span className="font-medium text-gray-700">{move.order.property_raw}</span> · {move.order.checkin}~{move.order.checkout}({move.order.nights}晚) · 營收 ${fmt(move.order.amount)}</div>
+              <label className="flex flex-col gap-1">移入日期(新房源入住日)<input type="date" value={move.date} min={move.order.checkin} max={move.order.checkout} onChange={(e) => setMove({ ...move, date: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="flex flex-col gap-1">新物業<select value={move.estateId ?? ''} onChange={(e) => setMove({ ...move, estateId: e.target.value || null, room: '', propertyId: null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option>{estates.map((es) => <option key={es.id} value={es.id}>{es.name}{es.active ? '' : '(停用)'}</option>)}</select></label>
+                <label className="flex flex-col gap-1">新房源<select value={move.room} onChange={(e) => { const nm = e.target.value; const pr = properties.find((x) => x.estate_id === move.estateId && x.name === nm); setMove({ ...move, room: nm, propertyId: pr?.id ?? null }); }} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option>{properties.filter((x) => x.estate_id === move.estateId).map((x) => <option key={x.id} value={x.name}>{x.name}</option>)}</select></label>
+              </div>
+              {(() => {
+                const ci = new Date(move.order.checkin).getTime(), co = new Date(move.order.checkout).getTime(), md = move.date ? new Date(move.date).getTime() : 0;
+                if (!move.date || !(md > ci && md < co)) return <p className="text-xs text-gray-400">填移入日期(須在期間內)後顯示拆分預覽。</p>;
+                const totalN = move.order.nights, n1 = Math.round((md - ci) / 86400000), n2 = totalN - n1;
+                const total = Number(move.order.amount) || 0, amt1 = Math.round(total * n1 / totalN), amt2 = total - amt1;
+                return (
+                  <div className="bg-mor-sand/30 rounded-lg px-3 py-2 text-xs text-gray-700 space-y-1">
+                    <div className="font-medium">移房後拆成兩段:</div>
+                    <div>• {move.order.property_raw} · {move.order.checkin}~{move.date}({n1}晚) · <span className="font-semibold">${fmt(amt1)}</span></div>
+                    <div>• {move.room || '(未選房源)'} · {move.date}~{move.order.checkout}({n2}晚) · <span className="font-semibold">${fmt(amt2)}</span></div>
+                    <div className="text-gray-400">兩段皆備註「移房」,押金留在原段。</div>
+                  </div>
+                );
+              })()}
+            </div>
+            <div className="border-t border-mor-line px-6 py-3 flex justify-end gap-2">
+              <button onClick={() => setMove(null)} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>
+              <button onClick={doMove} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium hover:bg-mor-slatedark">確認移房</button>
             </div>
           </div>
         </div>
