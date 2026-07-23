@@ -47,9 +47,11 @@ function hasNegative(r: Review) {
   return Object.values(tags).some((arr: any) => (arr as any[]).some((t) => t.intent === 'NEGATIVE'));
 }
 
-// 留言顯示:中文原文優先,其次現有翻譯/原文
+// 留言顯示:有中文的欄位優先(不信任 comment_language,因為多筆標記錯誤)
 function displayComment(r: Review) {
-  if (r.comment_language?.startsWith('zh') && r.comment_original) return r.comment_original;
+  const hasCJK = (s?: string | null) => !!s && /[\u4e00-\u9fff]/.test(s);
+  if (hasCJK(r.comment)) return r.comment;
+  if (hasCJK(r.comment_original)) return r.comment_original;
   return r.comment ?? r.comment_original ?? null;
 }
 
