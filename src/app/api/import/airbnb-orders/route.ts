@@ -35,7 +35,7 @@ export async function POST(req: Request) {
 
   const unmatched: Record<string, number> = {};
   const skipped: string[] = [];
-  const cat = { airbnb: 0, oneoff: 0, partner: 0 };
+  const cat = { airbnb: 0, oneoff: 0 };
   const records: any[] = [];
 
   for (const m of items) {
@@ -48,7 +48,7 @@ export async function POST(req: Request) {
       else { skipped.push(m.code); continue; }
     } else {
       if (earn > 0) { source = 'airbnb'; amount = earn; }
-      else if (cohost > 0) { source = 'partner'; amount = cohost; note = '搭檔收款(Co-host payout)'; }
+      else if (cohost > 0) { source = 'airbnb'; amount = cohost; note = '搭檔收款(Co-host payout)'; }
       else { skipped.push(m.code); continue; }
     }
     const prop = m.listingId ? byListing[String(m.listingId)] : null;
