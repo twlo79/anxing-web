@@ -288,14 +288,6 @@ export default function RevenuesPage() {
       {/* Filters */}
       <div className="bg-white rounded-xl border border-mor-line p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
         <div>
-          <label className="block text-xs text-gray-500 mb-1">期間(認列月份)</label>
-          <div className="flex items-center gap-1">
-            <input type="month" value={fromM} onChange={(e) => setFromM(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5" />
-            <span className="text-gray-400">~</span>
-            <input type="month" value={toM} onChange={(e) => setToM(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5" />
-          </div>
-        </div>
-        <div>
           <label className="block text-xs text-gray-500 mb-1">物業</label>
           <select value={estateFilter} onChange={(e) => setEstateFilter(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5 min-w-24">
             <option value="">全部</option>{estateOptions.map((e) => <option key={e} value={e}>{e}</option>)}
@@ -306,6 +298,14 @@ export default function RevenuesPage() {
           <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
             <option value="">全部</option>{SOURCE_ORDER.map((s) => <option key={s} value={s}>{SOURCE_LABEL[s]}</option>)}
           </select>
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">期間(認列月份)</label>
+          <div className="flex items-center gap-1">
+            <input type="month" value={fromM} onChange={(e) => setFromM(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5" />
+            <span className="text-gray-400">~</span>
+            <input type="month" value={toM} onChange={(e) => setToM(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5" />
+          </div>
         </div>
         <div>
           <label className="block text-xs text-gray-500 mb-1">排序(認列日期)</label>

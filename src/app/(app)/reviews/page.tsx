@@ -335,16 +335,6 @@ export default function ReviewsPage() {
           </select>
         </div>
         <div>
-          <label className="block text-xs text-gray-500 mb-1">退房日期(起)</label>
-          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
-            className="rounded-lg border border-gray-300 px-2 py-1.5" />
-        </div>
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">退房日期(迄)</label>
-          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
-            className="rounded-lg border border-gray-300 px-2 py-1.5" />
-        </div>
-        <div>
           <label className="block text-xs text-gray-500 mb-1">評分</label>
           <select value={ratingFilter} onChange={(e) => setRatingFilter(e.target.value)}
             className="rounded-lg border border-gray-300 px-2 py-1.5">
@@ -353,6 +343,16 @@ export default function ReviewsPage() {
             <option value="4">4 星</option>
             <option value="low">3 星以下(需關注)</option>
           </select>
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">退房日期(起)</label>
+          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
+            className="rounded-lg border border-gray-300 px-2 py-1.5" />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">退房日期(迄)</label>
+          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
+            className="rounded-lg border border-gray-300 px-2 py-1.5" />
         </div>
         <div>
           <label className="block text-xs text-gray-500 mb-1">關鍵字(旅客/留言/房源)</label>

@@ -242,14 +242,6 @@ export default function ShortTermPage() {
 
       <div className="bg-white rounded-xl border border-mor-line p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
         <div>
-          <label className="block text-xs text-gray-500 mb-1">訂單日期(期間內有交集)</label>
-          <div className="flex items-center gap-1">
-            <input type="date" value={fromD} onChange={(e) => setFromD(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5" />
-            <span className="text-gray-400">~</span>
-            <input type="date" value={toD} onChange={(e) => setToD(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5" />
-          </div>
-        </div>
-        <div>
           <label className="block text-xs text-gray-500 mb-1">物業</label>
           <select value={estF} onChange={(e) => setEstF(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
             <option value="">全部</option>{estates.map((es) => <option key={es.id} value={es.id}>{es.name}{es.active ? '' : '(停用)'}</option>)}
@@ -260,6 +252,14 @@ export default function ShortTermPage() {
           <select value={src} onChange={(e) => setSrc(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
             <option value="">全部</option>{FILTER_SRC.map((s) => <option key={s} value={s}>{SRC_LABEL[s]}</option>)}
           </select>
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">訂單日期(期間內有交集)</label>
+          <div className="flex items-center gap-1">
+            <input type="date" value={fromD} onChange={(e) => setFromD(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5" />
+            <span className="text-gray-400">~</span>
+            <input type="date" value={toD} onChange={(e) => setToD(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5" />
+          </div>
         </div>
         <div>
           <label className="block text-xs text-gray-500 mb-1">排序</label>

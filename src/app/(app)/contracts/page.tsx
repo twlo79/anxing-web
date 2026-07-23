@@ -26,6 +26,8 @@ export default function ContractsPage() {
   const [kw, setKw] = useState('');
   const [sortMode, setSortMode] = useState<'date_desc' | 'date_asc' | 'room'>('date_desc');
   const [cadFilter, setCadFilter] = useState('');
+  const [fromD, setFromD] = useState('');
+  const [toD, setToD] = useState('');
   const [properties, setProperties] = useState<{ id: string; name: string; estate_id: string | null }[]>([]);
   const [curLT, setCurLT] = useState<Record<string, { amount: number; paid: boolean }>>({});
   const curFirst = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`; })();
@@ -50,6 +52,7 @@ export default function ContractsPage() {
   const filtered = useMemo(() => {
     let out = estateFilter ? rows.filter((r: any) => r.estates?.name === estateFilter) : rows;
     if (cadFilter) out = out.filter((r) => r.cadence === cadFilter);
+    if (fromD || toD) out = out.filter((r) => { const st = r.start_date || '', en = r.end_date || ''; if (toD && st && st > toD) return false; if (fromD && en && en < fromD) return false; return true; });
     if (kw) { const k = kw.toLowerCase(); out = out.filter((r) => `${r.room ?? ''}${r.tenant_name ?? ''}${r.phone ?? ''}${r.note ?? ''}`.toLowerCase().includes(k)); }
     const rk = (x: string) => { const m = String(x || '').match(/^(\d+)/); return [m ? parseInt(m[1]) : 999, String(x || '')] as [number, string]; };
     out = [...out].sort((a: any, b: any) => {
@@ -58,7 +61,7 @@ export default function ContractsPage() {
       return sortMode === 'date_asc' ? (av > bv ? 1 : av < bv ? -1 : 0) : (av < bv ? 1 : av > bv ? -1 : 0);
     });
     return out;
-  }, [rows, estateFilter, cadFilter, kw, sortMode]);
+  }, [rows, estateFilter, cadFilter, fromD, toD, kw, sortMode]);
   const activeCount = useMemo(() => filtered.filter((r) => r.active).length, [filtered]);
   const monthAR = useMemo(() => filtered.filter((r) => r.active).reduce((s, r) => s + (curLT[r.room ?? '']?.amount ?? 0), 0), [filtered, curLT]);
   const monthPaid = useMemo(() => filtered.filter((r) => r.active).reduce((s, r) => s + (curLT[r.room ?? '']?.paid ? (curLT[r.room ?? ''].amount) : 0), 0), [filtered, curLT]);
@@ -106,14 +109,20 @@ export default function ContractsPage() {
         <div className="rounded-xl bg-white border border-mor-line p-4"><div className="text-xs text-gray-500">本月未收</div><div className="text-2xl font-bold mt-1 text-orange-600">${fmt(monthAR - monthPaid)}</div></div>
       </div>
 
-      <div className="flex items-center gap-3 mb-3 text-sm">
+      <div className="flex flex-wrap items-center gap-3 mb-3 text-sm">
         <select value={estateFilter} onChange={(e) => setEstateFilter(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
           <option value="">全部物業</option>{estates.map((e) => <option key={e.id} value={e.name}>{e.name}</option>)}
         </select>
         <select value={cadFilter} onChange={(e) => setCadFilter(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">全部繳別</option><option value="monthly">月繳</option><option value="quarterly">季繳</option><option value="halfyear">半年繳</option><option value="yearly">年繳</option></select>
-        <input value={kw} onChange={(e) => setKw(e.target.value)} placeholder="搜尋 房源/租戶/電話" className="rounded-lg border border-gray-300 px-2 py-1.5 w-48" />
-        {kw && <button onClick={() => setKw('')} className="text-gray-400 underline text-xs">清除</button>}
+        <div className="flex items-center gap-1" title="依租期(起訖)篩選">
+          <input type="date" value={fromD} onChange={(e) => setFromD(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5" />
+          <span className="text-gray-400">~</span>
+          <input type="date" value={toD} onChange={(e) => setToD(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5" />
+          {(fromD || toD) && <button onClick={() => { setFromD(''); setToD(''); }} className="text-gray-400 underline text-xs">清除</button>}
+        </div>
         <select value={sortMode} onChange={(e) => setSortMode(e.target.value as any)} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="date_desc">日期新→舊</option><option value="date_asc">日期舊→新</option><option value="room">房源</option></select>
+        <input value={kw} onChange={(e) => setKw(e.target.value)} placeholder="搜尋 房源/租戶/電話" className="rounded-lg border border-gray-300 px-2 py-1.5 w-44" />
+        {kw && <button onClick={() => setKw('')} className="text-gray-400 underline text-xs">清除</button>}
         <div className="text-xs text-gray-400">共 {filtered.length} 筆</div>
         <button onClick={() => setEdit(blank())} className="ml-auto rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 新增契約</button>
       </div>
