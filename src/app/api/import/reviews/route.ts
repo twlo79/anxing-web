@@ -15,10 +15,27 @@ export async function OPTIONS() {
 
 const MONTHS: Record<string, number> = { Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6, Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12 };
 
+const fmtDate = (y: number, m: number, d: number) => new Date(Date.UTC(y, m - 1, d)).toISOString().slice(0, 10);
+
+// 中文(繁/簡)住宿日期: "2026年5月25日至7月21日" / "2026年7月15日至20日" / "2025年12月28日至2026年1月2日"
+// 右側的「年」「月」可省略,會沿用左側
+function parseStayZh(s: string): [string | null, string | null] {
+  const m = s.match(
+    /(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日\s*(?:至|到|~|–|—|-|\u2013|\u2014)\s*(?:(\d{4})\s*年\s*)?(?:(\d{1,2})\s*月\s*)?(\d{1,2})\s*日/
+  );
+  if (!m) return [null, null];
+  const lY = +m[1], lM = +m[2], lD = +m[3];
+  const rY = m[4] ? +m[4] : lY;
+  const rM = m[5] ? +m[5] : lM;
+  const rD = +m[6];
+  return [fmtDate(lY, lM, lD), fmtDate(rY, rM, rD)];
+}
+
 // "Jul 6 – 10, 2026" / "Jun 10 – Jul 8, 2026" / "Dec 28, 2025 – Jan 2, 2026"
-function parseStay(s: string): [string | null, string | null] {
+function parseStayEn(s: string): [string | null, string | null] {
   try {
-    const [L, R] = s.split('–').map((x) => x.trim());
+    const [L, R] = s.split(/[\u2013\u2014–—-]/).map((x) => x.trim());
+    if (!R) return [null, null];
     const rYear = (R.match(/(\d{4})/) || [])[1];
     const lYear = (L.match(/(\d{4})/) || [])[1];
     const lM = (L.match(/[A-Z][a-z]{2}/) || [])[0] as string;
@@ -34,6 +51,13 @@ function parseStay(s: string): [string | null, string | null] {
   } catch {
     return [null, null];
   }
+}
+
+// 同時支援中文(airbnb.com.tw)與英文(airbnb.com)住宿日期格式
+function parseStay(s: string): [string | null, string | null] {
+  if (!s) return [null, null];
+  if (/[年月日]/.test(s)) return parseStayZh(s);
+  return parseStayEn(s);
 }
 
 function cleanTags(tags: any) {
@@ -66,6 +90,12 @@ export async function POST(req: Request) {
   if (pe) return NextResponse.json({ error: pe.message }, { status: 500, headers: CORS });
   const propByListing = Object.fromEntries((props ?? []).filter((p) => p.airbnb_listing_id).map((p) => [p.airbnb_listing_id, p.id]));
 
+  // 已存在的評價:保留已翻譯成中文的 comment,重新匯入時不覆蓋(只補日期等欄位)
+  const incomingIds = items.map((m) => String(m.id));
+  const { data: prevRows } = await supabase.from('reviews').select('airbnb_review_id, comment').in('airbnb_review_id', incomingIds);
+  const prevComment = new Map((prevRows ?? []).map((r) => [r.airbnb_review_id, r.comment as string | null]));
+  const hasCJK = (t: string | null | undefined) => !!t && /[\u4e00-\u9fff]/.test(t);
+
   const unmatched: Record<string, number> = {};
   const records = items.map((m) => {
     const [ci, co] = parseStay(m.stay || '');
@@ -86,7 +116,7 @@ export async function POST(req: Request) {
       checkout_date: co,
       nights: m.nights ?? null,
       overall_rating: m.rating,
-      comment: m.localized || m.comment || null,
+      comment: hasCJK(prevComment.get(String(m.id))) ? prevComment.get(String(m.id)) : (m.localized || m.comment || null),
       comment_original: m.comment || null,
       comment_language: m.lang || null,
       rating_checkin: c.CHECKIN ?? null,
