@@ -42,16 +42,23 @@ export async function POST(req: Request) {
     inserted += Math.min(20, contracts.length - i);
   }
 
-  // 3) 先清空正隆長租的已收記號,再依「已繳到(paid_through)」重新標記已收月份
+  // 3) 先清空正隆長租已收記號,再依「已收至」以「期」標記已收(paid_at 一律用第一次收租日)
+  const monthsBetween = (a: string, b: string) => {
+    const [ay, am] = a.slice(0, 7).split('-').map(Number);
+    const [by, bm] = b.slice(0, 7).split('-').map(Number);
+    return (by - ay) * 12 + (bm - am);
+  };
+  const STEP_OF: Record<string, number> = { monthly: 1, quarterly: 3, halfyear: 6, yearly: 12 };
   let paidMarked = 0, cleared = 0;
   for (const r of rows) {
     const { data: los } = await supabase.from('orders').select('id, order_key').like('order_key', `LT_${r.room}_%`);
-    const all = los ?? [];
+    const all = (los ?? []).sort((a: any, b: any) => (a.order_key.split('_').pop() < b.order_key.split('_').pop() ? -1 : 1));
     if (all.length) { await supabase.from('orders').update({ paid: false, paid_at: null }).in('id', all.map((o: any) => o.id)); cleared += all.length; }
-    if (!r.paid_through) continue;
-    const ptYm = r.paid_through.slice(0, 4) + r.paid_through.slice(5, 7);
-    const toPay = all.filter((o: any) => { const ym = o.order_key.split('_').pop(); return ym && ym <= ptYm; }).map((o: any) => o.id);
-    if (toPay.length) { await supabase.from('orders').update({ paid: true, paid_at: r.paid_at || r.first_payment_date || null }).in('id', toPay); paidMarked += toPay.length; }
+    if (!r.first_payment_date || !r.paid_through) continue;
+    const step = STEP_OF[r.cadence] || 1;
+    const k = Math.max(0, Math.round(monthsBetween(r.first_payment_date, r.paid_through) / step)); // 已繳到第 k 期(0-based)
+    const toPay = all.slice(0, (k + 1) * step).map((o: any) => o.id);                              // 前 (k+1) 期的月份
+    if (toPay.length) { await supabase.from('orders').update({ paid: true, paid_at: r.first_payment_date }).in('id', toPay); paidMarked += toPay.length; }
   }
 
   const incomplete = rows.filter((r) => !r.start || !r.end || !r.monthly_rent).map((r) => r.room);
