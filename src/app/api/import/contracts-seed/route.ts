@@ -30,7 +30,7 @@ export async function POST(req: Request) {
     return {
       estate_id: zl, room: r.room, tenant_name: r.tenant, phone: null,
       cadence: r.cadence, monthly_rent: r.monthly_rent || 0, amount_per_period: r.amount_per_period || 0, deposit: r.deposit || 0,
-      start_date: r.start || '2026-01-01', end_date: r.end || '2026-12-31', pay_day: r.pay_day || null,
+      start_date: r.start || '2026-01-01', end_date: r.end || '2026-12-31', first_payment_date: r.first_payment_date || null, pay_day: null,
       account: null, note: incomplete ? '⚠待補租期' : null, active: !incomplete,
       name: `${r.tenant ?? ''}-${r.room}`,
     };
@@ -42,16 +42,18 @@ export async function POST(req: Request) {
     inserted += Math.min(20, contracts.length - i);
   }
 
-  // 3) 依「已繳到」標記已收月份(LT 訂單 paid)
-  let paidMarked = 0;
+  // 3) 先清空正隆長租的已收記號,再依「已繳到(paid_through)」重新標記已收月份
+  let paidMarked = 0, cleared = 0;
   for (const r of rows) {
+    const { data: los } = await supabase.from('orders').select('id, order_key').like('order_key', `LT_${r.room}_%`);
+    const all = los ?? [];
+    if (all.length) { await supabase.from('orders').update({ paid: false, paid_at: null }).in('id', all.map((o: any) => o.id)); cleared += all.length; }
     if (!r.paid_through) continue;
     const ptYm = r.paid_through.slice(0, 4) + r.paid_through.slice(5, 7);
-    const { data: los } = await supabase.from('orders').select('id, order_key').like('order_key', `LT_${r.room}_%`);
-    const toPay = (los ?? []).filter((o: any) => { const ym = o.order_key.split('_').pop(); return ym && ym <= ptYm; }).map((o: any) => o.id);
-    if (toPay.length) { await supabase.from('orders').update({ paid: true, paid_at: r.paid_at || null }).in('id', toPay); paidMarked += toPay.length; }
+    const toPay = all.filter((o: any) => { const ym = o.order_key.split('_').pop(); return ym && ym <= ptYm; }).map((o: any) => o.id);
+    if (toPay.length) { await supabase.from('orders').update({ paid: true, paid_at: r.paid_at || r.first_payment_date || null }).in('id', toPay); paidMarked += toPay.length; }
   }
 
   const incomplete = rows.filter((r) => !r.start || !r.end || !r.monthly_rent).map((r) => r.room);
-  return NextResponse.json({ contracts: inserted, newProperties: newProps.length, paidMonthsMarked: paidMarked, incomplete });
+  return NextResponse.json({ contracts: inserted, newProperties: newProps.length, clearedPaidMarks: cleared, paidMonthsMarked: paidMarked, incomplete });
 }

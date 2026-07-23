@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase';
 type Contract = {
   id: string; estate_id: string | null; room: string | null; tenant_name: string | null;
   phone: string | null; cadence: string; monthly_rent: number | null; deposit: number | null;
-  start_date: string | null; end_date: string | null; pay_day: number | null;
+  start_date: string | null; end_date: string | null; pay_day: number | null; first_payment_date: string | null;
   paid: boolean; account: string | null; note: string | null; active: boolean;
 };
 type Estate = { id: string; name: string; sort: number };
@@ -73,7 +73,7 @@ export default function ContractsPage() {
     const payload = {
       estate_id: edit.estate_id, room: edit.room, tenant_name: edit.tenant_name, phone: edit.phone,
       cadence: edit.cadence, monthly_rent: edit.monthly_rent, deposit: edit.deposit,
-      start_date: edit.start_date || null, end_date: edit.end_date || null, pay_day: edit.pay_day,
+      start_date: edit.start_date || null, end_date: edit.end_date || null, first_payment_date: edit.first_payment_date || null, pay_day: null,
       account: edit.account, note: edit.note, active: edit.active, name: `${edit.tenant_name ?? ''}-${edit.room ?? ''}`,
     };
     const { error } = edit.id
@@ -89,7 +89,7 @@ export default function ContractsPage() {
     flash('已刪除'); load();
   }
   function blank(): Contract {
-    return { id: '', estate_id: estates.find((e) => e.name === '正隆')?.id ?? null, room: '', tenant_name: '', phone: '', cadence: 'monthly', monthly_rent: 0, deposit: 0, start_date: '', end_date: '', pay_day: null, paid: false, account: null, note: '', active: true };
+    return { id: '', estate_id: estates.find((e) => e.name === '正隆')?.id ?? null, room: '', tenant_name: '', phone: '', cadence: 'monthly', monthly_rent: 0, deposit: 0, start_date: '', end_date: '', pay_day: null, first_payment_date: '', paid: false, account: null, note: '', active: true };
   }
 
   return (
@@ -169,7 +169,7 @@ export default function ContractsPage() {
               <label className="flex flex-col gap-1">租戶<input value={edit.tenant_name ?? ''} onChange={(e) => setEdit({ ...edit, tenant_name: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">電話<input value={edit.phone ?? ''} onChange={(e) => setEdit({ ...edit, phone: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">繳別<select value={edit.cadence} onChange={(e) => setEdit({ ...edit, cadence: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="monthly">月繳</option><option value="quarterly">季繳</option><option value="halfyear">半年繳</option><option value="yearly">年繳</option></select></label>
-              <label className="flex flex-col gap-1">每月幾號繳<input type="number" value={edit.pay_day ?? ''} onChange={(e) => setEdit({ ...edit, pay_day: e.target.value ? parseInt(e.target.value) : null })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+              <label className="flex flex-col gap-1">第一次繳款日<input type="date" value={edit.first_payment_date ?? ''} onChange={(e) => setEdit({ ...edit, first_payment_date: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">月租金<input type="number" value={edit.monthly_rent ?? ''} onChange={(e) => setEdit({ ...edit, monthly_rent: e.target.value ? parseFloat(e.target.value) : 0 })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">押金<input type="number" value={edit.deposit ?? ''} onChange={(e) => setEdit({ ...edit, deposit: e.target.value ? parseFloat(e.target.value) : 0 })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">租期起<input type="date" value={edit.start_date ?? ''} onChange={(e) => setEdit({ ...edit, start_date: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
@@ -241,6 +241,12 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
     if (error) alert('失敗:' + error.message);
     setBusy(''); loadExisting();
   }
+  async function setPeriodPaidAt(chunk: any[], date: string) {
+    const keys = chunk.map((mm) => `LT_${c.room}_${mm.ym}`);
+    const { error } = await supabase.from('orders').update({ paid_at: date || null }).in('order_key', keys);
+    if (error) alert('失敗:' + error.message);
+    loadExisting();
+  }
   const loadFees = useCallback(async () => {
     const { data } = await supabase.from('orders').select('id, checkin, amount, fee_type').eq('contract_id', c.id).eq('source', 'oneoff').order('checkin');
     setFeeRows(data ?? []);
@@ -261,7 +267,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
         <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 flex items-center justify-between">
           <div>
             <div className="font-bold">收款 — {c.room} {c.tenant_name}</div>
-            <div className="text-xs text-gray-500 mt-0.5">{CAD_LABEL[c.cadence]}・月租 ${fmt(c.monthly_rent)}・每月 {c.pay_day ?? '?'} 號繳・租期 {c.start_date} ~ {c.end_date}・應收按月自動認列</div>
+            <div className="text-xs text-gray-500 mt-0.5">{CAD_LABEL[c.cadence]}・月租 ${fmt(c.monthly_rent)}・首繳 {c.first_payment_date ?? '—'}・租期 {c.start_date} ~ {c.end_date}・應收按月自動認列</div>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
         </div>
@@ -293,17 +299,20 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
               const allPaid = os.length > 0 && os.every((o: any) => o.paid);
               const paidAt = os.find((o: any) => o.paid_at)?.paid_at;
               const first = chunk[0], last = chunk[chunk.length - 1];
-              const due = c.pay_day ? `${first.y}/${first.m}/${c.pay_day}` : '';
+              const due = c.first_payment_date ? (() => { const dd = addMonths(new Date(c.first_payment_date + 'T00:00:00'), i * STEP); return `${dd.getFullYear()}/${dd.getMonth() + 1}/${dd.getDate()}`; })() : '';
               const pfees = feeRows.filter((f: any) => f.checkin && chunk.some((mm: any) => (f.checkin.slice(0, 4) + f.checkin.slice(5, 7)) === mm.ym));
               return (
                 <div key={i} className={`rounded-xl border px-4 py-2.5 text-sm ${allPaid ? 'border-mor-greenlight bg-mor-greenlight/30' : 'border-mor-line'}`}>
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="font-medium">{first.label}{STEP > 1 ? `~${last.label}` : ''}{due ? <span className="ml-2 text-xs text-gray-400">應繳 {due}</span> : null}</div>
-                      <div className="text-xs text-gray-500">應收 ${fmt(amount)}{allPaid && paidAt ? ` · 已收 ${paidAt}` : ''}</div>
+                      <div className="text-xs text-gray-500">應收 ${fmt(amount)}</div>
                     </div>
                     {os.length > 0 && (allPaid
-                      ? <button onClick={() => setPeriodPaid(chunk, false)} disabled={!!busy} className="rounded-lg bg-mor-greenlight text-mor-green px-3 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">✓ 已收款(取消)</button>
+                      ? <div className="flex items-center gap-1.5">
+                          <span className="text-xs text-gray-600">收款日 <input type="date" value={paidAt || ''} onChange={(e) => setPeriodPaidAt(chunk, e.target.value)} className="rounded border border-gray-300 px-1.5 py-0.5 text-xs" /></span>
+                          <button onClick={() => setPeriodPaid(chunk, false)} disabled={!!busy} className="rounded-lg bg-mor-greenlight text-mor-green px-2.5 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">取消</button>
+                        </div>
                       : <button onClick={() => setPeriodPaid(chunk, true)} disabled={!!busy} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">{busy === first.ym ? '…' : '確認收款'}</button>)}
                   </div>
                   <div className="mt-2 border-t border-mor-line/50 pt-1.5">
@@ -321,7 +330,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
                         <button onClick={saveFee} className="rounded bg-mor-slate text-white px-2 py-0.5 text-xs">儲存</button>
                         <button onClick={() => setFeeDraft(null)} className="text-gray-400 underline text-xs">取消</button>
                       </div>
-                    ) : <button onClick={() => setFeeDraft({ pi: i, date: `${first.y}-${String(first.m).padStart(2, '0')}-${String(c.pay_day || 1).padStart(2, '0')}`, type: '電費', amount: 0 })} className="text-xs text-mor-blue underline">+ 加費(認列營收)</button>}
+                    ) : <button onClick={() => setFeeDraft({ pi: i, date: `${first.y}-${String(first.m).padStart(2, '0')}-01`, type: '電費', amount: 0 })} className="text-xs text-mor-blue underline">+ 加費(認列營收)</button>}
                   </div>
                 </div>
               );
