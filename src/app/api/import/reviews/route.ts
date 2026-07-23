@@ -145,5 +145,11 @@ export async function POST(req: Request) {
     if (error) return NextResponse.json({ error: error.message, upserted }, { status: 500, headers: CORS });
     upserted += batch.length;
   }
-  return NextResponse.json({ upserted, inserted, updated: upserted - inserted, unmatched }, { headers: CORS });
+
+  // 這批匯入後,留言仍非中文(需要翻譯)的清單:rid=airbnb_review_id, src=待翻原文
+  const needTranslation = records
+    .filter((r) => r.comment && !hasCJK(r.comment))
+    .map((r) => ({ rid: r.airbnb_review_id, src: r.comment_original || r.comment }));
+
+  return NextResponse.json({ upserted, inserted, updated: upserted - inserted, unmatched, needTranslation }, { headers: CORS });
 }
