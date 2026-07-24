@@ -6,7 +6,7 @@ type Contract = {
   id: string; estate_id: string | null; room: string | null; tenant_name: string | null;
   phone: string | null; cadence: string; type: string | null; monthly_rent: number | null; amount_per_period: number | null; deposit: number | null;
   start_date: string | null; end_date: string | null; pay_day: number | null; first_payment_date: string | null;
-  paid: boolean; account: string | null; note: string | null; active: boolean;
+  paid: boolean; account: string | null; note: string | null; active: boolean; auto_renew?: boolean;
 };
 type Estate = { id: string; name: string; sort: number };
 
@@ -29,6 +29,7 @@ export default function ContractsPage() {
   const [sortMode, setSortMode] = useState<'date_desc' | 'date_asc' | 'room'>('date_desc');
   const [cadFilter, setCadFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
   const [fromD, setFromD] = useState('');
   const [toD, setToD] = useState('');
   const [properties, setProperties] = useState<{ id: string; name: string; estate_id: string | null }[]>([]);
@@ -40,9 +41,9 @@ export default function ContractsPage() {
     setLoading(true);
     const { data } = await supabase.from('contracts').select('*, estates(name)').order('room');
     setRows((data as any) ?? []);
-    const { data: lts } = await supabase.from('orders').select('property_raw, amount, paid').eq('source', 'longterm').eq('checkin', curFirst);
+    const { data: lts } = await supabase.from('orders').select('contract_id, amount, paid').in('source', ['longterm', 'company', 'office']).eq('checkin', curFirst);
     const m: Record<string, { amount: number; paid: boolean }> = {};
-    (lts ?? []).forEach((o: any) => { if (o.property_raw) m[o.property_raw] = { amount: Number(o.amount || 0), paid: !!o.paid }; });
+    (lts ?? []).forEach((o: any) => { if (o.contract_id) m[o.contract_id] = { amount: Number(o.amount || 0), paid: !!o.paid }; });
     setCurLT(m);
     setLoading(false);
   }, [supabase, curFirst]);
@@ -53,10 +54,13 @@ export default function ContractsPage() {
   }, [supabase, load]);
   function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 2500); }
 
+  const todayS = new Date().toISOString().slice(0, 10);
+  const statusOf = (c: any) => (!c.active ? 'disabled' : c.auto_renew ? 'active' : (c.end_date && c.end_date < todayS ? 'expired' : 'active'));
   const filtered = useMemo(() => {
     let out = estateFilter ? rows.filter((r: any) => r.estates?.name === estateFilter) : rows;
     if (cadFilter) out = out.filter((r) => r.cadence === cadFilter);
     if (typeFilter) out = out.filter((r) => (r.type ?? 'longterm') === typeFilter);
+    if (statusFilter) out = out.filter((r) => statusOf(r) === statusFilter);
     if (fromD || toD) out = out.filter((r) => { const st = r.start_date || '', en = r.end_date || ''; if (toD && st && st > toD) return false; if (fromD && en && en < fromD) return false; return true; });
     if (kw) { const k = kw.toLowerCase(); out = out.filter((r) => `${r.room ?? ''}${r.tenant_name ?? ''}${r.phone ?? ''}${r.note ?? ''}`.toLowerCase().includes(k)); }
     const rk = (x: string) => { const m = String(x || '').match(/^(\d+)/); return [m ? parseInt(m[1]) : 999, String(x || '')] as [number, string]; };
@@ -66,15 +70,15 @@ export default function ContractsPage() {
       return sortMode === 'date_asc' ? (av > bv ? 1 : av < bv ? -1 : 0) : (av < bv ? 1 : av > bv ? -1 : 0);
     });
     return out;
-  }, [rows, estateFilter, cadFilter, typeFilter, fromD, toD, kw, sortMode]);
+  }, [rows, estateFilter, cadFilter, typeFilter, statusFilter, fromD, toD, kw, sortMode]);
   const activeCount = useMemo(() => filtered.filter((r) => r.active).length, [filtered]);
-  const monthAR = useMemo(() => filtered.filter((r) => r.active).reduce((s, r) => s + (curLT[r.room ?? '']?.amount ?? 0), 0), [filtered, curLT]);
-  const monthPaid = useMemo(() => filtered.filter((r) => r.active).reduce((s, r) => s + (curLT[r.room ?? '']?.paid ? (curLT[r.room ?? ''].amount) : 0), 0), [filtered, curLT]);
+  const monthAR = useMemo(() => filtered.filter((r) => r.active).reduce((s, r) => s + (curLT[r.id]?.amount ?? 0), 0), [filtered, curLT]);
+  const monthPaid = useMemo(() => filtered.filter((r) => r.active).reduce((s, r) => s + (curLT[r.id]?.paid ? (curLT[r.id].amount) : 0), 0), [filtered, curLT]);
   const roomLists = useMemo(() => {
     const rk = (x: string) => { const m = String(x || '').match(/^(\d+)/); return [m ? parseInt(m[1]) : 999, String(x || '')] as [number, string]; };
     const cmp = (a: string, b: string) => { const ka = rk(a), kb = rk(b); return ka[0] - kb[0] || (ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0); };
     const paid: string[] = [], unpaid: string[] = [];
-    filtered.filter((r) => r.active).forEach((r) => { const lt = curLT[r.room ?? '']; if (!lt) return; (lt.paid ? paid : unpaid).push(r.room ?? ''); });
+    filtered.filter((r) => r.active).forEach((r) => { const lt = curLT[r.id]; if (!lt) return; (lt.paid ? paid : unpaid).push(r.room ?? ''); });
     return { paid: paid.sort(cmp), unpaid: unpaid.sort(cmp) };
   }, [filtered, curLT]);
 
@@ -90,7 +94,7 @@ export default function ContractsPage() {
       cadence: edit.cadence, type: edit.type, amount_per_period: edit.amount_per_period,
       monthly_rent: Math.round((edit.amount_per_period || 0) / (STEP_OF[edit.cadence] || 1)), deposit: edit.deposit,
       start_date: edit.start_date || null, end_date: edit.end_date || null, first_payment_date: edit.first_payment_date || null, pay_day: edit.pay_day ?? null,
-      account: edit.account, note: edit.note, active: edit.active, name: `${edit.tenant_name ?? ''}-${edit.room ?? ''}`,
+      account: edit.account, note: edit.note, active: edit.active, auto_renew: edit.auto_renew ?? false, name: `${edit.tenant_name ?? ''}-${edit.room ?? ''}`,
     };
     const { error } = edit.id
       ? await supabase.from('contracts').update(payload).eq('id', edit.id)
@@ -104,8 +108,15 @@ export default function ContractsPage() {
     if (error) return flash('刪除失敗:' + error.message);
     flash('已刪除'); load();
   }
+  function renew(c: Contract) {
+    const base = c.end_date ? new Date(c.end_date + 'T00:00:00') : new Date();
+    base.setDate(base.getDate() + 1);
+    const s0 = base.toISOString().slice(0, 10);
+    const e0 = new Date(base); e0.setFullYear(e0.getFullYear() + 1); e0.setDate(e0.getDate() - 1);
+    setEdit({ ...c, id: '', start_date: s0, end_date: e0.toISOString().slice(0, 10), first_payment_date: s0, paid: false, active: true });
+  }
   function blank(): Contract {
-    return { id: '', estate_id: estates.find((e) => e.name === '正隆')?.id ?? null, room: '', tenant_name: '', phone: '', cadence: 'monthly', type: 'longterm', monthly_rent: 0, amount_per_period: 0, deposit: 0, start_date: '', end_date: '', pay_day: null, first_payment_date: '', paid: false, account: null, note: '', active: true };
+    return { id: '', estate_id: estates.find((e) => e.name === '正隆')?.id ?? null, room: '', tenant_name: '', phone: '', cadence: 'monthly', type: 'longterm', monthly_rent: 0, amount_per_period: 0, deposit: 0, start_date: '', end_date: '', pay_day: null, first_payment_date: '', paid: false, account: null, note: '', active: true, auto_renew: false };
   }
 
   return (
@@ -139,6 +150,7 @@ export default function ContractsPage() {
         </select>
         <select value={cadFilter} onChange={(e) => setCadFilter(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">全部繳別</option><option value="monthly">月繳</option><option value="quarterly">季繳</option><option value="halfyear">半年繳</option><option value="yearly">年繳</option></select>
         <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">全部類別</option><option value="longterm">長租</option><option value="office">辦公室</option><option value="company">公司登記</option></select>
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">全部狀態</option><option value="active">進行中</option><option value="expired">已到期</option><option value="disabled">已停用</option></select>
         <div className="flex items-center gap-1" title="依租期(起訖)篩選">
           <input type="date" value={fromD} onChange={(e) => setFromD(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5" />
           <span className="text-gray-400">~</span>
@@ -148,7 +160,7 @@ export default function ContractsPage() {
         <select value={sortMode} onChange={(e) => setSortMode(e.target.value as any)} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="room">房源</option><option value="date_desc">日期新→舊</option><option value="date_asc">日期舊→新</option></select>
         <input value={kw} onChange={(e) => setKw(e.target.value)} placeholder="搜尋 房源/租戶/電話" className="rounded-lg border border-gray-300 px-2 py-1.5 w-44" />
         {kw && <button onClick={() => setKw('')} className="text-gray-400 underline text-xs">清除</button>}
-        {(estateFilter || cadFilter || typeFilter || fromD || toD || kw) && <button onClick={() => { setEstateFilter(''); setCadFilter(''); setTypeFilter(''); setFromD(''); setToD(''); setKw(''); }} className="text-gray-500 underline text-xs">全部清除</button>}
+        {(estateFilter || cadFilter || typeFilter || statusFilter || fromD || toD || kw) && <button onClick={() => { setEstateFilter(''); setCadFilter(''); setTypeFilter(''); setStatusFilter(''); setFromD(''); setToD(''); setKw(''); }} className="text-gray-500 underline text-xs">全部清除</button>}
         <div className="text-xs text-gray-400">共 {filtered.length} 筆</div>
         <button onClick={() => setEdit(blank())} className="ml-auto rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 新增契約</button>
       </div>
@@ -167,17 +179,18 @@ export default function ContractsPage() {
             : filtered.length === 0 ? <tr><td colSpan={8} className="px-4 py-10 text-center text-gray-400">尚無契約</td></tr>
             : filtered.map((c: any) => (
               <tr key={c.id} className={`border-b border-mor-line/60 hover:bg-mor-bluelight/30 ${c.active ? '' : 'opacity-50'}`}>
-                <td className="px-3 py-2 font-medium whitespace-nowrap">{c.room}<span className="ml-1 text-xs text-gray-400">{c.estates?.name}</span></td>
+                <td className="px-3 py-2 font-medium whitespace-nowrap">{c.room}<span className="ml-1 text-xs text-gray-400">{c.estates?.name}</span>{c.auto_renew && <span className="ml-1 rounded px-1.5 py-0.5 text-[10px] bg-mor-bluelight text-mor-blue">自動展延</span>}{statusOf(c) === 'expired' && <span className="ml-1 rounded px-1.5 py-0.5 text-[10px] bg-amber-50 text-amber-600">已到期</span>}{statusOf(c) === 'disabled' && <span className="ml-1 rounded px-1.5 py-0.5 text-[10px] bg-gray-100 text-gray-500">已停用</span>}</td>
                 <td className="px-3 py-2 whitespace-nowrap">{c.tenant_name}</td>
                 <td className="px-3 py-2 whitespace-nowrap">{CAD_LABEL[c.cadence] ?? c.cadence}</td>
                 <td className="px-3 py-2 text-right">${fmt(c.monthly_rent)}</td>
                 <td className="px-3 py-2 text-right text-gray-500">${fmt(c.deposit)}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-500">{c.start_date ?? '—'} ~ {c.end_date ?? '—'}</td>
                 <td className="px-3 py-2">
-                  {(() => { const lt = curLT[c.room ?? '']; if (!lt) return <span className="text-xs text-gray-300" title="本月無應收(缺租期或不在租期內)">—</span>; return <button onClick={() => setCollect(c)} title="點擊開啟收款" className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${lt.paid ? 'bg-mor-greenlight text-mor-green' : 'bg-orange-50 text-orange-600'}`}>{lt.paid ? '本月已收' : '本月未收'}</button>; })()}
+                  {(() => { const lt = curLT[c.id]; if (!lt) return <span className="text-xs text-gray-300" title="本月無應收(缺租期或不在租期內)">—</span>; return <button onClick={() => setCollect(c)} title="點擊開啟收款" className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${lt.paid ? 'bg-mor-greenlight text-mor-green' : 'bg-orange-50 text-orange-600'}`}>{lt.paid ? '本月已收' : '本月未收'}</button>; })()}
                 </td>
                 <td className="px-3 py-2 text-right whitespace-nowrap space-x-2">
                   <button onClick={() => setCollect(c)} className="text-xs text-mor-green underline hover:text-emerald-700 font-medium">收租</button>
+                  <button onClick={() => renew(c)} className="text-xs text-mor-blue underline hover:text-blue-700">續約</button>
                   <button onClick={() => setEdit(c)} className="text-xs text-mor-slate underline hover:text-mor-blue">編輯</button>
                   <button onClick={() => del(c)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
                 </td>
@@ -218,6 +231,7 @@ export default function ContractsPage() {
               <label className="flex flex-col gap-1">租期迄<input type="date" value={edit.end_date ?? ''} onChange={(e) => setEdit({ ...edit, end_date: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">入款帳號<select value={edit.account ?? ''} onChange={(e) => setEdit({ ...edit, account: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option><option value="8088">8088</option><option value="0564">0564</option><option value="4145">4145</option></select></label>
               <label className="flex items-center gap-2 mt-6"><input type="checkbox" checked={edit.active} onChange={(e) => setEdit({ ...edit, active: e.target.checked })} />啟用中</label>
+              <label className="flex items-center gap-2 mt-6 col-span-2" title="到期後每月自動產生營收與收租，直到取消啟用為止"><input type="checkbox" checked={edit.auto_renew ?? false} onChange={(e) => setEdit({ ...edit, auto_renew: e.target.checked })} />自動展延(到期後每月續產生，直到停用)</label>
               <label className="flex flex-col gap-1 col-span-2">備註<input value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
             </div>
             <div className="sticky bottom-0 bg-white border-t border-mor-line px-6 py-3 flex justify-end gap-2">
@@ -258,27 +272,33 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
   const STEP = ({ monthly: 1, quarterly: 3, halfyear: 6, yearly: 12 } as any)[c.cadence] || 1;
 
   const months = useMemo(() => {
-    if (!c.start_date || !c.end_date) return [] as { ym: string; y: number; m: number; label: string }[];
-    const sd = new Date(c.start_date + 'T00:00:00'), ed = new Date(c.end_date + 'T00:00:00');
+    if (!c.start_date) return [] as { ym: string; y: number; m: number; label: string }[];
+    const sd = new Date(c.start_date + 'T00:00:00');
+    let ed = c.end_date ? new Date(c.end_date + 'T00:00:00') : new Date(sd);
+    // 自動展延: 延伸到本月+1
+    if (c.auto_renew) { const h = new Date(); h.setMonth(h.getMonth() + 1); if (h > ed) ed = h; }
+    // 涵蓋任何已產生(展延)的月份
+    const exYms = Object.keys(existing).map((k) => k.split('_').pop() || '').filter((x) => /^\d{6}$/.test(x));
+    if (exYms.length) { const mx = exYms.sort()[exYms.length - 1]; const my = new Date(Number(mx.slice(0, 4)), Number(mx.slice(4, 6)) - 1, 1); if (my > ed) ed = my; }
     const out: { ym: string; y: number; m: number; label: string }[] = [];
     let cur = new Date(sd.getFullYear(), sd.getMonth(), 1);
     const endFirst = new Date(ed.getFullYear(), ed.getMonth(), 1);
     let g = 0;
-    while (cur <= endFirst && g++ < 120) {
+    while (cur <= endFirst && g++ < 360) {
       out.push({ ym: `${cur.getFullYear()}${String(cur.getMonth() + 1).padStart(2, '0')}`, y: cur.getFullYear(), m: cur.getMonth() + 1, label: `${cur.getFullYear()}/${cur.getMonth() + 1}` });
       cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1);
     }
     return out;
-  }, [c]);
+  }, [c, existing]);
   const cadPeriods = useMemo(() => { const out: any[] = []; for (let i = 0; i < months.length; i += STEP) out.push(months.slice(i, i + STEP)); return out; }, [months, STEP]);
 
   const loadExisting = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase.from('orders').select('order_key, paid, amount, paid_at').like('order_key', `LT_${c.room}_%`);
+    const { data } = await supabase.from('orders').select('order_key, paid, amount, paid_at').eq('contract_id', c.id).like('order_key', 'LT_%');
     const m: Record<string, any> = {};
     (data ?? []).forEach((o: any) => { m[o.order_key] = o; });
     setExisting(m); setLoading(false);
-  }, [supabase, c.room]);
+  }, [supabase, c.id]);
   useEffect(() => { loadExisting(); }, [loadExisting]);
 
   async function updDep(patch: any) {
