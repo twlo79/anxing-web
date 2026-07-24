@@ -302,6 +302,7 @@ function ymd(d: Date) { return d.toISOString().slice(0, 10); }
 
 function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClose: () => void; supabase: any }) {
   const [existing, setExisting] = useState<Record<string, any>>({});
+  const [endDate, setEndDate] = useState<string | null>(c.end_date ?? null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
   const [dep, setDep] = useState({ received: !!c.deposit_received, receivedAt: c.deposit_received_at || '', returned: !!c.deposit_returned, returnedAt: c.deposit_returned_at || '' });
@@ -313,7 +314,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
   const months = useMemo(() => {
     if (!c.start_date) return [] as { ym: string; y: number; m: number; label: string }[];
     const sd = new Date(c.start_date + 'T00:00:00');
-    let ed = c.end_date ? new Date(c.end_date + 'T00:00:00') : new Date(sd);
+    let ed = endDate ? new Date(endDate + 'T00:00:00') : new Date(sd);
     // 涵蓋任何已產生(展延)的月份
     const exYms = Object.keys(existing).map((k) => k.split('_').pop() || '').filter((x) => /^\d{6}$/.test(x));
     if (exYms.length) { const mx = exYms.sort()[exYms.length - 1]; const my = new Date(Number(mx.slice(0, 4)), Number(mx.slice(4, 6)) - 1, 1); if (my > ed) ed = my; }
@@ -326,7 +327,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
       cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1);
     }
     return out;
-  }, [c, existing]);
+  }, [c, existing, endDate]);
   const cadPeriods = useMemo(() => { const out: any[] = []; for (let i = 0; i < months.length; i += STEP) out.push(months.slice(i, i + STEP)); return out; }, [months, STEP]);
 
   const loadExisting = useCallback(async () => {
@@ -357,12 +358,13 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
     setBusy(first.ym);
     const { data: all } = await supabase.from('orders').select('id, order_key').like('order_key', `LT_${c.room}_%`);
     const toDel = (all ?? []).filter((o: any) => (o.order_key.split('_').pop() || '') >= first.ym).map((o: any) => o.id);
-    if (toDel.length) await supabase.from('orders').delete().in('id', toDel);
+    if (toDel.length) { const { error } = await supabase.from('orders').delete().in('id', toDel); if (error) { setBusy(''); alert('刪除失敗:' + error.message); return; } }
     const ed = new Date(first.y, first.m - 1, 0);
     const edStr = `${ed.getFullYear()}-${String(ed.getMonth() + 1).padStart(2, '0')}-${String(ed.getDate()).padStart(2, '0')}`;
-    await supabase.from('contracts').update({ end_date: edStr }).eq('id', c.id);
-    Object.assign(c, { end_date: edStr });
-    setBusy(''); loadExisting();
+    const { error: e2 } = await supabase.from('contracts').update({ end_date: edStr }).eq('id', c.id);
+    if (e2) { setBusy(''); alert('更新租期迄失敗:' + e2.message); return; }
+    c.end_date = edStr; setEndDate(edStr);
+    setBusy(''); await loadExisting();
   }
   async function setPeriodPaidAt(chunk: any[], date: string) {
     const keys = chunk.map((mm) => `LT_${c.room}_${mm.ym}`);
