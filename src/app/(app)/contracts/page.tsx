@@ -351,6 +351,19 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
     if (error) alert('失敗:' + error.message);
     setBusy(''); loadExisting();
   }
+  async function delFromPeriod(i: number) {
+    const chunk = cadPeriods[i]; const first = chunk[0];
+    if (!confirm(`刪除第 ${i + 1} 期(${first.label})及之後所有月份?此區間的營收與收款紀錄將一併移除,租期迄會改為前一個月底。`)) return;
+    setBusy(first.ym);
+    const { data: all } = await supabase.from('orders').select('id, order_key').like('order_key', `LT_${c.room}_%`);
+    const toDel = (all ?? []).filter((o: any) => (o.order_key.split('_').pop() || '') >= first.ym).map((o: any) => o.id);
+    if (toDel.length) await supabase.from('orders').delete().in('id', toDel);
+    const ed = new Date(first.y, first.m - 1, 0);
+    const edStr = `${ed.getFullYear()}-${String(ed.getMonth() + 1).padStart(2, '0')}-${String(ed.getDate()).padStart(2, '0')}`;
+    await supabase.from('contracts').update({ end_date: edStr }).eq('id', c.id);
+    Object.assign(c, { end_date: edStr });
+    setBusy(''); loadExisting();
+  }
   async function setPeriodPaidAt(chunk: any[], date: string) {
     const keys = chunk.map((mm) => `LT_${c.room}_${mm.ym}`);
     const { error } = await supabase.from('orders').update({ paid_at: date || null }).in('order_key', keys);
@@ -441,6 +454,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
                         <button onClick={() => setFeeDraft(null)} className="text-gray-400 underline text-xs">取消</button>
                       </div>
                     ) : <button onClick={() => setFeeDraft({ pi: i, date: `${first.y}-${String(first.m).padStart(2, '0')}-01`, type: '電費', amount: 0 })} className="text-xs text-mor-blue underline">+ 加費(認列營收)</button>}
+                    <div className="text-right mt-1"><button onClick={() => delFromPeriod(i)} disabled={!!busy} className="text-[11px] text-red-400 underline hover:text-red-600 disabled:opacity-40">刪除此期起</button></div>
                   </div>
                 </div>
               );
