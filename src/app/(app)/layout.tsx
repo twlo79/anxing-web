@@ -9,7 +9,7 @@ const ROLE_LABEL: Record<string, string> = {
 };
 
 const NAV = [
-  { href: '/shortterm', label: '短租訂單與收款', icon: '🏨', roles: ['manager', 'super_admin'] },
+  { href: '/shortterm', label: '短租訂單與收款', icon: '🏨', roles: ['housekeeper', 'manager', 'super_admin'] },
   { href: '/contracts', label: '契約訂單與收款', icon: '📋', roles: ['housekeeper', 'manager', 'super_admin'] },
   { href: '/revenues', label: '營收報表', icon: '💰', roles: ['manager', 'super_admin'] },
   { href: '/expenses', label: '支出', icon: '📒', roles: ['manager', 'super_admin'] },
