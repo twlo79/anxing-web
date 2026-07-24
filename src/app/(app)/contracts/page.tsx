@@ -84,7 +84,7 @@ export default function ContractsPage() {
     const payload = {
       estate_id: edit.estate_id, room: edit.room, tenant_name: edit.tenant_name, phone: edit.phone,
       cadence: edit.cadence, monthly_rent: edit.monthly_rent, deposit: edit.deposit,
-      start_date: edit.start_date || null, end_date: edit.end_date || null, first_payment_date: edit.first_payment_date || null, pay_day: null,
+      start_date: edit.start_date || null, end_date: edit.end_date || null, first_payment_date: edit.first_payment_date || null, pay_day: edit.pay_day ?? null,
       account: edit.account, note: edit.note, active: edit.active, name: `${edit.tenant_name ?? ''}-${edit.room ?? ''}`,
     };
     const { error } = edit.id
@@ -197,7 +197,14 @@ export default function ContractsPage() {
               <label className="flex flex-col gap-1">電話<input value={edit.phone ?? ''} onChange={(e) => setEdit({ ...edit, phone: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">繳別<select value={edit.cadence} onChange={(e) => setEdit({ ...edit, cadence: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="monthly">月繳</option><option value="quarterly">季繳</option><option value="halfyear">半年繳</option><option value="yearly">年繳</option></select></label>
               <label className="flex flex-col gap-1">首繳日<input type="date" value={edit.first_payment_date ?? ''} onChange={(e) => setEdit({ ...edit, first_payment_date: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
-              <div className="col-span-2 -mt-1 text-xs text-gray-500">租金對應:<span className="ml-1 font-medium text-gray-700">{payScheduleText(edit.cadence, edit.first_payment_date) || '—'}</span></div>
+              <div className="col-span-2 -mt-1 text-xs text-gray-500 flex items-center gap-1 flex-wrap">
+                <span>租金對應:</span>
+                {edit.cadence === 'yearly'
+                  ? <span>每年 {edit.first_payment_date ? Number(edit.first_payment_date.slice(5, 7)) : '?'} 月</span>
+                  : <span>{edit.cadence === 'monthly' ? '每月' : edit.cadence === 'quarterly' ? '每三個月' : '每半年'}</span>}
+                <input type="number" min={1} max={31} value={edit.pay_day ?? (edit.first_payment_date ? Number(edit.first_payment_date.slice(8, 10)) : '')} onChange={(e) => setEdit({ ...edit, pay_day: e.target.value ? parseInt(e.target.value) : null })} className="w-14 rounded border border-gray-300 px-1 py-0.5" />
+                <span>日</span>
+              </div>
               <label className="flex flex-col gap-1">月租金<input type="number" value={edit.monthly_rent ?? ''} onChange={(e) => setEdit({ ...edit, monthly_rent: e.target.value ? parseFloat(e.target.value) : 0 })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">押金<input type="number" value={edit.deposit ?? ''} onChange={(e) => setEdit({ ...edit, deposit: e.target.value ? parseFloat(e.target.value) : 0 })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">租期起<input type="date" value={edit.start_date ?? ''} onChange={(e) => setEdit({ ...edit, start_date: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
@@ -220,13 +227,15 @@ export default function ContractsPage() {
 
 const CAD_MONTHS: Record<string, number> = { monthly: 1, quarterly: 3, halfyear: 6, yearly: 12 };
 function addMonths(d: Date, n: number) { const x = new Date(d); x.setMonth(x.getMonth() + n); return x; }
-function payScheduleText(cadence: string, fpd: string | null | undefined) {
-  if (!fpd) return '';
-  const p = fpd.split('-').map(Number); const m = p[1], d = p[2];
+function payScheduleText(cadence: string, fpd: string | null | undefined, payDay?: number | null) {
+  const p = fpd ? fpd.split('-').map(Number) : null;
+  const m = p ? p[1] : null;
+  const d = payDay || (p ? p[2] : null);
+  if (!d) return '';
   if (cadence === 'monthly') return `每月 ${d} 日`;
   if (cadence === 'quarterly') return `每三個月 ${d} 日`;
   if (cadence === 'halfyear') return `每半年 ${d} 日`;
-  if (cadence === 'yearly') return `每年 ${m} 月 ${d} 日`;
+  if (cadence === 'yearly' && m) return `每年 ${m} 月 ${d} 日`;
   return '';
 }
 function ymd(d: Date) { return d.toISOString().slice(0, 10); }
@@ -304,7 +313,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
         <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 flex items-center justify-between">
           <div>
             <div className="font-bold">收款 — {c.room} {c.tenant_name}</div>
-            <div className="text-xs text-gray-500 mt-0.5">{CAD_LABEL[c.cadence]}・月租 ${fmt(c.monthly_rent)}・首繳 {c.first_payment_date ?? '—'}{payScheduleText(c.cadence, c.first_payment_date) ? `・繳款 ${payScheduleText(c.cadence, c.first_payment_date)}` : ''}・租期 {c.start_date} ~ {c.end_date}・應收按月自動認列</div>
+            <div className="text-xs text-gray-500 mt-0.5">{CAD_LABEL[c.cadence]}・月租 ${fmt(c.monthly_rent)}・首繳 {c.first_payment_date ?? '—'}{payScheduleText(c.cadence, c.first_payment_date, c.pay_day) ? `・繳款 ${payScheduleText(c.cadence, c.first_payment_date, c.pay_day)}` : ''}・租期 {c.start_date} ~ {c.end_date}・應收按月自動認列</div>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
         </div>
@@ -336,7 +345,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
               const allPaid = os.length > 0 && os.every((o: any) => o.paid);
               const paidAt = os.find((o: any) => o.paid_at)?.paid_at;
               const first = chunk[0], last = chunk[chunk.length - 1];
-              const due = c.first_payment_date ? (() => { const dd = addMonths(new Date(c.first_payment_date + 'T00:00:00'), i * STEP); dd.setDate(dd.getDate() - 1); return `${dd.getFullYear()}/${dd.getMonth() + 1}/${dd.getDate()}`; })() : '';
+              const due = c.first_payment_date ? (() => { const base = addMonths(new Date(c.first_payment_date + 'T00:00:00'), i * STEP); const day = c.pay_day || base.getDate(); const dd = new Date(base.getFullYear(), base.getMonth(), day); dd.setDate(dd.getDate() - 1); return `${dd.getFullYear()}/${dd.getMonth() + 1}/${dd.getDate()}`; })() : '';
               const pfees = feeRows.filter((f: any) => f.checkin && chunk.some((mm: any) => (f.checkin.slice(0, 4) + f.checkin.slice(5, 7)) === mm.ym));
               return (
                 <div key={i} className={`rounded-xl border px-4 py-2.5 text-sm ${allPaid ? 'border-mor-greenlight bg-mor-greenlight/30' : 'border-mor-line'}`}>
