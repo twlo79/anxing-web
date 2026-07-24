@@ -43,9 +43,9 @@ export default function ContractsPage() {
     setLoading(true);
     const { data } = await supabase.from('contracts').select('*, estates(name)').order('room');
     setRows((data as any) ?? []);
-    const { data: lts } = await supabase.from('orders').select('contract_id, amount, paid').in('source', ['longterm', 'company', 'office']).eq('checkin', curFirst);
+    const { data: lts } = await supabase.from('orders').select('property_raw, amount, paid').in('source', ['longterm', 'company', 'office']).eq('checkin', curFirst);
     const m: Record<string, { amount: number; paid: boolean }> = {};
-    (lts ?? []).forEach((o: any) => { if (o.contract_id) m[o.contract_id] = { amount: Number(o.amount || 0), paid: !!o.paid }; });
+    (lts ?? []).forEach((o: any) => { if (o.property_raw) m[o.property_raw] = { amount: Number(o.amount || 0), paid: !!o.paid }; });
     setCurLT(m);
     setLoading(false);
   }, [supabase, curFirst]);
@@ -74,13 +74,13 @@ export default function ContractsPage() {
     return out;
   }, [rows, estateFilter, cadFilter, typeFilter, statusFilter, fromD, toD, kw, sortMode]);
   const activeCount = useMemo(() => filtered.filter((r) => r.active).length, [filtered]);
-  const monthAR = useMemo(() => filtered.filter((r) => r.active).reduce((s, r) => s + (curLT[r.id]?.amount ?? 0), 0), [filtered, curLT]);
-  const monthPaid = useMemo(() => filtered.filter((r) => r.active).reduce((s, r) => s + (curLT[r.id]?.paid ? (curLT[r.id].amount) : 0), 0), [filtered, curLT]);
+  const monthAR = useMemo(() => filtered.filter((r) => r.active).reduce((s, r) => s + (curLT[r.room ?? '']?.amount ?? 0), 0), [filtered, curLT]);
+  const monthPaid = useMemo(() => filtered.filter((r) => r.active).reduce((s, r) => s + (curLT[r.room ?? '']?.paid ? (curLT[r.room ?? ''].amount) : 0), 0), [filtered, curLT]);
   const roomLists = useMemo(() => {
     const rk = (x: string) => { const m = String(x || '').match(/^(\d+)/); return [m ? parseInt(m[1]) : 999, String(x || '')] as [number, string]; };
     const cmp = (a: { room: string }, b: { room: string }) => { const ka = rk(a.room), kb = rk(b.room); return ka[0] - kb[0] || (ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0); };
     const paid: { room: string; label: string }[] = [], unpaid: { room: string; label: string }[] = [];
-    filtered.filter((r) => r.active && r.watch).forEach((r) => { const lt = curLT[r.id]; if (!lt) return; const it = { room: r.room ?? '', label: (r.display_name || r.room || '') as string }; (lt.paid ? paid : unpaid).push(it); });
+    filtered.filter((r) => r.active && r.watch).forEach((r) => { const lt = curLT[r.room ?? '']; if (!lt) return; const it = { room: r.room ?? '', label: (r.display_name || r.room || '') as string }; (lt.paid ? paid : unpaid).push(it); });
     return { paid: paid.sort(cmp), unpaid: unpaid.sort(cmp) };
   }, [filtered, curLT]);
 
@@ -208,7 +208,7 @@ export default function ContractsPage() {
                 <td className="px-3 py-2 text-right text-gray-500">${fmt(c.deposit)}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-500">{c.start_date ?? '—'} ~ {c.end_date ?? '—'}</td>
                 <td className="px-3 py-2">
-                  {(() => { const lt = curLT[c.id]; if (!lt) return <span className="text-xs text-gray-300" title="本月無應收(缺租期或不在租期內)">—</span>; return <button onClick={() => setCollect(c)} title="點擊開啟收款" className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${lt.paid ? 'bg-mor-greenlight text-mor-green' : 'bg-orange-50 text-orange-600'}`}>{lt.paid ? '本月已收' : '本月未收'}</button>; })()}
+                  {(() => { const lt = curLT[c.room ?? '']; if (!lt) return <span className="text-xs text-gray-300" title="本月無應收(缺租期或不在租期內)">—</span>; return <button onClick={() => setCollect(c)} title="點擊開啟收款" className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${lt.paid ? 'bg-mor-greenlight text-mor-green' : 'bg-orange-50 text-orange-600'}`}>{lt.paid ? '本月已收' : '本月未收'}</button>; })()}
                 </td>
                 <td className="px-3 py-2 text-right whitespace-nowrap space-x-2">
                   <button onClick={() => togglePin(c)} title={c.watch ? '已關注(顯示於已收/未收清單)' : '關注收租(釘選)'} className={`text-xs ${c.watch ? 'text-amber-500' : 'text-gray-300 hover:text-amber-400'}`}>{c.watch ? '★' : '☆'}</button>
@@ -331,11 +331,11 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
 
   const loadExisting = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase.from('orders').select('order_key, paid, amount, paid_at').eq('contract_id', c.id).like('order_key', 'LT_%');
+    const { data } = await supabase.from('orders').select('order_key, paid, amount, paid_at').like('order_key', `LT_${c.room}_%`);
     const m: Record<string, any> = {};
     (data ?? []).forEach((o: any) => { m[o.order_key] = o; });
     setExisting(m); setLoading(false);
-  }, [supabase, c.id]);
+  }, [supabase, c.room]);
   useEffect(() => { loadExisting(); }, [loadExisting]);
 
   async function updDep(patch: any) {
