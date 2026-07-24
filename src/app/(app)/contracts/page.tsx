@@ -168,9 +168,7 @@ export default function ContractsPage() {
                 <td className="px-3 py-2 text-right text-gray-500">${fmt(c.deposit)}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-500">{c.start_date ?? '—'} ~ {c.end_date ?? '—'}</td>
                 <td className="px-3 py-2">
-                  <button onClick={() => togglePaid(c)} className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${c.paid ? 'bg-mor-greenlight text-mor-green' : 'bg-orange-50 text-orange-600'}`}>
-                    {c.paid ? '已收租' : '未收租'}
-                  </button>
+                  {(() => { const lt = curLT[c.room ?? '']; if (!lt) return <span className="text-xs text-gray-300" title="本月無應收(缺租期或不在租期內)">—</span>; return <button onClick={() => setCollect(c)} title="點擊開啟收款" className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${lt.paid ? 'bg-mor-greenlight text-mor-green' : 'bg-orange-50 text-orange-600'}`}>{lt.paid ? '本月已收' : '本月未收'}</button>; })()}
                 </td>
                 <td className="px-3 py-2 text-right whitespace-nowrap space-x-2">
                   <button onClick={() => setCollect(c)} className="text-xs text-mor-green underline hover:text-emerald-700 font-medium">收租</button>
