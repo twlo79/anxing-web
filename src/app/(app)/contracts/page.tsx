@@ -6,13 +6,14 @@ type Contract = {
   id: string; estate_id: string | null; room: string | null; tenant_name: string | null;
   phone: string | null; cadence: string; type: string | null; monthly_rent: number | null; amount_per_period: number | null; deposit: number | null;
   start_date: string | null; end_date: string | null; pay_day: number | null; first_payment_date: string | null;
-  paid: boolean; account: string | null; note: string | null; active: boolean; auto_renew?: boolean;
+  paid: boolean; account: string | null; note: string | null; active: boolean;
 };
 type Estate = { id: string; name: string; sort: number };
 
 const CAD_LABEL: Record<string, string> = { monthly: '月繳', quarterly: '季繳', halfyear: '半年繳', yearly: '年繳' };
 const TYPE_LABEL: Record<string, string> = { longterm: '長租', company: '公司登記', office: '辦公室' };
 const STEP_OF: Record<string, number> = { monthly: 1, quarterly: 3, halfyear: 6, yearly: 12 };
+const TYPE_SRC: Record<string, string> = { longterm: 'longterm', company: 'company', office: 'office' };
 const FEE_TYPES = ['水費', '電費', '網路費', '瓦斯費', '管理費', '清潔費', '修繕費', '其他'];
 const fmt = (n: number | null) => (n == null ? '' : Math.round(n).toLocaleString());
 
@@ -30,6 +31,7 @@ export default function ContractsPage() {
   const [cadFilter, setCadFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [ext, setExt] = useState({ months: '', monthly: '', total: '' });
   const [fromD, setFromD] = useState('');
   const [toD, setToD] = useState('');
   const [properties, setProperties] = useState<{ id: string; name: string; estate_id: string | null }[]>([]);
@@ -55,7 +57,7 @@ export default function ContractsPage() {
   function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 2500); }
 
   const todayS = new Date().toISOString().slice(0, 10);
-  const statusOf = (c: any) => (!c.active ? 'disabled' : c.auto_renew ? 'active' : (c.end_date && c.end_date < todayS ? 'expired' : 'active'));
+  const statusOf = (c: any) => (!c.active ? 'disabled' : (c.end_date && c.end_date < todayS ? 'expired' : 'active'));
   const filtered = useMemo(() => {
     let out = estateFilter ? rows.filter((r: any) => r.estates?.name === estateFilter) : rows;
     if (cadFilter) out = out.filter((r) => r.cadence === cadFilter);
@@ -94,7 +96,7 @@ export default function ContractsPage() {
       cadence: edit.cadence, type: edit.type, amount_per_period: edit.amount_per_period,
       monthly_rent: Math.round((edit.amount_per_period || 0) / (STEP_OF[edit.cadence] || 1)), deposit: edit.deposit,
       start_date: edit.start_date || null, end_date: edit.end_date || null, first_payment_date: edit.first_payment_date || null, pay_day: edit.pay_day ?? null,
-      account: edit.account, note: edit.note, active: edit.active, auto_renew: edit.auto_renew ?? false, name: `${edit.tenant_name ?? ''}-${edit.room ?? ''}`,
+      account: edit.account, note: edit.note, active: edit.active, name: `${edit.tenant_name ?? ''}-${edit.room ?? ''}`,
     };
     const { error } = edit.id
       ? await supabase.from('contracts').update(payload).eq('id', edit.id)
@@ -108,15 +110,28 @@ export default function ContractsPage() {
     if (error) return flash('刪除失敗:' + error.message);
     flash('已刪除'); load();
   }
-  function renew(c: Contract) {
-    const base = c.end_date ? new Date(c.end_date + 'T00:00:00') : new Date();
-    base.setDate(base.getDate() + 1);
-    const s0 = base.toISOString().slice(0, 10);
-    const e0 = new Date(base); e0.setFullYear(e0.getFullYear() + 1); e0.setDate(e0.getDate() - 1);
-    setEdit({ ...c, id: '', start_date: s0, end_date: e0.toISOString().slice(0, 10), first_payment_date: s0, paid: false, active: true });
+  async function doExtend() {
+    if (!edit || !edit.id) return;
+    const N = parseInt(ext.months); const amt = parseFloat(ext.monthly);
+    if (!N || N < 1) return flash('請輸入追加月數');
+    if (!amt || amt <= 0) return flash('請輸入月租金或總共租金');
+    if (!edit.end_date) return flash('需先設定租期迄才能展延');
+    const ed = new Date(edit.end_date + 'T00:00:00');
+    const newEnd = new Date(ed.getFullYear(), ed.getMonth() + 1 + N, 0);
+    const yms: string[] = []; let cur = new Date(ed.getFullYear(), ed.getMonth() + 1, 1);
+    for (let i = 0; i < N; i++) { yms.push(`LT_${edit.room}_${cur.getFullYear()}${String(cur.getMonth() + 1).padStart(2, '0')}`); cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1); }
+    const { error: e1 } = await supabase.from('contracts').update({ end_date: ymd(newEnd) }).eq('id', edit.id);
+    if (e1) return flash('展延失敗:' + e1.message);
+    await new Promise((r) => setTimeout(r, 400));
+    const src = TYPE_SRC[edit.type ?? 'longterm'] ?? 'longterm';
+    await supabase.from('orders').update({ amount: amt, source: src }).in('order_key', yms);
+    setEdit({ ...edit, end_date: ymd(newEnd) });
+    setExt({ months: '', monthly: '', total: '' });
+    flash(`已展延 ${N} 個月・新增 ${N} 期待收款(月租 $${amt})`);
+    load();
   }
   function blank(): Contract {
-    return { id: '', estate_id: estates.find((e) => e.name === '正隆')?.id ?? null, room: '', tenant_name: '', phone: '', cadence: 'monthly', type: 'longterm', monthly_rent: 0, amount_per_period: 0, deposit: 0, start_date: '', end_date: '', pay_day: null, first_payment_date: '', paid: false, account: null, note: '', active: true, auto_renew: false };
+    return { id: '', estate_id: estates.find((e) => e.name === '正隆')?.id ?? null, room: '', tenant_name: '', phone: '', cadence: 'monthly', type: 'longterm', monthly_rent: 0, amount_per_period: 0, deposit: 0, start_date: '', end_date: '', pay_day: null, first_payment_date: '', paid: false, account: null, note: '', active: true };
   }
 
   return (
@@ -179,7 +194,7 @@ export default function ContractsPage() {
             : filtered.length === 0 ? <tr><td colSpan={8} className="px-4 py-10 text-center text-gray-400">尚無契約</td></tr>
             : filtered.map((c: any) => (
               <tr key={c.id} className={`border-b border-mor-line/60 hover:bg-mor-bluelight/30 ${c.active ? '' : 'opacity-50'}`}>
-                <td className="px-3 py-2 font-medium whitespace-nowrap">{c.room}<span className="ml-1 text-xs text-gray-400">{c.estates?.name}</span>{c.auto_renew && <span className="ml-1 rounded px-1.5 py-0.5 text-[10px] bg-mor-bluelight text-mor-blue">自動展延</span>}{statusOf(c) === 'expired' && <span className="ml-1 rounded px-1.5 py-0.5 text-[10px] bg-amber-50 text-amber-600">已到期</span>}{statusOf(c) === 'disabled' && <span className="ml-1 rounded px-1.5 py-0.5 text-[10px] bg-gray-100 text-gray-500">已停用</span>}</td>
+                <td className="px-3 py-2 font-medium whitespace-nowrap">{c.room}<span className="ml-1 text-xs text-gray-400">{c.estates?.name}</span>{statusOf(c) === 'expired' && <span className="ml-1 rounded px-1.5 py-0.5 text-[10px] bg-amber-50 text-amber-600">已到期</span>}{statusOf(c) === 'disabled' && <span className="ml-1 rounded px-1.5 py-0.5 text-[10px] bg-gray-100 text-gray-500">已停用</span>}</td>
                 <td className="px-3 py-2 whitespace-nowrap">{c.tenant_name}</td>
                 <td className="px-3 py-2 whitespace-nowrap">{CAD_LABEL[c.cadence] ?? c.cadence}</td>
                 <td className="px-3 py-2 text-right">${fmt(c.monthly_rent)}</td>
@@ -190,7 +205,6 @@ export default function ContractsPage() {
                 </td>
                 <td className="px-3 py-2 text-right whitespace-nowrap space-x-2">
                   <button onClick={() => setCollect(c)} className="text-xs text-mor-green underline hover:text-emerald-700 font-medium">收租</button>
-                  <button onClick={() => renew(c)} className="text-xs text-mor-blue underline hover:text-blue-700">續約</button>
                   <button onClick={() => setEdit(c)} className="text-xs text-mor-slate underline hover:text-mor-blue">編輯</button>
                   <button onClick={() => del(c)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
                 </td>
@@ -231,8 +245,23 @@ export default function ContractsPage() {
               <label className="flex flex-col gap-1">租期迄<input type="date" value={edit.end_date ?? ''} onChange={(e) => setEdit({ ...edit, end_date: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">入款帳號<select value={edit.account ?? ''} onChange={(e) => setEdit({ ...edit, account: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option><option value="8088">8088</option><option value="0564">0564</option><option value="4145">4145</option></select></label>
               <label className="flex items-center gap-2 mt-6"><input type="checkbox" checked={edit.active} onChange={(e) => setEdit({ ...edit, active: e.target.checked })} />啟用中</label>
-              <label className="flex items-center gap-2 mt-6 col-span-2" title="到期後每月自動產生營收與收租，直到取消啟用為止"><input type="checkbox" checked={edit.auto_renew ?? false} onChange={(e) => setEdit({ ...edit, auto_renew: e.target.checked })} />自動展延(到期後每月續產生，直到停用)</label>
               <label className="flex flex-col gap-1 col-span-2">備註<input value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+              {edit.id && (
+                <div className="col-span-2 border-t border-mor-line pt-3 mt-1">
+                  <div className="text-xs font-semibold text-gray-500 mb-1.5">展延租期(在現有租期之後追加 N 個月;追加後會多出對應 N 期待收款,可多次展延,持續認列營收直到停用)</div>
+                  <div className="flex flex-wrap items-end gap-2 text-sm">
+                    <label className="flex flex-col gap-0.5 text-xs text-gray-500">追加月數
+                      <input type="number" min={1} value={ext.months} onChange={(e) => { const m = e.target.value; const mn = parseInt(m) || 0; const mo = parseFloat(ext.monthly) || 0; setExt({ months: m, monthly: ext.monthly, total: mo && mn ? String(mo * mn) : ext.total }); }} className="w-24 rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+                    <label className="flex flex-col gap-0.5 text-xs text-gray-500">月租金
+                      <input type="number" value={ext.monthly} onChange={(e) => { const v = e.target.value; const mn = parseInt(ext.months) || 0; const mo = parseFloat(v) || 0; setExt({ months: ext.months, monthly: v, total: mn ? String(mo * mn) : '' }); }} className="w-28 rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+                    <span className="pb-2 text-gray-400">或</span>
+                    <label className="flex flex-col gap-0.5 text-xs text-gray-500">總共租金
+                      <input type="number" value={ext.total} onChange={(e) => { const v = e.target.value; const mn = parseInt(ext.months) || 0; const tt = parseFloat(v) || 0; setExt({ months: ext.months, total: v, monthly: mn ? String(Math.round(tt / mn)) : '' }); }} className="w-32 rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+                    <button type="button" onClick={doExtend} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark">展延</button>
+                  </div>
+                  <div className="text-[11px] text-gray-400 mt-1">目前租期迄 {edit.end_date || '—'}・月租金與總共租金擇一輸入,另一個自動換算(月租金 × 月數 = 總共租金)。展延後租期迄自動延後。</div>
+                </div>
+              )}
             </div>
             <div className="sticky bottom-0 bg-white border-t border-mor-line px-6 py-3 flex justify-end gap-2">
               <button onClick={() => setEdit(null)} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>
@@ -275,8 +304,6 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
     if (!c.start_date) return [] as { ym: string; y: number; m: number; label: string }[];
     const sd = new Date(c.start_date + 'T00:00:00');
     let ed = c.end_date ? new Date(c.end_date + 'T00:00:00') : new Date(sd);
-    // 自動展延: 延伸到本月+1
-    if (c.auto_renew) { const h = new Date(); h.setMonth(h.getMonth() + 1); if (h > ed) ed = h; }
     // 涵蓋任何已產生(展延)的月份
     const exYms = Object.keys(existing).map((k) => k.split('_').pop() || '').filter((x) => /^\d{6}$/.test(x));
     if (exYms.length) { const mx = exYms.sort()[exYms.length - 1]; const my = new Date(Number(mx.slice(0, 4)), Number(mx.slice(4, 6)) - 1, 1); if (my > ed) ed = my; }
