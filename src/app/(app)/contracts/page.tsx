@@ -4,13 +4,15 @@ import { createClient } from '@/lib/supabase';
 
 type Contract = {
   id: string; estate_id: string | null; room: string | null; tenant_name: string | null;
-  phone: string | null; cadence: string; monthly_rent: number | null; deposit: number | null;
+  phone: string | null; cadence: string; type: string | null; monthly_rent: number | null; amount_per_period: number | null; deposit: number | null;
   start_date: string | null; end_date: string | null; pay_day: number | null; first_payment_date: string | null;
   paid: boolean; account: string | null; note: string | null; active: boolean;
 };
 type Estate = { id: string; name: string; sort: number };
 
 const CAD_LABEL: Record<string, string> = { monthly: '月繳', quarterly: '季繳', halfyear: '半年繳', yearly: '年繳' };
+const TYPE_LABEL: Record<string, string> = { longterm: '長租', company: '公司登記', office: '辦公室' };
+const STEP_OF: Record<string, number> = { monthly: 1, quarterly: 3, halfyear: 6, yearly: 12 };
 const FEE_TYPES = ['水費', '電費', '網路費', '瓦斯費', '管理費', '清潔費', '修繕費', '其他'];
 const fmt = (n: number | null) => (n == null ? '' : Math.round(n).toLocaleString());
 
@@ -83,7 +85,8 @@ export default function ContractsPage() {
     if (!edit) return;
     const payload = {
       estate_id: edit.estate_id, room: edit.room, tenant_name: edit.tenant_name, phone: edit.phone,
-      cadence: edit.cadence, monthly_rent: edit.monthly_rent, deposit: edit.deposit,
+      cadence: edit.cadence, type: edit.type, amount_per_period: edit.amount_per_period,
+      monthly_rent: Math.round((edit.amount_per_period || 0) / (STEP_OF[edit.cadence] || 1)), deposit: edit.deposit,
       start_date: edit.start_date || null, end_date: edit.end_date || null, first_payment_date: edit.first_payment_date || null, pay_day: edit.pay_day ?? null,
       account: edit.account, note: edit.note, active: edit.active, name: `${edit.tenant_name ?? ''}-${edit.room ?? ''}`,
     };
@@ -100,7 +103,7 @@ export default function ContractsPage() {
     flash('已刪除'); load();
   }
   function blank(): Contract {
-    return { id: '', estate_id: estates.find((e) => e.name === '正隆')?.id ?? null, room: '', tenant_name: '', phone: '', cadence: 'monthly', monthly_rent: 0, deposit: 0, start_date: '', end_date: '', pay_day: null, first_payment_date: '', paid: false, account: null, note: '', active: true };
+    return { id: '', estate_id: estates.find((e) => e.name === '正隆')?.id ?? null, room: '', tenant_name: '', phone: '', cadence: 'monthly', type: 'longterm', monthly_rent: 0, amount_per_period: 0, deposit: 0, start_date: '', end_date: '', pay_day: null, first_payment_date: '', paid: false, account: null, note: '', active: true };
   }
 
   return (
@@ -196,6 +199,7 @@ export default function ContractsPage() {
               <label className="flex flex-col gap-1">租戶<input value={edit.tenant_name ?? ''} onChange={(e) => setEdit({ ...edit, tenant_name: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">電話<input value={edit.phone ?? ''} onChange={(e) => setEdit({ ...edit, phone: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">繳別<select value={edit.cadence} onChange={(e) => setEdit({ ...edit, cadence: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="monthly">月繳</option><option value="quarterly">季繳</option><option value="halfyear">半年繳</option><option value="yearly">年繳</option></select></label>
+              <label className="flex flex-col gap-1">類別<select value={edit.type ?? 'longterm'} onChange={(e) => setEdit({ ...edit, type: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="longterm">長租</option><option value="company">公司登記</option><option value="office">辦公室</option></select></label>
               <label className="flex flex-col gap-1">首繳日<input type="date" value={edit.first_payment_date ?? ''} onChange={(e) => setEdit({ ...edit, first_payment_date: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <div className="col-span-2 -mt-1 text-xs text-gray-500 flex items-center gap-1 flex-wrap">
                 <span>租金對應:</span>
@@ -205,7 +209,7 @@ export default function ContractsPage() {
                 <input type="number" min={1} max={31} value={edit.pay_day ?? (edit.first_payment_date ? Number(edit.first_payment_date.slice(8, 10)) : '')} onChange={(e) => setEdit({ ...edit, pay_day: e.target.value ? parseInt(e.target.value) : null })} className="w-14 rounded border border-gray-300 px-1 py-0.5" />
                 <span>日</span>
               </div>
-              <label className="flex flex-col gap-1">月租金<input type="number" value={edit.monthly_rent ?? ''} onChange={(e) => setEdit({ ...edit, monthly_rent: e.target.value ? parseFloat(e.target.value) : 0 })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+              <label className="flex flex-col gap-1">每期租金({CAD_LABEL[edit.cadence]})<input type="number" value={edit.amount_per_period ?? ''} onChange={(e) => setEdit({ ...edit, amount_per_period: e.target.value ? parseFloat(e.target.value) : 0 })} className="rounded-lg border border-gray-300 px-2 py-1.5" /><span className="text-xs text-gray-500 mt-0.5">對應月租金:${fmt(Math.round((edit.amount_per_period || 0) / (STEP_OF[edit.cadence] || 1)))}</span></label>
               <label className="flex flex-col gap-1">押金<input type="number" value={edit.deposit ?? ''} onChange={(e) => setEdit({ ...edit, deposit: e.target.value ? parseFloat(e.target.value) : 0 })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">租期起<input type="date" value={edit.start_date ?? ''} onChange={(e) => setEdit({ ...edit, start_date: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">租期迄<input type="date" value={edit.end_date ?? ''} onChange={(e) => setEdit({ ...edit, end_date: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
@@ -313,7 +317,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
         <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 flex items-center justify-between">
           <div>
             <div className="font-bold">收款 — {c.room} {c.tenant_name}</div>
-            <div className="text-xs text-gray-500 mt-0.5">{CAD_LABEL[c.cadence]}・月租 ${fmt(c.monthly_rent)}・首繳 {c.first_payment_date ?? '—'}{payScheduleText(c.cadence, c.first_payment_date, c.pay_day) ? `・繳款 ${payScheduleText(c.cadence, c.first_payment_date, c.pay_day)}` : ''}・租期 {c.start_date} ~ {c.end_date}・應收按月自動認列</div>
+            <div className="text-xs text-gray-500 mt-0.5">{TYPE_LABEL[c.type ?? 'longterm']}・{CAD_LABEL[c.cadence]}・每期 ${fmt(c.amount_per_period)}(月 ${fmt(c.monthly_rent)})・首繳 {c.first_payment_date ?? '—'}{payScheduleText(c.cadence, c.first_payment_date, c.pay_day) ? `・繳款 ${payScheduleText(c.cadence, c.first_payment_date, c.pay_day)}` : ''}・租期 {c.start_date} ~ {c.end_date}・應收按月自動認列</div>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
         </div>
