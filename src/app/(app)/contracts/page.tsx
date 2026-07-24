@@ -31,6 +31,7 @@ export default function ContractsPage() {
   const [properties, setProperties] = useState<{ id: string; name: string; estate_id: string | null }[]>([]);
   const [curLT, setCurLT] = useState<Record<string, { amount: number; paid: boolean }>>({});
   const curFirst = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`; })();
+  const curMon = (() => { const d = new Date(); return `${d.getFullYear()}/${d.getMonth() + 1}`; })();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -65,6 +66,13 @@ export default function ContractsPage() {
   const activeCount = useMemo(() => filtered.filter((r) => r.active).length, [filtered]);
   const monthAR = useMemo(() => filtered.filter((r) => r.active).reduce((s, r) => s + (curLT[r.room ?? '']?.amount ?? 0), 0), [filtered, curLT]);
   const monthPaid = useMemo(() => filtered.filter((r) => r.active).reduce((s, r) => s + (curLT[r.room ?? '']?.paid ? (curLT[r.room ?? ''].amount) : 0), 0), [filtered, curLT]);
+  const roomLists = useMemo(() => {
+    const rk = (x: string) => { const m = String(x || '').match(/^(\d+)/); return [m ? parseInt(m[1]) : 999, String(x || '')] as [number, string]; };
+    const cmp = (a: string, b: string) => { const ka = rk(a), kb = rk(b); return ka[0] - kb[0] || (ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0); };
+    const paid: string[] = [], unpaid: string[] = [];
+    filtered.filter((r) => r.active).forEach((r) => { const lt = curLT[r.room ?? '']; if (!lt) return; (lt.paid ? paid : unpaid).push(r.room ?? ''); });
+    return { paid: paid.sort(cmp), unpaid: unpaid.sort(cmp) };
+  }, [filtered, curLT]);
 
   async function togglePaid(c: Contract) {
     const { error } = await supabase.from('contracts').update({ paid: !c.paid }).eq('id', c.id);
@@ -104,9 +112,20 @@ export default function ContractsPage() {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
         <div className="rounded-xl bg-mor-slate text-white p-4"><div className="text-xs opacity-75">契約數(啟用)</div><div className="text-2xl font-bold mt-1">{activeCount}</div></div>
-        <div className="rounded-xl bg-white border border-mor-line p-4"><div className="text-xs text-gray-500">本月應收</div><div className="text-2xl font-bold mt-1">${fmt(monthAR)}</div></div>
-        <div className="rounded-xl bg-white border border-mor-line p-4"><div className="text-xs text-gray-500">本月已收</div><div className="text-2xl font-bold mt-1 text-mor-green">${fmt(monthPaid)}</div></div>
-        <div className="rounded-xl bg-white border border-mor-line p-4"><div className="text-xs text-gray-500">本月未收</div><div className="text-2xl font-bold mt-1 text-orange-600">${fmt(monthAR - monthPaid)}</div></div>
+        <div className="rounded-xl bg-white border border-mor-line p-4"><div className="text-xs text-gray-500">本月({curMon}) 應收</div><div className="text-2xl font-bold mt-1">${fmt(monthAR)}</div></div>
+        <div className="rounded-xl bg-white border border-mor-line p-4"><div className="text-xs text-gray-500">本月({curMon}) 已收</div><div className="text-2xl font-bold mt-1 text-mor-green">${fmt(monthPaid)}</div></div>
+        <div className="rounded-xl bg-white border border-mor-line p-4"><div className="text-xs text-gray-500">本月({curMon}) 未收</div><div className="text-2xl font-bold mt-1 text-orange-600">${fmt(monthAR - monthPaid)}</div></div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 mb-3 text-sm">
+        <div className="rounded-xl bg-white border border-mor-line p-3">
+          <div className="text-xs text-gray-500 mb-1.5">本月({curMon}) 已收房源 <span className="text-mor-green font-medium">{roomLists.paid.length}</span></div>
+          <div className="flex flex-wrap gap-1">{roomLists.paid.map((rm) => <span key={rm} className="inline-block rounded-md bg-mor-greenlight/50 text-mor-green px-1.5 py-0.5 text-xs">{rm}</span>)}{!roomLists.paid.length && <span className="text-xs text-gray-300">—</span>}</div>
+        </div>
+        <div className="rounded-xl bg-white border border-mor-line p-3">
+          <div className="text-xs text-gray-500 mb-1.5">本月({curMon}) 未收房源 <span className="text-orange-600 font-medium">{roomLists.unpaid.length}</span></div>
+          <div className="flex flex-wrap gap-1">{roomLists.unpaid.map((rm) => <span key={rm} className="inline-block rounded-md bg-orange-50 text-orange-600 px-1.5 py-0.5 text-xs">{rm}</span>)}{!roomLists.unpaid.length && <span className="text-xs text-gray-300">—</span>}</div>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-3 mb-3 text-sm">
@@ -120,9 +139,10 @@ export default function ContractsPage() {
           <input type="date" value={toD} onChange={(e) => setToD(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5" />
           {(fromD || toD) && <button onClick={() => { setFromD(''); setToD(''); }} className="text-gray-400 underline text-xs">清除</button>}
         </div>
-        <select value={sortMode} onChange={(e) => setSortMode(e.target.value as any)} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="date_desc">日期新→舊</option><option value="date_asc">日期舊→新</option><option value="room">房源</option></select>
+        <select value={sortMode} onChange={(e) => setSortMode(e.target.value as any)} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="room">房源</option><option value="date_desc">日期新→舊</option><option value="date_asc">日期舊→新</option></select>
         <input value={kw} onChange={(e) => setKw(e.target.value)} placeholder="搜尋 房源/租戶/電話" className="rounded-lg border border-gray-300 px-2 py-1.5 w-44" />
         {kw && <button onClick={() => setKw('')} className="text-gray-400 underline text-xs">清除</button>}
+        {(estateFilter || cadFilter || fromD || toD || kw) && <button onClick={() => { setEstateFilter(''); setCadFilter(''); setFromD(''); setToD(''); setKw(''); }} className="text-gray-500 underline text-xs">全部清除</button>}
         <div className="text-xs text-gray-400">共 {filtered.length} 筆</div>
         <button onClick={() => setEdit(blank())} className="ml-auto rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 新增契約</button>
       </div>
@@ -308,13 +328,13 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
               const allPaid = os.length > 0 && os.every((o: any) => o.paid);
               const paidAt = os.find((o: any) => o.paid_at)?.paid_at;
               const first = chunk[0], last = chunk[chunk.length - 1];
-              const due = c.first_payment_date ? (() => { const dd = addMonths(new Date(c.first_payment_date + 'T00:00:00'), i * STEP); return `${dd.getFullYear()}/${dd.getMonth() + 1}/${dd.getDate()}`; })() : '';
+              const due = c.first_payment_date ? (() => { const dd = addMonths(new Date(c.first_payment_date + 'T00:00:00'), i * STEP); dd.setDate(dd.getDate() - 1); return `${dd.getFullYear()}/${dd.getMonth() + 1}/${dd.getDate()}`; })() : '';
               const pfees = feeRows.filter((f: any) => f.checkin && chunk.some((mm: any) => (f.checkin.slice(0, 4) + f.checkin.slice(5, 7)) === mm.ym));
               return (
                 <div key={i} className={`rounded-xl border px-4 py-2.5 text-sm ${allPaid ? 'border-mor-greenlight bg-mor-greenlight/30' : 'border-mor-line'}`}>
                   <div className="flex items-center justify-between">
                     <div>
-                      <div className="font-medium">{first.label}{STEP > 1 ? `~${last.label}` : ''}{due ? <span className="ml-2 text-xs text-gray-400">應繳 {due}</span> : null}</div>
+                      <div className="font-medium"><span className="text-mor-blue">第 {i + 1} 期</span> <span className="text-gray-700">{first.label}{STEP > 1 ? `~${last.label}` : ''}</span>{due ? <span className="ml-2 text-xs text-gray-400">應繳 {due}</span> : null}</div>
                       <div className="text-xs text-gray-500">應收 ${fmt(amount)}</div>
                     </div>
                     {os.length > 0 && (allPaid
