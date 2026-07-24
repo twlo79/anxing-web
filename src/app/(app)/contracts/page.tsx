@@ -118,14 +118,16 @@ export default function ContractsPage() {
     if (!edit.end_date) return flash('需先設定租期迄才能展延');
     const ed = new Date(edit.end_date + 'T00:00:00');
     const newEnd = new Date(ed.getFullYear(), ed.getMonth() + 1 + N, 0);
+    const fmtLocal = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const newEndStr = fmtLocal(newEnd);
     const yms: string[] = []; let cur = new Date(ed.getFullYear(), ed.getMonth() + 1, 1);
     for (let i = 0; i < N; i++) { yms.push(`LT_${edit.room}_${cur.getFullYear()}${String(cur.getMonth() + 1).padStart(2, '0')}`); cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1); }
-    const { error: e1 } = await supabase.from('contracts').update({ end_date: ymd(newEnd) }).eq('id', edit.id);
+    const { error: e1 } = await supabase.from('contracts').update({ end_date: newEndStr }).eq('id', edit.id);
     if (e1) return flash('展延失敗:' + e1.message);
     await new Promise((r) => setTimeout(r, 400));
     const src = TYPE_SRC[edit.type ?? 'longterm'] ?? 'longterm';
     await supabase.from('orders').update({ amount: amt, source: src }).in('order_key', yms);
-    setEdit({ ...edit, end_date: ymd(newEnd) });
+    setEdit({ ...edit, end_date: newEndStr });
     setExt({ months: '', monthly: '', total: '' });
     flash(`已展延 ${N} 個月・新增 ${N} 期待收款(月租 $${amt})`);
     load();
