@@ -6,7 +6,7 @@ type Contract = {
   id: string; estate_id: string | null; room: string | null; tenant_name: string | null;
   phone: string | null; cadence: string; type: string | null; monthly_rent: number | null; amount_per_period: number | null; deposit: number | null;
   start_date: string | null; end_date: string | null; pay_day: number | null; first_payment_date: string | null;
-  paid: boolean; account: string | null; note: string | null; active: boolean;
+  paid: boolean; account: string | null; note: string | null; active: boolean; watch?: boolean; display_name?: string | null;
 };
 type Estate = { id: string; name: string; sort: number };
 
@@ -78,12 +78,17 @@ export default function ContractsPage() {
   const monthPaid = useMemo(() => filtered.filter((r) => r.active).reduce((s, r) => s + (curLT[r.id]?.paid ? (curLT[r.id].amount) : 0), 0), [filtered, curLT]);
   const roomLists = useMemo(() => {
     const rk = (x: string) => { const m = String(x || '').match(/^(\d+)/); return [m ? parseInt(m[1]) : 999, String(x || '')] as [number, string]; };
-    const cmp = (a: string, b: string) => { const ka = rk(a), kb = rk(b); return ka[0] - kb[0] || (ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0); };
-    const paid: string[] = [], unpaid: string[] = [];
-    filtered.filter((r) => r.active).forEach((r) => { const lt = curLT[r.id]; if (!lt) return; (lt.paid ? paid : unpaid).push(r.room ?? ''); });
+    const cmp = (a: { room: string }, b: { room: string }) => { const ka = rk(a.room), kb = rk(b.room); return ka[0] - kb[0] || (ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0); };
+    const paid: { room: string; label: string }[] = [], unpaid: { room: string; label: string }[] = [];
+    filtered.filter((r) => r.active && r.watch).forEach((r) => { const lt = curLT[r.id]; if (!lt) return; const it = { room: r.room ?? '', label: (r.display_name || r.room || '') as string }; (lt.paid ? paid : unpaid).push(it); });
     return { paid: paid.sort(cmp), unpaid: unpaid.sort(cmp) };
   }, [filtered, curLT]);
 
+  async function togglePin(c: Contract) {
+    const { error } = await supabase.from('contracts').update({ watch: !c.watch }).eq('id', c.id);
+    if (error) return flash('更新失敗:' + error.message);
+    setRows((rs) => rs.map((r) => r.id === c.id ? { ...r, watch: !c.watch } : r));
+  }
   async function togglePaid(c: Contract) {
     const { error } = await supabase.from('contracts').update({ paid: !c.paid }).eq('id', c.id);
     if (error) return flash('更新失敗:' + error.message);
@@ -96,7 +101,7 @@ export default function ContractsPage() {
       cadence: edit.cadence, type: edit.type, amount_per_period: edit.amount_per_period,
       monthly_rent: Math.round((edit.amount_per_period || 0) / (STEP_OF[edit.cadence] || 1)), deposit: edit.deposit,
       start_date: edit.start_date || null, end_date: edit.end_date || null, first_payment_date: edit.first_payment_date || null, pay_day: edit.pay_day ?? null,
-      account: edit.account, note: edit.note, active: edit.active, name: `${edit.tenant_name ?? ''}-${edit.room ?? ''}`,
+      account: edit.account, note: edit.note, active: edit.active, watch: edit.watch ?? false, display_name: edit.display_name || null, name: `${edit.tenant_name ?? ''}-${edit.room ?? ''}`,
     };
     const { error } = edit.id
       ? await supabase.from('contracts').update(payload).eq('id', edit.id)
@@ -133,7 +138,7 @@ export default function ContractsPage() {
     load();
   }
   function blank(): Contract {
-    return { id: '', estate_id: estates.find((e) => e.name === '正隆')?.id ?? null, room: '', tenant_name: '', phone: '', cadence: 'monthly', type: 'longterm', monthly_rent: 0, amount_per_period: 0, deposit: 0, start_date: '', end_date: '', pay_day: null, first_payment_date: '', paid: false, account: null, note: '', active: true };
+    return { id: '', estate_id: estates.find((e) => e.name === '正隆')?.id ?? null, room: '', tenant_name: '', phone: '', cadence: 'monthly', type: 'longterm', monthly_rent: 0, amount_per_period: 0, deposit: 0, start_date: '', end_date: '', pay_day: null, first_payment_date: '', paid: false, account: null, note: '', active: true, watch: false, display_name: '' };
   }
 
   return (
@@ -152,12 +157,12 @@ export default function ContractsPage() {
 
       <div className="grid grid-cols-2 gap-3 mb-3 text-sm">
         <div className="rounded-xl bg-white border border-mor-line p-3">
-          <div className="text-xs text-gray-500 mb-1.5">本月({curMon}) 已收房源 <span className="text-mor-green font-medium">{roomLists.paid.length}</span></div>
-          <div className="flex flex-wrap gap-1">{roomLists.paid.map((rm) => <span key={rm} className="inline-block rounded-md bg-mor-greenlight/50 text-mor-green px-1.5 py-0.5 text-xs">{rm}</span>)}{!roomLists.paid.length && <span className="text-xs text-gray-300">—</span>}</div>
+          <div className="text-xs text-gray-500 mb-1.5">本月({curMon}) 已收房源(關注) <span className="text-mor-green font-medium">{roomLists.paid.length}</span></div>
+          <div className="flex flex-wrap gap-1">{roomLists.paid.map((it) => <span key={it.room} className="inline-block rounded-md bg-mor-greenlight/50 text-mor-green px-1.5 py-0.5 text-xs">{it.label}</span>)}{!roomLists.paid.length && <span className="text-xs text-gray-300">—</span>}</div>
         </div>
         <div className="rounded-xl bg-white border border-mor-line p-3">
-          <div className="text-xs text-gray-500 mb-1.5">本月({curMon}) 未收房源 <span className="text-orange-600 font-medium">{roomLists.unpaid.length}</span></div>
-          <div className="flex flex-wrap gap-1">{roomLists.unpaid.map((rm) => <span key={rm} className="inline-block rounded-md bg-orange-50 text-orange-600 px-1.5 py-0.5 text-xs">{rm}</span>)}{!roomLists.unpaid.length && <span className="text-xs text-gray-300">—</span>}</div>
+          <div className="text-xs text-gray-500 mb-1.5">本月({curMon}) 未收房源(關注) <span className="text-orange-600 font-medium">{roomLists.unpaid.length}</span></div>
+          <div className="flex flex-wrap gap-1">{roomLists.unpaid.map((it) => <span key={it.room} className="inline-block rounded-md bg-orange-50 text-orange-600 px-1.5 py-0.5 text-xs">{it.label}</span>)}{!roomLists.unpaid.length && <span className="text-xs text-gray-300">—</span>}</div>
         </div>
       </div>
 
@@ -206,6 +211,7 @@ export default function ContractsPage() {
                   {(() => { const lt = curLT[c.id]; if (!lt) return <span className="text-xs text-gray-300" title="本月無應收(缺租期或不在租期內)">—</span>; return <button onClick={() => setCollect(c)} title="點擊開啟收款" className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${lt.paid ? 'bg-mor-greenlight text-mor-green' : 'bg-orange-50 text-orange-600'}`}>{lt.paid ? '本月已收' : '本月未收'}</button>; })()}
                 </td>
                 <td className="px-3 py-2 text-right whitespace-nowrap space-x-2">
+                  <button onClick={() => togglePin(c)} title={c.watch ? '已關注(顯示於已收/未收清單)' : '關注收租(釘選)'} className={`text-xs ${c.watch ? 'text-amber-500' : 'text-gray-300 hover:text-amber-400'}`}>{c.watch ? '★' : '☆'}</button>
                   <button onClick={() => setCollect(c)} className="text-xs text-mor-green underline hover:text-emerald-700 font-medium">收租</button>
                   <button onClick={() => setEdit(c)} className="text-xs text-mor-slate underline hover:text-mor-blue">編輯</button>
                   <button onClick={() => del(c)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
@@ -247,6 +253,8 @@ export default function ContractsPage() {
               <label className="flex flex-col gap-1">租期迄<input type="date" value={edit.end_date ?? ''} onChange={(e) => setEdit({ ...edit, end_date: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">入款帳號<select value={edit.account ?? ''} onChange={(e) => setEdit({ ...edit, account: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option><option value="8088">8088</option><option value="0564">0564</option><option value="4145">4145</option></select></label>
               <label className="flex items-center gap-2 mt-6"><input type="checkbox" checked={edit.active} onChange={(e) => setEdit({ ...edit, active: e.target.checked })} />啟用中</label>
+              <label className="flex items-center gap-2 mt-6" title="釘選後才會出現在上方「本月已收/未收」清單"><input type="checkbox" checked={edit.watch ?? false} onChange={(e) => setEdit({ ...edit, watch: e.target.checked })} />關注收租(釘選)</label>
+              <label className="flex flex-col gap-1 col-span-2">顯示名稱(釘選清單顯示,可填人名或自訂;留空則用房源)<input value={edit.display_name ?? ''} onChange={(e) => setEdit({ ...edit, display_name: e.target.value })} placeholder={edit.room ?? ''} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1 col-span-2">備註<input value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               {edit.id && (
                 <div className="col-span-2 border-t border-mor-line pt-3 mt-1">
