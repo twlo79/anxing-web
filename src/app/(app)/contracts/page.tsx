@@ -32,6 +32,7 @@ export default function ContractsPage() {
   const [typeFilter, setTypeFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [ext, setExt] = useState({ months: '', monthly: '', total: '' });
+  const [extBatches, setExtBatches] = useState<any[]>([]);
   const [fromD, setFromD] = useState('');
   const [toD, setToD] = useState('');
   const [properties, setProperties] = useState<{ id: string; name: string; estate_id: string | null }[]>([]);
@@ -115,6 +116,34 @@ export default function ContractsPage() {
     if (error) return flash('刪除失敗:' + error.message);
     flash('已刪除'); load();
   }
+  const loadExtBatches = useCallback(async () => {
+    if (!edit?.id || !edit?.room) { setExtBatches([]); return; }
+    const { data } = await supabase.from('orders').select('order_key, amount').eq('imported_via', 'extend').like('order_key', `LT_${edit.room}_%`);
+    const rows = (data ?? []).map((o: any) => ({ ym: o.order_key.split('_').pop() as string, amount: Number(o.amount || 0) })).sort((a, b) => (a.ym < b.ym ? -1 : 1));
+    const batches: any[] = [];
+    for (const r of rows) {
+      const last = batches[batches.length - 1];
+      if (last && nextYm(last.endYm) === r.ym && last.amount === r.amount) { last.endYm = r.ym; last.count++; }
+      else batches.push({ startYm: r.ym, endYm: r.ym, count: 1, amount: r.amount });
+    }
+    setExtBatches(batches);
+  }, [edit?.id, edit?.room, supabase]);
+  useEffect(() => { loadExtBatches(); }, [loadExtBatches]);
+
+  async function delExtBatch(b: any) {
+    if (!edit?.id) return;
+    const { data: all } = await supabase.from('orders').select('id, order_key').eq('imported_via', 'extend').like('order_key', `LT_${edit.room}_%`);
+    const toDel = (all ?? []).filter((o: any) => (o.order_key.split('_').pop() || '') >= b.startYm).map((o: any) => o.id);
+    if (toDel.length) { const { error } = await supabase.from('orders').delete().in('id', toDel); if (error) return flash('刪除失敗:' + error.message); }
+    const y = +b.startYm.slice(0, 4), m = +b.startYm.slice(4, 6);
+    const pe = new Date(y, m - 1, 0);
+    const peStr = `${pe.getFullYear()}-${String(pe.getMonth() + 1).padStart(2, '0')}-${String(pe.getDate()).padStart(2, '0')}`;
+    await supabase.from('contracts').update({ end_date: peStr }).eq('id', edit.id);
+    setEdit((prev) => prev ? { ...prev, end_date: peStr } : prev);
+    flash(`已刪除延展(${fmtYm(b.startYm)} 起),對應收租一併移除`);
+    loadExtBatches(); load();
+  }
+
   async function doExtend() {
     if (!edit || !edit.id) return;
     const N = parseInt(ext.months); const amt = parseFloat(ext.monthly);
@@ -131,11 +160,11 @@ export default function ContractsPage() {
     if (e1) return flash('展延失敗:' + e1.message);
     await new Promise((r) => setTimeout(r, 400));
     const src = TYPE_SRC[edit.type ?? 'longterm'] ?? 'longterm';
-    await supabase.from('orders').update({ amount: amt, source: src }).in('order_key', yms);
+    await supabase.from('orders').update({ amount: amt, source: src, imported_via: 'extend' }).in('order_key', yms);
     setEdit({ ...edit, end_date: newEndStr });
     setExt({ months: '', monthly: '', total: '' });
     flash(`已展延 ${N} 個月・新增 ${N} 期待收款(月租 $${amt})`);
-    load();
+    loadExtBatches(); load();
   }
   function blank(): Contract {
     return { id: '', estate_id: estates.find((e) => e.name === '正隆')?.id ?? null, room: '', tenant_name: '', phone: '', cadence: 'monthly', type: 'longterm', monthly_rent: 0, amount_per_period: 0, deposit: 0, start_date: '', end_date: '', pay_day: null, first_payment_date: '', paid: false, account: null, note: '', active: true, watch: false, display_name: '' };
@@ -270,6 +299,19 @@ export default function ContractsPage() {
                     <button type="button" onClick={doExtend} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark">展延</button>
                   </div>
                   <div className="text-[11px] text-gray-400 mt-1">目前租期迄 {edit.end_date || '—'}・月租金與總共租金擇一輸入,另一個自動換算(月租金 × 月數 = 總共租金)。展延後租期迄自動延後。</div>
+                  {extBatches.length > 0 && (
+                    <div className="mt-2 border-t border-mor-line/50 pt-2">
+                      <div className="text-[11px] text-gray-500 mb-1">已加延展(刪除會連同對應收租一併移除,不需再確認):</div>
+                      <div className="space-y-1">
+                        {extBatches.map((b, bi) => (
+                          <div key={bi} className="flex items-center justify-between text-xs">
+                            <span className="text-gray-700"><span className="rounded bg-mor-bluelight text-mor-blue px-1.5 py-0.5 text-[10px] mr-1">延展</span>{fmtYm(b.startYm)}{b.count > 1 ? ` ~ ${fmtYm(b.endYm)}` : ''} · {b.count} 個月 · 月租 ${fmt(b.amount)}</span>
+                            <button type="button" onClick={() => delExtBatch(b)} className="text-red-500 underline hover:text-red-700">刪除</button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -299,6 +341,8 @@ function payScheduleText(cadence: string, fpd: string | null | undefined, payDay
   return '';
 }
 function ymd(d: Date) { return d.toISOString().slice(0, 10); }
+const nextYm = (ym: string) => { let y = +ym.slice(0, 4), m = +ym.slice(4, 6); m++; if (m > 12) { m = 1; y++; } return `${y}${String(m).padStart(2, '0')}`; };
+const fmtYm = (ym: string) => `${+ym.slice(0, 4)}/${+ym.slice(4, 6)}`;
 
 function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClose: () => void; supabase: any }) {
   const [existing, setExisting] = useState<Record<string, any>>({});
@@ -328,11 +372,13 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
     }
     return out;
   }, [c, existing, endDate]);
-  const cadPeriods = useMemo(() => { const out: any[] = []; for (let i = 0; i < months.length; i += STEP) out.push(months.slice(i, i + STEP)); return out; }, [months, STEP]);
+  const extYms = useMemo(() => { const set = new Set<string>(); Object.entries(existing).forEach(([k, o]: any) => { if (o?.imported_via === 'extend') set.add(k.split('_').pop()); }); return set; }, [existing]);
+  const cadPeriods = useMemo(() => { const base = months.filter((m: any) => !extYms.has(m.ym)); const out: any[] = []; for (let i = 0; i < base.length; i += STEP) out.push(base.slice(i, i + STEP)); return out; }, [months, STEP, extYms]);
+  const extPeriods = useMemo(() => months.filter((m: any) => extYms.has(m.ym)).map((m: any) => [m]), [months, extYms]);
 
   const loadExisting = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase.from('orders').select('order_key, paid, amount, paid_at').like('order_key', `LT_${c.room}_%`);
+    const { data } = await supabase.from('orders').select('order_key, paid, amount, paid_at, imported_via').like('order_key', `LT_${c.room}_%`);
     const m: Record<string, any> = {};
     (data ?? []).forEach((o: any) => { m[o.order_key] = o; });
     setExisting(m); setLoading(false);
@@ -457,6 +503,30 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
                       </div>
                     ) : <button onClick={() => setFeeDraft({ pi: i, date: `${first.y}-${String(first.m).padStart(2, '0')}-01`, type: '電費', amount: 0 })} className="text-xs text-mor-blue underline">+ 加費(認列營收)</button>}
                     <div className="text-right mt-1"><button onClick={() => delFromPeriod(i)} disabled={!!busy} className="text-[11px] text-red-400 underline hover:text-red-600 disabled:opacity-40">刪除此期起</button></div>
+                  </div>
+                </div>
+              );
+            })}
+            {extPeriods.length > 0 && <div className="text-[11px] font-semibold text-mor-blue pt-1 pb-0.5">— 延展期數(每月一期確認)—</div>}
+            {extPeriods.map((chunk: any[], j: number) => {
+              const mm = chunk[0];
+              const o = existing[`LT_${c.room}_${mm.ym}`];
+              const amount = Number(o?.amount || 0);
+              const paid = !!o?.paid;
+              const paidAt = o?.paid_at;
+              return (
+                <div key={'ext' + j} className={`rounded-xl border px-4 py-2.5 text-sm ${paid ? 'border-mor-greenlight bg-mor-greenlight/30' : 'border-dashed border-mor-blue/40'}`}>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="font-medium"><span className="rounded bg-mor-bluelight text-mor-blue px-1.5 py-0.5 text-[10px]">延展</span> <span className="text-mor-blue">第 {j + 1} 期</span> <span className="text-gray-700">{mm.label}</span></div>
+                      <div className="text-xs text-gray-500">應收 ${fmt(amount)}</div>
+                    </div>
+                    {o && (paid
+                      ? <div className="flex items-center gap-1.5">
+                          <span className="text-xs text-gray-600">收款日 <input type="date" value={paidAt || ''} onChange={(e) => setPeriodPaidAt(chunk, e.target.value)} className="rounded border border-gray-300 px-1.5 py-0.5 text-xs" /></span>
+                          <button onClick={() => setPeriodPaid(chunk, false)} disabled={!!busy} className="rounded-lg bg-mor-greenlight text-mor-green px-2.5 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">取消</button>
+                        </div>
+                      : <button onClick={() => setPeriodPaid(chunk, true)} disabled={!!busy} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">{busy === mm.ym ? '…' : '確認收款'}</button>)}
                   </div>
                 </div>
               );
