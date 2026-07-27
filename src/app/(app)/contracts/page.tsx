@@ -221,7 +221,7 @@ export default function ContractsPage() {
           <thead>
             <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/50">
               <th className="px-3 py-2.5">房源</th><th className="px-3 py-2.5">租戶</th><th className="px-3 py-2.5">繳別</th>
-              <th className="px-3 py-2.5 text-right">月租金</th><th className="px-3 py-2.5 text-right">押金</th>
+              <th className="px-3 py-2.5 text-right">租金 / 對應月租</th><th className="px-3 py-2.5 text-right">押金</th>
               <th className="px-3 py-2.5 whitespace-nowrap">租期</th><th className="px-3 py-2.5">收租</th><th className="px-3 py-2.5 text-right">操作</th>
             </tr>
           </thead>
@@ -233,7 +233,7 @@ export default function ContractsPage() {
                 <td className="px-3 py-2 font-medium whitespace-nowrap">{c.room}<span className="ml-1 text-xs text-gray-400">{c.estates?.name}</span>{statusOf(c) === 'expired' && <span className="ml-1 rounded px-1.5 py-0.5 text-[10px] bg-amber-50 text-amber-600">已到期</span>}{statusOf(c) === 'disabled' && <span className="ml-1 rounded px-1.5 py-0.5 text-[10px] bg-gray-100 text-gray-500">已停用</span>}</td>
                 <td className="px-3 py-2 whitespace-nowrap">{c.tenant_name}</td>
                 <td className="px-3 py-2 whitespace-nowrap">{CAD_LABEL[c.cadence] ?? c.cadence}</td>
-                <td className="px-3 py-2 text-right">${fmt(c.monthly_rent)}</td>
+                <td className="px-3 py-2 text-right">{(() => { const step = STEP_OF[c.cadence] || 1; const per = c.amount_per_period || (c.monthly_rent || 0) * step; const mo = Math.round(per / step); return (<><div className="font-medium">${fmt(per)}</div><div className="text-xs text-gray-400">月 ${fmt(mo)}</div></>); })()}</td>
                 <td className="px-3 py-2 text-right text-gray-500">${fmt(c.deposit)}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-500">{c.start_date ?? '—'} ~ {c.end_date ?? '—'}</td>
                 <td className="px-3 py-2">
