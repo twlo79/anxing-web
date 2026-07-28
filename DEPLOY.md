@@ -46,12 +46,13 @@ pm2 start npm --name anxing -- start
 pm2 save && pm2 startup   # 照它輸出的指令再貼一次,開機自啟
 
 # 5. Nginx 反向代理
+#    ⚠ 埠號必須與 package.json 的 start script 一致(目前是 next start -p 3001)
 sudo tee /etc/nginx/sites-available/anxing <<'NGINX'
 server {
   listen 80;
   server_name 你的網域;   # 例 app.anxing.com
   location / {
-    proxy_pass http://127.0.0.1:3000;
+    proxy_pass http://127.0.0.1:3001;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
   }
@@ -80,9 +81,25 @@ Repo → Settings → Secrets and variables → Actions → New repository secre
 
 完成後,任何 push 到 main 都會自動部署,Actions 頁籤可看進度。
 
-## 四、讓 Claude 直接推更新(可選)
+⚠️ **注意:任何 commit 都會觸發完整重建與 `pm2 restart`**,包含只改文件的 commit。
+建置是在 Vultr 主機上執行的,若建置失敗,程式碼已經 `git pull` 更新、但服務仍跑舊版,
+會停在不一致狀態。**合併到 main 前請先在本機驗證:**
 
-GitHub → Settings → Developer settings → Personal access tokens → **Fine-grained token**:
-- Repository access:只選 `anxing-web`
-- Permissions:Contents → **Read and write**
-把 token 給 Claude,以後改完程式直接 push,自動上線。
+```powershell
+npm install
+npx tsc --noEmit
+npm run build
+```
+
+## 四、關於存取權限
+
+不需要為了讓工具或第三方代為推送而簽發 Personal Access Token。PAT 是長期有效、
+可寫入的憑證,一旦外流即等同 repo 寫入權,且容易忘記撤銷。
+
+需要代為操作時,採用下列任一方式即可,權限範圍都限於當次工作階段:
+
+- 瀏覽器既有的 GitHub 登入狀態(網頁編輯器)
+- GitKraken CLI(`gk auth login`,OAuth 授權,憑證不經第三方之手)
+- 本機 clone + Git Credential Manager
+
+上一版本文件曾建議簽發 fine-grained token 交付外部使用,已移除。
