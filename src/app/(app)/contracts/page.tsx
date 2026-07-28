@@ -38,6 +38,7 @@ export default function ContractsPage() {
   const [toD, setToD] = useState('');
   const [properties, setProperties] = useState<{ id: string; name: string; estate_id: string | null }[]>([]);
   const [curLT, setCurLT] = useState<Record<string, { amount: number; paid: boolean }>>({});
+  const [overdue, setOverdue] = useState<{ order_key: string; property_raw: string | null; guest_name: string | null; amount: number; checkin: string }[]>([]);
   const curFirst = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`; })();
   const curMon = (() => { const d = new Date(); return `${d.getFullYear()}/${d.getMonth() + 1}`; })();
 
@@ -49,6 +50,14 @@ export default function ContractsPage() {
     const m: Record<string, { amount: number; paid: boolean }> = {};
     (lts ?? []).forEach((o: any) => { if (o.property_raw) m[o.property_raw] = { amount: Number(o.amount || 0), paid: !!o.paid }; });
     setCurLT(m);
+    // 跨月欠款:本月之前已到期但仍未收的月租單(本月未收另計,兩者不重疊)
+    const { data: ovd } = await supabase.from('orders')
+      .select('order_key, property_raw, guest_name, amount, checkin')
+      .in('source', ['longterm', 'company', 'office'])
+      .eq('paid', false)
+      .lt('checkin', curFirst)
+      .order('checkin');
+    setOverdue((ovd as any) ?? []);
     setLoading(false);
   }, [supabase, curFirst]);
   useEffect(() => {
@@ -85,6 +94,36 @@ export default function ContractsPage() {
     filtered.filter((r) => r.active && r.watch).forEach((r) => { const lt = curLT[r.room ?? '']; if (!lt) return; const it = { room: r.room ?? '', label: (r.display_name || r.room || '') as string }; (lt.paid ? paid : unpaid).push(it); });
     return { paid: paid.sort(cmp), unpaid: unpaid.sort(cmp) };
   }, [filtered, curLT]);
+
+  // 跨月欠款:依房源彙總,連續月份合併顯示(2026/4,5,6 → 2026/4~6)
+  const arrears = useMemo(() => {
+    const byRoom = new Map<string, { room: string; label: string; tenant: string | null; yms: string[]; amount: number }>();
+    for (const o of overdue) {
+      const room = o.property_raw ?? '';
+      if (!room) continue;
+      const c = rows.find((r) => r.room === room);
+      const g = byRoom.get(room) ?? { room, label: (c?.display_name || room) as string, tenant: o.guest_name ?? c?.tenant_name ?? null, yms: [], amount: 0 };
+      g.yms.push(o.checkin.slice(0, 4) + o.checkin.slice(5, 7));
+      g.amount += Number(o.amount || 0);
+      byRoom.set(room, g);
+    }
+    const squash = (yms: string[]) => {
+      const s = [...new Set(yms)].sort();
+      const out: string[] = [];
+      let i = 0;
+      while (i < s.length) {
+        let j = i;
+        while (j + 1 < s.length && nextYm(s[j]) === s[j + 1]) j++;
+        out.push(i === j ? fmtYm(s[i]) : `${fmtYm(s[i])}~${fmtYm(s[j])}`);
+        i = j + 1;
+      }
+      return out.join('、');
+    };
+    return [...byRoom.values()]
+      .map((g) => ({ ...g, periods: g.yms.length, span: squash(g.yms), oldest: [...g.yms].sort()[0] }))
+      .sort((a, b) => (a.oldest < b.oldest ? -1 : a.oldest > b.oldest ? 1 : 0));
+  }, [overdue, rows]);
+  const arrearsTotal = useMemo(() => arrears.reduce((s, g) => s + g.amount, 0), [arrears]);
 
   async function togglePin(c: Contract) {
     const { error } = await supabase.from('contracts').update({ watch: !c.watch }).eq('id', c.id);
@@ -195,6 +234,41 @@ export default function ContractsPage() {
           <div className="flex flex-wrap gap-1">{roomLists.unpaid.map((it) => <span key={it.room} className="inline-block rounded-md bg-orange-50 text-orange-600 px-1.5 py-0.5 text-xs">{it.label}</span>)}{!roomLists.unpaid.length && <span className="text-xs text-gray-300">—</span>}</div>
         </div>
       </div>
+
+      {arrears.length > 0 && (
+        <div className="rounded-xl border border-red-200 bg-red-50/40 mb-3 overflow-hidden">
+          <div className="px-4 py-2 border-b border-red-200/70 flex items-center justify-between">
+            <div className="text-sm font-semibold text-red-700">
+              跨月欠款
+              <span className="ml-2 text-xs font-normal text-red-500">
+                {arrears.length} 間・共 {arrears.reduce((s, g) => s + g.periods, 0)} 期(不含本月未收)
+              </span>
+            </div>
+            <div className="text-sm font-bold text-red-700">${fmt(arrearsTotal)}</div>
+          </div>
+          <div className="max-h-52 overflow-y-auto">
+            {arrears.map((g) => {
+              const c = rows.find((r) => r.room === g.room);
+              return (
+                <div key={g.room}
+                  onClick={() => c && setCollect(c)}
+                  className="px-4 py-1.5 flex items-center justify-between text-sm border-b border-red-100 last:border-0 cursor-pointer hover:bg-red-100/40">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="font-medium shrink-0">{g.label}</span>
+                    <span className="text-gray-600 truncate">{g.tenant ?? ''}</span>
+                    {c && !c.active && <span className="shrink-0 rounded bg-gray-200 text-gray-500 px-1.5 py-0.5 text-[11px]">已終止</span>}
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <span className="text-xs text-red-600">欠 {g.periods} 期</span>
+                    <span className="text-xs text-gray-500">{g.span}</span>
+                    <span className="font-semibold w-24 text-right">${fmt(g.amount)}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-3 mb-3 text-sm">
         <select value={estateFilter} onChange={(e) => setEstateFilter(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
@@ -399,20 +473,10 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
     if (error) alert('失敗:' + error.message);
     setBusy(''); loadExisting();
   }
-  async function delFromPeriod(i: number) {
-    const chunk = cadPeriods[i]; const first = chunk[0];
-    if (!confirm(`刪除第 ${i + 1} 期(${first.label})及之後所有月份?此區間的營收與收款紀錄將一併移除,租期迄會改為前一個月底。`)) return;
-    setBusy(first.ym);
-    const { data: all } = await supabase.from('orders').select('id, order_key').like('order_key', `LT_${c.room}_%`);
-    const toDel = onlyLtOf(all as any[], c.room).filter((o: any) => (o.order_key.split('_').pop() || '') >= first.ym).map((o: any) => o.id);
-    if (toDel.length) { const { error } = await supabase.from('orders').delete().in('id', toDel); if (error) { setBusy(''); alert('刪除失敗:' + error.message); return; } }
-    const ed = new Date(first.y, first.m - 1, 0);
-    const edStr = `${ed.getFullYear()}-${String(ed.getMonth() + 1).padStart(2, '0')}-${String(ed.getDate()).padStart(2, '0')}`;
-    const { error: e2 } = await supabase.from('contracts').update({ end_date: edStr }).eq('id', c.id);
-    if (e2) { setBusy(''); alert('更新租期迄失敗:' + e2.message); return; }
-    c.end_date = edStr; setEndDate(edStr);
-    setBusy(''); await loadExisting();
-  }
+  // 「刪除此期起」已移除:它會一次刪掉該期之後的所有月租單(含已收款者)並回推租期迄,
+  // 而 UI 是以「期」呈現,實際刪除範圍卻是「該期及之後全部」,兩者不一致極易誤刪。
+  // 需要縮短租期請改在編輯視窗調整「租期迄」,由觸發器安全地移除多餘月份
+  // (gen_contract_orders 只刪 imported_via='contract' 且 paid=false 的列)。
   async function setPeriodPaidAt(chunk: any[], date: string) {
     const keys = chunk.map((mm) => `LT_${c.room}_${mm.ym}`);
     const { error } = await supabase.from('orders').update({ paid_at: date || null }).in('order_key', keys);
@@ -471,7 +535,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
               const allPaid = os.length > 0 && os.every((o: any) => o.paid);
               const paidAt = os.find((o: any) => o.paid_at)?.paid_at;
               const first = chunk[0], last = chunk[chunk.length - 1];
-              const due = c.first_payment_date ? (() => { const base = addMonths(new Date(c.first_payment_date + 'T00:00:00'), i * STEP); const day = c.pay_day || base.getDate(); const dd = new Date(base.getFullYear(), base.getMonth(), day); dd.setDate(dd.getDate() - 1); return `${dd.getFullYear()}/${dd.getMonth() + 1}/${dd.getDate()}`; })() : '';
+              const due = c.first_payment_date ? (() => { const base = addMonths(new Date(c.first_payment_date + 'T00:00:00'), i * STEP); const day = c.pay_day || base.getDate(); const dd = new Date(base.getFullYear(), base.getMonth(), day); return `${dd.getFullYear()}/${dd.getMonth() + 1}/${dd.getDate()}`; })() : '';
               const pfees = feeRows.filter((f: any) => f.checkin && chunk.some((mm: any) => (f.checkin.slice(0, 4) + f.checkin.slice(5, 7)) === mm.ym));
               return (
                 <div key={i} className={`rounded-xl border px-4 py-2.5 text-sm ${allPaid ? 'border-mor-greenlight bg-mor-greenlight/30' : 'border-mor-line'}`}>
@@ -503,7 +567,6 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
                         <button onClick={() => setFeeDraft(null)} className="text-gray-400 underline text-xs">取消</button>
                       </div>
                     ) : <button onClick={() => setFeeDraft({ pi: i, date: `${first.y}-${String(first.m).padStart(2, '0')}-01`, type: '電費', amount: 0 })} className="text-xs text-mor-blue underline">+ 加費(認列營收)</button>}
-                    <div className="text-right mt-1"><button onClick={() => delFromPeriod(i)} disabled={!!busy} className="text-[11px] text-red-400 underline hover:text-red-600 disabled:opacity-40">刪除此期起</button></div>
                   </div>
                 </div>
               );
