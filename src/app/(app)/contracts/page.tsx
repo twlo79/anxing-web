@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
+import { onlyLtOf } from '@/lib/ltKey';
 
 type Contract = {
   id: string; estate_id: string | null; room: string | null; tenant_name: string | null;
@@ -119,7 +120,7 @@ export default function ContractsPage() {
   const loadExtBatches = useCallback(async () => {
     if (!edit?.id || !edit?.room) { setExtBatches([]); return; }
     const { data } = await supabase.from('orders').select('order_key, amount').eq('imported_via', 'extend').like('order_key', `LT_${edit.room}_%`);
-    const rows = (data ?? []).map((o: any) => ({ ym: o.order_key.split('_').pop() as string, amount: Number(o.amount || 0) })).sort((a, b) => (a.ym < b.ym ? -1 : 1));
+    const rows = onlyLtOf(data as any[], edit.room).map((o: any) => ({ ym: o.order_key.split('_').pop() as string, amount: Number(o.amount || 0) })).sort((a, b) => (a.ym < b.ym ? -1 : 1));
     const batches: any[] = [];
     for (const r of rows) {
       const last = batches[batches.length - 1];
@@ -133,7 +134,7 @@ export default function ContractsPage() {
   async function delExtBatch(b: any) {
     if (!edit?.id) return;
     const { data: all } = await supabase.from('orders').select('id, order_key').eq('imported_via', 'extend').like('order_key', `LT_${edit.room}_%`);
-    const toDel = (all ?? []).filter((o: any) => (o.order_key.split('_').pop() || '') >= b.startYm).map((o: any) => o.id);
+    const toDel = onlyLtOf(all as any[], edit.room).filter((o: any) => (o.order_key.split('_').pop() || '') >= b.startYm).map((o: any) => o.id);
     if (toDel.length) { const { error } = await supabase.from('orders').delete().in('id', toDel); if (error) return flash('刪除失敗:' + error.message); }
     const y = +b.startYm.slice(0, 4), m = +b.startYm.slice(4, 6);
     const pe = new Date(y, m - 1, 0);
@@ -380,7 +381,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
     setLoading(true);
     const { data } = await supabase.from('orders').select('order_key, paid, amount, paid_at, imported_via').like('order_key', `LT_${c.room}_%`);
     const m: Record<string, any> = {};
-    (data ?? []).forEach((o: any) => { m[o.order_key] = o; });
+    onlyLtOf(data as any[], c.room).forEach((o: any) => { m[o.order_key] = o; });
     setExisting(m); setLoading(false);
   }, [supabase, c.room]);
   useEffect(() => { loadExisting(); }, [loadExisting]);
@@ -403,7 +404,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
     if (!confirm(`刪除第 ${i + 1} 期(${first.label})及之後所有月份?此區間的營收與收款紀錄將一併移除,租期迄會改為前一個月底。`)) return;
     setBusy(first.ym);
     const { data: all } = await supabase.from('orders').select('id, order_key').like('order_key', `LT_${c.room}_%`);
-    const toDel = (all ?? []).filter((o: any) => (o.order_key.split('_').pop() || '') >= first.ym).map((o: any) => o.id);
+    const toDel = onlyLtOf(all as any[], c.room).filter((o: any) => (o.order_key.split('_').pop() || '') >= first.ym).map((o: any) => o.id);
     if (toDel.length) { const { error } = await supabase.from('orders').delete().in('id', toDel); if (error) { setBusy(''); alert('刪除失敗:' + error.message); return; } }
     const ed = new Date(first.y, first.m - 1, 0);
     const edStr = `${ed.getFullYear()}-${String(ed.getMonth() + 1).padStart(2, '0')}-${String(ed.getDate()).padStart(2, '0')}`;

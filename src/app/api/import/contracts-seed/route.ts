@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import seed from '@/data/zl_contracts.json';
+import { onlyLtOf } from '@/lib/ltKey';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -52,11 +53,13 @@ export async function POST(req: Request) {
   let paidMarked = 0, cleared = 0;
   for (const r of rows) {
     const { data: los } = await supabase.from('orders').select('id, order_key').like('order_key', `LT_${r.room}_%`);
-    const all = (los ?? []).sort((a: any, b: any) => (a.order_key.split('_').pop() < b.order_key.split('_').pop() ? -1 : 1));
+    const all = onlyLtOf(los as any[], r.room).sort((a: any, b: any) => (a.order_key.split('_').pop() < b.order_key.split('_').pop() ? -1 : 1));
     if (all.length) { await supabase.from('orders').update({ paid: false, paid_at: null }).in('id', all.map((o: any) => o.id)); cleared += all.length; }
     if (!r.first_payment_date || !r.paid_through) continue;
     const step = STEP_OF[r.cadence] || 1;
-    const k = Math.max(0, Math.round(monthsBetween(r.first_payment_date, r.paid_through) / step)); // 已繳到第 k 期(0-based)
+    // floor 而非 round:繳到第 N 期就只認 N 期。用 round 會在季繳/半年繳/年繳時
+    // 多認一整期(例:年繳繳滿 12 個月 → round(11/12)=1 → 誤標 24 個月已收)
+    const k = Math.max(0, Math.floor(monthsBetween(r.first_payment_date, r.paid_through) / step)); // 已繳到第 k 期(0-based)
     const toPay = all.slice(0, (k + 1) * step).map((o: any) => o.id);                              // 前 (k+1) 期的月份
     if (toPay.length) { await supabase.from('orders').update({ paid: true, paid_at: r.first_payment_date }).in('id', toPay); paidMarked += toPay.length; }
   }

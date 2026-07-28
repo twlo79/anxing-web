@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import seed from '@/data/general_contracts.json';
+import { onlyLtOf } from '@/lib/ltKey';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -60,8 +61,13 @@ export async function POST(req: Request) {
   for (const r of rows) {
     const src = TYPE_SRC[r.type] || 'longterm';
     if (src === 'longterm') continue;
-    const { data: los } = await supabase.from('orders').update({ source: src }).like('order_key', `LT_${r.room_final}_%`).select('id');
-    srcUpdated += (los ?? []).length;
+    // 先粗篩再精確過濾,不能直接 .update().like() —— LIKE 的 "_" 會誤配到 2F-10~2F-19
+    const { data: cand } = await supabase.from('orders').select('id, order_key').like('order_key', `LT_${r.room_final}_%`);
+    const ids = onlyLtOf(cand as any[], r.room_final).map((o: any) => o.id);
+    if (ids.length) {
+      await supabase.from('orders').update({ source: src }).in('id', ids);
+      srcUpdated += ids.length;
+    }
   }
 
   // 5) 依「已收至」以「期」標記已收 (paid_at 用首繳日)
@@ -73,11 +79,13 @@ export async function POST(req: Request) {
   let paidMarked = 0, cleared = 0;
   for (const r of rows) {
     const { data: los } = await supabase.from('orders').select('id, order_key').like('order_key', `LT_${r.room_final}_%`);
-    const all = (los ?? []).sort((a: any, b: any) => (a.order_key.split('_').pop() < b.order_key.split('_').pop() ? -1 : 1));
+    const all = onlyLtOf(los as any[], r.room_final).sort((a: any, b: any) => (a.order_key.split('_').pop() < b.order_key.split('_').pop() ? -1 : 1));
     if (all.length) { await supabase.from('orders').update({ paid: false, paid_at: null }).in('id', all.map((o: any) => o.id)); cleared += all.length; }
     if (!r.first_payment_date || !r.paid_through) continue;
     const step = STEP_OF[r.cadence] || 1;
-    const k = Math.max(0, Math.round(monthsBetween(r.first_payment_date, r.paid_through) / step));
+    // floor 而非 round:繳到第 N 期就只認 N 期。用 round 會在季繳/半年繳/年繳時
+    // 多認一整期(例:年繳繳滿 12 個月 → round(11/12)=1 → 誤標 24 個月已收)
+    const k = Math.max(0, Math.floor(monthsBetween(r.first_payment_date, r.paid_through) / step));
     const toPay = all.slice(0, (k + 1) * step).map((o: any) => o.id);
     if (toPay.length) { await supabase.from('orders').update({ paid: true, paid_at: r.first_payment_date }).in('id', toPay); paidMarked += toPay.length; }
   }
