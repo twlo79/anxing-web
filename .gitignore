@@ -1,3 +1,15 @@
 node_modules
 .next
+out
+
+# 環境變數(含金鑰,絕不進版控)
 .env.local
+.env*.local
+
+# 編譯 / 建置產物(next-env.d.ts 例外,Next.js 要求納入版控)
+*.tsbuildinfo
+
+# 系統雜檔
+.DS_Store
+Thumbs.db
+*.log
