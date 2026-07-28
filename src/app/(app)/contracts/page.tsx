@@ -8,6 +8,12 @@ type Contract = {
   phone: string | null; cadence: string; type: string | null; monthly_rent: number | null; amount_per_period: number | null; deposit: number | null;
   start_date: string | null; end_date: string | null; pay_day: number | null; first_payment_date: string | null;
   paid: boolean; account: string | null; note: string | null; active: boolean; watch?: boolean; display_name?: string | null;
+  tax_id?: string | null; invoice_title?: string | null;
+};
+// 定期事項(目前只用 kind='invoice')
+type RTask = {
+  id: string; contract_id: string; kind: string; enabled: boolean;
+  day_of_month: number | null; gate: 'after_paid' | 'none'; note: string | null;
 };
 type Estate = { id: string; name: string; sort: number };
 
@@ -39,6 +45,17 @@ export default function ContractsPage() {
   const [properties, setProperties] = useState<{ id: string; name: string; estate_id: string | null }[]>([]);
   const [curLT, setCurLT] = useState<Record<string, { amount: number; paid: boolean }>>({});
   const [overdue, setOverdue] = useState<{ order_key: string; property_raw: string | null; guest_name: string | null; amount: number; checkin: string }[]>([]);
+  const [invTasks, setInvTasks] = useState<Record<string, RTask>>({});      // contract_id -> 發票設定
+  const [invDone, setInvDone] = useState<Record<string, boolean>>({});      // `${task_id}_${ym}` -> 本月是否已開立
+  const [invoice, setInvoice] = useState<Contract | null>(null);            // 開發票視窗
+  const [invDraft, setInvDraft] = useState<{ enabled: boolean; day: number | null; gate: 'after_paid' | 'none'; note: string | null }>({ enabled: false, day: null, gate: 'after_paid', note: null });
+  // 開啟編輯視窗時,把該契約的發票設定帶進草稿
+  useEffect(() => {
+    if (!edit) return;
+    const t = edit.id ? invTasks[edit.id] : undefined;
+    setInvDraft(t ? { enabled: true, day: t.day_of_month, gate: t.gate, note: t.note }
+                  : { enabled: false, day: null, gate: 'after_paid', note: null });
+  }, [edit?.id, invTasks]); // eslint-disable-line react-hooks/exhaustive-deps
   const curFirst = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`; })();
   const curMon = (() => { const d = new Date(); return `${d.getFullYear()}/${d.getMonth() + 1}`; })();
 
@@ -58,6 +75,16 @@ export default function ContractsPage() {
       .lt('checkin', curFirst)
       .order('checkin');
     setOverdue((ovd as any) ?? []);
+    // 發票設定 + 本月開立狀態
+    const { data: tks } = await supabase.from('recurring_tasks').select('*').eq('kind', 'invoice').eq('enabled', true);
+    const tm: Record<string, RTask> = {};
+    (tks ?? []).forEach((t: any) => { tm[t.contract_id] = t; });
+    setInvTasks(tm);
+    const curYm = curFirst.slice(0, 4) + curFirst.slice(5, 7);
+    const { data: lgs } = await supabase.from('recurring_task_logs').select('task_id, ym, done_at').eq('ym', curYm);
+    const dm: Record<string, boolean> = {};
+    (lgs ?? []).forEach((l: any) => { dm[`${l.task_id}_${l.ym}`] = !!l.done_at; });
+    setInvDone(dm);
     setLoading(false);
   }, [supabase, curFirst]);
   useEffect(() => {
@@ -125,6 +152,26 @@ export default function ContractsPage() {
   }, [overdue, rows]);
   const arrearsTotal = useMemo(() => arrears.reduce((s, g) => s + g.amount, 0), [arrears]);
 
+  // 本月發票狀態:待開立 / 等待入帳 / 逾期 / 已開立
+  const curYm = curFirst.slice(0, 4) + curFirst.slice(5, 7);
+  const todayD = new Date().getDate();
+  const invStatusOf = useCallback((c: Contract): { key: 'done' | 'due' | 'waiting' | 'overdue' | 'upcoming'; label: string; day: number | null } | null => {
+    const t = invTasks[c.id];
+    if (!t) return null;
+    const day = t.day_of_month ?? null;
+    if (invDone[`${t.id}_${curYm}`]) return { key: 'done', label: '已開立', day };
+    const paidThisMonth = !!curLT[c.room ?? '']?.paid;
+    if (t.gate === 'after_paid' && !paidThisMonth) return { key: 'waiting', label: '等待入帳', day };
+    if (day == null) return { key: 'due', label: '待開立', day };
+    if (todayD > day) return { key: 'overdue', label: '逾期未開', day };
+    if (todayD === day) return { key: 'due', label: '今天要開', day };
+    return { key: 'upcoming', label: `${day} 號開立`, day };
+  }, [invTasks, invDone, curLT, curYm, todayD]);
+  const invPending = useMemo(
+    () => rows.filter((c) => { const s = invStatusOf(c); return s && (s.key === 'due' || s.key === 'overdue'); })
+              .sort((a, b) => (invTasks[a.id]?.day_of_month ?? 99) - (invTasks[b.id]?.day_of_month ?? 99)),
+    [rows, invStatusOf, invTasks]);
+
   async function togglePin(c: Contract) {
     const { error } = await supabase.from('contracts').update({ watch: !c.watch }).eq('id', c.id);
     if (error) return flash('更新失敗:' + error.message);
@@ -143,11 +190,27 @@ export default function ContractsPage() {
       monthly_rent: Math.round((edit.amount_per_period || 0) / (STEP_OF[edit.cadence] || 1)), deposit: edit.deposit,
       start_date: edit.start_date || null, end_date: edit.end_date || null, first_payment_date: edit.first_payment_date || null, pay_day: edit.pay_day ?? null,
       account: edit.account, note: edit.note, active: edit.active, watch: edit.watch ?? false, display_name: edit.display_name || null, name: `${edit.tenant_name ?? ''}-${edit.room ?? ''}`,
+      tax_id: edit.tax_id || null, invoice_title: edit.invoice_title || null,
     };
-    const { error } = edit.id
-      ? await supabase.from('contracts').update(payload).eq('id', edit.id)
-      : await supabase.from('contracts').insert(payload);
+    const { data: saved, error } = edit.id
+      ? await supabase.from('contracts').update(payload).eq('id', edit.id).select('id').single()
+      : await supabase.from('contracts').insert(payload).select('id').single();
     if (error) return flash('儲存失敗:' + error.message);
+    // 發票設定(recurring_tasks,kind='invoice')
+    const cid = edit.id || (saved as any)?.id;
+    if (cid) {
+      if (invDraft.enabled) {
+        const { error: e2 } = await supabase.from('recurring_tasks').upsert({
+          contract_id: cid, kind: 'invoice', enabled: true,
+          day_of_month: invDraft.day, gate: invDraft.gate, note: invDraft.note || null,
+        }, { onConflict: 'contract_id,kind' });
+        if (e2) return flash('發票設定儲存失敗:' + e2.message);
+      } else if (invTasks[cid]) {
+        // 取消勾選 → 停用而非刪除,保留歷年開立紀錄
+        const { error: e3 } = await supabase.from('recurring_tasks').update({ enabled: false }).eq('contract_id', cid).eq('kind', 'invoice');
+        if (e3) return flash('發票設定停用失敗:' + e3.message);
+      }
+    }
     flash('已儲存'); setEdit(null); load();
   }
   async function del(c: Contract) {
@@ -235,6 +298,36 @@ export default function ContractsPage() {
         </div>
       </div>
 
+      {invPending.length > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50/50 mb-3 overflow-hidden">
+          <div className="px-4 py-2 border-b border-amber-200/70 text-sm font-semibold text-amber-800">
+            本月({curMon}) 待開發票
+            <span className="ml-2 text-xs font-normal text-amber-600">{invPending.length} 張</span>
+          </div>
+          <div className="max-h-40 overflow-y-auto">
+            {invPending.map((c) => {
+              const s = invStatusOf(c)!;
+              const t = invTasks[c.id];
+              return (
+                <div key={c.id} onClick={() => setInvoice(c)}
+                  className="px-4 py-1.5 flex items-center justify-between text-sm border-b border-amber-100 last:border-0 cursor-pointer hover:bg-amber-100/40">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="font-medium shrink-0">{c.display_name || c.room}</span>
+                    <span className="text-gray-600 truncate">{c.tenant_name}</span>
+                    {t?.note && <span className="shrink-0 text-[11px] text-gray-400">{t.note}</span>}
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    {t?.gate === 'none' && <span className="text-[11px] text-gray-400">先開立</span>}
+                    <span className={`text-xs font-medium ${s.key === 'overdue' ? 'text-red-600' : 'text-amber-700'}`}>{s.label}</span>
+                    <span className="text-xs text-gray-500 w-14 text-right">每月 {s.day} 號</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {arrears.length > 0 && (
         <div className="rounded-xl border border-red-200 bg-red-50/40 mb-3 overflow-hidden">
           <div className="px-4 py-2 border-b border-red-200/70 flex items-center justify-between">
@@ -317,6 +410,12 @@ export default function ContractsPage() {
                 <td className="px-3 py-2 text-right whitespace-nowrap space-x-2">
                   <button onClick={() => togglePin(c)} title={c.watch ? '已關注(顯示於已收/未收清單)' : '關注收租(釘選)'} className={`text-xs ${c.watch ? 'text-amber-500' : 'text-gray-300 hover:text-amber-400'}`}>{c.watch ? '★' : '☆'}</button>
                   <button onClick={() => setCollect(c)} className="text-xs text-mor-green underline hover:text-emerald-700 font-medium">收租</button>
+                  {(() => {
+                    const s = invStatusOf(c);
+                    if (!s) return null;
+                    const color = s.key === 'overdue' ? 'text-red-600' : s.key === 'due' ? 'text-amber-600' : s.key === 'done' ? 'text-gray-400' : 'text-gray-400';
+                    return <button onClick={() => setInvoice(c)} title={`開發票・${s.label}`} className={`text-xs underline hover:text-amber-700 ${color}`}>開發票{s.key === 'due' || s.key === 'overdue' ? ' ●' : ''}</button>;
+                  })()}
                   <button onClick={() => setEdit(c)} className="text-xs text-mor-slate underline hover:text-mor-blue">編輯</button>
                   <button onClick={() => del(c)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
                 </td>
@@ -327,6 +426,7 @@ export default function ContractsPage() {
       </div>
 
       {collect && <CollectModal contract={collect} onClose={() => { setCollect(null); load(); }} supabase={supabase} />}
+      {invoice && <InvoiceModal contract={invoice} task={invTasks[invoice.id]} onClose={() => { setInvoice(null); load(); }} supabase={supabase} />}
       {edit && (
         <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => setEdit(null)}>
           <div className="absolute inset-0 bg-black/30" />
@@ -359,6 +459,47 @@ export default function ContractsPage() {
               <label className="flex items-center gap-2 mt-6"><input type="checkbox" checked={edit.active} onChange={(e) => setEdit({ ...edit, active: e.target.checked })} />啟用中</label>
               <label className="flex items-center gap-2 mt-6" title="釘選後才會出現在上方「本月已收/未收」清單"><input type="checkbox" checked={edit.watch ?? false} onChange={(e) => setEdit({ ...edit, watch: e.target.checked })} />關注收租(釘選)</label>
               <label className="flex flex-col gap-1 col-span-2">顯示名稱(釘選清單顯示,可填人名或自訂;留空則用房源)<input value={edit.display_name ?? ''} onChange={(e) => setEdit({ ...edit, display_name: e.target.value })} placeholder={edit.room ?? ''} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+
+              <div className="col-span-2 mt-2 pt-3 border-t border-mor-line">
+                <div className="text-xs font-semibold text-gray-500 mb-2">發票</div>
+                <label className="flex items-center gap-2 mb-2">
+                  <input type="checkbox" checked={invDraft.enabled}
+                    onChange={(e) => setInvDraft({ ...invDraft, enabled: e.target.checked })} />
+                  需要定期開立發票
+                </label>
+                {invDraft.enabled && (
+                  <div className="grid grid-cols-2 gap-3 pl-6">
+                    <label className="flex flex-col gap-1">開立日
+                      <div className="flex items-center gap-1">
+                        <span className="text-gray-500">每月</span>
+                        <input type="number" min={1} max={31} value={invDraft.day ?? ''}
+                          onChange={(e) => setInvDraft({ ...invDraft, day: e.target.value ? parseInt(e.target.value) : null })}
+                          className="rounded-lg border border-gray-300 px-2 py-1.5 w-20" />
+                        <span className="text-gray-500">號</span>
+                      </div>
+                    </label>
+                    <label className="flex flex-col gap-1">開立時機
+                      <select value={invDraft.gate} onChange={(e) => setInvDraft({ ...invDraft, gate: e.target.value as any })}
+                        className="rounded-lg border border-gray-300 px-2 py-1.5">
+                        <option value="after_paid">確定入帳才可開立</option>
+                        <option value="none">先開立(不看入帳)</option>
+                      </select>
+                    </label>
+                    <label className="flex flex-col gap-1">統一編號
+                      <input value={edit.tax_id ?? ''} onChange={(e) => setEdit({ ...edit, tax_id: e.target.value })}
+                        className="rounded-lg border border-gray-300 px-2 py-1.5" />
+                    </label>
+                    <label className="flex flex-col gap-1">發票抬頭
+                      <input value={edit.invoice_title ?? ''} onChange={(e) => setEdit({ ...edit, invoice_title: e.target.value })}
+                        placeholder={edit.tenant_name ?? ''} className="rounded-lg border border-gray-300 px-2 py-1.5" />
+                    </label>
+                    <label className="flex flex-col gap-1 col-span-2">固定備註(每期自動帶入,如 PO 號)
+                      <input value={invDraft.note ?? ''} onChange={(e) => setInvDraft({ ...invDraft, note: e.target.value })}
+                        placeholder="PO4701105619" className="rounded-lg border border-gray-300 px-2 py-1.5" />
+                    </label>
+                  </div>
+                )}
+              </div>
               <label className="flex flex-col gap-1 col-span-2">備註<input value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               {edit.id && (
                 <div className="col-span-2 border-t border-mor-line pt-3 mt-1">
@@ -596,6 +737,156 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
               );
             })}
           </div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+// ── 開發票視窗 ────────────────────────────────────────────────────────────
+// 逐期列出契約月份,疊上 recurring_task_logs 的開立紀錄。
+// 紀錄採 lazy 建立:只有實際標記開立時才寫入一列,不預先產生。
+// 歷史期別同樣可以補填發票號碼(需求:歷史的可以存進去,補儲存)。
+function InvoiceModal({ contract: c, task, onClose, supabase }:
+  { contract: any; task: any; onClose: () => void; supabase: any }) {
+  const [logs, setLogs] = useState<Record<string, any>>({});   // ym -> log
+  const [paidYms, setPaidYms] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState('');
+  const [draft, setDraft] = useState<Record<string, { ref_no: string; note: string; done_at: string }>>({});
+  const today = () => new Date().toISOString().slice(0, 10);
+  const curYm = (() => { const d = new Date(); return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`; })();
+
+  // 契約涵蓋的月份(由新到舊,方便先看最近的)
+  const months = useMemo(() => {
+    if (!c.start_date) return [] as string[];
+    const sd = new Date(c.start_date + 'T00:00:00');
+    const ed = c.end_date ? new Date(c.end_date + 'T00:00:00') : sd;
+    const out: string[] = [];
+    let cur = new Date(sd.getFullYear(), sd.getMonth(), 1);
+    const last = new Date(ed.getFullYear(), ed.getMonth(), 1);
+    let g = 0;
+    while (cur <= last && g++ < 360) {
+      out.push(`${cur.getFullYear()}${String(cur.getMonth() + 1).padStart(2, '0')}`);
+      cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1);
+    }
+    return out.reverse();
+  }, [c.start_date, c.end_date]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    if (task?.id) {
+      const { data } = await supabase.from('recurring_task_logs').select('*').eq('task_id', task.id);
+      const m: Record<string, any> = {};
+      (data ?? []).forEach((l: any) => { m[l.ym] = l; });
+      setLogs(m);
+    }
+    // 收款狀態(判斷 after_paid 是否解鎖)
+    const { data: os } = await supabase.from('orders').select('order_key, paid').like('order_key', `LT_${c.room}_%`);
+    const s = new Set<string>();
+    onlyLtOf(os as any[], c.room).forEach((o: any) => { if (o.paid) s.add(o.order_key.slice(-6)); });
+    setPaidYms(s);
+    setLoading(false);
+  }, [supabase, task?.id, c.room]);
+  useEffect(() => { load(); }, [load]);
+
+  const dueDateOf = (ym: string) => {
+    if (!task?.day_of_month) return null;
+    const y = +ym.slice(0, 4), m = +ym.slice(4, 6);
+    const dim = new Date(y, m, 0).getDate();
+    return `${y}-${String(m).padStart(2, '0')}-${String(Math.min(task.day_of_month, dim)).padStart(2, '0')}`;
+  };
+
+  async function markIssued(ym: string) {
+    if (!task?.id) return;
+    const d = draft[ym] ?? { ref_no: '', note: task.note ?? '', done_at: today() };
+    if (!d.ref_no.trim()) { alert('請先填寫發票號碼'); return; }
+    setBusy(ym);
+    const { error } = await supabase.from('recurring_task_logs').upsert({
+      task_id: task.id, ym, due_date: dueDateOf(ym),
+      done_at: d.done_at || today(), ref_no: d.ref_no.trim(), note: d.note || null,
+    }, { onConflict: 'task_id,ym' });
+    setBusy('');
+    if (error) { alert('儲存失敗:' + error.message); return; }
+    setDraft((x) => { const n = { ...x }; delete n[ym]; return n; });
+    load();
+  }
+  async function undoIssued(ym: string) {
+    if (!logs[ym]?.id) return;
+    if (!confirm(`取消 ${fmtYm(ym)} 的開立紀錄?發票號碼會一併清除。`)) return;
+    setBusy(ym);
+    const { error } = await supabase.from('recurring_task_logs').delete().eq('id', logs[ym].id);
+    setBusy('');
+    if (error) { alert('取消失敗:' + error.message); return; }
+    load();
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/30" />
+      <div onClick={(e) => e.stopPropagation()} className="relative bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[85vh] overflow-y-auto">
+        <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 flex items-center justify-between">
+          <div>
+            <div className="font-bold">開發票 — {c.display_name || c.room} {c.tenant_name}</div>
+            <div className="text-xs text-gray-500 mt-0.5">
+              {task?.day_of_month ? `每月 ${task.day_of_month} 號開立` : '未設定開立日'}
+              ・{task?.gate === 'none' ? '先開立' : '確定入帳才可開立'}
+              {c.tax_id ? `・統編 ${c.tax_id}` : ''}
+              {c.invoice_title ? `・抬頭 ${c.invoice_title}` : ''}
+              {task?.note ? `・固定備註 ${task.note}` : ''}
+            </div>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+        </div>
+
+        <div className="px-6 py-4 space-y-2">
+          {!task?.id && <div className="text-sm text-gray-500">此契約尚未啟用發票設定,請先到「編輯」勾選「需要定期開立發票」。</div>}
+          {loading && <div className="text-sm text-gray-400">載入中…</div>}
+          {!loading && task?.id && months.map((ym) => {
+            const log = logs[ym];
+            const issued = !!log?.done_at;
+            const paid = paidYms.has(ym);
+            const locked = task.gate === 'after_paid' && !paid && !issued;
+            const d = draft[ym] ?? { ref_no: '', note: task.note ?? '', done_at: today() };
+            const due = dueDateOf(ym);
+            return (
+              <div key={ym} className={`rounded-xl border px-4 py-2.5 text-sm ${issued ? 'border-mor-greenlight bg-mor-greenlight/25' : locked ? 'border-mor-line bg-gray-50' : 'border-amber-200 bg-amber-50/40'}`}>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <span className="font-medium">{fmtYm(ym)}</span>
+                    {ym === curYm && <span className="ml-1.5 text-[11px] text-mor-blue">本月</span>}
+                    {due && <span className="ml-2 text-xs text-gray-400">應開 {due.slice(5).replace('-', '/')}</span>}
+                    <span className={`ml-2 text-xs ${paid ? 'text-mor-green' : 'text-gray-400'}`}>{paid ? '已入帳' : '未入帳'}</span>
+                  </div>
+                  {issued ? (
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-xs text-gray-600">{log.done_at} 開立</span>
+                      <span className="font-mono text-xs bg-white border border-mor-line rounded px-1.5 py-0.5">{log.ref_no}</span>
+                      <button onClick={() => undoIssued(ym)} disabled={!!busy} className="text-xs text-red-400 underline hover:text-red-600">取消</button>
+                    </div>
+                  ) : locked ? (
+                    <span className="text-xs text-gray-400 shrink-0">等待入帳</span>
+                  ) : (
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <input value={d.ref_no} onChange={(e) => setDraft({ ...draft, [ym]: { ...d, ref_no: e.target.value } })}
+                        placeholder="發票號碼" className="rounded border border-gray-300 px-1.5 py-1 text-xs w-28" />
+                      <input type="date" value={d.done_at} onChange={(e) => setDraft({ ...draft, [ym]: { ...d, done_at: e.target.value } })}
+                        className="rounded border border-gray-300 px-1.5 py-1 text-xs" />
+                      <button onClick={() => markIssued(ym)} disabled={busy === ym}
+                        className="rounded-lg bg-mor-slate text-white px-3 py-1 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">
+                        {busy === ym ? '…' : '確認開立'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {issued
+                  ? (log.note ? <div className="mt-1 text-xs text-gray-500">備註 {log.note}</div> : null)
+                  : (locked ? null : (
+                      <input value={d.note} onChange={(e) => setDraft({ ...draft, [ym]: { ...d, note: e.target.value } })}
+                        placeholder="備註(預設帶入固定備註)" className="mt-1.5 w-full rounded border border-gray-200 px-1.5 py-1 text-xs" />
+                    ))}
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>
