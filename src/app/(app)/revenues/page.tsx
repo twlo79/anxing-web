@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import * as XLSX from 'xlsx-js-style';
+import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 
 type Row = {
   order_id: string; source: string; estate_id: string | null; estate_name: string | null;
@@ -23,6 +24,20 @@ const SOURCE_COLOR: Record<string, string> = {
   partner: 'bg-teal-50 text-teal-700', airbnb_cancelled: 'bg-red-50 text-red-600',
 };
 const SOURCE_ORDER = ['airbnb', 'agoda', 'private', 'longterm', 'office', 'company', 'oneoff', 'other'];
+
+// 表頭排序:key 對應欄位型別與取值。
+// 「認列起訖」沿用原本 period_start 缺值時退回 checkin 的邏輯,避免舊資料被當成空值排到最後。
+const SORT_COLS: SortCols<Row> = {
+  source: { type: 'text', get: (r) => SOURCE_LABEL[r.source] ?? r.source },
+  estate_name: { type: 'text', get: (r) => r.estate_name },
+  property_raw: { type: 'room', get: (r) => r.property_raw },
+  guest_name: { type: 'text', get: (r) => r.guest_name },
+  checkin: { type: 'date', get: (r) => r.checkin },
+  period_start: { type: 'date', get: (r) => r.period_start || r.checkin || '' },
+  total_amount: { type: 'number', get: (r) => r.total_amount },
+  month_nights: { type: 'number', get: (r) => r.month_nights },
+  month_amount: { type: 'number', get: (r) => r.month_amount },
+};
 
 const fmt = (n: number) => Math.round(n).toLocaleString();
 const minus1 = (d: string) => { const dt = new Date(d + 'T00:00:00Z'); dt.setUTCDate(dt.getUTCDate() - 1); return dt.toISOString().slice(0, 10); };
@@ -50,7 +65,7 @@ export default function RevenuesPage() {
   const [sourceFilter, setSourceFilter] = useState('');
   const [kw, setKw] = useState('');
   const [kwInput, setKwInput] = useState('');
-  const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc');
+  const [sort, setSort] = useState<SortState>({ key: 'period_start', dir: 'desc' });
   const [contracts, setContracts] = useState<{ estate: string; room: string; start: string; end: string }[]>([]);
   useEffect(() => { (async () => {
     const { data } = await supabase.from('contracts').select('room, start_date, end_date, estates(name)');
@@ -93,10 +108,10 @@ export default function RevenuesPage() {
   }), [rows, estateFilter, sourceFilter, kw]);
 
   const total = useMemo(() => filtered.reduce((s, r) => s + Number(r.month_amount), 0), [filtered]);
-  const sorted = useMemo(() => [...filtered].sort((a, b) => { const av = a.period_start || a.checkin || '', bv = b.period_start || b.checkin || ''; return sortDir === 'asc' ? (av > bv ? 1 : av < bv ? -1 : 0) : (av < bv ? 1 : av > bv ? -1 : 0); }), [filtered, sortDir]);
+  const sorted = useMemo(() => sortRows(filtered, sort, SORT_COLS), [filtered, sort]);
   const ROWS = 100;
   const [rowPage, setRowPage] = useState(0);
-  useEffect(() => { setRowPage(0); }, [fromM, toM, estateFilter, sourceFilter, kw, sortDir]);
+  useEffect(() => { setRowPage(0); }, [fromM, toM, estateFilter, sourceFilter, kw, sort]);
   const rowPages = Math.max(1, Math.ceil(sorted.length / ROWS));
   const pageRows = sorted.slice(rowPage * ROWS, rowPage * ROWS + ROWS);
   const bySource = useMemo(() => {
@@ -308,10 +323,6 @@ export default function RevenuesPage() {
           </div>
         </div>
         <div>
-          <label className="block text-xs text-gray-500 mb-1">排序(認列日期)</label>
-          <select value={sortDir} onChange={(e) => setSortDir(e.target.value as 'desc' | 'asc')} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="desc">新→舊</option><option value="asc">舊→新</option></select>
-        </div>
-        <div>
           <label className="block text-xs text-gray-500 mb-1">關鍵字(客戶/房源)</label>
           <div className="flex gap-1">
             <input value={kwInput} onChange={(e) => setKwInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') setKw(kwInput.trim()); }}
@@ -331,11 +342,15 @@ export default function RevenuesPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/50">
-              <th className="px-3 py-2.5">來源</th><th className="px-3 py-2.5">物業</th><th className="px-3 py-2.5">房源</th>
-              <th className="px-3 py-2.5">客戶</th><th className="px-3 py-2.5 whitespace-nowrap">訂單起訖</th>
-              <th className="px-3 py-2.5 whitespace-nowrap">認列起訖</th>
-              <th className="px-3 py-2.5 text-right">訂單總額</th><th className="px-3 py-2.5 text-right whitespace-nowrap">認列天數</th>
-              <th className="px-3 py-2.5 text-right">當期認列</th>
+              <SortTh label="來源" sortKey="source" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
+              <SortTh label="物業" sortKey="estate_name" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
+              <SortTh label="房源" sortKey="property_raw" type="room" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
+              <SortTh label="客戶" sortKey="guest_name" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
+              <SortTh label="訂單起訖" sortKey="checkin" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="whitespace-nowrap" />
+              <SortTh label="認列起訖" sortKey="period_start" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="whitespace-nowrap" />
+              <SortTh label="訂單總額" sortKey="total_amount" type="number" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="text-right" align="right" />
+              <SortTh label="認列天數" sortKey="month_nights" type="number" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="text-right whitespace-nowrap" align="right" />
+              <SortTh label="當期認列" sortKey="month_amount" type="number" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="text-right" align="right" />
             </tr>
           </thead>
           <tbody>

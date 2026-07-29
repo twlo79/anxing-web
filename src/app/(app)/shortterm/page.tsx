@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { SortTh, type SortState } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
 
 type Order = {
@@ -28,6 +29,14 @@ const SRC_COLOR: Record<string, string> = {
 const fmt = (n: number | null) => (n == null ? '' : Math.round(n).toLocaleString());
 const PAGE = 50;
 
+// 表頭排序 key → orders 資料表欄位。本頁走伺服器端排序,只能排真實欄位。
+// 「物業」不在清單裡:它來自 orders.estate_id 關聯的 estates.name,
+// PostgREST 無法用關聯表的欄位排序母表,勉強用 estate_id 排會變成 UUID 亂序。
+const SORT_DB_COL: Record<string, string> = {
+  source: 'source', property_raw: 'property_raw', guest_name: 'guest_name',
+  checkin: 'checkin', amount: 'amount', deposit: 'deposit', account: 'account',
+};
+
 export default function ShortTermPage() {
   const supabase = useMemo(() => createClient(), []);
   const [estates, setEstates] = useState<Estate[]>([]);
@@ -44,7 +53,7 @@ export default function ShortTermPage() {
   const [estF, setEstF] = useState('');
   const [fromD, setFromD] = useState('');
   const [toD, setToD] = useState('');
-  const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc');
+  const [sort, setSort] = useState<SortState>({ key: 'checkin', dir: 'desc' });
   const [agg, setAgg] = useState<any[]>([]);
 
   useEffect(() => { supabase.from('estates').select('id, name, sort, active').order('sort').then(({ data }) => setEstates(data ?? [])); }, [supabase]);
@@ -79,7 +88,11 @@ export default function ShortTermPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    let q = supabase.from('orders').select('*, properties(name)', { count: 'exact' }).in('source', SRC).order('checkin', { ascending: sortDir === 'asc' });
+    // 伺服器端排序。本頁是伺服器端分頁,若改成前端排序只會排到當前頁的 100 筆。
+    // nullsFirst: false —— 空值一律殿後,與另外兩頁的前端排序行為一致。
+    const sortCol = SORT_DB_COL[sort?.key ?? 'checkin'] ?? 'checkin';
+    let q = supabase.from('orders').select('*, properties(name)', { count: 'exact' }).in('source', SRC)
+      .order(sortCol, { ascending: sort?.dir === 'asc', nullsFirst: false });
     if (src) q = q.eq('source', src);
     if (estF) q = q.eq('estate_id', estF);
     if (toD) q = q.lte('checkin', toD);
@@ -87,9 +100,9 @@ export default function ShortTermPage() {
     if (kw) q = q.or(`guest_name.ilike.%${kw}%,property_raw.ilike.%${kw}%,note.ilike.%${kw}%`);
     const { data, count } = await q.range(page * PAGE, page * PAGE + PAGE - 1);
     setRows((data as any) ?? []); setTotal(count ?? 0); setLoading(false);
-  }, [supabase, src, kw, estF, fromD, toD, sortDir, page]);
+  }, [supabase, src, kw, estF, fromD, toD, sort, page]);
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { setPage(0); }, [src, kw, estF, fromD, toD, sortDir]);
+  useEffect(() => { setPage(0); }, [src, kw, estF, fromD, toD, sort]);
 
   const loadAgg = useCallback(async () => {
     let all: any[] = []; let from = 0;
@@ -262,12 +275,6 @@ export default function ShortTermPage() {
           </div>
         </div>
         <div>
-          <label className="block text-xs text-gray-500 mb-1">排序</label>
-          <select value={sortDir} onChange={(e) => setSortDir(e.target.value as 'desc' | 'asc')} className="rounded-lg border border-gray-300 px-2 py-1.5">
-            <option value="desc">新→舊</option><option value="asc">舊→新</option>
-          </select>
-        </div>
-        <div>
           <label className="block text-xs text-gray-500 mb-1">關鍵字(客戶/房源)</label>
           <div className="flex gap-1">
             <input value={kwIn} onChange={(e) => setKwIn(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') setKw(kwIn.trim()); }} placeholder="搜尋" className="rounded-lg border border-gray-300 px-2 py-1.5 w-36" />
@@ -285,9 +292,15 @@ export default function ShortTermPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/50">
-              <th className="px-3 py-2.5">來源</th><th className="px-3 py-2.5">物業</th><th className="px-3 py-2.5">房源</th>
-              <th className="px-3 py-2.5">客戶</th><th className="px-3 py-2.5 whitespace-nowrap">訂單起訖</th><th className="px-3 py-2.5 text-right">金額</th>
-              <th className="px-3 py-2.5 text-right">押金</th><th className="px-3 py-2.5">入款方式</th><th className="px-3 py-2.5 text-right">操作</th>
+              <SortTh label="來源" sortKey="source" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
+              <th className="px-3 py-2.5">物業</th>
+              <SortTh label="房源" sortKey="property_raw" type="room" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
+              <SortTh label="客戶" sortKey="guest_name" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
+              <SortTh label="訂單起訖" sortKey="checkin" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="whitespace-nowrap" />
+              <SortTh label="金額" sortKey="amount" type="number" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="text-right" align="right" />
+              <SortTh label="押金" sortKey="deposit" type="number" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="text-right" align="right" />
+              <SortTh label="入款方式" sortKey="account" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
+              <th className="px-3 py-2.5 text-right">操作</th>
             </tr>
           </thead>
           <tbody>

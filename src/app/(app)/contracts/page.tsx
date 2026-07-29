@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { onlyLtOf } from '@/lib/ltKey';
+import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 
 type Contract = {
   id: string; estate_id: string | null; room: string | null; tenant_name: string | null;
@@ -25,6 +26,17 @@ const TYPE_SRC: Record<string, string> = { longterm: 'longterm', company: 'compa
 const FEE_TYPES = ['水費', '電費', '網路費', '瓦斯費', '管理費', '清潔費', '修繕費', '其他'];
 const fmt = (n: number | null) => (n == null ? '' : Math.round(n).toLocaleString());
 
+// 表頭排序:key 對應欄位型別與取值。租金一律換算成「每期租金」比較,
+// 否則月繳 3 萬與年繳 36 萬會被當成同一個量級直接比大小。
+const SORT_COLS: SortCols<any> = {
+  room: { type: 'room', get: (c) => c.room },
+  tenant_name: { type: 'text', get: (c) => c.tenant_name },
+  cadence: { type: 'text', get: (c) => CAD_LABEL[c.cadence] ?? c.cadence },
+  amount: { type: 'number', get: (c) => c.amount_per_period || (c.monthly_rent || 0) * (STEP_OF[c.cadence] || 1) },
+  deposit: { type: 'number', get: (c) => c.deposit },
+  start_date: { type: 'date', get: (c) => c.start_date },
+};
+
 export default function ContractsPage() {
   const supabase = useMemo(() => createClient(), []);
   const [estates, setEstates] = useState<Estate[]>([]);
@@ -35,7 +47,7 @@ export default function ContractsPage() {
   const [edit, setEdit] = useState<Contract | null>(null);
   const [collect, setCollect] = useState<Contract | null>(null);
   const [kw, setKw] = useState('');
-  const [sortMode, setSortMode] = useState<'date_desc' | 'date_asc' | 'room'>('date_desc');
+  const [sort, setSort] = useState<SortState>({ key: 'start_date', dir: 'desc' });
   const [cadFilter, setCadFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -101,14 +113,8 @@ export default function ContractsPage() {
     if (statusFilter) out = out.filter((r) => statusOf(r) === statusFilter);
     if (fromD || toD) out = out.filter((r) => { const st = r.start_date || '', en = r.end_date || ''; if (toD && st && st > toD) return false; if (fromD && en && en < fromD) return false; return true; });
     if (kw) { const k = kw.toLowerCase(); out = out.filter((r) => `${r.room ?? ''}${r.tenant_name ?? ''}${r.phone ?? ''}${r.note ?? ''}`.toLowerCase().includes(k)); }
-    const rk = (x: string) => { const m = String(x || '').match(/^(\d+)/); return [m ? parseInt(m[1]) : 999, String(x || '')] as [number, string]; };
-    out = [...out].sort((a: any, b: any) => {
-      if (sortMode === 'room') { const ka = rk(a.room), kb = rk(b.room); return ka[0] - kb[0] || (ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0); }
-      const av = a.start_date || '', bv = b.start_date || '';
-      return sortMode === 'date_asc' ? (av > bv ? 1 : av < bv ? -1 : 0) : (av < bv ? 1 : av > bv ? -1 : 0);
-    });
-    return out;
-  }, [rows, estateFilter, cadFilter, typeFilter, statusFilter, fromD, toD, kw, sortMode]);
+    return sortRows(out, sort, SORT_COLS);
+  }, [rows, estateFilter, cadFilter, typeFilter, statusFilter, fromD, toD, kw, sort]);
   const activeCount = useMemo(() => filtered.filter((r) => r.active).length, [filtered]);
   const monthAR = useMemo(() => filtered.filter((r) => r.active).reduce((s, r) => s + (curLT[r.room ?? '']?.amount ?? 0), 0), [filtered, curLT]);
   const monthPaid = useMemo(() => filtered.filter((r) => r.active).reduce((s, r) => s + (curLT[r.room ?? '']?.paid ? (curLT[r.room ?? ''].amount) : 0), 0), [filtered, curLT]);
@@ -381,7 +387,6 @@ export default function ContractsPage() {
           <input type="date" value={toD} onChange={(e) => setToD(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5" />
           {(fromD || toD) && <button onClick={() => { setFromD(''); setToD(''); }} className="text-gray-400 underline text-xs">清除</button>}
         </div>
-        <select value={sortMode} onChange={(e) => setSortMode(e.target.value as any)} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="room">房源</option><option value="date_desc">日期新→舊</option><option value="date_asc">日期舊→新</option></select>
         <input value={kw} onChange={(e) => setKw(e.target.value)} placeholder="搜尋 房源/租戶/電話" className="rounded-lg border border-gray-300 px-2 py-1.5 w-44" />
         {kw && <button onClick={() => setKw('')} className="text-gray-400 underline text-xs">清除</button>}
         {(estateFilter || cadFilter || typeFilter || statusFilter || fromD || toD || kw) && <button onClick={() => { setEstateFilter(''); setCadFilter(''); setTypeFilter(''); setStatusFilter(''); setFromD(''); setToD(''); setKw(''); }} className="text-gray-500 underline text-xs">全部清除</button>}
@@ -393,9 +398,13 @@ export default function ContractsPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/50">
-              <th className="px-3 py-2.5">房源</th><th className="px-3 py-2.5">租戶</th><th className="px-3 py-2.5">繳別</th>
-              <th className="px-3 py-2.5 text-right">租金 / 對應月租</th><th className="px-3 py-2.5 text-right">押金</th>
-              <th className="px-3 py-2.5 whitespace-nowrap">租期</th><th className="px-3 py-2.5">收租</th><th className="px-3 py-2.5 text-right">操作</th>
+              <SortTh label="房源" sortKey="room" type="room" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
+              <SortTh label="租戶" sortKey="tenant_name" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
+              <SortTh label="繳別" sortKey="cadence" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
+              <SortTh label="租金 / 對應月租" sortKey="amount" type="number" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="text-right" align="right" />
+              <SortTh label="押金" sortKey="deposit" type="number" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="text-right" align="right" />
+              <SortTh label="租期" sortKey="start_date" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="whitespace-nowrap" />
+              <th className="px-3 py-2.5">收租</th><th className="px-3 py-2.5 text-right">操作</th>
             </tr>
           </thead>
           <tbody>
