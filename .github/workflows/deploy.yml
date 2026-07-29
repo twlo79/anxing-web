@@ -12,9 +12,10 @@ jobs:
           host: ${{ secrets.VULTR_HOST }}
           username: ${{ secrets.VULTR_USER }}
           key: ${{ secrets.VULTR_SSH_KEY }}
+          script_stop: true
           script: |
             cd /opt/anxing-web
             git pull origin main
             npm install --no-audit --no-fund
-            npm run build
+            npm run build || exit 1
             pm2 restart anxing || pm2 start npm --name anxing -- start
