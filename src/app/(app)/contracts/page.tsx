@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { onlyLtOf } from '@/lib/ltKey';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
+import * as XLSX from 'xlsx-js-style';
 
 type Contract = {
   id: string; estate_id: string | null; room: string | null; tenant_name: string | null;
@@ -273,6 +274,47 @@ export default function ContractsPage() {
     flash(`已展延 ${N} 個月・新增 ${N} 期待收款(月租 $${amt})`);
     loadExtBatches(); load();
   }
+  // 匯出 Excel:輸出「目前篩選 + 排序後」的結果,與畫面所見一致。
+  function exportXlsx() {
+    const BR = { style: 'thin', color: { rgb: 'C9C6BE' } };
+    const BORD = { top: BR, bottom: BR, left: BR, right: BR };
+    const stHead = { font: { bold: true, sz: 11 }, fill: { fgColor: { rgb: 'E7E4DC' } }, border: BORD, alignment: { horizontal: 'center' } };
+    const stCell = { border: BORD };
+    const stNum = { border: BORD, alignment: { horizontal: 'right' } };
+    const T = (v: any, st: any) => ({ v: v ?? '', t: typeof v === 'number' ? 'n' : 's', s: st, z: typeof v === 'number' ? '#,##0' : undefined });
+
+    const header = ['租戶', '物業', '房源', '類別', '租期起', '租期迄', '繳別', '每期租金', '對應月租', '押金', '入款帳號', '備註'];
+    const aoa: any[][] = [header.map((h) => T(h, stHead))];
+    for (const c of filtered as any[]) {
+      const step = STEP_OF[c.cadence] || 1;
+      const per = c.amount_per_period || (c.monthly_rent || 0) * step;
+      aoa.push([
+        T(c.tenant_name ?? '', stCell),
+        T(c.estates?.name ?? '', stCell),
+        T(c.room ?? '', stCell),
+        T(TYPE_LABEL[c.type ?? 'longterm'] ?? '', stCell),
+        T(c.start_date ?? '', stCell),
+        T(c.end_date ?? '', stCell),
+        T(CAD_LABEL[c.cadence] ?? c.cadence ?? '', stCell),
+        T(Math.round(per), stNum),
+        T(Math.round(per / step), stNum),
+        T(Math.round(c.deposit || 0), stNum),
+        T(c.account ?? '', stCell),
+        T(c.note ?? '', stCell),
+      ]);
+    }
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{ wch: 22 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 30 }];
+    ws['!freeze'] = { xSplit: 0, ySplit: 1 };   // 凍結表頭
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '契約');
+    // 檔名帶上篩選條件,之後回頭找得出這份是什麼
+    const tag = [estateFilter, TYPE_LABEL[typeFilter] ?? '', CAD_LABEL[cadFilter] ?? '', kw].filter(Boolean).join('_');
+    const d = new Date();
+    const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+    XLSX.writeFile(wb, `契約${tag ? '_' + tag : ''}_${stamp}.xlsx`);
+  }
+
   function blank(): Contract {
     return { id: '', estate_id: estates.find((e) => e.name === '正隆')?.id ?? null, room: '', tenant_name: '', phone: '', cadence: 'monthly', type: 'longterm', monthly_rent: 0, amount_per_period: 0, deposit: 0, start_date: '', end_date: '', pay_day: null, first_payment_date: '', paid: false, account: null, note: '', active: true, watch: false, display_name: '',
       invoice_required: false, invoice_day: null, invoice_after_paid: true, invoice_title: '', invoice_tax_id: '', invoice_note: '' };
@@ -391,7 +433,8 @@ export default function ContractsPage() {
         {kw && <button onClick={() => setKw('')} className="text-gray-400 underline text-xs">清除</button>}
         {(estateFilter || cadFilter || typeFilter || statusFilter || fromD || toD || kw) && <button onClick={() => { setEstateFilter(''); setCadFilter(''); setTypeFilter(''); setStatusFilter(''); setFromD(''); setToD(''); setKw(''); }} className="text-gray-500 underline text-xs">全部清除</button>}
         <div className="text-xs text-gray-400">共 {filtered.length} 筆</div>
-        <button onClick={() => setEdit(blank())} className="ml-auto rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 新增契約</button>
+        <button onClick={exportXlsx} disabled={!filtered.length} className="ml-auto rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 disabled:opacity-40">⬇ 下載 Excel</button>
+        <button onClick={() => setEdit(blank())} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 新增契約</button>
       </div>
 
       <div className="bg-white rounded-xl border border-mor-line overflow-x-auto">
