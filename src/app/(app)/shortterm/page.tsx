@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import * as XLSX from 'xlsx-js-style';
 import { SortTh, type SortState } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
 
@@ -123,6 +124,75 @@ export default function ShortTermPage() {
   }, [supabase, src, kw, estF, fromD, toD]);
   useEffect(() => { loadAgg(); }, [loadAgg]);
   function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 2500); }
+
+  // 匯出 Excel:輸出「目前篩選 + 排序後」的結果,與畫面所見一致。
+  //
+  // ⚠️ 與契約頁的關鍵差異:本頁是伺服器端分頁,state 裡的 rows 只有當前這一頁。
+  // 直接拿 rows 匯出只會得到 50 筆,所以這裡要重新向伺服器要完整結果,
+  // 篩選與排序條件必須與 load() 完全一致,否則匯出內容會對不上畫面。
+  const [exporting, setExporting] = useState(false);
+  async function exportXlsx() {
+    setExporting(true);
+    try {
+      const sortCol = SORT_DB_COL[sort?.key ?? 'checkin'] ?? 'checkin';
+      let all: Order[] = [];
+      let from = 0;
+      while (true) {
+        let q = supabase.from('orders').select('*, properties(name)').in('source', SRC)
+          .order(sortCol, { ascending: sort?.dir === 'asc', nullsFirst: false });
+        if (src) q = q.eq('source', src);
+        if (estF) q = q.eq('estate_id', estF);
+        if (toD) q = q.lte('checkin', toD);
+        if (fromD) q = q.gte('checkout', fromD);
+        if (kw) q = q.or(`guest_name.ilike.%${kw}%,property_raw.ilike.%${kw}%,note.ilike.%${kw}%`);
+        const { data, error } = await q.range(from, from + 999);
+        if (error) { flash('匯出失敗:' + error.message); return; }
+        const chunk = (data as any[]) ?? [];
+        all = all.concat(chunk as Order[]);
+        if (chunk.length < 1000) break;
+        from += 1000;
+      }
+      if (!all.length) { flash('沒有符合條件的訂單'); return; }
+
+      const BR = { style: 'thin', color: { rgb: 'C9C6BE' } };
+      const BORD = { top: BR, bottom: BR, left: BR, right: BR };
+      const stHead = { font: { bold: true, sz: 11 }, fill: { fgColor: { rgb: 'E7E4DC' } }, border: BORD, alignment: { horizontal: 'center' } };
+      const stCell = { border: BORD };
+      const stNum = { border: BORD, alignment: { horizontal: 'right' } };
+      const T = (v: any, st: any) => ({ v: v ?? '', t: typeof v === 'number' ? 'n' : 's', s: st, z: typeof v === 'number' ? '#,##0' : undefined });
+
+      const header = ['來源', '物業', '房源', '客戶', '入住日', '退房日', '晚數', '金額', '押金', '入款方式', '備註'];
+      const aoa: any[][] = [header.map((h) => T(h, stHead))];
+      for (const o of all) {
+        aoa.push([
+          T(SRC_LABEL[o.source] ?? o.source, stCell),
+          T(o.estate_id ? estateName[o.estate_id] ?? '' : '', stCell),
+          T(o.property_raw ?? o.properties?.name ?? '', stCell),
+          T(o.guest_name ?? '', stCell),
+          T(o.checkin ?? '', stCell),
+          T(o.checkout ?? '', stCell),
+          T(Number(o.nights) || 0, stNum),
+          T(Math.round(Number(o.amount) || 0), stNum),
+          T(Math.round(Number(o.deposit) || 0), stNum),
+          T(o.account ?? '', stCell),
+          T(o.note ?? '', stCell),
+        ]);
+      }
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws['!cols'] = [{ wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 18 }, { wch: 12 }, { wch: 12 }, { wch: 7 }, { wch: 12 }, { wch: 10 }, { wch: 12 }, { wch: 30 }];
+      ws['!freeze'] = { xSplit: 0, ySplit: 1 };   // 凍結表頭
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, '短租訂單');
+      // 檔名帶上篩選條件,之後回頭找得出這份是什麼
+      const tag = [SRC_LABEL[src] ?? '', estF ? estateName[estF] ?? '' : '', fromD, toD, kw].filter(Boolean).join('_');
+      const d = new Date();
+      const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+      XLSX.writeFile(wb, `短租訂單${tag ? '_' + tag : ''}_${stamp}.xlsx`);
+      flash(`已匯出 ${all.length.toLocaleString()} 筆`);
+    } finally {
+      setExporting(false);
+    }
+  }
 
   async function save() {
     if (!edit) return;
@@ -284,6 +354,7 @@ export default function ShortTermPage() {
         {(src || kw || estF || fromD || toD) && <button onClick={() => { setSrc(''); setKw(''); setKwIn(''); setEstF(''); setFromD(''); setToD(''); }} className="text-gray-500 underline pb-1.5">清除</button>}
         <div className="ml-auto flex items-end gap-3">
           <div className="text-xs text-gray-400 pb-1.5">共 {total.toLocaleString()} 筆</div>
+          <button onClick={exportXlsx} disabled={exporting || !total} className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 disabled:opacity-40">{exporting ? '匯出中…' : '⬇ 下載 Excel'}</button>
           <button onClick={() => setEdit(blank())} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 新增訂單</button>
         </div>
       </div>

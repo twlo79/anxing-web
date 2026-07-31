@@ -90,17 +90,52 @@ export async function POST(req: Request) {
   if (pe) return NextResponse.json({ error: pe.message }, { status: 500, headers: CORS });
   const propByListing = Object.fromEntries((props ?? []).filter((p) => p.airbnb_listing_id).map((p) => [p.airbnb_listing_id, p.id]));
 
+  // 房源名稱 → property_id 的備援對照,由既有評價自學。
+  // 抓取端若沒帶 listingId(例如評價 API 本身就不回傳 listing_id),還能靠名稱救回來。
+  // 只採計「同一名稱只對到單一房源」的,有歧義就不用。
+  const nameToProp: Record<string, string | null> = {};
+  {
+    const seen: Record<string, Set<string>> = {};
+    for (let from = 0; from < 20000; from += 1000) {
+      const { data } = await supabase.from('reviews')
+        .select('listing_name_raw, property_id')
+        .not('property_id', 'is', null).not('listing_name_raw', 'is', null)
+        .range(from, from + 999);
+      if (!data || !data.length) break;
+      for (const d of data) {
+        const k = String(d.listing_name_raw);
+        (seen[k] ||= new Set()).add(String(d.property_id));
+      }
+      if (data.length < 1000) break;
+    }
+    for (const k of Object.keys(seen)) {
+      const arr = Array.from(seen[k]);
+      if (arr.length === 1) nameToProp[k] = arr[0];
+    }
+  }
+
+  // 既有評價的 property_id:用來避免「這次解析不出房源」時把原本正確的值蓋成 null
+  const prevProp = new Map<string, string | null>();
+
   // 已存在的評價:保留已翻譯成中文的 comment,重新匯入時不覆蓋(只補日期等欄位)
   const incomingIds = items.map((m) => String(m.id));
-  const { data: prevRows } = await supabase.from('reviews').select('airbnb_review_id, comment').in('airbnb_review_id', incomingIds);
+  const { data: prevRows } = await supabase.from('reviews').select('airbnb_review_id, comment, property_id').in('airbnb_review_id', incomingIds);
   const prevComment = new Map((prevRows ?? []).map((r) => [r.airbnb_review_id, r.comment as string | null]));
+  (prevRows ?? []).forEach((r) => prevProp.set(r.airbnb_review_id, (r.property_id as string | null) ?? null));
   const hasCJK = (t: string | null | undefined) => !!t && /[\u4e00-\u9fff]/.test(t);
 
   const unmatched: Record<string, number> = {};
   const records = items.map((m) => {
     const [ci, co] = parseStay(m.stay || '');
-    const propertyId = m.listingId ? propByListing[m.listingId] ?? null : null;
-    if (m.listingId && !propertyId) unmatched[m.listingId] = (unmatched[m.listingId] || 0) + 1;
+    const rid = String(m.id);
+    const nameKey = m.listing || m.listEN || null;
+    // 三層解析:listing_id → 名稱備援 → 保留既有值。
+    // 最後一層是關鍵 —— 解析不出來時絕不能寫 null,那會把先前正確的對應洗掉。
+    const propertyId =
+      (m.listingId ? propByListing[m.listingId] ?? null : null)
+      ?? (nameKey ? nameToProp[nameKey] ?? null : null)
+      ?? (prevProp.get(rid) ?? null);
+    if (m.listingId && !propByListing[m.listingId]) unmatched[m.listingId] = (unmatched[m.listingId] || 0) + 1;
     const dc: any = {};
     if (m.privateFb) dc.private_feedback = m.privateFb;
     if (m.privateFbLoc) dc.private_feedback_localized = m.privateFbLoc;
@@ -108,7 +143,7 @@ export async function POST(req: Request) {
     if (tags) dc.tags = tags;
     const c = m.cats || {};
     return {
-      airbnb_review_id: String(m.id),
+      airbnb_review_id: rid,
       property_id: propertyId,
       listing_name_raw: m.listing || m.listEN || null,
       guest_name: m.guest || '(unknown)',
@@ -151,5 +186,10 @@ export async function POST(req: Request) {
     .filter((r) => r.comment && !hasCJK(r.comment))
     .map((r) => ({ rid: r.airbnb_review_id, src: r.comment_original || r.comment }));
 
-  return NextResponse.json({ upserted, inserted, updated: upserted - inserted, unmatched, needTranslation }, { headers: CORS });
+  // 三層都解析不出房源的,列出來讓呼叫端知道(否則會靜默留 null)
+  const unresolved = Array.from(new Set(
+    records.filter((r) => !r.property_id).map((r) => r.listing_name_raw || '(無房源名稱)')
+  ));
+
+  return NextResponse.json({ upserted, inserted, updated: upserted - inserted, unmatched, unresolved, needTranslation }, { headers: CORS });
 }
