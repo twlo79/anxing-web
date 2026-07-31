@@ -8,8 +8,8 @@ type Estate = { id: string; name: string; manager: string | null; sort: number; 
 type Property = { id: string; name: string; estate_id: string | null };
 
 const TYPE_LABEL: Record<string, string> = { housekeeper: '管家', roomservice: '房務', other: '其他/離職' };
-const ROLE_LABEL: Record<string, string> = { super_admin: '管理員', manager: '主管', housekeeper: '一般' };
-const ROLE_OPTS = ['housekeeper', 'manager', 'super_admin'];
+const ROLE_LABEL: Record<string, string> = { super_admin: '管理員', manager: '主管', accountant: '會計', housekeeper: '一般' };
+const ROLE_OPTS = ['housekeeper', 'accountant', 'manager', 'super_admin'];
 
 export default function AdminPage() {
   const supabase = useMemo(() => createClient(), []);
