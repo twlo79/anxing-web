@@ -15,7 +15,13 @@ jobs:
           script_stop: true
           script: |
             cd /opt/anxing-web
-            git pull origin main
+            # 用 fetch + reset --hard 而不是 git pull。
+            # 原因:npm install 會改寫 package-lock.json,主機上一旦有本機修改,
+            # git pull 就會以「本機變更會被覆蓋」為由中止,整個部署卡在第一步。
+            # 部署主機不該保留本機修改,直接對齊遠端才是正確語意。
+            # .env.local 在 .gitignore 裡,不受 reset --hard 影響。
+            git fetch origin main
+            git reset --hard origin/main
             npm install --no-audit --no-fund
             npm run build || exit 1
             pm2 restart anxing || pm2 start npm --name anxing -- start
