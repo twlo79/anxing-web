@@ -8,10 +8,15 @@ type Estate = { id: string; name: string; manager: string | null; sort: number; 
 type Property = { id: string; name: string; estate_id: string | null };
 type Profile = { id: string; name: string | null; role: string; active: boolean };
 
-const TYPE_LABEL: Record<string, string> = { housekeeper: '管家', roomservice: '房務', manager: '主管', accountant: '會計', other: '其他' };
-const TYPE_OPTS = ['housekeeper', 'roomservice', 'manager', 'accountant', 'other'];
-const ROLE_LABEL: Record<string, string> = { super_admin: '管理員', manager: '主管', accountant: '會計', housekeeper: '一般' };
-const ROLE_OPTS = ['housekeeper', 'accountant', 'manager', 'super_admin'];
+const TYPE_LABEL: Record<string, string> = { housekeeper: '管家', roomservice: '房務', manager: '經理', accountant: '會計', gm: '總經理', other: '其他' };
+const TYPE_OPTS = ['housekeeper', 'roomservice', 'manager', 'accountant', 'gm', 'other'];
+const ROLE_LABEL: Record<string, string> = { super_admin: '總經理', manager: '主管', accountant: '會計', housekeeper: '一般' };
+// 職位 → 權限 一對一。職位是主軸,權限由職位決定,不再各改各的 ——
+// 原本兩欄各自可改,結果同一個人可以是「管家職位 + 管理員權限」,對不起來。
+const ROLE_OF: Record<string, string> = {
+  housekeeper: 'housekeeper', roomservice: 'housekeeper', manager: 'manager',
+  accountant: 'accountant', gm: 'super_admin', other: 'housekeeper',
+};
 
 export default function AdminPage() {
   const supabase = useMemo(() => createClient(), []);
@@ -63,9 +68,19 @@ export default function AdminPage() {
   async function addStaff() {
     const name = newStaffName.trim();
     if (!name) return;
-    const { error } = await supabase.from('staff').insert({ name, staff_type: newStaffType, active: true, sort: 50 });
+    const { error } = await supabase.from('staff')
+      .insert({ name, staff_type: newStaffType, role: ROLE_OF[newStaffType], active: true, sort: 50 });
     if (error) return flash('新增失敗:' + error.message);
     setNewStaffName(''); flash('已新增 ' + name); load();
+  }
+  // 改職位時連權限一起改 —— 兩者一對一,分開改遲早會不同步
+  async function changeStaffType(s: Staff, staff_type: string) {
+    const role = ROLE_OF[staff_type];
+    const { error } = await supabase.from('staff').update({ staff_type, role }).eq('id', s.id);
+    if (error) return flash('更新失敗:' + error.message);
+    // 有登入帳號的人還要同步 profiles.role,否則權限不會真的生效
+    if (s.auth_uid) { await callAcct({ action: 'role', staffId: s.id, role }); return; }
+    flash('已更新'); load();
   }
   async function updateStaff(id: string, patch: Partial<Staff>) {
     const { error } = await supabase.from('staff').update(patch).eq('id', id);
@@ -168,16 +183,14 @@ export default function AdminPage() {
                 <tr key={s.id} className={`border-b border-mor-line/60 last:border-0 ${s.active ? '' : 'opacity-50'}`}>
                   <td className="px-4 py-2 font-medium">{s.name}{s.aliases?.length ? <span className="ml-1 text-xs text-gray-400">({s.aliases.join('/')})</span> : null}</td>
                   <td className="px-4 py-2">
-                    <select value={s.staff_type} disabled={!s.active} onChange={(e) => updateStaff(s.id, { staff_type: e.target.value })}
+                    <select value={s.staff_type} disabled={!s.active} onChange={(e) => changeStaffType(s, e.target.value)}
                       className="rounded-lg border border-gray-300 px-2 py-1 text-sm disabled:bg-gray-100 disabled:cursor-not-allowed">
                       {TYPE_OPTS.map((t) => <option key={t} value={t}>{TYPE_LABEL[t]}</option>)}
                     </select>
                   </td>
                   <td className="px-4 py-2">
-                    <select value={s.role ?? 'housekeeper'} disabled={!s.active} onChange={(e) => callAcct({ action: 'role', staffId: s.id, role: e.target.value })}
-                      className="rounded-lg border border-gray-300 px-2 py-1 text-sm disabled:bg-gray-100">
-                      {ROLE_OPTS.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
-                    </select>
+                    <span className="text-sm">{ROLE_LABEL[s.role ?? 'housekeeper'] ?? s.role}</span>
+                    <span className="ml-1 text-xs text-gray-400">(依職位)</span>
                   </td>
                   <td className="px-4 py-2">
                     {s.auth_uid ? (
@@ -224,7 +237,7 @@ export default function AdminPage() {
             <p className="text-xs text-amber-600 mt-1.5">這些帳號可以登入,但無法在此頁編輯。請執行補建 SQL(migration_31)。</p>
           </div>
         )}
-        <p className="text-xs text-gray-400 mt-2">停用=離職:紀錄保留、可查詢,但從統計列表排除;總數仍計入營運總量。離職會同時停用網站登入(封鎖帳號),恢復在職則解除。職位=實際工作內容(只有「管家」會出現在物業負責人下拉);權限=能看到哪些頁面:管理員=全部含設定;主管=營收/評價/清潔/訂單;會計=營收/請款/支出;一般=只清潔/評價。</p>
+        <p className="text-xs text-gray-400 mt-2">停用=離職:紀錄保留、可查詢,但從統計列表排除;總數仍計入營運總量。離職會同時停用網站登入(封鎖帳號),恢復在職則解除。權限由職位自動決定,不能單獨改:管家/房務→一般、經理→主管、會計→會計、總經理→super admin。各權限看得到的頁面:總經理=全部含設定;主管=營收/評價/清潔/訂單/請款/支出;會計=營收/請款/支出;一般=清潔/評價/訂單/請款。只有職位「管家」會出現在物業負責人下拉。</p>
       </section>
 
       {/* ===== 物業與負責人 ===== */}
@@ -329,7 +342,7 @@ export default function AdminPage() {
               {acct.mode === 'create' && (
                 <>
                   <label className="flex flex-col gap-1">登入 email<input value={acct.email} onChange={(e) => setAcct({ ...acct, email: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" placeholder="name@justwork.oasisliving.tw" /></label>
-                  <label className="flex flex-col gap-1">權限<select value={acct.role} onChange={(e) => setAcct({ ...acct, role: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5">{ROLE_OPTS.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}</select></label>
+                  <div className="flex flex-col gap-1">權限<div className="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1.5 text-gray-600">{ROLE_LABEL[acct.role] ?? acct.role}<span className="ml-1 text-xs text-gray-400">(依職位自動決定)</span></div></div>
                 </>
               )}
               <label className="flex flex-col gap-1">{acct.mode === 'create' ? '設定密碼' : '新密碼'}(至少 6 碼)<input type="text" value={acct.password} onChange={(e) => setAcct({ ...acct, password: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" placeholder="輸入密碼" autoComplete="new-password" /></label>

@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase';
 
 type Item = {
   id?: string; request_id?: string; item_name: string; amount: number;
-  account_code: string | null; purpose_type: string; property_id: string | null;
+  account_code: string | null; purpose_type: string; estate_id: string | null;
   note: string | null; sort: number;
 };
 type Req = {
@@ -21,7 +21,7 @@ type Req = {
   purchase_request_items?: Item[];
 };
 type AccountCode = { code: string; name: string };
-type Property = { id: string; name: string };
+type Estate = { id: string; name: string };
 type Profile = { id: string; name: string; role: string };
 
 const FREE_THRESHOLD = 3000;   // 與 migration 的 pr_apply_status() 一致
@@ -40,7 +40,7 @@ export default function PurchasesPage() {
   const [me, setMe] = useState<{ id: string; role: string } | null>(null);
   const [rows, setRows] = useState<Req[]>([]);
   const [codes, setCodes] = useState<AccountCode[]>([]);
-  const [props, setProps] = useState<Property[]>([]);
+  const [estates, setEstates] = useState<Estate[]>([]);
   const [people, setPeople] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState('');
@@ -69,12 +69,12 @@ export default function PurchasesPage() {
       setMe({ id: user.id, role: data?.role ?? 'housekeeper' });
     })();
     supabase.from('account_codes').select('code, name').order('sort').then(({ data }) => setCodes(data ?? []));
-    supabase.from('properties').select('id, name').order('name').then(({ data }) => setProps(data ?? []));
+    supabase.from('estates').select('id, name').eq('active', true).order('sort').order('name').then(({ data }) => setEstates(data ?? []));
     supabase.from('profiles').select('id, name, role').then(({ data }) => setPeople(data ?? []));
   }, [supabase]);
 
   const codeName = useMemo(() => Object.fromEntries(codes.map((c) => [c.code, c.name])), [codes]);
-  const propName = useMemo(() => Object.fromEntries(props.map((p) => [p.id, p.name])), [props]);
+  const estateName = useMemo(() => Object.fromEntries(estates.map((e) => [e.id, e.name])), [estates]);
   const personName = useMemo(() => Object.fromEntries(people.map((p) => [p.id, p.name])), [people]);
 
   const role = me?.role ?? '';
@@ -117,7 +117,7 @@ export default function PurchasesPage() {
   const sum = (xs: Req[]) => xs.reduce((a, r) => a + (Number(r.total_amount) || 0), 0);
 
   function blankItem(): Item {
-    return { item_name: '', amount: 0, account_code: null, purpose_type: 'property', property_id: null, note: null, sort: 0 };
+    return { item_name: '', amount: 0, account_code: null, purpose_type: 'estate', estate_id: null, note: null, sort: 0 };
   }
 
   function openNew() {
@@ -145,7 +145,7 @@ export default function PurchasesPage() {
     if (!clean.length) return flash('至少要有一個請款項目');
     for (const i of clean) {
       if (!i.item_name.trim()) return flash('每個項目都要填名稱');
-      if (i.purpose_type === 'property' && !i.property_id) return flash(`「${i.item_name}」請選擇用途`);
+      if (i.purpose_type === 'estate' && !i.estate_id) return flash(`「${i.item_name}」請選擇用途`);
     }
     if (edit.payment_method === 'transfer' && !edit.payee_account) return flash('匯款需填收款帳號');
     setSaving(true);
@@ -174,7 +174,7 @@ export default function PurchasesPage() {
       const payload = clean.map((i, idx) => ({
         request_id: reqId, item_name: i.item_name.trim(), amount: Number(i.amount) || 0,
         account_code: i.account_code || null, purpose_type: i.purpose_type,
-        property_id: i.purpose_type === 'office' ? null : i.property_id,
+        estate_id: i.purpose_type === 'office' ? null : i.estate_id,
         note: i.note || null, sort: idx,
       }));
       const { error: ie } = await supabase.from('purchase_request_items').insert(payload);
@@ -185,7 +185,7 @@ export default function PurchasesPage() {
         // 前端不自己算 —— 否則改前端就能繞過門檻。
         const { error: se } = await supabase.from('purchase_requests').update({ status: 'pending' }).eq('id', reqId);
         if (se) { flash('送出失敗:' + se.message); return; }
-        flash(editTotal < FREE_THRESHOLD ? `已送出・未達 $${fmt(FREE_THRESHOLD)},自動核可` : '已送出,等待兩位主管核可');
+        flash(editTotal < FREE_THRESHOLD ? `已送出・未達 $${fmt(FREE_THRESHOLD)},自動核可` : '已送出,等待主管與總經理核可');
       } else {
         flash('已儲存草稿');
       }
@@ -224,11 +224,15 @@ export default function PurchasesPage() {
     load();
   }
 
-  async function del(r: Req) {
-    if (!confirm(`確定刪除請款單 ${r.req_no}?`)) return;
+  // 撤銷 = 硬刪除。已產生支出的單一律擋下 —— 支出是錢真的花掉的紀錄,
+  // 連動刪除會讓請款單與支出兩邊對不上,而且 gen_expenses_from_pr() 只在
+  // 採購日「從無到有」時建立,刪掉救不回來。這條同時寫在 RLS 裡,不只靠前端藏按鈕。
+  async function cancel(r: Req) {
+    if (r.expense_generated_at) return flash('已產生支出,不能撤銷。請到支出頁處理。');
+    if (!confirm(`確定撤銷請款單 ${r.req_no}?撤銷後資料不會保留。`)) return;
     const { error } = await supabase.from('purchase_requests').delete().eq('id', r.id);
-    if (error) return flash('刪除失敗:' + error.message);
-    flash('已刪除'); load();
+    if (error) return flash('撤銷失敗:' + error.message);
+    flash('已撤銷'); load();
   }
 
   function exportXlsx() {
@@ -256,7 +260,7 @@ export default function PurchasesPage() {
           T(i?.item_name ?? '', stCell),
           T(Math.round(Number(i?.amount) || 0), stNum),
           T(i?.account_code ? codeName[i.account_code] ?? i.account_code : '', stCell),
-          T(i ? (i.purpose_type === 'office' ? '安幸辦公室' : (i.property_id ? propName[i.property_id] ?? '' : '')) : '', stCell),
+          T(i ? (i.purpose_type === 'office' ? '安幸辦公室' : (i.estate_id ? estateName[i.estate_id] ?? '' : '')) : '', stCell),
           T(r.payment_method ? PAY_LABEL[r.payment_method] ?? r.payment_method : '', stCell),
           T(r.payee_account ?? '', stCell),
           T(Math.round(Number(r.total_amount) || 0), stNum),
@@ -291,8 +295,8 @@ export default function PurchasesPage() {
 
       {canSeeAll && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
-          {card('待主管核可', waitManager, isManager ? '你可以核可這些' : '等待 manager 投票', () => setStF('pending'))}
-          {card('待 Super Admin 核可', waitAdmin, isAdmin ? '你可以核可這些' : '等待 super_admin 投票', () => setStF('pending'))}
+          {card('待主管核可', waitManager, isManager ? '你可以核可這些' : '等待主管投票', () => setStF('pending'))}
+          {card('待總經理核可', waitAdmin, isAdmin ? '你可以核可這些' : '等待總經理投票', () => setStF('pending'))}
           {card('待填採購日', waitDate, canSetDate ? '填了才會產生支出' : '等待主管或會計填寫', () => setStF('approved'))}
         </div>
       )}
@@ -346,10 +350,13 @@ export default function PurchasesPage() {
             : sorted.map((r) => {
               const mine = r.requester_id === me?.id;
               const canEdit = mine && (r.status === 'draft' || r.status === 'rejected');
-              const canVoteMgr = isManager && r.status === 'pending' && !r.manager_approved_at && !mine;
-              const canVoteAdm = isAdmin && r.status === 'pending' && !r.admin_approved_at && !mine;
-              const canRej = (isManager || isAdmin) && r.status === 'pending' && !mine;
+              // 開放自核:主管送的單那一票由他自己投,不再要求第二人。
+              const canVoteMgr = isManager && r.status === 'pending' && !r.manager_approved_at;
+              const canVoteAdm = isAdmin && r.status === 'pending' && !r.admin_approved_at;
+              const canRej = (isManager || isAdmin) && r.status === 'pending';
               const canDate = canSetDate && r.status === 'approved';
+              // 撤銷:提交者本人 / 主管 / 會計 / 總經理,任何狀態皆可,已產生支出除外
+              const canCancel = (mine || isManager || isAccountant || isAdmin) && !r.expense_generated_at;
               return (
                 <tr key={r.id} className="border-b border-mor-line/60 hover:bg-mor-bluelight/30 align-top">
                   <td className="px-3 py-2 whitespace-nowrap font-medium">{r.req_no}</td>
@@ -374,7 +381,7 @@ export default function PurchasesPage() {
                             {r.manager_approved_at ? '✓' : '○'} 主管{r.manager_approved_by ? `・${personName[r.manager_approved_by] ?? ''}` : ''}
                           </div>
                           <div className={r.admin_approved_at ? 'text-mor-green' : 'text-gray-400'}>
-                            {r.admin_approved_at ? '✓' : '○'} Admin{r.admin_approved_by ? `・${personName[r.admin_approved_by] ?? ''}` : ''}
+                            {r.admin_approved_at ? '✓' : '○'} 總經理{r.admin_approved_by ? `・${personName[r.admin_approved_by] ?? ''}` : ''}
                           </div>
                         </>}
                   </td>
@@ -387,7 +394,7 @@ export default function PurchasesPage() {
                     {canRej && <button onClick={() => { setRejecting(r); setRejectReason(''); }} className="text-xs text-amber-600 underline hover:text-amber-800">駁回</button>}
                     {canDate && <button onClick={() => { setDating(r); setDateVal(r.purchased_on ?? todayStr()); }} className="text-xs text-mor-blue underline hover:text-mor-slate">
                       {r.purchased_on ? '改採購日' : '填採購日'}</button>}
-                    {canEdit && <button onClick={() => del(r)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>}
+                    {canCancel && <button onClick={() => cancel(r)} className="text-xs text-red-500 underline hover:text-red-700">撤銷</button>}
                   </td>
                 </tr>
               );
@@ -443,17 +450,17 @@ export default function PurchasesPage() {
                             {codes.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
                           </select>
                           <select disabled={readOnly}
-                            value={it.purpose_type === 'office' ? 'office' : (it.property_id ?? '')}
+                            value={it.purpose_type === 'office' ? 'office' : (it.estate_id ?? '')}
                             onChange={(e) => {
                               const v = e.target.value;
                               setItems(items.map((x, i) => i === idx
-                                ? (v === 'office' ? { ...x, purpose_type: 'office', property_id: null } : { ...x, purpose_type: 'property', property_id: v || null })
+                                ? (v === 'office' ? { ...x, purpose_type: 'office', estate_id: null } : { ...x, purpose_type: 'estate', estate_id: v || null })
                                 : x));
                             }}
                             className="flex-1 rounded-lg border border-mor-line px-2 py-1.5 disabled:bg-gray-50">
                             <option value="">用途</option>
                             <option value="office">安幸辦公室</option>
-                            {props.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                            {estates.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
                           </select>
                           <input disabled={readOnly} value={it.note ?? ''} placeholder="備註"
                             onChange={(e) => setItems(items.map((x, i) => i === idx ? { ...x, note: e.target.value } : x))}
@@ -466,7 +473,7 @@ export default function PurchasesPage() {
                     <div className={editTotal < FREE_THRESHOLD ? 'text-mor-green text-xs' : 'text-amber-600 text-xs'}>
                       {editTotal < FREE_THRESHOLD
                         ? `未達 $${fmt(FREE_THRESHOLD)},送出後直接核可`
-                        : `達 $${fmt(FREE_THRESHOLD)} 以上,需主管與 Super Admin 各核可一次`}
+                        : `達 $${fmt(FREE_THRESHOLD)} 以上,需主管與總經理各核可一次`}
                     </div>
                     <div className="font-bold">總額 ${fmt(editTotal)}</div>
                   </div>

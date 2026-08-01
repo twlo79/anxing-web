@@ -6,13 +6,12 @@ import { createClient } from '@/lib/supabase';
 
 type Expense = {
   id: string; spent_on: string; item_name: string; amount: number;
-  account_code: string | null; purpose_type: string; property_id: string | null;
+  account_code: string | null; purpose_type: string; estate_id: string | null;
   voucher_no: string | null; payment_method: string | null; pay_account: string | null;
   note: string | null; source_item_id: string | null;
 };
 type AccountCode = { code: string; name: string; sort: number; active: boolean };
-type Property = { id: string; name: string; estate_id: string | null };
-type Estate = { id: string; name: string; sort: number };
+type Estate = { id: string; name: string; sort: number; active: boolean };
 
 const PAY_LABEL: Record<string, string> = { cash: '現金', transfer: '匯款', credit_card: '信用卡' };
 const PAY_OPTS = ['cash', 'transfer', 'credit_card'];
@@ -25,7 +24,6 @@ export default function ExpensesPage() {
   const supabase = useMemo(() => createClient(), []);
   const [rows, setRows] = useState<Expense[]>([]);
   const [codes, setCodes] = useState<AccountCode[]>([]);
-  const [props, setProps] = useState<Property[]>([]);
   const [estates, setEstates] = useState<Estate[]>([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState('');
@@ -38,7 +36,7 @@ export default function ExpensesPage() {
   const [toD, setToD] = useState('');
   const [codeF, setCodeF] = useState('');
   const [payF, setPayF] = useState('');
-  const [purposeF, setPurposeF] = useState('');   // '' | 'office' | property id
+  const [purposeF, setPurposeF] = useState('');   // '' | 'office' | estate id
   const [kw, setKw] = useState('');
   const [kwIn, setKwIn] = useState('');
   const [sort, setSort] = useState<SortState>({ key: 'spent_on', dir: 'desc' });
@@ -53,14 +51,13 @@ export default function ExpensesPage() {
       setRole(data?.role ?? '');
     })();
     supabase.from('account_codes').select('code, name, sort, active').order('sort').then(({ data }) => setCodes(data ?? []));
-    supabase.from('properties').select('id, name, estate_id').order('name').then(({ data }) => setProps(data ?? []));
-    supabase.from('estates').select('id, name, sort').order('sort').then(({ data }) => setEstates(data ?? []));
+    supabase.from('estates').select('id, name, sort, active').order('sort').then(({ data }) => setEstates(data ?? []));
   }, [supabase]);
 
   const codeName = useMemo(() => Object.fromEntries(codes.map((c) => [c.code, c.name])), [codes]);
-  const propName = useMemo(() => Object.fromEntries(props.map((p) => [p.id, p.name])), [props]);
   const estateName = useMemo(() => Object.fromEntries(estates.map((e) => [e.id, e.name])), [estates]);
-  const propEstate = useMemo(() => Object.fromEntries(props.map((p) => [p.id, p.estate_id])), [props]);
+  // 停用的物業不再出現在下拉,但既有支出仍要顯示得出名字,所以 estateName 用全部物業
+  const activeEstates = useMemo(() => estates.filter((e) => e.active), [estates]);
 
   // 支出筆數遠少於訂單,一次載完走前端排序即可(與契約頁同策略)。
   // 若日後量大到需要分頁,要改成伺服器端排序,並比照 /shortterm 讓匯出重新向伺服器取完整結果。
@@ -75,7 +72,7 @@ export default function ExpensesPage() {
       if (codeF) q = q.eq('account_code', codeF);
       if (payF) q = q.eq('payment_method', payF);
       if (purposeF === 'office') q = q.eq('purpose_type', 'office');
-      else if (purposeF) q = q.eq('property_id', purposeF);
+      else if (purposeF) q = q.eq('estate_id', purposeF);
       if (kw) q = q.or(`item_name.ilike.%${kw}%,note.ilike.%${kw}%,voucher_no.ilike.%${kw}%`);
       const { data, error } = await q.range(from, from + 999);
       if (error) { flash('載入失敗:' + error.message); break; }
@@ -105,23 +102,23 @@ export default function ExpensesPage() {
     return Object.entries(m).sort((a, b) => b[1] - a[1]);
   }, [rows]);
 
-  // 房源分項:辦公室獨立一列,其餘依房源歸戶(順帶標出所屬物業)
+  // 物業分項:辦公室獨立一列,其餘依物業歸戶
   const byPurpose = useMemo(() => {
     const m: Record<string, number> = {};
     rows.forEach((r) => {
-      const k = r.purpose_type === 'office' ? '__office' : (r.property_id ?? '__none');
+      const k = r.purpose_type === 'office' ? '__office' : (r.estate_id ?? '__none');
       m[k] = (m[k] || 0) + (Number(r.amount) || 0);
     });
     return Object.entries(m).sort((a, b) => b[1] - a[1]);
   }, [rows]);
 
   const purposeLabel = (r: Expense) =>
-    r.purpose_type === 'office' ? '安幸辦公室' : (r.property_id ? propName[r.property_id] ?? '—' : '—');
+    r.purpose_type === 'office' ? '安幸辦公室' : (r.estate_id ? estateName[r.estate_id] ?? '—' : '—');
 
   function blank(): Expense {
     return {
       id: '', spent_on: todayStr(), item_name: '', amount: 0, account_code: null,
-      purpose_type: 'property', property_id: null, voucher_no: null,
+      purpose_type: 'estate', estate_id: null, voucher_no: null,
       payment_method: 'cash', pay_account: null, note: null, source_item_id: null,
     };
   }
@@ -130,7 +127,7 @@ export default function ExpensesPage() {
     if (!edit) return;
     if (!edit.spent_on) return flash('請填支出日期');
     if (!edit.item_name.trim()) return flash('請填支出項目');
-    if (edit.purpose_type === 'property' && !edit.property_id) return flash('請選擇用途房源');
+    if (edit.purpose_type === 'estate' && !edit.estate_id) return flash('請選擇用途物業');
     setSaving(true);
     const payload: any = {
       spent_on: edit.spent_on,
@@ -138,7 +135,7 @@ export default function ExpensesPage() {
       amount: Number(edit.amount) || 0,
       account_code: edit.account_code || null,
       purpose_type: edit.purpose_type,
-      property_id: edit.purpose_type === 'office' ? null : edit.property_id,
+      estate_id: edit.purpose_type === 'office' ? null : edit.estate_id,
       voucher_no: edit.voucher_no || null,
       payment_method: edit.payment_method || null,
       pay_account: edit.payment_method === 'transfer' ? (edit.pay_account || null) : null,
@@ -173,16 +170,15 @@ export default function ExpensesPage() {
     const stNum = { border: BORD, alignment: { horizontal: 'right' } };
     const T = (v: any, st: any) => ({ v: v ?? '', t: typeof v === 'number' ? 'n' : 's', s: st, z: typeof v === 'number' ? '#,##0' : undefined });
 
-    const header = ['支出日期', '支出項目', '金額', '會計科目', '物業', '用途', '憑證號碼', '支付方式', '付款帳號', '備註'];
+    // 用途已是物業層級,原本的「物業」欄與「用途」欄內容重複,合併成一欄
+    const header = ['支出日期', '支出項目', '金額', '會計科目', '用途', '憑證號碼', '支付方式', '付款帳號', '備註'];
     const aoa: any[][] = [header.map((h) => T(h, stHead))];
     for (const r of sorted) {
-      const est = r.purpose_type === 'office' ? '' : (r.property_id ? estateName[propEstate[r.property_id] ?? ''] ?? '' : '');
       aoa.push([
         T(r.spent_on ?? '', stCell),
         T(r.item_name ?? '', stCell),
         T(Math.round(Number(r.amount) || 0), stNum),
         T(r.account_code ? codeName[r.account_code] ?? r.account_code : '', stCell),
-        T(est, stCell),
         T(purposeLabel(r), stCell),
         T(r.voucher_no ?? '', stCell),
         T(r.payment_method ? PAY_LABEL[r.payment_method] ?? r.payment_method : '', stCell),
@@ -191,7 +187,7 @@ export default function ExpensesPage() {
       ]);
     }
     const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws['!cols'] = [{ wch: 12 }, { wch: 24 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 28 }];
+    ws['!cols'] = [{ wch: 12 }, { wch: 24 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 28 }];
     ws['!freeze'] = { xSplit: 0, ySplit: 1 };
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, '支出');
@@ -236,11 +232,11 @@ export default function ExpensesPage() {
         </div>
 
         <div className="rounded-xl border border-mor-line bg-white p-4">
-          <div className="text-sm font-medium mb-3">房源分項</div>
+          <div className="text-sm font-medium mb-3">物業分項</div>
           <div className="space-y-1.5 max-h-44 overflow-auto pr-1">
             {byPurpose.length === 0 ? <div className="text-xs text-gray-400">無資料</div> : byPurpose.map(([k, v]) => (
               <div key={k} className="flex items-center gap-2 text-xs">
-                <div className="w-20 shrink-0 truncate">{k === '__office' ? '安幸辦公室' : k === '__none' ? '—' : propName[k] ?? '—'}</div>
+                <div className="w-20 shrink-0 truncate">{k === '__office' ? '安幸辦公室' : k === '__none' ? '—' : estateName[k] ?? '—'}</div>
                 <div className="flex-1 h-2 rounded bg-mor-sand/60 overflow-hidden">
                   <div className="h-full bg-mor-green" style={{ width: `${Math.max(2, (v / maxPurpose) * 100)}%` }} />
                 </div>
@@ -266,7 +262,7 @@ export default function ExpensesPage() {
           <select value={purposeF} onChange={(e) => setPurposeF(e.target.value)} className="rounded-lg border border-mor-line px-2 py-1.5 max-w-44">
             <option value="">全部用途</option>
             <option value="office">安幸辦公室</option>
-            {props.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            {activeEstates.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
           </select></label>
         <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">支付方式</span>
           <select value={payF} onChange={(e) => setPayF(e.target.value)} className="rounded-lg border border-mor-line px-2 py-1.5">
@@ -376,16 +372,16 @@ export default function ExpensesPage() {
               </div>
               <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">用途 *</span>
                 <select
-                  value={edit.purpose_type === 'office' ? 'office' : (edit.property_id ?? '')}
+                  value={edit.purpose_type === 'office' ? 'office' : (edit.estate_id ?? '')}
                   onChange={(e) => {
                     const v = e.target.value;
-                    if (v === 'office') setEdit({ ...edit, purpose_type: 'office', property_id: null });
-                    else setEdit({ ...edit, purpose_type: 'property', property_id: v || null });
+                    if (v === 'office') setEdit({ ...edit, purpose_type: 'office', estate_id: null });
+                    else setEdit({ ...edit, purpose_type: 'estate', estate_id: v || null });
                   }}
                   className="rounded-lg border border-mor-line px-2 py-1.5">
                   <option value="">請選擇</option>
                   <option value="office">安幸辦公室</option>
-                  {props.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  {activeEstates.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
                 </select></label>
               <div className="grid grid-cols-2 gap-3">
                 <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">支付方式</span>

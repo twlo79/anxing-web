@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
 
 const ROLE_LABEL: Record<string, string> = {
-  housekeeper: '管家', accountant: '會計', manager: '主管', super_admin: 'Super Admin',
+  housekeeper: '一般', accountant: '會計', manager: '主管', super_admin: '總經理',
 };
 
 const NAV = [
