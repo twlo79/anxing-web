@@ -11,7 +11,7 @@ type Rec = {
 };
 
 const PAGE_SIZE = 50;
-const TYPE_LABEL: Record<string, string> = { housekeeper: '管家', roomservice: '房務', other: '其他' };
+const TYPE_LABEL: Record<string, string> = { housekeeper: '管家', roomservice: '房務', manager: '主管', accountant: '會計', other: '其他' };
 
 function csvEsc(v: unknown) {
   if (v == null) return '';

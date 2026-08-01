@@ -6,8 +6,10 @@ import { createClient } from '@/lib/supabase';
 type Staff = { id: string; name: string; aliases: string[]; staff_type: string; active: boolean; sort: number; role?: string; email?: string | null; auth_uid?: string | null };
 type Estate = { id: string; name: string; manager: string | null; sort: number; active: boolean };
 type Property = { id: string; name: string; estate_id: string | null };
+type Profile = { id: string; name: string | null; role: string; active: boolean };
 
-const TYPE_LABEL: Record<string, string> = { housekeeper: '管家', roomservice: '房務', other: '其他/離職' };
+const TYPE_LABEL: Record<string, string> = { housekeeper: '管家', roomservice: '房務', manager: '主管', accountant: '會計', other: '其他' };
+const TYPE_OPTS = ['housekeeper', 'roomservice', 'manager', 'accountant', 'other'];
 const ROLE_LABEL: Record<string, string> = { super_admin: '管理員', manager: '主管', accountant: '會計', housekeeper: '一般' };
 const ROLE_OPTS = ['housekeeper', 'accountant', 'manager', 'super_admin'];
 
@@ -16,6 +18,7 @@ export default function AdminPage() {
   const router = useRouter();
   const [role, setRole] = useState<string | null>(null);
   const [staff, setStaff] = useState<Staff[]>([]);
+  const [profiles, setProfiles] = useState<Profile[]>([]);
   const [estates, setEstates] = useState<Estate[]>([]);
   const [properties, setProperties] = useState<Property[]>([]);
   const [selEstate, setSelEstate] = useState<string>('');
@@ -25,9 +28,11 @@ export default function AdminPage() {
 
   const load = useCallback(async () => {
     const { data: st } = await supabase.from('staff').select('*').order('sort').order('name');
+    const { data: pf } = await supabase.from('profiles').select('id, name, role, active');
     const { data: es } = await supabase.from('estates').select('*').order('sort').order('name');
     const { data: pr } = await supabase.from('properties').select('id, name, estate_id').order('name');
     setStaff(st ?? []);
+    setProfiles(pf ?? []);
     setEstates(es ?? []);
     setProperties(pr ?? []);
     setSelEstate((cur) => cur || es?.[0]?.id || '');
@@ -47,6 +52,11 @@ export default function AdminPage() {
 
   // ---- 人員 ----
   const activeHousekeepers = useMemo(() => staff.filter((s) => s.active && s.staff_type === 'housekeeper'), [staff]);
+  // 有登入帳號(profiles)但名冊(staff)沒有對應列的孤兒帳號 —— 多半是直接用 SQL 建的
+  const orphanAccounts = useMemo(() => {
+    const linked = new Set(staff.map((s) => s.auth_uid).filter(Boolean));
+    return profiles.filter((p) => !linked.has(p.id));
+  }, [staff, profiles]);
   const [newStaffName, setNewStaffName] = useState('');
   const [newStaffType, setNewStaffType] = useState('housekeeper');
 
@@ -158,15 +168,10 @@ export default function AdminPage() {
                 <tr key={s.id} className={`border-b border-mor-line/60 last:border-0 ${s.active ? '' : 'opacity-50'}`}>
                   <td className="px-4 py-2 font-medium">{s.name}{s.aliases?.length ? <span className="ml-1 text-xs text-gray-400">({s.aliases.join('/')})</span> : null}</td>
                   <td className="px-4 py-2">
-                    {s.staff_type === 'other' ? (
-                      <span className="text-gray-400 text-sm">—</span>
-                    ) : (
-                      <select value={s.staff_type} disabled={!s.active} onChange={(e) => updateStaff(s.id, { staff_type: e.target.value })}
-                        className="rounded-lg border border-gray-300 px-2 py-1 text-sm disabled:bg-gray-100 disabled:cursor-not-allowed">
-                        <option value="housekeeper">管家</option>
-                        <option value="roomservice">房務</option>
-                      </select>
-                    )}
+                    <select value={s.staff_type} disabled={!s.active} onChange={(e) => updateStaff(s.id, { staff_type: e.target.value })}
+                      className="rounded-lg border border-gray-300 px-2 py-1 text-sm disabled:bg-gray-100 disabled:cursor-not-allowed">
+                      {TYPE_OPTS.map((t) => <option key={t} value={t}>{TYPE_LABEL[t]}</option>)}
+                    </select>
                   </td>
                   <td className="px-4 py-2">
                     <select value={s.role ?? 'housekeeper'} disabled={!s.active} onChange={(e) => callAcct({ action: 'role', staffId: s.id, role: e.target.value })}
@@ -203,13 +208,23 @@ export default function AdminPage() {
             <input value={newStaffName} onChange={(e) => setNewStaffName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addStaff(); }}
               placeholder="新人員姓名" className="rounded-lg border border-gray-300 px-2 py-1.5 w-40" />
             <select value={newStaffType} onChange={(e) => setNewStaffType(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
-              <option value="housekeeper">管家</option>
-              <option value="roomservice">房務</option>
+              {TYPE_OPTS.map((t) => <option key={t} value={t}>{TYPE_LABEL[t]}</option>)}
             </select>
             <button onClick={addStaff} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 新增人員</button>
           </div>
         </div>
-        <p className="text-xs text-gray-400 mt-2">停用=離職:紀錄保留、可查詢,但從統計列表排除;總數仍計入營運總量。離職會同時停用網站登入(封鎖帳號),恢復在職則解除。權限:管理員=全部含設定;主管=營收/評價/清潔/訂單;一般=只清潔/評價。</p>
+        {orphanAccounts.length > 0 && (
+          <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm">
+            <div className="font-medium text-amber-800 mb-1">有 {orphanAccounts.length} 個登入帳號未對應到人員名冊</div>
+            <ul className="text-xs text-amber-700 space-y-0.5">
+              {orphanAccounts.map((p) => (
+                <li key={p.id}>{p.name || '(未命名)'} · {ROLE_LABEL[p.role] ?? p.role}</li>
+              ))}
+            </ul>
+            <p className="text-xs text-amber-600 mt-1.5">這些帳號可以登入,但無法在此頁編輯。請執行補建 SQL(migration_31)。</p>
+          </div>
+        )}
+        <p className="text-xs text-gray-400 mt-2">停用=離職:紀錄保留、可查詢,但從統計列表排除;總數仍計入營運總量。離職會同時停用網站登入(封鎖帳號),恢復在職則解除。職位=實際工作內容(只有「管家」會出現在物業負責人下拉);權限=能看到哪些頁面:管理員=全部含設定;主管=營收/評價/清潔/訂單;會計=營收/請款/支出;一般=只清潔/評價。</p>
       </section>
 
       {/* ===== 物業與負責人 ===== */}
