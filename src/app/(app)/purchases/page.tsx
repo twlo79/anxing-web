@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
+import PushToggle from '../push-toggle';
 
 type Item = {
   id?: string; request_id?: string; item_name: string; amount: number;
@@ -326,6 +327,8 @@ export default function PurchasesPage() {
       {msg && <div className="mb-3 rounded-lg bg-mor-greenlight text-mor-green px-4 py-2 text-sm">{msg}</div>}
       {/* 手機上標題由頂列顯示,這裡只留桌機用 */}
       <h1 className="hidden md:block text-xl font-bold mb-4">請款填寫</h1>
+
+      <PushToggle />
 
       {/* 手機:主要動作放最上面,一按就能送單 */}
       <button onClick={openNew}
