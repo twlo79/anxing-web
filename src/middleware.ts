@@ -24,12 +24,18 @@ export async function middleware(request: NextRequest) {
   return response;
 }
 
-// PWA 注意事項:manifest.webmanifest、sw.js、icons/ 一定要排除在登入檢查之外。
-// 瀏覽器抓 manifest 與 service worker 時未必帶著登入 cookie,被導去 /login 的話
-// 拿到的是 HTML 而不是 JSON/JS,PWA 就裝不起來,而且錯誤訊息完全看不出原因。
-// sw.js 另外還有一個限制:它的 scope 取決於檔案路徑,必須從網站根目錄提供。
+// 這個 middleware 是「沒有登入 cookie 就導去 /login」。
+// 凡是不靠 cookie 驗證的路徑都必須排除,否則會拿到登入頁的 HTML 而不是預期的回應,
+// 而且狀態碼是 200 —— 呼叫端會以為成功,失敗完全沒有徵兆。
+//
+//   api/import  用 x-import-key 驗證
+//   api/push    subscribe 用 Bearer token、notify 用 x-push-key,兩者都不吃 cookie。
+//               漏掉這條的話 Supabase webhook 會被導去 /login,推播永遠不會發出。
+//   manifest / sw.js / icons
+//               瀏覽器抓這些檔案時未必帶 cookie,被導走 PWA 就裝不起來。
+//               sw.js 另外還有 scope 限制,必須從網站根目錄提供。
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|api/import|manifest.webmanifest|sw.js|icons/|.*\\.(?:svg|png|jpg|ico)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|api/import|api/push|manifest.webmanifest|sw.js|icons/|.*\\.(?:svg|png|jpg|ico)$).*)',
   ],
 };
