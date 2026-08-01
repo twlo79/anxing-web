@@ -31,6 +31,22 @@ order by p.name;
 
 
 -- ============================================================
+-- 步驟 0.5：放寬 staff_type 的 CHECK 約束
+--
+--   約束 staff_staff_type_check 建在本 repo 的 migrations 之外，
+--   原本只允許 housekeeper / roomservice / other。
+--   不放寬的話：步驟 2 會失敗，而且後台新增的「主管/會計」選項也存不進去。
+--
+--   執行前先確認現有資料沒有本清單以外的值：
+--     select staff_type, count(*) from staff group by 1;
+-- ============================================================
+alter table staff drop constraint staff_staff_type_check;
+
+alter table staff add constraint staff_staff_type_check
+  check (staff_type in ('housekeeper','roomservice','manager','accountant','other'));
+
+
+-- ============================================================
 -- 步驟 1：用姓名把「既有 staff 列」與「登入帳號」連起來
 --         必須先做這步，否則步驟 2 會把已在名冊裡的人重複建一次
 -- ============================================================
@@ -75,14 +91,17 @@ where not exists (select 1 from staff s where s.auth_uid = p.id);
 
 
 -- ============================================================
--- 附錄：staff_type 若有 CHECK 約束，需放寬才存得下 manager / accountant
---       先跑這句查；查不到結果就不用做下面那段
--- ============================================================
--- select conname, pg_get_constraintdef(oid)
--- from pg_constraint
--- where conrelid = 'staff'::regclass and contype = 'c';
-
--- 查到的話，把 <約束名稱> 換掉後執行：
--- alter table staff drop constraint <約束名稱>;
--- alter table staff add constraint staff_type_chk
---   check (staff_type in ('housekeeper','roomservice','manager','accountant','other'));
+-- 執行紀錄：2026-08-01 已於正式站執行完畢
+--
+--   步驟 0.5  放寬約束。原本的 staff_staff_type_check 只允許
+--             housekeeper / roomservice / other，插入 manager 會噴 23514。
+--   步驟 1    0 列受影響（現有名冊 7 人本來就沒有登入帳號）
+--   步驟 2    補建 David（super_admin → 職位 manager）
+--   步驟 3    0 列，通過
+--
+--   另：justwork0117@gmail.com（Property manager，建立後從未登入）
+--       於此次一併刪除，profiles 與 auth.users 兩邊都已清除。
+--
+--   踩到的坑：步驟 0.5 的 DDL 會讓 PostgREST 重載 schema cache，
+--             執行後短時間內前端可能讀到空資料（200 + 空陣列，不是錯誤），
+--             重新整理即可，不是權限或資料問題。
