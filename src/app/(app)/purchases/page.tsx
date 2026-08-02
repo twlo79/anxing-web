@@ -19,10 +19,12 @@ type Req = {
   admin_approved_by: string | null; admin_approved_at: string | null;
   rejected_by: string | null; rejected_at: string | null; reject_reason: string | null;
   purchased_on: string | null; expense_generated_at: string | null; created_at: string;
+  planned_transfer_on: string | null; payout_account: string | null;
   purchase_request_items?: Item[];
 };
 type AccountCode = { code: string; name: string };
 type Estate = { id: string; name: string };
+type PayAccount = { code: string; name: string; method: string };
 type Profile = { id: string; name: string; role: string };
 
 const FREE_THRESHOLD = 3000;   // 與 migration 的 pr_apply_status() 一致
@@ -42,6 +44,7 @@ export default function PurchasesPage() {
   const [rows, setRows] = useState<Req[]>([]);
   const [codes, setCodes] = useState<AccountCode[]>([]);
   const [estates, setEstates] = useState<Estate[]>([]);
+  const [payAccounts, setPayAccounts] = useState<PayAccount[]>([]);
   const [people, setPeople] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState('');
@@ -53,6 +56,9 @@ export default function PurchasesPage() {
   const [rejectReason, setRejectReason] = useState('');
   const [dating, setDating] = useState<Req | null>(null);
   const [dateVal, setDateVal] = useState('');
+  const [planning, setPlanning] = useState<Req | null>(null);
+  const [planDate, setPlanDate] = useState('');
+  const [planAcct, setPlanAcct] = useState('');
 
   const [stF, setStF] = useState('');
   const [reqF, setReqF] = useState('');
@@ -71,6 +77,9 @@ export default function PurchasesPage() {
     })();
     supabase.from('account_codes').select('code, name').order('sort').then(({ data }) => setCodes(data ?? []));
     supabase.from('estates').select('id, name').eq('active', true).order('sort').order('name').then(({ data }) => setEstates(data ?? []));
+    supabase.from('payment_accounts').select('code, name, method')
+      .eq('for_payment', true).eq('active', true).order('sort')
+      .then(({ data }) => setPayAccounts(data ?? []));
     supabase.from('profiles').select('id, name, role').then(({ data }) => setPeople(data ?? []));
   }, [supabase]);
 
@@ -83,7 +92,7 @@ export default function PurchasesPage() {
   const isAdmin = role === 'super_admin';
   const isAccountant = role === 'accountant';
   const canSeeAll = isManager || isAdmin || isAccountant;
-  // 採購日:主管、Super Admin、會計都能填。會計不能核可,但能填採購日。
+  // 排匯款與匯出:主管、總經理、會計都能操作。會計不能核可,但能安排與執行付款。
   const canSetDate = isManager || isAdmin || isAccountant;
 
   const load = useCallback(async () => {
@@ -107,6 +116,7 @@ export default function PurchasesPage() {
     created_at:   { type: 'date',   get: (r) => r.created_at },
     total_amount: { type: 'number', get: (r) => r.total_amount },
     purchased_on: { type: 'date',   get: (r) => r.purchased_on },
+    planned_transfer_on: { type: 'date', get: (r) => r.planned_transfer_on },
     status:       { type: 'text',   get: (r) => ST_LABEL[r.status] ?? r.status },
   }), []);
   const sorted = useMemo(() => sortRows(rows, sort, SORT_COLS), [rows, sort, SORT_COLS]);
@@ -128,6 +138,7 @@ export default function PurchasesPage() {
       note: null, submitted_at: null, manager_approved_by: null, manager_approved_at: null,
       admin_approved_by: null, admin_approved_at: null, rejected_by: null, rejected_at: null, reject_reason: null,
       purchased_on: null, expense_generated_at: null, created_at: '',
+      planned_transfer_on: null, payout_account: null,
     });
     setItems([blankItem()]);
   }
@@ -217,12 +228,23 @@ export default function PurchasesPage() {
 
   async function doSetDate() {
     if (!dating) return;
-    if (!dateVal) return flash('請選擇採購日');
+    if (!dateVal) return flash('請選擇日期');
     const { error } = await supabase.from('purchase_requests').update({ purchased_on: dateVal }).eq('id', dating.id);
     if (error) return flash('儲存失敗:' + error.message);
     setDating(null);
-    flash(dating.purchased_on ? '採購日已更新,連動支出的日期一併調整' : '已填採購日,費用已連動到支出');
+    flash(dating.purchased_on ? '已更新,連動支出的日期一併調整' : '已匯出,費用已連動到支出');
     load();
+  }
+
+  // 排匯款:只寫計畫欄位,不碰 purchased_on —— 錢還沒出去,不該產生支出
+  async function savePlan() {
+    if (!planning) return;
+    if (!planDate) return flash('請選擇預定匯款日');
+    if (!planAcct) return flash('請選擇匯出帳號');
+    const { error } = await supabase.from('purchase_requests')
+      .update({ planned_transfer_on: planDate, payout_account: planAcct }).eq('id', planning.id);
+    if (error) return flash('儲存失敗:' + error.message);
+    setPlanning(null); flash('已排定匯款'); load();
   }
 
   // 撤銷 = 硬刪除。已產生支出的單一律擋下 —— 支出是錢真的花掉的紀錄,
@@ -290,6 +312,10 @@ export default function PurchasesPage() {
       canVoteMgr: isManager && r.status === 'pending' && !r.manager_approved_at,
       canVoteAdm: isAdmin && r.status === 'pending' && !r.admin_approved_at,
       canRej: (isManager || isAdmin) && r.status === 'pending',
+      // 匯款類的單要先排定計畫,再按匯出;現金類沒有計畫階段,核可後直接匯出
+      needPlan: r.payment_method === 'transfer' || r.payment_method === 'credit_card',
+      canPlan: canSetDate && r.status === 'approved' && !r.purchased_on
+               && (r.payment_method === 'transfer' || r.payment_method === 'credit_card'),
       canDate: canSetDate && r.status === 'approved',
       // 撤銷:提交者本人 / 主管 / 會計 / 總經理,任何狀態皆可,已產生支出除外
       canCancel: (mine || isManager || isAccountant || isAdmin) && !r.expense_generated_at,
@@ -340,7 +366,7 @@ export default function PurchasesPage() {
         <div className="grid grid-cols-3 gap-2 md:gap-4 mb-4 md:mb-5">
           {card('待主管核可', waitManager, isManager ? '你可以核可這些' : '等待主管投票', () => setStF('pending'))}
           {card('待總經理核可', waitAdmin, isAdmin ? '你可以核可這些' : '等待總經理投票', () => setStF('pending'))}
-          {card('待填採購日', waitDate, canSetDate ? '填了才會產生支出' : '等待主管或會計填寫', () => setStF('approved'))}
+          {card('待匯出', waitDate, canSetDate ? '匯出後才會產生支出' : '等待主管或會計處理', () => setStF('approved'))}
         </div>
       )}
 
@@ -411,7 +437,7 @@ export default function PurchasesPage() {
         {loading ? <div className="rounded-xl border border-mor-line bg-white py-10 text-center text-gray-400 text-sm">載入中…</div>
         : sorted.length === 0 ? <div className="rounded-xl border border-mor-line bg-white py-10 text-center text-gray-400 text-sm">無請款單</div>
         : sorted.map((r) => {
-          const { canEdit, canVoteMgr, canVoteAdm, canRej, canDate, canCancel } = perms(r);
+          const { canEdit, canVoteMgr, canVoteAdm, canRej, canDate, canCancel, canPlan } = perms(r);
           return (
             <div key={r.id} className="rounded-xl border border-mor-line bg-white p-3">
               <div className="flex items-start justify-between gap-2">
@@ -438,7 +464,13 @@ export default function PurchasesPage() {
 
               <div className="mt-2 flex items-center justify-between text-xs">
                 <div>{voteLine(r)}</div>
-                {r.purchased_on && <div className="text-gray-500 shrink-0">採購日 {r.purchased_on}</div>}
+                <div className="text-gray-500 shrink-0 text-right">
+                  {r.purchased_on
+                    ? <>付款日 {r.purchased_on}</>
+                    : r.planned_transfer_on
+                      ? <span className="text-mor-blue">預定 {r.planned_transfer_on}・{r.payout_account}</span>
+                      : null}
+                </div>
               </div>
 
               {/* 手機的按鈕要夠大才點得到,一律 44px 高 */}
@@ -455,10 +487,15 @@ export default function PurchasesPage() {
                   <button onClick={() => { setRejecting(r); setRejectReason(''); }}
                     className="flex-1 min-w-[5rem] h-11 rounded-lg border border-amber-400 text-amber-700 text-sm font-medium active:bg-amber-50">駁回</button>
                 )}
+                {canPlan && (
+                  <button onClick={() => { setPlanning(r); setPlanDate(r.planned_transfer_on ?? todayStr()); setPlanAcct(r.payout_account ?? ''); }}
+                    className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-slate text-mor-slate text-sm font-medium active:bg-mor-sand/60">
+                    {r.planned_transfer_on ? '改匯款計畫' : '排匯款'}</button>
+                )}
                 {canDate && (
-                  <button onClick={() => { setDating(r); setDateVal(r.purchased_on ?? todayStr()); }}
+                  <button onClick={() => { setDating(r); setDateVal(r.purchased_on ?? r.planned_transfer_on ?? todayStr()); }}
                     className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-blue text-mor-blue text-sm font-medium active:bg-mor-bluelight">
-                    {r.purchased_on ? '改採購日' : '填採購日'}</button>
+                    {r.purchased_on ? '改付款日' : '匯出'}</button>
                 )}
                 {canCancel && (
                   <button onClick={() => cancel(r)}
@@ -476,23 +513,26 @@ export default function PurchasesPage() {
           <thead>
             <tr className="border-b border-mor-line bg-mor-sand/40 text-left">
               <SortTh label="單號" sortKey="req_no" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
+              <SortTh label="建立日" sortKey="created_at" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <th className="px-3 py-2.5">申請人</th>
               <th className="px-3 py-2.5">項目</th>
               <SortTh label="總額" sortKey="total_amount" type="number" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="text-right" align="right" />
               <SortTh label="狀態" sortKey="status" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <th className="px-3 py-2.5">核可</th>
-              <SortTh label="採購日" sortKey="purchased_on" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
+              <SortTh label="預定匯款" sortKey="planned_transfer_on" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
+              <SortTh label="付款日" sortKey="purchased_on" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <th className="px-3 py-2.5 text-right">操作</th>
             </tr>
           </thead>
           <tbody>
-            {loading ? <tr><td colSpan={8} className="px-4 py-10 text-center text-gray-400">載入中…</td></tr>
-            : sorted.length === 0 ? <tr><td colSpan={8} className="px-4 py-10 text-center text-gray-400">無請款單</td></tr>
+            {loading ? <tr><td colSpan={10} className="px-4 py-10 text-center text-gray-400">載入中…</td></tr>
+            : sorted.length === 0 ? <tr><td colSpan={10} className="px-4 py-10 text-center text-gray-400">無請款單</td></tr>
             : sorted.map((r) => {
-              const { canEdit, canVoteMgr, canVoteAdm, canRej, canDate, canCancel } = perms(r);
+              const { canEdit, canVoteMgr, canVoteAdm, canRej, canDate, canCancel, canPlan } = perms(r);
               return (
                 <tr key={r.id} className="border-b border-mor-line/60 hover:bg-mor-bluelight/30 align-top">
                   <td className="px-3 py-2 whitespace-nowrap font-medium">{r.req_no}</td>
+                  <td className="px-3 py-2 whitespace-nowrap text-gray-600">{r.created_at ? r.created_at.slice(0, 10) : '—'}</td>
                   <td className="px-3 py-2 whitespace-nowrap">{personName[r.requester_id] ?? '—'}</td>
                   <td className="px-3 py-2 text-gray-600 max-w-64">
                     <div className="truncate" title={(r.purchase_request_items ?? []).map((i) => i.item_name).join('、')}>
@@ -507,6 +547,13 @@ export default function PurchasesPage() {
                       <div className="text-[11px] text-red-500 mt-1 max-w-40 truncate" title={r.reject_reason}>{r.reject_reason}</div>}
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap text-xs">{voteLine(r)}</td>
+                  <td className="px-3 py-2 whitespace-nowrap text-xs">
+                    {r.planned_transfer_on
+                      ? <span className={r.purchased_on ? 'text-gray-400' : 'text-mor-blue font-medium'}>
+                          {r.planned_transfer_on}<span className="text-gray-400 ml-1">{r.payout_account}</span>
+                        </span>
+                      : <span className="text-gray-300">—</span>}
+                  </td>
                   <td className="px-3 py-2 whitespace-nowrap text-gray-600">{r.purchased_on ?? '—'}</td>
                   <td className="px-3 py-2 text-right whitespace-nowrap space-x-2">
                     <button onClick={() => openEdit(r)} className="text-xs text-gray-500 underline hover:text-mor-slate">
@@ -514,8 +561,10 @@ export default function PurchasesPage() {
                     </button>
                     {(canVoteMgr || canVoteAdm) && <button onClick={() => vote(r)} className="text-xs text-mor-green underline hover:text-mor-slate">核可</button>}
                     {canRej && <button onClick={() => { setRejecting(r); setRejectReason(''); }} className="text-xs text-amber-600 underline hover:text-amber-800">駁回</button>}
-                    {canDate && <button onClick={() => { setDating(r); setDateVal(r.purchased_on ?? todayStr()); }} className="text-xs text-mor-blue underline hover:text-mor-slate">
-                      {r.purchased_on ? '改採購日' : '填採購日'}</button>}
+                    {canPlan && <button onClick={() => { setPlanning(r); setPlanDate(r.planned_transfer_on ?? todayStr()); setPlanAcct(r.payout_account ?? ''); }} className="text-xs text-mor-slate underline hover:text-mor-blue">
+                      {r.planned_transfer_on ? '改匯款計畫' : '排匯款'}</button>}
+                    {canDate && <button onClick={() => { setDating(r); setDateVal(r.purchased_on ?? r.planned_transfer_on ?? todayStr()); }} className="text-xs text-mor-blue underline hover:text-mor-slate">
+                      {r.purchased_on ? '改付款日' : '匯出'}</button>}
                     {canCancel && <button onClick={() => cancel(r)} className="text-xs text-red-500 underline hover:text-red-700">撤銷</button>}
                   </td>
                 </tr>
@@ -541,7 +590,7 @@ export default function PurchasesPage() {
               <div className="p-4 md:p-6 space-y-4 text-sm">
                 {readOnly && edit.id && (
                   <div className="rounded-lg bg-mor-sand/60 text-gray-600 px-3 py-2 text-xs">
-                    {edit.status === 'approved' ? '已核可的單不可再編輯,只能修改採購日。' : '此單目前不可編輯。'}
+                    {edit.status === 'approved' ? '已核可的單不可再編輯,只能安排匯款與確認付款日。' : '此單目前不可編輯。'}
                   </div>
                 )}
                 {edit.status === 'rejected' && edit.reject_reason && (
@@ -674,19 +723,57 @@ export default function PurchasesPage() {
       {dating && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setDating(null)}>
           <div className="bg-white rounded-xl w-[420px] max-w-[92vw] shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <div className="border-b border-mor-line px-6 py-4 font-bold">{dating.purchased_on ? '修改採購日' : '填寫採購日'} · {dating.req_no}</div>
+            <div className="border-b border-mor-line px-6 py-4 font-bold">{dating.purchased_on ? '修改付款日' : '確認匯出'} · {dating.req_no}</div>
             <div className="p-6 text-sm space-y-2">
               <div className="text-xs text-gray-500">
                 {dating.purchased_on
                   ? '改日期只會同步既有支出的日期,不會重複產生新的支出。'
-                  : `填入後,這張單的 ${(dating.purchase_request_items ?? []).length} 個項目會各自產生一筆支出。`}
+                  : `確認後,這張單的 ${(dating.purchase_request_items ?? []).length} 個項目會各自產生一筆支出,而且這張單就不能再撤銷。`}
               </div>
+              {!dating.purchased_on && dating.planned_transfer_on && (
+                <div className="text-xs text-mor-blue">預定匯款日 {dating.planned_transfer_on}・{dating.payout_account} —— 已帶入,實際日期不同請自行修改。</div>
+              )}
+              <label className="block text-xs text-gray-500 pt-1">實際付款日</label>
               <input type="date" value={dateVal} onChange={(e) => setDateVal(e.target.value)}
                 className="w-full rounded-lg border border-mor-line px-2 py-1.5" />
             </div>
             <div className="border-t border-mor-line px-6 py-4 flex justify-end gap-2">
               <button onClick={() => setDating(null)} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>
               <button onClick={doSetDate} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium hover:bg-mor-slatedark">確認</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 排匯款:只寫計畫,不產生支出 */}
+      {planning && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setPlanning(null)}>
+          <div className="bg-white rounded-xl w-[420px] max-w-[92vw] shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="border-b border-mor-line px-6 py-4 font-bold">
+              {planning.planned_transfer_on ? '修改匯款計畫' : '排匯款'} · {planning.req_no}
+            </div>
+            <div className="p-6 text-sm space-y-3">
+              <div className="text-xs text-gray-500">
+                這裡只是排定計畫,不會產生支出。實際匯出後再按「匯出」,那時才會記帳。
+              </div>
+              <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">預定匯款日</span>
+                <input type="date" value={planDate} onChange={(e) => setPlanDate(e.target.value)}
+                  className="rounded-lg border border-mor-line px-2 py-1.5" /></label>
+              <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">匯出帳號(我方)</span>
+                <select value={planAcct} onChange={(e) => setPlanAcct(e.target.value)}
+                  className="rounded-lg border border-mor-line px-2 py-1.5">
+                  <option value="">請選擇</option>
+                  {payAccounts.filter((a) => a.method === planning.payment_method)
+                    .map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
+                </select></label>
+              <div className="text-xs text-gray-400">
+                金額 ${fmt(planning.total_amount)}
+                {planning.payee_account ? `・匯給 ${planning.payee_company ?? ''} ${planning.payee_account}` : ''}
+              </div>
+            </div>
+            <div className="border-t border-mor-line px-6 py-4 flex justify-end gap-2">
+              <button onClick={() => setPlanning(null)} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>
+              <button onClick={savePlan} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium hover:bg-mor-slatedark">儲存</button>
             </div>
           </div>
         </div>
