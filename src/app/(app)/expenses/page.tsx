@@ -9,6 +9,8 @@ type Expense = {
   account_code: string | null; purpose_type: string; estate_id: string | null;
   voucher_no: string | null; payment_method: string | null; pay_account: string | null;
   note: string | null; source_item_id: string | null;
+  // amount 一律台幣;外幣的單另存原幣別與原金額供對帳
+  currency?: string | null; fx_rate?: number | null; amount_original?: number | null;
 };
 type AccountCode = { code: string; name: string; sort: number; active: boolean };
 type Estate = { id: string; name: string; sort: number; active: boolean };
@@ -316,7 +318,14 @@ export default function ExpensesPage() {
                   {r.item_name}
                   {r.source_item_id && <span className="ml-2 inline-block rounded-md bg-mor-bluelight text-mor-slate px-1.5 py-0.5 text-[10px]">請款</span>}
                 </td>
-                <td className="px-3 py-2 text-right font-medium">${fmt(r.amount)}</td>
+                <td className="px-3 py-2 text-right font-medium">
+                  {fmt(r.amount)}
+                  {r.currency && r.currency !== 'TWD' && (
+                    <div className="text-[11px] font-normal text-gray-400">
+                      {r.currency} {fmt(r.amount_original)} × {r.fx_rate}
+                    </div>
+                  )}
+                </td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{r.account_code ? codeName[r.account_code] ?? r.account_code : '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{purposeLabel(r)}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-500">{r.voucher_no ?? '—'}</td>

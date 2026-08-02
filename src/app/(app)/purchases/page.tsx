@@ -9,6 +9,7 @@ type Item = {
   id?: string; request_id?: string; item_name: string; amount: number;
   account_code: string | null; purpose_type: string; estate_id: string | null;
   note: string | null; sort: number;
+  amount_original?: number | null;   // 原幣別金額。amount 一律是換算後的台幣。
 };
 type Req = {
   id: string; req_no: string; requester_id: string; status: string; total_amount: number;
@@ -20,6 +21,7 @@ type Req = {
   rejected_by: string | null; rejected_at: string | null; reject_reason: string | null;
   purchased_on: string | null; expense_generated_at: string | null; created_at: string;
   planned_transfer_on: string | null; payout_account: string | null;
+  currency: string; fx_rate: number;
   purchase_request_items?: Item[];
 };
 type AccountCode = { code: string; name: string };
@@ -30,6 +32,8 @@ type Profile = { id: string; name: string; role: string };
 const FREE_THRESHOLD = 3000;   // 與 migration 的 pr_apply_status() 一致
 const PAY_LABEL: Record<string, string> = { cash: '現金', transfer: '匯款', credit_card: '信用卡' };
 const PAY_OPTS = ['cash', 'transfer', 'credit_card'];
+const CURRENCIES = ['TWD', 'USD', 'JPY', 'CNY', 'EUR'];
+const PURCHASE_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSc3ZE8jE6dIDTzrrDDeYYL6EcMKUniPRhhhKXCRbWddGt4bbw/viewform';
 const ST_LABEL: Record<string, string> = { draft: '草稿', pending: '待核可', approved: '已核可', rejected: '已駁回' };
 const ST_COLOR: Record<string, string> = {
   draft: 'bg-gray-100 text-gray-600', pending: 'bg-amber-50 text-amber-700',
@@ -56,6 +60,7 @@ export default function PurchasesPage() {
   const [rejectReason, setRejectReason] = useState('');
   const [dating, setDating] = useState<Req | null>(null);
   const [dateVal, setDateVal] = useState('');
+  const [dateAcct, setDateAcct] = useState('');
   const [planning, setPlanning] = useState<Req | null>(null);
   const [planDate, setPlanDate] = useState('');
   const [planAcct, setPlanAcct] = useState('');
@@ -128,7 +133,7 @@ export default function PurchasesPage() {
   const sum = (xs: Req[]) => xs.reduce((a, r) => a + (Number(r.total_amount) || 0), 0);
 
   function blankItem(): Item {
-    return { item_name: '', amount: 0, account_code: null, purpose_type: 'estate', estate_id: null, note: null, sort: 0 };
+    return { item_name: '', amount: 0, amount_original: 0, account_code: null, purpose_type: 'estate', estate_id: null, note: null, sort: 0 };
   }
 
   function openNew() {
@@ -139,6 +144,7 @@ export default function PurchasesPage() {
       admin_approved_by: null, admin_approved_at: null, rejected_by: null, rejected_at: null, reject_reason: null,
       purchased_on: null, expense_generated_at: null, created_at: '',
       planned_transfer_on: null, payout_account: null,
+      currency: 'TWD', fx_rate: 1,
     });
     setItems([blankItem()]);
   }
@@ -149,17 +155,23 @@ export default function PurchasesPage() {
     setItems(its.length ? its : [blankItem()]);
   }
 
-  const editTotal = useMemo(() => items.reduce((a, i) => a + (Number(i.amount) || 0), 0), [items]);
+  // 使用者輸入的是原幣別金額,台幣總額 = 原幣合計 × 匯率。
+  // 台幣單的匯率是 1,所以兩者相等,不用寫兩套邏輯。
+  const fxRate = Number(edit?.fx_rate) || 1;
+  const editSubtotal = useMemo(() => items.reduce((a, i) => a + (Number(i.amount_original) || 0), 0), [items]);
+  const editTotal = useMemo(() => Math.round(editSubtotal * fxRate), [editSubtotal, fxRate]);
 
   async function save(submit: boolean) {
     if (!edit || !me) return;
-    const clean = items.filter((i) => i.item_name.trim() || Number(i.amount) > 0);
+    const clean = items.filter((i) => i.item_name.trim() || Number(i.amount_original) > 0);
     if (!clean.length) return flash('至少要有一個請款項目');
     for (const i of clean) {
       if (!i.item_name.trim()) return flash('每個項目都要填名稱');
+      if (!(Number(i.amount_original) > 0)) return flash(`「${i.item_name}」請填金額`);
       if (i.purpose_type === 'estate' && !i.estate_id) return flash(`「${i.item_name}」請選擇用途`);
     }
     if (edit.payment_method === 'transfer' && !edit.payee_account) return flash('匯款需填收款帳號');
+    if (edit.currency !== 'TWD' && !(fxRate > 0)) return flash('請填匯率');
     setSaving(true);
     try {
       const header: any = {
@@ -169,6 +181,8 @@ export default function PurchasesPage() {
         payee_company: edit.payee_company || null,
         payee_tax_id: edit.payee_tax_id || null,
         note: edit.note || null,
+        currency: edit.currency || 'TWD',
+        fx_rate: edit.currency === 'TWD' ? 1 : fxRate,
       };
       let reqId = edit.id;
       if (!reqId) {
@@ -183,8 +197,12 @@ export default function PurchasesPage() {
         if (error) { flash('儲存失敗:' + error.message); return; }
         await supabase.from('purchase_request_items').delete().eq('request_id', reqId);
       }
+      // amount 一律存台幣,amount_original 存使用者輸入的原幣別金額。
+      // 換算在這裡一次做完,資料庫不會有「一半換過一半沒換」的中間狀態。
       const payload = clean.map((i, idx) => ({
-        request_id: reqId, item_name: i.item_name.trim(), amount: Number(i.amount) || 0,
+        request_id: reqId, item_name: i.item_name.trim(),
+        amount_original: Number(i.amount_original) || 0,
+        amount: Math.round((Number(i.amount_original) || 0) * (edit.currency === 'TWD' ? 1 : fxRate)),
         account_code: i.account_code || null, purpose_type: i.purpose_type,
         estate_id: i.purpose_type === 'office' ? null : i.estate_id,
         note: i.note || null, sort: idx,
@@ -229,7 +247,14 @@ export default function PurchasesPage() {
   async function doSetDate() {
     if (!dating) return;
     if (!dateVal) return flash('請選擇日期');
-    const { error } = await supabase.from('purchase_requests').update({ purchased_on: dateVal }).eq('id', dating.id);
+    // 匯款/信用卡一定要記錄從哪個帳戶付出去。
+    // 這個檢查放在「匯出」而不是「排匯款」—— 排匯款可以跳過,匯出不行,
+    // 把必填綁在可跳過的步驟上,等於沒綁。
+    const needAcct = dating.payment_method === 'transfer' || dating.payment_method === 'credit_card';
+    if (needAcct && !dateAcct) return flash('請選擇匯出帳號');
+    const patch: Record<string, unknown> = { purchased_on: dateVal };
+    if (needAcct) patch.payout_account = dateAcct;
+    const { error } = await supabase.from('purchase_requests').update(patch).eq('id', dating.id);
     if (error) return flash('儲存失敗:' + error.message);
     setDating(null);
     flash(dating.purchased_on ? '已更新,連動支出的日期一併調整' : '已匯出,費用已連動到支出');
@@ -312,11 +337,13 @@ export default function PurchasesPage() {
       canVoteMgr: isManager && r.status === 'pending' && !r.manager_approved_at,
       canVoteAdm: isAdmin && r.status === 'pending' && !r.admin_approved_at,
       canRej: (isManager || isAdmin) && r.status === 'pending',
-      // 匯款類的單要先排定計畫,再按匯出;現金類沒有計畫階段,核可後直接匯出
+      // 匯款與信用卡一定要先排付款(選日期與帳號/卡別)才能確認支付。
+      // 順序不強制的話,可以跳過排付款直接確認,結果是付了錢卻不知道從哪個帳戶出去。
       needPlan: r.payment_method === 'transfer' || r.payment_method === 'credit_card',
       canPlan: canSetDate && r.status === 'approved' && !r.purchased_on
                && (r.payment_method === 'transfer' || r.payment_method === 'credit_card'),
-      canDate: canSetDate && r.status === 'approved',
+      canDate: canSetDate && r.status === 'approved'
+               && (r.payment_method === 'cash' || !!r.planned_transfer_on || !!r.purchased_on),
       // 撤銷:提交者本人 / 主管 / 會計 / 總經理,任何狀態皆可,已產生支出除外
       canCancel: (mine || isManager || isAccountant || isAdmin) && !r.expense_generated_at,
     };
@@ -357,10 +384,16 @@ export default function PurchasesPage() {
       <PushToggle />
 
       {/* 手機:主要動作放最上面,一按就能送單 */}
-      <button onClick={openNew}
-        className="md:hidden w-full h-12 mb-3 rounded-xl bg-mor-slate text-white font-medium active:bg-mor-slatedark">
-        + 填寫請款
-      </button>
+      <div className="md:hidden flex gap-2 mb-3">
+        <button onClick={openNew}
+          className="flex-1 h-12 rounded-xl bg-mor-slate text-white font-medium active:bg-mor-slatedark">
+          + 填寫請款
+        </button>
+        <a href={PURCHASE_FORM_URL} target="_blank" rel="noreferrer"
+          className="flex-1 h-12 rounded-xl border border-mor-line bg-white font-medium flex items-center justify-center active:bg-mor-sand/60">
+          + 採購單
+        </a>
+      </div>
 
       {canSeeAll && (
         <div className="grid grid-cols-3 gap-2 md:gap-4 mb-4 md:mb-5">
@@ -428,6 +461,8 @@ export default function PurchasesPage() {
           <div className="text-xs text-gray-400 pb-1.5">共 {rows.length.toLocaleString()} 筆</div>
           <button onClick={exportXlsx} disabled={!rows.length}
             className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 disabled:opacity-40">⬇ 下載 Excel</button>
+          <a href={PURCHASE_FORM_URL} target="_blank" rel="noreferrer"
+            className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60">+ 採購單</a>
           <button onClick={openNew} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 填寫請款</button>
         </div>
       </div>
@@ -493,7 +528,7 @@ export default function PurchasesPage() {
                     {r.planned_transfer_on ? '改匯款計畫' : '排匯款'}</button>
                 )}
                 {canDate && (
-                  <button onClick={() => { setDating(r); setDateVal(r.purchased_on ?? r.planned_transfer_on ?? todayStr()); }}
+                  <button onClick={() => { setDating(r); setDateVal(r.purchased_on ?? r.planned_transfer_on ?? todayStr()); setDateAcct(r.payout_account ?? ''); }}
                     className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-blue text-mor-blue text-sm font-medium active:bg-mor-bluelight">
                     {r.purchased_on ? '改付款日' : '匯出'}</button>
                 )}
@@ -563,7 +598,7 @@ export default function PurchasesPage() {
                     {canRej && <button onClick={() => { setRejecting(r); setRejectReason(''); }} className="text-xs text-amber-600 underline hover:text-amber-800">駁回</button>}
                     {canPlan && <button onClick={() => { setPlanning(r); setPlanDate(r.planned_transfer_on ?? todayStr()); setPlanAcct(r.payout_account ?? ''); }} className="text-xs text-mor-slate underline hover:text-mor-blue">
                       {r.planned_transfer_on ? '改匯款計畫' : '排匯款'}</button>}
-                    {canDate && <button onClick={() => { setDating(r); setDateVal(r.purchased_on ?? r.planned_transfer_on ?? todayStr()); }} className="text-xs text-mor-blue underline hover:text-mor-slate">
+                    {canDate && <button onClick={() => { setDating(r); setDateVal(r.purchased_on ?? r.planned_transfer_on ?? todayStr()); setDateAcct(r.payout_account ?? ''); }} className="text-xs text-mor-blue underline hover:text-mor-slate">
                       {r.purchased_on ? '改付款日' : '匯出'}</button>}
                     {canCancel && <button onClick={() => cancel(r)} className="text-xs text-red-500 underline hover:text-red-700">撤銷</button>}
                   </td>
@@ -607,12 +642,21 @@ export default function PurchasesPage() {
                     {items.map((it, idx) => (
                       <div key={idx} className="rounded-lg border border-mor-line p-3 space-y-2">
                         <div className="flex gap-2">
-                          <input disabled={readOnly} value={it.item_name} placeholder="項目名稱"
+                          <input disabled={readOnly} value={it.item_name} placeholder="項目名稱 *"
                             onChange={(e) => setItems(items.map((x, i) => i === idx ? { ...x, item_name: e.target.value } : x))}
                             className="flex-1 min-w-0 h-11 md:h-auto rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50" />
-                          <input disabled={readOnly} type="number" inputMode="numeric" value={it.amount} placeholder="金額"
-                            onChange={(e) => setItems(items.map((x, i) => i === idx ? { ...x, amount: Number(e.target.value) } : x))}
-                            className="w-24 md:w-28 h-11 md:h-auto rounded-lg border border-mor-line px-2 md:py-1.5 text-right disabled:bg-gray-50" />
+                          <div className="relative w-28 md:w-32 shrink-0">
+                            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">
+                              {edit.currency === 'TWD' ? 'NT$' : edit.currency}
+                            </span>
+                            {/* 值用字串保存,不是 Number(0) —— 否則欄位永遠顯示 0,
+                                打字時新數字會接在 0 後面變成 0500。空字串才能被直接取代。 */}
+                            <input disabled={readOnly} type="number" inputMode="decimal" min="0"
+                              value={it.amount_original === 0 || it.amount_original == null ? '' : it.amount_original}
+                              placeholder="金額 *"
+                              onChange={(e) => setItems(items.map((x, i) => i === idx ? { ...x, amount_original: e.target.value === '' ? 0 : Number(e.target.value) } : x))}
+                              className="w-full h-11 md:h-auto rounded-lg border border-mor-line pl-9 pr-2 md:py-1.5 text-right disabled:bg-gray-50" />
+                          </div>
                           {!readOnly && items.length > 1 &&
                             <button onClick={() => setItems(items.filter((_, i) => i !== idx))} aria-label="刪除項目"
                               className="w-10 shrink-0 text-red-400 hover:text-red-600">✕</button>}
@@ -633,7 +677,7 @@ export default function PurchasesPage() {
                                 : x));
                             }}
                             className="flex-1 h-11 md:h-auto rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50">
-                            <option value="">用途</option>
+                            <option value="">用途 *</option>
                             <option value="office">安幸辦公室</option>
                             {estates.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
                           </select>
@@ -644,13 +688,35 @@ export default function PurchasesPage() {
                       </div>
                     ))}
                   </div>
+                  {/* 幣別與匯率 */}
+                  <div className="mt-3 flex flex-wrap items-end gap-2">
+                    <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">幣別</span>
+                      <select disabled={readOnly} value={edit.currency ?? 'TWD'}
+                        onChange={(e) => setEdit({ ...edit, currency: e.target.value, fx_rate: e.target.value === 'TWD' ? 1 : (edit.fx_rate || 0) })}
+                        className="h-11 md:h-auto rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50">
+                        {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                      </select></label>
+                    {edit.currency !== 'TWD' && (
+                      <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">匯率 * (1 {edit.currency} = ? NTD)</span>
+                        <input disabled={readOnly} type="number" inputMode="decimal" step="0.0001" min="0"
+                          value={edit.fx_rate ? edit.fx_rate : ''} placeholder="例 31.5"
+                          onChange={(e) => setEdit({ ...edit, fx_rate: e.target.value === '' ? 0 : Number(e.target.value) })}
+                          className="w-32 h-11 md:h-auto rounded-lg border border-mor-line px-2 md:py-1.5 text-right disabled:bg-gray-50" /></label>
+                    )}
+                  </div>
+
                   <div className="mt-2 flex items-center justify-between text-sm">
                     <div className={editTotal < FREE_THRESHOLD ? 'text-mor-green text-xs' : 'text-amber-600 text-xs'}>
                       {editTotal < FREE_THRESHOLD
-                        ? `未達 $${fmt(FREE_THRESHOLD)},送出後直接核可`
-                        : `達 $${fmt(FREE_THRESHOLD)} 以上,需主管與總經理各核可一次`}
+                        ? `未達 NT$${fmt(FREE_THRESHOLD)},送出後直接核可`
+                        : `達 NT$${fmt(FREE_THRESHOLD)} 以上,需主管與總經理各核可一次`}
                     </div>
-                    <div className="font-bold">總額 ${fmt(editTotal)}</div>
+                    <div className="text-right">
+                      {edit.currency !== 'TWD' && (
+                        <div className="text-xs text-gray-500">{edit.currency} {fmt(editSubtotal)} × {fxRate || '—'}</div>
+                      )}
+                      <div className="font-bold">總額 NT$ {fmt(editTotal)}</div>
+                    </div>
                   </div>
                 </div>
 
@@ -731,11 +797,25 @@ export default function PurchasesPage() {
                   : `確認後,這張單的 ${(dating.purchase_request_items ?? []).length} 個項目會各自產生一筆支出,而且這張單就不能再撤銷。`}
               </div>
               {!dating.purchased_on && dating.planned_transfer_on && (
-                <div className="text-xs text-mor-blue">預定匯款日 {dating.planned_transfer_on}・{dating.payout_account} —— 已帶入,實際日期不同請自行修改。</div>
+                <div className="text-xs text-mor-blue">預定匯款日 {dating.planned_transfer_on} —— 已帶入,實際日期不同請自行修改。</div>
               )}
               <label className="block text-xs text-gray-500 pt-1">實際付款日</label>
               <input type="date" value={dateVal} onChange={(e) => setDateVal(e.target.value)}
                 className="w-full rounded-lg border border-mor-line px-2 py-1.5" />
+              {/* 匯款與信用卡必須記錄從哪個帳戶付出去,現金沒有帳戶所以不問 */}
+              {(dating.payment_method === 'transfer' || dating.payment_method === 'credit_card') && (
+                <>
+                  <label className="block text-xs text-gray-500 pt-1">
+                    {dating.payment_method === 'transfer' ? '匯出帳號(我方)' : '刷卡卡別'} *
+                  </label>
+                  <select value={dateAcct} onChange={(e) => setDateAcct(e.target.value)}
+                    className="w-full rounded-lg border border-mor-line px-2 py-1.5">
+                    <option value="">請選擇</option>
+                    {payAccounts.filter((a) => a.method === dating.payment_method)
+                      .map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
+                  </select>
+                </>
+              )}
             </div>
             <div className="border-t border-mor-line px-6 py-4 flex justify-end gap-2">
               <button onClick={() => setDating(null)} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>
