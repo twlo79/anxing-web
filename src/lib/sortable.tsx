@@ -86,22 +86,31 @@ export function SortTh({
   const activeAsc = state?.key === sortKey && state.dir === 'asc';
   const activeDesc = state?.key === sortKey && state.dir === 'desc';
   const [hintAsc, hintDesc] = HINT[type];
-  const arrow = (dir: SortDir, on: boolean, hint: string, glyph: string) => (
+  // 箭頭原本是 9px + text-gray-300,又小又淡,幾乎看不出可以點。
+  // 改用 SVG 三角形而非 ▲▼ 字元 —— 字元的實際大小取決於字型,
+  // 各作業系統/瀏覽器算出來的尺寸不一致,SVG 才控制得住。
+  const arrow = (dir: SortDir, on: boolean, hint: string) => (
     <button
       type="button"
       onClick={() => onSort(sortKey, dir)}
       title={hint}
       aria-label={hint}
-      className={`block leading-[0.6] text-[9px] transition-colors ${on ? 'text-mor-blue' : 'text-gray-300 hover:text-gray-500'}`}
-    >{glyph}</button>
+      className={`flex items-center justify-center w-4 h-3 rounded transition-colors ${
+        on ? 'text-mor-blue' : 'text-gray-400 hover:text-mor-slate hover:bg-mor-sand/70'
+      }`}
+    >
+      <svg viewBox="0 0 10 6" className="w-2.5 h-1.5" fill="currentColor" aria-hidden="true">
+        {dir === 'asc' ? <path d="M5 0 L10 6 L0 6 Z" /> : <path d="M5 6 L10 0 L0 0 Z" />}
+      </svg>
+    </button>
   );
   return (
     <th className={`px-3 py-2.5 ${className}`}>
-      <span className={`inline-flex items-center gap-1 ${align === 'right' ? 'flex-row-reverse' : ''}`}>
+      <span className={`inline-flex items-center gap-1.5 ${align === 'right' ? 'flex-row-reverse' : ''}`}>
         <span className="whitespace-nowrap">{label}</span>
-        <span className="inline-flex flex-col shrink-0 -space-y-px">
-          {arrow('asc', activeAsc, hintAsc, '▲')}
-          {arrow('desc', activeDesc, hintDesc, '▼')}
+        <span className="inline-flex flex-col shrink-0 gap-px">
+          {arrow('asc', activeAsc, hintAsc)}
+          {arrow('desc', activeDesc, hintDesc)}
         </span>
       </span>
     </th>

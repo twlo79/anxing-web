@@ -12,11 +12,10 @@ type Expense = {
 };
 type AccountCode = { code: string; name: string; sort: number; active: boolean };
 type Estate = { id: string; name: string; sort: number; active: boolean };
+type PayAccount = { code: string; name: string; method: string };
 
 const PAY_LABEL: Record<string, string> = { cash: '現金', transfer: '匯款', credit_card: '信用卡' };
 const PAY_OPTS = ['cash', 'transfer', 'credit_card'];
-// 我方付款帳號。之後有第二個帳戶再往這裡加。
-const PAY_ACCOUNTS = ['8088 0513'];
 const fmt = (n: number | null | undefined) => (n == null ? '' : Math.round(n).toLocaleString());
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
@@ -25,6 +24,7 @@ export default function ExpensesPage() {
   const [rows, setRows] = useState<Expense[]>([]);
   const [codes, setCodes] = useState<AccountCode[]>([]);
   const [estates, setEstates] = useState<Estate[]>([]);
+  const [payAccounts, setPayAccounts] = useState<PayAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState('');
   const [edit, setEdit] = useState<Expense | null>(null);
@@ -52,6 +52,9 @@ export default function ExpensesPage() {
     })();
     supabase.from('account_codes').select('code, name, sort, active').order('sort').then(({ data }) => setCodes(data ?? []));
     supabase.from('estates').select('id, name, sort, active').order('sort').then(({ data }) => setEstates(data ?? []));
+    supabase.from('payment_accounts').select('code, name, method')
+      .eq('for_payment', true).eq('active', true).order('sort')
+      .then(({ data }) => setPayAccounts(data ?? []));
   }, [supabase]);
 
   const codeName = useMemo(() => Object.fromEntries(codes.map((c) => [c.code, c.name])), [codes]);
@@ -389,12 +392,14 @@ export default function ExpensesPage() {
                     className="rounded-lg border border-mor-line px-2 py-1.5">
                     {PAY_OPTS.map((p) => <option key={p} value={p}>{PAY_LABEL[p]}</option>)}
                   </select></label>
-                {edit.payment_method === 'transfer' && (
+                {/* 現金沒有帳號可選,匯款與信用卡才需要 */}
+                {(edit.payment_method === 'transfer' || edit.payment_method === 'credit_card') && (
                   <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">付款帳號</span>
                     <select value={edit.pay_account ?? ''} onChange={(e) => setEdit({ ...edit, pay_account: e.target.value || null })}
                       className="rounded-lg border border-mor-line px-2 py-1.5">
                       <option value="">請選擇</option>
-                      {PAY_ACCOUNTS.map((a) => <option key={a} value={a}>{a}</option>)}
+                      {payAccounts.filter((a) => a.method === edit.payment_method)
+                        .map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
                     </select></label>
                 )}
               </div>

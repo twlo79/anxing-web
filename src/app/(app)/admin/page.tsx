@@ -7,6 +7,12 @@ type Staff = { id: string; name: string; aliases: string[]; staff_type: string; 
 type Estate = { id: string; name: string; manager: string | null; sort: number; active: boolean };
 type Property = { id: string; name: string; estate_id: string | null };
 type Profile = { id: string; name: string | null; role: string; active: boolean };
+type PayAccount = {
+  id: string; method: string; code: string; name: string;
+  for_income: boolean; for_payment: boolean; sort: number; active: boolean;
+};
+
+const METHOD_LABEL: Record<string, string> = { transfer: '匯款', credit_card: '信用卡' };
 
 const TYPE_LABEL: Record<string, string> = { housekeeper: '管家', roomservice: '房務', manager: '經理', accountant: '會計', gm: '總經理', other: '其他' };
 const TYPE_OPTS = ['housekeeper', 'roomservice', 'manager', 'accountant', 'gm', 'other'];
@@ -26,6 +32,7 @@ export default function AdminPage() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [estates, setEstates] = useState<Estate[]>([]);
   const [properties, setProperties] = useState<Property[]>([]);
+  const [payAccounts, setPayAccounts] = useState<PayAccount[]>([]);
   const [selEstate, setSelEstate] = useState<string>('');
   const [newPropName, setNewPropName] = useState('');
   const [msg, setMsg] = useState('');
@@ -36,10 +43,12 @@ export default function AdminPage() {
     const { data: pf } = await supabase.from('profiles').select('id, name, role, active');
     const { data: es } = await supabase.from('estates').select('*').order('sort').order('name');
     const { data: pr } = await supabase.from('properties').select('id, name, estate_id').order('name');
+    const { data: pa } = await supabase.from('payment_accounts').select('*').order('sort').order('code');
     setStaff(st ?? []);
     setProfiles(pf ?? []);
     setEstates(es ?? []);
     setProperties(pr ?? []);
+    setPayAccounts(pa ?? []);
     setSelEstate((cur) => cur || es?.[0]?.id || '');
   }, [supabase]);
 
@@ -130,6 +139,35 @@ export default function AdminPage() {
     if (!confirm(`確定刪除物業「${name}」?此物業下的房源會失去物業歸屬(評價/清潔紀錄仍保留)。`)) return;
     const { error } = await supabase.from('estates').delete().eq('id', id);
     if (error) return flash('刪除失敗(可能仍有房源綁定):' + error.message);
+    flash('已刪除'); load();
+  }
+
+  // ---- 收付款帳號 ----
+  const [newAcctMethod, setNewAcctMethod] = useState('transfer');
+  const [newAcctCode, setNewAcctCode] = useState('');
+  const [newAcctName, setNewAcctName] = useState('');
+
+  async function addPayAccount() {
+    const code = newAcctCode.trim();
+    const name = newAcctName.trim() || code;
+    if (!code) return flash('請填代號');
+    const { error } = await supabase.from('payment_accounts').insert({
+      method: newAcctMethod, code, name,
+      for_income: newAcctMethod === 'transfer',   // 信用卡預設只用於付款
+      for_payment: true, sort: 50,
+    });
+    if (error) return flash('新增失敗:' + error.message);
+    setNewAcctCode(''); setNewAcctName(''); flash('已新增 ' + code); load();
+  }
+  async function updatePayAccount(id: string, patch: Partial<PayAccount>) {
+    const { error } = await supabase.from('payment_accounts').update(patch).eq('id', id);
+    if (error) return flash('更新失敗:' + error.message);
+    flash('已更新'); load();
+  }
+  async function deletePayAccount(a: PayAccount) {
+    if (!confirm(`確定刪除帳號「${a.code}」?已經記在訂單或支出上的資料不會跟著改,那些紀錄會找不到對應帳號。建議改用「停用」。`)) return;
+    const { error } = await supabase.from('payment_accounts').delete().eq('id', a.id);
+    if (error) return flash('刪除失敗:' + error.message);
     flash('已刪除'); load();
   }
 
@@ -287,6 +325,75 @@ export default function AdminPage() {
           </div>
         </div>
         <p className="text-xs text-gray-400 mt-2">停用物業:不顯示在評價/清潔的評分與篩選、也不需指派(紀錄仍保留)。負責管家換人後,該物業所有評價(含過去)歸現任。排序越小越前。</p>
+      </section>
+
+      {/* ===== 收付款帳號 ===== */}
+      <section className="mt-8">
+        <h2 className="text-sm font-semibold text-gray-700 mb-2">收付款帳號</h2>
+        <div className="bg-white rounded-xl border border-mor-line overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/40">
+                <th className="px-4 py-2.5">方式</th>
+                <th className="px-4 py-2.5">代號</th>
+                <th className="px-4 py-2.5">顯示名稱</th>
+                <th className="px-4 py-2.5 text-center">可收款</th>
+                <th className="px-4 py-2.5 text-center">可付款</th>
+                <th className="px-4 py-2.5 w-20">排序</th>
+                <th className="px-4 py-2.5 text-right">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {payAccounts.map((a) => (
+                <tr key={a.id} className={`border-b border-mor-line/60 last:border-0 ${a.active ? '' : 'opacity-50'}`}>
+                  <td className="px-4 py-2">{METHOD_LABEL[a.method] ?? a.method}</td>
+                  <td className="px-4 py-2 font-medium">{a.code}</td>
+                  <td className="px-4 py-2">
+                    <input defaultValue={a.name}
+                      onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== a.name) updatePayAccount(a.id, { name: v }); }}
+                      className="rounded-lg border border-gray-300 px-2 py-1 w-44" />
+                  </td>
+                  <td className="px-4 py-2 text-center">
+                    <input type="checkbox" checked={a.for_income} className="w-4 h-4"
+                      onChange={(e) => updatePayAccount(a.id, { for_income: e.target.checked })} />
+                  </td>
+                  <td className="px-4 py-2 text-center">
+                    <input type="checkbox" checked={a.for_payment} className="w-4 h-4"
+                      onChange={(e) => updatePayAccount(a.id, { for_payment: e.target.checked })} />
+                  </td>
+                  <td className="px-4 py-2">
+                    <input type="number" defaultValue={a.sort}
+                      onBlur={(e) => { const v = parseInt(e.target.value); if (v !== a.sort) updatePayAccount(a.id, { sort: v }); }}
+                      className="rounded-lg border border-gray-300 px-2 py-1 w-16 text-sm" />
+                  </td>
+                  <td className="px-4 py-2 text-right space-x-3">
+                    <button onClick={() => updatePayAccount(a.id, { active: !a.active })} className="text-xs text-mor-slate underline hover:text-mor-blue">{a.active ? '停用' : '啟用'}</button>
+                    <button onClick={() => deletePayAccount(a)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
+                  </td>
+                </tr>
+              ))}
+              {payAccounts.length === 0 && (
+                <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-400">尚無帳號</td></tr>
+              )}
+            </tbody>
+          </table>
+          <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-t border-mor-line bg-mor-sand/20 text-sm">
+            <select value={newAcctMethod} onChange={(e) => setNewAcctMethod(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
+              <option value="transfer">匯款</option>
+              <option value="credit_card">信用卡</option>
+            </select>
+            <input value={newAcctCode} onChange={(e) => setNewAcctCode(e.target.value)} placeholder="代號(如 8088)"
+              className="rounded-lg border border-gray-300 px-2 py-1.5 w-32" />
+            <input value={newAcctName} onChange={(e) => setNewAcctName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addPayAccount(); }}
+              placeholder="顯示名稱(如 元大 8088)" className="rounded-lg border border-gray-300 px-2 py-1.5 w-44" />
+            <button onClick={addPayAccount} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 新增帳號</button>
+          </div>
+        </div>
+        <p className="text-xs text-gray-400 mt-2">
+          支付方式(現金/匯款/信用卡/加密貨幣)是固定的,這裡管的是匯款與信用卡底下的帳號。
+          「可收款」決定它出不出現在短租與契約的入款選單;「可付款」決定它出不出現在請款與支出。
+          <b>代號一旦有交易掛上就不要再改</b> —— 訂單與支出存的是代號,改了舊資料會對不到,要調整標示請改顯示名稱。不再使用的帳號請用「停用」而非刪除。
+        </p>
       </section>
 
       {/* ===== 房源管理 ===== */}

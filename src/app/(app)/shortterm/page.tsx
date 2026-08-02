@@ -58,6 +58,13 @@ export default function ShortTermPage() {
   const [agg, setAgg] = useState<any[]>([]);
 
   useEffect(() => { supabase.from('estates').select('id, name, sort, active').order('sort').then(({ data }) => setEstates(data ?? [])); }, [supabase]);
+  // 入款帳號改讀主檔,不再寫死。現金與加密貨幣沒有帳號,直接列在選單上。
+  const [payAccounts, setPayAccounts] = useState<{ code: string; name: string }[]>([]);
+  useEffect(() => {
+    supabase.from('payment_accounts').select('code, name')
+      .eq('for_income', true).eq('active', true).order('sort')
+      .then(({ data }) => setPayAccounts(data ?? []));
+  }, [supabase]);
   const estateName = useMemo(() => Object.fromEntries(estates.map((e) => [e.id, e.name])), [estates]);
   const [fees, setFees] = useState<Fee[]>([]);
   const [fxRev, setFxRev] = useState<{ cur: string; amt: number; rate: number }[]>([]);
@@ -462,7 +469,7 @@ export default function ShortTermPage() {
                   ))}
                 </div>
               )}
-              <label className="flex flex-col gap-1">入款方式<select value={edit.account ?? ''} onChange={(e) => setEdit({ ...edit, account: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option><option value="現金">現金</option><option value="8088">8088</option><option value="0564">0564</option><option value="4145">4145</option><option value="加密貨幣">加密貨幣</option></select></label>
+              <label className="flex flex-col gap-1">入款方式<select value={edit.account ?? ''} onChange={(e) => setEdit({ ...edit, account: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option><option value="現金">現金</option>{payAccounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}<option value="加密貨幣">加密貨幣</option></select></label>
               <label className="flex flex-col gap-1 col-span-2">備註<input value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               {edit.source !== 'oneoff' && (
                 <div className="col-span-2 border-t border-mor-line pt-3 mt-1">
