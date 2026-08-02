@@ -67,9 +67,16 @@ export default function PurchasesPage() {
 
   const [stF, setStF] = useState('');
   const [reqF, setReqF] = useState('');
-  const [fromD, setFromD] = useState('');
-  const [toD, setToD] = useState('');
+  // 月份是主要的時間軸(依建立日)。空字串 = 全部期間。
+  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [estateF, setEstateF] = useState('');
+  const [methodF, setMethodF] = useState('');
+  const [kw, setKw] = useState('');
+  const [kwIn, setKwIn] = useState('');
   const [sort, setSort] = useState<SortState>({ key: 'created_at', dir: 'desc' });
+  // 匯款排程獨立查詢:它看的是「預定付款日」,跟列表的「建立日」是兩條時間軸。
+  // 上個月建的單可能排在這個月付,混在同一個查詢裡會漏掉。
+  const [schedule, setSchedule] = useState<Req[]>([]);
 
   function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 3000); }
 
@@ -100,6 +107,13 @@ export default function PurchasesPage() {
   // 排匯款與匯出:主管、總經理、會計都能操作。會計不能核可,但能安排與執行付款。
   const canSetDate = isManager || isAdmin || isAccountant;
 
+  /** 月份字串 YYYY-MM → [起, 迄) 兩個日期字串 */
+  function monthRange(m: string): [string, string] {
+    const [y, mo] = m.split('-').map(Number);
+    const next = mo === 12 ? `${y + 1}-01-01` : `${y}-${String(mo + 1).padStart(2, '0')}-01`;
+    return [`${m}-01`, next];
+  }
+
   const load = useCallback(async () => {
     setLoading(true);
     let q = supabase.from('purchase_requests')
@@ -107,13 +121,27 @@ export default function PurchasesPage() {
       .order('created_at', { ascending: false });
     if (stF) q = q.eq('status', stF);
     if (reqF) q = q.eq('requester_id', reqF);
-    if (fromD) q = q.gte('created_at', fromD);
-    if (toD) q = q.lte('created_at', toD + 'T23:59:59');
+    if (month) {
+      const [from, to] = monthRange(month);
+      q = q.gte('created_at', from).lt('created_at', to);
+    }
     const { data, error } = await q;
     if (error) flash('載入失敗:' + error.message);
     setRows((data as Req[]) ?? []);
+
+    // 匯款排程:該月要付出去、但還沒付的單。不受列表其他篩選影響 ——
+    // 它回答的是「這個月還要準備多少錢」,那跟你正在看誰的單無關。
+    if (month) {
+      const [from, to] = monthRange(month);
+      const { data: sc } = await supabase.from('purchase_requests')
+        .select('*, purchase_request_items(*)')
+        .eq('status', 'approved').is('purchased_on', null)
+        .gte('planned_transfer_on', from).lt('planned_transfer_on', to)
+        .order('planned_transfer_on');
+      setSchedule((sc as Req[]) ?? []);
+    } else setSchedule([]);
     setLoading(false);
-  }, [supabase, stF, reqF, fromD, toD]);
+  }, [supabase, stF, reqF, month]);
   useEffect(() => { load(); }, [load]);
 
   const SORT_COLS: SortCols<Req> = useMemo(() => ({
@@ -124,13 +152,59 @@ export default function PurchasesPage() {
     planned_transfer_on: { type: 'date', get: (r) => r.planned_transfer_on },
     status:       { type: 'text',   get: (r) => ST_LABEL[r.status] ?? r.status },
   }), []);
-  const sorted = useMemo(() => sortRows(rows, sort, SORT_COLS), [rows, sort, SORT_COLS]);
+  // 物業與關鍵字要看子項目,做不成 Supabase 的欄位條件,改在前端篩。
+  // 請款單數量不大(一個月幾十張),不需要為此改成伺服器端分頁。
+  const filtered = useMemo(() => {
+    const k = kw.trim().toLowerCase();
+    return rows.filter((r) => {
+      if (methodF && r.payment_method !== methodF) return false;
+      const its = r.purchase_request_items ?? [];
+      if (estateF && !its.some((i) => i.estate_id === estateF)) return false;
+      if (k) {
+        const hay = [
+          r.req_no, r.note, r.payee_company, r.payee_account,
+          ...its.map((i) => i.item_name), ...its.map((i) => i.note),
+        ].filter(Boolean).join(' ').toLowerCase();
+        if (!hay.includes(k)) return false;
+      }
+      return true;
+    });
+  }, [rows, methodF, estateF, kw]);
 
-  // 待核可佇列:兩票獨立,各自列出「還缺這一票」的單
-  const waitManager = useMemo(() => rows.filter((r) => r.status === 'pending' && !r.manager_approved_at), [rows]);
-  const waitAdmin = useMemo(() => rows.filter((r) => r.status === 'pending' && !r.admin_approved_at), [rows]);
-  const waitDate = useMemo(() => rows.filter((r) => r.status === 'approved' && !r.purchased_on), [rows]);
+  const sorted = useMemo(() => sortRows(filtered, sort, SORT_COLS), [filtered, sort, SORT_COLS]);
+
+  // 待辦佇列:兩票獨立,各自列出「還缺這一票」的單
+  const waitManager = useMemo(() => filtered.filter((r) => r.status === 'pending' && !r.manager_approved_at), [filtered]);
+  const waitAdmin = useMemo(() => filtered.filter((r) => r.status === 'pending' && !r.admin_approved_at), [filtered]);
+  // 待排付款:匯款/信用卡且還沒排。現金沒有這個階段,所以排除。
+  const waitPlan = useMemo(() => filtered.filter((r) =>
+    r.status === 'approved' && !r.purchased_on && !r.planned_transfer_on
+    && (r.payment_method === 'transfer' || r.payment_method === 'credit_card')), [filtered]);
+  // 待支付:現金核可後即可付;匯款/信用卡要排過才算
+  const waitDate = useMemo(() => filtered.filter((r) =>
+    r.status === 'approved' && !r.purchased_on
+    && (r.payment_method === 'cash' || !!r.planned_transfer_on)), [filtered]);
   const sum = (xs: Req[]) => xs.reduce((a, r) => a + (Number(r.total_amount) || 0), 0);
+
+  // 金額卡:依目前篩選結果,排除草稿與已駁回(那些不算數)
+  const counted = useMemo(() => filtered.filter((r) => r.status === 'pending' || r.status === 'approved'), [filtered]);
+  const byMethod = useMemo(() => ({
+    cash: counted.filter((r) => r.payment_method === 'cash'),
+    transfer: counted.filter((r) => r.payment_method === 'transfer'),
+    credit_card: counted.filter((r) => r.payment_method === 'credit_card'),
+  }), [counted]);
+
+  // 匯款排程:日期 × 帳號 分組
+  const scheduleRows = useMemo(() => {
+    const m: Record<string, { date: string; acct: string; n: number; amt: number }> = {};
+    schedule.forEach((r) => {
+      const key = `${r.planned_transfer_on}|${r.payout_account ?? '—'}`;
+      if (!m[key]) m[key] = { date: r.planned_transfer_on ?? '', acct: r.payout_account ?? '—', n: 0, amt: 0 };
+      m[key].n += 1;
+      m[key].amt += Number(r.total_amount) || 0;
+    });
+    return Object.values(m).sort((a, b) => a.date.localeCompare(b.date) || a.acct.localeCompare(b.acct));
+  }, [schedule]);
 
   function blankItem(): Item {
     return { item_name: '', amount: 0, amount_original: 0, account_code: null, purpose_type: 'estate', estate_id: null, note: null, sort: 0 };
@@ -321,7 +395,9 @@ export default function PurchasesPage() {
     ws['!freeze'] = { xSplit: 0, ySplit: 1 };
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, '請款單');
-    const tag = [ST_LABEL[stF] ?? '', reqF ? personName[reqF] ?? '' : '', fromD, toD].filter(Boolean).join('_');
+    const tag = [ST_LABEL[stF] ?? '', reqF ? personName[reqF] ?? '' : '',
+      estateF ? estateName[estateF] ?? '' : '', methodF ? PAY_LABEL[methodF] ?? '' : '',
+      month, kw].filter(Boolean).join('_');
     const d = new Date();
     const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
     XLSX.writeFile(wb, `請款單${tag ? '_' + tag : ''}_${stamp}.xlsx`);
@@ -396,17 +472,61 @@ export default function PurchasesPage() {
       </div>
 
       {canSeeAll && (
-        <div className="grid grid-cols-3 gap-2 md:gap-4 mb-4 md:mb-5">
-          {card('待主管核可', waitManager, isManager ? '你可以核可這些' : '等待主管投票', () => setStF('pending'))}
-          {card('待總經理核可', waitAdmin, isAdmin ? '你可以核可這些' : '等待總經理投票', () => setStF('pending'))}
-          {card('待匯出', waitDate, canSetDate ? '匯出後才會產生支出' : '等待主管或會計處理', () => setStF('approved'))}
-        </div>
+        <>
+          {/* 上排:該做什麼 */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3 mb-2 md:mb-3">
+            {card('待主管核可', waitManager, isManager ? '你可以核可' : '等待主管投票', () => setStF('pending'))}
+            {card('待總經理核可', waitAdmin, isAdmin ? '你可以核可' : '等待總經理投票', () => setStF('pending'))}
+            {card('待排付款', waitPlan, '選日期與帳號', () => setStF('approved'))}
+            {card('待支付', waitDate, '支付後才會產生支出', () => setStF('approved'))}
+          </div>
+
+          {/* 下排:多少錢。依建立日所屬月份 + 目前篩選,不含草稿與已駁回。 */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3 mb-4 md:mb-5">
+            {card(`申請總額${month ? `・${month}` : ''}`, counted, '依建立日', () => {})}
+            {card('現金', byMethod.cash, '', () => setMethodF('cash'))}
+            {card('匯款', byMethod.transfer, '', () => setMethodF('transfer'))}
+            {card('信用卡', byMethod.credit_card, '', () => setMethodF('credit_card'))}
+          </div>
+
+          {/* 匯款排程:依預定付款日,獨立於上面的篩選 */}
+          {scheduleRows.length > 0 && (
+            <div className="rounded-xl border border-mor-line bg-white mb-4 md:mb-5 overflow-hidden">
+              <div className="px-4 py-2.5 text-sm font-medium border-b border-mor-line bg-mor-sand/40 flex items-center justify-between">
+                <span>{month} 付款排程</span>
+                <span className="text-xs font-normal text-gray-500">
+                  依預定付款日・尚未支付・共 NT$ {fmt(scheduleRows.reduce((a, s) => a + s.amt, 0))}
+                </span>
+              </div>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-gray-500 border-b border-mor-line/60">
+                    <th className="px-4 py-2">預定付款日</th>
+                    <th className="px-4 py-2">帳號 / 卡別</th>
+                    <th className="px-4 py-2 text-right">筆數</th>
+                    <th className="px-4 py-2 text-right">金額</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {scheduleRows.map((s) => (
+                    <tr key={s.date + s.acct} className="border-b border-mor-line/40 last:border-0">
+                      <td className="px-4 py-2 whitespace-nowrap">{s.date}</td>
+                      <td className="px-4 py-2">{s.acct}</td>
+                      <td className="px-4 py-2 text-right text-gray-500">{s.n}</td>
+                      <td className="px-4 py-2 text-right font-medium">NT$ {fmt(s.amt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
       )}
 
       {/* 工具列 —— 手機只留狀態篩選,其餘收在 details 裡 */}
       <details className="md:hidden mb-3 rounded-xl border border-mor-line bg-white">
         <summary className="px-4 py-3 text-sm text-gray-600 cursor-pointer select-none">
-          篩選{(stF || reqF || fromD || toD) ? '（已套用）' : ''}・共 {rows.length.toLocaleString()} 筆
+          篩選{(stF || reqF || estateF || methodF || kw) ? '（已套用）' : ''}・共 {sorted.length.toLocaleString()} 筆
         </summary>
         <div className="px-4 pb-4 flex flex-col gap-3 text-sm border-t border-mor-line pt-3">
           <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">狀態</span>
@@ -421,17 +541,29 @@ export default function PurchasesPage() {
                 {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select></label>
           )}
-          <div className="grid grid-cols-2 gap-2">
-            <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">建立日(起)</span>
-              <input type="date" value={fromD} onChange={(e) => setFromD(e.target.value)} className="h-11 rounded-lg border border-mor-line px-2" /></label>
-            <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">建立日(迄)</span>
-              <input type="date" value={toD} onChange={(e) => setToD(e.target.value)} className="h-11 rounded-lg border border-mor-line px-2" /></label>
-          </div>
+          <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">物業</span>
+            <select value={estateF} onChange={(e) => setEstateF(e.target.value)} className="h-11 rounded-lg border border-mor-line px-2">
+              <option value="">全部物業</option>
+              {estates.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+            </select></label>
+          <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">支出方式</span>
+            <select value={methodF} onChange={(e) => setMethodF(e.target.value)} className="h-11 rounded-lg border border-mor-line px-2">
+              <option value="">全部方式</option>
+              {PAY_OPTS.map((p) => <option key={p} value={p}>{PAY_LABEL[p]}</option>)}
+            </select></label>
+          <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">月份(建立日)</span>
+            <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="h-11 rounded-lg border border-mor-line px-2" /></label>
+          <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">關鍵字</span>
+            <div className="flex gap-1">
+              <input value={kwIn} onChange={(e) => setKwIn(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') setKw(kwIn.trim()); }}
+                placeholder="單號/項目/備註/廠商" className="flex-1 min-w-0 h-11 rounded-lg border border-mor-line px-2" />
+              <button onClick={() => setKw(kwIn.trim())} className="h-11 px-4 rounded-lg bg-mor-slate text-white">搜尋</button>
+            </div></label>
           <div className="flex gap-2">
-            {(stF || reqF || fromD || toD) &&
-              <button onClick={() => { setStF(''); setReqF(''); setFromD(''); setToD(''); }}
+            {(stF || reqF || estateF || methodF || kw) &&
+              <button onClick={() => { setStF(''); setReqF(''); setEstateF(''); setMethodF(''); setKw(''); setKwIn(''); }}
                 className="flex-1 h-11 rounded-lg border border-mor-line text-gray-600">清除篩選</button>}
-            <button onClick={exportXlsx} disabled={!rows.length}
+            <button onClick={exportXlsx} disabled={!sorted.length}
               className="flex-1 h-11 rounded-lg border border-mor-line disabled:opacity-40">⬇ Excel</button>
           </div>
         </div>
@@ -451,14 +583,28 @@ export default function PurchasesPage() {
               {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select></label>
         )}
-        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">建立日(起)</span>
-          <input type="date" value={fromD} onChange={(e) => setFromD(e.target.value)} className="rounded-lg border border-mor-line px-2 py-1.5" /></label>
-        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">建立日(迄)</span>
-          <input type="date" value={toD} onChange={(e) => setToD(e.target.value)} className="rounded-lg border border-mor-line px-2 py-1.5" /></label>
-        {(stF || reqF || fromD || toD) &&
-          <button onClick={() => { setStF(''); setReqF(''); setFromD(''); setToD(''); }} className="text-gray-500 underline pb-1.5">清除</button>}
+        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">物業</span>
+          <select value={estateF} onChange={(e) => setEstateF(e.target.value)} className="rounded-lg border border-mor-line px-2 py-1.5 max-w-32">
+            <option value="">全部物業</option>
+            {estates.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+          </select></label>
+        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">支出方式</span>
+          <select value={methodF} onChange={(e) => setMethodF(e.target.value)} className="rounded-lg border border-mor-line px-2 py-1.5">
+            <option value="">全部方式</option>
+            {PAY_OPTS.map((p) => <option key={p} value={p}>{PAY_LABEL[p]}</option>)}
+          </select></label>
+        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">月份(建立日)</span>
+          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="rounded-lg border border-mor-line px-2 py-1.5" /></label>
+        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">關鍵字</span>
+          <div className="flex">
+            <input value={kwIn} onChange={(e) => setKwIn(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') setKw(kwIn.trim()); }}
+              placeholder="單號/項目/備註/廠商" className="rounded-l-lg border border-mor-line px-2 py-1.5 w-40" />
+            <button onClick={() => setKw(kwIn.trim())} className="rounded-r-lg bg-mor-slate text-white px-3">搜尋</button>
+          </div></label>
+        {(stF || reqF || estateF || methodF || kw) &&
+          <button onClick={() => { setStF(''); setReqF(''); setEstateF(''); setMethodF(''); setKw(''); setKwIn(''); }} className="text-gray-500 underline pb-1.5">清除</button>}
         <div className="ml-auto flex items-end gap-2">
-          <div className="text-xs text-gray-400 pb-1.5">共 {rows.length.toLocaleString()} 筆</div>
+          <div className="text-xs text-gray-400 pb-1.5">共 {sorted.length.toLocaleString()} 筆</div>
           <button onClick={exportXlsx} disabled={!rows.length}
             className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 disabled:opacity-40">⬇ 下載 Excel</button>
           <a href={PURCHASE_FORM_URL} target="_blank" rel="noreferrer"
