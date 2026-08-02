@@ -152,16 +152,24 @@ export default function CleaningPage() {
 
   return (
     <div>
+      {/* 手機:填表是現場人員的主要動作,放最上面全寬 */}
+      <div className="md:hidden grid grid-cols-2 gap-2 mb-3">
+        <a href={FORM_HOUSEKEEPER} target="_blank" rel="noreferrer"
+          className="h-12 rounded-xl bg-mor-slate text-white font-medium flex items-center justify-center active:bg-mor-slatedark">📋 管家檢查表</a>
+        <a href={FORM_ROOMSERVICE} target="_blank" rel="noreferrer"
+          className="h-12 rounded-xl bg-mor-slate text-white font-medium flex items-center justify-center active:bg-mor-slatedark">🧹 房務清潔表</a>
+      </div>
+
       {/* Dashboard */}
-      <div className="mb-6">
+      <div className="mb-4 md:mb-6">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-          <h1 className="text-xl font-bold">清潔記錄</h1>
-          <div className="flex items-center gap-2 text-sm">
-            <span className="text-xs text-gray-500">統計區間</span>
-            <input type="date" value={statsFrom} onChange={(e) => setStatsFrom(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1" />
+          <h1 className="hidden md:block text-xl font-bold">清潔記錄</h1>
+          <div className="flex items-center gap-2 text-sm w-full md:w-auto">
+            <span className="text-xs text-gray-500 shrink-0">統計區間</span>
+            <input type="date" value={statsFrom} onChange={(e) => setStatsFrom(e.target.value)} className="flex-1 md:flex-none h-11 md:h-auto min-w-0 rounded-lg border border-gray-300 px-2 md:py-1" />
             <span className="text-gray-400">~</span>
-            <input type="date" value={statsTo} onChange={(e) => setStatsTo(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1" />
-            {(statsFrom || statsTo) && <button onClick={() => { setStatsFrom(''); setStatsTo(''); }} className="text-gray-400 underline">清除</button>}
+            <input type="date" value={statsTo} onChange={(e) => setStatsTo(e.target.value)} className="flex-1 md:flex-none h-11 md:h-auto min-w-0 rounded-lg border border-gray-300 px-2 md:py-1" />
+            {(statsFrom || statsTo) && <button onClick={() => { setStatsFrom(''); setStatsTo(''); }} className="text-gray-400 underline shrink-0">清除</button>}
           </div>
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-stretch">
@@ -188,8 +196,53 @@ export default function CleaningPage() {
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="bg-white rounded-xl border border-mor-line p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
+      {/* Filters —— 手機收在可展開區塊,預設收合 */}
+      <details className="md:hidden mb-3 rounded-xl border border-mor-line bg-white">
+        <summary className="px-4 py-3 text-sm text-gray-600 cursor-pointer select-none">
+          篩選{(estate || staff || staffType || dateFrom || dateTo || kw) ? '（已套用）' : ''}・共 {total.toLocaleString()} 筆
+        </summary>
+        <div className="px-4 pb-4 pt-3 flex flex-col gap-3 text-sm border-t border-mor-line">
+          <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">物業</span>
+            <select value={estate} onChange={(e) => setEstate(e.target.value)} className="h-11 rounded-lg border border-gray-300 px-2">
+              <option value="">全部</option>{estates.map((e) => <option key={e.id} value={e.name}>{e.name}</option>)}
+            </select></label>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">填寫人</span>
+              <select value={staff} onChange={(e) => setStaff(e.target.value)} className="h-11 rounded-lg border border-gray-300 px-2">
+                <option value="">全部</option>{staffNames.map((n) => <option key={n} value={n}>{n}</option>)}
+              </select></label>
+            <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">職位</span>
+              <select value={staffType} onChange={(e) => setStaffType(e.target.value)} className="h-11 rounded-lg border border-gray-300 px-2">
+                <option value="">全部</option>
+                <option value="housekeeper">管家</option>
+                <option value="roomservice">房務</option>
+              </select></label>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">日期(起)</span>
+              <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="h-11 rounded-lg border border-gray-300 px-2" /></label>
+            <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">日期(迄)</span>
+              <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="h-11 rounded-lg border border-gray-300 px-2" /></label>
+          </div>
+          <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">關鍵字(備註/房號)</span>
+            <div className="flex gap-1">
+              <input value={kwInput} onChange={(e) => setKwInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') setKw(kwInput.trim()); }}
+                placeholder="例:冰箱、拖鞋" className="flex-1 min-w-0 h-11 rounded-lg border border-gray-300 px-2" />
+              <button onClick={() => setKw(kwInput.trim())} className="h-11 px-4 rounded-lg bg-mor-slate text-white">搜尋</button>
+            </div></label>
+          <div className="flex gap-2">
+            {(estate || staff || staffType || dateFrom || dateTo || kw) && (
+              <button onClick={() => { setEstate(''); setStaff(''); setStaffType(''); setDateFrom(''); setDateTo(''); setKw(''); setKwInput(''); }}
+                className="flex-1 h-11 rounded-lg border border-mor-line text-gray-600">清除篩選</button>
+            )}
+            <button onClick={exportCsv} disabled={exporting || total === 0}
+              className="flex-1 h-11 rounded-lg border border-mor-line disabled:opacity-40">{exporting ? '匯出中…' : '⬇ CSV'}</button>
+          </div>
+        </div>
+      </details>
+
+      {/* Filters —— 桌機 */}
+      <div className="hidden md:flex bg-white rounded-xl border border-mor-line p-4 mb-4 flex-wrap items-end gap-3 text-sm">
         <div>
           <label className="block text-xs text-gray-500 mb-1">物業</label>
           <select value={estate} onChange={(e) => setEstate(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5 min-w-24">
@@ -239,8 +292,48 @@ export default function CleaningPage() {
         </div>
       </div>
 
-      {/* Table */}
-      <div className="bg-white rounded-xl border border-mor-line overflow-x-auto">
+      {/* 手機卡片版 */}
+      <div className="md:hidden space-y-2">
+        {loading ? <div className="rounded-xl border border-mor-line bg-white py-10 text-center text-gray-400 text-sm">載入中…</div>
+        : rows.length === 0 ? <div className="rounded-xl border border-mor-line bg-white py-10 text-center text-gray-400 text-sm">沒有符合條件的紀錄</div>
+        : rows.map((r) => (
+          <div key={r.id} className="rounded-xl border border-mor-line bg-white p-3">
+            <div className="flex items-start justify-between gap-2" onClick={() => setDetail(r)}>
+              <div className="min-w-0">
+                <div className="font-medium">
+                  <span className="inline-block rounded-md bg-mor-bluelight text-mor-slate px-2 py-0.5 text-xs mr-1.5">{r.estate_name ?? '—'}</span>
+                  {r.property_raw ?? '—'}
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  {r.record_date}・{r.staff_name}
+                  <span className="ml-1 text-gray-400">{TYPE_LABEL[r.staff_type || 'other']}</span>
+                </div>
+              </div>
+            </div>
+            <div className="mt-2 text-sm text-gray-600 line-clamp-3" onClick={() => setDetail(r)}>
+              {r.note || <span className="text-gray-300">（無備註）</span>}
+            </div>
+            <div className="mt-3 flex gap-2">
+              {r.doc_url && (
+                <a href={r.doc_url} target="_blank" rel="noreferrer"
+                  className="flex-1 h-11 rounded-lg border border-mor-line text-sm font-medium flex items-center justify-center active:bg-mor-sand/60">📄 詳細內容</a>
+              )}
+              <button onClick={() => shareRec(r)}
+                className="flex-1 h-11 rounded-lg border border-mor-line text-sm font-medium active:bg-mor-sand/60">↗ 分享</button>
+            </div>
+          </div>
+        ))}
+        <div className="flex items-center justify-between px-1 py-2 text-sm text-gray-500">
+          <div>第 {page + 1} / {pages} 頁</div>
+          <div className="flex gap-2">
+            <button disabled={page === 0} onClick={() => setPage(page - 1)} className="h-11 px-4 rounded-lg border border-gray-300 disabled:opacity-40">上一頁</button>
+            <button disabled={page >= pages - 1} onClick={() => setPage(page + 1)} className="h-11 px-4 rounded-lg border border-gray-300 disabled:opacity-40">下一頁</button>
+          </div>
+        </div>
+      </div>
+
+      {/* 桌機表格版 */}
+      <div className="hidden md:block bg-white rounded-xl border border-mor-line overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/50">
