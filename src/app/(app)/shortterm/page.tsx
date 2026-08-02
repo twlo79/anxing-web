@@ -41,6 +41,7 @@ const SORT_DB_COL: Record<string, string> = {
 export default function ShortTermPage() {
   const supabase = useMemo(() => createClient(), []);
   const [estates, setEstates] = useState<Estate[]>([]);
+  const [detail, setDetail] = useState<Order | null>(null);
   const [rows, setRows] = useState<Order[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
@@ -371,33 +372,32 @@ export default function ShortTermPage() {
           <thead>
             <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/50">
               <SortTh label="來源" sortKey="source" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
-              <th className="px-3 py-2.5">物業</th>
               <SortTh label="房源" sortKey="property_raw" type="room" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <SortTh label="客戶" sortKey="guest_name" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <SortTh label="訂單起訖" sortKey="checkin" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="whitespace-nowrap" />
               <SortTh label="金額" sortKey="amount" type="number" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="text-right" align="right" />
-              <SortTh label="押金" sortKey="deposit" type="number" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="text-right" align="right" />
-              <SortTh label="入款方式" sortKey="account" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <th className="px-3 py-2.5 text-right">操作</th>
             </tr>
           </thead>
           <tbody>
-            {loading ? <tr><td colSpan={9} className="px-4 py-10 text-center text-gray-400">載入中…</td></tr>
-            : rows.length === 0 ? <tr><td colSpan={9} className="px-4 py-10 text-center text-gray-400">無訂單</td></tr>
+            {loading ? <tr><td colSpan={6} className="px-4 py-10 text-center text-gray-400">載入中…</td></tr>
+            : rows.length === 0 ? <tr><td colSpan={6} className="px-4 py-10 text-center text-gray-400">無訂單</td></tr>
             : rows.map((o) => (
-              <tr key={o.id} className="border-b border-mor-line/60 hover:bg-mor-bluelight/30">
+              // 整列可點,開啟右側詳細抽屜。
+              // 刪除與移房移進抽屜:1,900 多筆的列表上,刪除只差 8px 就在編輯旁邊,
+              // 點錯就是一張真實訂單消失。要先開抽屜看到完整內容才刪得掉,那本身就是一道確認。
+              <tr key={o.id} onClick={() => setDetail(o)}
+                className="border-b border-mor-line/60 hover:bg-mor-bluelight/30 cursor-pointer">
                 <td className="px-3 py-2 whitespace-nowrap"><span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${SRC_COLOR[o.source]}`}>{SRC_LABEL[o.source] ?? o.source}</span></td>
-                <td className="px-3 py-2 whitespace-nowrap">{o.estate_id ? estateName[o.estate_id] ?? '—' : '—'}</td>
-                <td className="px-3 py-2 whitespace-nowrap">{o.property_raw ?? o.properties?.name ?? '—'}</td>
+                <td className="px-3 py-2 whitespace-nowrap">
+                  <div>{o.property_raw ?? o.properties?.name ?? '—'}</div>
+                  <div className="text-[11px] text-gray-400">{o.estate_id ? estateName[o.estate_id] ?? '' : ''}</div>
+                </td>
                 <td className="px-3 py-2 whitespace-nowrap">{o.guest_name ?? '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-500">{o.checkin}~{o.checkout}</td>
                 <td className="px-3 py-2 text-right font-medium">${fmt(o.amount)}</td>
-                <td className="px-3 py-2 text-right text-gray-500">{o.deposit ? '$' + fmt(o.deposit) : '—'}</td>
-                <td className="px-3 py-2 whitespace-nowrap text-gray-500">{o.account ?? '—'}</td>
-                <td className="px-3 py-2 text-right whitespace-nowrap space-x-2">
-                  {o.source !== 'oneoff' && o.checkin && o.checkout && o.nights > 1 && <button onClick={() => openMove(o)} className="text-xs text-mor-green underline hover:text-mor-slate">移房</button>}
-                  <button onClick={() => setEdit(o)} className="text-xs text-mor-slate underline hover:text-mor-blue">編輯</button>
-                  <button onClick={() => del(o)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
+                <td className="px-3 py-2 text-right whitespace-nowrap">
+                  <button onClick={(e) => { e.stopPropagation(); setEdit(o); }} className="text-xs text-mor-slate underline hover:text-mor-blue">編輯</button>
                 </td>
               </tr>
             ))}
@@ -411,6 +411,68 @@ export default function ShortTermPage() {
           </div>
         </div>
       </div>
+
+      {/* 詳細資訊抽屜 —— 列表精簡掉的欄位都在這裡,破壞性操作也放這 */}
+      {detail && (() => {
+        const d = detail;
+        const row = (label: string, value: React.ReactNode) => (
+          <div className="flex gap-3 py-1.5 border-b border-mor-line/40 last:border-0">
+            <div className="w-24 shrink-0 text-xs text-gray-400 pt-0.5">{label}</div>
+            <div className="flex-1 min-w-0 text-sm">{value ?? '—'}</div>
+          </div>
+        );
+        const canMove = d.source !== 'oneoff' && d.checkin && d.checkout && d.nights > 1;
+        return (
+          <div className="fixed inset-0 z-50" onClick={() => setDetail(null)}>
+            <div className="absolute inset-0 bg-black/30" />
+            <div onClick={(e) => e.stopPropagation()}
+              className="absolute right-0 top-0 h-full w-full max-w-lg bg-white shadow-xl overflow-y-auto">
+              <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 flex items-start justify-between"
+                style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
+                <div className="min-w-0">
+                  <div className="font-bold truncate">{d.guest_name ?? '—'}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">
+                    {d.estate_id ? estateName[d.estate_id] ?? '' : ''} {d.property_raw ?? d.properties?.name ?? ''}
+                  </div>
+                </div>
+                <button onClick={() => setDetail(null)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+              </div>
+
+              <div className="px-6 py-4">
+                {row('來源', <span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${SRC_COLOR[d.source]}`}>{SRC_LABEL[d.source] ?? d.source}</span>)}
+                {row('訂單起訖', <span>{d.checkin} ~ {d.checkout}<span className="text-gray-400 ml-2">{d.nights} 晚</span></span>)}
+                {row('金額', <span className="font-medium">${fmt(d.amount)}</span>)}
+                {row('押金', d.deposit ? (
+                  <span>
+                    ${fmt(d.deposit)}
+                    <span className="ml-2 text-xs text-gray-500">
+                      {d.deposit_received ? `已收${d.deposit_received_at ? ' ' + d.deposit_received_at.slice(0, 10) : ''}` : '未收'}
+                      {d.deposit_returned ? `・已退${d.deposit_returned_at ? ' ' + d.deposit_returned_at.slice(0, 10) : ''}` : ''}
+                    </span>
+                  </span>
+                ) : '—')}
+                {row('入款方式', d.account ?? '—')}
+                {d.fx_revenue?.length ? row('外幣營收', d.fx_revenue.map((f, i) => <div key={i}>{f.cur} {fmt(f.amt)} × {f.rate}</div>)) : null}
+                {d.fx_deposit?.length ? row('外幣押金', d.fx_deposit.map((f, i) => <div key={i}>{f.cur} {fmt(f.amt)}</div>)) : null}
+                {row('備註', d.note ? <span className="whitespace-pre-wrap">{d.note}</span> : '—')}
+                {row('訂單編號', <span className="text-xs text-gray-500 break-all">{d.order_key}</span>)}
+              </div>
+
+              <div className="sticky bottom-0 bg-white border-t border-mor-line px-6 py-3 flex gap-2"
+                style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
+                <button onClick={() => { setDetail(null); setEdit(d); }}
+                  className="flex-1 h-11 rounded-lg bg-mor-slate text-white text-sm font-medium hover:bg-mor-slatedark">編輯</button>
+                {canMove && (
+                  <button onClick={() => { setDetail(null); openMove(d); }}
+                    className="flex-1 h-11 rounded-lg border border-mor-green text-mor-green text-sm font-medium hover:bg-mor-greenlight">移房</button>
+                )}
+                <button onClick={() => { del(d); setDetail(null); }}
+                  className="flex-1 h-11 rounded-lg border border-red-300 text-red-500 text-sm font-medium hover:bg-red-50">刪除</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {edit && (
         <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => setEdit(null)}>
