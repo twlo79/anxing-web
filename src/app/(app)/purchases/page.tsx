@@ -77,6 +77,7 @@ export default function PurchasesPage() {
   // 匯款排程獨立查詢:它看的是「預定付款日」,跟列表的「建立日」是兩條時間軸。
   // 上個月建的單可能排在這個月付,混在同一個查詢裡會漏掉。
   const [schedule, setSchedule] = useState<Req[]>([]);
+  const [detail, setDetail] = useState<Req | null>(null);
 
   function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 3000); }
 
@@ -143,6 +144,25 @@ export default function PurchasesPage() {
     setLoading(false);
   }, [supabase, stF, reqF, month]);
   useEffect(() => { load(); }, [load]);
+
+  // 從分享連結進來(?req=PR-YYYYMM-NNN)時,自動打開那張單的抽屜。
+  // 月份預設是本月,若該單不在本月會找不到,所以先把月份篩選清掉。
+  const [pendingReqNo, setPendingReqNo] = useState<string | null>(null);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const q = new URLSearchParams(window.location.search).get('req');
+    if (!q) return;
+    setPendingReqNo(q);
+    setMonth('');
+    // 網址列留著 ?req= 會讓重新整理又跳出抽屜,處理完就清掉
+    window.history.replaceState({}, '', window.location.pathname);
+  }, []);
+  useEffect(() => {
+    if (!pendingReqNo || loading) return;
+    const hit = rows.find((r) => r.req_no === pendingReqNo);
+    if (hit) { setDetail(hit); setPendingReqNo(null); }
+    else if (rows.length) { flash(`找不到單號 ${pendingReqNo}`); setPendingReqNo(null); }
+  }, [pendingReqNo, rows, loading]);
 
   const SORT_COLS: SortCols<Req> = useMemo(() => ({
     req_no:       { type: 'text',   get: (r) => r.req_no },
@@ -442,6 +462,35 @@ export default function PurchasesPage() {
     );
   }
 
+  /**
+   * 分享請款單到 LINE,讓主管直接點連結進來核可。
+   * 連結帶 ?req=單號,對方開啟後會自動跳到那張單並展開抽屜 ——
+   * 只給網址的話對方還要自己找,單號一多就找不到。
+   */
+  function shareReq(r: Req) {
+    const items = (r.purchase_request_items ?? []).map((i) => i.item_name).filter(Boolean).join('、');
+    const url = `${typeof window !== 'undefined' ? window.location.origin : ''}/purchases?req=${encodeURIComponent(r.req_no)}`;
+    const text = [
+      r.status === 'pending' ? '🧾 請款單待核可' : '🧾 請款單',
+      '',
+      r.req_no,
+      `NT$ ${fmt(r.total_amount)}`,
+      '',
+      `申請人　${personName[r.requester_id] ?? '—'}`,
+      `項目　　${items || '—'}`,
+      `支出方式　${r.payment_method ? PAY_LABEL[r.payment_method] ?? r.payment_method : '—'}`,
+      '',
+      '前往核可',
+      url,
+    ].join('\n');
+
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      navigator.share({ title: '請款單 ' + r.req_no, text }).catch(() => {});
+      return;
+    }
+    window.open('https://line.me/R/msg/text/?' + encodeURIComponent(text), '_blank', 'noopener');
+  }
+
   const card = (title: string, list: Req[], hint: string, onClick: () => void) => (
     <button onClick={onClick} className="text-left rounded-xl border border-mor-line bg-white p-2.5 md:p-4 hover:bg-mor-sand/40 transition-colors">
       <div className="text-xs md:text-sm font-medium leading-tight">{title}</div>
@@ -618,70 +667,53 @@ export default function PurchasesPage() {
         {loading ? <div className="rounded-xl border border-mor-line bg-white py-10 text-center text-gray-400 text-sm">載入中…</div>
         : sorted.length === 0 ? <div className="rounded-xl border border-mor-line bg-white py-10 text-center text-gray-400 text-sm">無請款單</div>
         : sorted.map((r) => {
-          const { canEdit, canVoteMgr, canVoteAdm, canRej, canDate, canCancel, canPlan } = perms(r);
+          const { canVoteMgr, canVoteAdm } = perms(r);
           return (
+            // 卡片本體可點開抽屜,底下只留核可與分享,其餘操作都在抽屜內
             <div key={r.id} className="rounded-xl border border-mor-line bg-white p-3">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="font-medium">{r.req_no}</div>
-                  <div className="text-xs text-gray-500 mt-0.5">
-                    {personName[r.requester_id] ?? '—'}・{(r.purchase_request_items ?? []).length} 個項目
+              <div onClick={() => setDetail(r)}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="font-medium">{personName[r.requester_id] ?? '—'}</div>
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      {r.created_at ? r.created_at.slice(0, 10) : ''}・{(r.purchase_request_items ?? []).length} 個項目
+                      {r.payment_method ? `・${PAY_LABEL[r.payment_method] ?? r.payment_method}` : ''}
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className="font-bold">${fmt(r.total_amount)}</div>
+                    <span className={`inline-block mt-1 rounded-md px-2 py-0.5 text-xs font-medium ${ST_COLOR[r.status]}`}>
+                      {ST_LABEL[r.status] ?? r.status}
+                    </span>
                   </div>
                 </div>
-                <div className="text-right shrink-0">
-                  <div className="font-bold">${fmt(r.total_amount)}</div>
-                  <span className={`inline-block mt-1 rounded-md px-2 py-0.5 text-xs font-medium ${ST_COLOR[r.status]}`}>
-                    {ST_LABEL[r.status] ?? r.status}
-                  </span>
+
+                <div className="mt-2 text-sm text-gray-600 line-clamp-2">
+                  {(r.purchase_request_items ?? []).map((i) => i.item_name).join('、') || '—'}
+                </div>
+
+                {r.status === 'rejected' && r.reject_reason &&
+                  <div className="mt-2 rounded-lg bg-red-50 text-red-600 px-2 py-1.5 text-xs">駁回原因:{r.reject_reason}</div>}
+
+                <div className="mt-2 flex items-center justify-between text-xs">
+                  <div>{voteLine(r)}</div>
+                  <div className="text-gray-500 shrink-0 text-right">
+                    {r.purchased_on
+                      ? <>付款日 {r.purchased_on}</>
+                      : r.planned_transfer_on
+                        ? <span className="text-mor-blue">預定 {r.planned_transfer_on}・{r.payout_account}</span>
+                        : null}
+                  </div>
                 </div>
               </div>
 
-              <div className="mt-2 text-sm text-gray-600 line-clamp-2">
-                {(r.purchase_request_items ?? []).map((i) => i.item_name).join('、') || '—'}
-              </div>
-
-              {r.status === 'rejected' && r.reject_reason &&
-                <div className="mt-2 rounded-lg bg-red-50 text-red-600 px-2 py-1.5 text-xs">駁回原因:{r.reject_reason}</div>}
-
-              <div className="mt-2 flex items-center justify-between text-xs">
-                <div>{voteLine(r)}</div>
-                <div className="text-gray-500 shrink-0 text-right">
-                  {r.purchased_on
-                    ? <>付款日 {r.purchased_on}</>
-                    : r.planned_transfer_on
-                      ? <span className="text-mor-blue">預定 {r.planned_transfer_on}・{r.payout_account}</span>
-                      : null}
-                </div>
-              </div>
-
-              {/* 手機的按鈕要夠大才點得到,一律 44px 高 */}
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button onClick={() => openEdit(r)}
-                  className="flex-1 min-w-[5rem] h-12 rounded-lg border border-mor-line text-sm font-medium active:bg-mor-sand/60">
-                  {canEdit ? '編輯' : '檢視'}
-                </button>
+              <div className="mt-3 flex gap-2">
                 {(canVoteMgr || canVoteAdm) && (
                   <button onClick={() => vote(r)}
-                    className="flex-1 min-w-[5rem] h-12 rounded-lg bg-mor-green text-white text-sm font-medium active:opacity-80">核可</button>
+                    className="flex-1 h-12 rounded-lg bg-mor-green text-white text-sm font-medium active:opacity-80">核可</button>
                 )}
-                {canRej && (
-                  <button onClick={() => { setRejecting(r); setRejectReason(''); }}
-                    className="flex-1 min-w-[5rem] h-12 rounded-lg border border-amber-400 text-amber-700 text-sm font-medium active:bg-amber-50">駁回</button>
-                )}
-                {canPlan && (
-                  <button onClick={() => { setPlanning(r); setPlanDate(r.planned_transfer_on ?? todayStr()); setPlanAcct(r.payout_account ?? ''); }}
-                    className="flex-1 min-w-[6rem] h-12 rounded-lg border border-mor-slate text-mor-slate text-sm font-medium active:bg-mor-sand/60">
-                    {r.planned_transfer_on ? '改匯款計畫' : '排匯款'}</button>
-                )}
-                {canDate && (
-                  <button onClick={() => { setDating(r); setDateVal(r.purchased_on ?? r.planned_transfer_on ?? todayStr()); setDateAcct(r.payout_account ?? ''); }}
-                    className="flex-1 min-w-[6rem] h-12 rounded-lg border border-mor-blue text-mor-blue text-sm font-medium active:bg-mor-bluelight">
-                    {r.purchased_on ? '改付款日' : '匯出'}</button>
-                )}
-                {canCancel && (
-                  <button onClick={() => cancel(r)}
-                    className="flex-1 min-w-[5rem] h-12 rounded-lg border border-red-300 text-red-500 text-sm font-medium active:bg-red-50">撤銷</button>
-                )}
+                <button onClick={() => shareReq(r)}
+                  className="flex-1 h-12 rounded-lg border border-mor-line text-sm font-medium active:bg-mor-sand/60">↗ 分享</button>
               </div>
             </div>
           );
@@ -693,26 +725,26 @@ export default function PurchasesPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-mor-line bg-mor-sand/40 text-left">
-              <SortTh label="單號" sortKey="req_no" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <SortTh label="建立日" sortKey="created_at" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <th className="px-3 py-2.5">申請人</th>
               <th className="px-3 py-2.5">項目</th>
               <SortTh label="總額" sortKey="total_amount" type="number" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="text-right" align="right" />
+              <th className="px-3 py-2.5">支出方式</th>
               <SortTh label="狀態" sortKey="status" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
-              <th className="px-3 py-2.5">核可</th>
-              <SortTh label="預定匯款" sortKey="planned_transfer_on" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <SortTh label="付款日" sortKey="purchased_on" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <th className="px-3 py-2.5 text-right">操作</th>
             </tr>
           </thead>
           <tbody>
-            {loading ? <tr><td colSpan={10} className="px-4 py-10 text-center text-gray-400">載入中…</td></tr>
-            : sorted.length === 0 ? <tr><td colSpan={10} className="px-4 py-10 text-center text-gray-400">無請款單</td></tr>
+            {loading ? <tr><td colSpan={8} className="px-4 py-10 text-center text-gray-400">載入中…</td></tr>
+            : sorted.length === 0 ? <tr><td colSpan={8} className="px-4 py-10 text-center text-gray-400">無請款單</td></tr>
             : sorted.map((r) => {
-              const { canEdit, canVoteMgr, canVoteAdm, canRej, canDate, canCancel, canPlan } = perms(r);
+              const { canVoteMgr, canVoteAdm } = perms(r);
               return (
-                <tr key={r.id} className="border-b border-mor-line/60 hover:bg-mor-bluelight/30 align-top">
-                  <td className="px-3 py-2 whitespace-nowrap font-medium">{r.req_no}</td>
+                // 整列可點開抽屜。列上只留「核可」與「分享」——
+                // 核可是最高頻的動作,分享是要拉主管進來的動作,其餘都在抽屜裡。
+                <tr key={r.id} onClick={() => setDetail(r)}
+                  className="border-b border-mor-line/60 hover:bg-mor-bluelight/30 align-top cursor-pointer">
                   <td className="px-3 py-2 whitespace-nowrap text-gray-600">{r.created_at ? r.created_at.slice(0, 10) : '—'}</td>
                   <td className="px-3 py-2 whitespace-nowrap">{personName[r.requester_id] ?? '—'}</td>
                   <td className="px-3 py-2 text-gray-600 max-w-64">
@@ -721,32 +753,31 @@ export default function PurchasesPage() {
                     </div>
                     <div className="text-[11px] text-gray-400">{(r.purchase_request_items ?? []).length} 個項目</div>
                   </td>
-                  <td className="px-3 py-2 text-right font-medium">${fmt(r.total_amount)}</td>
+                  <td className="px-3 py-2 text-right font-medium">
+                    ${fmt(r.total_amount)}
+                    {r.currency && r.currency !== 'TWD' && (
+                      <div className="text-[11px] font-normal text-gray-400">{r.currency} × {r.fx_rate}</div>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-gray-600">
+                    {r.payment_method ? PAY_LABEL[r.payment_method] ?? r.payment_method : '—'}
+                    {r.payout_account && <div className="text-[11px] text-gray-400">{r.payout_account}</div>}
+                  </td>
+                  {/* 狀態與核可進度合併成一欄 */}
                   <td className="px-3 py-2 whitespace-nowrap">
                     <span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${ST_COLOR[r.status]}`}>{ST_LABEL[r.status] ?? r.status}</span>
+                    <div className="text-[11px] mt-1">{voteLine(r)}</div>
                     {r.status === 'rejected' && r.reject_reason &&
                       <div className="text-[11px] text-red-500 mt-1 max-w-40 truncate" title={r.reject_reason}>{r.reject_reason}</div>}
                   </td>
-                  <td className="px-3 py-2 whitespace-nowrap text-xs">{voteLine(r)}</td>
-                  <td className="px-3 py-2 whitespace-nowrap text-xs">
-                    {r.planned_transfer_on
-                      ? <span className={r.purchased_on ? 'text-gray-400' : 'text-mor-blue font-medium'}>
-                          {r.planned_transfer_on}<span className="text-gray-400 ml-1">{r.payout_account}</span>
-                        </span>
-                      : <span className="text-gray-300">—</span>}
+                  <td className="px-3 py-2 whitespace-nowrap text-gray-600">
+                    {r.purchased_on ?? (r.planned_transfer_on
+                      ? <span className="text-mor-blue text-xs">預定 {r.planned_transfer_on}</span>
+                      : '—')}
                   </td>
-                  <td className="px-3 py-2 whitespace-nowrap text-gray-600">{r.purchased_on ?? '—'}</td>
-                  <td className="px-3 py-2 text-right whitespace-nowrap space-x-2">
-                    <button onClick={() => openEdit(r)} className="text-xs text-gray-500 underline hover:text-mor-slate">
-                      {canEdit ? '編輯' : '檢視'}
-                    </button>
-                    {(canVoteMgr || canVoteAdm) && <button onClick={() => vote(r)} className="text-xs text-mor-green underline hover:text-mor-slate">核可</button>}
-                    {canRej && <button onClick={() => { setRejecting(r); setRejectReason(''); }} className="text-xs text-amber-600 underline hover:text-amber-800">駁回</button>}
-                    {canPlan && <button onClick={() => { setPlanning(r); setPlanDate(r.planned_transfer_on ?? todayStr()); setPlanAcct(r.payout_account ?? ''); }} className="text-xs text-mor-slate underline hover:text-mor-blue">
-                      {r.planned_transfer_on ? '改匯款計畫' : '排匯款'}</button>}
-                    {canDate && <button onClick={() => { setDating(r); setDateVal(r.purchased_on ?? r.planned_transfer_on ?? todayStr()); setDateAcct(r.payout_account ?? ''); }} className="text-xs text-mor-blue underline hover:text-mor-slate">
-                      {r.purchased_on ? '改付款日' : '匯出'}</button>}
-                    {canCancel && <button onClick={() => cancel(r)} className="text-xs text-red-500 underline hover:text-red-700">撤銷</button>}
+                  <td className="px-3 py-2 text-right whitespace-nowrap space-x-2" onClick={(e) => e.stopPropagation()}>
+                    {(canVoteMgr || canVoteAdm) && <button onClick={() => vote(r)} className="text-xs text-mor-green underline hover:text-mor-slate font-medium">核可</button>}
+                    <button onClick={() => shareReq(r)} className="text-xs text-mor-slate underline hover:text-mor-blue">分享</button>
                   </td>
                 </tr>
               );
@@ -754,6 +785,113 @@ export default function PurchasesPage() {
           </tbody>
         </table>
       </div>
+
+      {/* 詳細資訊抽屜 —— 列表精簡掉的欄位與所有操作都在這裡 */}
+      {detail && (() => {
+        const d = detail;
+        const p = perms(d);
+        const row = (label: string, value: React.ReactNode) => (
+          <div className="flex gap-3 py-1.5 border-b border-mor-line/40 last:border-0">
+            <div className="w-24 shrink-0 text-xs text-gray-400 pt-0.5">{label}</div>
+            <div className="flex-1 min-w-0 text-sm">{value ?? '—'}</div>
+          </div>
+        );
+        const its = (d.purchase_request_items ?? []).slice().sort((a, b) => a.sort - b.sort);
+        const btn = 'flex-1 min-w-[5rem] h-11 rounded-lg text-sm font-medium';
+        return (
+          <div className="fixed inset-0 z-50" onClick={() => setDetail(null)}>
+            <div className="absolute inset-0 bg-black/30" />
+            <div onClick={(e) => e.stopPropagation()}
+              className="absolute right-0 top-0 h-full w-full max-w-lg bg-white shadow-xl overflow-y-auto">
+              <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 flex items-start justify-between"
+                style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
+                <div className="min-w-0">
+                  <div className="font-bold">{d.req_no}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">
+                    {personName[d.requester_id] ?? '—'}・{d.created_at ? d.created_at.slice(0, 10) : ''}
+                  </div>
+                </div>
+                <button onClick={() => setDetail(null)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+              </div>
+
+              <div className="px-6 py-4">
+                {row('狀態', (
+                  <span>
+                    <span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${ST_COLOR[d.status]}`}>{ST_LABEL[d.status] ?? d.status}</span>
+                    <div className="text-xs mt-1">{voteLine(d)}</div>
+                    {d.status === 'rejected' && d.reject_reason && <div className="text-xs text-red-500 mt-1">駁回原因:{d.reject_reason}</div>}
+                  </span>
+                ))}
+                {row('總額', (
+                  <span>
+                    <span className="font-medium">NT$ {fmt(d.total_amount)}</span>
+                    {d.currency !== 'TWD' && <div className="text-xs text-gray-400">{d.currency} × 匯率 {d.fx_rate}</div>}
+                  </span>
+                ))}
+                {row('支出方式', (
+                  <span>
+                    {d.payment_method ? PAY_LABEL[d.payment_method] ?? d.payment_method : '—'}
+                    {d.payout_account && <span className="text-gray-500 ml-1">・{d.payout_account}</span>}
+                  </span>
+                ))}
+                {d.payee_account ? row('收款方', (
+                  <span className="text-xs">
+                    {d.payee_company ?? ''} {d.payee_bank_code ?? ''} {d.payee_account}
+                    {d.payee_tax_id ? <div>統編 {d.payee_tax_id}</div> : null}
+                  </span>
+                )) : null}
+                {row('預定付款', d.planned_transfer_on ?? '—')}
+                {row('實際付款', d.purchased_on ?? '—')}
+                {row('備註', d.note ? <span className="whitespace-pre-wrap">{d.note}</span> : '—')}
+
+                <div className="mt-4 text-xs text-gray-400 mb-1">請款項目（{its.length}）</div>
+                <div className="rounded-lg border border-mor-line divide-y divide-mor-line/40">
+                  {its.map((i, idx) => (
+                    <div key={idx} className="px-3 py-2 text-sm">
+                      <div className="flex justify-between gap-2">
+                        <span className="font-medium">{i.item_name}</span>
+                        <span className="shrink-0">
+                          {d.currency !== 'TWD' && <span className="text-xs text-gray-400 mr-1">{d.currency} {fmt(i.amount_original ?? 0)}</span>}
+                          NT$ {fmt(i.amount)}
+                        </span>
+                      </div>
+                      <div className="text-xs text-gray-500 mt-0.5">
+                        {i.account_code ? codeName[i.account_code] ?? i.account_code : '未分類'}
+                        ・{i.purpose_type === 'office' ? '安幸辦公室' : (i.estate_id ? estateName[i.estate_id] ?? '' : '')}
+                        {i.note ? `・${i.note}` : ''}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="sticky bottom-0 bg-white border-t border-mor-line px-6 py-3 flex flex-wrap gap-2"
+                style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
+                <button onClick={() => { setDetail(null); openEdit(d); }}
+                  className={`${btn} border border-mor-line`}>{p.canEdit ? '編輯' : '檢視內容'}</button>
+                {(p.canVoteMgr || p.canVoteAdm) && (
+                  <button onClick={() => { vote(d); setDetail(null); }} className={`${btn} bg-mor-green text-white`}>核可</button>
+                )}
+                {p.canRej && (
+                  <button onClick={() => { setDetail(null); setRejecting(d); setRejectReason(''); }}
+                    className={`${btn} border border-amber-400 text-amber-700`}>駁回</button>
+                )}
+                {p.canPlan && (
+                  <button onClick={() => { setDetail(null); setPlanning(d); setPlanDate(d.planned_transfer_on ?? todayStr()); setPlanAcct(d.payout_account ?? ''); }}
+                    className={`${btn} border border-mor-slate text-mor-slate`}>{d.planned_transfer_on ? '改付款計畫' : '排付款'}</button>
+                )}
+                {p.canDate && (
+                  <button onClick={() => { setDetail(null); setDating(d); setDateVal(d.purchased_on ?? d.planned_transfer_on ?? todayStr()); setDateAcct(d.payout_account ?? ''); }}
+                    className={`${btn} border border-mor-blue text-mor-blue`}>{d.purchased_on ? '改付款日' : '確認支付'}</button>
+                )}
+                {p.canCancel && (
+                  <button onClick={() => { cancel(d); setDetail(null); }} className={`${btn} border border-red-300 text-red-500`}>撤銷</button>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* 請款單表單 */}
       {edit && (() => {
