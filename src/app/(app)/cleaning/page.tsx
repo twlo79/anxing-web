@@ -11,6 +11,8 @@ type Rec = {
 };
 
 const PAGE_SIZE = 50;
+const FORM_HOUSEKEEPER = 'https://docs.google.com/forms/d/e/1FAIpQLSeTR203A1Q3rvyngaN0TJYadt7_Es_DoRsby_Xz5MKVVobeaw/viewform';
+const FORM_ROOMSERVICE = 'https://docs.google.com/forms/d/e/1FAIpQLSeS-lhGwtUjhZWHUSlxyTS9gygQdVA4y_HoWYEjAmdsXB6mZQ/viewform';
 const TYPE_LABEL: Record<string, string> = { housekeeper: '管家', roomservice: '房務', manager: '主管', accountant: '會計', other: '其他' };
 
 function csvEsc(v: unknown) {
@@ -105,6 +107,49 @@ export default function CleaningPage() {
 
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
+  /**
+   * 分享單筆記錄到 LINE。
+   *
+   * 版型依填寫人的職位自動切換,對齊 Make 那兩張 Flex 卡片的欄位：
+   *   管家 → 👩 管家檢查結果通知 / 檢查日 / 管家
+   *   房務 → 🧹 清潔檢查表填寫通知 / 清潔日 / 房務員
+   *
+   * ⚠️ 這裡送出的是純文字,不是 Flex 卡片。
+   * Flex 只有 Messaging API 推播才送得出去,而推播的收件人必須寫死在程式裡;
+   * 「人工選收件人」+「Flex」要同時成立,只能靠 LIFF 的 shareTargetPicker,
+   * 那需要另外註冊 LINE Login channel 與 LIFF App,且網站要從 LINE 內開啟。
+   * 目前用全形空白對齊欄位,視覺上盡量接近卡片。
+   */
+  function shareRec(r: Rec) {
+    const isHk = r.staff_type === 'housekeeper';
+    const head = isHk ? '👩 管家檢查結果通知' : '🧹 清潔檢查表填寫通知';
+    const dateLabel = isHk ? '檢查日' : '清潔日';
+    const whoLabel = isHk ? '管家　' : '房務員';
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const submitted = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+
+    const text = [
+      head,
+      '',
+      `${r.estate_name ?? ''}${r.property_raw ?? ''}`.trim(),
+      '',
+      `${dateLabel}　${r.record_date}`,
+      `${whoLabel}　${r.staff_name}`,
+      `備註　　${r.note || '—'}`,
+      `提交時間　${submitted}`,
+      ...(r.doc_url ? ['', '完整檔案', r.doc_url] : []),
+    ].join('\n');
+
+    // 手機(含加到主畫面的 PWA)走系統分享面板,選單裡就有 LINE。
+    // 桌機沒有 navigator.share,退回 LINE 的分享網址。
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      navigator.share({ title: head, text }).catch(() => {});
+      return;
+    }
+    window.open('https://line.me/R/msg/text/?' + encodeURIComponent(text), '_blank', 'noopener');
+  }
+
   return (
     <div>
       {/* Dashboard */}
@@ -184,8 +229,12 @@ export default function CleaningPage() {
         {(estate || staff || staffType || dateFrom || dateTo || kw) && (
           <button onClick={() => { setEstate(''); setStaff(''); setStaffType(''); setDateFrom(''); setDateTo(''); setKw(''); setKwInput(''); }} className="text-gray-500 underline pb-1.5">清除篩選</button>
         )}
-        <div className="ml-auto flex items-end gap-3">
+        <div className="ml-auto flex flex-wrap items-end gap-2">
           <div className="text-xs text-gray-400 pb-1.5">共 {total.toLocaleString()} 筆</div>
+          <a href={FORM_HOUSEKEEPER} target="_blank" rel="noreferrer"
+            className="rounded-lg border border-mor-line bg-white px-3 py-1.5 font-medium hover:bg-mor-sand/60">📋 管家檢查表</a>
+          <a href={FORM_ROOMSERVICE} target="_blank" rel="noreferrer"
+            className="rounded-lg border border-mor-line bg-white px-3 py-1.5 font-medium hover:bg-mor-sand/60">🧹 房務清潔表</a>
           <button onClick={exportCsv} disabled={exporting || total === 0} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark disabled:opacity-40">{exporting ? '匯出中…' : '⬇ 下載 CSV'}</button>
         </div>
       </div>
@@ -213,8 +262,10 @@ export default function CleaningPage() {
                 <td className="px-3 py-2.5 whitespace-nowrap cursor-pointer" onClick={() => setDetail(r)}>{r.property_raw ?? '—'}</td>
                 <td className="px-3 py-2.5 whitespace-nowrap cursor-pointer" onClick={() => setDetail(r)}>{r.staff_name}<span className="ml-1 text-xs text-gray-400">{TYPE_LABEL[r.staff_type || 'other']}</span></td>
                 <td className="px-3 py-2.5 text-gray-600 min-w-64 cursor-pointer" onClick={() => setDetail(r)}><div className="line-clamp-2">{r.note ?? <span className="text-gray-300">（無備註）</span>}</div></td>
-                <td className="px-3 py-2.5 whitespace-nowrap">
+                <td className="px-3 py-2.5 whitespace-nowrap space-x-3">
                   {r.doc_url ? <a href={r.doc_url} target="_blank" rel="noreferrer" className="text-mor-slate underline hover:text-mor-blue" onClick={(e) => e.stopPropagation()}>📄 詳細內容</a> : <span className="text-gray-300">—</span>}
+                  <button onClick={(e) => { e.stopPropagation(); shareRec(r); }}
+                    className="text-mor-slate underline hover:text-mor-blue">↗ 分享</button>
                 </td>
               </tr>
             ))}
@@ -246,7 +297,10 @@ export default function CleaningPage() {
                 <div className="text-xs text-gray-500 mb-1.5 font-medium">備註</div>
                 <p className="whitespace-pre-wrap leading-relaxed">{detail.note ?? '（無）'}</p>
               </div>
-              {detail.doc_url && <a href={detail.doc_url} target="_blank" rel="noreferrer" className="inline-block rounded-lg bg-mor-bluelight text-mor-slate px-4 py-2 font-medium hover:bg-mor-blue hover:text-white">📄 開啟詳細記錄</a>}
+              <div className="flex flex-wrap gap-2">
+                {detail.doc_url && <a href={detail.doc_url} target="_blank" rel="noreferrer" className="inline-block rounded-lg bg-mor-bluelight text-mor-slate px-4 py-2 font-medium hover:bg-mor-blue hover:text-white">📄 開啟詳細記錄</a>}
+                <button onClick={() => shareRec(detail)} className="inline-block rounded-lg border border-mor-line px-4 py-2 font-medium hover:bg-mor-sand/60">↗ 分享</button>
+              </div>
             </div>
           </div>
         </div>
