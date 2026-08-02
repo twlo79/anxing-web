@@ -17,10 +17,25 @@ export async function middleware(request: NextRequest) {
       },
     }
   );
+  // getUser() 在 access token 過期時會用 refresh token 換一組新的,
+  // 新 token 由上面的 setAll 寫進 response。
   const { data: { user } } = await supabase.auth.getUser();
+
+  // 導向時必須把 response 上的 cookie 一起帶走。
+  //
+  // 少了這步會造成間歇性登出,而且很難查:Supabase 的 refresh token 是一次性的,
+  // 續期時舊的當場作廢。若那次續期剛好發生在會導向的請求上,新 token 隨著被丟棄的
+  // response 一起消失,瀏覽器手上只剩已作廢的舊 token —— 下次續期必定失敗,直接登出。
+  // access token 一小時到期,所以症狀是「隔一段時間就要重新登入」。
+  function redirectTo(path: string) {
+    const r = NextResponse.redirect(new URL(path, request.url));
+    response.cookies.getAll().forEach((c) => r.cookies.set(c));
+    return r;
+  }
+
   const isLogin = request.nextUrl.pathname.startsWith('/login');
-  if (!user && !isLogin) return NextResponse.redirect(new URL('/login', request.url));
-  if (user && isLogin) return NextResponse.redirect(new URL('/reviews', request.url));
+  if (!user && !isLogin) return redirectTo('/login');
+  if (user && isLogin) return redirectTo('/reviews');
   return response;
 }
 
