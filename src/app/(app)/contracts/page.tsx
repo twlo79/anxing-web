@@ -48,6 +48,7 @@ export default function ContractsPage() {
   const [estateFilter, setEstateFilter] = useState('');
   const [edit, setEdit] = useState<Contract | null>(null);
   const [collect, setCollect] = useState<Contract | null>(null);
+  const [detail, setDetail] = useState<Contract | null>(null);
   const [kw, setKw] = useState('');
   const [sort, setSort] = useState<SortState>({ key: 'start_date', dir: 'desc' });
   const [cadFilter, setCadFilter] = useState('');
@@ -448,38 +449,94 @@ export default function ContractsPage() {
             <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/50">
               <SortTh label="房源" sortKey="room" type="room" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <SortTh label="租戶" sortKey="tenant_name" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
-              <SortTh label="繳別" sortKey="cadence" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
-              <SortTh label="租金 / 對應月租" sortKey="amount" type="number" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="text-right" align="right" />
-              <SortTh label="押金" sortKey="deposit" type="number" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="text-right" align="right" />
+              <SortTh label="租金 / 繳別" sortKey="amount" type="number" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="text-right" align="right" />
               <SortTh label="租期" sortKey="start_date" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="whitespace-nowrap" />
               <th className="px-3 py-2.5">收租</th><th className="px-3 py-2.5 text-right">操作</th>
             </tr>
           </thead>
           <tbody>
-            {loading ? <tr><td colSpan={8} className="px-4 py-10 text-center text-gray-400">載入中…</td></tr>
-            : filtered.length === 0 ? <tr><td colSpan={8} className="px-4 py-10 text-center text-gray-400">尚無契約</td></tr>
+            {loading ? <tr><td colSpan={6} className="px-4 py-10 text-center text-gray-400">載入中…</td></tr>
+            : filtered.length === 0 ? <tr><td colSpan={6} className="px-4 py-10 text-center text-gray-400">尚無契約</td></tr>
             : filtered.map((c: any) => (
-              <tr key={c.id} className={`border-b border-mor-line/60 hover:bg-mor-bluelight/30 ${c.active ? '' : 'opacity-50'}`}>
+              // 整列可點開詳細抽屜。押金與刪除移進抽屜 ——
+              // 刪除契約會連帶影響已產生的月租單,不該在列表上一鍵可及。
+              <tr key={c.id} onClick={() => setDetail(c)}
+                className={`border-b border-mor-line/60 hover:bg-mor-bluelight/30 cursor-pointer ${c.active ? '' : 'opacity-50'}`}>
                 <td className="px-3 py-2 font-medium whitespace-nowrap">{c.room}<span className="ml-1 text-xs text-gray-400">{c.estates?.name}</span>{statusOf(c) === 'expired' && <span className="ml-1 rounded px-1.5 py-0.5 text-[10px] bg-amber-50 text-amber-600">已到期</span>}{statusOf(c) === 'disabled' && <span className="ml-1 rounded px-1.5 py-0.5 text-[10px] bg-gray-100 text-gray-500">已停用</span>}</td>
                 <td className="px-3 py-2 whitespace-nowrap">{c.tenant_name}</td>
-                <td className="px-3 py-2 whitespace-nowrap">{CAD_LABEL[c.cadence] ?? c.cadence}</td>
-                <td className="px-3 py-2 text-right">{(() => { const step = STEP_OF[c.cadence] || 1; const per = c.amount_per_period || (c.monthly_rent || 0) * step; const mo = Math.round(per / step); return (<><div className="font-medium">${fmt(per)}</div><div className="text-xs text-gray-400">月 ${fmt(mo)}</div></>); })()}</td>
-                <td className="px-3 py-2 text-right text-gray-500">${fmt(c.deposit)}</td>
+                <td className="px-3 py-2 text-right">{(() => { const step = STEP_OF[c.cadence] || 1; const per = c.amount_per_period || (c.monthly_rent || 0) * step; const mo = Math.round(per / step); return (<><div className="font-medium">${fmt(per)}</div><div className="text-xs text-gray-400">{CAD_LABEL[c.cadence] ?? c.cadence}・月 ${fmt(mo)}</div></>); })()}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-500">{c.start_date ?? '—'} ~ {c.end_date ?? '—'}</td>
-                <td className="px-3 py-2">
+                <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
                   {(() => { const lt = curLT[c.room ?? '']; if (!lt) return <span className="text-xs text-gray-300" title="本月無應收(缺租期或不在租期內)">—</span>; return <button onClick={() => setCollect(c)} title="點擊開啟收款" className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${lt.paid ? 'bg-mor-greenlight text-mor-green' : 'bg-orange-50 text-orange-600'}`}>{lt.paid ? '本月已收' : '本月未收'}</button>; })()}
                 </td>
-                <td className="px-3 py-2 text-right whitespace-nowrap space-x-2">
+                <td className="px-3 py-2 text-right whitespace-nowrap space-x-2" onClick={(e) => e.stopPropagation()}>
                   <button onClick={() => togglePin(c)} title={c.watch ? '已關注(顯示於已收/未收清單)' : '關注收租(釘選)'} className={`text-xs ${c.watch ? 'text-amber-500' : 'text-gray-300 hover:text-amber-400'}`}>{c.watch ? '★' : '☆'}</button>
                   <button onClick={() => setCollect(c)} className="text-xs text-mor-green underline hover:text-emerald-700 font-medium">收租</button>
-                  <button onClick={() => setEdit(c)} className="text-xs text-mor-slate underline hover:text-mor-blue">編輯</button>
-                  <button onClick={() => del(c)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      {/* 詳細資訊抽屜 —— 列表精簡掉的欄位都在這裡,編輯與刪除也在這 */}
+      {detail && (() => {
+        const c: any = detail;
+        const row = (label: string, value: React.ReactNode) => (
+          <div className="flex gap-3 py-1.5 border-b border-mor-line/40 last:border-0">
+            <div className="w-24 shrink-0 text-xs text-gray-400 pt-0.5">{label}</div>
+            <div className="flex-1 min-w-0 text-sm">{value ?? '—'}</div>
+          </div>
+        );
+        const step = STEP_OF[c.cadence] || 1;
+        const per = c.amount_per_period || (c.monthly_rent || 0) * step;
+        return (
+          <div className="fixed inset-0 z-50" onClick={() => setDetail(null)}>
+            <div className="absolute inset-0 bg-black/30" />
+            <div onClick={(e) => e.stopPropagation()}
+              className="absolute right-0 top-0 h-full w-full max-w-lg bg-white shadow-xl overflow-y-auto">
+              <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 flex items-start justify-between"
+                style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
+                <div className="min-w-0">
+                  <div className="font-bold truncate">{c.room} <span className="text-sm font-normal text-gray-500">{c.estates?.name}</span></div>
+                  <div className="text-xs text-gray-500 mt-0.5">{c.tenant_name}{c.display_name ? `・${c.display_name}` : ''}</div>
+                </div>
+                <button onClick={() => setDetail(null)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+              </div>
+
+              <div className="px-6 py-4">
+                {row('類型', TYPE_LABEL[c.type] ?? c.type ?? '—')}
+                {row('租金', <span><span className="font-medium">${fmt(per)}</span> <span className="text-gray-500">/ {CAD_LABEL[c.cadence] ?? c.cadence}</span><div className="text-xs text-gray-400">對應月租 ${fmt(Math.round(per / step))}</div></span>)}
+                {row('押金', c.deposit ? <span>${fmt(c.deposit)}</span> : '—')}
+                {row('租期', `${c.start_date ?? '—'} ~ ${c.end_date ?? '—'}`)}
+                {row('繳款日', c.pay_day ? `每期 ${c.pay_day} 號` : '—')}
+                {row('首期繳款', c.first_payment_date ?? '—')}
+                {row('入款帳號', c.account ?? '—')}
+                {row('電話', c.phone ?? '—')}
+                {row('狀態', (
+                  <span className="space-x-1">
+                    <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] ${c.active ? 'bg-mor-greenlight text-mor-green' : 'bg-gray-100 text-gray-500'}`}>{c.active ? '啟用' : '停用'}</span>
+                    {c.watch && <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-amber-50 text-amber-600">已關注</span>}
+                    {c.auto_renew && <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-mor-bluelight text-mor-slate">自動續約</span>}
+                  </span>
+                ))}
+                {c.invoice_required ? row('發票', `需開立${c.invoice_day ? `・每月 ${c.invoice_day} 號` : ''}${c.invoice_after_paid ? '・收款後開' : ''}${c.invoice_title ? `\n抬頭 ${c.invoice_title}` : ''}${c.invoice_tax_id ? `・統編 ${c.invoice_tax_id}` : ''}`) : null}
+                {row('備註', c.note ? <span className="whitespace-pre-wrap">{c.note}</span> : '—')}
+              </div>
+
+              <div className="sticky bottom-0 bg-white border-t border-mor-line px-6 py-3 flex gap-2"
+                style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
+                <button onClick={() => { setDetail(null); setEdit(c); }}
+                  className="flex-1 h-11 rounded-lg bg-mor-slate text-white text-sm font-medium hover:bg-mor-slatedark">編輯</button>
+                <button onClick={() => { setDetail(null); setCollect(c); }}
+                  className="flex-1 h-11 rounded-lg border border-mor-green text-mor-green text-sm font-medium hover:bg-mor-greenlight">收租</button>
+                <button onClick={() => { del(c); setDetail(null); }}
+                  className="flex-1 h-11 rounded-lg border border-red-300 text-red-500 text-sm font-medium hover:bg-red-50">刪除</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {collect && <CollectModal contract={collect} onClose={() => { setCollect(null); load(); }} supabase={supabase} />}
       {edit && (
