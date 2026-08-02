@@ -38,6 +38,18 @@
     input:not([type='checkbox']):not([type='radio']) {
       min-height: 3rem;
       font-size: 16px;
+      /*
+       * flex-basis 要回到 auto。
+       * Tailwind 的 flex-1 展開是 `flex: 1 1 0%`,那個 0% 是 flex-basis,
+       * 會覆蓋主軸方向的尺寸 —— 在直向排列(flex-col)時主軸是垂直,
+       * 於是 h-12 失效、欄位被壓矮,而同一列沒有 flex-1 的欄位卻是正常高度,
+       * 看起來就是「有些框比較矮」。改回 auto 之後 flex-grow 仍然有效,
+       * 只是不再從 0 起算。
+       */
+      flex-basis: auto;
+      /* 直向排列時撐滿寬度。Safari 對 select 的 stretch 行為與 input 不同,
+         不明寫的話 select 會比隔壁的 input 窄一截。 */
+      width: 100%;
     }
 
     textarea {

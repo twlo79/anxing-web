@@ -822,14 +822,14 @@ export default function PurchasesPage() {
                                 ? (v === 'office' ? { ...x, purpose_type: 'office', estate_id: null } : { ...x, purpose_type: 'estate', estate_id: v || null })
                                 : x));
                             }}
-                            className="flex-1 h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50">
+                            className="w-full md:w-auto md:flex-1 h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50">
                             <option value="">用途 *</option>
                             <option value="office">安幸辦公室</option>
                             {estates.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
                           </select>
                           <input disabled={readOnly} value={it.note ?? ''} placeholder="備註"
                             onChange={(e) => setItems(items.map((x, i) => i === idx ? { ...x, note: e.target.value } : x))}
-                            className="flex-1 h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50" />
+                            className="w-full md:w-auto md:flex-1 h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50" />
                         </div>
                       </div>
                     ))}
