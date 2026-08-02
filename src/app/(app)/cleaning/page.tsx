@@ -166,9 +166,9 @@ export default function CleaningPage() {
           <h1 className="hidden md:block text-xl font-bold">清潔記錄</h1>
           <div className="flex items-center gap-2 text-sm w-full md:w-auto">
             <span className="text-xs text-gray-500 shrink-0">統計區間</span>
-            <input type="date" value={statsFrom} onChange={(e) => setStatsFrom(e.target.value)} className="flex-1 md:flex-none h-11 md:h-auto min-w-0 rounded-lg border border-gray-300 px-2 md:py-1" />
+            <input type="date" value={statsFrom} onChange={(e) => setStatsFrom(e.target.value)} className="flex-1 md:flex-none h-12 md:h-auto min-w-0 rounded-lg border border-gray-300 px-2 md:py-1" />
             <span className="text-gray-400">~</span>
-            <input type="date" value={statsTo} onChange={(e) => setStatsTo(e.target.value)} className="flex-1 md:flex-none h-11 md:h-auto min-w-0 rounded-lg border border-gray-300 px-2 md:py-1" />
+            <input type="date" value={statsTo} onChange={(e) => setStatsTo(e.target.value)} className="flex-1 md:flex-none h-12 md:h-auto min-w-0 rounded-lg border border-gray-300 px-2 md:py-1" />
             {(statsFrom || statsTo) && <button onClick={() => { setStatsFrom(''); setStatsTo(''); }} className="text-gray-400 underline shrink-0">清除</button>}
           </div>
         </div>
@@ -203,16 +203,16 @@ export default function CleaningPage() {
         </summary>
         <div className="px-4 pb-4 pt-3 flex flex-col gap-3 text-sm border-t border-mor-line">
           <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">物業</span>
-            <select value={estate} onChange={(e) => setEstate(e.target.value)} className="h-11 rounded-lg border border-gray-300 px-2">
+            <select value={estate} onChange={(e) => setEstate(e.target.value)} className="h-12 rounded-lg border border-gray-300 px-2">
               <option value="">全部</option>{estates.map((e) => <option key={e.id} value={e.name}>{e.name}</option>)}
             </select></label>
           <div className="grid grid-cols-2 gap-2">
             <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">填寫人</span>
-              <select value={staff} onChange={(e) => setStaff(e.target.value)} className="h-11 rounded-lg border border-gray-300 px-2">
+              <select value={staff} onChange={(e) => setStaff(e.target.value)} className="h-12 rounded-lg border border-gray-300 px-2">
                 <option value="">全部</option>{staffNames.map((n) => <option key={n} value={n}>{n}</option>)}
               </select></label>
             <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">職位</span>
-              <select value={staffType} onChange={(e) => setStaffType(e.target.value)} className="h-11 rounded-lg border border-gray-300 px-2">
+              <select value={staffType} onChange={(e) => setStaffType(e.target.value)} className="h-12 rounded-lg border border-gray-300 px-2">
                 <option value="">全部</option>
                 <option value="housekeeper">管家</option>
                 <option value="roomservice">房務</option>
@@ -220,23 +220,23 @@ export default function CleaningPage() {
           </div>
           <div className="grid grid-cols-2 gap-2">
             <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">日期(起)</span>
-              <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="h-11 rounded-lg border border-gray-300 px-2" /></label>
+              <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="h-12 rounded-lg border border-gray-300 px-2" /></label>
             <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">日期(迄)</span>
-              <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="h-11 rounded-lg border border-gray-300 px-2" /></label>
+              <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="h-12 rounded-lg border border-gray-300 px-2" /></label>
           </div>
           <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">關鍵字(備註/房號)</span>
             <div className="flex gap-1">
               <input value={kwInput} onChange={(e) => setKwInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') setKw(kwInput.trim()); }}
-                placeholder="例:冰箱、拖鞋" className="flex-1 min-w-0 h-11 rounded-lg border border-gray-300 px-2" />
-              <button onClick={() => setKw(kwInput.trim())} className="h-11 px-4 rounded-lg bg-mor-slate text-white">搜尋</button>
+                placeholder="例:冰箱、拖鞋" className="flex-1 min-w-0 h-12 rounded-lg border border-gray-300 px-2" />
+              <button onClick={() => setKw(kwInput.trim())} className="h-12 px-4 rounded-lg bg-mor-slate text-white">搜尋</button>
             </div></label>
           <div className="flex gap-2">
             {(estate || staff || staffType || dateFrom || dateTo || kw) && (
               <button onClick={() => { setEstate(''); setStaff(''); setStaffType(''); setDateFrom(''); setDateTo(''); setKw(''); setKwInput(''); }}
-                className="flex-1 h-11 rounded-lg border border-mor-line text-gray-600">清除篩選</button>
+                className="flex-1 h-12 rounded-lg border border-mor-line text-gray-600">清除篩選</button>
             )}
             <button onClick={exportCsv} disabled={exporting || total === 0}
-              className="flex-1 h-11 rounded-lg border border-mor-line disabled:opacity-40">{exporting ? '匯出中…' : '⬇ CSV'}</button>
+              className="flex-1 h-12 rounded-lg border border-mor-line disabled:opacity-40">{exporting ? '匯出中…' : '⬇ CSV'}</button>
           </div>
         </div>
       </details>
@@ -316,18 +316,18 @@ export default function CleaningPage() {
             <div className="mt-3 flex gap-2">
               {r.doc_url && (
                 <a href={r.doc_url} target="_blank" rel="noreferrer"
-                  className="flex-1 h-11 rounded-lg border border-mor-line text-sm font-medium flex items-center justify-center active:bg-mor-sand/60">📄 詳細內容</a>
+                  className="flex-1 h-12 rounded-lg border border-mor-line text-sm font-medium flex items-center justify-center active:bg-mor-sand/60">📄 詳細內容</a>
               )}
               <button onClick={() => shareRec(r)}
-                className="flex-1 h-11 rounded-lg border border-mor-line text-sm font-medium active:bg-mor-sand/60">↗ 分享</button>
+                className="flex-1 h-12 rounded-lg border border-mor-line text-sm font-medium active:bg-mor-sand/60">↗ 分享</button>
             </div>
           </div>
         ))}
         <div className="flex items-center justify-between px-1 py-2 text-sm text-gray-500">
           <div>第 {page + 1} / {pages} 頁</div>
           <div className="flex gap-2">
-            <button disabled={page === 0} onClick={() => setPage(page - 1)} className="h-11 px-4 rounded-lg border border-gray-300 disabled:opacity-40">上一頁</button>
-            <button disabled={page >= pages - 1} onClick={() => setPage(page + 1)} className="h-11 px-4 rounded-lg border border-gray-300 disabled:opacity-40">下一頁</button>
+            <button disabled={page === 0} onClick={() => setPage(page - 1)} className="h-12 px-4 rounded-lg border border-gray-300 disabled:opacity-40">上一頁</button>
+            <button disabled={page >= pages - 1} onClick={() => setPage(page + 1)} className="h-12 px-4 rounded-lg border border-gray-300 disabled:opacity-40">下一頁</button>
           </div>
         </div>
       </div>

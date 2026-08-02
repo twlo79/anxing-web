@@ -1,3 +1,47 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/*
+ * 表單欄位的全站基準樣式。
+ *
+ * 寫在這裡而不是逐頁改 className,是因為欄位散在七個頁面、上百個地方,
+ * 逐一改一定會漏,而且之後新增欄位又會不一致。統一在 base layer 定基準,
+ * 個別頁面仍可用 utility class 覆蓋(Tailwind 的 utilities 層優先度較高)。
+ */
+@layer base {
+  /* iOS 的 select 預設是灰底,跟白底的 input 並排時看起來像兩種元件。 */
+  select,
+  textarea,
+  input:not([type='checkbox']):not([type='radio']) {
+    background-color: #fff;
+  }
+
+  select:disabled,
+  textarea:disabled,
+  input:disabled {
+    background-color: #f9fafb;
+  }
+
+  /*
+   * 手機:欄位一律至少 48px 高。
+   * 44px 是 Apple 建議的最小點擊區,48px 讓輸入框與下拉在視覺上等高 ——
+   * 原生 select 的內距比 input 大,兩者設同樣高度才不會參差。
+   *
+   * 字級 16px 是必要的:iOS Safari 在小於 16px 的欄位獲得焦點時會自動放大頁面。
+   * 我們雖然用 maximumScale=1 鎖住了縮放,但那是治標;字級夠大才是根本解法,
+   * 而且欄位字太小在手機上本來就難讀。
+   */
+  @media (max-width: 767px) {
+    select,
+    textarea,
+    input:not([type='checkbox']):not([type='radio']) {
+      min-height: 3rem;
+      font-size: 16px;
+    }
+
+    textarea {
+      min-height: 6rem;
+    }
+  }
+}

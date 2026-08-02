@@ -530,41 +530,41 @@ export default function PurchasesPage() {
         </summary>
         <div className="px-4 pb-4 flex flex-col gap-3 text-sm border-t border-mor-line pt-3">
           <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">狀態</span>
-            <select value={stF} onChange={(e) => setStF(e.target.value)} className="h-11 rounded-lg border border-mor-line px-2">
+            <select value={stF} onChange={(e) => setStF(e.target.value)} className="h-12 rounded-lg border border-mor-line px-2">
               <option value="">全部狀態</option>
               {Object.entries(ST_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select></label>
           {canSeeAll && (
             <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">申請人</span>
-              <select value={reqF} onChange={(e) => setReqF(e.target.value)} className="h-11 rounded-lg border border-mor-line px-2">
+              <select value={reqF} onChange={(e) => setReqF(e.target.value)} className="h-12 rounded-lg border border-mor-line px-2">
                 <option value="">全部</option>
                 {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select></label>
           )}
           <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">物業</span>
-            <select value={estateF} onChange={(e) => setEstateF(e.target.value)} className="h-11 rounded-lg border border-mor-line px-2">
+            <select value={estateF} onChange={(e) => setEstateF(e.target.value)} className="h-12 rounded-lg border border-mor-line px-2">
               <option value="">全部物業</option>
               {estates.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
             </select></label>
           <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">支出方式</span>
-            <select value={methodF} onChange={(e) => setMethodF(e.target.value)} className="h-11 rounded-lg border border-mor-line px-2">
+            <select value={methodF} onChange={(e) => setMethodF(e.target.value)} className="h-12 rounded-lg border border-mor-line px-2">
               <option value="">全部方式</option>
               {PAY_OPTS.map((p) => <option key={p} value={p}>{PAY_LABEL[p]}</option>)}
             </select></label>
           <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">月份(建立日)</span>
-            <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="h-11 rounded-lg border border-mor-line px-2" /></label>
+            <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="h-12 rounded-lg border border-mor-line px-2" /></label>
           <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">關鍵字</span>
             <div className="flex gap-1">
               <input value={kwIn} onChange={(e) => setKwIn(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') setKw(kwIn.trim()); }}
-                placeholder="單號/項目/備註/廠商" className="flex-1 min-w-0 h-11 rounded-lg border border-mor-line px-2" />
-              <button onClick={() => setKw(kwIn.trim())} className="h-11 px-4 rounded-lg bg-mor-slate text-white">搜尋</button>
+                placeholder="單號/項目/備註/廠商" className="flex-1 min-w-0 h-12 rounded-lg border border-mor-line px-2" />
+              <button onClick={() => setKw(kwIn.trim())} className="h-12 px-4 rounded-lg bg-mor-slate text-white">搜尋</button>
             </div></label>
           <div className="flex gap-2">
             {(stF || reqF || estateF || methodF || kw) &&
               <button onClick={() => { setStF(''); setReqF(''); setEstateF(''); setMethodF(''); setKw(''); setKwIn(''); }}
-                className="flex-1 h-11 rounded-lg border border-mor-line text-gray-600">清除篩選</button>}
+                className="flex-1 h-12 rounded-lg border border-mor-line text-gray-600">清除篩選</button>}
             <button onClick={exportXlsx} disabled={!sorted.length}
-              className="flex-1 h-11 rounded-lg border border-mor-line disabled:opacity-40">⬇ Excel</button>
+              className="flex-1 h-12 rounded-lg border border-mor-line disabled:opacity-40">⬇ Excel</button>
           </div>
         </div>
       </details>
@@ -657,30 +657,30 @@ export default function PurchasesPage() {
               {/* 手機的按鈕要夠大才點得到,一律 44px 高 */}
               <div className="mt-3 flex flex-wrap gap-2">
                 <button onClick={() => openEdit(r)}
-                  className="flex-1 min-w-[5rem] h-11 rounded-lg border border-mor-line text-sm font-medium active:bg-mor-sand/60">
+                  className="flex-1 min-w-[5rem] h-12 rounded-lg border border-mor-line text-sm font-medium active:bg-mor-sand/60">
                   {canEdit ? '編輯' : '檢視'}
                 </button>
                 {(canVoteMgr || canVoteAdm) && (
                   <button onClick={() => vote(r)}
-                    className="flex-1 min-w-[5rem] h-11 rounded-lg bg-mor-green text-white text-sm font-medium active:opacity-80">核可</button>
+                    className="flex-1 min-w-[5rem] h-12 rounded-lg bg-mor-green text-white text-sm font-medium active:opacity-80">核可</button>
                 )}
                 {canRej && (
                   <button onClick={() => { setRejecting(r); setRejectReason(''); }}
-                    className="flex-1 min-w-[5rem] h-11 rounded-lg border border-amber-400 text-amber-700 text-sm font-medium active:bg-amber-50">駁回</button>
+                    className="flex-1 min-w-[5rem] h-12 rounded-lg border border-amber-400 text-amber-700 text-sm font-medium active:bg-amber-50">駁回</button>
                 )}
                 {canPlan && (
                   <button onClick={() => { setPlanning(r); setPlanDate(r.planned_transfer_on ?? todayStr()); setPlanAcct(r.payout_account ?? ''); }}
-                    className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-slate text-mor-slate text-sm font-medium active:bg-mor-sand/60">
+                    className="flex-1 min-w-[6rem] h-12 rounded-lg border border-mor-slate text-mor-slate text-sm font-medium active:bg-mor-sand/60">
                     {r.planned_transfer_on ? '改匯款計畫' : '排匯款'}</button>
                 )}
                 {canDate && (
                   <button onClick={() => { setDating(r); setDateVal(r.purchased_on ?? r.planned_transfer_on ?? todayStr()); setDateAcct(r.payout_account ?? ''); }}
-                    className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-blue text-mor-blue text-sm font-medium active:bg-mor-bluelight">
+                    className="flex-1 min-w-[6rem] h-12 rounded-lg border border-mor-blue text-mor-blue text-sm font-medium active:bg-mor-bluelight">
                     {r.purchased_on ? '改付款日' : '匯出'}</button>
                 )}
                 {canCancel && (
                   <button onClick={() => cancel(r)}
-                    className="flex-1 min-w-[5rem] h-11 rounded-lg border border-red-300 text-red-500 text-sm font-medium active:bg-red-50">撤銷</button>
+                    className="flex-1 min-w-[5rem] h-12 rounded-lg border border-red-300 text-red-500 text-sm font-medium active:bg-red-50">撤銷</button>
                 )}
               </div>
             </div>
@@ -790,7 +790,7 @@ export default function PurchasesPage() {
                         <div className="flex gap-2">
                           <input disabled={readOnly} value={it.item_name} placeholder="項目名稱 *"
                             onChange={(e) => setItems(items.map((x, i) => i === idx ? { ...x, item_name: e.target.value } : x))}
-                            className="flex-1 min-w-0 h-11 md:h-auto rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50" />
+                            className="flex-1 min-w-0 h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50" />
                           <div className="relative w-28 md:w-32 shrink-0">
                             <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">
                               {edit.currency === 'TWD' ? 'NT$' : edit.currency}
@@ -801,7 +801,7 @@ export default function PurchasesPage() {
                               value={it.amount_original === 0 || it.amount_original == null ? '' : it.amount_original}
                               placeholder="金額 *"
                               onChange={(e) => setItems(items.map((x, i) => i === idx ? { ...x, amount_original: e.target.value === '' ? 0 : Number(e.target.value) } : x))}
-                              className="w-full h-11 md:h-auto rounded-lg border border-mor-line pl-9 pr-2 md:py-1.5 text-right disabled:bg-gray-50" />
+                              className="w-full h-12 md:h-auto bg-white rounded-lg border border-mor-line pl-9 pr-2 md:py-1.5 text-right disabled:bg-gray-50" />
                           </div>
                           {!readOnly && items.length > 1 &&
                             <button onClick={() => setItems(items.filter((_, i) => i !== idx))} aria-label="刪除項目"
@@ -810,7 +810,7 @@ export default function PurchasesPage() {
                         <div className="flex flex-col md:flex-row gap-2">
                           <select disabled={readOnly} value={it.account_code ?? ''}
                             onChange={(e) => setItems(items.map((x, i) => i === idx ? { ...x, account_code: e.target.value || null } : x))}
-                            className="w-full md:w-36 h-11 md:h-auto rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50">
+                            className="w-full md:w-36 h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50">
                             <option value="">會計科目</option>
                             {codes.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
                           </select>
@@ -822,14 +822,14 @@ export default function PurchasesPage() {
                                 ? (v === 'office' ? { ...x, purpose_type: 'office', estate_id: null } : { ...x, purpose_type: 'estate', estate_id: v || null })
                                 : x));
                             }}
-                            className="flex-1 h-11 md:h-auto rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50">
+                            className="flex-1 h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50">
                             <option value="">用途 *</option>
                             <option value="office">安幸辦公室</option>
                             {estates.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
                           </select>
                           <input disabled={readOnly} value={it.note ?? ''} placeholder="備註"
                             onChange={(e) => setItems(items.map((x, i) => i === idx ? { ...x, note: e.target.value } : x))}
-                            className="flex-1 h-11 md:h-auto rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50" />
+                            className="flex-1 h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50" />
                         </div>
                       </div>
                     ))}
@@ -839,7 +839,7 @@ export default function PurchasesPage() {
                     <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">幣別</span>
                       <select disabled={readOnly} value={edit.currency ?? 'TWD'}
                         onChange={(e) => setEdit({ ...edit, currency: e.target.value, fx_rate: e.target.value === 'TWD' ? 1 : (edit.fx_rate || 0) })}
-                        className="h-11 md:h-auto rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50">
+                        className="w-full md:w-auto h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50">
                         {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
                       </select></label>
                     {edit.currency !== 'TWD' && (
@@ -847,7 +847,7 @@ export default function PurchasesPage() {
                         <input disabled={readOnly} type="number" inputMode="decimal" step="0.0001" min="0"
                           value={edit.fx_rate ? edit.fx_rate : ''} placeholder="例 31.5"
                           onChange={(e) => setEdit({ ...edit, fx_rate: e.target.value === '' ? 0 : Number(e.target.value) })}
-                          className="w-32 h-11 md:h-auto rounded-lg border border-mor-line px-2 md:py-1.5 text-right disabled:bg-gray-50" /></label>
+                          className="w-full md:w-32 h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 text-right disabled:bg-gray-50" /></label>
                     )}
                   </div>
 
@@ -871,11 +871,11 @@ export default function PurchasesPage() {
                   <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">支出方式</span>
                     <select disabled={readOnly} value={edit.payment_method ?? 'cash'}
                       onChange={(e) => setEdit({ ...edit, payment_method: e.target.value })}
-                      className="w-full md:w-40 h-11 md:h-auto rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50">
+                      className="w-full md:w-40 h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50">
                       {PAY_OPTS.map((p) => <option key={p} value={p}>{PAY_LABEL[p]}</option>)}
                     </select></label>
                   {edit.payment_method === 'transfer' && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 [&_input]:h-11 md:[&_input]:h-auto">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 [&_input]:h-12 md:[&_input]:h-auto [&_input]:bg-white">
                       <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">銀行代碼</span>
                         <input disabled={readOnly} value={edit.payee_bank_code ?? ''} onChange={(e) => setEdit({ ...edit, payee_bank_code: e.target.value })}
                           className="rounded-lg border border-mor-line px-2 py-1.5 disabled:bg-gray-50" /></label>
@@ -892,19 +892,19 @@ export default function PurchasesPage() {
                   )}
                   <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">備註</span>
                     <textarea disabled={readOnly} value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })}
-                      className="rounded-lg border border-mor-line px-2 py-1.5 h-16 disabled:bg-gray-50" /></label>
+                      className="bg-white rounded-lg border border-mor-line px-2 py-2 h-24 md:h-16 disabled:bg-gray-50" /></label>
                 </div>
               </div>
               {/* 手機:按鈕列吸在畫面底部,捲到哪都按得到 */}
               <div className="sticky bottom-0 md:static bg-white border-t border-mor-line px-4 md:px-6 py-3 md:py-4 flex gap-2 md:justify-end"
                 style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
                 <button onClick={() => setEdit(null)}
-                  className="h-11 md:h-auto flex-1 md:flex-none rounded-lg border border-gray-300 px-4 md:py-1.5 text-sm">關閉</button>
+                  className="h-12 md:h-auto flex-1 md:flex-none rounded-lg border border-gray-300 px-4 md:py-1.5 text-sm">關閉</button>
                 {!readOnly && <>
                   <button onClick={() => save(false)} disabled={saving}
-                    className="h-11 md:h-auto flex-1 md:flex-none rounded-lg border border-mor-line px-4 md:py-1.5 text-sm hover:bg-mor-sand/60 disabled:opacity-40">儲存草稿</button>
+                    className="h-12 md:h-auto flex-1 md:flex-none rounded-lg border border-mor-line px-4 md:py-1.5 text-sm hover:bg-mor-sand/60 disabled:opacity-40">儲存草稿</button>
                   <button onClick={() => save(true)} disabled={saving}
-                    className="h-11 md:h-auto flex-1 md:flex-none rounded-lg bg-mor-slate text-white px-4 md:py-1.5 text-sm font-medium hover:bg-mor-slatedark disabled:opacity-40">
+                    className="h-12 md:h-auto flex-1 md:flex-none rounded-lg bg-mor-slate text-white px-4 md:py-1.5 text-sm font-medium hover:bg-mor-slatedark disabled:opacity-40">
                     {saving ? '處理中…' : '送出審核'}</button>
                 </>}
               </div>
