@@ -39,6 +39,7 @@ export default function ExpensesPage() {
   const [codeF, setCodeF] = useState('');
   const [payF, setPayF] = useState('');
   const [purposeF, setPurposeF] = useState('');   // '' | 'office' | estate id
+  const [acctF, setAcctF] = useState('');         // 付款帳號 / 卡別
   const [kw, setKw] = useState('');
   const [kwIn, setKwIn] = useState('');
   const [sort, setSort] = useState<SortState>({ key: 'spent_on', dir: 'desc' });
@@ -78,6 +79,8 @@ export default function ExpensesPage() {
       if (payF) q = q.eq('payment_method', payF);
       if (purposeF === 'office') q = q.eq('purpose_type', 'office');
       else if (purposeF) q = q.eq('estate_id', purposeF);
+      if (acctF === '__cash') q = q.is('pay_account', null);
+      else if (acctF) q = q.eq('pay_account', acctF);
       if (kw) q = q.or(`item_name.ilike.%${kw}%,note.ilike.%${kw}%,voucher_no.ilike.%${kw}%`);
       const { data, error } = await q.range(from, from + 999);
       if (error) { flash('載入失敗:' + error.message); break; }
@@ -88,7 +91,7 @@ export default function ExpensesPage() {
     }
     setRows(all);
     setLoading(false);
-  }, [supabase, fromD, toD, codeF, payF, purposeF, kw]);
+  }, [supabase, fromD, toD, codeF, payF, purposeF, acctF, kw]);
   useEffect(() => { load(); }, [load]);
 
   const SORT_COLS: SortCols<Expense> = useMemo(() => ({
@@ -116,6 +119,18 @@ export default function ExpensesPage() {
     });
     return Object.entries(m).sort((a, b) => b[1] - a[1]);
   }, [rows]);
+
+  // 帳戶分項:錢從哪個戶頭/哪張卡出去的。
+  // pay_account 為空的歸到「現金/未指定」—— 現金沒有帳戶，那是正常狀態不是缺漏。
+  const byAccount = useMemo(() => {
+    const m: Record<string, number> = {};
+    rows.forEach((r) => {
+      const k = r.pay_account || '__cash';
+      m[k] = (m[k] || 0) + (Number(r.amount) || 0);
+    });
+    return Object.entries(m).sort((a, b) => b[1] - a[1]);
+  }, [rows]);
+  const acctName = useMemo(() => Object.fromEntries(payAccounts.map((a) => [a.code, a.name])), [payAccounts]);
 
   const purposeLabel = (r: Expense) =>
     r.purpose_type === 'office' ? '安幸辦公室' : (r.estate_id ? estateName[r.estate_id] ?? '—' : '—');
@@ -200,7 +215,11 @@ export default function ExpensesPage() {
     ws['!freeze'] = { xSplit: 0, ySplit: 1 };
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, '支出');
-    const tag = [codeF ? codeName[codeF] : '', PAY_LABEL[payF] ?? '', fromD, toD, kw].filter(Boolean).join('_');
+    const tag = [
+      codeF ? codeName[codeF] : '', PAY_LABEL[payF] ?? '',
+      acctF === '__cash' ? '現金' : (acctF ? acctName[acctF] ?? acctF : ''),
+      fromD, toD, kw,
+    ].filter(Boolean).join('_');
     const d = new Date();
     const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
     XLSX.writeFile(wb, `支出${tag ? '_' + tag : ''}_${stamp}.xlsx`);
@@ -208,6 +227,7 @@ export default function ExpensesPage() {
 
   const maxCode = byCode.length ? byCode[0][1] : 1;
   const maxPurpose = byPurpose.length ? byPurpose[0][1] : 1;
+  const maxAccount = byAccount.length ? byAccount[0][1] : 1;
 
   return (
     <div>
@@ -215,7 +235,7 @@ export default function ExpensesPage() {
       <h1 className="text-xl font-bold mb-4">支出</h1>
 
       {/* 統計 */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
         <div className="rounded-xl min-w-0 bg-mor-slate text-white p-5">
           <div className="flex items-baseline justify-between">
             <div className="text-sm opacity-80">總支出</div>
@@ -254,6 +274,23 @@ export default function ExpensesPage() {
             ))}
           </div>
         </div>
+
+        {/* 帳戶分項:點一列可直接篩選成該帳戶 */}
+        <div className="rounded-xl border border-mor-line bg-white p-4">
+          <div className="text-sm font-medium mb-3">帳戶分項</div>
+          <div className="space-y-1.5 max-h-44 overflow-auto pr-1">
+            {byAccount.length === 0 ? <div className="text-xs text-gray-400">無資料</div> : byAccount.map(([k, v]) => (
+              <button key={k} onClick={() => setAcctF(acctF === k ? '' : k)}
+                className={`w-full flex items-center gap-2 text-xs rounded px-1 py-0.5 ${acctF === k ? 'bg-mor-bluelight' : 'hover:bg-mor-sand/50'}`}>
+                <div className="w-20 shrink-0 truncate text-left">{k === '__cash' ? '現金/未指定' : acctName[k] ?? k}</div>
+                <div className="flex-1 h-2 rounded bg-mor-sand/60 overflow-hidden">
+                  <div className="h-full bg-mor-slate" style={{ width: `${Math.max(2, (v / maxAccount) * 100)}%` }} />
+                </div>
+                <div className="min-w-[5rem] shrink-0 whitespace-nowrap text-right tabular-nums">${fmt(v)}</div>
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* 工具列 */}
@@ -278,14 +315,20 @@ export default function ExpensesPage() {
             <option value="">全部</option>
             {PAY_OPTS.map((p) => <option key={p} value={p}>{PAY_LABEL[p]}</option>)}
           </select></label>
+        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">帳戶</span>
+          <select value={acctF} onChange={(e) => setAcctF(e.target.value)} className="rounded-lg border border-mor-line px-2 py-1.5">
+            <option value="">全部帳戶</option>
+            <option value="__cash">現金/未指定</option>
+            {payAccounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
+          </select></label>
         <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">關鍵字(項目/備註/憑證)</span>
           <div className="flex">
             <input value={kwIn} onChange={(e) => setKwIn(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && setKw(kwIn.trim())}
               className="rounded-l-lg border border-mor-line px-2 py-1.5 w-44" placeholder="含否關鍵字" />
             <button onClick={() => setKw(kwIn.trim())} className="rounded-r-lg bg-mor-slate text-white px-3 hover:bg-mor-slatedark">搜尋</button>
           </div></label>
-        {(fromD || toD || codeF || payF || purposeF || kw) &&
-          <button onClick={() => { setFromD(''); setToD(''); setCodeF(''); setPayF(''); setPurposeF(''); setKw(''); setKwIn(''); }}
+        {(fromD || toD || codeF || payF || purposeF || acctF || kw) &&
+          <button onClick={() => { setFromD(''); setToD(''); setCodeF(''); setPayF(''); setPurposeF(''); setAcctF(''); setKw(''); setKwIn(''); }}
             className="text-gray-500 underline pb-1.5">清除</button>}
         <div className="ml-auto flex items-end gap-2">
           <div className="text-xs text-gray-400 pb-1.5">共 {rows.length.toLocaleString()} 筆</div>
