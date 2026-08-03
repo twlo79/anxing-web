@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase';
 type Expense = {
   id: string; spent_on: string; item_name: string; amount: number;
   account_code: string | null; purpose_type: string; estate_id: string | null;
+  property_id?: string | null;   // 選填,用途的細分
   voucher_no: string | null; payment_method: string | null; pay_account: string | null;
   note: string | null; source_item_id: string | null;
   // amount 一律台幣;外幣的單另存原幣別與原金額供對帳
@@ -15,6 +16,9 @@ type Expense = {
 type AccountCode = { code: string; name: string; sort: number; active: boolean };
 type Estate = { id: string; name: string; sort: number; active: boolean };
 type PayAccount = { code: string; name: string; method: string };
+type Property = { id: string; name: string; estate_id: string | null };
+
+const CURRENCIES = ['TWD', 'USD', 'JPY', 'CNY', 'EUR'];
 
 const PAY_LABEL: Record<string, string> = { cash: '現金', transfer: '匯款', credit_card: '信用卡' };
 const PAY_OPTS = ['cash', 'transfer', 'credit_card'];
@@ -27,6 +31,7 @@ export default function ExpensesPage() {
   const [codes, setCodes] = useState<AccountCode[]>([]);
   const [estates, setEstates] = useState<Estate[]>([]);
   const [payAccounts, setPayAccounts] = useState<PayAccount[]>([]);
+  const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState('');
   const [edit, setEdit] = useState<Expense | null>(null);
@@ -58,6 +63,8 @@ export default function ExpensesPage() {
     supabase.from('payment_accounts').select('code, name, method')
       .eq('for_payment', true).eq('active', true).order('sort')
       .then(({ data }) => setPayAccounts(data ?? []));
+    supabase.from('properties').select('id, name, estate_id').order('name')
+      .then(({ data }) => setProperties(data ?? []));
   }, [supabase]);
 
   const codeName = useMemo(() => Object.fromEntries(codes.map((c) => [c.code, c.name])), [codes]);
@@ -138,8 +145,9 @@ export default function ExpensesPage() {
   function blank(): Expense {
     return {
       id: '', spent_on: todayStr(), item_name: '', amount: 0, account_code: null,
-      purpose_type: 'estate', estate_id: null, voucher_no: null,
+      purpose_type: 'estate', estate_id: null, property_id: null, voucher_no: null,
       payment_method: 'cash', pay_account: null, note: null, source_item_id: null,
+      currency: 'TWD', fx_rate: 1, amount_original: 0,
     };
   }
 
@@ -148,14 +156,24 @@ export default function ExpensesPage() {
     if (!edit.spent_on) return flash('請填支出日期');
     if (!edit.item_name.trim()) return flash('請填支出項目');
     if (edit.purpose_type === 'estate' && !edit.estate_id) return flash('請選擇用途物業');
+    const cur = edit.currency || 'TWD';
+    const rate = cur === 'TWD' ? 1 : (Number(edit.fx_rate) || 0);
+    if (cur !== 'TWD' && !(rate > 0)) return flash('請填匯率');
     setSaving(true);
+    const orig = Number(edit.amount_original) || 0;
     const payload: any = {
       spent_on: edit.spent_on,
       item_name: edit.item_name.trim(),
-      amount: Number(edit.amount) || 0,
+      // amount 一律台幣,與請款單同一套規則 —— 報表與統計都只看這欄
+      amount: Math.round(orig * rate),
+      amount_original: orig,
+      currency: cur,
+      fx_rate: rate,
       account_code: edit.account_code || null,
       purpose_type: edit.purpose_type,
       estate_id: edit.purpose_type === 'office' ? null : edit.estate_id,
+      // 房源選填。選了辦公室就沒有房源可言,清成 null。
+      property_id: edit.purpose_type === 'office' ? null : (edit.property_id || null),
       voucher_no: edit.voucher_no || null,
       payment_method: edit.payment_method || null,
       // 匯款與信用卡都要記錄從哪個帳戶/哪張卡付出去;現金沒有帳戶,清成 null。
@@ -411,10 +429,48 @@ export default function ExpensesPage() {
                 <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">支出日期 *</span>
                   <input type="date" value={edit.spent_on ?? ''} onChange={(e) => setEdit({ ...edit, spent_on: e.target.value })}
                     className="rounded-lg border border-mor-line px-2 py-1.5" /></label>
-                <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">金額 *</span>
-                  <input type="number" value={edit.amount ?? 0} onChange={(e) => setEdit({ ...edit, amount: Number(e.target.value) })}
-                    className="rounded-lg border border-mor-line px-2 py-1.5 text-right" /></label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-gray-500">金額 *</span>
+                  <div className="relative">
+                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">
+                      {(edit.currency ?? 'TWD') === 'TWD' ? 'NT$' : edit.currency}
+                    </span>
+                    {/* 空字串而非 0 —— 否則打字會接在 0 後面變成 0500 */}
+                    <input type="number" inputMode="decimal" min="0"
+                      value={edit.amount_original === 0 || edit.amount_original == null ? '' : edit.amount_original}
+                      onChange={(e) => setEdit({ ...edit, amount_original: e.target.value === '' ? 0 : Number(e.target.value) })}
+                      className="w-full rounded-lg border border-mor-line pl-9 pr-2 py-1.5 text-right" />
+                  </div>
+                </label>
               </div>
+
+              {/* 幣別與匯率:選非台幣才會出現匯率欄 */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">幣別</span>
+                  <select value={edit.currency ?? 'TWD'}
+                    onChange={(e) => setEdit({ ...edit, currency: e.target.value, fx_rate: e.target.value === 'TWD' ? 1 : (edit.fx_rate || 0) })}
+                    className="rounded-lg border border-mor-line px-2 py-1.5">
+                    {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select></label>
+                {(edit.currency ?? 'TWD') !== 'TWD' && (
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-gray-500">匯率 * (1 {edit.currency} = ? NTD)</span>
+                    <input type="number" inputMode="decimal" step="0.0001" min="0"
+                      value={edit.fx_rate ? edit.fx_rate : ''} placeholder="例 31.5"
+                      onChange={(e) => setEdit({ ...edit, fx_rate: e.target.value === '' ? 0 : Number(e.target.value) })}
+                      className="rounded-lg border border-mor-line px-2 py-1.5 text-right" /></label>
+                )}
+              </div>
+              {(edit.currency ?? 'TWD') !== 'TWD' && (
+                <div className="text-right text-sm">
+                  <span className="text-xs text-gray-500 mr-2">
+                    {edit.currency} {fmt(edit.amount_original)} × {edit.fx_rate || '—'}
+                  </span>
+                  <span className="font-bold">
+                    NT$ {fmt(Math.round((Number(edit.amount_original) || 0) * (Number(edit.fx_rate) || 0)))}
+                  </span>
+                </div>
+              )}
               <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">支出項目 *</span>
                 <input value={edit.item_name ?? ''} onChange={(e) => setEdit({ ...edit, item_name: e.target.value })}
                   className="rounded-lg border border-mor-line px-2 py-1.5" placeholder="例:14B5 冷氣濾網更換" /></label>
@@ -434,14 +490,28 @@ export default function ExpensesPage() {
                   value={edit.purpose_type === 'office' ? 'office' : (edit.estate_id ?? '')}
                   onChange={(e) => {
                     const v = e.target.value;
-                    if (v === 'office') setEdit({ ...edit, purpose_type: 'office', estate_id: null });
-                    else setEdit({ ...edit, purpose_type: 'estate', estate_id: v || null });
+                    // 換物業時清掉房源 —— 否則會留著上一個物業的房間
+                    if (v === 'office') setEdit({ ...edit, purpose_type: 'office', estate_id: null, property_id: null });
+                    else setEdit({ ...edit, purpose_type: 'estate', estate_id: v || null, property_id: null });
                   }}
                   className="rounded-lg border border-mor-line px-2 py-1.5">
                   <option value="">請選擇</option>
                   <option value="office">安幸辦公室</option>
                   {activeEstates.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
                 </select></label>
+
+              {/* 房源選填:知道是哪一間就填,之後要追單一房間的花費才有依據 */}
+              {edit.purpose_type === 'estate' && edit.estate_id && (
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-gray-500">房源（選填）</span>
+                  <select value={edit.property_id ?? ''} onChange={(e) => setEdit({ ...edit, property_id: e.target.value || null })}
+                    className="rounded-lg border border-mor-line px-2 py-1.5">
+                    <option value="">整個物業（不指定房源）</option>
+                    {properties.filter((p) => p.estate_id === edit.estate_id)
+                      .map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                </label>
+              )}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">支付方式</span>
                   <select value={edit.payment_method ?? ''} onChange={(e) => setEdit({ ...edit, payment_method: e.target.value || null })}

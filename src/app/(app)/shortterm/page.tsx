@@ -397,7 +397,7 @@ export default function ShortTermPage() {
                 <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-500">{o.checkin}~{o.checkout}</td>
                 <td className="px-3 py-2 text-right font-medium">${fmt(o.amount)}</td>
                 <td className="px-3 py-2 text-right whitespace-nowrap">
-                  <button onClick={(e) => { e.stopPropagation(); setEdit(o); }} className="text-xs text-mor-slate underline hover:text-mor-blue">編輯</button>
+                  <button onClick={(e) => { e.stopPropagation(); setDetail(o); }} className="text-xs text-mor-slate underline hover:text-mor-blue">檢視</button>
                 </td>
               </tr>
             ))}

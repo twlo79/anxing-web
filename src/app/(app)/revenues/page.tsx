@@ -62,6 +62,7 @@ export default function RevenuesPage() {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [estateFilter, setEstateFilter] = useState('');
+  const [roomFilter, setRoomFilter] = useState('');
   const [sourceFilter, setSourceFilter] = useState('');
   const [kw, setKw] = useState('');
   const [kwInput, setKwInput] = useState('');
@@ -102,16 +103,19 @@ export default function RevenuesPage() {
 
   const filtered = useMemo(() => rows.filter((r) => {
     if (estateFilter && (r.estate_name ?? '無') !== estateFilter) return false;
+    if (roomFilter && (r.property_raw ?? '') !== roomFilter) return false;
     if (sourceFilter && r.source !== sourceFilter) return false;
     if (kw) { const s = `${r.guest_name ?? ''}${r.property_raw ?? ''}${r.estate_name ?? ''}`; if (!s.includes(kw)) return false; }
     return true;
-  }), [rows, estateFilter, sourceFilter, kw]);
+  }), [rows, estateFilter, roomFilter, sourceFilter, kw]);
 
   const total = useMemo(() => filtered.reduce((s, r) => s + Number(r.month_amount), 0), [filtered]);
   const sorted = useMemo(() => sortRows(filtered, sort, SORT_COLS), [filtered, sort]);
   const ROWS = 100;
   const [rowPage, setRowPage] = useState(0);
-  useEffect(() => { setRowPage(0); }, [fromM, toM, estateFilter, sourceFilter, kw, sort]);
+  useEffect(() => { setRowPage(0); }, [fromM, toM, estateFilter, roomFilter, sourceFilter, kw, sort]);
+  // 換物業時清掉房源篩選 —— 否則會留著上一個物業的房號,結果一筆都篩不出來
+  useEffect(() => { setRoomFilter(''); }, [estateFilter]);
   const rowPages = Math.max(1, Math.ceil(sorted.length / ROWS));
   const pageRows = sorted.slice(rowPage * ROWS, rowPage * ROWS + ROWS);
   const bySource = useMemo(() => {
@@ -129,6 +133,12 @@ export default function RevenuesPage() {
     return Object.entries(m).sort((a, b) => b[1] - a[1]);
   }, [filtered]);
   const estateOptions = useMemo(() => Array.from(new Set(rows.map((r) => r.estate_name ?? "無"))).sort(), [rows]);
+  // 房源選項跟著物業篩選連動 —— 選了物業就只列該物業的房源,
+  // 否則 200 多間全部列出來根本找不到。
+  const roomOptions = useMemo(() => Array.from(new Set(
+    rows.filter((r) => !estateFilter || (r.estate_name ?? '無') === estateFilter)
+        .map((r) => r.property_raw ?? '').filter(Boolean)
+  )).sort(), [rows, estateFilter]);
 
   async function exportXlsx() {
     const months = monthsInRange(fromM, toM).slice(0, 24);
@@ -309,6 +319,12 @@ export default function RevenuesPage() {
           </select>
         </div>
         <div>
+          <label className="block text-xs text-gray-500 mb-1">房源</label>
+          <select value={roomFilter} onChange={(e) => setRoomFilter(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5 min-w-24 max-w-40">
+            <option value="">全部</option>{roomOptions.map((r) => <option key={r} value={r}>{r}</option>)}
+          </select>
+        </div>
+        <div>
           <label className="block text-xs text-gray-500 mb-1">來源</label>
           <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
             <option value="">全部</option>{SOURCE_ORDER.map((s) => <option key={s} value={s}>{SOURCE_LABEL[s]}</option>)}
@@ -330,7 +346,7 @@ export default function RevenuesPage() {
             <button onClick={() => setKw(kwInput.trim())} className="rounded-lg bg-mor-slate text-white px-3 hover:bg-mor-slatedark">搜尋</button>
           </div>
         </div>
-        {(estateFilter || sourceFilter || kw) && <button onClick={() => { setEstateFilter(''); setSourceFilter(''); setKw(''); setKwInput(''); }} className="text-gray-500 underline pb-1.5">清除</button>}
+        {(estateFilter || roomFilter || sourceFilter || kw) && <button onClick={() => { setEstateFilter(''); setRoomFilter(''); setSourceFilter(''); setKw(''); setKwInput(''); }} className="text-gray-500 underline pb-1.5">清除</button>}
         <div className="ml-auto flex items-end gap-3">
           <div className="text-xs text-gray-400 pb-1.5">共 {filtered.length} 筆・${fmt(total)}</div>
           <button onClick={exportXlsx} disabled={!filtered.length} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark disabled:opacity-40">⬇ 下載 Excel</button>
