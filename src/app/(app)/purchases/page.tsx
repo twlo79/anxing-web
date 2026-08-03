@@ -452,7 +452,8 @@ export default function PurchasesPage() {
       mine,
       // 核可前都能改。approved 之後不行 —— 錢要出去了,改內容等於繞過審核。
       // 送審中(pending)存檔會清掉既有核可票並重新送審,見 save()。
-      canEdit: mine && (r.status === 'draft' || r.status === 'rejected' || r.status === 'pending'),
+      // 總經理可以改別人的單(RLS 本來就允許);主管與會計只能改自己送的。
+      canEdit: (mine || isAdmin) && (r.status === 'draft' || r.status === 'rejected' || r.status === 'pending'),
       // 開放自核:主管送的單那一票由他自己投,不再要求第二人。
       canVoteMgr: isManager && r.status === 'pending' && !r.manager_approved_at,
       canVoteAdm: isAdmin && r.status === 'pending' && !r.admin_approved_at,
@@ -920,7 +921,7 @@ export default function PurchasesPage() {
       {/* 請款單表單 */}
       {edit && (() => {
         // pending 也開放編輯。存檔會清票重送審 —— 判斷邏輯要跟 perms().canEdit 一致
-        const readOnly = !(edit.requester_id === me?.id
+        const readOnly = !((edit.requester_id === me?.id || isAdmin)
           && (edit.status === 'draft' || edit.status === 'rejected' || edit.status === 'pending' || !edit.id));
         const editingPending = !readOnly && edit.status === 'pending';
         // 手機:整頁式(貼齊上下邊)。桌機:置中對話框
@@ -937,6 +938,7 @@ export default function PurchasesPage() {
                 {editingPending && (
                   <div className="rounded-lg bg-amber-50 text-amber-700 px-3 py-2 text-xs">
                     這張單審核中。存檔後既有的核可會被清空,需要重新走一次審核。
+                    {edit.requester_id !== me?.id && `（申請人:${personName[edit.requester_id] ?? '—'}）`}
                   </div>
                 )}
                 {readOnly && edit.id && (
