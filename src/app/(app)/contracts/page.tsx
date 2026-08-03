@@ -12,7 +12,10 @@ type Contract = {
   paid: boolean; account: string | null; note: string | null; active: boolean; watch?: boolean; display_name?: string | null;
   invoice_required?: boolean; invoice_day?: number | null; invoice_after_paid?: boolean;
   invoice_title?: string | null; invoice_tax_id?: string | null; invoice_note?: string | null;
+  concessions?: Concession[] | null;
 };
+/** 折讓約定：純文字備查，不影響金額。實際折讓走 oneoff 負數訂單。 */
+type Concession = { date: string; amount: number; note: string };
 type Estate = { id: string; name: string; sort: number };
 type Invoice = {
   id: string; contract_id: string | null; order_id: string | null; room: string; ym: string;
@@ -217,6 +220,8 @@ export default function ContractsPage() {
       invoice_title: edit.invoice_title || null,
       invoice_tax_id: edit.invoice_tax_id || null,
       invoice_note: edit.invoice_note || null,
+      // 只留有填金額的，空白列不寫進去
+      concessions: (((edit.concessions as any[]) ?? []).filter((cn: any) => Number(cn?.amount) > 0)),
     };
     const { error } = edit.id
       ? await supabase.from('contracts').update(payload).eq('id', edit.id)
@@ -323,7 +328,7 @@ export default function ContractsPage() {
 
   function blank(): Contract {
     return { id: '', estate_id: estates.find((e) => e.name === '正隆')?.id ?? null, room: '', tenant_name: '', phone: '', cadence: 'monthly', type: 'longterm', monthly_rent: 0, amount_per_period: 0, deposit: 0, start_date: '', end_date: '', pay_day: null, first_payment_date: '', paid: false, account: null, note: '', active: true, watch: false, display_name: '',
-      invoice_required: false, invoice_day: null, invoice_after_paid: true, invoice_title: '', invoice_tax_id: '', invoice_note: '' };
+      invoice_required: false, invoice_day: null, invoice_after_paid: true, invoice_title: '', invoice_tax_id: '', invoice_note: '', concessions: [] };
   }
 
   return (
@@ -540,6 +545,14 @@ export default function ContractsPage() {
                   </span>
                 ))}
                 {c.invoice_required ? row('發票', `需開立${c.invoice_day ? `・每月 ${c.invoice_day} 號` : ''}${c.invoice_after_paid ? '・收款後開' : ''}${c.invoice_title ? `\n抬頭 ${c.invoice_title}` : ''}${c.invoice_tax_id ? `・統編 ${c.invoice_tax_id}` : ''}`) : null}
+                {((c.concessions ?? []) as Concession[]).length > 0 ? row('折讓約定', (
+                  <span className="space-y-0.5 block">
+                    {((c.concessions ?? []) as Concession[]).map((cn: Concession, i: number) => (
+                      <span key={i} className="block">{cn.date || '未定'}・${fmt(cn.amount)}{cn.note ? `・${cn.note}` : ''}</span>
+                    ))}
+                    <span className="block text-[11px] text-gray-400">約定紀錄,實際折讓看收租視窗</span>
+                  </span>
+                )) : null}
                 {row('備註', c.note ? <span className="whitespace-pre-wrap">{c.note}</span> : '—')}
               </div>
 
@@ -591,6 +604,38 @@ export default function ContractsPage() {
               <label className="flex items-center gap-2 mt-6" title="釘選後才會出現在上方「本月已收/未收」清單"><input type="checkbox" checked={edit.watch ?? false} onChange={(e) => setEdit({ ...edit, watch: e.target.checked })} />關注收租(釘選)</label>
               <label className="flex flex-col gap-1 col-span-2">顯示名稱(釘選清單顯示,可填人名或自訂;留空則用房源)<input value={edit.display_name ?? ''} onChange={(e) => setEdit({ ...edit, display_name: e.target.value })} placeholder={edit.room ?? ''} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1 col-span-2">備註<input value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+
+              {/*
+                折讓約定:純文字備查,記錄雙方談好的條件,可以有多筆。
+                這裡不影響任何金額 —— 實際發生的折讓要到收租視窗按「− 折讓」,
+                那才會產生負數的一次性收入並減少該月營收。
+              */}
+              <div className="col-span-2 border-t border-mor-line pt-3 mt-1">
+                <div className="text-xs font-semibold text-gray-500 mb-1.5">折讓約定（僅記錄,不影響金額）</div>
+                <div className="space-y-1.5">
+                  {((edit.concessions as any[]) ?? []).map((cn: any, idx: number) => (
+                    <div key={idx} className="flex flex-wrap items-center gap-1.5">
+                      <input type="date" value={cn.date ?? ''}
+                        onChange={(e) => { const a = [...((edit.concessions as any[]) ?? [])]; a[idx] = { ...a[idx], date: e.target.value }; setEdit({ ...edit, concessions: a } as any); }}
+                        className="rounded border border-gray-300 px-1.5 py-1 text-xs" />
+                      <input type="number" min="0" placeholder="金額" value={cn.amount || ''}
+                        onChange={(e) => { const a = [...((edit.concessions as any[]) ?? [])]; a[idx] = { ...a[idx], amount: Number(e.target.value) }; setEdit({ ...edit, concessions: a } as any); }}
+                        className="w-24 rounded border border-gray-300 px-1.5 py-1 text-xs text-right" />
+                      <input placeholder="說明" value={cn.note ?? ''}
+                        onChange={(e) => { const a = [...((edit.concessions as any[]) ?? [])]; a[idx] = { ...a[idx], note: e.target.value }; setEdit({ ...edit, concessions: a } as any); }}
+                        className="flex-1 min-w-32 rounded border border-gray-300 px-1.5 py-1 text-xs" />
+                      <button type="button" onClick={() => setEdit({ ...edit, concessions: ((edit.concessions as any[]) ?? []).filter((_, j) => j !== idx) } as any)}
+                        className="text-xs text-red-400 underline px-1">刪</button>
+                    </div>
+                  ))}
+                </div>
+                <button type="button"
+                  onClick={() => setEdit({ ...edit, concessions: [...(((edit.concessions as any[]) ?? [])), { date: '', amount: 0, note: '' }] } as any)}
+                  className="text-xs text-mor-blue underline mt-1.5">+ 增加折讓約定</button>
+                <p className="text-[11px] text-gray-400 mt-1">
+                  這裡只是備查。實際折讓請在「收租」視窗對該期按「− 折讓」,那才會扣減營收。
+                </p>
+              </div>
 
               <div className="col-span-2 border-t border-mor-line pt-3 mt-1">
                 <label className="flex items-center gap-2 text-xs font-semibold text-gray-500" title="勾選後會出現在主畫面的「待開發票」提醒清單">
@@ -692,6 +737,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
   const [dep, setDep] = useState({ received: !!c.deposit_received, receivedAt: c.deposit_received_at || '', returned: !!c.deposit_returned, returnedAt: c.deposit_returned_at || '' });
   const [feeRows, setFeeRows] = useState<any[]>([]);
   const [feeDraft, setFeeDraft] = useState<{ pi: number; date: string; type: string; amount: number } | null>(null);
+  const [concDraft, setConcDraft] = useState<{ pi: number; date: string; amount: number; note: string; baseAmount: number; priorDisc: number } | null>(null);
   const [invMap, setInvMap] = useState<Record<string, any>>({});
   const [invDraft, setInvDraft] = useState<{ id?: string; ym: string; date: string; no: string; note: string } | null>(null);
   const today = () => new Date().toISOString().slice(0, 10);
@@ -790,7 +836,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
     return () => { Object.values(timers).forEach(clearTimeout); };
   }, []);
   const loadFees = useCallback(async () => {
-    const { data } = await supabase.from('orders').select('id, checkin, amount, fee_type').eq('contract_id', c.id).eq('source', 'oneoff').order('checkin');
+    const { data } = await supabase.from('orders').select('id, checkin, amount, fee_type, note').eq('contract_id', c.id).eq('source', 'oneoff').order('checkin');
     setFeeRows(data ?? []);
   }, [supabase, c.id]);
   useEffect(() => { loadFees(); }, [loadFees]);
@@ -799,6 +845,37 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
     const { error } = await supabase.from('orders').insert({ order_key: `CFEE_${String(c.id).slice(0, 8)}_${Date.now()}`, source: 'oneoff', contract_id: c.id, estate_id: c.estate_id, property_raw: c.room, guest_name: c.tenant_name, checkin: feeDraft.date, checkout: feeDraft.date, nights: 0, amount: feeDraft.amount, fee_type: feeDraft.type, note: '契約加費', imported_via: 'manual' });
     if (error) { alert('失敗:' + error.message); return; }
     setFeeDraft(null); loadFees();
+  }
+
+  /**
+   * 折讓：產生一筆負數的一次性收入，掛在契約下。
+   *
+   * 不改月租單的金額 —— 那些是 gen_contract_orders() 產生的，
+   * 之後編輯契約時未收款的月份會被重新產生，折讓會被蓋回原價且無提示。
+   * 獨立一筆負數訂單不會被觸發器動到，而且 oneoff 本來就會流進營收認列，
+   * 所以該月營收自動減少。
+   *
+   * 備註寫明「原應收 − 折讓 = 淨額」，日後對帳看得出這筆是怎麼來的。
+   */
+  async function saveConcession() {
+    if (!concDraft || !concDraft.amount || !concDraft.date) { alert('請填折讓日期與金額'); return; }
+    const amt = Math.abs(Number(concDraft.amount));
+    // 同一期可能折讓多次。備註要把先前已折讓的也寫進去，否則第二筆的算式會對不起來。
+    const prior = Math.abs(Number(concDraft.priorDisc || 0));
+    const note = `契約折讓・原應收 $${fmt(concDraft.baseAmount)}`
+      + (prior ? ` − 已折讓 $${fmt(prior)}` : '')
+      + ` − 本次折讓 $${fmt(amt)} = $${fmt(concDraft.baseAmount - prior - amt)}`
+      + (concDraft.note ? `・${concDraft.note}` : '');
+    const { error } = await supabase.from('orders').insert({
+      order_key: `CDIS_${String(c.id).slice(0, 8)}_${Date.now()}`,
+      source: 'oneoff', contract_id: c.id, estate_id: c.estate_id,
+      property_raw: c.room, guest_name: c.tenant_name,
+      checkin: concDraft.date, checkout: concDraft.date, nights: 0,
+      amount: -amt,                 // 負數 —— 營收認列會跟著減少
+      fee_type: '折讓', note, imported_via: 'manual',
+    });
+    if (error) { alert('失敗:' + error.message); return; }
+    setConcDraft(null); loadFees();
   }
   async function delFee(id: string) { await supabase.from('orders').delete().eq('id', id); loadFees(); }
 
@@ -918,12 +995,21 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
               const first = chunk[0], last = chunk[chunk.length - 1];
               const due = c.first_payment_date ? (() => { const base = addMonths(new Date(c.first_payment_date + 'T00:00:00'), i * STEP); const day = c.pay_day || base.getDate(); const dd = new Date(base.getFullYear(), base.getMonth(), day); return `${dd.getFullYear()}/${dd.getMonth() + 1}/${dd.getDate()}`; })() : '';
               const pfees = feeRows.filter((f: any) => f.checkin && chunk.some((mm: any) => (f.checkin.slice(0, 4) + f.checkin.slice(5, 7)) === mm.ym));
+              // 折讓是 fee_type='折讓' 的負數列。應收顯示淨額,但保留原始金額供對帳。
+              const pdisc = pfees.filter((f: any) => Number(f.amount) < 0);
+              const discTotal = pdisc.reduce((a: number, f: any) => a + Math.abs(Number(f.amount) || 0), 0);
+              const netAmount = amount - discTotal;
               return (
                 <div key={i} className={`rounded-xl border px-4 py-2.5 text-sm ${allPaid ? 'border-mor-greenlight bg-mor-greenlight/30' : 'border-mor-line'}`}>
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="font-medium"><span className="text-mor-blue">第 {i + 1} 期</span> <span className="text-gray-700">{first.label}{STEP > 1 ? `~${last.label}` : ''}</span>{due ? <span className="ml-2 text-xs text-gray-400">應繳 {due}</span> : null}</div>
-                      <div className="text-xs text-gray-500">應收 ${fmt(amount)}</div>
+                      <div className="text-xs text-gray-500">
+                        應收 ${fmt(netAmount)}
+                        {discTotal > 0 && (
+                          <span className="ml-1 text-gray-400">（原 ${fmt(amount)} − 折讓 ${fmt(discTotal)}）</span>
+                        )}
+                      </div>
                     </div>
                     {os.length > 0 && (allPaid
                       ? <div className="flex items-center gap-1.5">
@@ -934,8 +1020,8 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
                   </div>
                   <div className="mt-2 border-t border-mor-line/50 pt-1.5">
                     {pfees.map((f: any) => (
-                      <div key={f.id} className="flex items-center justify-between text-xs text-gray-600 py-0.5">
-                        <span>· {f.fee_type} ${fmt(f.amount)} <span className="text-gray-400">({f.checkin})</span></span>
+                      <div key={f.id} className={`flex items-center justify-between text-xs py-0.5 ${Number(f.amount) < 0 ? 'text-orange-600' : 'text-gray-600'}`}>
+                        <span>· {f.fee_type} {Number(f.amount) < 0 ? '−' : ''}${fmt(Math.abs(Number(f.amount) || 0))} <span className="text-gray-400">({f.checkin})</span></span>
                         <button onClick={() => delFee(f.id)} className="text-red-400 underline">刪</button>
                       </div>
                     ))}
@@ -947,7 +1033,27 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
                         <button onClick={saveFee} className="rounded bg-mor-slate text-white px-2 py-0.5 text-xs">儲存</button>
                         <button onClick={() => setFeeDraft(null)} className="text-gray-400 underline text-xs">取消</button>
                       </div>
-                    ) : <button onClick={() => setFeeDraft({ pi: i, date: `${first.y}-${String(first.m).padStart(2, '0')}-01`, type: '電費', amount: 0 })} className="text-xs text-mor-blue underline">+ 加費(認列營收)</button>}
+                    ) : concDraft?.pi === i ? (
+                      <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                        <span className="text-xs text-gray-500">折讓</span>
+                        <input type="number" min="0" placeholder="金額" value={concDraft.amount || ''}
+                          onChange={(e) => setConcDraft({ ...concDraft, amount: Number(e.target.value) })}
+                          className="w-24 rounded border border-gray-300 px-1.5 py-0.5 text-xs text-right" />
+                        <input type="date" value={concDraft.date}
+                          onChange={(e) => setConcDraft({ ...concDraft, date: e.target.value })}
+                          className="rounded border border-gray-300 px-1.5 py-0.5 text-xs" />
+                        <input placeholder="原因(選填)" value={concDraft.note}
+                          onChange={(e) => setConcDraft({ ...concDraft, note: e.target.value })}
+                          className="w-28 rounded border border-gray-300 px-1.5 py-0.5 text-xs" />
+                        <button onClick={saveConcession} className="rounded bg-mor-slate text-white px-2 py-0.5 text-xs">儲存</button>
+                        <button onClick={() => setConcDraft(null)} className="text-gray-400 underline text-xs">取消</button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-3">
+                        <button onClick={() => setFeeDraft({ pi: i, date: `${first.y}-${String(first.m).padStart(2, '0')}-01`, type: '電費', amount: 0 })} className="text-xs text-mor-blue underline">+ 加費(認列營收)</button>
+                        <button onClick={() => setConcDraft({ pi: i, date: `${first.y}-${String(first.m).padStart(2, '0')}-01`, amount: 0, note: '', baseAmount: amount, priorDisc: discTotal })} className="text-xs text-orange-600 underline">− 折讓</button>
+                      </div>
+                    )}
                   </div>
                   {c.invoice_required && (
                     <div className="mt-1.5 border-t border-amber-200/60 pt-1.5">
