@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { onlyLtOf } from '@/lib/ltKey';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
@@ -718,12 +718,15 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
   const cadPeriods = useMemo(() => { const base = months.filter((m: any) => !extYms.has(m.ym)); const out: any[] = []; for (let i = 0; i < base.length; i += STEP) out.push(base.slice(i, i + STEP)); return out; }, [months, STEP, extYms]);
   const extPeriods = useMemo(() => months.filter((m: any) => extYms.has(m.ym)).map((m: any) => [m]), [months, extYms]);
 
-  const loadExisting = useCallback(async () => {
-    setLoading(true);
+  // showSpinner=false 用於背景重新整理:不切 loading 狀態,列表就不會被換成
+  // 「載入中」再重建,捲軸位置得以保留。首次載入才需要 spinner。
+  const loadExisting = useCallback(async (showSpinner = true) => {
+    if (showSpinner) setLoading(true);
     const { data } = await supabase.from('orders').select('id, order_key, paid, amount, paid_at, imported_via').like('order_key', `LT_${c.room}_%`);
     const m: Record<string, any> = {};
     onlyLtOf(data as any[], c.room).forEach((o: any) => { m[o.order_key] = o; });
-    setExisting(m); setLoading(false);
+    setExisting(m);
+    if (showSpinner) setLoading(false);
   }, [supabase, c.room]);
   useEffect(() => { loadExisting(); }, [loadExisting]);
 
@@ -733,23 +736,59 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
     Object.assign(c, patch);
     setDep({ received: !!c.deposit_received, receivedAt: c.deposit_received_at || '', returned: !!c.deposit_returned, returnedAt: c.deposit_returned_at || '' });
   }
+  /**
+   * 只改本地那幾期的欄位,不整份重新載入。
+   * 原本每次操作都呼叫 loadExisting(),而它會 setLoading(true) ——
+   * 列表被換成「載入中」再重建,捲軸就彈回頂端,也就是「按一下就跳掉」。
+   */
+  function patchLocal(keys: string[], patch: Record<string, unknown>) {
+    setExisting((prev) => {
+      const next = { ...prev };
+      keys.forEach((k) => { if (next[k]) next[k] = { ...next[k], ...patch }; });
+      return next;
+    });
+  }
+
   async function setPeriodPaid(chunk: any[], v: boolean) {
     setBusy(chunk[0].ym);
     const keys = chunk.map((mm) => `LT_${c.room}_${mm.ym}`);
-    const { error } = await supabase.from('orders').update({ paid: v, paid_at: v ? today() : null }).in('order_key', keys);
-    if (error) alert('失敗:' + error.message);
-    setBusy(''); loadExisting();
+    const paidAt = v ? today() : null;
+    // 先更新畫面,再寫資料庫 —— 按下去立刻有反應,不用等網路來回
+    patchLocal(keys, { paid: v, paid_at: paidAt });
+    const { error } = await supabase.from('orders').update({ paid: v, paid_at: paidAt }).in('order_key', keys);
+    setBusy('');
+    if (error) {
+      alert('失敗:' + error.message);
+      loadExisting(false);   // 寫入失敗才回頭跟資料庫對齊,且不顯示 spinner
+    }
   }
   // 「刪除此期起」已移除:它會一次刪掉該期之後的所有月租單(含已收款者)並回推租期迄,
   // 而 UI 是以「期」呈現,實際刪除範圍卻是「該期及之後全部」,兩者不一致極易誤刪。
   // 需要縮短租期請改在編輯視窗調整「租期迄」,由觸發器安全地移除多餘月份
   // (gen_contract_orders 只刪 imported_via='contract' 且 paid=false 的列)。
-  async function setPeriodPaidAt(chunk: any[], date: string) {
+  /**
+   * 收款日:畫面立即反映,資料庫延遲 600ms 才寫。
+   *
+   * <input type="date"> 每動一次年/月/日都會觸發 onChange,
+   * 原本是每次都立刻寫入 + 整份重載 —— 選一個日期會打三次資料庫、跳三次。
+   * 防抖之後只在停止輸入後寫一次。
+   */
+  const paidAtTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  function setPeriodPaidAt(chunk: any[], date: string) {
     const keys = chunk.map((mm) => `LT_${c.room}_${mm.ym}`);
-    const { error } = await supabase.from('orders').update({ paid_at: date || null }).in('order_key', keys);
-    if (error) alert('失敗:' + error.message);
-    loadExisting();
+    const id = keys.join('|');
+    patchLocal(keys, { paid_at: date || null });
+    clearTimeout(paidAtTimers.current[id]);
+    paidAtTimers.current[id] = setTimeout(async () => {
+      const { error } = await supabase.from('orders').update({ paid_at: date || null }).in('order_key', keys);
+      if (error) { alert('失敗:' + error.message); loadExisting(false); }
+    }, 600);
   }
+  // 視窗關閉時把還沒送出的寫入清掉,避免對已卸載的元件動作
+  useEffect(() => {
+    const timers = paidAtTimers.current;
+    return () => { Object.values(timers).forEach(clearTimeout); };
+  }, []);
   const loadFees = useCallback(async () => {
     const { data } = await supabase.from('orders').select('id, checkin, amount, fee_type').eq('contract_id', c.id).eq('source', 'oneoff').order('checkin');
     setFeeRows(data ?? []);
