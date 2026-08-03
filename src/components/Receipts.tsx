@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 
 /**
@@ -12,7 +12,18 @@ import { createClient } from '@/lib/supabase';
  * （見 migration_51_receipts.sql）。
  *
  * bucket 是私有的，看圖要用簽名網址 —— 這也是為什麼縮圖要非同步載入。
+ *
+ * 還沒存檔的新單沒有 id，路徑就組不出來。這種情況下選的檔案先留在瀏覽器裡
+ * （staged），等母單建立後由父層呼叫 flush(id) 才真的上傳。
+ * 不採「開視窗就先建一張草稿」的做法 —— 使用者按了關閉就會留下空單並吃掉一個單號。
  */
+
+export type ReceiptsHandle = {
+  /** 母單存檔後呼叫，把暫存的檔案真正上傳。回傳錯誤訊息，成功為 null。 */
+  flush: (parentId: string) => Promise<string | null>;
+  /** 有沒有還沒上傳的檔案 */
+  hasStaged: () => boolean;
+};
 
 type Att = {
   id: string; path: string; file_name: string | null;
@@ -55,17 +66,18 @@ function fmtSize(n: number | null) {
   return n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
-export default function Receipts({
-  kind, parentId, canEdit = true, label = '憑證',
-}: {
+type Staged = { key: string; file: File; preview: string };
+
+const Receipts = forwardRef<ReceiptsHandle, {
   kind: 'pr' | 'exp';
   parentId: string | null | undefined;
   canEdit?: boolean;
   label?: string;
-}) {
+}>(function Receipts({ kind, parentId, canEdit = true, label = '憑證' }, ref) {
   const supabase = createClient();
   const [rows, setRows] = useState<Att[]>([]);
   const [urls, setUrls] = useState<Record<string, string>>({});
+  const [staged, setStaged] = useState<Staged[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
@@ -98,41 +110,91 @@ export default function Receipts({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, supabase]);
 
-  async function upload(files: FileList | null) {
-    if (!files?.length || !parentId) return;
-    setErr(''); setBusy(true);
+  /** 傳一個檔案並登記。回傳錯誤訊息，成功為 null。 */
+  const putOne = useCallback(async (file: File, pid: string, userId: string): Promise<string | null> => {
+    const body = await shrink(file);
+    const ext = body.type === 'image/jpeg' ? 'jpg'
+      : (file.name.split('.').pop() || 'bin').toLowerCase().slice(0, 5);
+    const path = `${kind}/${pid}/${crypto.randomUUID()}.${ext}`;
+
+    const { error: ue } = await supabase.storage.from(BUCKET)
+      .upload(path, body, { contentType: body.type || file.type, upsert: false });
+    if (ue) return `上傳失敗:${ue.message}`;
+
+    // storage 傳成功但 attachments 寫失敗的話，檔案會變成沒人認領的孤兒，
+    // 所以這裡失敗要把剛上傳的檔案刪掉，不要留下看不到的垃圾。
+    const { error: ie } = await supabase.from('attachments').insert({
+      [col]: pid, path, file_name: file.name,
+      mime_type: body.type || file.type, size_bytes: body.size,
+      uploaded_by: userId,
+    });
+    if (ie) {
+      await supabase.storage.from(BUCKET).remove([path]);
+      return `存檔失敗:${ie.message}`;
+    }
+    return null;
+  }, [supabase, kind, col]);
+
+  async function pick(files: FileList | null) {
+    if (!files?.length) return;
+    setErr('');
+
+    // 母單還不存在 —— 先留在瀏覽器，等存檔後 flush() 再上傳
+    if (!parentId) {
+      setStaged((s) => [...s, ...Array.from(files).map((file) => ({
+        key: crypto.randomUUID(), file,
+        preview: file.type.startsWith('image/') ? URL.createObjectURL(file) : '',
+      }))]);
+      if (fileRef.current) fileRef.current.value = '';
+      return;
+    }
+
+    setBusy(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { setErr('尚未登入'); return; }
-
       for (const file of Array.from(files)) {
-        const body = await shrink(file);
-        const ext = body.type === 'image/jpeg' ? 'jpg'
-          : (file.name.split('.').pop() || 'bin').toLowerCase().slice(0, 5);
-        const path = `${kind}/${parentId}/${crypto.randomUUID()}.${ext}`;
-
-        const { error: ue } = await supabase.storage.from(BUCKET)
-          .upload(path, body, { contentType: body.type || file.type, upsert: false });
-        if (ue) { setErr(`上傳失敗:${ue.message}`); return; }
-
-        // storage 傳成功但 attachments 寫失敗的話，檔案會變成沒人認領的孤兒，
-        // 所以這裡失敗要把剛上傳的檔案刪掉，不要留下看不到的垃圾。
-        const { error: ie } = await supabase.from('attachments').insert({
-          [col]: parentId, path, file_name: file.name,
-          mime_type: body.type || file.type, size_bytes: body.size,
-          uploaded_by: user.id,
-        });
-        if (ie) {
-          await supabase.storage.from(BUCKET).remove([path]);
-          setErr(`存檔失敗:${ie.message}`);
-          return;
-        }
+        const e = await putOne(file, parentId, user.id);
+        if (e) { setErr(e); return; }
       }
       await load();
     } finally {
       setBusy(false);
       if (fileRef.current) fileRef.current.value = '';   // 同一個檔案再選一次也要能觸發 onChange
     }
+  }
+
+  useImperativeHandle(ref, () => ({
+    hasStaged: () => staged.length > 0,
+    async flush(pid: string) {
+      if (!staged.length) return null;
+      setBusy(true);
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return '尚未登入';
+        for (const s of staged) {
+          const e = await putOne(s.file, pid, user.id);
+          if (e) { setErr(e); return e; }
+        }
+        staged.forEach((s) => s.preview && URL.revokeObjectURL(s.preview));
+        setStaged([]);
+        return null;
+      } finally { setBusy(false); }
+    },
+  }), [staged, supabase, putOne]);
+
+  // 視窗關掉時把預覽用的 object URL 收回，不然會一直佔著記憶體
+  useEffect(() => () => { staged.forEach((s) => s.preview && URL.revokeObjectURL(s.preview)); },
+    // 只在卸載時執行
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []);
+
+  function dropStaged(key: string) {
+    setStaged((s) => {
+      const hit = s.find((x) => x.key === key);
+      if (hit?.preview) URL.revokeObjectURL(hit.preview);
+      return s.filter((x) => x.key !== key);
+    });
   }
 
   async function remove(a: Att) {
@@ -146,36 +208,44 @@ export default function Receipts({
     setBusy(false); load();
   }
 
-  if (!parentId) {
-    return (
-      <div className="border-t border-mor-line pt-3">
-        <div className="text-xs text-gray-500 mb-1">{label}</div>
-        <div className="rounded-lg bg-mor-sand/60 text-gray-500 px-3 py-2 text-xs">
-          先儲存這張單，之後再打開就可以上傳憑證。
-        </div>
-      </div>
-    );
-  }
+  const total = rows.length + staged.length;
 
   return (
     <div className="border-t border-mor-line pt-3">
       <div className="flex items-center justify-between mb-1.5">
-        <span className="text-xs text-gray-500">{label}{rows.length > 0 ? `（${rows.length}）` : ''}</span>
+        <span className="text-xs text-gray-500">{label}{total > 0 ? `（${total}）` : ''}</span>
         {canEdit && (
           <label className={`text-xs underline cursor-pointer ${busy ? 'text-gray-400' : 'text-mor-blue'}`}>
             {busy ? '處理中…' : '+ 上傳'}
             <input ref={fileRef} type="file" accept="image/*,application/pdf" multiple
-              disabled={busy} onChange={(e) => upload(e.target.files)} className="hidden" />
+              disabled={busy} onChange={(e) => pick(e.target.files)} className="hidden" />
           </label>
         )}
       </div>
 
       {err && <div className="rounded-lg bg-red-50 text-red-600 px-2 py-1.5 text-xs mb-1.5">{err}</div>}
+      {staged.length > 0 && (
+        <div className="text-xs text-amber-600 mb-1.5">{staged.length} 張待上傳,存檔後才會送出。</div>
+      )}
 
-      {rows.length === 0 ? (
+      {total === 0 ? (
         <div className="text-xs text-gray-400">尚未上傳{canEdit ? '，手機可直接拍照' : ''}</div>
       ) : (
         <div className="grid grid-cols-3 md:grid-cols-4 gap-2">
+          {staged.map((s) => (
+            <div key={s.key} className="relative">
+              <div className="block aspect-square rounded-lg border border-dashed border-amber-300 overflow-hidden bg-amber-50">
+                {s.preview
+                  /* eslint-disable-next-line @next/next/no-img-element */
+                  ? <img src={s.preview} alt={s.file.name} className="w-full h-full object-cover opacity-70" />
+                  : <div className="w-full h-full flex items-center justify-center text-xs text-gray-400">PDF</div>}
+              </div>
+              <div className="mt-0.5 text-[10px] text-amber-600 truncate">待上傳</div>
+              <button onClick={() => dropStaged(s.key)} disabled={busy}
+                className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/50 text-white text-xs leading-none flex items-center justify-center"
+                aria-label="移除">✕</button>
+            </div>
+          ))}
           {rows.map((a) => {
             const isPdf = a.mime_type === 'application/pdf';
             const url = urls[a.path];
@@ -208,4 +278,6 @@ export default function Receipts({
       )}
     </div>
   );
-}
+});
+
+export default Receipts;

@@ -1,9 +1,9 @@
 'use client';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
-import Receipts from '@/components/Receipts';
+import Receipts, { type ReceiptsHandle } from '@/components/Receipts';
 import PushToggle from '../push-toggle';
 
 type Item = {
@@ -82,6 +82,8 @@ export default function PurchasesPage() {
   // 上個月建的單可能排在這個月付,混在同一個查詢裡會漏掉。
   const [schedule, setSchedule] = useState<Req[]>([]);
   const [detail, setDetail] = useState<Req | null>(null);
+  // 新單還沒有 id，憑證要等母單建立後才傳得上去 —— 存檔時呼叫 flush()
+  const receiptsRef = useRef<ReceiptsHandle>(null);
 
   function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 3000); }
 
@@ -329,6 +331,10 @@ export default function PurchasesPage() {
       const { error: ie } = await supabase.from('purchase_request_items').insert(payload);
       if (ie) { flash('項目儲存失敗:' + ie.message); return; }
 
+      // 填表時選的憑證留在瀏覽器裡，母單有 id 了才真正上傳
+      const fe = await receiptsRef.current?.flush(reqId);
+      if (fe) { flash('憑證' + fe); return; }
+
       if (submit) {
         // 狀態一律送 'pending'。免核門檻由資料庫觸發器判斷後自行翻成 approved,
         // 前端不自己算 —— 否則改前端就能繞過門檻。
@@ -339,10 +345,10 @@ export default function PurchasesPage() {
         setEdit(null); load();
       } else {
         flash(wasPending ? '已存為草稿・原本的核可已清空,記得再送出審核' : '已儲存草稿');
-        // 新建的草稿存完不關視窗 —— 憑證要有單號才傳得上去,
-        // 關掉再重開只是為了上傳一張發票,沒有道理。
-        if (isCreate) { setEdit({ ...edit, id: reqId, req_no: newReqNo, status: 'draft' }); load(); }
-        else { setEdit(null); load(); }
+        // 新建的草稿存完留在原地,讓人可以接著補憑證或直接送審
+        if (isCreate) setEdit({ ...edit, id: reqId, req_no: newReqNo, status: 'draft' });
+        else setEdit(null);
+        load();
       }
     } finally { setSaving(false); }
   }
@@ -1109,7 +1115,7 @@ export default function PurchasesPage() {
                   <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">備註</span>
                     <textarea disabled={readOnly} value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })}
                       className="bg-white rounded-lg border border-mor-line px-2 py-2 h-24 md:h-16 disabled:bg-gray-50" /></label>
-                  <Receipts kind="pr" parentId={edit.id || null} canEdit={!readOnly} label="憑證圖片" />
+                  <Receipts ref={receiptsRef} kind="pr" parentId={edit.id || null} canEdit={!readOnly} label="憑證圖片" />
                 </div>
               </div>
               {/* 手機:按鈕列吸在畫面底部,捲到哪都按得到 */}

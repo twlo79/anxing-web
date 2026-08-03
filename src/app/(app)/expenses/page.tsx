@@ -1,9 +1,9 @@
 'use client';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
-import Receipts from '@/components/Receipts';
+import Receipts, { type ReceiptsHandle } from '@/components/Receipts';
 
 type Expense = {
   id: string; spent_on: string; item_name: string; amount: number;
@@ -37,6 +37,8 @@ export default function ExpensesPage() {
   const [msg, setMsg] = useState('');
   const [edit, setEdit] = useState<Expense | null>(null);
   const [saving, setSaving] = useState(false);
+  // 新支出還沒有 id，憑證要等這筆建立後才傳得上去 —— 存檔時呼叫 flush()
+  const receiptsRef = useRef<ReceiptsHandle>(null);
   const [role, setRole] = useState('');
 
   // 篩選
@@ -184,11 +186,17 @@ export default function ExpensesPage() {
         ? (edit.pay_account || null) : null,
       note: edit.note || null,
     };
-    const { error } = edit.id
-      ? await supabase.from('expenses').update(payload).eq('id', edit.id)
-      : await supabase.from('expenses').insert({ ...payload, created_by: (await supabase.auth.getUser()).data.user?.id ?? null });
+    // 新建時要拿回 id —— 填表時選的憑證還留在瀏覽器裡，等這個 id 才傳得上去
+    const { data, error } = edit.id
+      ? await supabase.from('expenses').update(payload).eq('id', edit.id).select('id').single()
+      : await supabase.from('expenses')
+          .insert({ ...payload, created_by: (await supabase.auth.getUser()).data.user?.id ?? null })
+          .select('id').single();
+    if (error) { setSaving(false); return flash('儲存失敗:' + error.message); }
+
+    const fe = await receiptsRef.current?.flush(data.id);
     setSaving(false);
-    if (error) return flash('儲存失敗:' + error.message);
+    if (fe) return flash('憑證' + fe);
     setEdit(null); flash('已儲存'); load();
   }
 
@@ -533,7 +541,7 @@ export default function ExpensesPage() {
               <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">備註</span>
                 <textarea value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })}
                   className="rounded-lg border border-mor-line px-2 py-1.5 h-20" /></label>
-              <Receipts kind="exp" parentId={edit.id || null} label="憑證圖片" />
+              <Receipts ref={receiptsRef} kind="exp" parentId={edit.id || null} label="憑證圖片" />
             </div>
             <div className="border-t border-mor-line px-6 py-4 flex justify-end gap-2">
               <button onClick={() => setEdit(null)} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>
