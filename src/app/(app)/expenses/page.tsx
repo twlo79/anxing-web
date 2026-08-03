@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
+import Receipts from '@/components/Receipts';
 
 type Expense = {
   id: string; spent_on: string; item_name: string; amount: number;
@@ -532,6 +533,7 @@ export default function ExpensesPage() {
               <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">備註</span>
                 <textarea value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })}
                   className="rounded-lg border border-mor-line px-2 py-1.5 h-20" /></label>
+              <Receipts kind="exp" parentId={edit.id || null} label="憑證圖片" />
             </div>
             <div className="border-t border-mor-line px-6 py-4 flex justify-end gap-2">
               <button onClick={() => setEdit(null)} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>

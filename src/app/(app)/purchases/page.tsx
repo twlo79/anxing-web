@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
+import Receipts from '@/components/Receipts';
 import PushToggle from '../push-toggle';
 
 type Item = {
@@ -300,13 +301,16 @@ export default function PurchasesPage() {
         } : {}),
       };
       let reqId = edit.id;
+      let newReqNo = '';
+      const isCreate = !reqId;
       if (!reqId) {
         const { data: no, error: ne } = await supabase.rpc('next_req_no');
         if (ne) { flash('取單號失敗:' + ne.message); return; }
         const { data, error } = await supabase.from('purchase_requests')
-          .insert({ ...header, req_no: no, requester_id: me.id, status: 'draft' }).select('id').single();
+          .insert({ ...header, req_no: no, requester_id: me.id, status: 'draft' }).select('id, req_no').single();
         if (error) { flash('建立失敗:' + error.message); return; }
         reqId = data.id;
+        newReqNo = data.req_no;
       } else {
         const { error } = await supabase.from('purchase_requests').update(header).eq('id', reqId);
         if (error) { flash('儲存失敗:' + error.message); return; }
@@ -332,10 +336,14 @@ export default function PurchasesPage() {
         if (se) { flash('送出失敗:' + se.message); return; }
         const head = wasPending ? '已重新送審' : '已送出';
         flash(editTotal < FREE_THRESHOLD ? `${head}・未達 $${fmt(FREE_THRESHOLD)},自動核可` : `${head},等待主管與總經理核可`);
+        setEdit(null); load();
       } else {
         flash(wasPending ? '已存為草稿・原本的核可已清空,記得再送出審核' : '已儲存草稿');
+        // 新建的草稿存完不關視窗 —— 憑證要有單號才傳得上去,
+        // 關掉再重開只是為了上傳一張發票,沒有道理。
+        if (isCreate) { setEdit({ ...edit, id: reqId, req_no: newReqNo, status: 'draft' }); load(); }
+        else { setEdit(null); load(); }
       }
-      setEdit(null); load();
     } finally { setSaving(false); }
   }
 
@@ -869,6 +877,9 @@ export default function PurchasesPage() {
                 {row(`確認${dateWord(d.payment_method)}`, d.purchased_on ?? '—')}
                 {row('備註', d.note ? <span className="whitespace-pre-wrap">{d.note}</span> : '—')}
 
+                {/* 審核者最需要的就是看發票,放在項目上方 */}
+                <div className="mt-3"><Receipts kind="pr" parentId={d.id} canEdit={p.canEdit} label="憑證圖片" /></div>
+
                 <div className="mt-4 text-xs text-gray-400 mb-1">請款項目（{its.length}）</div>
                 <div className="rounded-lg border border-mor-line divide-y divide-mor-line/40">
                   {its.map((i, idx) => (
@@ -1098,6 +1109,7 @@ export default function PurchasesPage() {
                   <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">備註</span>
                     <textarea disabled={readOnly} value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })}
                       className="bg-white rounded-lg border border-mor-line px-2 py-2 h-24 md:h-16 disabled:bg-gray-50" /></label>
+                  <Receipts kind="pr" parentId={edit.id || null} canEdit={!readOnly} label="憑證圖片" />
                 </div>
               </div>
               {/* 手機:按鈕列吸在畫面底部,捲到哪都按得到 */}
