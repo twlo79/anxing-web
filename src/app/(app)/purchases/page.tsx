@@ -32,6 +32,9 @@ type Profile = { id: string; name: string; role: string };
 const FREE_THRESHOLD = 3000;   // 與 migration 的 pr_apply_status() 一致
 const PAY_LABEL: Record<string, string> = { cash: '現金', transfer: '匯款', credit_card: '信用卡' };
 const PAY_OPTS = ['cash', 'transfer', 'credit_card'];
+// 信用卡是「刷」不是「匯」，同一個欄位在兩種付款方式下要用不同說法
+const dateWord = (m?: string | null) => (m === 'credit_card' ? '刷卡日' : '出款日');
+const acctWord = (m?: string | null) => (m === 'credit_card' ? '刷卡卡片' : '出款帳號');
 const CURRENCIES = ['TWD', 'USD', 'JPY', 'CNY', 'EUR'];
 const PURCHASE_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSc3ZE8jE6dIDTzrrDDeYYL6EcMKUniPRhhhKXCRbWddGt4bbw/viewform';
 const ST_LABEL: Record<string, string> = { draft: '草稿', pending: '待核可', approved: '已核可', rejected: '已駁回' };
@@ -99,6 +102,8 @@ export default function PurchasesPage() {
   const codeName = useMemo(() => Object.fromEntries(codes.map((c) => [c.code, c.name])), [codes]);
   const estateName = useMemo(() => Object.fromEntries(estates.map((e) => [e.id, e.name])), [estates]);
   const personName = useMemo(() => Object.fromEntries(people.map((p) => [p.id, p.name])), [people]);
+  // 資料庫存的是 code（如 8088），畫面上要顯示可讀的名稱（如 元大 8088）
+  const acctName = useMemo(() => Object.fromEntries(payAccounts.map((a) => [a.code, a.name])), [payAccounts]);
 
   const role = me?.role ?? '';
   const isManager = role === 'manager';
@@ -266,6 +271,7 @@ export default function PurchasesPage() {
     }
     if (edit.payment_method === 'transfer' && !edit.payee_account) return flash('匯款需填收款帳號');
     if (edit.currency !== 'TWD' && !(fxRate > 0)) return flash('請填匯率');
+    const needsPayout = edit.payment_method === 'transfer' || edit.payment_method === 'credit_card';
     setSaving(true);
     try {
       const header: any = {
@@ -277,6 +283,9 @@ export default function PurchasesPage() {
         note: edit.note || null,
         currency: edit.currency || 'TWD',
         fx_rate: edit.currency === 'TWD' ? 1 : fxRate,
+        // 現金沒有出款帳號，換了付款方式要把舊值清掉，否則會違反 pr_planned_chk
+        payout_account: needsPayout ? (edit.payout_account || null) : null,
+        planned_transfer_on: needsPayout ? (edit.planned_transfer_on || null) : null,
       };
       let reqId = edit.id;
       if (!reqId) {
@@ -701,7 +710,7 @@ export default function PurchasesPage() {
                     {r.purchased_on
                       ? <>付款日 {r.purchased_on}</>
                       : r.planned_transfer_on
-                        ? <span className="text-mor-blue">預定 {r.planned_transfer_on}・{r.payout_account}</span>
+                        ? <span className="text-mor-blue">預定 {r.planned_transfer_on}{r.payout_account ? `・${acctName[r.payout_account] ?? r.payout_account}` : ''}</span>
                         : null}
                   </div>
                 </div>
@@ -831,7 +840,7 @@ export default function PurchasesPage() {
                 {row('支出方式', (
                   <span>
                     {d.payment_method ? PAY_LABEL[d.payment_method] ?? d.payment_method : '—'}
-                    {d.payout_account && <span className="text-gray-500 ml-1">・{d.payout_account}</span>}
+                    {d.payout_account && <span className="text-gray-500 ml-1">・{acctName[d.payout_account] ?? d.payout_account}</span>}
                   </span>
                 ))}
                 {d.payee_account ? row('收款方', (
@@ -840,8 +849,8 @@ export default function PurchasesPage() {
                     {d.payee_tax_id ? <div>統編 {d.payee_tax_id}</div> : null}
                   </span>
                 )) : null}
-                {row('預定付款', d.planned_transfer_on ?? '—')}
-                {row('實際付款', d.purchased_on ?? '—')}
+                {row(`預定${dateWord(d.payment_method)}`, d.planned_transfer_on ?? '—')}
+                {row(`確認${dateWord(d.payment_method)}`, d.purchased_on ?? '—')}
                 {row('備註', d.note ? <span className="whitespace-pre-wrap">{d.note}</span> : '—')}
 
                 <div className="mt-4 text-xs text-gray-400 mb-1">請款項目（{its.length}）</div>
@@ -878,11 +887,11 @@ export default function PurchasesPage() {
                 )}
                 {p.canPlan && (
                   <button onClick={() => { setDetail(null); setPlanning(d); setPlanDate(d.planned_transfer_on ?? todayStr()); setPlanAcct(d.payout_account ?? ''); }}
-                    className={`${btn} border border-mor-slate text-mor-slate`}>{d.planned_transfer_on ? '改付款計畫' : '排付款'}</button>
+                    className={`${btn} border border-mor-slate text-mor-slate`}>{d.planned_transfer_on ? '改付款計畫' : `排${dateWord(d.payment_method)}`}</button>
                 )}
                 {p.canDate && (
                   <button onClick={() => { setDetail(null); setDating(d); setDateVal(d.purchased_on ?? d.planned_transfer_on ?? todayStr()); setDateAcct(d.payout_account ?? ''); }}
-                    className={`${btn} border border-mor-blue text-mor-blue`}>{d.purchased_on ? '改付款日' : '確認支付'}</button>
+                    className={`${btn} border border-mor-blue text-mor-blue`}>{d.purchased_on ? `改${dateWord(d.payment_method)}` : `確認${dateWord(d.payment_method)}`}</button>
                 )}
                 {p.canCancel && (
                   <button onClick={() => { cancel(d); setDetail(null); }} className={`${btn} border border-red-300 text-red-500`}>撤銷</button>
@@ -1020,12 +1029,45 @@ export default function PurchasesPage() {
                       <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">入款帳號 *</span>
                         <input disabled={readOnly} value={edit.payee_account ?? ''} onChange={(e) => setEdit({ ...edit, payee_account: e.target.value })}
                           className="rounded-lg border border-mor-line px-2 py-1.5 disabled:bg-gray-50" /></label>
-                      <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">公司名</span>
+                      <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">公司名／戶名</span>
                         <input disabled={readOnly} value={edit.payee_company ?? ''} onChange={(e) => setEdit({ ...edit, payee_company: e.target.value })}
                           className="rounded-lg border border-mor-line px-2 py-1.5 disabled:bg-gray-50" /></label>
                       <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">統編</span>
                         <input disabled={readOnly} value={edit.payee_tax_id ?? ''} onChange={(e) => setEdit({ ...edit, payee_tax_id: e.target.value })}
                           className="rounded-lg border border-mor-line px-2 py-1.5 disabled:bg-gray-50" /></label>
+                    </div>
+                  )}
+
+                  {/*
+                    出款帳號與預定日期：申請時就能填，但都是選填。
+                    會計在核可後可以覆寫 —— 這裡填的是「打算」，不是「已付」。
+                    現金沒有出款帳號可言，所以只在匯款／信用卡時出現。
+                  */}
+                  {(edit.payment_method === 'transfer' || edit.payment_method === 'credit_card') && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <label className="flex flex-col gap-1">
+                        <span className="text-xs text-gray-500">
+                          {edit.payment_method === 'credit_card' ? '刷卡卡片' : '出款帳號'}
+                          <span className="text-gray-400">（選填）</span>
+                        </span>
+                        <select disabled={readOnly} value={edit.payout_account ?? ''}
+                          onChange={(e) => setEdit({ ...edit, payout_account: e.target.value || null })}
+                          className="w-full h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50">
+                          <option value="">未指定</option>
+                          {payAccounts.filter((a) => a.method === edit.payment_method)
+                            .map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
+                        </select></label>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-xs text-gray-500">
+                          {edit.payment_method === 'credit_card' ? '預定刷卡日' : '預定出款日'}
+                          <span className="text-gray-400">（選填）</span>
+                        </span>
+                        <input disabled={readOnly} type="date" value={edit.planned_transfer_on ?? ''}
+                          onChange={(e) => setEdit({ ...edit, planned_transfer_on: e.target.value || null })}
+                          className="w-full h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50" /></label>
+                      <div className="md:col-span-2 text-xs text-gray-400">
+                        核可後由會計確認實際出款日，這裡填的只是預定。
+                      </div>
                     </div>
                   )}
                   <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">備註</span>
@@ -1073,7 +1115,7 @@ export default function PurchasesPage() {
       {dating && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setDating(null)}>
           <div className="bg-white rounded-xl w-[420px] max-w-[92vw] shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <div className="border-b border-mor-line px-6 py-4 font-bold">{dating.purchased_on ? '修改付款日' : '確認匯出'} · {dating.req_no}</div>
+            <div className="border-b border-mor-line px-6 py-4 font-bold">{dating.purchased_on ? `修改${dateWord(dating.payment_method)}` : `確認${dateWord(dating.payment_method)}`} · {dating.req_no}</div>
             <div className="p-6 text-sm space-y-2">
               <div className="text-xs text-gray-500">
                 {dating.purchased_on
@@ -1081,17 +1123,15 @@ export default function PurchasesPage() {
                   : `確認後,這張單的 ${(dating.purchase_request_items ?? []).length} 個項目會各自產生一筆支出,而且這張單就不能再撤銷。`}
               </div>
               {!dating.purchased_on && dating.planned_transfer_on && (
-                <div className="text-xs text-mor-blue">預定匯款日 {dating.planned_transfer_on} —— 已帶入,實際日期不同請自行修改。</div>
+                <div className="text-xs text-mor-blue">預定{dateWord(dating.payment_method)} {dating.planned_transfer_on} —— 已帶入,實際日期不同請自行修改。</div>
               )}
-              <label className="block text-xs text-gray-500 pt-1">實際付款日</label>
+              <label className="block text-xs text-gray-500 pt-1">確認{dateWord(dating.payment_method)}</label>
               <input type="date" value={dateVal} onChange={(e) => setDateVal(e.target.value)}
                 className="w-full rounded-lg border border-mor-line px-2 py-1.5" />
               {/* 匯款與信用卡必須記錄從哪個帳戶付出去,現金沒有帳戶所以不問 */}
               {(dating.payment_method === 'transfer' || dating.payment_method === 'credit_card') && (
                 <>
-                  <label className="block text-xs text-gray-500 pt-1">
-                    {dating.payment_method === 'transfer' ? '匯出帳號(我方)' : '刷卡卡別'} *
-                  </label>
+                  <label className="block text-xs text-gray-500 pt-1">{acctWord(dating.payment_method)}(我方) *</label>
                   <select value={dateAcct} onChange={(e) => setDateAcct(e.target.value)}
                     className="w-full rounded-lg border border-mor-line px-2 py-1.5">
                     <option value="">請選擇</option>
@@ -1114,16 +1154,16 @@ export default function PurchasesPage() {
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setPlanning(null)}>
           <div className="bg-white rounded-xl w-[420px] max-w-[92vw] shadow-xl" onClick={(e) => e.stopPropagation()}>
             <div className="border-b border-mor-line px-6 py-4 font-bold">
-              {planning.planned_transfer_on ? '修改匯款計畫' : '排匯款'} · {planning.req_no}
+              {planning.planned_transfer_on ? '修改付款計畫' : `排${dateWord(planning.payment_method)}`} · {planning.req_no}
             </div>
             <div className="p-6 text-sm space-y-3">
               <div className="text-xs text-gray-500">
-                這裡只是排定計畫,不會產生支出。實際匯出後再按「匯出」,那時才會記帳。
+                這裡只是排定計畫,不會產生支出。實際出款後再按「確認{dateWord(planning.payment_method)}」,那時才會記帳。
               </div>
-              <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">預定匯款日</span>
+              <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">預定{dateWord(planning.payment_method)}</span>
                 <input type="date" value={planDate} onChange={(e) => setPlanDate(e.target.value)}
                   className="rounded-lg border border-mor-line px-2 py-1.5" /></label>
-              <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">匯出帳號(我方)</span>
+              <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">{acctWord(planning.payment_method)}(我方)</span>
                 <select value={planAcct} onChange={(e) => setPlanAcct(e.target.value)}
                   className="rounded-lg border border-mor-line px-2 py-1.5">
                   <option value="">請選擇</option>
