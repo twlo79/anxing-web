@@ -90,27 +90,42 @@ export async function POST(req: Request) {
   if (pe) return NextResponse.json({ error: pe.message }, { status: 500, headers: CORS });
   const propByListing = Object.fromEntries((props ?? []).filter((p) => p.airbnb_listing_id).map((p) => [p.airbnb_listing_id, p.id]));
 
-  // 房源名稱 → property_id 的備援對照,由既有評價自學。
-  // 抓取端若沒帶 listingId(例如評價 API 本身就不回傳 listing_id),還能靠名稱救回來。
-  // 只採計「同一名稱只對到單一房源」的,有歧義就不用。
-  const nameToProp: Record<string, string | null> = {};
+  // 先解析住宿日期 —— 下面要用「房客 + 退房日」去訂單裡查房源
+  const parsed = items.map((m) => {
+    const [ci, co] = parseStay(m.stay || '');
+    return { m, ci, co, rid: String(m.id) };
+  });
+
+  /**
+   * 第二層備援:用訂單反查房源。
+   *
+   * 原本這層是「房源名稱 → property_id」的自學對照,但實測發現不可行:
+   * 開封 2F/3F/4F/整棟 在 Airbnb 用了完全相同的標題,全站有 23 個名稱
+   * 被多間房源共用。名稱在結構上就分不出是哪一間,猜了必錯,
+   * 而且自學機制會把第一次的錯誤固化下來、往後一路套用。
+   *
+   * 訂單則是另一條管道進來的事實資料(Airbnb 訂單匯入,以 code 對應),
+   * 記錄了房客實際住哪一間。用「房客 + 退房日」接回去,實測 17/17 全中。
+   *
+   * 一樣只採計唯一解:同名房客在同一天退房於不同單位就跳過,不猜。
+   */
+  const orderProp: Record<string, string> = {};
   {
+    const checkouts = Array.from(new Set(parsed.map((p) => p.co).filter(Boolean))) as string[];
     const seen: Record<string, Set<string>> = {};
-    for (let from = 0; from < 20000; from += 1000) {
-      const { data } = await supabase.from('reviews')
-        .select('listing_name_raw, property_id')
-        .not('property_id', 'is', null).not('listing_name_raw', 'is', null)
-        .range(from, from + 999);
-      if (!data || !data.length) break;
-      for (const d of data) {
-        const k = String(d.listing_name_raw);
-        (seen[k] ||= new Set()).add(String(d.property_id));
+    for (let i = 0; i < checkouts.length; i += 200) {
+      const { data } = await supabase.from('orders')
+        .select('guest_name, checkout, property_id')
+        .in('checkout', checkouts.slice(i, i + 200))
+        .not('property_id', 'is', null);
+      for (const o of data ?? []) {
+        if (!o.guest_name) continue;
+        const k = `${o.guest_name}|${o.checkout}`;
+        (seen[k] ||= new Set()).add(String(o.property_id));
       }
-      if (data.length < 1000) break;
     }
     for (const k of Object.keys(seen)) {
-      const arr = Array.from(seen[k]);
-      if (arr.length === 1) nameToProp[k] = arr[0];
+      if (seen[k].size === 1) orderProp[k] = Array.from(seen[k])[0];
     }
   }
 
@@ -125,16 +140,14 @@ export async function POST(req: Request) {
   const hasCJK = (t: string | null | undefined) => !!t && /[\u4e00-\u9fff]/.test(t);
 
   const unmatched: Record<string, number> = {};
-  const records = items.map((m) => {
-    const [ci, co] = parseStay(m.stay || '');
-    const rid = String(m.id);
-    const nameKey = m.listing || m.listEN || null;
-    // 三層解析:listing_id → 名稱備援 → 保留既有值。
+  const guessedByOrder: string[] = [];
+  const records = parsed.map(({ m, ci, co, rid }) => {
+    // 三層解析:listing_id → 訂單反查 → 保留既有值。
     // 最後一層是關鍵 —— 解析不出來時絕不能寫 null,那會把先前正確的對應洗掉。
-    const propertyId =
-      (m.listingId ? propByListing[m.listingId] ?? null : null)
-      ?? (nameKey ? nameToProp[nameKey] ?? null : null)
-      ?? (prevProp.get(rid) ?? null);
+    const byListing = m.listingId ? propByListing[m.listingId] ?? null : null;
+    const byOrder = (!byListing && co && m.guest) ? orderProp[`${m.guest}|${co}`] ?? null : null;
+    if (byOrder) guessedByOrder.push(rid);
+    const propertyId = byListing ?? byOrder ?? (prevProp.get(rid) ?? null);
     if (m.listingId && !propByListing[m.listingId]) unmatched[m.listingId] = (unmatched[m.listingId] || 0) + 1;
     const dc: any = {};
     if (m.privateFb) dc.private_feedback = m.privateFb;
@@ -191,5 +204,11 @@ export async function POST(req: Request) {
     records.filter((r) => !r.property_id).map((r) => r.listing_name_raw || '(無房源名稱)')
   ));
 
-  return NextResponse.json({ upserted, inserted, updated: upserted - inserted, unmatched, unresolved, needTranslation }, { headers: CORS });
+  // resolvedByOrder:這幾筆的 listingId 缺漏,是靠訂單反查補上的。
+  // 數字持續偏高就表示抓取端沒帶 listingId,那才是根治的地方 ——
+  // 訂單反查只是備援,不該變成主要來源。
+  return NextResponse.json({
+    upserted, inserted, updated: upserted - inserted,
+    unmatched, unresolved, resolvedByOrder: guessedByOrder.length, needTranslation,
+  }, { headers: CORS });
 }
