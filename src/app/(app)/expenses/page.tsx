@@ -143,7 +143,11 @@ export default function ExpensesPage() {
       estate_id: edit.purpose_type === 'office' ? null : edit.estate_id,
       voucher_no: edit.voucher_no || null,
       payment_method: edit.payment_method || null,
-      pay_account: edit.payment_method === 'transfer' ? (edit.pay_account || null) : null,
+      // 匯款與信用卡都要記錄從哪個帳戶/哪張卡付出去;現金沒有帳戶,清成 null。
+      // 這裡的條件必須與畫面上顯示下拉的條件一致 —— 先前只判斷 transfer,
+      // 結果信用卡選了卡片存檔時被清掉,而且沒有任何錯誤訊息。
+      pay_account: (edit.payment_method === 'transfer' || edit.payment_method === 'credit_card')
+        ? (edit.pay_account || null) : null,
       note: edit.note || null,
     };
     const { error } = edit.id
