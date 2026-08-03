@@ -272,6 +272,10 @@ export default function PurchasesPage() {
     if (edit.payment_method === 'transfer' && !edit.payee_account) return flash('匯款需填收款帳號');
     if (edit.currency !== 'TWD' && !(fxRate > 0)) return flash('請填匯率');
     const needsPayout = edit.payment_method === 'transfer' || edit.payment_method === 'credit_card';
+    // 送審中的單被改動,既有的票就不算數了 —— 有人投過票的話先問一聲
+    const wasPending = !!edit.id && edit.status === 'pending';
+    const hadVotes = !!edit.manager_approved_at || !!edit.admin_approved_at;
+    if (wasPending && hadVotes && !confirm('這張單已經有人核可。存檔會清掉既有核可票並重新送審,確定嗎?')) return;
     setSaving(true);
     try {
       const header: any = {
@@ -286,6 +290,14 @@ export default function PurchasesPage() {
         // 現金沒有出款帳號，換了付款方式要把舊值清掉，否則會違反 pr_planned_chk
         payout_account: needsPayout ? (edit.payout_account || null) : null,
         planned_transfer_on: needsPayout ? (edit.planned_transfer_on || null) : null,
+        // 送審中被編輯:退回草稿並清空核可票。
+        // 退回 draft 有兩個作用 —— 項目的 pri_write policy 只認 draft/rejected,
+        // 而且之後再送 pending 會走既有狀態機,免核門檻依「新金額」重算。
+        ...(wasPending ? {
+          status: 'draft',
+          manager_approved_by: null, manager_approved_at: null,
+          admin_approved_by: null, admin_approved_at: null,
+        } : {}),
       };
       let reqId = edit.id;
       if (!reqId) {
@@ -318,9 +330,10 @@ export default function PurchasesPage() {
         // 前端不自己算 —— 否則改前端就能繞過門檻。
         const { error: se } = await supabase.from('purchase_requests').update({ status: 'pending' }).eq('id', reqId);
         if (se) { flash('送出失敗:' + se.message); return; }
-        flash(editTotal < FREE_THRESHOLD ? `已送出・未達 $${fmt(FREE_THRESHOLD)},自動核可` : '已送出,等待主管與總經理核可');
+        const head = wasPending ? '已重新送審' : '已送出';
+        flash(editTotal < FREE_THRESHOLD ? `${head}・未達 $${fmt(FREE_THRESHOLD)},自動核可` : `${head},等待主管與總經理核可`);
       } else {
-        flash('已儲存草稿');
+        flash(wasPending ? '已存為草稿・原本的核可已清空,記得再送出審核' : '已儲存草稿');
       }
       setEdit(null); load();
     } finally { setSaving(false); }
@@ -437,7 +450,9 @@ export default function PurchasesPage() {
     const mine = r.requester_id === me?.id;
     return {
       mine,
-      canEdit: mine && (r.status === 'draft' || r.status === 'rejected'),
+      // 核可前都能改。approved 之後不行 —— 錢要出去了,改內容等於繞過審核。
+      // 送審中(pending)存檔會清掉既有核可票並重新送審,見 save()。
+      canEdit: mine && (r.status === 'draft' || r.status === 'rejected' || r.status === 'pending'),
       // 開放自核:主管送的單那一票由他自己投,不再要求第二人。
       canVoteMgr: isManager && r.status === 'pending' && !r.manager_approved_at,
       canVoteAdm: isAdmin && r.status === 'pending' && !r.admin_approved_at,
@@ -904,7 +919,10 @@ export default function PurchasesPage() {
 
       {/* 請款單表單 */}
       {edit && (() => {
-        const readOnly = !(edit.requester_id === me?.id && (edit.status === 'draft' || edit.status === 'rejected' || !edit.id));
+        // pending 也開放編輯。存檔會清票重送審 —— 判斷邏輯要跟 perms().canEdit 一致
+        const readOnly = !(edit.requester_id === me?.id
+          && (edit.status === 'draft' || edit.status === 'rejected' || edit.status === 'pending' || !edit.id));
+        const editingPending = !readOnly && edit.status === 'pending';
         // 手機:整頁式(貼齊上下邊)。桌機:置中對話框
         return (
           <div className="fixed inset-0 bg-black/30 flex items-stretch md:items-start justify-center overflow-auto md:py-10 z-50" onClick={() => setEdit(null)}>
@@ -916,6 +934,11 @@ export default function PurchasesPage() {
                   className="w-10 h-10 -mr-2 flex items-center justify-center text-gray-400 hover:text-gray-600 text-xl">✕</button>
               </div>
               <div className="p-4 md:p-6 space-y-4 text-sm">
+                {editingPending && (
+                  <div className="rounded-lg bg-amber-50 text-amber-700 px-3 py-2 text-xs">
+                    這張單審核中。存檔後既有的核可會被清空,需要重新走一次審核。
+                  </div>
+                )}
                 {readOnly && edit.id && (
                   <div className="rounded-lg bg-mor-sand/60 text-gray-600 px-3 py-2 text-xs">
                     {edit.status === 'approved' ? '已核可的單不可再編輯,只能安排匯款與確認付款日。' : '此單目前不可編輯。'}
@@ -1085,7 +1108,7 @@ export default function PurchasesPage() {
                     className="h-12 md:h-auto flex-1 md:flex-none rounded-lg border border-mor-line px-4 md:py-1.5 text-sm hover:bg-mor-sand/60 disabled:opacity-40">儲存草稿</button>
                   <button onClick={() => save(true)} disabled={saving}
                     className="h-12 md:h-auto flex-1 md:flex-none rounded-lg bg-mor-slate text-white px-4 md:py-1.5 text-sm font-medium hover:bg-mor-slatedark disabled:opacity-40">
-                    {saving ? '處理中…' : '送出審核'}</button>
+                    {saving ? '處理中…' : (editingPending ? '重新送審' : '送出審核')}</button>
                 </>}
               </div>
             </div>
