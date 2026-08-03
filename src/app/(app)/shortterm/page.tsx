@@ -303,9 +303,9 @@ export default function ShortTermPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-4 items-stretch">
-        <div className="rounded-xl bg-mor-slate text-white p-5 flex flex-col justify-center">
+        <div className="rounded-xl bg-mor-slate text-white p-5 flex flex-col justify-center min-w-0">
           <div className="text-xs opacity-75">當期營收(訂單總額)</div>
-          <div className="text-3xl font-bold mt-1">${fmt(totRevenue)}</div>
+          <div className="stat-num-lg font-bold mt-1">${fmt(totRevenue)}</div>
           <div className="text-sm opacity-90 mt-2">佔收帳款(暫收) 台幣 <span className="font-semibold">${fmt(heldTwd)}</span>{Object.entries(heldFx).map(([c, v]) => <span key={c} className="ml-1">· {c} {fmt(v)}</span>)}</div>
           <div className="text-xs opacity-60 mt-1">{total.toLocaleString()} 筆・押金非營收</div>
         </div>
@@ -331,7 +331,7 @@ export default function ShortTermPage() {
         </div>
       </div>
 
-      <div className="bg-white rounded-xl border border-mor-line p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
+      <div className="filter-bar bg-white rounded-xl border border-mor-line p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
         <div>
           <label className="block text-xs text-gray-500 mb-1">物業</label>
           <select value={estF} onChange={(e) => setEstF(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
@@ -479,7 +479,7 @@ export default function ShortTermPage() {
           <div className="absolute inset-0 bg-black/30" />
           <div onClick={(e) => e.stopPropagation()} className="relative bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[85vh] overflow-y-auto">
             <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 font-bold flex items-center justify-between">{edit.id ? '編輯訂單' : '新增訂單(私下/一次性)'}<button onClick={() => setEdit(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button></div>
-            <div className="px-6 py-4 grid grid-cols-2 gap-3 text-sm">
+            <div className="px-6 py-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
               <label className="flex flex-col gap-1">來源<select value={edit.source} onChange={(e) => setEdit({ ...edit, source: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5">{Array.from(new Set([...(edit.id ? [edit.source] : []), ...MANUAL_SRC])).map((s) => <option key={s} value={s}>{SRC_LABEL[s] ?? s}</option>)}</select></label>
               <label className="flex flex-col gap-1">物業<select value={edit.estate_id ?? ''} onChange={(e) => setEdit({ ...edit, estate_id: e.target.value || null, property_raw: null, property_id: null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option>{estates.map((es) => <option key={es.id} value={es.id}>{es.name}{es.active ? '' : '(停用)'}</option>)}</select></label>
               <label className="flex flex-col gap-1">房源<select value={edit.property_raw ?? ''} onChange={(e) => { const nm = e.target.value; const pr = properties.find((x) => x.estate_id === edit.estate_id && x.name === nm); setEdit({ ...edit, property_raw: nm || null, property_id: pr?.id ?? null }); }} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option>{properties.filter((x) => x.estate_id === edit.estate_id).map((x) => <option key={x.id} value={x.name}>{x.name}</option>)}</select></label>

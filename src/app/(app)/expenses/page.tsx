@@ -212,12 +212,12 @@ export default function ExpensesPage() {
 
       {/* 統計 */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
-        <div className="rounded-xl bg-mor-slate text-white p-5">
+        <div className="rounded-xl min-w-0 bg-mor-slate text-white p-5">
           <div className="flex items-baseline justify-between">
             <div className="text-sm opacity-80">總支出</div>
             <div className="text-xs opacity-60">{rows.length.toLocaleString()} 筆</div>
           </div>
-          <div className="text-3xl font-bold mt-2">${fmt(total)}</div>
+          <div className="stat-num-lg font-bold mt-2">${fmt(total)}</div>
           <div className="text-xs opacity-60 mt-1">{fromD || toD ? `${fromD || '起始'} ~ ${toD || '至今'}` : '全部期間'}</div>
         </div>
 
@@ -230,7 +230,7 @@ export default function ExpensesPage() {
                 <div className="flex-1 h-2 rounded bg-mor-sand/60 overflow-hidden">
                   <div className="h-full bg-mor-blue" style={{ width: `${Math.max(2, (v / maxCode) * 100)}%` }} />
                 </div>
-                <div className="w-20 text-right tabular-nums">${fmt(v)}</div>
+                <div className="min-w-[5rem] shrink-0 whitespace-nowrap text-right tabular-nums">${fmt(v)}</div>
               </div>
             ))}
           </div>
@@ -245,7 +245,7 @@ export default function ExpensesPage() {
                 <div className="flex-1 h-2 rounded bg-mor-sand/60 overflow-hidden">
                   <div className="h-full bg-mor-green" style={{ width: `${Math.max(2, (v / maxPurpose) * 100)}%` }} />
                 </div>
-                <div className="w-20 text-right tabular-nums">${fmt(v)}</div>
+                <div className="min-w-[5rem] shrink-0 whitespace-nowrap text-right tabular-nums">${fmt(v)}</div>
               </div>
             ))}
           </div>
@@ -253,7 +253,7 @@ export default function ExpensesPage() {
       </div>
 
       {/* 工具列 */}
-      <div className="flex flex-wrap items-end gap-2 mb-3 text-sm">
+      <div className="filter-bar flex flex-wrap items-end gap-2 mb-3 text-sm">
         <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">支出日(起)</span>
           <input type="date" value={fromD} onChange={(e) => setFromD(e.target.value)} className="rounded-lg border border-mor-line px-2 py-1.5" /></label>
         <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">支出日(迄)</span>
@@ -360,7 +360,7 @@ export default function ExpensesPage() {
                   這筆支出由請款單連動產生。金額與項目建議回請款單修正,以免帳面與核可內容對不上。
                 </div>
               )}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">支出日期 *</span>
                   <input type="date" value={edit.spent_on ?? ''} onChange={(e) => setEdit({ ...edit, spent_on: e.target.value })}
                     className="rounded-lg border border-mor-line px-2 py-1.5" /></label>
@@ -371,7 +371,7 @@ export default function ExpensesPage() {
               <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">支出項目 *</span>
                 <input value={edit.item_name ?? ''} onChange={(e) => setEdit({ ...edit, item_name: e.target.value })}
                   className="rounded-lg border border-mor-line px-2 py-1.5" placeholder="例:14B5 冷氣濾網更換" /></label>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">會計科目</span>
                   <select value={edit.account_code ?? ''} onChange={(e) => setEdit({ ...edit, account_code: e.target.value || null })}
                     className="rounded-lg border border-mor-line px-2 py-1.5">
@@ -395,7 +395,7 @@ export default function ExpensesPage() {
                   <option value="office">安幸辦公室</option>
                   {activeEstates.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
                 </select></label>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">支付方式</span>
                   <select value={edit.payment_method ?? ''} onChange={(e) => setEdit({ ...edit, payment_method: e.target.value || null })}
                     className="rounded-lg border border-mor-line px-2 py-1.5">

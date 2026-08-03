@@ -9,6 +9,38 @@
  * 逐一改一定會漏,而且之後新增欄位又會不一致。統一在 base layer 定基準,
  * 個別頁面仍可用 utility class 覆蓋(Tailwind 的 utilities 層優先度較高)。
  */
+@layer components {
+  /*
+   * 儀表板的大數字。
+   *
+   * 用 clamp 而不是 text-lg md:text-2xl 這種斷點切換,是因為金額的位數不固定：
+   * $500 和 $50,444,188 差了 7 位,同一個斷點下前者留白過多、後者撐破卡片。
+   * clamp 讓字級隨螢幕寬度連續變化,兩端各設一個界線,中間平滑過渡。
+   *
+   * tabular-nums 讓每個數字等寬,金額上下對齊時不會參差。
+   */
+  .stat-num,
+  .stat-num-lg {
+    line-height: 1.25;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    /*
+     * 數字超出卡片的真正原因:flex/grid 的子項預設 min-width 是 auto,
+     * 也就是「不能小於內容寬度」。$50,444,188 這種長字串會把卡片整個撐開,
+     * 於是溢出到隔壁或被切掉。min-width:0 解除這個下限,卡片才守得住寬度。
+     */
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* 兩欄卡片用（契約、請款）——每張卡約 150px */
+  .stat-num { font-size: clamp(1.05rem, 4.4vw, 1.5rem); }
+
+  /* 單欄大卡用（短租、營收、支出、清潔）——整行寬 */
+  .stat-num-lg { font-size: clamp(1.5rem, 7vw, 1.875rem); }
+}
+
 @layer base {
   /* iOS 的 select 預設是灰底,跟白底的 input 並排時看起來像兩種元件。 */
   select,
@@ -54,6 +86,31 @@
 
     textarea {
       min-height: 6rem;
+    }
+
+    /*
+     * 篩選列在手機上改成直向。
+     *
+     * 桌機是 flex-wrap 橫向排列,每個欄位的寬度由自己的內容決定 ——
+     * 「全部物業」比「全部」長,框就比較寬,一堆長短不一的框擠在一起就是跑版。
+     * 直向排列後每個欄位都是滿版,寬度自然一致。
+     *
+     * ml-auto 是桌機用來把「共 N 筆 + 按鈕」推到最右邊的,
+     * 直向排列時它會造成整塊往右偏,所以一併取消。
+     */
+    .filter-bar {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0.75rem;
+    }
+    .filter-bar > * {
+      width: 100%;
+      margin-left: 0;
+    }
+    .filter-bar > .ml-auto {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
     }
   }
 }

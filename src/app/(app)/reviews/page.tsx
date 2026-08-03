@@ -254,7 +254,7 @@ export default function ReviewsPage() {
                     <div className={`h-full ${label === '5 星' ? 'bg-amber-400' : label === '4 星' ? 'bg-orange-500' : label === '3 星' ? 'bg-red-500' : label === '2 星' ? 'bg-purple-500' : 'bg-gray-900'}`}
                       style={{ width: overallDist.total ? `${Math.max((n / overallDist.total) * 100, n ? 1.5 : 0)}%` : '0%' }} />
                   </div>
-                  <span className="w-20 text-right opacity-75">{n.toLocaleString()} ({overallDist.total ? Math.round((n / overallDist.total) * 100) : 0}%)</span>
+                  <span className="min-w-[5rem] shrink-0 whitespace-nowrap text-right opacity-75">{n.toLocaleString()} ({overallDist.total ? Math.round((n / overallDist.total) * 100) : 0}%)</span>
                 </div>
               ))}
             </div>
@@ -273,10 +273,10 @@ export default function ReviewsPage() {
                     <div className="flex-1 h-1.5 rounded-full bg-mor-sand overflow-hidden">
                       <div className="h-full bg-mor-blue" style={{ width: `${(Number(x.review_count) / max) * 100}%` }} />
                     </div>
-                    <span className={`w-16 text-right font-semibold ${Number(x.avg_rating) < 4.5 ? 'text-orange-600' : 'text-mor-ink'}`}>
+                    <span className={`min-w-[4rem] shrink-0 whitespace-nowrap text-right font-semibold ${Number(x.avg_rating) < 4.5 ? 'text-orange-600' : 'text-mor-ink'}`}>
                       {Number(x.avg_rating).toFixed(2)} ★
                     </span>
-                    <span className="w-14 text-right text-xs text-gray-400">{Number(x.review_count).toLocaleString()} 筆</span>
+                    <span className="w-14 shrink-0 whitespace-nowrap text-right text-xs text-gray-400">{Number(x.review_count).toLocaleString()} 筆</span>
                   </div>
                 );
               })}
@@ -302,10 +302,10 @@ export default function ReviewsPage() {
                     <div className="flex-1 h-1.5 rounded-full bg-mor-sand overflow-hidden">
                       <div className="h-full bg-mor-green" style={{ width: `${(Number(m.total) / max) * 100}%` }} />
                     </div>
-                    <span className={`w-16 text-right font-semibold ${Number(m.avg_rating) < 4.5 ? 'text-orange-600' : 'text-mor-ink'}`}>
+                    <span className={`min-w-[4rem] shrink-0 whitespace-nowrap text-right font-semibold ${Number(m.avg_rating) < 4.5 ? 'text-orange-600' : 'text-mor-ink'}`}>
                       {Number(m.avg_rating).toFixed(2)} ★
                     </span>
-                    <span className="w-16 text-right text-xs text-gray-400">{Number(m.total).toLocaleString()} 筆 ›</span>
+                    <span className="min-w-[4rem] shrink-0 whitespace-nowrap text-right text-xs text-gray-400">{Number(m.total).toLocaleString()} 筆 ›</span>
                   </button>
                 );
               })}
@@ -315,7 +315,7 @@ export default function ReviewsPage() {
       </div>
 
       {/* ===== 表格篩選 ===== */}
-      <div id="review-filters" className="bg-white rounded-xl border border-mor-line p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
+      <div id="review-filters" className="filter-bar bg-white rounded-xl border border-mor-line p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
         <div>
           <label className="block text-xs text-gray-500 mb-1">物業</label>
           <select value={estateId} onChange={(e) => setEstateId(e.target.value)}
@@ -612,7 +612,7 @@ function MgrModal({ m, onClose, estates, properties, statsFrom, statsTo, propByI
               <div className="flex-1 h-3 rounded-full bg-mor-sand overflow-hidden">
                 <div className={`h-full ${color}`} style={{ width: total ? `${(n / total) * 100}%` : '0%' }} />
               </div>
-              <span className="w-20 text-right text-gray-600">{n} ({total ? Math.round((n / total) * 100) : 0}%)</span>
+              <span className="min-w-[5rem] shrink-0 whitespace-nowrap text-right text-gray-600">{n} ({total ? Math.round((n / total) * 100) : 0}%)</span>
             </div>
           ))}
         </div>
@@ -707,7 +707,7 @@ function ListModal({ cfg, onClose, statsFrom, statsTo, propById, estateById, onS
                 <div className="flex-1 h-3 rounded-full bg-mor-sand overflow-hidden">
                   <div className={`h-full ${BAR[i]}`} style={{ width: total ? `${(dist[i] / total) * 100}%` : '0%' }} />
                 </div>
-                <span className="w-20 text-right text-gray-600">{dist[i]} ({total ? Math.round((dist[i] / total) * 100) : 0}%)</span>
+                <span className="min-w-[5rem] shrink-0 whitespace-nowrap text-right text-gray-600">{dist[i]} ({total ? Math.round((dist[i] / total) * 100) : 0}%)</span>
               </div>
             ))}
           </div>

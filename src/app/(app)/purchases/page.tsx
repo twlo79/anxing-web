@@ -492,9 +492,9 @@ export default function PurchasesPage() {
   }
 
   const card = (title: string, list: Req[], hint: string, onClick: () => void) => (
-    <button onClick={onClick} className="text-left rounded-xl border border-mor-line bg-white p-2.5 md:p-4 hover:bg-mor-sand/40 transition-colors">
+    <button onClick={onClick} className="text-left rounded-xl border border-mor-line bg-white p-2.5 md:p-4 min-w-0 hover:bg-mor-sand/40 transition-colors">
       <div className="text-xs md:text-sm font-medium leading-tight">{title}</div>
-      <div className="text-xl md:text-2xl font-bold mt-1">{list.length}<span className="text-xs md:text-sm font-normal text-gray-400 ml-1">筆</span></div>
+      <div className="stat-num font-bold mt-1">{list.length}<span className="text-xs md:text-sm font-normal text-gray-400 ml-1">筆</span></div>
       <div className="text-[11px] md:text-xs text-gray-500 mt-0.5 md:mt-1">${fmt(sum(list))}</div>
       <div className="hidden md:block text-[11px] text-gray-400 mt-1">{hint}</div>
     </button>

@@ -265,9 +265,9 @@ export default function RevenuesPage() {
 
       {/* Dashboard */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-4 items-stretch">
-        <div className="rounded-xl bg-mor-slate text-white p-5 flex flex-col justify-center">
+        <div className="rounded-xl bg-mor-slate text-white p-5 flex flex-col justify-center min-w-0">
           <div className="text-xs opacity-75">當期營收總額</div>
-          <div className="text-3xl font-bold mt-1">${fmt(total)}</div>
+          <div className="stat-num-lg font-bold mt-1">${fmt(total)}</div>
           <div className="text-xs opacity-75 mt-2">{fromM} ~ {toM}・{filtered.length} 筆認列</div>
         </div>
         <div className="rounded-xl bg-white border border-mor-line overflow-hidden">
@@ -292,7 +292,7 @@ export default function RevenuesPage() {
                   className={`px-4 py-2 flex items-center gap-3 text-sm border-b border-mor-line/50 last:border-0 cursor-pointer hover:bg-mor-bluelight/40 ${estateFilter === e ? 'bg-mor-bluelight/60' : ''}`}>
                   <span className="w-16 truncate">{e}</span>
                   <div className="flex-1 h-1.5 rounded-full bg-mor-sand overflow-hidden"><div className="h-full bg-mor-blue" style={{ width: `${(v / max) * 100}%` }} /></div>
-                  <span className="w-24 text-right font-semibold">${fmt(v)}</span>
+                  <span className="min-w-[6rem] shrink-0 whitespace-nowrap text-right font-semibold">${fmt(v)}</span>
                 </div>
               );
             })}
@@ -301,7 +301,7 @@ export default function RevenuesPage() {
       </div>
 
       {/* Filters */}
-      <div className="bg-white rounded-xl border border-mor-line p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
+      <div className="filter-bar bg-white rounded-xl border border-mor-line p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
         <div>
           <label className="block text-xs text-gray-500 mb-1">物業</label>
           <select value={estateFilter} onChange={(e) => setEstateFilter(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5 min-w-24">

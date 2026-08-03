@@ -173,9 +173,9 @@ export default function CleaningPage() {
           </div>
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-stretch">
-          <div className="rounded-xl bg-mor-slate text-white p-5 flex flex-col justify-center">
+          <div className="rounded-xl min-w-0 bg-mor-slate text-white p-5 flex flex-col justify-center">
             <div className="text-xs opacity-75">總清潔次數</div>
-            <div className="text-4xl font-bold mt-1">{totalCount.toLocaleString()}</div>
+            <div className="stat-num-lg font-bold mt-1">{totalCount.toLocaleString()}</div>
             <div className="text-xs opacity-75 mt-2">共 {visibleStats.length} 位・{(statsFrom || statsTo) ? `${statsFrom || minDate || '起始'} ~ ${statsTo || '今'}` : (minDate ? `${minDate} ~ 今` : '全部期間')}</div>
           </div>
           <div className="lg:col-span-2 rounded-xl bg-white border border-mor-line overflow-hidden">
@@ -187,7 +187,7 @@ export default function CleaningPage() {
                   <div key={m.staff_name} className="px-4 py-2 flex items-center gap-3 text-sm border-b border-mor-line/50 last:border-0">
                     <span className="w-16 font-medium truncate">{m.staff_name}<span className="ml-1 text-xs text-gray-400">{TYPE_LABEL[m.staff_type]}</span></span>
                     <div className="flex-1 h-1.5 rounded-full bg-mor-sand overflow-hidden"><div className="h-full bg-mor-green" style={{ width: `${(Number(m.total) / max) * 100}%` }} /></div>
-                    <span className="w-16 text-right text-xs text-gray-500">{Number(m.total)} 次</span>
+                    <span className="min-w-[4rem] shrink-0 whitespace-nowrap text-right text-xs text-gray-500">{Number(m.total)} 次</span>
                   </div>
                 );
               })}

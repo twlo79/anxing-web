@@ -333,11 +333,30 @@ export default function ContractsPage() {
         {msg && <span className="text-sm text-mor-green font-medium">{msg}</span>}
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-        <div className="rounded-xl bg-mor-slate text-white p-4"><div className="text-xs opacity-75">契約數(啟用)</div><div className="text-2xl font-bold mt-1">{activeCount}</div></div>
-        <div className="rounded-xl bg-white border border-mor-line p-4"><div className="text-xs text-gray-500">本月({curMon}) 應收</div><div className="text-2xl font-bold mt-1">${fmt(monthAR)}</div></div>
-        <div className="rounded-xl bg-white border border-mor-line p-4"><div className="text-xs text-gray-500">本月({curMon}) 已收</div><div className="text-2xl font-bold mt-1 text-mor-green">${fmt(monthPaid)}</div></div>
-        <div className="rounded-xl bg-white border border-mor-line p-4"><div className="text-xs text-gray-500">本月({curMon}) 未收</div><div className="text-2xl font-bold mt-1 text-orange-600">${fmt(monthAR - monthPaid)}</div></div>
+      {/*
+        手機是兩欄,每張卡扣掉間距與內距後只剩約 150px。
+        原本每張卡的標籤都寫「本月(2026/08) 應收」—— 13 個字必然折行擠壓,
+        所以把月份抽出來只顯示一次,卡片標籤縮到兩個字。
+        數字用 .stat-num（clamp 流體字級）,位數再多也不會撐破。
+      */}
+      <div className="text-xs text-gray-500 mb-1.5 md:hidden">本月 {curMon}</div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 md:gap-3 mb-4">
+        <div className="rounded-xl bg-mor-slate text-white p-3 md:p-4 min-w-0">
+          <div className="text-xs opacity-75 truncate">契約數(啟用)</div>
+          <div className="stat-num font-bold mt-1">{activeCount}</div>
+        </div>
+        <div className="rounded-xl bg-white border border-mor-line p-3 md:p-4 min-w-0">
+          <div className="text-xs text-gray-500 truncate"><span className="hidden md:inline">本月({curMon}) </span>應收</div>
+          <div className="stat-num font-bold mt-1">${fmt(monthAR)}</div>
+        </div>
+        <div className="rounded-xl bg-white border border-mor-line p-3 md:p-4 min-w-0">
+          <div className="text-xs text-gray-500 truncate"><span className="hidden md:inline">本月({curMon}) </span>已收</div>
+          <div className="stat-num font-bold mt-1 text-mor-green">${fmt(monthPaid)}</div>
+        </div>
+        <div className="rounded-xl bg-white border border-mor-line p-3 md:p-4 min-w-0">
+          <div className="text-xs text-gray-500 truncate"><span className="hidden md:inline">本月({curMon}) </span>未收</div>
+          <div className="stat-num font-bold mt-1 text-orange-600">${fmt(monthAR - monthPaid)}</div>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-3 mb-3 text-sm">
@@ -377,7 +396,7 @@ export default function ContractsPage() {
                   <div className="flex items-center gap-3 shrink-0">
                     <span className="text-xs text-red-600">欠 {g.periods} 期</span>
                     <span className="text-xs text-gray-500">{g.span}</span>
-                    <span className="font-semibold w-24 text-right">${fmt(g.amount)}</span>
+                    <span className="font-semibold min-w-[6rem] shrink-0 whitespace-nowrap text-right">${fmt(g.amount)}</span>
                   </div>
                 </div>
               );
@@ -414,7 +433,7 @@ export default function ContractsPage() {
                   <span className="text-xs text-gray-500">{fmtYm(p.ym)}</span>
                   {p.status === 'waiting' && <span className="text-xs text-gray-400">尚未入帳</span>}
                   {p.status === 'overdue' && <span className="text-xs text-red-600 font-medium">逾期</span>}
-                  <span className="font-semibold w-24 text-right">${fmt(p.amount)}</span>
+                  <span className="font-semibold min-w-[6rem] shrink-0 whitespace-nowrap text-right">${fmt(p.amount)}</span>
                 </div>
               </div>
             ))}
@@ -547,7 +566,7 @@ export default function ContractsPage() {
               {edit.id ? '編輯契約' : '新增契約'}
               <button onClick={() => setEdit(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
             </div>
-            <div className="px-6 py-4 grid grid-cols-2 gap-3 text-sm">
+            <div className="px-6 py-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
               <label className="flex flex-col gap-1">物業<select value={edit.estate_id ?? ''} onChange={(e) => setEdit({ ...edit, estate_id: e.target.value || null, room: '' })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option>{estates.map((es) => <option key={es.id} value={es.id}>{es.name}</option>)}</select></label>
               <label className="flex flex-col gap-1">房源<select value={edit.room ?? ''} onChange={(e) => setEdit({ ...edit, room: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option>{properties.filter((x) => x.estate_id === edit.estate_id).map((x) => <option key={x.id} value={x.name}>{x.name}</option>)}</select></label>
               <label className="flex flex-col gap-1">租戶<input value={edit.tenant_name ?? ''} onChange={(e) => setEdit({ ...edit, tenant_name: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
@@ -580,7 +599,7 @@ export default function ContractsPage() {
                 </label>
                 {edit.invoice_required && (
                   <>
-                    <div className="grid grid-cols-2 gap-3 mt-2 text-sm">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2 text-sm">
                       <label className="flex flex-col gap-1 text-xs text-gray-500">每月開票日
                         <input type="number" min={1} max={31} value={edit.invoice_day ?? ''} onChange={(e) => setEdit({ ...edit, invoice_day: e.target.value ? parseInt(e.target.value) : null })} className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm" /></label>
                       <label className="flex items-center gap-2 mt-5 text-sm" title="勾選=必須先確認入帳才能開票;不勾=可先開後收">
@@ -605,7 +624,7 @@ export default function ContractsPage() {
               {edit.id && (
                 <div className="col-span-2 border-t border-mor-line pt-3 mt-1">
                   <div className="text-xs font-semibold text-gray-500 mb-1.5">展延租期(在現有租期之後追加 N 個月;追加後會多出對應 N 期待收款,可多次展延,持續認列營收直到停用)</div>
-                  <div className="flex flex-wrap items-end gap-2 text-sm">
+                  <div className="filter-bar flex flex-wrap items-end gap-2 text-sm">
                     <label className="flex flex-col gap-0.5 text-xs text-gray-500">追加月數
                       <input type="number" min={1} value={ext.months} onChange={(e) => { const m = e.target.value; const mn = parseInt(m) || 0; const mo = parseFloat(ext.monthly) || 0; setExt({ months: m, monthly: ext.monthly, total: mo && mn ? String(mo * mn) : ext.total }); }} className="w-24 rounded-lg border border-gray-300 px-2 py-1.5" /></label>
                     <label className="flex flex-col gap-0.5 text-xs text-gray-500">月租金

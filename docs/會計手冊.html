@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>安幸上工 ERP — 操作手冊</title>
+<style>
+  /* 螢幕上置中、限制行寬;列印時交給 @page 控制邊界 */
+  :root { --ink:#1f2933; --muted:#6b7280; --line:#d7d3cb; --sand:#f5f3ee; --accent:#4A5A6A; }
+
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Noto Sans TC","PingFang TC","Microsoft JhengHei","微軟正黑體",sans-serif;
+    color: var(--ink); line-height: 1.75; margin: 0 auto; padding: 32px 24px 64px;
+    max-width: 820px; font-size: 15px;
+  }
+
+  h1 { font-size: 28px; border-bottom: 3px solid var(--accent); padding-bottom: 12px; margin: 0 0 8px; }
+  h2 { font-size: 21px; margin: 32px 0 12px; padding-left: 10px; border-left: 5px solid var(--accent); }
+  h3 { font-size: 17px; margin: 24px 0 8px; color: var(--accent); }
+  p, li { margin: 8px 0; }
+  strong { color: #111; }
+
+  table { border-collapse: collapse; width: 100%; margin: 14px 0; font-size: 14px; }
+  th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--sand); font-weight: 600; }
+
+  /* ASCII 流程圖:CJK 必須是 ASCII 的兩倍寬才對得齊,
+     所以字型清單裡放的是全形對齊的等寬字（細明體、MS Gothic 這類）。 */
+  pre {
+    background: var(--sand); border: 1px solid var(--line); border-radius: 6px;
+    padding: 14px 16px; overflow-x: auto; line-height: 1.5;
+    font-family: "Sarasa Mono TC","Noto Sans Mono CJK TC","MingLiU","PMingLiU","MS Gothic",monospace;
+    font-size: 12.5px;
+  }
+  code { background: var(--sand); padding: 1px 5px; border-radius: 4px; font-size: 0.92em; }
+  pre code { background: none; padding: 0; }
+
+  blockquote {
+    margin: 14px 0; padding: 10px 16px; background: #fffbeb;
+    border-left: 4px solid #f0b429; color: #5b4a12;
+  }
+  blockquote p { margin: 4px 0; }
+
+  hr { border: 0; border-top: 1px solid var(--line); margin: 28px 0; }
+
+  .toolbar {
+    position: sticky; top: 0; background: #fff; border-bottom: 1px solid var(--line);
+    padding: 12px 0; margin: -32px -24px 24px; padding-left: 24px; z-index: 10;
+  }
+  .toolbar button {
+    background: var(--accent); color:#fff; border:0; border-radius: 8px;
+    padding: 10px 20px; font-size: 15px; cursor: pointer; font-family: inherit;
+  }
+  .toolbar span { color: var(--muted); font-size: 13px; margin-left: 12px; }
+
+  @page { size: A4; margin: 16mm 14mm 18mm; }
+
+  @media print {
+    body { max-width: none; padding: 0; font-size: 10.5pt; line-height: 1.65; }
+    .toolbar { display: none; }
+
+    /* 章節從新的一頁開始 */
+    hr.pb { break-after: page; border: 0; margin: 0; height: 0; }
+
+    /* 標題不要落在頁尾、表格與圖不要被切成兩半 */
+    h1, h2, h3 { break-after: avoid; }
+    table, pre, blockquote { break-inside: avoid; }
+    tr { break-inside: avoid; }
+
+    h2 { font-size: 15pt; }
+    h3 { font-size: 12pt; }
+    pre { font-size: 8.5pt; }
+    table { font-size: 9.5pt; }
+  }
+</style>
+</head>
+<body>
+  <div class="toolbar">
+    <button onclick="window.print()">列印 / 存成 PDF</button>
+    <span>列印時選「目的地 → 另存為 PDF」，背景圖形建議勾選</span>
+  </div>
+<h1>安幸上工 ERP — 操作手冊</h1>
+<p>給全體同仁的操作說明。不需要任何技術背景，照著看就會用。</p>
+<p>網址：<strong>justwork.estia.com.tw</strong></p>
+<hr class="pb" />
+<h2>零、先把手機裝起來</h2>
+<p>現場記錄和核可請款主要在手機上做，建議裝成 App。</p>
+<p><strong>iPhone</strong>（一定要用 Safari，Chrome 不行）
+Safari 開網址 → 下方「分享」→ 往下找「<strong>加入主畫面</strong>」→ 新增</p>
+<p><strong>Android</strong>
+Chrome 開網址 → 右上選單 → 「<strong>安裝應用程式</strong>」</p>
+<p>裝好後主畫面會出現黑底「安幸」圖示，點開是全螢幕、沒有網址列。</p>
+<h3>開啟核可通知</h3>
+<p>裝好後從主畫面進入 → 請款填寫 → 最上方「<strong>核可通知</strong>」按「開啟」。</p>
+<p>有請款單等你核可時，手機會跳通知。</p>
+<blockquote>
+<p><strong>iPhone 特別注意：</strong>一定要從主畫面的圖示進去才看得到這個開關。用 Safari 直接開網頁是沒有的 —— 這是 Apple 的限制，繞不過去。</p>
+</blockquote>
+<hr class="pb" />
+<h2>一、這套系統在做什麼</h2>
+<p>一句話：<strong>把錢進來和錢出去，都變成有紀錄、有憑據、有人負責的動作。</strong></p>
+<pre><code>        錢進來                              錢出去
+   ┌──────────────┐                   ┌──────────────┐
+   │  短租訂單     │                   │   請款單      │
+   │  契約(長租)   │                   │  （要花錢）    │
+   └──────┬───────┘                   └──────┬───────┘
+          │ 系統自動                          │ 核可 → 付款
+          ▼                                  ▼
+   ┌──────────────┐                   ┌──────────────┐
+   │   營收報表    │                   │    支出       │
+   └──────────────┘                   └──────────────┘
+</code></pre>
+<p>左邊那條是自動的，你只要把訂單記對，營收自己會算。
+右邊那條要人簽核，錢花出去之前得有人點頭。</p>
+<hr class="pb" />
+<h2>二、錢進來：訂單 → 營收</h2>
+<h3>你只需要做一件事：把訂單記對</h3>
+<p>訂單記進系統之後，<strong>營收報表會自己產生，不用另外填</strong>。</p>
+<pre><code>   你輸入的                        系統自動算的
+┌────────────────┐            ┌─────────────────────┐
+│ 客戶：王小明     │            │ 8月 營收 $12,000     │
+│ 入住：8/28      │  ────►     │ 9月 營收 $18,000     │
+│ 退房：9/5       │            │                     │
+│ 金額：$30,000   │            │ （按住幾晚，自動分月） │
+└────────────────┘            └─────────────────────┘
+</code></pre>
+<p><strong>重點：跨月的訂單會自動拆開。</strong> 上面的例子住了 9 晚，其中 4 晚在 8 月、5 晚在 9 月，系統就按天數把 3 萬元分到兩個月，不用你手算。</p>
+<h3>兩種訂單，兩種記法</h3>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>短租訂單</th>
+<th>契約（長租）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>在哪</td>
+<td>短租訂單與收款</td>
+<td>契約訂單與收款</td>
+</tr>
+<tr>
+<td>怎麼進來</td>
+<td>Airbnb 每天自動抓；直客手動新增</td>
+<td>建一次契約</td>
+</tr>
+<tr>
+<td>特別的地方</td>
+<td>—</td>
+<td><strong>建好契約，每個月的月租單自動長出來</strong></td>
+</tr>
+</tbody>
+</table>
+<p>契約那邊特別省事：你設定「2026/9/1 到 2028/8/31、月繳 11 萬」，系統就把這 24 個月的收款單一次全部建好，每個月只要去點「本月未收」那顆按鈕收款就行。</p>
+<h3>列表怎麼看</h3>
+<p>短租和契約的列表都精簡過，只留最常掃視的欄位。</p>
+<p><strong>點任何一列會從右邊滑出詳細資訊</strong>，押金、外幣、備註、發票設定那些都在裡面，編輯和刪除也在那裡。</p>
+<blockquote>
+<p><strong>為什麼刪除要藏在裡面？</strong> 短租有 1,900 多筆訂單，刪除如果就擺在編輯旁邊，手滑一下就是一張真實訂單消失。要先點開看到完整內容才刪得掉，那本身就是一道確認。</p>
+</blockquote>
+<h3>⚠️ 三件要注意的事</h3>
+<p><strong>1. 營收報表不能手動改。</strong> 它是系統從訂單算出來的。數字不對，去改訂單，報表會跟著變。直接改報表沒有意義，下次重算就沒了。</p>
+<p><strong>2. 已經打勾「已收款」的月租單，不會被契約異動蓋掉。</strong> 這是保護設計 —— 你改契約的租期或金額，系統只會動還沒收錢的那幾期，已經收到的錢不會憑空變動。</p>
+<p><strong>3. 押金不是營收。</strong> 押金是暫時保管的錢，之後要還，所以不計入營收。系統分開記。</p>
+<hr class="pb" />
+<h2>三、錢出去：請款 → 核可 → 付款 → 支出</h2>
+<h3>完整流程</h3>
+<pre><code> ①          ②            ③              ④            ⑤
+需求     填請款單      主管核可        實際付款      變成支出
+
+「4樓冷氣   在系統裡    ┌─ 主管  ✓ ┐   現金：直接    自動出現在
+ 壞了」  →  填單送出 → │          ├→  確認支付   →  支出頁
+           （可多項）  └─ 總經理 ✓ ┘   匯款/信用卡： （不用再輸入）
+                                       先排付款
+                       兩個都要點頭     再確認支付
+                       （未滿 3000 免核）
+</code></pre>
+<h3>一步一步</h3>
+<p><strong>① 需求發生</strong>
+房源缺備品、設備壞了、辦公室要買東西 —— 任何要花公司錢的事。</p>
+<p><strong>② 填請款單</strong>（左側選單「🧾 請款填寫」→「+ 填寫請款」）</p>
+<p>一張單可以填<strong>很多項目</strong>。買三樣東西不用開三張單。</p>
+<p>每個項目要填：</p>
+<table>
+<thead>
+<tr>
+<th>欄位</th>
+<th>說明</th>
+<th>例子</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>項目名稱 <code>*</code></td>
+<td>買什麼</td>
+<td>冷氣濾網</td>
+</tr>
+<tr>
+<td>金額 <code>*</code></td>
+<td>多少錢</td>
+<td>1,200</td>
+</tr>
+<tr>
+<td>會計科目</td>
+<td>這筆算哪一類</td>
+<td>修繕維護</td>
+</tr>
+<tr>
+<td><strong>用途</strong> <code>*</code></td>
+<td><strong>這筆花在哪個物業</strong></td>
+<td>時兆</td>
+</tr>
+<tr>
+<td>備註</td>
+<td>補充說明</td>
+<td>選填</td>
+</tr>
+</tbody>
+</table>
+<p>標 <code>*</code> 的是必填。</p>
+<p>然後填<strong>支出方式</strong>：現金 / 匯款 / 信用卡。
+選匯款的話，要填<strong>收款方（廠商）</strong>的銀行代碼、帳號、公司名、統編。</p>
+<blockquote>
+<p><strong>「用途」是物業層級，不是房源。</strong> 選「時兆」「正隆」這種，不是「時兆A2」。之後看「哪個物業花最多錢」全靠這一欄。
+不是物業的（辦公室文具、公司保險），選「安幸辦公室」。</p>
+</blockquote>
+<p><strong>外幣怎麼填？</strong></p>
+<p>幣別預設台幣。刷卡刷到外幣時，把幣別改成 USD / JPY / CNY / EUR，會多出一個<strong>匯率</strong>欄位。</p>
+<ul>
+<li>金額欄填<strong>原幣別</strong>的數字（例如 USD 100 就填 100）</li>
+<li>匯率填帳單上的<strong>實際換算率</strong>（1 USD = 31.5 就填 31.5）</li>
+<li>系統自動算出台幣總額</li>
+</ul>
+<blockquote>
+<p>匯率要手動填，系統不會自動抓。你需要的是「刷卡當下那筆的實際匯率」，那只有帳單上才有，自動抓來的反而不準。</p>
+</blockquote>
+<p>填完可以先「儲存草稿」慢慢補，確定了再按「送出審核」。</p>
+<p><strong>③ 核可</strong></p>
+<p>送出後看金額：</p>
+<pre><code>   總額 &lt; NT$3,000  ──────────────────► 直接通過，不用等
+
+   總額 ≥ NT$3,000  ──┬─ 主管    點頭 ─┐
+                      │                ├── 兩個都點頭 → 通過
+                      └─ 總經理  點頭 ─┘
+
+                      誰先點都可以，沒有先後順序
+</code></pre>
+<p><strong>兩票都要到齊才算通過。</strong> 只有一個人點頭，還是不能付款。</p>
+<p>門檻是看<strong>整張單換算成台幣的總額</strong>，不是單項。三個項目各 1,500 元、總共 4,500 元，還是要核可 —— 這樣才不會有人靠拆單規避。</p>
+<p>如果覺得有問題，可以<strong>駁回</strong>並寫原因。單子回到申請人手上，改完可以重新送。駁回後已經投的票會清空，重新來過。</p>
+<blockquote>
+<p><strong>主管可以核可自己送的單。</strong> 人手不多的實務考量。但要知道代價：主管送的單，那一票沒有第二個人把關，實際上只剩總經理一道關卡。</p>
+</blockquote>
+<p><strong>④ 實際付款</strong></p>
+<p>核可通過 ≠ 已經花錢。要等錢真的付出去，才回來登記。</p>
+<table>
+<thead>
+<tr>
+<th>支出方式</th>
+<th>怎麼做</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>現金</strong></td>
+<td>直接按「確認支付」，填實際付款日</td>
+</tr>
+<tr>
+<td><strong>匯款 / 信用卡</strong></td>
+<td>先「<strong>排付款</strong>」：選預定日期 + 從哪個帳戶匯（或刷哪張卡）<br>錢真的出去後再按「<strong>確認支付</strong>」，填實際日期</td>
+</tr>
+</tbody>
+</table>
+<p>匯款和信用卡<strong>一定要先排付款</strong>才能確認支付。這是刻意的 —— 不然會發生「錢付了卻不知道從哪個帳戶出去」的情況，而那正是最需要記錄的事。</p>
+<p>「確認支付」時會自動帶入預定日期，實際日期不同就自己改。</p>
+<p>可以操作的人：<strong>會計、主管、總經理</strong>。</p>
+<p><strong>⑤ 自動變成支出</strong></p>
+<p>按下確認支付的當下，這張單的每個項目<strong>各自變成一筆支出</strong>，出現在支出頁。</p>
+<pre><code>請款單 PR-202608-003
+├─ 冷氣濾網   $1,200  修繕維護  時兆    ──►  支出：8/15 冷氣濾網 $1,200
+├─ 遙控器     $  450  備品      時兆    ──►  支出：8/15 遙控器  $  450
+└─ 工資       $2,000  修繕維護  時兆    ──►  支出：8/15 工資    $2,000
+</code></pre>
+<p><strong>不用再手動輸入一次。</strong> 付款帳號、幣別、匯率也會一併帶過去。</p>
+<h3>請款頁的畫面</h3>
+<p><strong>上排卡片</strong>（該做什麼）：待主管核可 ／ 待總經理核可 ／ 待排付款 ／ 待支付
+<strong>下排卡片</strong>（多少錢）：申請總額 ／ 現金 ／ 匯款 ／ 信用卡</p>
+<p><strong>付款排程表</strong>會列出「哪天要從哪個帳戶準備多少錢」，依預定付款日分組。這張表看的是預定付款日，跟上面卡片的建立日是兩條不同的時間軸，所以數字不會一致，那是正常的。</p>
+<p><strong>點任何一列開啟詳細抽屜</strong> —— 完整資訊和所有操作（編輯、核可、駁回、排付款、確認支付、撤銷）都在裡面。列上只留「核可」和「分享」兩個最常用的。</p>
+<h3>分享給主管核可</h3>
+<p>列上或抽屜裡的「<strong>分享</strong>」按鈕，會把單據資訊整理好傳到 LINE，附上一個<strong>可以直接開到那張單的連結</strong>。</p>
+<p>主管從 LINE 點進去，系統會自動跳到那張單並展開抽屜，直接按核可 —— 不用自己在列表裡翻找。</p>
+<h3>撤銷</h3>
+<p><strong>還沒付款的單，任何狀態都可以撤銷。</strong> 可以撤銷的人：提交者本人、主管、會計、總經理。</p>
+<p><strong>已經確認支付的單不能撤銷</strong>，因為支出已經產生了。要處理請找總經理。</p>
+<hr class="pb" />
+<h2>四、支出頁</h2>
+<p>左側選單「📒 支出」。管家和房務看不到這一頁。</p>
+<p>上面三張卡片：</p>
+<ul>
+<li><strong>總支出</strong> — 目前篩選條件下的總金額</li>
+<li><strong>會計科目分項</strong> — 錢花在哪些類別（修繕？備品？水電？）</li>
+<li><strong>物業分項</strong> — 哪個物業花最多</li>
+</ul>
+<p>下面是明細，可以照日期、科目、用途、支付方式篩選，也能下載 Excel。外幣的支出會在金額下方顯示原幣別與匯率。</p>
+<h3>兩種支出</h3>
+<table>
+<thead>
+<tr>
+<th>來源</th>
+<th>標記</th>
+<th>能不能刪</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>請款單連動</td>
+<td>項目旁有藍色「請款」標籤</td>
+<td><strong>不能刪</strong>（只有總經理可以）</td>
+</tr>
+<tr>
+<td>直接新增</td>
+<td>無標記</td>
+<td>可以刪</td>
+</tr>
+</tbody>
+</table>
+<p><strong>為什麼連動的不能刪？</strong></p>
+<p>因為那筆錢是走完兩票核可才花出去的。如果一個人就能把紀錄刪掉，那兩道核可等於白設。而且刪掉之後請款單還是顯示已付款，支出這邊卻沒了，<strong>兩邊對不起來而系統不會提醒你</strong> —— 這種帳最難查。</p>
+<p>要修正金額請用「編輯」，不要刪。</p>
+<hr class="pb" />
+<h2>五、誰能做什麼</h2>
+<h3>職位與權限</h3>
+<p><strong>權限由職位決定，不能單獨改。</strong> 在設定頁改職位，權限會自動跟著變。</p>
+<table>
+<thead>
+<tr>
+<th>職位</th>
+<th>權限</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>管家</td>
+<td>一般</td>
+</tr>
+<tr>
+<td>房務</td>
+<td>一般</td>
+</tr>
+<tr>
+<td>經理</td>
+<td>主管</td>
+</tr>
+<tr>
+<td>會計</td>
+<td>會計</td>
+</tr>
+<tr>
+<td>總經理</td>
+<td>總經理</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>為什麼綁在一起？以前兩欄各改各的，結果會出現「管家職位 + 總經理權限」這種對不起來的組合，而且沒人會發現。職位是人事事實，權限是它的結果。</p>
+</blockquote>
+<h3>各權限看得到什麼</h3>
+<pre><code>                  訂單  營收  請款  核可  排付款/支付  支出  評價/清潔  設定
+   一般    🧹      ✓     ✗     ✓     ✗       ✗        ✗       ✓        ✗
+   會計    📗      ✓     ✓     ✓     ✗       ✓        ✓       ✗        ✗
+   主管    👔      ✓     ✓     ✓     ✓       ✓        ✓       ✓        ✗
+   總經理  🔑      ✓     ✓     ✓     ✓       ✓        ✓       ✓        ✓
+</code></pre>
+<p><strong>一般（管家、房務）</strong>
+日常記錄訂單、清潔、看評價。可以請款，但<strong>只看得到自己送的單</strong>，也看不到公司整體的營收和支出。</p>
+<p><strong>會計</strong>
+帳務作業。看得到訂單、營收、支出，可以排付款、確認支付、整理支出。</p>
+<blockquote>
+<p><strong>會計不能核可請款單。</strong> 這是刻意的 —— 請款的人、核可的人、記帳的人要分開，這樣才叫內控。會計負責「錢花掉之後把帳做對」，不負責「決定要不要花」。</p>
+</blockquote>
+<p><strong>主管（經理職位）</strong>
+核可的其中一票。也能做會計能做的所有事。</p>
+<p><strong>總經理</strong>
+核可的另一票，加上人員、物業、房源、帳號等系統設定。</p>
+<hr class="pb" />
+<h2>六、常見情況怎麼辦</h2>
+<h3>「單子填錯了，還沒送出」</h3>
+<p>直接編輯，或撤銷重開。草稿狀態隨你改。</p>
+<h3>「送出了才發現填錯」</h3>
+<p>自己撤銷，或請主管駁回。駁回的單會回到你手上，改完重送。</p>
+<h3>「已經核可了才發現金額錯」</h3>
+<p>核可過的單不能改內容。<strong>但只要還沒確認支付，就可以撤銷重開一張。</strong></p>
+<p>已經確認支付的話，照原本的處理，然後在支出頁調整那筆金額並在備註寫明原因。差額大的話跟主管說一聲，另外開一張單處理。</p>
+<h3>「付款日填錯了」</h3>
+<p>可以改。改了之後對應的支出日期會跟著調整，<strong>不會重複產生新的支出</strong>。</p>
+<h3>「東西後來沒買」</h3>
+<p>只要還沒按「確認支付」，直接撤銷那張單就好。</p>
+<h3>「找不到『確認支付』按鈕」</h3>
+<p>如果是匯款或信用卡的單，要<strong>先按「排付款」</strong>選好日期和帳戶，確認支付才會出現。現金的單沒有這個限制。</p>
+<h3>「我看不到支出頁」</h3>
+<p>你是一般權限（管家或房務）。支出資訊只開放給會計以上。</p>
+<h3>「核可按鈕點不下去」</h3>
+<p>兩種可能：你的那一票已經投過了，或你是會計（會計不核可）。</p>
+<h3>「上個月的單找不到」</h3>
+<p>請款頁預設只顯示<strong>本月</strong>。把上方的「月份」改成上個月，或清空。</p>
+<h3>「營收報表的數字怪怪的」</h3>
+<p>不要改報表，去看<strong>訂單</strong>。報表是從訂單算出來的，訂單對了報表就對了。</p>
+<h3>「手機收不到核可通知」</h3>
+<p>三件事確認：
+1. 有沒有從<strong>主畫面的圖示</strong>進去（iPhone 用 Safari 開網頁是收不到的）
+2. 請款頁最上方的「核可通知」有沒有按「開啟」
+3. 手機系統設定裡，這個 App 的通知有沒有被關掉</p>
+<hr class="pb" />
+<h2>七、快速對照</h2>
+<table>
+<thead>
+<tr>
+<th>我想…</th>
+<th>去哪裡</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>記一筆短租訂單</td>
+<td>短租訂單與收款 → + 新增訂單</td>
+</tr>
+<tr>
+<td>看某張訂單的完整內容</td>
+<td>點那一列，右邊會滑出詳細資訊</td>
+</tr>
+<tr>
+<td>建一份長租契約</td>
+<td>契約訂單與收款 → + 新增契約</td>
+</tr>
+<tr>
+<td>收這個月的租</td>
+<td>契約訂單與收款 → 該筆的「本月未收」或「收租」</td>
+</tr>
+<tr>
+<td>看這個月賺多少</td>
+<td>營收報表</td>
+</tr>
+<tr>
+<td>申請買東西</td>
+<td>請款填寫 → + 填寫請款</td>
+</tr>
+<tr>
+<td>填採購單</td>
+<td>請款填寫 → + 採購單（連到 Google 表單）</td>
+</tr>
+<tr>
+<td>核可別人的請款</td>
+<td>請款填寫 → 該筆的「核可」</td>
+</tr>
+<tr>
+<td>叫主管來核可</td>
+<td>請款填寫 → 該筆的「分享」→ 傳到 LINE</td>
+</tr>
+<tr>
+<td>排這週要匯的款</td>
+<td>請款填寫 → 該筆的「排付款」</td>
+</tr>
+<tr>
+<td>錢付出去了登記</td>
+<td>請款填寫 → 該筆的「確認支付」</td>
+</tr>
+<tr>
+<td>看這個月要匯多少錢</td>
+<td>請款填寫 → 上方的「付款排程」表</td>
+</tr>
+<tr>
+<td>看錢花去哪</td>
+<td>支出</td>
+</tr>
+<tr>
+<td>記一筆沒走請款的支出</td>
+<td>支出 → + 填寫支出</td>
+</tr>
+<tr>
+<td>填清潔表單</td>
+<td>清潔記錄 → 📋 管家檢查表 / 🧹 房務清潔表</td>
+</tr>
+<tr>
+<td>把清潔記錄傳給人看</td>
+<td>清潔記錄 → 該筆的「分享」</td>
+</tr>
+<tr>
+<td>改某人的職位或權限</td>
+<td>設定 → 人員管理 → 改「職位」（權限會自動跟著變）</td>
+</tr>
+<tr>
+<td>新增匯款帳戶或信用卡</td>
+<td>設定 → 收付款帳號</td>
+</tr>
+<tr>
+<td>匯出報表</td>
+<td>各頁的「⬇ 下載 Excel / CSV」（會照你目前的篩選條件匯出）</td>
+</tr>
+</tbody>
+</table>
+<hr class="pb" />
+<h2>八、三個原則</h2>
+<p><strong>1. 用途一定要填對。</strong>
+物業分項統計、之後要算單一物業的損益，全靠這一欄。</p>
+<p><strong>2. 系統自動算的東西不要手動改。</strong>
+營收報表、契約的月租單、請款連動的支出 —— 這些都是算出來的。要改就改源頭。</p>
+<p><strong>3. 核可是為了保護你。</strong>
+兩票核可不是不信任，是讓花錢這件事有紀錄、有人共同承擔。事後有疑問時，單子上寫得清清楚楚是誰在什麼時候點頭的。</p>
+<hr class="pb" />
+<p>有問題找 David。</p>
+  <hr>
+  <p style="color:#6b7280;font-size:12px">文件產生日期：2026-08-03　·　安幸上工 ERP　justwork.estia.com.tw</p>
+</body>
+</html>
