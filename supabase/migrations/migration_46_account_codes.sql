@@ -1,7 +1,7 @@
 -- migration_46：調整會計科目
 --
 --   差旅交通 → 拆成「差旅」與「交通」
---   新增「交際費」「員工福利」
+--   新增「交際費」「職工福利」
 --
 -- ⚠️ 既有支出用的是 code 不是名稱，所以只改名不會動到任何已記錄的支出。
 --    現有掛在 transport 上的支出，改名後會顯示成「交通」——
@@ -31,7 +31,7 @@ update account_codes set name = '交通' where code = 'transport';
 insert into account_codes (code, name, sort, active) values
   ('travel',    '差旅',   (select sort from account_codes where code = 'transport') + 1, true),
   ('entertain', '交際費', (select sort from account_codes where code = 'transport') + 2, true),
-  ('welfare',   '員工福利', (select sort from account_codes where code = 'transport') + 3, true)
+  ('welfare',   '職工福利', (select sort from account_codes where code = 'transport') + 3, true)
 on conflict (code) do update set name = excluded.name, active = true;
 
 
