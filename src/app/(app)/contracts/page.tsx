@@ -734,7 +734,6 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
   const [endDate, setEndDate] = useState<string | null>(c.end_date ?? null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
-  const [dep, setDep] = useState({ received: !!c.deposit_received, receivedAt: c.deposit_received_at || '', returned: !!c.deposit_returned, returnedAt: c.deposit_returned_at || '' });
   const [feeRows, setFeeRows] = useState<any[]>([]);
   const [feeDraft, setFeeDraft] = useState<{ pi: number; date: string; type: string; amount: number } | null>(null);
   const [concDraft, setConcDraft] = useState<{ pi: number; date: string; amount: number; note: string; baseAmount: number; priorDisc: number } | null>(null);
@@ -776,12 +775,6 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
   }, [supabase, c.room]);
   useEffect(() => { loadExisting(); }, [loadExisting]);
 
-  async function updDep(patch: any) {
-    const { error } = await supabase.from('contracts').update(patch).eq('id', c.id);
-    if (error) { alert('更新失敗:' + error.message); return; }
-    Object.assign(c, patch);
-    setDep({ received: !!c.deposit_received, receivedAt: c.deposit_received_at || '', returned: !!c.deposit_returned, returnedAt: c.deposit_returned_at || '' });
-  }
   /**
    * 只改本地那幾期的欄位,不整份重新載入。
    * 原本每次操作都呼叫 loadExisting(),而它會 setLoading(true) ——
@@ -966,23 +959,17 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
           </div>
         )}
         <div className="px-6 py-4">
-          <div className="mb-4">
-            <div className="text-xs font-semibold text-gray-500 mb-2">押金(暫收帳款,不計入營收)</div>
-            <div className={`rounded-xl border px-4 py-3 text-sm ${dep.received && !dep.returned ? 'border-amber-200 bg-amber-50/50' : 'border-mor-line'}`}>
-              <div className="flex items-center justify-between">
-                <div className="font-medium">押金 ${fmt(c.deposit)}</div>
-                {!dep.received
-                  ? <button onClick={() => updDep({ deposit_received: true, deposit_received_at: today() })} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark">確認已收</button>
-                  : <div className="flex items-center gap-2">
-                      <span className="text-xs text-gray-600">已收 <input type="date" value={dep.receivedAt} onChange={(e) => updDep({ deposit_received_at: e.target.value || null })} className="rounded border border-gray-300 px-1.5 py-0.5 text-xs" /></span>
-                      {!dep.returned
-                        ? <button onClick={() => updDep({ deposit_returned: true, deposit_returned_at: today() })} className="rounded-lg bg-mor-slate text-white px-3 py-1.5 text-xs font-medium hover:bg-mor-slatedark">退回</button>
-                        : <span className="text-xs text-gray-600">已退 <input type="date" value={dep.returnedAt} onChange={(e) => updDep({ deposit_returned_at: e.target.value || null })} className="rounded border border-gray-300 px-1.5 py-0.5 text-xs" /></span>}
-                    </div>}
-              </div>
-              {dep.received && <div className="mt-1"><button onClick={() => updDep({ deposit_received: false, deposit_received_at: null, deposit_returned: false, deposit_returned_at: null })} className="text-xs text-gray-400 underline">清除押金狀態</button></div>}
+          {/*
+            押金的收退搬到「押金管理」頁了(migration_56)。
+            這裡只顯示金額 —— 收租視窗管的是每期租金,押金的生命週期跟租期無關,
+            混在一起會讓「這個月收了沒」跟「押金收了沒」看起來像同一件事。
+          */}
+          {!!c.deposit && (
+            <div className="mb-4 rounded-xl border border-mor-line px-4 py-3 text-sm flex items-center justify-between">
+              <div className="font-medium">押金 ${fmt(c.deposit)}</div>
+              <span className="text-xs text-gray-400">收退狀態請到「押金管理」頁</span>
             </div>
-          </div>
+          )}
           <div className="text-xs font-semibold text-gray-500 mb-2">收款({CAD_LABEL[c.cadence]},每期確認)</div>
           {!c.start_date || !c.end_date ? <div className="text-center text-orange-600 py-8 text-sm">此契約缺租期,請先編輯補上起訖日</div>
           : loading ? <div className="text-center text-gray-400 py-8">載入中…</div>

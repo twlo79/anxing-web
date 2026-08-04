@@ -14,6 +14,7 @@ const NAV = [
   { href: '/revenues', label: '營收報表', icon: '💰', roles: ['accountant', 'manager', 'super_admin'] },
   { href: '/purchases', label: '請款填寫', icon: '🧾', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/expenses', label: '支出', icon: '📒', roles: ['accountant', 'manager', 'super_admin'] },
+  { href: '/deposits', label: '押金管理', icon: '🔐', roles: ['accountant', 'manager', 'super_admin'] },
   { href: '/reviews', label: '評價', icon: '⭐', roles: ['housekeeper', 'manager', 'super_admin'] },
   { href: '/cleaning', label: '清潔記錄', icon: '🧹', roles: ['housekeeper', 'manager', 'super_admin'] },
   { href: '/admin', label: '設定', icon: '⚙️', roles: ['super_admin'] },

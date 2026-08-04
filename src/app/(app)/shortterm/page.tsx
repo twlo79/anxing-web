@@ -8,7 +8,7 @@ type Order = {
   id: string; order_key: string; source: string; estate_id: string | null; property_id?: string | null; property_raw: string | null;
   guest_name: string | null; checkin: string; checkout: string; nights: number;
   amount: number; deposit: number | null; account: string | null; note: string | null;
-  deposit_received?: boolean; deposit_returned?: boolean; deposit_received_at?: string | null; deposit_returned_at?: string | null;
+  // 【已淘汰】押金收退改由 deposits 表管理(migration_56),這裡不再讀寫
   fx_revenue?: { cur: string; amt: number; rate: number }[];
   fx_deposit?: { cur: string; amt: number }[];
   move_group?: string | null;
@@ -116,7 +116,7 @@ export default function ShortTermPage() {
   const loadAgg = useCallback(async () => {
     let all: any[] = []; let from = 0;
     while (true) {
-      let q = supabase.from('orders').select('source, estate_id, amount, deposit, deposit_received, deposit_returned, fx_deposit').in('source', SRC);
+      let q = supabase.from('orders').select('source, estate_id, amount, deposit, fx_deposit').in('source', SRC);
       if (src) q = q.eq('source', src);
       if (estF) q = q.eq('estate_id', estF);
       if (toD) q = q.lte('checkin', toD);
@@ -206,7 +206,7 @@ export default function ShortTermPage() {
     if (!edit) return;
     const co = edit.source === 'oneoff' ? (edit.checkout || edit.checkin) : edit.checkout;
     const nights = (edit.checkin && co) ? Math.max(0, Math.round((new Date(co).getTime() - new Date(edit.checkin).getTime()) / 86400000)) : 0;
-    const payload = { source: edit.source, estate_id: edit.estate_id, property_id: edit.property_id ?? null, property_raw: edit.property_raw, guest_name: edit.guest_name, checkin: edit.checkin || null, checkout: co || null, nights, amount: (twdBase || 0) + revFxTwd, deposit: edit.deposit, account: edit.account, note: edit.note, deposit_received: edit.deposit_received ?? false, deposit_returned: edit.deposit_returned ?? false, deposit_received_at: edit.deposit_received ? (edit.deposit_received_at || null) : null, deposit_returned_at: edit.deposit_returned ? (edit.deposit_returned_at || null) : null, fx_revenue: fxRev.filter((l) => l.cur && l.amt), fx_deposit: fxDep.filter((l) => l.cur && l.amt) };
+    const payload = { source: edit.source, estate_id: edit.estate_id, property_id: edit.property_id ?? null, property_raw: edit.property_raw, guest_name: edit.guest_name, checkin: edit.checkin || null, checkout: co || null, nights, amount: (twdBase || 0) + revFxTwd, deposit: edit.deposit, account: edit.account, note: edit.note, fx_revenue: fxRev.filter((l) => l.cur && l.amt), fx_deposit: fxDep.filter((l) => l.cur && l.amt) };
     let orderId = edit.id;
     if (edit.id) {
       const { error } = await supabase.from('orders').update(payload).eq('id', edit.id);
@@ -286,11 +286,9 @@ export default function ShortTermPage() {
   const addStay = () => move && setMove({ ...move, stays: [...move.stays, { room: '', estateId: move.stays[move.stays.length - 1]?.estateId ?? null, propertyId: null, from: '' }] });
   const updStay = (i: number, patch: Partial<Stay>) => move && setMove({ ...move, stays: move.stays.map((s, idx) => idx === i ? { ...s, ...patch } : s) });
   const delStay = (i: number) => move && setMove({ ...move, stays: move.stays.filter((_, idx) => idx !== i) });
-  function blank(): Order { return { id: '', order_key: '', source: 'private', estate_id: null, property_id: null, property_raw: '', guest_name: '', checkin: '', checkout: '', nights: 0, amount: 0, deposit: 0, account: null, note: '', deposit_received: false, deposit_returned: false, deposit_received_at: null, deposit_returned_at: null, fx_revenue: [], fx_deposit: [] }; }
+  function blank(): Order { return { id: '', order_key: '', source: 'private', estate_id: null, property_id: null, property_raw: '', guest_name: '', checkin: '', checkout: '', nights: 0, amount: 0, deposit: 0, account: null, note: '', fx_revenue: [], fx_deposit: [] }; }
 
   const totRevenue = useMemo(() => agg.reduce((a, o) => a + Number(o.amount || 0), 0), [agg]);
-  const heldTwd = useMemo(() => agg.reduce((a, o) => a + (o.deposit_received && !o.deposit_returned ? Number(o.deposit || 0) : 0), 0), [agg]);
-  const heldFx = useMemo(() => { const m: Record<string, number> = {}; for (const o of agg) { if (o.deposit_received && !o.deposit_returned) { for (const l of (o.fx_deposit || [])) { const c = l.cur || '?'; m[c] = (m[c] || 0) + (Number(l.amt) || 0); } } } return m; }, [agg]);
   const bySource = useMemo(() => { const m: Record<string, number> = {}; for (const o of agg) m[o.source] = (m[o.source] || 0) + Number(o.amount || 0); return m; }, [agg]);
   const byEstate = useMemo(() => { const m: Record<string, number> = {}; for (const o of agg) { const k = o.estate_id ? (estateName[o.estate_id] ?? '—') : '—'; m[k] = (m[k] || 0) + Number(o.amount || 0); } return Object.entries(m).sort((a, b) => b[1] - a[1]); }, [agg, estateName]);
   const pages = Math.max(1, Math.ceil(total / PAGE));
@@ -306,7 +304,7 @@ export default function ShortTermPage() {
         <div className="rounded-xl bg-mor-slate text-white p-5 flex flex-col justify-center min-w-0">
           <div className="text-xs opacity-75">當期營收(訂單總額)</div>
           <div className="stat-num-lg font-bold mt-1">${fmt(totRevenue)}</div>
-          <div className="text-sm opacity-90 mt-2">佔收帳款(暫收) 台幣 <span className="font-semibold">${fmt(heldTwd)}</span>{Object.entries(heldFx).map(([c, v]) => <span key={c} className="ml-1">· {c} {fmt(v)}</span>)}</div>
+          {/* 暫收款移到「押金管理」頁 —— 那裡才看得到契約押金,只算短租的數字是不完整的 */}
           <div className="text-xs opacity-60 mt-1">{total.toLocaleString()} 筆・押金非營收</div>
         </div>
         <div className="rounded-xl bg-white border border-mor-line overflow-hidden">
@@ -442,13 +440,11 @@ export default function ShortTermPage() {
                 {row('來源', <span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${SRC_COLOR[d.source]}`}>{SRC_LABEL[d.source] ?? d.source}</span>)}
                 {row('訂單起訖', <span>{d.checkin} ~ {d.checkout}<span className="text-gray-400 ml-2">{d.nights} 晚</span></span>)}
                 {row('金額', <span className="font-medium">${fmt(d.amount)}</span>)}
+                {/* 收退狀態改看「押金管理」頁,這裡只顯示金額 */}
                 {row('押金', d.deposit ? (
                   <span>
                     ${fmt(d.deposit)}
-                    <span className="ml-2 text-xs text-gray-500">
-                      {d.deposit_received ? `已收${d.deposit_received_at ? ' ' + d.deposit_received_at.slice(0, 10) : ''}` : '未收'}
-                      {d.deposit_returned ? `・已退${d.deposit_returned_at ? ' ' + d.deposit_returned_at.slice(0, 10) : ''}` : ''}
-                    </span>
+                    <span className="ml-2 text-xs text-gray-400">收退狀態見押金管理</span>
                   </span>
                 ) : '—')}
                 {row('入款方式', d.account ?? '—')}
@@ -507,13 +503,14 @@ export default function ShortTermPage() {
                   <div className="text-xs text-gray-500 mt-1">營收合計(台幣):<span className="font-semibold text-mor-slate">${fmt((twdBase || 0) + revFxTwd)}</span>{revFxTwd ? ` (台幣 ${fmt(twdBase)} + 外幣換算 ${fmt(revFxTwd)})` : ''}</div>
                 </div>
               )}
-              {edit.source !== 'oneoff' && (
-                <div className="col-span-2 flex flex-wrap items-center gap-5 text-sm bg-mor-sand/30 rounded-lg px-3 py-2">
-                  <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={!!edit.deposit_received} onChange={(e) => setEdit({ ...edit, deposit_received: e.target.checked })} />已收押金</label>
-                  {edit.deposit_received && <input type="date" value={edit.deposit_received_at ?? ''} onChange={(e) => setEdit({ ...edit, deposit_received_at: e.target.value || null })} className="rounded border border-gray-300 px-2 py-1 text-xs" title="收款日期" />}
-                  <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={!!edit.deposit_returned} onChange={(e) => setEdit({ ...edit, deposit_returned: e.target.checked })} />退回押金</label>
-                  {edit.deposit_returned && <input type="date" value={edit.deposit_returned_at ?? ''} onChange={(e) => setEdit({ ...edit, deposit_returned_at: e.target.value || null })} className="rounded border border-gray-300 px-2 py-1 text-xs" title="退回日期" />}
-                  <span className="text-xs text-gray-400">押金為暫收(佔收帳款),非營收;退回後從佔收帳款扣除</span>
+              {/*
+                收退押金的動作搬到「押金管理」頁了(migration_56)。
+                這裡只填金額 —— 金額是訂單條件的一部分,收退是之後才發生的事,
+                混在同一個表單裡會讓「這張單成立了沒」跟「錢收到了沒」分不清楚。
+              */}
+              {edit.source !== 'oneoff' && edit.id && (
+                <div className="col-span-2 text-xs text-gray-400 bg-mor-sand/30 rounded-lg px-3 py-2">
+                  押金的收退日期與入款帳戶請到「押金管理」頁維護,填了金額就會自動出現在那裡。
                 </div>
               )}
               {edit.source !== 'oneoff' && (
