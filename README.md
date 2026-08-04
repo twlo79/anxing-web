@@ -60,8 +60,11 @@ public/
   manifest.webmanifest           PWA
   sw.js                          service worker(推播接收)
   icons/                         maskable icons
-supabase/migrations/             migration_30 ~ 55(見文末索引)
-deploy.ps1                       一鍵部署:build → commit → push
+supabase/migrations/             migration_30 ~ 70(見文末索引)
+supabase/schema-baseline.sql     線上 schema 快照(**參考用,不可執行**)
+supabase/dump-schema.sql         產生上面那份快照的目錄查詢
+src/lib/hkParse.test.ts          排班解析器測試(`npm test`)
+deploy.ps1                       一鍵部署:測試 → build → commit → push
 docs/                            會計手冊、模組設計文件
 ```
 
@@ -631,6 +634,11 @@ values ('<user_uuid>', '名字', 'housekeeper');  -- housekeeper | accountant | 
 | 損益未整合 | 收入鏈與支出鏈各自獨立,要看損益得兩邊各自匯出 Excel 再合併 |
 | 評價分項評分缺漏 | `ReviewsSectionQuery` 不回傳分項評分與房東回覆,那 7 欄目前留 null |
 | 請款憑證不回補 | 改版前已結案的單不會自動補 `voucher_no` 到支出(`on conflict do nothing`),要人工補 |
+| ~~房務設定按了沒用~~ | **已修**:`count_mode`、`include_gift`、工作類型與房源的計布巾開關都真的接上計算了。過濾規則收在 `hkParse.filterItems()`,由測試釘住 |
+| ~~`hk_audit` 是空表~~ | **已修**(`migration_67`):四張設定主檔的增刪改都會寫,`changes` 只存真的變動的欄位。排班格的日常增刪不記 —— 量差好幾個數量級,而且畫面上看得到 |
+| ~~不知道 migration 跑到哪~~ | **已修**(`migration_70`):`schema_migrations` + `record_migration()`。30~65 是事後回填的推測值(`source = 'assumed'`) |
+| `hk_property.beds` 有 null | `17B5 / 18B5 / 19B2 / 6B2` 的床數還沒填,布巾統計會少算這幾間。不是程式問題,是主檔沒補完 |
+| 房務沒有月結鎖定 | 改主檔(幾床、計布巾)會**追溯改變已經出過的月報**。`hk_audit` 現在查得到是誰改的,但沒有東西擋住改動本身 |
 
 ---
 
@@ -662,3 +670,41 @@ values ('<user_uuid>', '名字', 'housekeeper');  -- housekeeper | accountant | 
 | 53 | **跨月營收改捨去 + 尾期補餘額**(含全量重算) |
 | 54 | 憑證號碼帶進支出 |
 | 55 | `expenses.request_id`,憑證照片沿用 |
+| 56 | 押金:`deposits` 表、訂單/契約自動連動 |
+| 57 | 手動建立押金(沒有訂單來源的舊案) |
+| 58 | 房務排班:人員/房源/工作項主檔 + 種子資料 |
+| 59 | 房務主檔可維護化(`ptype`、`count_linen`、`hk_audit`) |
+| 60 | 間數可手動覆寫(`rooms_override`) |
+| 61 | 退押金審核流程:房客帳戶、兩票、確認退款日 |
+| 62 | 合併重複房源(匿名化造成的 14 組) |
+| 63 | 合併 南京5 / 台4(需人工判斷的 2 組) |
+| 64 | 布巾群組歸位 |
+| 65 | 修 `sync_order_deposits()` 的 `malformed array literal` |
+| 66 | 「公區清潔」計布巾 —— 消除匯入與手改的結果不一致 |
+| 67 | `hk_audit` 開始寫入(設定層四張主檔的觸發器) |
+| 68 | 移除 `hk_property.is_common`,公區只看 `ptype` |
+| 69 | 移除 `hk_staff.source_name`,顯示名只看 `source_names[]` + 重名防呆 |
+| 70 | **`schema_migrations` 執行紀錄** —— 每支結尾要 `select record_migration('編號_名稱')` |
+
+---
+
+## Migration 怎麼跑
+
+沒有 `supabase link`,也沒有 Docker,所以 `supabase db push` 用不了 —— **migration 是手動貼進 [Supabase SQL Editor](https://supabase.com/dashboard/project/_/sql) 執行的**,CI 完全不會碰。
+
+程式推上去了但 SQL 沒跑,症狀是線上噴 `column does not exist`,而且要等有人點到那個頁面才發現。所以:
+
+```sql
+-- 線上跑到哪了？
+select name, applied_at, source from schema_migrations order by name;
+```
+
+`source = 'assumed'` 的那些是 `migration_70` 事後回填的推測值(對照 schema 快照看起來是生效了),不是當下記錄的。從 66 開始才是真的有憑據。
+
+`deploy.ps1` 在 commit 前會列出這次帶了哪幾支 migration 並要你確認 —— 那是提醒,不是保證,它沒有連到資料庫。
+
+**寫新的 migration 時**:
+
+* 結尾補上 `select record_migration('編號_名稱')`
+* **要能重跑**。`migration_63` 第二次跑時報「不同名或不同物業」,是因為守衛把「已經處理完了」和「資料對不上」講成同一句話。守衛要分開判斷,而且「已完成」要跳過而不是中止。
+* **驗證段要有真的寫入**,不能只有 `select`。`sync_order_deposits()` 的陣列 bug 撐了兩天沒被發現,就是因為驗證只讀不寫,從來沒碰到觸發器。做法是包在 `do $$ ... $$` 裡寫一次、檢查結果、再讓它回滾。

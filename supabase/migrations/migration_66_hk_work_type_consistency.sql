@@ -50,3 +50,15 @@ left join public.hk_property p on p.code = w.property_code
 where w.work_type in ('拆備品', '點交', '其他工時')
 group by w.work_type, w.property_code, p.beds
 order by w.work_type, w.property_code;
+
+
+-- ── 記錄執行 ───────────────────────────────────────
+-- 包在判斷裡，是因為建立 record_migration 的 migration_70 不一定先跑。
+-- 順序不對只會少一筆紀錄，不該讓整支 migration 掛掉。
+do $$ begin
+  if to_regprocedure('public.record_migration(text)') is not null then
+    raise notice '%', (select public.record_migration('66_hk_work_type_consistency'));
+  else
+    raise notice '尚未建立 schema_migrations（migration_70），這支沒有被記錄';
+  end if;
+end $$;

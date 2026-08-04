@@ -12,9 +12,14 @@
  */
 
 export type HkStaff = {
-  id: string; source_name: string; code: string; name: string;
-  /** 排班表上可能出現的顯示名,可多個 —— 同一個人的顯示名會隨時間改 */
-  source_names?: string[];
+  id: string; code: string; name: string;
+  /**
+   * 排班表上可能出現的顯示名,可多個 —— 同一個人的顯示名會隨時間改。
+   * 比對負責人的唯一依據（單數的 source_name 已於 migration_69 移除）。
+   * 在職人員之間不可重複，由 DB 的 trg_hk_staff_no_dup 擋住 ——
+   * 重名的話底下的 Map 會後蓋前，某人的工作會整批算到別人頭上而且不報錯。
+   */
+  source_names: string[];
   count_mode: 'rooms' | 'hours' | 'none';
   count_cleans: boolean;
   color: string | null; color_text?: string | null; color_bar?: string | null;
@@ -25,7 +30,7 @@ export type HkStaff = {
 export function staffLookup(staff: HkStaff[]) {
   const m = new Map<string, HkStaff>();
   for (const s of staff) {
-    const names = (s.source_names?.length ? s.source_names : [s.source_name]).filter(Boolean);
+    const names = (s.source_names ?? []).filter(Boolean);
     for (const n of names) m.set(n, s);
   }
   return m;
@@ -33,7 +38,9 @@ export function staffLookup(staff: HkStaff[]) {
 
 export type HkProperty = {
   code: string; aliases: string[]; beds: number | null;
-  linen_group: 'kai' | 'ab' | 'zl' | 'other'; is_common: boolean;
+  linen_group: 'kai' | 'ab' | 'zl' | 'other';
+  /** room / building / common_area / other。公區的判斷只看這個 —— is_common 已於 migration_68 移除 */
+  ptype?: string;
   /** 這個房源的清掃要不要進布巾統計。與 beds=0 是兩件事 —— 那是「沒床」,這是「不算」。 */
   count_linen?: boolean;
 };

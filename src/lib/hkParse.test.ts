@@ -92,6 +92,19 @@ describe('負責人', () => {
     assert.deepEqual(splitAssignees(''), []);
   });
 
+  test('顯示名重複時後面的人會蓋掉前面的 —— 所以 DB 要擋', () => {
+    // 這是 staffLookup 的既有行為（Map.set 後蓋前），不是 bug，
+    // 但它意味著兩個人共用一個顯示名時，其中一位的工作會**整批**算到另一位頭上，
+    // 而且畫面上完全沒有徵兆。真正的防線在 DB 的 trg_hk_staff_no_dup（migration_69）。
+    // 這個測試存在的目的是:哪天有人想拿掉那個約束，先來看這裡。
+    const lookup = staffLookup([
+      { ...staff[0], id: 'a', code: 'A', source_names: ['花花'] },
+      { ...staff[1], id: 'b', code: 'B', source_names: ['花花'] },
+    ] as HkStaff[]);
+    assert.equal(lookup.get('花花')?.code, 'B');
+    assert.equal(lookup.size, 1, 'A 的工作會全部記到 B 頭上');
+  });
+
   test('一個人可以有多個顯示名', () => {
     const lookup = staffLookup([
       { ...staff[0], source_names: ['SHAO-YING HSIEH', 'Una'] },

@@ -14,7 +14,7 @@ import { createClient } from '@/lib/supabase';
  */
 
 type Staff = {
-  id: string; source_name: string; source_names: string[]; code: string; name: string;
+  id: string; source_names: string[]; code: string; name: string;
   count_mode: 'rooms' | 'hours' | 'none'; count_cleans: boolean;
   color: string | null; color_text: string | null; color_bar: string | null;
   leave_prefix: string | null; active: boolean; sort: number;
@@ -22,7 +22,7 @@ type Staff = {
 type Prop = {
   id: string; code: string; name: string | null; aliases: string[];
   beds: number | null; linen_group: string; count_linen: boolean;
-  ptype: string; is_common: boolean; active: boolean; sort: number;
+  ptype: string; active: boolean; sort: number;
 };
 type WType = { code: string; name: string; count_workload: boolean; count_linen: boolean; sort: number; active: boolean };
 type Setting = { key: string; value: string | null; vtype: string; options: string[] | null; description: string | null; sort: number };
@@ -112,7 +112,7 @@ export default function HkSettingsPage() {
     const code = prompt('系統代號（例:MEI）', name); if (!code) return;
     const src = prompt('排班表上的顯示名（要跟排班系統上一模一樣）', name); if (!src) return;
     const { error } = await supabase.from('hk_staff').insert({
-      source_name: src, source_names: [src], code, name,
+      source_names: [src], code, name,
       count_mode: 'rooms', count_cleans: true,
       color: 'E7E6E6', color_text: '3F3F3F', color_bar: 'A6A6A6',
       sort: (staff.at(-1)?.sort ?? 0) + 1,

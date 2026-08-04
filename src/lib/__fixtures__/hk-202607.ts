@@ -156,18 +156,18 @@ export const ROWS_202607 = RAW_202607.split('\n').map((l) => {
 
 /** 人員主檔（對應 migration_58 的種子資料） */
 export const STAFF = [
-  { id: 'una', source_name: 'SHAO-YING HSIEH', source_names: ['SHAO-YING HSIEH'], code: 'UNA', name: 'Una', count_mode: 'rooms' as const, count_cleans: true, color: null, leave_prefix: 'U休' },
-  { id: 'ayu', source_name: 'Ayu', source_names: ['Ayu'], code: '庭玉', name: '庭玉', count_mode: 'rooms' as const, count_cleans: true, color: null, leave_prefix: 'A休' },
-  { id: 'liu', source_name: '劉姐', source_names: ['劉姐'], code: 'LIU', name: '劉姐', count_mode: 'hours' as const, count_cleans: true, color: null, leave_prefix: null },
+  { id: 'una', source_names: ['SHAO-YING HSIEH'], code: 'UNA', name: 'Una', count_mode: 'rooms' as const, count_cleans: true, color: null, leave_prefix: 'U休' },
+  { id: 'ayu', source_names: ['Ayu'], code: '庭玉', name: '庭玉', count_mode: 'rooms' as const, count_cleans: true, color: null, leave_prefix: 'A休' },
+  { id: 'liu', source_names: ['劉姐'], code: 'LIU', name: '劉姐', count_mode: 'hours' as const, count_cleans: true, color: null, leave_prefix: null },
   ...['月(Dianne)', 'Carol芊芊', '唐筑萱', '花花', 'Jessica'].map((n, i) => ({
-    id: 'n' + i, source_name: n, source_names: [n], code: 'N' + i, name: n,
+    id: 'n' + i, source_names: [n], code: 'N' + i, name: n,
     count_mode: 'none' as const, count_cleans: false, color: null, leave_prefix: null,
   })),
 ];
 
 const mk = (code: string, aliases: string[], beds: number | null,
             g: 'kai' | 'ab' | 'zl' | 'other', common = false) =>
-  ({ code, aliases, beds, linen_group: g, is_common: common });
+  ({ code, aliases, beds, linen_group: g, ptype: common ? 'common_area' : 'room' });
 
 /** 房源主檔（對應 migration_58/59 的種子資料） */
 export const PROPS = [
