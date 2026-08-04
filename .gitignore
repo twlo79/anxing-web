@@ -14,3 +14,6 @@ out
 .DS_Store
 Thumbs.db
 *.log
+
+# Supabase CLI 的本機快取(含 project ref、pooler url),不是專案的一部分
+supabase/.temp/

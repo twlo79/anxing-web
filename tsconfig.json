@@ -20,5 +20,8 @@
     "paths": { "@/*": ["./src/*"] }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules"]
+  // archive/ 必須排除:那裡的 route.ts 還 import 著已經搬走的 @/data，
+  // 而 include 是 **/*.ts —— 不排除的話 next build 會直接失敗，
+  // 而且是在伺服器上失敗（程式碼已拉到最新、服務還跑舊版，或整個起不來）。
+  "exclude": ["node_modules", "archive"]
 }

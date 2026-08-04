@@ -9,7 +9,7 @@ Next.js 14 (App Router) + Supabase(Auth + PostgreSQL + RLS)。
 > 給非工程同仁的操作說明請看 **[`docs/會計手冊.md`](docs/會計手冊.md)**;
 > 請款與支出模組的設計決策見 **[`docs/expenses.md`](docs/expenses.md)**。
 
-**動手前先讀兩件事**:文末的〈已知缺口〉第一條(版控缺基準 schema),以及〈角色與權限〉—— 這兩處是踩坑最多的地方。
+**動手前先讀三件事**:〈角色與權限〉、〈Migration 怎麼跑〉、以及文末的〈已知缺口〉—— 這三處是踩坑最多的地方。
 
 ---
 
@@ -52,21 +52,26 @@ src/
     (app)/admin/page.tsx         設定:人員 / 物業 / 房源 / 帳號 / 科目 / 出款帳戶
     api/admin/staff-account/     建立/停權/改密碼/改角色(service role)
     api/push/*                   Web Push 訂閱與發送
-    api/import/*                 外部資料匯入端點
+    api/import/*                 外部資料匯入端點(排程與爬蟲呼叫)
   components/Receipts.tsx        憑證上傳共用元件(壓縮、暫存、簽名網址)
   lib/sortable.tsx               表頭排序共用元件(SortTh / sortRows)
-  data/*.json                    一次性 seed 資料
+  lib/hkParse.ts                 排班解析與計數(**全專案風險最高的邏輯**)
+  lib/hkParse.test.ts            上面那支的測試(`npm test`,32 則)
+  lib/__fixtures__/hk-202607.ts  7 月真實排班資料,測試的黃金基準
 public/
   manifest.webmanifest           PWA
   sw.js                          service worker(推播接收)
   icons/                         maskable icons
-supabase/migrations/             migration_30 ~ 70(見文末索引)
+supabase/migrations/             migration_30 ~ 71(見文末索引)
 supabase/schema-baseline.sql     線上 schema 快照(**參考用,不可執行**)
 supabase/dump-schema.sql         產生上面那份快照的目錄查詢
-src/lib/hkParse.test.ts          排班解析器測試(`npm test`)
+archive/                         已完成任務的東西(見 archive/README.md)
+.gitattributes                   行尾正規化 —— 沒有它 git status 會有 44 個假異動
 deploy.ps1                       一鍵部署:測試 → build → commit → push
 docs/                            會計手冊、模組設計文件
 ```
+
+`src/data/` 的一次性 seed 資料與四支 seed 端點已移到 `archive/seed-2026-07/`。它們沒有防重跑機制,再呼叫一次會產生整批重複訂單 —— 一個只會用一次卻能造成大範圍損害的端點,留在線上是純風險。
 
 `middleware.ts` 有一個容易重蹈的坑:**redirect 時必須把刷新後的 auth cookie 一起帶上**。`NextResponse.redirect()` 會丟掉 `response.cookies` 裡的內容,而 Supabase 的 refresh token 是**一次性**的 —— 一旦刷新後的新 token 沒寫回瀏覽器,舊的那顆也同時失效,症狀是「隔天要重新登入」。
 
@@ -531,14 +536,33 @@ DB 擴充:`pg_trgm`(房號模糊比對)、**`pg_net`**(資料庫直接發 HTTP,�
 | `/api/import/reconcile` | POST | **撤評對帳**:傳入 Airbnb 現存的全部 review id,刪除 DB 有而 Airbnb 沒有的。三道護欄:抓取完整性(`totalCount` 須相符)、比例閘(不足現有 90% 中止)、刪除上限(`maxDelete`,預設 5)。`dryRun` **預設 true** |
 | `/api/import/airbnb-orders` | POST | Airbnb 訂單;`code`→`order_key` 去重,既有列只更新金額/日期,保留人工欄位 |
 | `/api/import/orders` | POST | 通用訂單 upsert(Excel / Make) |
+| `/api/import/reviews/state` | GET / POST | 撤評哨兵的狀態:`dbCount`、最近 300 筆 `recentIds`、`lastFullReconcile`。**取代原本的本機 `sync-state.json`** |
 | `/api/import/cleaning` | POST | 清潔記錄 upsert(`record_key`) |
-| `/api/import/snapshots` | POST | 歷史營收快照,全刪重建 |
-| `/api/import/contracts-seed` | POST | 正隆契約 seed |
-| `/api/import/contracts-general` | POST | 一般契約 seed(longterm/company/office) |
-| `/api/import/shortterm-seed` | POST | 短租訂單 seed(先清空短租類再灌) |
+| `/api/import/housekeeping` | POST | 房務排班文字解析後匯入(與前端共用 `hkParse`) |
 | `/api/admin/staff-account` | POST | `create` / `password` / `role` / `ban` / `delete_account`,呼叫者須為 `super_admin` |
 
-> `seed` 類端點是**破壞性**的(先 delete 再 insert),正式環境請勿隨意呼叫。
+四支 seed 端點(`snapshots` / `contracts-seed` / `contracts-general` / `shortterm-seed`)**已移入 `archive/seed-2026-07/`**。資料 2026-07 就匯完了,而它們沒有防重跑機制 —— 帶著正確的金鑰呼叫第二次會產生一整批重複訂單。要重跑的話請先讀 `archive/README.md`。
+
+---
+
+## 排程與自動化
+
+兩支 Cowork 排程每天跑,程式碼在 `C:\Users\ASUS\Claude\Scheduled\`,金鑰讀專案根目錄的 `.env.sync`(已在 `.gitignore` 內)。
+
+| 排程 | 時間 | 做什麼 |
+|---|---|---|
+| `airbnb-orders-sync` | 每日 06:00 | 抓未來/取消/最近結束三批訂單 → `/api/import/airbnb-orders` |
+| `airbnb-reviews-sync` | 每日 06:30 | 抓最新 50 筆評價 → 匯入 → 翻譯 → 視情況撤評對帳 |
+| `housekeeping-timetree-sync` | 每月 1 號 09:00 | TimeTree 排班 → `/api/import/housekeeping` |
+
+實際觸發時間會有幾分鐘隨機延遲,那是刻意的(避免整點一起打 Airbnb)。
+
+**兩件事情非做不可,否則資料會靜靜地錯:**
+
+* **`locale` 必須是 `zh-TW`。** 用 `en` 時 Airbnb 回的是英文翻譯後的房源名,跟 DB 裡的中文原名對不上,房源對照會整片失效。2026-07-30 就因為這個洗掉了 50 筆評價的房源歸屬。
+* **所有 fetch 都要在 airbnb.com 分頁的 context 裡執行。** Airbnb API 靠同源 cookie 認證,匯入端點的 CORS 也只允許 `https://www.airbnb.com`。
+
+撤評哨兵的狀態**存在 DB 的 `sync_state`,不是本機檔**(`migration_71`)。舊版存在 `sync-backups/sync-state.json`,那個檔只存在於某一台機器上 —— 換路徑之後「找不到 `topReviewId`」天天成立,於是天天多跑一次 30 次請求的全量對帳,而症狀跟「今天真的新增很多評價」完全一樣,不會有人發現。
 
 ---
 
@@ -550,7 +574,9 @@ DB 擴充:`pg_trgm`(房號模糊比對)、**`pg_net`**(資料庫直接發 HTTP,�
 .\deploy.ps1 "commit 訊息"
 ```
 
-依序做:檢查變更 → **本機 `npm run build`** → 失敗就中止 → `git add` 程式與設定(不碰根目錄的個人筆記)→ commit → push → 印出 Actions 連結。
+依序做:檢查變更 → **`npm test`** → **本機 `npm run build`** → 失敗就中止 → `git add` 程式與設定(不碰根目錄的個人筆記)→ **列出這次帶的 migration 並要你確認** → commit → push → 印出 Actions 連結。
+
+測試排在 build 之前,因為它跑幾秒就有結果,沒必要等三分鐘的 build 才發現邏輯錯了。
 
 先在本機 build 過再推是刻意的:CI 在 Vultr 上是 `git reset --hard` → `npm install` → `npm run build` → `pm2 restart`,build 掛掉的話**程式碼已經被拉到最新、但服務還跑舊版**,會停在不一致的狀態。
 
@@ -633,10 +659,13 @@ values ('<user_uuid>', '名字', 'housekeeper');  -- housekeeper | accountant | 
 | 出款日無撤銷路徑 | 填錯只能改日期(會同步支出),無法退回未出款。要補得設計作廢流程,含已產生支出的處理 |
 | 損益未整合 | 收入鏈與支出鏈各自獨立,要看損益得兩邊各自匯出 Excel 再合併 |
 | 評價分項評分缺漏 | `ReviewsSectionQuery` 不回傳分項評分與房東回覆,那 7 欄目前留 null |
+| ~~撤評哨兵綁在單一機器~~ | **已修**(`migration_71`):狀態改存 `sync_state`,排程改打 `GET /api/import/reviews/state`。舊版存在 `sync-backups/sync-state.json`,換路徑後「找不到 topReviewId」天天成立,於是天天多跑一次 30 次請求的全量對帳,而且不會有人發現 |
 | 請款憑證不回補 | 改版前已結案的單不會自動補 `voucher_no` 到支出(`on conflict do nothing`),要人工補 |
 | ~~房務設定按了沒用~~ | **已修**:`count_mode`、`include_gift`、工作類型與房源的計布巾開關都真的接上計算了。過濾規則收在 `hkParse.filterItems()`,由測試釘住 |
 | ~~`hk_audit` 是空表~~ | **已修**(`migration_67`):四張設定主檔的增刪改都會寫,`changes` 只存真的變動的欄位。排班格的日常增刪不記 —— 量差好幾個數量級,而且畫面上看得到 |
 | ~~不知道 migration 跑到哪~~ | **已修**(`migration_70`):`schema_migrations` + `record_migration()`。30~65 是事後回填的推測值(`source = 'assumed'`) |
+| ~~44 個檔案永遠顯示已修改~~ | **已修**:加了 `.gitattributes`(`text=auto eol=lf`)。Windows 編輯器存 CRLF、repo 存 LF,git 把整檔當成改過。危害是 `git add -u` 會把假異動一起 commit,真正改了什麼被埋在裡面,之後 merge 還會在這些檔案上衝突 |
+| ~~全站 503,pm2 重啟 79 次~~ | **已修**:`next.config.mjs` 的 `output: 'standalone'` 與 pm2 跑的 `next start` 不相容。服務起得來(log 顯示 ✓ Ready),一有請求就 `Cannot find module '.next/server/pages/_error.js'` 崩潰重啟。這種錯**不會出現在 build 階段**,只在執行期才炸 —— 本機 `npm run build` 過了不代表線上活得下來 |
 | `hk_property.beds` 有 null | `17B5 / 18B5 / 19B2 / 6B2` 的床數還沒填,布巾統計會少算這幾間。不是程式問題,是主檔沒補完 |
 | 房務沒有月結鎖定 | 改主檔(幾床、計布巾)會**追溯改變已經出過的月報**。`hk_audit` 現在查得到是誰改的,但沒有東西擋住改動本身 |
 
@@ -685,6 +714,7 @@ values ('<user_uuid>', '名字', 'housekeeper');  -- housekeeper | accountant | 
 | 68 | 移除 `hk_property.is_common`,公區只看 `ptype` |
 | 69 | 移除 `hk_staff.source_name`,顯示名只看 `source_names[]` + 重名防呆 |
 | 70 | **`schema_migrations` 執行紀錄** —— 每支結尾要 `select record_migration('編號_名稱')` |
+| 71 | `sync_state`:排程同步狀態改存 DB(原本在本機 json,換機器就失效) |
 
 ---
 

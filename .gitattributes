@@ -1,0 +1,27 @@
+# 行尾正規化
+#
+# 沒有這個檔案的時候，git status 會有 44 個檔案顯示「已修改」，但 diff 出來
+# 每一行的內容完全一樣 —— 差的只是 CRLF 和 LF。Windows 的編輯器存檔會寫 CRLF，
+# repo 裡存的是 LF，git 就把整個檔案當成全部改過。
+#
+# 危害不是難看。deploy.ps1 的 `git add -u` 會把這 44 個檔案一起 commit 進去，
+# 於是每次部署都夾帶一坨假異動，真正改了什麼被埋在裡面看不出來，
+# 而且之後任何 merge 都會在這些檔案上衝突。
+#
+# `text=auto eol=lf`：入庫一律 LF，檢出也是 LF。全員 Windows，不需要 CRLF。
+
+* text=auto eol=lf
+
+# PowerShell 維持 CRLF —— 部分舊版 PowerShell 對 LF 指令碼的處理不一致，
+# 而 deploy.ps1 壞掉的時候人是沒辦法部署的，不值得為了統一冒這個險。
+*.ps1 text eol=crlf
+
+# 二進位檔不要碰
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.ico    binary
+*.woff   binary
+*.woff2  binary
+*.xlsx   binary
+*.pdf    binary

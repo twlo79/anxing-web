@@ -91,8 +91,22 @@ export async function POST(req: Request) {
     }, { status: 409, headers: CORS });
   }
 
-  if (!missing.length)
+  // 對帳日期由本端記錄,不靠呼叫端。
+  // 呼叫端記的話,「跑完但沒回寫」跟「根本沒跑」分不出來 ——
+  // 而這兩者的差別就是明天要不要再跑一次 30 次請求的全量對帳。
+  const markReconciled = async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const { data: st } = await supabase.from('sync_state').select('value').eq('key', 'reviews').maybeSingle();
+    await supabase.rpc('set_sync_state', {
+      p_key: 'reviews',
+      p_value: { ...((st?.value as any) ?? {}), lastFullReconcile: today },
+    });
+  };
+
+  if (!missing.length) {
+    await markReconciled();   // 沒東西要刪也是「對過了」
     return NextResponse.json({ scope, dryRun, dbCount: dbRows.length, fetched: uniqueIds.length, deleted: 0, rows: [] }, { headers: CORS });
+  }
 
   // ── 執行 ────────────────────────────────────────────────────────
   // rows 一律完整回傳,呼叫端負責留存;硬刪除後 DB 內不會再有痕跡。
@@ -103,5 +117,6 @@ export async function POST(req: Request) {
     .in('airbnb_review_id', missing.map((r) => String(r.airbnb_review_id)));
   if (error) return NextResponse.json({ error: error.message, rows: missing }, { status: 500, headers: CORS });
 
+  await markReconciled();
   return NextResponse.json({ scope, dryRun: false, dbCount: dbRows.length, fetched: uniqueIds.length, deleted: missing.length, rows: missing }, { headers: CORS });
 }
