@@ -27,7 +27,9 @@ type Wi = {
 type Day = { period: string; work_date: string; staff_id: string; status: string | null; hours: number | null; rooms_override?: number | null };
 type MP = { period: string; property_code: string; count_override: number | null; linen_taken: number };
 
-const GROUP_LABEL: Record<string, string> = { kai: '房源（開整棟系）', ab: '房源（A、B 系）', zl: '正隆', other: '其他（未列於三表）' };
+// ab 原本叫「A、B 系」,改成棟別「時兆」—— A1~A18 與 B1~B8 全在時兆,
+// 用棟別命名之後加新房號不用改標題（migration_64）
+const GROUP_LABEL: Record<string, string> = { kai: '房源（開整棟系）', ab: '時兆', zl: '正隆', other: '其他（未列於三表）' };
 const GROUPS = ['kai', 'ab', 'zl', 'other'] as const;
 const WORK_TYPES = ['退房清潔', '入住清潔', '換房清潔', '細清', '公區清潔', '贈品補充', '點交', '拆備品', '清潔', '其他工時'];
 const LEAVE_OPTS = ['', '休', '特休', '請假', '颱風假', '報到'];

@@ -38,6 +38,12 @@ const METHOD_LABEL: Record<string, string> = {
 };
 const METHOD_OPTS = ['cash', 'transfer', 'credit_card', 'crypto'];
 
+/** 押金狀態。all 是「不分類」,其餘四類互斥（orphan 除外,它跨類別） */
+type Status = 'all' | 'pending' | 'held' | 'returned' | 'orphan';
+const STATUS_LABEL: Record<Status, string> = {
+  all: '全部', pending: '未收款', held: '已收款(暫收中)', returned: '已退款', orphan: '孤兒',
+};
+
 const fmt = (n: number | null) => (n == null ? '0' : Math.round(n).toLocaleString());
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
@@ -65,7 +71,7 @@ export default function DepositsPage() {
   const [methodF, setMethodF] = useState('');
   const [acctF, setAcctF] = useState('');
   // 分頁籤:一筆押金一定屬於其中一類,不會同時出現在兩個頁籤
-  const [statusF, setStatusF] = useState<'pending' | 'held' | 'returned' | 'orphan'>('held');
+  const [statusF, setStatusF] = useState<Status>('held');
   const [kwInput, setKwInput] = useState('');
   const [kw, setKw] = useState('');
 
@@ -133,9 +139,11 @@ export default function DepositsPage() {
   /** 一筆押金必定落在三類的其中一類,順序不能顛倒:退了就是已退,不管收款日 */
   const bucketOf = (r: Dep) => (r.returned_on ? 'returned' : r.received_on ? 'held' : 'pending');
 
-  const filtered = useMemo(
-    () => base.filter((r) => (statusF === 'orphan' ? r.orphaned : bucketOf(r) === statusF)),
-    [base, statusF]);
+  const filtered = useMemo(() => base.filter((r) => {
+    if (statusF === 'all') return true;
+    if (statusF === 'orphan') return r.orphaned;
+    return bucketOf(r) === statusF;
+  }), [base, statusF]);
 
   const sorted = useMemo(() => sortRows(filtered, sort, COLS), [filtered, sort]);
 
@@ -157,6 +165,12 @@ export default function DepositsPage() {
 
   const fxLine = (cur: Record<string, number>) =>
     Object.entries(cur).filter(([c]) => c !== 'TWD').map(([c, v]) => `${c} ${fmt(v)}`).join('・');
+
+  function clearFilters() {
+    setFromD(''); setToD(''); setEstateF(''); setRoomF('');
+    setMethodF(''); setAcctF(''); setKwInput(''); setKw('');
+    setStatusF('held');   // 狀態也一起回到預設,否則「清除」之後還是看不到全部
+  }
 
   /** 手動押金:不掛在任何訂單/契約下,金額與房源姓名可以直接填 */
   function blankManual(): Dep {
@@ -364,8 +378,8 @@ export default function DepositsPage() {
   const inp = 'rounded-lg border border-gray-300 px-2 py-1.5';
 
   // 未收款的列沒有任何日期,設了區間必然全空。直接說明,不要讓人以為資料不見了。
-  const emptyHint = statusF === 'pending' && (fromD || toD)
-    ? '未收款的押金還沒有收退日期,清除日期區間才看得到。'
+  const emptyHint = (statusF === 'pending' || statusF === 'all') && (fromD || toD)
+    ? '未收款的押金還沒有收退日期,設了日期區間就不會出現。清除日期才看得到。'
     : '這一類目前沒有押金紀錄';
 
   return (
@@ -442,6 +456,18 @@ export default function DepositsPage() {
             <option value="">全部</option>
             {payAccounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
           </select></label>
+        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">押金狀態</span>
+          {/*
+            跟上方的卡片是同一個狀態,點卡片或用這裡都行。
+            卡片沒有「全部」—— 它們是三類的總覽,多一張「全部」卡片只是把三個數字再加一次。
+            要跨類別看就用這個下拉。
+          */}
+          <select value={statusF} onChange={(e) => setStatusF(e.target.value as Status)} className={`${inp} min-w-28`}>
+            {(['all', 'pending', 'held', 'returned'] as Status[]).map((k) => (
+              <option key={k} value={k}>{STATUS_LABEL[k]}</option>
+            ))}
+            {stats.orphan.n > 0 && <option value="orphan">孤兒</option>}
+          </select></label>
         <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">關鍵字(房源/姓名/備註)</span>
           <div className="flex items-center gap-1">
             <input value={kwInput} onChange={(e) => setKwInput(e.target.value)}
@@ -449,10 +475,11 @@ export default function DepositsPage() {
               placeholder="搜尋" className={`${inp} w-28`} />
             <button onClick={() => setKw(kwInput.trim())}
               className="rounded-lg bg-mor-slate text-white px-3 py-1.5 hover:bg-mor-slatedark">搜尋</button>
+            {/* 清除放在搜尋旁邊 —— 清條件跟下條件是同一件事,分在畫面兩端要來回移動滑鼠 */}
+            <button onClick={clearFilters}
+              className="rounded-lg border border-gray-300 px-3 py-1.5">清除</button>
           </div></label>
         <div className="ml-auto flex gap-2">
-          <button onClick={() => { setFromD(''); setToD(''); setEstateF(''); setRoomF(''); setMethodF(''); setAcctF(''); setKwInput(''); setKw(''); }}
-            className="rounded-lg border border-gray-300 px-3 py-1.5">清除</button>
           <button onClick={() => setEdit(blankManual())}
             className="rounded-lg border border-mor-slate text-mor-slate px-3 py-1.5 font-medium hover:bg-mor-sand/60">+ 手動新增</button>
           <button onClick={exportXlsx} disabled={!sorted.length}

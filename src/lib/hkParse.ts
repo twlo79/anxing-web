@@ -112,6 +112,30 @@ export function buildLookup(props: HkProperty[]) {
   return { map, keys };
 }
 
+/**
+ * 「包含」但要是完整的代碼,不能是別的代碼的一截。
+ *
+ * 沒有這道檢查的話,主檔裡沒有的「18B2細清」會命中主檔裡的「B2」,
+ * 於是清掃被靜靜記到 B2 頭上,B2 的床單多算而 18B2 從例外清單消失。
+ * 兩種錯都不會讓程式當掉。
+ *
+ * 邊界的定義:代碼前後不能緊接著英數字。
+ *   18B2 的 B2 → 前面是 '8' → 不算
+ *   A18  的 A1 → 後面是 '8' → 不算
+ *   退-A18-x 的 A18 → 前後都是 '-' → 算
+ *   繼續4B1完成 的 4B1 → 前後是中文 → 算
+ */
+function hasBoundary(title: string, key: string) {
+  const isAlnum = (c: string | undefined) => !!c && /[0-9A-Za-z]/.test(c);
+  let from = 0;
+  for (;;) {
+    const i = title.indexOf(key, from);
+    if (i < 0) return false;
+    if (!isAlnum(title[i - 1]) && !isAlnum(title[i + key.length])) return true;
+    from = i + 1;
+  }
+}
+
 export function matchProperty(title: string, lk: ReturnType<typeof buildLookup>) {
   if (NO_PROPERTY.some((k) => title.includes(k))) return { code: null, unknown: null };
 
@@ -126,7 +150,7 @@ export function matchProperty(title: string, lk: ReturnType<typeof buildLookup>)
     // 單字母代碼(M / V / C)不做包含比對 —— 「Michael」裡有 M,會亂命中。
     // 那幾個只靠下面的切段完全比對。
     if (k.length < 2) continue;
-    if (title.includes(k)) return { code: lk.map.get(k)!, unknown: null };
+    if (hasBoundary(title, k)) return { code: lk.map.get(k)!, unknown: null };
   }
 
   for (const c of cands) {

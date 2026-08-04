@@ -28,7 +28,7 @@ type WType = { code: string; name: string; count_workload: boolean; count_linen:
 type Setting = { key: string; value: string | null; vtype: string; options: string[] | null; description: string | null; sort: number };
 
 const MODE_LABEL: Record<string, string> = { rooms: '計間數', hours: '計時數', none: '不統計' };
-const GROUP_LABEL: Record<string, string> = { kai: '開整棟系', ab: 'A、B 系', zl: '正隆', other: '其他' };
+const GROUP_LABEL: Record<string, string> = { kai: '開整棟系', ab: '時兆', zl: '正隆', other: '其他' };
 const PTYPE_LABEL: Record<string, string> = { room: '房間', building: '整棟', common_area: '公區', other: '其他' };
 
 /** 相對亮度 → 對比度。WCAG AA 要求正文 >= 4.5:1 */

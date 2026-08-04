@@ -294,6 +294,11 @@ export default function PurchasesPage() {
         fx_rate: edit.currency === 'TWD' ? 1 : fxRate,
         // 現金沒有出款帳號，換了付款方式要把舊值清掉，否則會違反 pr_planned_chk。
         // 預定出款日則三種付款方式都有，不受限制。
+        //
+        // payout_account 有三個寫入點：這裡（填單）、savePlan（排付款）、doSetDate（確認出款）。
+        // 三者都只在自己那個階段跑，狀態機保證不會互相蓋掉 ——
+        // 但改動前務必確認這個前提還成立。押金頁就是因為兩處寫入規則不一致，
+        // 「儲存」把退款流程剛填的出款帳號清成 null，看起來像存不進去。
         payout_account: needsPayout ? (edit.payout_account || null) : null,
         planned_transfer_on: edit.planned_transfer_on || null,
         // 互斥,見 pr_voucher_chk

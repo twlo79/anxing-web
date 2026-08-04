@@ -12,6 +12,9 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "jsx": "preserve",
+    // 測試用 node --experimental-strip-types 直接跑 .ts，import 必須帶副檔名。
+    // 這個選項要求 noEmit（上面已設），Next 的 build 不受影響。
+    "allowImportingTsExtensions": true,
     "incremental": true,
     "plugins": [{ "name": "next" }],
     "paths": { "@/*": ["./src/*"] }
