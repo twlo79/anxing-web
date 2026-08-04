@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import * as XLSX from 'xlsx-js-style';
 import { createClient } from '@/lib/supabase';
-import { parseRows, cleanCounts, splitAssignees, staffLookup, type HkStaff, type HkProperty } from '@/lib/hkParse';
+import { parseRows, cleanCounts, filterItems, splitAssignees, staffLookup, type HkStaff, type HkProperty } from '@/lib/hkParse';
 
 /**
  * 房務排班統計。
@@ -112,31 +112,11 @@ export default function HousekeepingPage() {
   const countMode = (settings['count_mode'] === 'headcount' ? 'headcount' : 'clean') as 'clean' | 'headcount';
   const includeGift = settings['include_gift'] !== 'false';
 
-  const wtMap = useMemo(() => Object.fromEntries(wtypes.map((w) => [w.code, w])), [wtypes]);
-  /** 主檔沒有這個類型時預設兩個開關都開 —— 不能因為漏建檔就讓資料靜靜消失 */
-  const wt = useCallback((code: string) => wtMap[code] ?? { count_workload: true, count_linen: true }, [wtMap]);
-
-  /**
-   * 計間數用的工作項。
-   * 「贈品補充」若被設定成不計，或該工作類型的「計間數」被關掉，就不算進個人工作量。
-   */
-  const roomItems = useMemo(() => items.filter((i) => {
-    if (!includeGift && i.work_type === '贈品補充') return false;
-    return wt(i.work_type).count_workload !== false;
-  }), [items, includeGift, wt]);
-
-  /**
-   * 計布巾用的工作項。條件比間數多一層：
-   *   工作類型要計布巾（點交、拆備品、公區清潔預設不計）
-   *   而且該房源本身也要計布巾（hk_property.count_linen）
-   * 兩個都通過才會進入打掃次數 → 床數 → 床單。
-   */
-  const linenItems = useMemo(() => items.filter((i) => {
-    if (!includeGift && i.work_type === '贈品補充') return false;
-    if (wt(i.work_type).count_linen === false) return false;
-    if (i.property_code && propByCode[i.property_code]?.count_linen === false) return false;
-    return true;
-  }), [items, includeGift, wt, propByCode]);
+  // 過濾規則放在 hkParse 而不是這裡 —— 那樣才測得到。
+  // 之前把邏輯散在頁面裡，改一次就得靠肉眼比對數字。
+  const { rooms: roomItems, linen: linenItems } = useMemo(
+    () => filterItems(items, { workTypes: wtypes, properties: props, includeGift }),
+    [items, wtypes, props, includeGift]);
 
   /** 每人每日間數（由房源格推導的自動值） */
   const autoRooms = useMemo(() => {

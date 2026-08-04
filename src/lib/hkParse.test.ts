@@ -1,8 +1,8 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  parseRows, cleanCounts, splitAssignees, buildLookup, matchProperty, staffLookup,
-  type HkStaff, type HkProperty,
+  parseRows, cleanCounts, filterItems, splitAssignees, buildLookup, matchProperty, staffLookup,
+  type HkStaff, type HkProperty, type HkWorkType,
 } from './hkParse.ts';
 import { ROWS_202607, STAFF, PROPS } from './__fixtures__/hk-202607.ts';
 
@@ -154,6 +154,62 @@ describe('打掃次數', () => {
   });
 });
 
+/** migration_59 的 hk_work_type 種子 */
+const WORK_TYPES: HkWorkType[] = [
+  { code: '退房清潔', count_workload: true, count_linen: true },
+  { code: '入住清潔', count_workload: true, count_linen: true },
+  { code: '換房清潔', count_workload: true, count_linen: true },
+  { code: '細清', count_workload: true, count_linen: true },
+  { code: '公區清潔', count_workload: true, count_linen: true },
+  { code: '贈品補充', count_workload: true, count_linen: true },
+  { code: '點交', count_workload: true, count_linen: false },
+  { code: '拆備品', count_workload: true, count_linen: false },
+  { code: '清潔', count_workload: true, count_linen: true },
+  { code: '其他工時', count_workload: true, count_linen: false },
+];
+
+describe('設定過濾（filterItems）', () => {
+  const mk = (work_type: string, property_code: string | null = 'A1') =>
+    ({ work_date: '2026-07-01', property_code, staff_id: 'una', work_type });
+
+  test('主檔沒登記的工作類型視為兩個都開', () => {
+    // 漏建檔不該讓資料靜靜消失 —— 那種錯不會報錯，只會讓月底數字變小
+    const r = filterItems([mk('沒見過的類型')], { workTypes: WORK_TYPES });
+    assert.equal(r.rooms.length, 1);
+    assert.equal(r.linen.length, 1);
+  });
+
+  test('計布巾關掉的類型:算間數但不算床單', () => {
+    const r = filterItems([mk('拆備品'), mk('點交')], { workTypes: WORK_TYPES });
+    assert.equal(r.rooms.length, 2);
+    assert.equal(r.linen.length, 0);
+  });
+
+  test('房源自己關掉計布巾也會被擋', () => {
+    const r = filterItems([mk('退房清潔', '復興')], {
+      workTypes: WORK_TYPES,
+      properties: [{ code: '復興', count_linen: false }],
+    });
+    assert.equal(r.rooms.length, 1);
+    assert.equal(r.linen.length, 0);
+  });
+
+  test('include_gift 關掉時,贈品補充兩邊都不算', () => {
+    const r = filterItems([mk('贈品補充'), mk('退房清潔')],
+      { workTypes: WORK_TYPES, includeGift: false });
+    assert.equal(r.rooms.length, 1);
+    assert.equal(r.linen.length, 1);
+  });
+
+  test('公區清潔要計布巾 —— 解析器不會產生這個類型,', () => {
+    // 公區事件被解析成「清潔」。若這裡設成不計布巾，
+    // 匯入的算、手動改成「公區清潔」的不算，同一件事因來源而異。
+    // 公區的 beds=0，床數本來就是 0，不需要靠這個開關擋。
+    const r = filterItems([mk('公區清潔', '時兆公區')], { workTypes: WORK_TYPES });
+    assert.equal(r.linen.length, 1, '公區清潔不該被排除，否則會跟解析出的「清潔」結果不一致');
+  });
+});
+
 describe('2026-07 全月（對照人工 Excel）', () => {
   const parsed = parseRows(ROWS_202607, staff, props, { includeGift: true });
   const byName = staffLookup(staff);
@@ -161,6 +217,7 @@ describe('2026-07 全月（對照人工 Excel）', () => {
   const rooms: Record<string, number> = {};
   const leaves: Record<string, number> = {};
   const items: { work_date: string; property_code: string | null; staff_id: string }[] = [];
+  const itemsWithType: { work_date: string; property_code: string | null; staff_id: string; work_type: string }[] = [];
   const unknown = new Set<string>();
   let noAssignee = 0;
 
@@ -174,6 +231,7 @@ describe('2026-07 全月（對照人工 Excel）', () => {
       if (s.count_mode === 'rooms') rooms[s.code] = (rooms[s.code] ?? 0) + 1;
       if (s.count_cleans && e.propertyCode) {
         items.push({ work_date: e.date, property_code: e.propertyCode, staff_id: s.id });
+        itemsWithType.push({ work_date: e.date, property_code: e.propertyCode, staff_id: s.id, work_type: e.workType });
       }
     }
   }
@@ -205,6 +263,18 @@ describe('2026-07 全月（對照人工 Excel）', () => {
     assert.equal(counts['開2-1'], 2);   // 曾被誤判成「開2」
     assert.equal(counts['開整棟'], 2);
     assert.equal(counts['台1+2'], 2);
+  });
+
+  test('套用工作類型設定後,只有 9A5 的次數會變', () => {
+    // 7/4「9A5拆備品」的拆備品不計布巾，所以 9A5 從 2 變 1。
+    // 其餘數字必須完全不動 —— 這是接上設定時最容易誤傷的地方。
+    const { linen } = filterItems(itemsWithType, { workTypes: WORK_TYPES, properties: props });
+    const after = cleanCounts(linen);
+    assert.equal(after['9A5'], 1, '拆備品不計布巾');
+    assert.equal(after['時兆公區'], 8);
+    assert.equal(after['4B1'], 3);
+    assert.equal(after['4B5'], 3);
+    assert.equal(after['復興'], 2);
   });
 
   test('劉姐不計間數，但她掃的房間要計次', () => {

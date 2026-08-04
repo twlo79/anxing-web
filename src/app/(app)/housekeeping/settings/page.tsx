@@ -26,10 +26,16 @@ type Prop = {
 };
 type WType = { code: string; name: string; count_workload: boolean; count_linen: boolean; sort: number; active: boolean };
 type Setting = { key: string; value: string | null; vtype: string; options: string[] | null; description: string | null; sort: number };
+/** 設定層的異動紀錄。changes 格式:{欄位: [改前, 改後]} */
+type Audit = { id: number; table_name: string; record_key: string; action: string; changes: any; at: string };
 
 const MODE_LABEL: Record<string, string> = { rooms: '計間數', hours: '計時數', none: '不統計' };
 const GROUP_LABEL: Record<string, string> = { kai: '開整棟系', ab: '時兆', zl: '正隆', other: '其他' };
 const PTYPE_LABEL: Record<string, string> = { room: '房間', building: '整棟', common_area: '公區', other: '其他' };
+const TABLE_LABEL: Record<string, string> = {
+  hk_staff: '人員', hk_property: '房源', hk_work_type: '工作類型', hk_setting: '系統參數',
+};
+const ACTION_LABEL: Record<string, string> = { insert: '新增', update: '修改', delete: '刪除' };
 
 /** 相對亮度 → 對比度。WCAG AA 要求正文 >= 4.5:1 */
 function contrast(bg: string, fg: string) {
@@ -48,11 +54,12 @@ function contrast(bg: string, fg: string) {
 
 export default function HkSettingsPage() {
   const supabase = createClient();
-  const [tab, setTab] = useState<'staff' | 'property' | 'wtype' | 'setting'>('staff');
+  const [tab, setTab] = useState<'staff' | 'property' | 'wtype' | 'setting' | 'audit'>('staff');
   const [staff, setStaff] = useState<Staff[]>([]);
   const [props, setProps] = useState<Prop[]>([]);
   const [wtypes, setWtypes] = useState<WType[]>([]);
   const [settings, setSettings] = useState<Setting[]>([]);
+  const [audits, setAudits] = useState<Audit[]>([]);
   const [msg, setMsg] = useState('');
   const [kw, setKw] = useState('');
   const [showInactive, setShowInactive] = useState(false);
@@ -60,16 +67,18 @@ export default function HkSettingsPage() {
   function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 3000); }
 
   const load = useCallback(async () => {
-    const [s, p, w, st] = await Promise.all([
+    const [s, p, w, st, au] = await Promise.all([
       supabase.from('hk_staff').select('*').order('sort'),
       supabase.from('hk_property').select('*').order('sort'),
       supabase.from('hk_work_type').select('*').order('sort'),
       supabase.from('hk_setting').select('*').order('sort'),
+      supabase.from('hk_audit').select('*').order('at', { ascending: false }).limit(200),
     ]);
     setStaff((s.data ?? []) as Staff[]);
     setProps((p.data ?? []) as Prop[]);
     setWtypes((w.data ?? []) as WType[]);
     setSettings((st.data ?? []) as Setting[]);
+    setAudits((au.data ?? []) as Audit[]);
   }, [supabase]);
   useEffect(() => { load(); }, [load]);
 
@@ -129,7 +138,8 @@ export default function HkSettingsPage() {
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
         <Link href="/housekeeping" className="text-sm text-mor-blue underline mr-2">← 回排班表</Link>
-        {([['staff', '人員'], ['property', '房源'], ['wtype', '工作類型'], ['setting', '系統參數']] as const).map(([k, l]) => (
+        {([['staff', '人員'], ['property', '房源'], ['wtype', '工作類型'],
+           ['setting', '系統參數'], ['audit', '異動紀錄']] as const).map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)}
             className={`px-4 h-10 rounded-lg text-sm font-medium ${tab === k ? 'bg-mor-slate text-white' : 'bg-white border border-mor-line text-gray-600'}`}>
             {l}
@@ -270,6 +280,10 @@ export default function HkSettingsPage() {
           <div className="px-4 py-2 text-xs text-gray-400 border-b border-mor-line/40">
             兩個開關是分開的:<b>計間數</b>影響個人工作量,<b>計布巾</b>影響床單推算。
             例如「贈品補充」算工作量但不一定換床單,可以只關後者。
+            <div className="mt-1">
+              改動立即生效,回排班表重新整理就會看到數字變動。
+              計布巾還要看該房源自己的「計布巾」開關 —— 兩個都開才會進床單。
+            </div>
           </div>
           <table className="w-full text-sm">
             <thead><tr className="border-b border-mor-line/60">
@@ -286,6 +300,62 @@ export default function HkSettingsPage() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* ── 異動紀錄 ───────────────────────────── */}
+      {tab === 'audit' && (
+        <div className="rounded-xl border border-mor-line bg-white overflow-x-auto">
+          <div className="px-4 py-2.5 border-b border-mor-line bg-mor-sand/40 text-sm font-medium">
+            異動紀錄（最近 200 筆）
+          </div>
+          <div className="px-4 py-2 text-xs text-gray-400 border-b border-mor-line/40">
+            只記設定層的改動 —— 那些會<b>追溯影響所有月份</b>的計算（改幾床、改計布巾開關）。
+            排班表上每天的增刪不記在這裡,那些在畫面上本來就看得到（虛線框 = 手動、✎ = 同步後被改過）。
+          </div>
+          {audits.length === 0 ? (
+            <div className="px-4 py-10 text-center text-gray-400 text-sm">
+              還沒有異動紀錄。到其他分頁改一個設定就會出現。
+            </div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead><tr className="border-b border-mor-line/60">
+                <th className={th}>時間</th><th className={th}>主檔</th>
+                <th className={th}>對象</th><th className={th}>動作</th><th className={th}>改了什麼</th>
+              </tr></thead>
+              <tbody>
+                {audits.map((a) => (
+                  <tr key={a.id} className="border-b border-mor-line/40 last:border-0 align-top">
+                    <td className={`${td} whitespace-nowrap text-gray-500 text-xs`}>
+                      {a.at?.slice(0, 16).replace('T', ' ')}
+                    </td>
+                    <td className={`${td} text-xs text-gray-500`}>{TABLE_LABEL[a.table_name] ?? a.table_name}</td>
+                    <td className={`${td} font-medium`}>{a.record_key}</td>
+                    <td className={td}>
+                      <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] ${
+                        a.action === 'insert' ? 'bg-mor-greenlight text-mor-green'
+                        : a.action === 'delete' ? 'bg-red-50 text-red-600'
+                        : 'bg-mor-bluelight text-mor-slate'}`}>
+                        {ACTION_LABEL[a.action] ?? a.action}
+                      </span>
+                    </td>
+                    <td className={`${td} text-xs`}>
+                      {a.action === 'update' && a.changes
+                        ? Object.entries(a.changes as Record<string, any>).map(([k, v]) => (
+                            <div key={k}>
+                              <span className="text-gray-400">{k}</span>{' '}
+                              <span className="text-gray-500">{JSON.stringify(Array.isArray(v) ? v[0] : null)}</span>
+                              {' → '}
+                              <span className="font-medium">{JSON.stringify(Array.isArray(v) ? v[1] : v)}</span>
+                            </div>
+                          ))
+                        : <span className="text-gray-400">整筆{ACTION_LABEL[a.action] ?? a.action}</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
 

@@ -64,7 +64,13 @@ export async function POST(req: Request) {
   if (!staff.length)
     return NextResponse.json({ error: 'hk_staff 是空的，請先執行 migration_58' }, { status: 500, headers: CORS });
 
-  const parsed = parseRows(rows, staff, props, { includeGift: true });
+  // include_gift 是設定,不是常數 —— 端點與畫面必須讀同一份,
+  // 否則排程匯入的結果會跟人工匯入不一樣。
+  const { data: settingRows } = await supabase.from('hk_setting').select('key, value');
+  const settings = Object.fromEntries((settingRows ?? []).map((x: any) => [x.key, x.value]));
+  const includeGift = settings['include_gift'] !== 'false';
+
+  const parsed = parseRows(rows, staff, props, { includeGift });
   const byName = staffLookup(staff);
 
   // 排程跑完要能一眼看出有沒有問題，所以這幾個數字一定要回傳

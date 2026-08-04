@@ -34,6 +34,8 @@ export function staffLookup(staff: HkStaff[]) {
 export type HkProperty = {
   code: string; aliases: string[]; beds: number | null;
   linen_group: 'kai' | 'ab' | 'zl' | 'other'; is_common: boolean;
+  /** 這個房源的清掃要不要進布巾統計。與 beds=0 是兩件事 —— 那是「沒床」,這是「不算」。 */
+  count_linen?: boolean;
 };
 
 export type RawRow = { date: string; title: string; assignees: string };
@@ -158,6 +160,48 @@ export function matchProperty(title: string, lk: ReturnType<typeof buildLookup>)
     if (hit) return { code: hit, unknown: null };
   }
   return { code: null, unknown: cands[1] ?? cands[0] ?? title };
+}
+
+export type HkWorkType = { code: string; count_workload: boolean; count_linen: boolean };
+
+/** 工作項在計算時只需要這幾個欄位 */
+export type CountableItem = {
+  work_date: string; property_code: string | null; staff_id: string; work_type: string;
+};
+
+/**
+ * 依設定過濾工作項。
+ *
+ * 兩條計算鏈的入口條件不同，所以分開算：
+ *   間數（個人工作量）→ 只看工作類型的 count_workload
+ *   布巾（床單推算）  → 工作類型的 count_linen **且** 房源的 count_linen
+ *
+ * 主檔沒有登記的工作類型一律視為兩個都開 —— 漏建檔不該讓資料靜靜消失，
+ * 那種錯不會報錯，只會讓月底的數字小一點。
+ */
+export function filterItems<T extends CountableItem>(
+  items: T[],
+  opts: {
+    workTypes?: HkWorkType[];
+    properties?: Pick<HkProperty, 'code' | 'count_linen'>[];
+    includeGift?: boolean;
+  } = {},
+): { rooms: T[]; linen: T[] } {
+  const wtMap = new Map((opts.workTypes ?? []).map((w) => [w.code, w]));
+  const propMap = new Map((opts.properties ?? []).map((p) => [p.code, p]));
+  const includeGift = opts.includeGift !== false;
+
+  const rooms: T[] = [];
+  const linen: T[] = [];
+  for (const i of items) {
+    if (!includeGift && i.work_type === '贈品補充') continue;
+    const w = wtMap.get(i.work_type);
+    if (w?.count_workload !== false) rooms.push(i);
+    if (w?.count_linen === false) continue;
+    if (i.property_code && propMap.get(i.property_code)?.count_linen === false) continue;
+    linen.push(i);
+  }
+  return { rooms, linen };
 }
 
 /**
