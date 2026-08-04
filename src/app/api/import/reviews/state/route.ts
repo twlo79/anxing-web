@@ -25,7 +25,8 @@ const client = () =>
  * 而症狀跟「一天真的新增超過 50 筆」完全一樣 —— 每天多跑 30 次請求,沒人會發現。
  *
  * 【回傳什麼】
- *   dbCount           DB 現有評價數(受管轄範圍,預設 imported_via='auto')
+ *   dbCount           受對帳管轄的筆數(scope=auto 時只算 imported_via='auto')
+ *   dbCountAll        全部筆數,含早期 CSV 匯入的 —— **要跟 Airbnb 的 totalCount 比的是這個**
  *   recentIds         最近匯入的 300 筆 airbnb_review_id
  *                     呼叫端拿今天抓到的 50 筆跟它比,差集就是今天的新評價,
  *                     不需要「找 topReviewId 在第幾個」那種位置比對 ——
@@ -42,19 +43,34 @@ export async function GET(req: Request) {
 
   const scope = new URL(req.url).searchParams.get('scope') === 'all' ? 'all' : 'auto';
 
+  // 兩個數字都要，而且用途完全不同 —— 混用會讓偵測靜靜失效。
+  //
+  //   dbCount     受對帳管轄的筆數（scope=auto 時只算 imported_via='auto'）
+  //               對帳只刪自動匯入的，所以護欄的比例閘要用這個
+  //   dbCountAll  全部筆數，含早期 CSV 匯入的
+  //               要跟 Airbnb 的 totalCount 比就得用這個
+  //
+  // 第一版只回 dbCount，結果是 55 對上 Airbnb 的 1473 ——
+  // 「totalCount < dbCount + newCount」永遠不成立，評價消失偵測等於不存在。
   let countQ = supabase.from('reviews').select('airbnb_review_id', { count: 'exact', head: true });
   if (scope === 'auto') countQ = countQ.eq('imported_via', 'auto');
   const { count, error: ce } = await countQ;
   if (ce) return NextResponse.json({ error: ce.message }, { status: 500, headers: CORS });
 
+  const { count: countAll, error: cae } = await supabase
+    .from('reviews').select('airbnb_review_id', { count: 'exact', head: true });
+  if (cae) return NextResponse.json({ error: cae.message }, { status: 500, headers: CORS });
+
   // 用 scraped_at 排序而不是 id —— airbnb_review_id 是字串,字典序不等於時間序,
   // 位數一變(19 → 20 碼)排序就會錯,而且錯得很安靜。
-  let recentQ = supabase.from('reviews')
+  // recentIds 刻意**不**依 scope 過濾。
+  // 它的用途是「今天抓到的 50 筆裡，哪幾筆是新的」——
+  // 一筆評價當初是 CSV 還是自動匯入的，跟它今天新不新完全無關。
+  // 篩掉的話舊評價會被誤判成新的，newCount 灌水、連帶觸發不必要的全量對帳。
+  const { data: recent, error: re } = await supabase.from('reviews')
     .select('airbnb_review_id')
     .order('scraped_at', { ascending: false })
     .limit(300);
-  if (scope === 'auto') recentQ = recentQ.eq('imported_via', 'auto');
-  const { data: recent, error: re } = await recentQ;
   if (re) return NextResponse.json({ error: re.message }, { status: 500, headers: CORS });
 
   const { data: st } = await supabase.from('sync_state').select('value').eq('key', 'reviews').maybeSingle();
@@ -62,6 +78,7 @@ export async function GET(req: Request) {
   return NextResponse.json({
     scope,
     dbCount: count ?? 0,
+    dbCountAll: countAll ?? 0,
     recentIds: (recent ?? []).map((r) => String(r.airbnb_review_id)),
     lastFullReconcile: (st?.value as any)?.lastFullReconcile ?? null,
     lastSyncAt: (st?.value as any)?.lastSyncAt ?? null,

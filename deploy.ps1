@@ -66,7 +66,7 @@ foreach ($p in @("src", "supabase", "public", ".github", "docs", "archive")) {
 # 這支腳本自己曾經不在清單裡 —— 於是它從來沒被 commit 過:
 # 改了它、推了程式,腳本本身留在本機,換台機器就沒了,
 # 而且 git status 一直顯示 ?? 也沒人覺得奇怪。
-foreach ($f in @("deploy.ps1", ".gitattributes", ".gitignore", "README.md",
+foreach ($f in @("deploy.ps1", "smoke-test.ps1", ".gitattributes", ".gitignore", "README.md",
                  "package.json", "package-lock.json", "tsconfig.json",
                  "next.config.mjs", "postcss.config.mjs", "tailwind.config.ts")) {
     if (Test-Path $f) { git add $f }
