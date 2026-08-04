@@ -13,15 +13,67 @@ jobs:
           username: ${{ secrets.VULTR_USER }}
           key: ${{ secrets.VULTR_SSH_KEY }}
           script_stop: true
+          command_timeout: 15m
           script: |
+            set -u
             cd /opt/anxing-web
+
             # 用 fetch + reset --hard 而不是 git pull。
             # 原因:npm install 會改寫 package-lock.json,主機上一旦有本機修改,
             # git pull 就會以「本機變更會被覆蓋」為由中止,整個部署卡在第一步。
             # 部署主機不該保留本機修改,直接對齊遠端才是正確語意。
             # .env.local 在 .gitignore 裡,不受 reset --hard 影響。
+
+            # ── 為什麼要先備份 .next ──────────────────────────────
+            # 2026-08-04 有一次 build 失敗，結果不是「部署沒成功」，是「網站掛了」：
+            #   git reset --hard  → 原始碼換成新的
+            #   npm run build     → 失敗，但 .next 已經被寫壞一半
+            #   pm2 restart       → 沒跑到，舊程序繼續跑
+            # 舊程序讀的是那份殘缺的 .next，每個請求都 Cannot find module '_error.js'，
+            # 崩潰 → pm2 重啟 → 再崩潰，累積 79 次，全站 503 好幾個小時。
+            # 而 Actions 上只顯示「部署失敗」，沒有人會聯想到網站已經死了。
+            #
+            # 所以：先留一份能跑的 .next 和目前的 commit，失敗就整組還原。
+            # 部署失敗應該等於「什麼都沒發生」，不該等於「網站掛掉」。
+            PREV_SHA=$(git rev-parse HEAD)
+            rm -rf .next.bak
+            [ -d .next ] && cp -a .next .next.bak
+
+            rollback() {
+              echo "!! 部署失敗，還原到 $PREV_SHA"
+              git reset --hard "$PREV_SHA"
+              rm -rf .next
+              [ -d .next.bak ] && mv .next.bak .next
+              pm2 restart anxing || true
+              exit 1
+            }
+
             git fetch origin main
             git reset --hard origin/main
-            npm install --no-audit --no-fund
-            npm run build || exit 1
+            npm install --no-audit --no-fund || rollback
+            npm run build || rollback
+
             pm2 restart anxing || pm2 start npm --name anxing -- start
+
+            # ── build 成功不等於服務活著 ──────────────────────────
+            # 上面那次事故裡，build 之外的每一個訊號都是綠的：
+            # pm2 顯示 online、log 印著 ✓ Ready in 898ms、CI 也綠。
+            # 所以這裡實際打一次 API，確認它真的回得出 200 才算部署完成。
+            # 給 30 秒，next start 通常一秒內就緒，慢的是第一次的路由編譯。
+            echo "-- 健康檢查 --"
+            OK=0
+            CODE=000
+            for i in $(seq 1 15); do
+              CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:3001/api/health || echo 000)
+              if [ "$CODE" = "200" ]; then OK=1; echo "健康檢查通過（第 ${i} 次嘗試）"; break; fi
+              sleep 2
+            done
+
+            if [ "$OK" != "1" ]; then
+              echo "!! 服務起來了但健康檢查沒過（最後狀態碼 $CODE）"
+              pm2 logs anxing --lines 40 --nostream || true
+              rollback
+            fi
+
+            rm -rf .next.bak
+            echo "部署完成：$(git rev-parse --short HEAD)"
