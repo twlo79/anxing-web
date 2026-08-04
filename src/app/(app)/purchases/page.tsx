@@ -9,6 +9,8 @@ import PushToggle from '../push-toggle';
 type Item = {
   id?: string; request_id?: string; item_name: string; amount: number;
   account_code: string | null; purpose_type: string; estate_id: string | null;
+  /** 選填。用途是物業層級,這欄再細到房間 —— 之後要追單一房源的花費才有依據。 */
+  property_id?: string | null;
   note: string | null; sort: number;
   amount_original?: number | null;   // 原幣別金額。amount 一律是換算後的台幣。
 };
@@ -53,6 +55,7 @@ export default function PurchasesPage() {
   const [rows, setRows] = useState<Req[]>([]);
   const [codes, setCodes] = useState<AccountCode[]>([]);
   const [estates, setEstates] = useState<Estate[]>([]);
+  const [properties, setProperties] = useState<{ id: string; name: string; estate_id: string | null }[]>([]);
   const [payAccounts, setPayAccounts] = useState<PayAccount[]>([]);
   const [people, setPeople] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -97,6 +100,8 @@ export default function PurchasesPage() {
     })();
     supabase.from('account_codes').select('code, name').order('sort').then(({ data }) => setCodes(data ?? []));
     supabase.from('estates').select('id, name').eq('active', true).order('sort').order('name').then(({ data }) => setEstates(data ?? []));
+    // 停用的房源不出現在下拉,但既有項目仍要顯示得出名字,所以不篩 active
+    supabase.from('properties').select('id, name, estate_id').order('name').then(({ data }) => setProperties(data ?? []));
     supabase.from('payment_accounts').select('code, name, method')
       .eq('for_payment', true).eq('active', true).order('sort')
       .then(({ data }) => setPayAccounts(data ?? []));
@@ -236,7 +241,7 @@ export default function PurchasesPage() {
   }, [schedule]);
 
   function blankItem(): Item {
-    return { item_name: '', amount: 0, amount_original: 0, account_code: null, purpose_type: 'estate', estate_id: null, note: null, sort: 0 };
+    return { item_name: '', amount: 0, amount_original: 0, account_code: null, purpose_type: 'estate', estate_id: null, property_id: null, note: null, sort: 0 };
   }
 
   function openNew() {
@@ -337,6 +342,8 @@ export default function PurchasesPage() {
         amount: Math.round((Number(i.amount_original) || 0) * (edit.currency === 'TWD' ? 1 : fxRate)),
         account_code: i.account_code || null, purpose_type: i.purpose_type,
         estate_id: i.purpose_type === 'office' ? null : i.estate_id,
+        // 辦公室沒有房源可言,清成 null;跟支出頁同一套規則
+        property_id: i.purpose_type === 'office' ? null : (i.property_id || null),
         note: i.note || null, sort: idx,
       }));
       const { error: ie } = await supabase.from('purchase_request_items').insert(payload);
@@ -434,7 +441,7 @@ export default function PurchasesPage() {
     const T = (v: any, st: any) => ({ v: v ?? '', t: typeof v === 'number' ? 'n' : 's', s: st, z: typeof v === 'number' ? '#,##0' : undefined });
 
     // 一列一個請款項目,單頭資訊重複帶上 —— 這樣才能在 Excel 裡對科目或房源做樞紐分析。
-    const header = ['單號', '申請人', '狀態', '送出日', '採購日', '項目', '金額', '會計科目', '用途', '支付方式', '收款帳號', '單據總額', '項目備註'];
+    const header = ['單號', '申請人', '狀態', '送出日', '採購日', '項目', '金額', '會計科目', '用途', '房源', '支付方式', '收款帳號', '單據總額', '項目備註'];
     const aoa: any[][] = [header.map((h) => T(h, stHead))];
     for (const r of sorted) {
       const its = (r.purchase_request_items ?? []).slice().sort((a, b) => a.sort - b.sort);
@@ -450,6 +457,7 @@ export default function PurchasesPage() {
           T(Math.round(Number(i?.amount) || 0), stNum),
           T(i?.account_code ? codeName[i.account_code] ?? i.account_code : '', stCell),
           T(i ? (i.purpose_type === 'office' ? '安幸辦公室' : (i.estate_id ? estateName[i.estate_id] ?? '' : '')) : '', stCell),
+          T(i?.property_id ? properties.find((pp) => pp.id === i.property_id)?.name ?? '' : '', stCell),
           T(r.payment_method ? PAY_LABEL[r.payment_method] ?? r.payment_method : '', stCell),
           T(r.payee_account ?? '', stCell),
           T(Math.round(Number(r.total_amount) || 0), stNum),
@@ -912,6 +920,7 @@ export default function PurchasesPage() {
                       <div className="text-xs text-gray-500 mt-0.5">
                         {i.account_code ? codeName[i.account_code] ?? i.account_code : '未分類'}
                         ・{i.purpose_type === 'office' ? '安幸辦公室' : (i.estate_id ? estateName[i.estate_id] ?? '' : '')}
+                        {i.property_id && `／${properties.find((pp) => pp.id === i.property_id)?.name ?? ''}`}
                         {i.note ? `・${i.note}` : ''}
                       </div>
                     </div>
@@ -1020,7 +1029,10 @@ export default function PurchasesPage() {
                             onChange={(e) => {
                               const v = e.target.value;
                               setItems(items.map((x, i) => i === idx
-                                ? (v === 'office' ? { ...x, purpose_type: 'office', estate_id: null } : { ...x, purpose_type: 'estate', estate_id: v || null })
+                                // 換用途時一定要清掉房源 —— 否則會留著上一個物業的房間
+                                ? (v === 'office'
+                                    ? { ...x, purpose_type: 'office', estate_id: null, property_id: null }
+                                    : { ...x, purpose_type: 'estate', estate_id: v || null, property_id: null })
                                 : x));
                             }}
                             className="w-full md:w-auto md:flex-1 h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50">
@@ -1028,6 +1040,17 @@ export default function PurchasesPage() {
                             <option value="office">安幸辦公室</option>
                             {estates.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
                           </select>
+                          {/* 房源選填。跟支出頁同一套:選了物業才出現 ——
+                              沒有物業就篩不出房源清單。 */}
+                          {it.purpose_type === 'estate' && it.estate_id && (
+                            <select disabled={readOnly} value={it.property_id ?? ''}
+                              onChange={(e) => setItems(items.map((x, i) => i === idx ? { ...x, property_id: e.target.value || null } : x))}
+                              className="w-full md:w-auto md:flex-1 h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50">
+                              <option value="">整個物業（房源選填）</option>
+                              {properties.filter((pp) => pp.estate_id === it.estate_id)
+                                .map((pp) => <option key={pp.id} value={pp.id}>{pp.name}</option>)}
+                            </select>
+                          )}
                           <input disabled={readOnly} value={it.note ?? ''} placeholder="備註"
                             onChange={(e) => setItems(items.map((x, i) => i === idx ? { ...x, note: e.target.value } : x))}
                             className="w-full md:w-auto md:flex-1 h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50" />

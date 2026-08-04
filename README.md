@@ -49,7 +49,7 @@ src/
     (app)/expenses/page.tsx      支出(expenses)+ 科目/房源分項統計
     (app)/reviews/page.tsx       Airbnb 評價(reviews)
     (app)/cleaning/page.tsx      清潔記錄(cleaning_records)
-    (app)/admin/page.tsx         設定:人員 / 物業 / 房源 / 帳號 / 科目 / 出款帳戶
+    (app)/admin/page.tsx         權限管理(分頁):人員 / 物業 / 收付款帳號 / 房源 / **編輯紀錄**
     api/admin/staff-account/     建立/停權/改密碼/改角色(service role)
     api/push/*                   Web Push 訂閱與發送
     api/import/*                 外部資料匯入端點(排程與爬蟲呼叫)
@@ -661,6 +661,7 @@ values ('<user_uuid>', '名字', 'housekeeper');  -- housekeeper | accountant | 
 | 出款日無撤銷路徑 | 填錯只能改日期(會同步支出),無法退回未出款。要補得設計作廢流程,含已產生支出的處理 |
 | 損益未整合 | 收入鏈與支出鏈各自獨立,要看損益得兩邊各自匯出 Excel 再合併 |
 | 評價分項評分缺漏 | `ReviewsSectionQuery` 不回傳分項評分與房東回覆,那 7 欄目前留 null |
+| ~~錢的紀錄沒有刪除軌跡~~ | **已修**(`migration_72`):`data_audit` 記下支出、請款單、押金、訂單、契約的增刪改。2026-08-04 有人問「支出之前比較多筆是不是被刪了」,查遍 migration 與 baseline 都排除了,最後只能說「可能有人刪的,但沒紀錄」—— 那次查不出來就是這張表存在的理由 |
 | ~~撤評哨兵綁在單一機器~~ | **已修**(`migration_71`):狀態改存 `sync_state`,排程改打 `GET /api/import/reviews/state`。舊版存在 `sync-backups/sync-state.json`,換路徑後「找不到 topReviewId」天天成立,於是天天多跑一次 30 次請求的全量對帳,而且不會有人發現 |
 | 請款憑證不回補 | 改版前已結案的單不會自動補 `voucher_no` 到支出(`on conflict do nothing`),要人工補 |
 | ~~房務設定按了沒用~~ | **已修**:`count_mode`、`include_gift`、工作類型與房源的計布巾開關都真的接上計算了。過濾規則收在 `hkParse.filterItems()`,由測試釘住 |
@@ -720,6 +721,7 @@ values ('<user_uuid>', '名字', 'housekeeper');  -- housekeeper | accountant | 
 | 69 | 移除 `hk_staff.source_name`,顯示名只看 `source_names[]` + 重名防呆 |
 | 70 | **`schema_migrations` 執行紀錄** —— 每支結尾要 `select record_migration('編號_名稱')` |
 | 71 | `sync_state`:排程同步狀態改存 DB(原本在本機 json,換機器就失效) |
+| 72 | **`data_audit` 編輯紀錄**:支出/請款/押金/訂單/契約的增刪改。刪除與新增存整列,修改只存變動欄位 |
 
 ---
 

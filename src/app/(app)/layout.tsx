@@ -18,7 +18,7 @@ const NAV = [
   { href: '/housekeeping', label: '房務管理', icon: '🛏️', roles: ['manager', 'super_admin'] },
   { href: '/reviews', label: '評價', icon: '⭐', roles: ['housekeeper', 'manager', 'super_admin'] },
   { href: '/cleaning', label: '清潔記錄', icon: '🧹', roles: ['housekeeper', 'manager', 'super_admin'] },
-  { href: '/admin', label: '設定', icon: '⚙️', roles: ['super_admin'] },
+  { href: '/admin', label: '權限管理', icon: '⚙️', roles: ['super_admin'] },
 ];
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {

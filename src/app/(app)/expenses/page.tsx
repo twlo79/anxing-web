@@ -527,7 +527,8 @@ export default function ExpensesPage() {
                   {activeEstates.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
                 </select></label>
 
-              {/* 房源選填:知道是哪一間就填,之後要追單一房間的花費才有依據 */}
+              {/* 房源選填:知道是哪一間就填,之後要追單一房間的花費才有依據。
+                  選了物業才出現 —— 沒有物業就篩不出房源清單。 */}
               {edit.purpose_type === 'estate' && edit.estate_id && (
                 <label className="flex flex-col gap-1">
                   <span className="text-xs text-gray-500">房源（選填）</span>

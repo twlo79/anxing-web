@@ -7,12 +7,33 @@ type Staff = { id: string; name: string; aliases: string[]; staff_type: string; 
 type Estate = { id: string; name: string; manager: string | null; sort: number; active: boolean };
 type Property = { id: string; name: string; estate_id: string | null };
 type Profile = { id: string; name: string | null; role: string; active: boolean };
+/** 編輯紀錄（migration_72）。changes 格式:刪除/新增是整列,修改是 {欄位: [改前, 改後]} */
+type Audit = {
+  id: number; at: string; user_id: string | null; table_name: string;
+  record_id: string | null; label: string | null; action: string; changes: any;
+};
+
 type PayAccount = {
   id: string; method: string; code: string; name: string;
   for_income: boolean; for_payment: boolean; sort: number; active: boolean;
 };
 
 const METHOD_LABEL: Record<string, string> = { transfer: '匯款', credit_card: '信用卡' };
+
+const TAB_LABEL = {
+  people: '權限管理', estates: '物業與負責人', accounts: '收付款帳號',
+  props: '房源管理', audit: '編輯紀錄',
+} as const;
+type TabKey = keyof typeof TAB_LABEL;
+
+/** 編輯紀錄裡的表名要講人話 —— 沒人記得 purchase_request_items 是什麼 */
+const AUDIT_TABLE: Record<string, string> = {
+  expenses: '支出', purchase_requests: '請款單', purchase_request_items: '請款項目',
+  deposits: '押金', orders: '訂單', contracts: '契約',
+};
+const AUDIT_ACTION: Record<string, string> = { insert: '新增', update: '修改', delete: '刪除' };
+/** 這些欄位改了沒有意義,列表上省略,免得蓋掉真正重要的變動 */
+const AUDIT_SKIP = new Set(['updated_at', 'created_at', 'id']);
 
 const TYPE_LABEL: Record<string, string> = { housekeeper: '管家', roomservice: '房務', manager: '經理', accountant: '會計', gm: '總經理', other: '其他' };
 const TYPE_OPTS = ['housekeeper', 'roomservice', 'manager', 'accountant', 'gm', 'other'];
@@ -36,6 +57,9 @@ export default function AdminPage() {
   const [selEstate, setSelEstate] = useState<string>('');
   const [newPropName, setNewPropName] = useState('');
   const [msg, setMsg] = useState('');
+  const [tab, setTab] = useState<TabKey>('people');
+  const [audits, setAudits] = useState<Audit[]>([]);
+  const [auditTable, setAuditTable] = useState('');
   const [acct, setAcct] = useState<{ staffId: string; name: string; mode: 'create' | 'password'; email: string; password: string; role: string } | null>(null);
 
   const load = useCallback(async () => {
@@ -63,6 +87,27 @@ export default function AdminPage() {
   }, [supabase, router, load]);
 
   function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 2500); }
+
+  // ---- 編輯紀錄 ----
+  // 只在切到那個分頁時才載,而且限 300 筆 —— 這張表會一直長,
+  // 每次進設定頁都全載會愈來愈慢。
+  const loadAudit = useCallback(async () => {
+    let q = supabase.from('data_audit').select('*').order('at', { ascending: false }).limit(300);
+    if (auditTable) q = q.eq('table_name', auditTable);
+    const { data, error } = await q;
+    if (error) return flash('編輯紀錄載入失敗:' + error.message);
+    setAudits((data ?? []) as Audit[]);
+  }, [supabase, auditTable]);
+  useEffect(() => { if (tab === 'audit') loadAudit(); }, [tab, loadAudit]);
+
+  // profiles.id 對回姓名。編輯紀錄只存 user_id,不存名字 ——
+  // 存名字的話改名之後歷史紀錄會對不上人。
+  const nameOfUser = useMemo(() => {
+    const m: Record<string, string> = {};
+    staff.forEach((st) => { if (st.auth_uid) m[st.auth_uid] = st.name; });
+    profiles.forEach((pf) => { if (!m[pf.id] && pf.name) m[pf.id] = pf.name; });
+    return m;
+  }, [staff, profiles]);
 
   // ---- 人員 ----
   const activeHousekeepers = useMemo(() => staff.filter((s) => s.active && s.staff_type === 'housekeeper'), [staff]);
@@ -109,6 +154,29 @@ export default function AdminPage() {
     if (s.auth_uid) await callAcct({ action: 'ban', staffId: s.id, ban: s.active });
     else { flash(s.active ? '已設為離職' : '已恢復在職'); load(); }
   }
+  // 刪除登入帳號:人留著,只是不能再登入。
+  // 跟「設為離職」不一樣 —— 離職是封鎖帳號(還原得回來),
+  // 這個是真的把 auth 使用者刪掉,email 可以拿去給別人用。
+  async function deleteAccount(s2: Staff) {
+    if (!s2.auth_uid) return;
+    if (!confirm(
+      `確定刪除「${s2.name}」的登入帳號?\n\n` +
+      `・這個人在名冊上會留著,歷史紀錄不受影響\n` +
+      `・但他從此無法登入,要重新建立帳號才行\n` +
+      `・email（${s2.email ?? '未設定'}）會釋出,可以給別人用\n\n` +
+      `只是暫時停用的話請用「設為離職」,那個還原得回來。`
+    )) return;
+    await callAcct({ action: 'delete_account', staffId: s2.id });
+  }
+
+  // 改姓名。改的是 staff.name,不動登入 email ——
+  // 歷史紀錄靠 id 綁定,改名不會讓過去的資料對不上人。
+  async function renameStaff(s2: Staff) {
+    const name = prompt(`修改姓名（原：${s2.name}）`, s2.name)?.trim();
+    if (!name || name === s2.name) return;
+    await updateStaff(s2.id, { name });
+  }
+
   async function saveAcct() {
     if (!acct) return;
     if (acct.mode === 'create') {
@@ -196,14 +264,24 @@ export default function AdminPage() {
 
   return (
     <div className="max-w-4xl">
-      <div className="flex items-center justify-between mb-5">
-        <h1 className="text-xl font-bold">設定</h1>
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-xl font-bold">權限管理</h1>
         {msg && <span className="text-sm text-mor-green font-medium">{msg}</span>}
       </div>
 
+      <div className="flex flex-wrap gap-1 mb-5 border-b border-mor-line">
+        {(Object.keys(TAB_LABEL) as TabKey[]).map((k) => (
+          <button key={k} onClick={() => setTab(k)}
+            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${
+              tab === k ? 'border-mor-slate text-mor-slate' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            {TAB_LABEL[k]}
+          </button>
+        ))}
+      </div>
+
       {/* ===== 人員管理 ===== */}
+      {tab === 'people' && (
       <section className="mb-8">
-        <h2 className="text-sm font-semibold text-gray-700 mb-2">人員管理</h2>
         <div className="bg-white rounded-xl border border-mor-line overflow-hidden">
           <table className="w-full text-sm">
             <thead>
@@ -219,7 +297,13 @@ export default function AdminPage() {
             <tbody>
               {staff.map((s) => (
                 <tr key={s.id} className={`border-b border-mor-line/60 last:border-0 ${s.active ? '' : 'opacity-50'}`}>
-                  <td className="px-4 py-2 font-medium">{s.name}{s.aliases?.length ? <span className="ml-1 text-xs text-gray-400">({s.aliases.join('/')})</span> : null}</td>
+                  <td className="px-4 py-2 font-medium">
+                    <span className="group inline-flex items-center gap-1.5">
+                      {s.name}{s.aliases?.length ? <span className="text-xs text-gray-400">({s.aliases.join('/')})</span> : null}
+                      <button onClick={() => renameStaff(s)} title="修改姓名"
+                        className="text-xs text-gray-300 hover:text-mor-slate">✎</button>
+                    </span>
+                  </td>
                   <td className="px-4 py-2">
                     <select value={s.staff_type} disabled={!s.active} onChange={(e) => changeStaffType(s, e.target.value)}
                       className="rounded-lg border border-gray-300 px-2 py-1 text-sm disabled:bg-gray-100 disabled:cursor-not-allowed">
@@ -235,6 +319,7 @@ export default function AdminPage() {
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-gray-500">{s.email}</span>
                         <button onClick={() => setAcct({ staffId: s.id, name: s.name, mode: 'password', email: s.email ?? '', password: '', role: s.role ?? 'housekeeper' })} className="text-xs text-mor-slate underline hover:text-mor-blue">改密碼</button>
+                        <button onClick={() => deleteAccount(s)} className="text-xs text-red-500 underline hover:text-red-600">刪除帳號</button>
                       </div>
                     ) : (
                       <button onClick={() => setAcct({ staffId: s.id, name: s.name, mode: 'create', email: `u${s.id.slice(0, 8)}@justwork.estia.com.tw`, password: '', role: s.role ?? 'housekeeper' })} className="text-xs text-mor-blue underline">建立登入</button>
@@ -277,10 +362,11 @@ export default function AdminPage() {
         )}
         <p className="text-xs text-gray-400 mt-2">停用=離職:紀錄保留、可查詢,但從統計列表排除;總數仍計入營運總量。離職會同時停用網站登入(封鎖帳號),恢復在職則解除。權限由職位自動決定,不能單獨改:管家/房務→一般、經理→主管、會計→會計、總經理→super admin。各權限看得到的頁面:總經理=全部含設定;主管=營收/評價/清潔/訂單/請款/支出;會計=營收/請款/支出;一般=清潔/評價/訂單/請款。只有職位「管家」會出現在物業負責人下拉。</p>
       </section>
+      )}
 
       {/* ===== 物業與負責人 ===== */}
+      {tab === 'estates' && (
       <section>
-        <h2 className="text-sm font-semibold text-gray-700 mb-2">物業與負責人</h2>
         <div className="bg-white rounded-xl border border-mor-line overflow-hidden">
           <table className="w-full text-sm">
             <thead>
@@ -326,8 +412,10 @@ export default function AdminPage() {
         </div>
         <p className="text-xs text-gray-400 mt-2">停用物業:不顯示在評價/清潔的評分與篩選、也不需指派(紀錄仍保留)。負責管家換人後,該物業所有評價(含過去)歸現任。排序越小越前。</p>
       </section>
+      )}
 
       {/* ===== 收付款帳號 ===== */}
+      {tab === 'accounts' && (
       <section className="mt-8">
         <h2 className="text-sm font-semibold text-gray-700 mb-2">收付款帳號</h2>
         <div className="bg-white rounded-xl border border-mor-line overflow-hidden">
@@ -395,8 +483,10 @@ export default function AdminPage() {
           <b>代號一旦有交易掛上就不要再改</b> —— 訂單與支出存的是代號,改了舊資料會對不到,要調整標示請改顯示名稱。不再使用的帳號請用「停用」而非刪除。
         </p>
       </section>
+      )}
 
       {/* ===== 房源管理 ===== */}
+      {tab === 'props' && (
       <section className="mt-8">
         <h2 className="text-sm font-semibold text-gray-700 mb-2">房源管理</h2>
         <div className="flex items-center gap-2 mb-2 text-sm">
@@ -439,6 +529,88 @@ export default function AdminPage() {
         </div>
         <p className="text-xs text-gray-400 mt-2">直接點房源名稱即可改名(改完點空白處儲存)。改名不影響已連結的訂單/評價(用 ID 綁定)。</p>
       </section>
+      )}
+
+      {/* ===== 編輯紀錄 ===== */}
+      {tab === 'audit' && (
+      <section>
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <select value={auditTable} onChange={(e) => setAuditTable(e.target.value)}
+            className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm">
+            <option value="">全部資料</option>
+            {Object.entries(AUDIT_TABLE).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+          <button onClick={loadAudit} className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50">重新整理</button>
+          <span className="text-xs text-gray-400">最近 300 筆</span>
+        </div>
+
+        <div className="bg-white rounded-xl border border-mor-line overflow-x-auto">
+          {audits.length === 0 ? (
+            <div className="px-4 py-12 text-center text-sm text-gray-400">
+              目前沒有紀錄。這張表從 migration_72 之後才開始累積,在那之前的改動查不到。
+            </div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/40">
+                  <th className="px-4 py-2.5 whitespace-nowrap">時間</th>
+                  <th className="px-4 py-2.5">操作人</th>
+                  <th className="px-4 py-2.5">資料</th>
+                  <th className="px-4 py-2.5">對象</th>
+                  <th className="px-4 py-2.5">動作</th>
+                  <th className="px-4 py-2.5">改了什麼</th>
+                </tr>
+              </thead>
+              <tbody>
+                {audits.map((a) => (
+                  <tr key={a.id} className="border-b border-mor-line/50 last:border-0 align-top">
+                    <td className="px-4 py-2 whitespace-nowrap text-xs text-gray-500">
+                      {a.at?.slice(0, 16).replace('T', ' ')}
+                    </td>
+                    <td className="px-4 py-2 whitespace-nowrap">
+                      {a.user_id
+                        ? (nameOfUser[a.user_id] ?? <span className="text-xs text-gray-400">已刪除的帳號</span>)
+                        : <span className="text-xs text-gray-400">系統／排程</span>}
+                    </td>
+                    <td className="px-4 py-2 text-xs text-gray-500 whitespace-nowrap">
+                      {AUDIT_TABLE[a.table_name] ?? a.table_name}
+                    </td>
+                    <td className="px-4 py-2 font-medium">{a.label ?? '—'}</td>
+                    <td className="px-4 py-2">
+                      <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] whitespace-nowrap ${
+                        a.action === 'delete' ? 'bg-red-50 text-red-600'
+                        : a.action === 'insert' ? 'bg-mor-greenlight text-mor-green'
+                        : 'bg-mor-bluelight text-mor-slate'}`}>
+                        {AUDIT_ACTION[a.action] ?? a.action}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-xs">
+                      {a.action === 'update' && a.changes
+                        ? Object.entries(a.changes as Record<string, any>)
+                            .filter(([k]) => !AUDIT_SKIP.has(k))
+                            .map(([k, v]) => (
+                              <div key={k} className="whitespace-nowrap">
+                                <span className="text-gray-400">{k}</span>{' '}
+                                <span className="text-gray-500">{JSON.stringify(Array.isArray(v) ? v[0] : null)}</span>
+                                {' → '}
+                                <span className="font-medium">{JSON.stringify(Array.isArray(v) ? v[1] : v)}</span>
+                              </div>
+                            ))
+                        : <span className="text-gray-400">整筆{AUDIT_ACTION[a.action] ?? a.action}</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+        <p className="text-xs text-gray-400 mt-2">
+          記錄支出、請款單、押金、訂單與契約的異動。<b>刪除與新增存整列</b>（刪掉的資料還原得回來），<b>修改只存變動的欄位</b>。
+          自動匯入（Airbnb 每日同步）的新增與修改不記 —— 那不是使用者的行為,全記下來只會把真正要看的淹掉;
+          但<b>刪除一律記</b>,不管是誰做的。契約重產月租單造成的連帶刪除也跳過,那是系統在算不是人在決定。
+        </p>
+      </section>
+      )}
 
       {acct && (
         <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => setAcct(null)}>
