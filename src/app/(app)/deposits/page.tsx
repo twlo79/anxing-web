@@ -256,9 +256,17 @@ export default function DepositsPage() {
     setDetail(null); flash('已完成退款'); load();
   }
 
+  /**
+   * 儲存「收押金」那一段與備註。
+   *
+   * 刻意不碰 returned_* —— 那三欄屬於退款流程,由 submitRefund() 與 settle() 管。
+   * 早期版本這裡也一併寫,結果是:退款申請填好出款帳號後按「儲存」,
+   * 因為 returned_on 還是空的,就把 returned_method / returned_account 清成 null,
+   * 看起來像「存不進去」,實際上是存進去了但把值洗掉。
+   * 一個欄位只該有一個地方負責寫。
+   */
   async function save() {
     if (!edit) return;
-    if (edit.returned_on && !edit.received_on) return flash('還沒收到押金,不能填退款日');
     const manual = !!edit.is_manual;
     if (manual) {
       if (!(Number(edit.amount) > 0)) return flash('請填押金金額');
@@ -270,9 +278,6 @@ export default function DepositsPage() {
       received_method: edit.received_on ? (edit.received_method || null) : null,
       // 現金沒有帳戶可言。換了方式要把舊帳號清掉,否則會留下「現金 + 元大8088」這種組合。
       received_account: edit.received_on && edit.received_method !== 'cash' ? (edit.received_account || null) : null,
-      returned_on: edit.returned_on || null,
-      returned_method: edit.returned_on ? (edit.returned_method || null) : null,
-      returned_account: edit.returned_on && edit.returned_method !== 'cash' ? (edit.returned_account || null) : null,
       note: edit.note || null,
     };
     // 連動列的這幾欄是來源的快照,改了下次同步就被蓋回去,所以只有手動列能改
