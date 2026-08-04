@@ -1,10 +1,15 @@
 # 安幸上工 — 內部管理網站
 
 Next.js 14 (App Router) + Supabase(Auth + PostgreSQL + RLS)。
-短租/長租訂單、收款、營收認列、請款核可、支出、Airbnb 評價與清潔記錄的一站式後台。
+短租/長租訂單、收款、營收認列、請款核可、支出、憑證、Airbnb 評價與清潔記錄的一站式後台。
+可安裝為 PWA,請款核可有推播通知。
+
+正式站:**https://justwork.estia.com.tw**
 
 > 給非工程同仁的操作說明請看 **[`docs/會計手冊.md`](docs/會計手冊.md)**;
 > 請款與支出模組的設計決策見 **[`docs/expenses.md`](docs/expenses.md)**。
+
+**動手前先讀兩件事**:文末的〈已知缺口〉第一條(版控缺基準 schema),以及〈角色與權限〉—— 這兩處是踩坑最多的地方。
 
 ---
 
@@ -23,6 +28,8 @@ npm run dev      # http://localhost:3000
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | 前端 anon key(安全性由 RLS 保護) | ✅ |
 | `SUPABASE_SERVICE_KEY` | 匯入 / 管理 API 用的 service role key | ❌ 僅伺服器 |
 | `IMPORT_KEY` | `/api/import/*` 的共享密鑰(header `x-import-key`) | ❌ |
+| `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | Web Push 公鑰(前端訂閱用) | ✅ |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | Web Push 簽章 | ❌ 僅伺服器 |
 
 ---
 
@@ -42,16 +49,23 @@ src/
     (app)/expenses/page.tsx      支出(expenses)+ 科目/房源分項統計
     (app)/reviews/page.tsx       Airbnb 評價(reviews)
     (app)/cleaning/page.tsx      清潔記錄(cleaning_records)
-    (app)/admin/page.tsx         設定:人員 / 物業 / 房源 / 帳號
+    (app)/admin/page.tsx         設定:人員 / 物業 / 房源 / 帳號 / 科目 / 出款帳戶
     api/admin/staff-account/     建立/停權/改密碼/改角色(service role)
+    api/push/*                   Web Push 訂閱與發送
     api/import/*                 外部資料匯入端點
+  components/Receipts.tsx        憑證上傳共用元件(壓縮、暫存、簽名網址)
   lib/sortable.tsx               表頭排序共用元件(SortTh / sortRows)
   data/*.json                    一次性 seed 資料
-supabase/migrations/
-  migration_30_purchases_expenses.sql
-migration_28_auto_renew.sql      (待整理進 supabase/migrations/)
-migration_29_watch.sql
+public/
+  manifest.webmanifest           PWA
+  sw.js                          service worker(推播接收)
+  icons/                         maskable icons
+supabase/migrations/             migration_30 ~ 55(見文末索引)
+deploy.ps1                       一鍵部署:build → commit → push
+docs/                            會計手冊、模組設計文件
 ```
+
+`middleware.ts` 有一個容易重蹈的坑:**redirect 時必須把刷新後的 auth cookie 一起帶上**。`NextResponse.redirect()` 會丟掉 `response.cookies` 裡的內容,而 Supabase 的 refresh token 是**一次性**的 —— 一旦刷新後的新 token 沒寫回瀏覽器,舊的那顆也同時失效,症狀是「隔天要重新登入」。
 
 ---
 
@@ -65,18 +79,74 @@ create function current_role_of() returns text
   select role from profiles where id = auth.uid() and active $$;
 ```
 
-| 角色 | 選單 | 資料權限重點 |
+### 職位是主軸,權限是衍生的
+
+使用者只會看到「職位」,權限由職位 1:1 推導出來,不能各自設定(`migration_33`)。少了這條規則,同一個人可能出現「職位是房務、權限是總經理」這種對不起來的組合。
+
+| 職位 `staff.staff_type` | → 權限 `profiles.role` | 權限顯示名 |
 |---|---|---|
-| `housekeeper` 管家 | 短租、契約、**請款**、評價、清潔 | 可讀寫 `orders` / `contracts` / `contract_payments`;請款單**只看得到自己送的**;**看不到** `expenses`、`revenue_recognitions`、`revenue_snapshots` |
-| `accountant` 會計 | 短租、契約、營收、**請款**、**支出** | 上述四張表唯讀;`expenses` 可讀寫;請款單可看全部但**不得核可**,可填採購日 |
-| `manager` 主管 | + 營收、請款、支出 | 可寫 `orders`/`reviews`/`cleaning_records`/營收表/`expenses`;請款**投一票** |
-| `super_admin` | + 設定 | 全部,含 `estates`/`properties`/`staff`/`profiles` 的寫入;請款**投一票** |
+| 管家 `housekeeper` | `housekeeper` | 一般 |
+| 房務 `roomservice` | `housekeeper` | 一般 |
+| 經理 `manager` | `manager` | 主管 |
+| 會計 `accountant` | `accountant` | 會計 |
+| 總經理 `gm` | `super_admin` | 總經理 |
+| 其他 `other` | `housekeeper` | 一般 |
+
+改職位會同時更新 `staff.staff_type`、`staff.role` 與 `profiles.role`。資料庫另有保護:**不能把最後一個 `super_admin` 降級**,否則沒人進得了設定頁。
+
+核可流程上的稱呼是「主管核可」與「總經理核可」,對應 `manager` 與 `super_admin` 兩票。
+
+### 各角色能做什麼
+
+| 角色 | 側邊選單 | 資料權限重點 |
+|---|---|---|
+| 一般(管家/房務) | 短租、契約、請款、評價、清潔 | 讀寫 `orders` / `contracts` / `contract_payments`;請款單**只看得到自己送的**;**看不到** `expenses`、`revenue_recognitions`、`revenue_snapshots` |
+| 主管 `manager` | + 營收、支出 | 讀寫 `orders`/`reviews`/`cleaning_records`/`expenses`;請款**投主管那一票**;可排付款與確認出款 |
+| 會計 `accountant` | 短租、契約、營收、請款、支出 | **讀寫** `orders`/`contracts`/`invoices`/`expenses`(見下);請款單看得到全部但**不得核可**;可排付款與確認出款 |
+| 總經理 `super_admin` | + 設定 | 全部,含 `estates`/`properties`/`staff`/`profiles`/`account_codes`/`payment_accounts`;請款**投總經理那一票**;可編輯任何人未核可的請款單 |
 
 所有 public schema 的表都已啟用 RLS。
 
-**`accountant` 是後加的角色**,既有表的 policy 都明列角色名,新角色預設什麼都讀不到。開放方式是**追加一條 `for select` policy**(見 `migration_30` 第 10 節),不改寫既有 policy —— Postgres 的 permissive policy 是 OR 關係,追加不會動到原本的判斷,避免重寫時把既有權限改壞。
+### 會計權限的演進(migration 41 → 44)
 
-**RLS 管不到欄位層級。** 「會計不得核可」「不得核可自己送的單」這兩條無法用 RLS 表達(會計為了填採購日必須能 update 該列),改用 `pr_guard_votes()` 觸發器擋。
+`accountant` 是後加的角色,`migration_30` 只給了 `for select`。實際用起來陸續發現三個做不到的事,現在都已開放:
+
+| 症狀 | 原因 | 修正 |
+|---|---|---|
+| 不能確認收款 | `orders_accountant_read` 只有 SELECT | `migration_41` |
+| 不能開發票 | `invoices_accountant_read` 只有 SELECT | `migration_42` |
+| 不能編輯契約日期 | 同上 + 見下方那個坑 | `migration_43/44` |
+
+⚠️ **`migration_41` 當時加的 `orders_guard_accountant` 觸發器自己造成了新問題**:它用欄位白名單限制會計能改 `orders` 的哪些欄位,但編輯契約會觸發 `gen_contract_orders()` 重產月租單,而那支函式**不是** `SECURITY DEFINER`,它的巢狀 UPDATE 一樣會撞上白名單。結果是「會計改契約日期存不進去,且沒有錯誤訊息」。`migration_44` 移除該觸發器,改為完整 ALL 權限。
+
+`revenue_recognitions` **維持唯讀**,對所有角色皆然 —— 那是 `orders` 的衍生資料,能手改就會跟來源對不起來。要改金額請改 `orders`。
+
+### RLS 管不到的地方
+
+RLS 是列層級的,無法表達「這個角色不能改這一欄」。以下規則改用觸發器實作:
+
+| 規則 | 實作 |
+|---|---|
+| 會計不得核可請款單 | `pr_guard_votes()` 觸發器 |
+| 免核門檻(< NT$3,000 自動核可) | `pr_apply_status()` 觸發器,**前端不自己算** —— 否則改前端就能繞過門檻 |
+| `total_amount` 不接受前端寫入 | `sync_pr_total()` 觸發器由項目重算 |
+| 未核可不能填出款日 | CHECK 約束 `pr_purchase_chk` |
+| 出款帳號只有匯款/信用卡能填 | CHECK 約束 `pr_planned_chk`(`migration_49`) |
+| 憑證號碼與「無憑證」互斥 | CHECK 約束 `pr_voucher_chk` / `exp_voucher_chk`(`migration_52`) |
+
+> 開放新角色的做法是**追加一條 policy**,不改寫既有的 —— Postgres 的 permissive policy 是 OR 關係,追加不會動到原本的判斷,避免重寫時把既有權限改壞。
+
+### 請款單的編輯權限
+
+| 狀態 | 誰能編輯 |
+|---|---|
+| `draft` / `rejected` | 申請人本人、總經理 |
+| `pending` 審核中 | 申請人本人、總經理 —— **存檔會清空既有核可票並重新送審** |
+| `approved` 已核可 | 不能編輯。錢要出去了,改內容等於繞過審核 |
+
+重新送審的實作是把 `status` 先退回 `draft`、清空兩個 `*_approved_at`,寫完項目再送 `pending`。這樣直接重用既有狀態機,而且**免核門檻會依新金額重算** —— 5,000 改成 2,000 會自動核可,不會卡在 pending 等兩張不需要的票。
+
+撤銷(刪除)的條件寫在 RLS:`expense_generated_at is null`。已產生支出的單不能撤 —— 支出是錢真的花掉的紀錄,而 `gen_expenses_from_pr()` 只在出款日「從無到有」時建立支出,單子刪掉後重填也補不回來。
 
 ---
 
@@ -107,6 +177,12 @@ erDiagram
     account_codes ||--o{ expenses               : account_code
     properties    ||--o{ purchase_request_items : property_id
     properties    ||--o{ expenses               : property_id
+    estates       ||--o{ purchase_request_items : estate_id
+    estates       ||--o{ expenses               : estate_id
+    purchase_requests ||--o{ expenses           : request_id
+    purchase_requests ||--o{ attachments        : request_id
+    expenses          ||--o{ attachments        : expense_id
+    profiles          ||--o{ push_subscriptions : user_id
 ```
 
 ### 三層核心關係
@@ -150,9 +226,16 @@ contracts ────────┘
 | `purchase_request_items.request_id` | `purchase_requests.id` | **CASCADE** |
 | `purchase_request_items.property_id` | `properties.id` | NO ACTION |
 | `purchase_request_items.account_code` | `account_codes.code` | NO ACTION |
+| `purchase_request_items.estate_id` | `estates.id` | NO ACTION |
 | `expenses.source_item_id` | `purchase_request_items.id` | **SET NULL**(且 UNIQUE) |
+| `expenses.request_id` | `purchase_requests.id` | **SET NULL** |
+| `expenses.estate_id` | `estates.id` | NO ACTION |
 | `expenses.property_id` | `properties.id` | NO ACTION |
 | `expenses.account_code` | `account_codes.code` | NO ACTION |
+| `attachments.request_id` | `purchase_requests.id` | **CASCADE** |
+| `attachments.expense_id` | `expenses.id` | **CASCADE** |
+| `attachments.uploaded_by` | `profiles.id` | NO ACTION |
+| `push_subscriptions.user_id` | `profiles.id` | **CASCADE** |
 
 > 未建 FK 但邏輯上相關:`orders.contract_id → contracts.id`、`orders.parent_order_id → orders.id`(加費/移房子單)、`orders.move_group`(同一次移房的群組 id)、`profiles.id` 與 `staff.auth_uid` 皆指向 `auth.users.id`。
 
@@ -170,6 +253,9 @@ contracts ────────┘
 | `staff_properties` | (`staff_id`, `property_id`) — 複合主鍵 |
 | `purchase_requests` | `req_no`(`PR-YYYYMM-NNN`,由 `next_req_no()` 產生) |
 | `expenses` | `source_item_id` — **一個請款項目只能產生一筆支出**,這條在 DB 層成立,不靠應用層自律 |
+| `attachments` | `path` — storage 裡的路徑,一個檔案只登記一次 |
+| `push_subscriptions` | `endpoint` |
+| `payment_accounts` | `code` |
 
 ### 查詢索引
 
@@ -220,12 +306,23 @@ contract_id, parent_order_id, move_group, imported_via, created_at`
 | `airbnb` | Airbnb(含 co-host 搭檔收款) | 自動匯入 |
 | `agoda` | Agoda | 匯入 |
 | `private` | 直客短租 | 手動 / 匯入 |
-| `oneoff` | 一次性收入(取消費、加費) | 觸發 / 手動 |
+| `oneoff` | 一次性收入(取消費、加費、**折讓**) | 觸發 / 手動 |
 | `longterm` / `company` / `office` | 長租 / 公司戶 / 辦公室月租 | **由 contracts 觸發器產生** |
 
 `imported_via`:`contract`(觸發器產生,可被覆寫)/ `auto`(爬蟲)/ `excel` / `manual` / `extend`(手動展延)。
 
-`order_key` 命名規則:`LT_{room}_{YYYYMM}` 月租、`CFEE_…` 契約加費、`FEE_…` 訂單加費、`MOVE_…` 移房子單、`OO_/PV_…` 手動一次性/直客。
+`order_key` 命名規則:`LT_{room}_{YYYYMM}` 月租、`CFEE_…` 契約加費、`FEE_…` 訂單加費、`MOVE_…` 移房子單、`CDIS_…` 契約折讓、`OO_/PV_…` 手動一次性/直客。
+
+**契約折讓分兩層**(`migration_48`):
+
+| | 存在哪 | 影響金額 |
+|---|---|---|
+| 折讓**約定** | `contracts.concessions` jsonb,可多筆 | ❌ 純文字備查 |
+| **實際**折讓 | `orders` 的負數 `oneoff` 列(`CDIS_…`,`fee_type='折讓'`) | ✅ 該月營收自動減少 |
+
+實際折讓不直接改月租單的金額,因為 `LT_{room}_{YYYYMM}` 是 `gen_contract_orders()` 產的 —— 只要之後編輯一次契約(改租期、改租金),觸發器就會把未收款的月份重新產生,折讓後的金額會被無聲蓋回原價。獨立一筆負數訂單就不會被動到,而且 `oneoff` 本來就流進 `revenue_recognitions`,營收自動變少,不用另外寫連動。
+
+收租畫面顯示淨額並載明原始金額:`應收 $80,000（原 $100,000 − 折讓 $20,000）`,備註自動寫成算式。同一期折讓第二次時會多帶一段「已折讓 $X」,算式才對得起來。
 
 ### `revenue_recognitions` 營收認列(由觸發器維護,勿手改)
 `id, order_id→orders(CASCADE), ym, period_start, period_end, source, estate_id, property_id,
@@ -233,6 +330,23 @@ estate_name, property_raw, guest_name, checkin, checkout, total_amount, total_ni
 month_nights, month_amount, fee_type, created_at`
 
 一張 `orders` 依住宿區間切成多個月份列,金額按住宿天數比例攤分。營收報表頁直接查這張表。
+
+**攤分方式:捨去 + 尾期補餘額**(`migration_53`)
+
+```
+除了最後一個月 →  trunc(amount × month_nights / total_nights)   無條件捨去到整數
+最後一個月     →  amount − 前面各月的合計                        餘數全給它
+```
+
+10,000 分三期 → 3,333 + 3,333 + **3,334** = 10,000。舊版是每月各自 `round(..., 2)`,結果帳上出現 333.33 這種小數,而且三個月加起來 999.99 對不上 1,000。
+
+「最後一個月」是**時間上最晚**的那個,用 `date_trunc('month', checkout - 1)` 判斷 —— `checkout` 是退房日不算一晚,7/30 進 8/1 出的最後一晚在 7/31,所以尾差記在 7 月不是 8 月。餘數放最後一期而非第一期,是因為最後一期通常還沒結案,調整它不會動到已經對過帳、出過月報的月份。
+
+用 `trunc` 而非 `floor` 是為了負數 —— `floor(-3333.3) = -3334` 會變成「捨去反而變大」。正數兩者相同。
+
+`source='oneoff'` 不跨月,整筆記在 `checkin` 當月。契約折讓就是走這條路的負數訂單。
+
+> 這張表對**所有角色唯讀**。它是 `orders` 的衍生資料,能手改就會跟來源對不起來。改金額請改 `orders`,觸發器會重算。
 
 ### `revenue_snapshots` 歷史營收快照
 `id, ym, source, estate_name, property_raw, guest_name, checkin, checkout,
@@ -264,36 +378,85 @@ property_id→properties, property_raw, estate_name, overall_rating, note, doc_u
 `code(PK), name, sort, active`
 預設 15 個科目(修繕維護、清潔費、備品消耗品…)。所有登入者可讀,只有 `super_admin` 可改。
 
+### `payment_accounts` 出款帳戶主檔(`migration_38`)
+`code(PK), name, method(cash|transfer|credit_card|crypto), card_last4, for_payment, for_receipt, active, sort`
+
+我方的錢從哪裡出、收到哪裡去。依 `method` 分組:匯款可有多個銀行帳號,信用卡可有多張。請款單的出款帳號、支出的付款帳號、短租與契約的入款帳號都從這裡取,不再各自打字。
+
 ### `purchase_requests` 請款單
 `id, req_no*, requester_id→auth.users, status, total_amount,
+currency, fx_rate,
 payment_method, payee_bank_code, payee_account, payee_company, payee_tax_id,
+planned_transfer_on, payout_account, purchased_on,
+voucher_no, no_voucher,
 note, submitted_at, manager_approved_by/_at, admin_approved_by/_at,
-rejected_by/_at, reject_reason, purchased_on, expense_generated_at, created_at`
+rejected_by/_at, reject_reason, expense_generated_at, created_at`
 
 `status`:`draft` → `pending` → `approved` / `rejected`。
 
-**兩票並行,沒有先後**:`manager` 一票、`super_admin` 一票,兩票到齊才進 `approved`。總額 < 3000 送出即核可(兩票全免)。
+**兩票並行,沒有先後**:`manager` 一票、`super_admin` 一票,兩票到齊才進 `approved`。總額 < NT$3,000 送出即核可(兩票全免)。**開放自核** —— 主管送的單那一票由他自己投,不再要求第二人(`migration_32`)。
 
-`payee_*` 存的是**收款方(廠商)**的帳戶資訊,與 `expenses.pay_account`(我方付款帳號)方向相反,兩者不互通。
+**付款分兩段**(`migration_39`,`migration_49` 放寬時機):
 
-`total_amount` 由 `sync_pr_total()` 觸發器維護,**前端勿寫** —— 免核門檻靠它判斷,交給呼叫端等於門檻形同虛設。
+```
+填單(可先填預定出款日/出款帳號) → 核可 → 排付款(會計調整計畫) → 確認出款日 → 產生支出
+                                                              ↑ 錢真的出去才記帳
+```
 
-CHECK 約束 `pr_purchase_chk`:`purchased_on` 只有在 `status='approved'` 時才能有值,**「未核可不能採購」寫在資料庫層**,不是只靠前端藏按鈕。
+- `planned_transfer_on` = 打算哪天付(計畫,可改)。申請人送單時就能填,現金/匯款/信用卡都有。
+- `purchased_on` = 實際哪天付。填了才觸發支出產生,而且這張單就不能再撤銷。
+- `payout_account` = **我方**出款帳號/信用卡,對應 `payment_accounts.code`。信用卡的用詞是「刷卡日/刷卡卡片」,同一組欄位換個說法。
+
+`payee_*` 存的是**收款方(廠商)**的帳戶資訊,與 `payout_account`(我方)方向相反,兩者不互通。
+
+**幣別**(`migration_40`):一張單限定一種幣別,支援 TWD / USD / JPY / CNY / EUR,匯率手動填。`amount_original` 存使用者輸入的原幣金額,`amount` 一律存台幣。換算在存檔時一次做完,資料庫不會有「一半換過一半沒換」的中間狀態。免核門檻看的是**換算後的台幣**。
+
+**憑證**(`migration_52`):`voucher_no` 與 `no_voucher` 互斥,由 CHECK 約束保證。分成兩件事是為了讓「還沒填」和「本來就沒有」在帳上分得出來 —— 只留一個空白欄位的話,會計永遠不知道還要不要追這張發票。
+
+`total_amount` 由 `sync_pr_total()` 觸發器維護,**前端勿寫**。
+
+CHECK 約束 `pr_purchase_chk`:`purchased_on` 只有在 `status='approved'` 時才能有值,**「未核可不能出款」寫在資料庫層**,不是只靠前端藏按鈕。
 
 ### `purchase_request_items` 請款項目
-`id, request_id→purchase_requests(CASCADE), item_name, amount, account_code→account_codes,
-purpose_type(property|office), property_id→properties, note, sort`
+`id, request_id→purchase_requests(CASCADE), item_name, amount, amount_original,
+account_code→account_codes, purpose_type(estate|office),
+estate_id→estates, property_id→properties, note, sort`
 
-一張請款單含多個項目;`purpose_type='office'` 表示安幸辦公室(此時 `property_id` 必須為 null,由 CHECK 約束保證)。
+一張請款單含多個項目。
+
+**用途是物業層級**(`migration_34`)。原本綁在房源上,但多數支出(水電、清潔、耗材)是整棟共用的,逐間房挑一個等於亂記。`purpose_type='office'` 表示安幸辦公室,此時 `estate_id` 與 `property_id` 都必須為 null。房源(`property_id`)是**選填**的細分(`migration_47`),知道是哪一間就填,之後要追單一房間的花費才有依據。
 
 ### `expenses` 支出
-`id, spent_on, item_name, amount, account_code→account_codes,
-purpose_type, property_id→properties, voucher_no, payment_method, pay_account,
-note, source_item_id→purchase_request_items(UNIQUE), created_by, created_at`
+`id, spent_on, item_name, amount, amount_original, currency, fx_rate,
+account_code→account_codes, purpose_type, estate_id→estates, property_id→properties,
+voucher_no, no_voucher, payment_method, pay_account,
+note, source_item_id→purchase_request_items(UNIQUE), request_id→purchase_requests,
+created_by, created_at`
 
 兩種來源:請款連動產生(`source_item_id` 有值)、或直接手動新增(為 null)。
 
-**連動產生的支出只有 `super_admin` 能刪。** 兩票核可是為了管錢,若那筆錢的紀錄一個人就能刪掉,這道關卡等於白設;而且刪除是靜默的 —— 請款單仍顯示已核可、有採購日,支出卻不見了,兩邊對不上而系統不會叫。
+`request_id`(`migration_55`)記錄這筆支出來自哪張請款單。除了追溯來歷,憑證照片也靠它沿用 —— **照片不複製**,一張請款單常拆成好幾筆支出,複製會讓同一張發票在 storage 出現 N 份,某天有人刪掉其中一個,其他還在,對帳時分不出哪張才算數。憑證**號碼**則是真的複製一份,因為同一張發票本來就對應多個項目,對帳靠這個號碼把它們串回去。
+
+**連動產生的支出只有 `super_admin` 能刪。** 兩票核可是為了管錢,若那筆錢的紀錄一個人就能刪掉,這道關卡等於白設;而且刪除是靜默的 —— 請款單仍顯示已核可、有出款日,支出卻不見了,兩邊對不上而系統不會叫。
+
+### `attachments` 憑證附件(`migration_51`)
+`id, request_id→purchase_requests(CASCADE), expense_id→expenses(CASCADE),
+path*, file_name, mime_type, size_bytes, uploaded_by→profiles, created_at`
+
+檔案本體在 Supabase Storage 的 **`receipts`** bucket(私有,10MB 上限),這張表只存路徑與歸屬。CHECK 約束 `att_one_parent` 要求兩個父鍵**恰好一個**有值。
+
+沒有在請款單上加一個 `image_url` 欄位,因為一張單常常有好幾張發票,單一欄位放不下,而且刪檔案要順便清欄位,很容易留下指向不存在檔案的死連結。
+
+路徑約定 `pr/{request_id}/{uuid}.{ext}` 與 `exp/{expense_id}/{uuid}.{ext}` —— **storage 的 RLS policy 直接解析這個路徑判斷權限,格式不能亂改**。權限判斷集中在兩支 `SECURITY DEFINER` 函式:`can_see_receipt(path)` 與 `can_edit_receipt(path)`。
+
+bucket 私有代表看圖要用簽名網址(前端 `createSignedUrls`,1 小時到期)。手機拍的照片會先在瀏覽器壓到長邊 1600px 的 JPEG 再上傳,4MB 通常剩 300KB 左右。填新單時還沒有 id、路徑組不出來,選的檔案會先暫存在瀏覽器,母單建立後才真正上傳。
+
+### `push_subscriptions` 推播訂閱(`migration_35`)
+`id, user_id→profiles, endpoint*, p256dh, auth, user_agent, created_at`
+
+Web Push 的訂閱資料。請款單送審時由資料庫觸發器經 **`pg_net`** 打 `/api/push/notify`,通知有權核可的人(`migration_36`,換網域後 `migration_37`)。用 `pg_net` 而非 Supabase Dashboard 的 Webhook,是因為後者不在版控裡,換網域時會忘記改。
+
+> iOS 的 Web Push 只在**加到主畫面**之後才會運作(16.4+),用 Safari 直接開網站收不到通知。
 
 ---
 
@@ -315,13 +478,23 @@ purchase_request_items ──[trg_sync_pr_total: AFTER I/U/D]──► sync_pr_t
 
 purchase_requests ──[BEFORE UPDATE,依序三支]
    1. trg_pr_status      pr_apply_status()   狀態機:送出判斷免核門檻、兩票到齊翻 approved、駁回清票
-   2. trg_pr_guard_votes pr_guard_votes()    擋:會計投票、核可自己送的單(RLS 管不到欄位層級)
+   2. trg_pr_guard_votes pr_guard_votes()    擋:會計投票(RLS 管不到欄位層級)
    3. trg_gen_expenses   gen_expenses_from_pr()
                           └─ approved 且 purchased_on 由空變有值 → 逐項 insert expenses
-                             採購日變動 → 只同步既有支出的 spent_on,不重複產生
+                             (帶 currency/fx_rate、payout_account、voucher_no/no_voucher、request_id)
+                             出款日變動 → 只同步既有支出的 spent_on,不重複產生
+
+purchase_requests ──[AFTER UPDATE → pending]──► pg_net 打 /api/push/notify
+                                                  └─ 通知有權核可的人(Web Push)
 ```
 
-⚠️ `gen_expenses_from_pr()` **只在採購日「從無到有」時建立支出**。連動產生的支出一旦被刪除,重填採購日也不會補回來 —— 這是刪除限制成 `super_admin` 才能做的原因之一。
+⚠️ `gen_expenses_from_pr()` **只在出款日「從無到有」時建立支出**(`on conflict (source_item_id) do nothing`)。連動產生的支出一旦被刪除,重填出款日也不會補回來 —— 這是刪除限制成 `super_admin` 才能做的原因之一。同理,改版前就結案的單不會回頭補憑證欄位,那些要人工補。
+
+⚠️ **這支函式的線上定義曾經跟 repo 對不起來。** `migration_30` 之後,它被 `migration_34/38/40` 各改過一次但沒有全部進版控,照 repo 的版本 `create or replace` 會把那幾次修改整批回捲。`migration_54/55` 已經把線上定義撈回來納管(`pg_get_functiondef`)。**改這支之前先確認線上定義**:
+
+```sql
+select pg_get_functiondef('public.gen_expenses_from_pr()'::regprocedure);
+```
 
 **重要:刪除或改寫契約時,已收款(`paid=true`)與匯入來源的訂單不會被觸發器動到**,這是保護人工欄位(收款、押金、外幣、移房)的設計。
 
@@ -338,8 +511,9 @@ purchase_requests ──[BEFORE UPDATE,依序三支]
 | `rebuild_contract_orders()` | 全量重建契約月租單 |
 | `current_role_of()` | RLS 用,取目前登入者角色 |
 | `next_req_no()` | 產生下一個請款單號 `PR-YYYYMM-NNN`(台北時區) |
+| `can_see_receipt(path)` / `can_edit_receipt(path)` | 憑證附件的權限判斷,storage policy 與 `attachments` policy 共用 |
 
-DB 擴充:`pg_trgm`(房號模糊比對)。
+DB 擴充:`pg_trgm`(房號模糊比對)、**`pg_net`**(資料庫直接發 HTTP,推播用)。
 
 ---
 
@@ -365,24 +539,52 @@ DB 擴充:`pg_trgm`(房號模糊比對)。
 
 ---
 
-## 部署(Vultr)
+## 部署
 
-```bash
-# Ubuntu 24.04, Node 20+
-npm install && npm run build
-npm i -g pm2 && pm2 start npm --name anxing -- start
-# Nginx 反代 + certbot 上 SSL
+**一鍵部署(建議)** —— 在專案資料夾:
+
+```powershell
+.\deploy.ps1 "commit 訊息"
 ```
 
-> ⚠️ `npm start` 實際監聽 **3001**(`package.json` 的 `next start -p 3001`),但 `DEPLOY.md` 的 Nginx 範例寫 `proxy_pass http://127.0.0.1:3000`。重建主機時要對齊。
+依序做:檢查變更 → **本機 `npm run build`** → 失敗就中止 → `git add` 程式與設定(不碰根目錄的個人筆記)→ commit → push → 印出 Actions 連結。
 
-CI:`.github/workflows/deploy.yml` — push 到 `main` 會 SSH 進 Vultr 執行 `git pull && npm install && npm run build && pm2 restart`,**任何 commit(含只改文件)都會觸發重建與重啟**。詳見 `DEPLOY.md`。
+先在本機 build 過再推是刻意的:CI 在 Vultr 上是 `git reset --hard` → `npm install` → `npm run build` → `pm2 restart`,build 掛掉的話**程式碼已經被拉到最新、但服務還跑舊版**,會停在不一致的狀態。
+
+**主機**:Vultr / Ubuntu 24.04 / Node 20+,`pm2` 常駐,**Caddy(Docker)** 反向代理並自動處理 SSL。
+
+> ⚠️ `npm start` 監聽 **3001**(`package.json` 的 `next start -p 3001`)。`DEPLOY.md` 裡的 Nginx 範例是**過時的** —— 實際跑的是 Caddy,不是 Nginx。
+>
+> ⚠️ Caddyfile 是 Docker 的**單檔 bind mount**,綁的是 inode。用 `sed -i` 改會產生新 inode,結果是主機看到新內容、容器裡還是舊的,而且 `caddy reload` 會說 "config is unchanged"。改完要 `docker restart`,不能只 reload。
+
+**網域**:`justwork.estia.com.tw`(原 `justwork.oasisliving.tw` 已淘汰)。換網域時要一起改的地方:DNS、Caddyfile、Supabase Auth 的 Site URL 與 Redirect URLs、`migration_37` 的推播觸發器、PWA 的 manifest(使用者需重新安裝)。
+
+CI:`.github/workflows/deploy.yml` — push 到 `main` 觸發。用 `git fetch origin main && git reset --hard origin/main` 而非 `git pull`,因為主機上的 `package-lock.json` 會被 `npm install` 改髒而擋住 pull。**任何 commit(含只改文件)都會觸發重建與重啟**。詳見 `DEPLOY.md`。
+
+---
+
+## PWA 與推播
+
+網站可以「加到主畫面」當 App 用:`public/manifest.webmanifest` + service worker + maskable icons,`display: standalone`。
+
+推播用 Web Push(VAPID)。流程:
+
+```
+使用者在網站上授權 → PushManager 訂閱 → 寫入 push_subscriptions
+請款單送出審核 → DB 觸發器經 pg_net → /api/push/notify → web-push 發給有權核可的人
+```
+
+> **iOS 限制**:16.4 以後才支援 Web Push,而且**只有加到主畫面之後才會運作**。用 Safari 直接開網站是收不到通知的。
+
+VAPID 金鑰放在 `.env.local`(`VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY`,前者另需 `NEXT_PUBLIC_` 版本給前端)。
 
 ---
 
 ## 帳號管理
 
-建議走 **設定 → 人員** 頁(`/admin`),由 `/api/admin/staff-account` 一次建立 `auth.users` + `profiles` 並回寫 `staff`。
+建議走 **設定 → 人員** 頁(`/admin`),由 `/api/admin/staff-account` 一次建立 `auth.users` + `profiles` 並回寫 `staff`。**改職位時三個地方會一起更新**:`staff.staff_type`、`staff.role`、`profiles.role`。
+
+設定頁另有兩張主檔可維護:**會計科目**(`account_codes`)與**出款帳戶**(`payment_accounts`),都只有總經理能改。
 
 手動作法:Supabase Dashboard → Authentication → Add user,再到 SQL Editor:
 
@@ -391,7 +593,9 @@ insert into profiles (id, name, role)
 values ('<user_uuid>', '名字', 'housekeeper');  -- housekeeper | accountant | manager | super_admin
 ```
 
-`profiles.role` 有 CHECK 約束 `profiles_role_chk` 限定這四個值。要再加角色得先改約束(見 `migration_30` 第 0 節)。
+`profiles.role` 有 CHECK 約束 `profiles_role_chk` 限定這四個值。`staff.staff_type` 的約束在 `migration_31` 放寬過(加入 `gm`)。
+
+> 由 SQL 直接建立的帳號如果沒有對應的 `staff` 列,設定頁會顯示「孤兒帳號」警示並提供補建。
 
 ---
 
@@ -401,20 +605,60 @@ values ('<user_uuid>', '名字', 'housekeeper');  -- housekeeper | accountant | 
 |---|---|
 | 登入 / 角色選單 | ✅ |
 | 短租訂單與收款(含加費、移房、外幣、押金) | ✅ |
-| 契約訂單與收款(自動產生月租單、展延、關注) | ✅ |
-| 營收報表(月度認列、xlsx 匯出) | ✅ |
+| 契約訂單與收款(自動月租單、展延、關注、**折讓**) | ✅ |
+| 營收報表(月度認列、房源篩選、xlsx 匯出) | ✅ |
 | 短租 xlsx 匯出(伺服器端分頁,匯出重取完整結果) | ✅ |
-| **請款填寫(多項目、兩票並行核可、駁回、採購日)** | ✅ |
-| **支出(科目/房源分項統計、xlsx 匯出、請款連動)** | ✅ |
+| 請款填寫(多項目、幣別、兩票核可、駁回、撤銷) | ✅ |
+| 請款付款兩段流程(排付款 → 確認出款日) | ✅ |
+| 請款核可前可編輯(存檔清票重新送審) | ✅ |
+| **憑證上傳**(請款單 + 支出,自動壓縮,連動沿用) | ✅ |
+| 支出(科目/帳戶/房源分項統計、外幣、xlsx 匯出) | ✅ |
+| 發票開立與待開清單 | ✅ |
 | 評價查詢(篩選、細節抽屜、負評警示、自動翻譯) | ✅ |
 | Airbnb 每日同步(評價+訂單,含撤評對帳) | ✅ 排程 |
-| 清潔記錄(人員統計) | ✅ |
-| 設定(人員/物業/房源/帳號) | ✅ |
+| 清潔記錄(人員統計、分享到 LINE) | ✅ |
+| 設定(人員/物業/房源/帳號/科目/出款帳戶) | ✅ |
+| **PWA 安裝 + 核可推播** | ✅ |
+| 手機版面(全站) | ✅ |
 
 ### 已知缺口
 
 | 項目 | 說明 |
 |---|---|
-| 採購日無撤銷路徑 | 填錯只能改日期(會同步支出),無法退回未採購。要補得設計作廢流程,含已產生支出的處理 |
+| **`supabase/migrations/` 缺基準 schema** | 版控只從 `migration_30` 開始,之前的表結構、policy、函式都只存在於線上資料庫。已經因此踩過至少 4 次「repo 裡沒有但 DB 裡有」的坑(`staff_staff_type_check`、`gen_expenses_from_pr()`、`gen_recognitions()`…)。**動任何既有函式前先 `pg_get_functiondef` 撈線上定義** |
+| 爬蟲不送 `listingId` | 評價被指到錯誤房源的**根因**。4 間開封的 Airbnb 標題完全相同,靠名稱比對必然出錯(全站有 23 個共用名稱)。`migration_45` 已用日曆訂單修正既有資料,匯入端也改成用訂單回查,但來源沒修就還是治標 |
+| 出款日無撤銷路徑 | 填錯只能改日期(會同步支出),無法退回未出款。要補得設計作廢流程,含已產生支出的處理 |
 | 損益未整合 | 收入鏈與支出鏈各自獨立,要看損益得兩邊各自匯出 Excel 再合併 |
 | 評價分項評分缺漏 | `ReviewsSectionQuery` 不回傳分項評分與房東回覆,那 7 欄目前留 null |
+| 請款憑證不回補 | 改版前已結案的單不會自動補 `voucher_no` 到支出(`on conflict do nothing`),要人工補 |
+
+---
+
+## Migration 索引
+
+`supabase/migrations/` 依序執行。**30 之前的沒有進版控**(見上方缺口)。
+
+| # | 主題 |
+|---|---|
+| 30 | 請款單與支出:建表、狀態機、RLS、觸發器 |
+| 31 | `staff` ↔ `profiles` 打通,職位加入 `gm` |
+| 32 | 請款撤銷規則、開放自核 |
+| 33 | **職位為權限的唯一來源**,保護最後一個 `super_admin` |
+| 34 | 用途改為物業層級(`estate_id`) |
+| 35 | `push_subscriptions` |
+| 36 / 37 | 推播觸發器(`pg_net`)/ 換網域後更新 URL |
+| 38 | `payment_accounts` 出款帳戶主檔 |
+| 39 | 預定出款日 + 出款帳號(付款兩段化) |
+| 40 | 幣別與匯率 |
+| 41–44 | 會計權限逐步開放(收款 → 發票 → 契約 → 完整) |
+| 45 | 用日曆訂單修正評價的房源歸屬 |
+| 46 | 會計科目:差旅/交通拆開,加交際費、職工福利 |
+| 47 | 支出的房源改選填 |
+| 48 | 契約折讓(約定 jsonb + 實際走負數 oneoff) |
+| 49 | 預定出款日改成申請時就能填 |
+| 50 | 核可前可編輯請款單 |
+| 51 | 憑證附件:`receipts` bucket + `attachments` + storage policy |
+| 52 | 憑證號碼與「無憑證」註記 |
+| 53 | **跨月營收改捨去 + 尾期補餘額**(含全量重算) |
+| 54 | 憑證號碼帶進支出 |
+| 55 | `expenses.request_id`,憑證照片沿用 |
