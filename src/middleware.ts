@@ -46,11 +46,14 @@ export async function middleware(request: NextRequest) {
 //   api/import  用 x-import-key 驗證
 //   api/push    subscribe 用 Bearer token、notify 用 x-push-key,兩者都不吃 cookie。
 //               漏掉這條的話 Supabase webhook 會被導去 /login,推播永遠不會發出。
+//   api/health  部署腳本在主機上 curl 它,手上不可能有登入 cookie。
+//               漏掉這條的話會拿到 307(導向 /login),CI 判定健康檢查失敗並回滾一次
+//               完全正常的部署 —— 2026-08-04 就這樣白回滾了一次。
 //   manifest / sw.js / icons
 //               瀏覽器抓這些檔案時未必帶 cookie,被導走 PWA 就裝不起來。
 //               sw.js 另外還有 scope 限制,必須從網站根目錄提供。
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|api/import|api/push|manifest.webmanifest|sw.js|icons/|.*\\.(?:svg|png|jpg|ico)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|api/import|api/push|api/health|manifest.webmanifest|sw.js|icons/|.*\\.(?:svg|png|jpg|ico)$).*)',
   ],
 };
