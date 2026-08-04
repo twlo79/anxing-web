@@ -1,8 +1,9 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import * as XLSX from 'xlsx-js-style';
 import { createClient } from '@/lib/supabase';
-import { parseRows, cleanCounts, splitAssignees, type HkStaff, type HkProperty } from '@/lib/hkParse';
+import { parseRows, cleanCounts, splitAssignees, staffLookup, type HkStaff, type HkProperty } from '@/lib/hkParse';
 
 /**
  * 房務排班統計。
@@ -19,12 +20,16 @@ type Ev = {
   assignees: string[]; parsed_code: string | null; work_type: string | null;
   excluded: string | null;
 };
-type Wi = { id: string; period: string; work_date: string; property_code: string | null; work_type: string; staff_id: string };
-type Day = { period: string; work_date: string; staff_id: string; status: string | null; hours: number | null };
+type Wi = {
+  id: string; period: string; work_date: string; property_code: string | null;
+  work_type: string; staff_id: string; source?: string; note?: string | null;
+};
+type Day = { period: string; work_date: string; staff_id: string; status: string | null; hours: number | null; rooms_override?: number | null };
 type MP = { period: string; property_code: string; count_override: number | null; linen_taken: number };
 
 const GROUP_LABEL: Record<string, string> = { kai: '房源（開整棟系）', ab: '房源（A、B 系）', zl: '正隆', other: '其他（未列於三表）' };
 const GROUPS = ['kai', 'ab', 'zl', 'other'] as const;
+const WORK_TYPES = ['退房清潔', '入住清潔', '換房清潔', '細清', '公區清潔', '贈品補充', '點交', '拆備品', '清潔', '其他工時'];
 const LEAVE_OPTS = ['', '休', '特休', '請假', '颱風假', '報到'];
 
 const ymOf = (d: Date) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -38,7 +43,8 @@ const dateStr = (period: string, d: number) =>
 export default function HousekeepingPage() {
   const supabase = createClient();
   const [period, setPeriod] = useState(ymOf(new Date()));
-  const [tab, setTab] = useState<'schedule' | 'linen' | 'exception'>('schedule');
+  // 排班與布巾放在同一頁 —— 改一格房源要能立刻看到布巾跟著動,分頁會讓人來回切
+  const [tab, setTab] = useState<'sheet' | 'exception'>('sheet');
   const [staff, setStaff] = useState<HkStaff[]>([]);
   const [props, setProps] = useState<HkProperty[]>([]);
   const [events, setEvents] = useState<Ev[]>([]);
@@ -50,6 +56,9 @@ export default function HousekeepingPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [raw, setRaw] = useState('');
   const [busy, setBusy] = useState(false);
+  const [undo, setUndo] = useState<{ it: Wi; until: number } | null>(null);
+  /** 正在新增房源格的儲存格 */
+  const [adding, setAdding] = useState<{ date: string; staffId: string; code: string; type: string } | null>(null);
 
   function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 4000); }
 
@@ -80,13 +89,13 @@ export default function HousekeepingPage() {
   useEffect(() => { loadMaster(); }, [loadMaster]);
   useEffect(() => { loadPeriod(); }, [loadPeriod]);
 
-  const staffById = useMemo(() => Object.fromEntries(staff.map((s) => [s.id, s])), [staff]);
+  const staffById = useMemo(() => Object.fromEntries(staff.map((s) => [s.id, s as any])), [staff]);
   const roomStaff = useMemo(() => staff.filter((s) => s.count_mode === 'rooms'), [staff]);
   const hourStaff = useMemo(() => staff.filter((s) => s.count_mode === 'hours'), [staff]);
   const propByCode = useMemo(() => Object.fromEntries(props.map((p) => [p.code, p])), [props]);
 
-  /** 每人每日間數 */
-  const roomCount = useMemo(() => {
+  /** 每人每日間數（由房源格推導的自動值） */
+  const autoRooms = useMemo(() => {
     const m: Record<string, number> = {};
     for (const i of items) m[`${i.work_date}|${i.staff_id}`] = (m[`${i.work_date}|${i.staff_id}`] ?? 0) + 1;
     return m;
@@ -94,6 +103,18 @@ export default function HousekeepingPage() {
 
   const dayMap = useMemo(
     () => Object.fromEntries(days.map((d) => [`${d.work_date}|${d.staff_id}`, d])), [days]);
+
+  /**
+   * 實際採用的間數:手動覆寫優先,否則用自動值。
+   * 兩個數字並存,不互相覆蓋 —— 月底發現數字不對才查得出是哪裡多出來的。
+   */
+  const roomCount = useMemo(() => {
+    const m: Record<string, number> = { ...autoRooms };
+    for (const d of days) {
+      if (d.rooms_override != null) m[`${d.work_date}|${d.staff_id}`] = d.rooms_override;
+    }
+    return m;
+  }, [autoRooms, days]);
 
   /** 打掃次數（自動值）。手動覆寫在 mpMap。 */
   const autoCounts = useMemo(() => cleanCounts(items, 'clean'), [items]);
@@ -108,13 +129,9 @@ export default function HousekeepingPage() {
 
   /** 某日的工作項,依人分組並保持「先 Una 後庭玉」的順序 */
   const itemsOfDay = useCallback((date: string) => {
-    const out: { code: string; type: string; staffId: string }[] = [];
-    for (const s of staff) {
-      for (const i of items) {
-        if (i.work_date === date && i.staff_id === s.id) {
-          out.push({ code: i.property_code ?? i.work_type, type: i.work_type, staffId: s.id });
-        }
-      }
+    const out: Wi[] = [];
+    for (const s of staff) for (const i of items) {
+      if (i.work_date === date && i.staff_id === s.id) out.push(i);
     }
     return out;
   }, [items, staff]);
@@ -130,7 +147,7 @@ export default function HousekeepingPage() {
     const unknownNames = new Set<string>();
     for (const r of rows) {
       for (const n of splitAssignees(r.assignees)) {
-        if (!staff.some((s) => s.source_name === n)) unknownNames.add(n);
+        if (!staffLookup(staff).has(n)) unknownNames.add(n);
       }
     }
     return { rows, parsed, unknownNames: Array.from(unknownNames) };
@@ -147,7 +164,7 @@ export default function HousekeepingPage() {
       await supabase.from('hk_work_item').delete().eq('period', per);
       await supabase.from('hk_event').delete().eq('period', per);
 
-      const byName = new Map(staff.map((s) => [s.source_name, s]));
+      const byName = staffLookup(staff);
       for (const e of parsed) {
         // 入住準備組完全不匯入
         const known = e.assigneeNames.map((n) => byName.get(n)).filter(Boolean) as HkStaff[];
@@ -185,7 +202,58 @@ export default function HousekeepingPage() {
   }
 
   // ── 編輯 ───────────────────────────────────────────
+  /**
+   * 出勤狀態機（附錄 A A0.1）。規則只有兩條:
+   *   有房源就不能設休假 / 設了休假就不能加房源
+   * 所有 UI 行為都由這裡推導,不在各處各寫一份判斷。
+   */
+  function canAddItem(date: string, staffId: string) {
+    return !dayMap[`${date}|${staffId}`]?.status;
+  }
+  function blockLeaveReason(date: string, staffId: string) {
+    const n = roomCount[`${date}|${staffId}`] ?? 0;
+    if (!n) return null;
+    const codes = items.filter((i) => i.work_date === date && i.staff_id === staffId)
+      .map((i) => i.property_code ?? i.work_type);
+    return `當日已有 ${n} 個房源（${codes.join('、')}）,要先移除才能設休假。`;
+  }
+
+  /** 手動新增的工作項。source='manual' —— 下次同步永不刪除它。 */
+  async function addItem(date: string, staffId: string, code: string, type: string) {
+    if (!canAddItem(date, staffId)) return flash('休假日不能新增房源');
+    const row = {
+      period, work_date: date, property_code: code || null,
+      work_type: type, staff_id: staffId, source: 'manual',
+    };
+    const { data, error } = await supabase.from('hk_work_item').insert(row).select('*').single();
+    if (error) return flash('新增失敗:' + error.message);
+    setItems((xs) => [...xs, data as Wi]);
+  }
+
+  async function delItem(it: Wi) {
+    setItems((xs) => xs.filter((x) => x.id !== it.id));
+    const { error } = await supabase.from('hk_work_item').delete().eq('id', it.id);
+    if (error) { flash('刪除失敗:' + error.message); loadPeriod(); return; }
+    // 5 秒內可復原。刪一格不該跳確認彈窗 —— 一天要刪十幾格的話會很煩,
+    // 但誤刪又不能沒救,所以用 undo 而不是 confirm。
+    setUndo({ it, until: Date.now() + 5000 });
+    setTimeout(() => setUndo((u) => (u && u.it.id === it.id ? null : u)), 5000);
+  }
+
+  async function doUndo() {
+    if (!undo) return;
+    const { id, ...rest } = undo.it as any;
+    const { data, error } = await supabase.from('hk_work_item').insert(rest).select('*').single();
+    if (error) return flash('復原失敗:' + error.message);
+    setItems((xs) => [...xs, data as Wi]);
+    setUndo(null);
+  }
+
   async function setDay(date: string, staffId: string, patch: Partial<Day>) {
+    if (patch.status) {
+      const reason = blockLeaveReason(date, staffId);
+      if (reason) return flash(reason);
+    }
     const cur = dayMap[`${date}|${staffId}`];
     const next = { period, work_date: date, staff_id: staffId, status: cur?.status ?? null, hours: cur?.hours ?? null, ...patch };
     setDays((ds) => {
@@ -193,6 +261,13 @@ export default function HousekeepingPage() {
       return [...rest, next as Day];
     });
     await supabase.from('hk_day').upsert(next, { onConflict: 'work_date,staff_id' });
+  }
+
+  /** 幾床是房源主檔的屬性,不是月份的。改了會影響所有月份的重算。 */
+  async function setBeds(code: string, beds: number | null) {
+    setProps((ps) => ps.map((p) => (p.code === code ? { ...p, beds } : p)));
+    const { error } = await supabase.from('hk_property').update({ beds }).eq('code', code);
+    if (error) { flash('儲存失敗:' + error.message); loadMaster(); }
   }
 
   async function setMp(code: string, patch: Partial<MP>) {
@@ -212,7 +287,7 @@ export default function HousekeepingPage() {
         row.push(st ? st : (roomCount[`${d}|${s.id}`] ?? ''));
       }
       for (const s of hourStaff) row.push(dayMap[`${d}|${s.id}`]?.hours ?? '');
-      for (const it of itemsOfDay(d)) row.push(it.type === '贈品補充' ? `${it.code}-贈` : it.code);
+      for (const it of itemsOfDay(d)) row.push(it.work_type === '贈品補充' ? `${it.property_code ?? ''}-贈` : (it.property_code ?? it.work_type));
       return row;
     });
     const sheet = [head, ...body, []];
@@ -268,10 +343,9 @@ export default function HousekeepingPage() {
         <input type="month" value={`${period.slice(0, 4)}-${period.slice(4, 6)}`}
           onChange={(e) => setPeriod(e.target.value.replace('-', ''))}
           className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm" />
-        {tabBtn('schedule', '排班表')}
-        {tabBtn('linen', '布巾統計')}
-        {tabBtn('exception', `例外 ${exceptions.noAssignee.length + exceptions.unknownProp.length + exceptions.noBeds.length}`)}
         <div className="ml-auto flex gap-2">
+          <Link href="/housekeeping/settings"
+            className="rounded-lg border border-mor-line px-3 py-1.5 text-sm text-gray-600 hover:bg-mor-sand/60">⚙ 設定</Link>
           <button onClick={() => setImportOpen(true)}
             className="rounded-lg border border-mor-slate text-mor-slate px-3 py-1.5 text-sm font-medium hover:bg-mor-sand/60">⬆ 匯入排班</button>
           <button onClick={exportXlsx} disabled={!items.length}
@@ -309,8 +383,29 @@ export default function HousekeepingPage() {
         </div>
       </div>
 
+      {/* 分頁放在摘要卡片之後 —— 卡片是整月總覽,不該被分頁切掉 */}
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        {tabBtn('sheet', '排班與布巾')}
+        {tabBtn('exception', `例外 ${exceptions.noAssignee.length + exceptions.unknownProp.length + exceptions.noBeds.length}`)}
+      </div>
+
       {loading ? <div className="text-center text-gray-400 py-16">載入中…</div>
-      : tab === 'schedule' ? (
+      : !items.length && !events.length ? (
+        <div className="rounded-xl border border-dashed border-mor-line bg-white px-6 py-16 text-center">
+          <div className="text-gray-500 text-sm">{period.slice(0, 4)} 年 {Number(period.slice(4, 6))} 月還沒有排班資料</div>
+          <div className="text-xs text-gray-400 mt-2 max-w-md mx-auto leading-relaxed">
+            按右上角「匯入排班」貼上排班紀錄。系統會解析出每個人負責哪些房源,
+            再由房源的清掃次數乘上幾床,推算床單用量。
+          </div>
+          <button onClick={() => setImportOpen(true)}
+            className="mt-4 rounded-lg bg-mor-slate text-white px-5 py-2 text-sm font-medium hover:bg-mor-slatedark">
+            匯入排班
+          </button>
+        </div>
+      ) : tab === 'sheet' ? (
+        // 左排班、右布巾。寬螢幕並排,窄螢幕上下疊 ——
+        // 改一格房源要能立刻看到布巾跟著動,分開兩頁會逼人來回切。
+        <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1fr)_560px] gap-4 items-start">
         <div className="rounded-xl border border-mor-line bg-white overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -330,14 +425,34 @@ export default function HousekeepingPage() {
                     {roomStaff.map((s) => {
                       const st = dayMap[`${d}|${s.id}`]?.status ?? '';
                       const n = roomCount[`${d}|${s.id}`] ?? 0;
+                      const auto = autoRooms[`${d}|${s.id}`] ?? 0;
+                      const ov = dayMap[`${d}|${s.id}`]?.rooms_override;
                       return (
                         <td key={s.id} className="px-3 py-1.5 whitespace-nowrap">
-                          {/* 休假是狀態不是數字 —— 兩者互斥,休假日不該有間數 */}
-                          <select value={st} onChange={(e) => setDay(d, s.id, { status: e.target.value || null })}
-                            className={`${inp} w-20 ${st ? 'bg-amber-50 text-amber-700' : 'text-gray-400'}`}>
-                            {LEAVE_OPTS.map((o) => <option key={o} value={o}>{o || (n ? String(n) : '—')}</option>)}
-                          </select>
-                          {!st && n > 0 && <span className="ml-1 font-medium">{n}</span>}
+                          {/* 休假是狀態不是數字,兩者互斥 */}
+                          <span className="inline-flex items-center gap-1.5">
+                            {st ? (
+                              <span className="inline-block rounded px-1.5 py-0.5 text-xs bg-amber-50 text-amber-700 min-w-10 text-center">{st}</span>
+                            ) : (
+                              /*
+                                可以直接改數字 —— 有些工作不值得為了記數而去建一個房源格。
+                                但改了是「另存」不是「覆蓋」:自動值還在,tooltip 看得到,
+                                清空就還原。直接改掉自動值的話,月底發現不對就查不出多在哪。
+                                注意這只影響間數,不影響布巾 —— 沒有房源就沒有床單可算。
+                              */
+                              <input type="number" min="0" value={n || ''}
+                                onChange={(e) => setDay(d, s.id, {
+                                  rooms_override: e.target.value === '' ? null : Number(e.target.value),
+                                })}
+                                title={ov != null ? `手動覆寫（自動值 ${auto}）,清空可還原` : '由房源格自動計算,可直接改'}
+                                className={`${inp} w-12 text-center font-medium ${ov != null ? 'bg-amber-50 text-amber-700 border-amber-300' : ''}`} />
+                            )}
+                            <select value={st} onChange={(e) => setDay(d, s.id, { status: e.target.value || null })}
+                              title="標記休假"
+                              className={`${inp} w-14 ${st ? 'text-amber-700' : 'text-gray-300'}`}>
+                              {LEAVE_OPTS.map((o) => <option key={o} value={o}>{o || '上班'}</option>)}
+                            </select>
+                          </span>
                         </td>
                       );
                     })}
@@ -348,17 +463,67 @@ export default function HousekeepingPage() {
                           className={`${inp} w-16 text-right`} />
                       </td>
                     ))}
+                    {/*
+                      房源格是唯一真實來源。間數、打掃次數、床單全部由這裡推導,
+                      所以這裡是唯一可以新增/刪除的輸入點。
+                    */}
                     <td className="px-3 py-1.5">
-                      <div className="flex flex-wrap gap-1">
-                        {its.map((it, i) => {
-                          const c = staffById[it.staffId]?.color;
+                      <div className="flex flex-wrap items-center gap-1">
+                        {its.map((it) => {
+                          const s = staffById[it.staff_id];
+                          const manual = it.source === 'manual';
                           return (
-                            <span key={i} className="inline-block rounded px-1.5 py-0.5 text-xs"
-                              style={{ backgroundColor: c ? `#${c}` : '#f3f4f6' }}>
-                              {it.type === '贈品補充' ? `${it.code}-贈` : it.code}
+                            <span key={it.id} className="group inline-flex items-center rounded text-xs pl-1.5 pr-0.5 py-0.5 border-l-4"
+                              style={{
+                                backgroundColor: s?.color ? `#${s.color}` : '#f3f4f6',
+                                color: s?.color_text ? `#${s.color_text}` : undefined,
+                                borderLeftColor: s?.color_bar ? `#${s.color_bar}` : '#d1d5db',
+                                // 虛線外框 = 手動新增,一眼看得出哪些不是同步來的
+                                outline: manual ? '1px dashed #9ca3af' : undefined,
+                                outlineOffset: manual ? '-1px' : undefined,
+                              }}
+                              title={`${s?.name ?? ''}・${it.work_type}${manual ? '・手動新增' : ''}`}>
+                              <span className="opacity-60 mr-0.5">{s?.name}</span>
+                              {it.work_type === '贈品補充' ? `${it.property_code ?? ''}-贈` : (it.property_code ?? it.work_type)}
+                              <button onClick={() => delItem(it)}
+                                className="ml-1 w-4 h-4 rounded-full opacity-0 group-hover:opacity-70 hover:!opacity-100 hover:bg-black/10 leading-none"
+                                aria-label="刪除">×</button>
                             </span>
                           );
                         })}
+
+                        {adding?.date === d ? (
+                          <span className="inline-flex items-center gap-1">
+                            <select value={adding.staffId} onChange={(e) => setAdding({ ...adding, staffId: e.target.value })} className={`${inp} w-20`}>
+                              {staff.filter((s) => s.count_mode !== 'none').map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                            </select>
+                            <input list="hk-props" value={adding.code} autoFocus
+                              onChange={(e) => setAdding({ ...adding, code: e.target.value })}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' && adding.code) {
+                                  addItem(d, adding.staffId, adding.code, adding.type);
+                                  setAdding({ ...adding, code: '' });   // 連續新增:存檔後停在輸入器
+                                }
+                                if (e.key === 'Escape') setAdding(null);
+                              }}
+                              placeholder="房源" className={`${inp} w-24`} />
+                            <select value={adding.type} onChange={(e) => setAdding({ ...adding, type: e.target.value })} className={`${inp} w-24`}>
+                              {WORK_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                            </select>
+                            <button onClick={() => { if (adding.code) { addItem(d, adding.staffId, adding.code, adding.type); setAdding({ ...adding, code: '' }); } }}
+                              className="text-xs text-mor-blue underline">加入</button>
+                            <button onClick={() => setAdding(null)} className="text-xs text-gray-400 underline">完成</button>
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => {
+                              const s = staff.find((x) => x.count_mode === 'rooms' && canAddItem(d, x.id));
+                              if (!s) return flash('當日所有人員都是休假狀態,要先清除休假才能新增房源');
+                              setAdding({ date: d, staffId: s.id, code: '', type: '退房清潔' });
+                            }}
+                            className="w-5 h-5 rounded border border-dashed border-gray-300 text-gray-400 text-xs leading-none hover:border-mor-blue hover:text-mor-blue"
+                            title="新增房源">+</button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -367,8 +532,8 @@ export default function HousekeepingPage() {
             </tbody>
           </table>
         </div>
-      ) : tab === 'linen' ? (
-        <div className="space-y-4">
+
+        <div className="space-y-4 2xl:sticky 2xl:top-4">
           {GROUPS.map((g) => {
             const list = props.filter((p) => p.linen_group === g);
             if (!list.length) return null;
@@ -406,7 +571,14 @@ export default function HousekeepingPage() {
                               className={`${inp} w-14 text-right ${over ? 'bg-amber-50 text-amber-700' : ''}`}
                               title={over ? `自動值 ${auto},已手動覆寫` : '自動計算'} />
                           </td>
-                          <td className="px-3 py-1.5 text-right text-gray-500">{p.beds ?? '—'}</td>
+                          <td className="px-3 py-1.5 text-right">
+                            {/* 幾床是房源主檔的屬性,改了會影響所有月份 —— 但不改就永遠算不出床單 */}
+                            <input type="number" min="0" value={p.beds ?? ''}
+                              onChange={(e) => setBeds(p.code, e.target.value === '' ? null : Number(e.target.value))}
+                              placeholder="—"
+                              title={p.beds == null ? '尚未建檔,填了才算得出床數' : '房源主檔的幾床,改了影響所有月份'}
+                              className={`${inp} w-12 text-right ${p.beds == null ? 'bg-amber-50 border-amber-300' : ''}`} />
+                          </td>
                           <td className="px-3 py-1.5 text-right">{c * beds}</td>
                           <td className="px-3 py-1.5 text-right">
                             <input type="number" min="0" value={lt || ''}
@@ -426,6 +598,7 @@ export default function HousekeepingPage() {
               </div>
             );
           })}
+        </div>
         </div>
       ) : (
         <div className="space-y-4">
@@ -447,6 +620,19 @@ export default function HousekeepingPage() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* 房源自動完成:代碼與別名都能搜 */}
+      <datalist id="hk-props">
+        {props.map((p) => <option key={p.code} value={p.code}>{(p.aliases ?? []).join('・')}</option>)}
+      </datalist>
+
+      {/* 刪除用 undo 不用 confirm —— 一天要刪十幾格的話彈窗會很煩,但誤刪不能沒救 */}
+      {undo && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 rounded-lg bg-gray-900 text-white px-4 py-2.5 text-sm shadow-lg flex items-center gap-3">
+          <span>已刪除 {undo.it.property_code ?? undo.it.work_type}</span>
+          <button onClick={doUndo} className="underline font-medium">復原</button>
         </div>
       )}
 

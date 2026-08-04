@@ -1,0 +1,320 @@
+'use client';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
+import { createClient } from '@/lib/supabase';
+
+/**
+ * 房務設定中心。
+ *
+ * 設計原則:所有規則、對照、名單都是資料,不是程式碼。
+ * 新增人員、新房源、改床數、改工作類型,全部在這裡完成,不需要改版佈署。
+ *
+ * 改設定不改歷史 —— 改幾床只影響「之後重算」的結果,
+ * 已經下載的報表不會回頭變動。
+ */
+
+type Staff = {
+  id: string; source_name: string; source_names: string[]; code: string; name: string;
+  count_mode: 'rooms' | 'hours' | 'none'; count_cleans: boolean;
+  color: string | null; color_text: string | null; color_bar: string | null;
+  leave_prefix: string | null; active: boolean; sort: number;
+};
+type Prop = {
+  id: string; code: string; name: string | null; aliases: string[];
+  beds: number | null; linen_group: string; count_linen: boolean;
+  ptype: string; is_common: boolean; active: boolean; sort: number;
+};
+type WType = { code: string; name: string; count_workload: boolean; count_linen: boolean; sort: number; active: boolean };
+type Setting = { key: string; value: string | null; vtype: string; options: string[] | null; description: string | null; sort: number };
+
+const MODE_LABEL: Record<string, string> = { rooms: '計間數', hours: '計時數', none: '不統計' };
+const GROUP_LABEL: Record<string, string> = { kai: '開整棟系', ab: 'A、B 系', zl: '正隆', other: '其他' };
+const PTYPE_LABEL: Record<string, string> = { room: '房間', building: '整棟', common_area: '公區', other: '其他' };
+
+/** 相對亮度 → 對比度。WCAG AA 要求正文 >= 4.5:1 */
+function contrast(bg: string, fg: string) {
+  const lum = (hex: string) => {
+    const h = hex.replace('#', '');
+    if (h.length !== 6) return 1;
+    const v = [0, 2, 4].map((i) => {
+      const c = parseInt(h.slice(i, i + 2), 16) / 255;
+      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+  };
+  const a = lum(bg), b = lum(fg);
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}
+
+export default function HkSettingsPage() {
+  const supabase = createClient();
+  const [tab, setTab] = useState<'staff' | 'property' | 'wtype' | 'setting'>('staff');
+  const [staff, setStaff] = useState<Staff[]>([]);
+  const [props, setProps] = useState<Prop[]>([]);
+  const [wtypes, setWtypes] = useState<WType[]>([]);
+  const [settings, setSettings] = useState<Setting[]>([]);
+  const [msg, setMsg] = useState('');
+  const [kw, setKw] = useState('');
+  const [showInactive, setShowInactive] = useState(false);
+
+  function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 3000); }
+
+  const load = useCallback(async () => {
+    const [s, p, w, st] = await Promise.all([
+      supabase.from('hk_staff').select('*').order('sort'),
+      supabase.from('hk_property').select('*').order('sort'),
+      supabase.from('hk_work_type').select('*').order('sort'),
+      supabase.from('hk_setting').select('*').order('sort'),
+    ]);
+    setStaff((s.data ?? []) as Staff[]);
+    setProps((p.data ?? []) as Prop[]);
+    setWtypes((w.data ?? []) as WType[]);
+    setSettings((st.data ?? []) as Setting[]);
+  }, [supabase]);
+  useEffect(() => { load(); }, [load]);
+
+  /** 樂觀更新:畫面先動,失敗才回滾。設定頁的每個欄位都是即時存檔,沒有儲存按鈕。 */
+  async function patch<T extends { [k: string]: any }>(
+    table: string, keyCol: string, keyVal: string, p: Partial<T>,
+    setter: React.Dispatch<React.SetStateAction<T[]>>,
+  ) {
+    setter((rows) => rows.map((r) => (r[keyCol] === keyVal ? { ...r, ...p } : r)));
+    // as any:supabase-js 的 update() 帶 RejectExcessProperties 約束,
+    // 對上這裡的泛型 Partial<T> 推不出來。這幾張表沒有產生型別定義,
+    // 型別安全本來就落在呼叫端。
+    const { error } = await supabase.from(table).update(p as any).eq(keyCol, keyVal);
+    if (error) { flash('儲存失敗:' + error.message); load(); }
+  }
+
+  const inp = 'rounded border border-gray-300 px-2 py-1 text-sm';
+  const th = 'px-3 py-2 text-left text-xs text-gray-500 font-medium';
+  const td = 'px-3 py-1.5';
+
+  const filteredProps = useMemo(() => props.filter((p) => {
+    if (!showInactive && !p.active) return false;
+    if (!kw) return true;
+    const hay = `${p.code} ${p.name ?? ''} ${(p.aliases ?? []).join(' ')}`.toLowerCase();
+    return hay.includes(kw.toLowerCase());
+  }), [props, kw, showInactive]);
+
+  // ── 新增 ───────────────────────────────────────────
+  async function addStaff() {
+    const name = prompt('顯示名（例:小美）'); if (!name) return;
+    const code = prompt('系統代號（例:MEI）', name); if (!code) return;
+    const src = prompt('排班表上的顯示名（要跟排班系統上一模一樣）', name); if (!src) return;
+    const { error } = await supabase.from('hk_staff').insert({
+      source_name: src, source_names: [src], code, name,
+      count_mode: 'rooms', count_cleans: true,
+      color: 'E7E6E6', color_text: '3F3F3F', color_bar: 'A6A6A6',
+      sort: (staff.at(-1)?.sort ?? 0) + 1,
+    });
+    if (error) return flash('新增失敗:' + error.message);
+    flash('已新增,記得設定顏色與計法'); load();
+  }
+
+  async function addProp() {
+    const code = prompt('房源代碼（例:20B1）'); if (!code) return;
+    const beds = prompt('幾床（公區填 0）', '1');
+    const { error } = await supabase.from('hk_property').insert({
+      code, beds: beds === '' || beds == null ? null : Number(beds),
+      linen_group: 'other', sort: 500,
+    });
+    if (error) return flash('新增失敗:' + error.message);
+    flash('已新增,記得指定布巾表'); load();
+  }
+
+  return (
+    <div>
+      {msg && <div className="mb-3 rounded-lg bg-mor-greenlight text-mor-green px-3 py-2 text-sm">{msg}</div>}
+
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        <Link href="/housekeeping" className="text-sm text-mor-blue underline mr-2">← 回排班表</Link>
+        {([['staff', '人員'], ['property', '房源'], ['wtype', '工作類型'], ['setting', '系統參數']] as const).map(([k, l]) => (
+          <button key={k} onClick={() => setTab(k)}
+            className={`px-4 h-10 rounded-lg text-sm font-medium ${tab === k ? 'bg-mor-slate text-white' : 'bg-white border border-mor-line text-gray-600'}`}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {/* ── 人員 ───────────────────────────────── */}
+      {tab === 'staff' && (
+        <div className="rounded-xl border border-mor-line bg-white overflow-x-auto">
+          <div className="px-4 py-2.5 border-b border-mor-line bg-mor-sand/40 flex items-center justify-between">
+            <span className="text-sm font-medium">人員主檔</span>
+            <button onClick={addStaff} className="text-xs text-mor-blue underline">+ 新增人員</button>
+          </div>
+          <div className="px-4 py-2 text-xs text-gray-400 border-b border-mor-line/40">
+            <b>計間數</b> = 出現在排班表的間數欄（Una、庭玉）・
+            <b>計時數</b> = 只填時數,不算間數（劉姐）・
+            <b>不統計</b> = 事件不匯入（入住準備組）。
+            「計打掃次數」獨立於上面三者 —— 劉姐不算間數,但她掃的房間床單確實被換掉了,不算會少領。
+          </div>
+          <table className="w-full text-sm">
+            <thead><tr className="border-b border-mor-line/60">
+              <th className={th}>顯示名</th><th className={th}>代號</th>
+              <th className={th}>排班表上的名稱</th><th className={th}>計法</th>
+              <th className={th}>計打掃次數</th><th className={th}>休假前綴</th>
+              <th className={th}>顏色</th><th className={th}>啟用</th>
+            </tr></thead>
+            <tbody>
+              {staff.map((s) => {
+                const bg = `#${s.color ?? 'EEEEEE'}`, fg = `#${s.color_text ?? '333333'}`;
+                const ratio = contrast(bg, fg);
+                return (
+                  <tr key={s.id} className={`border-b border-mor-line/40 last:border-0 ${s.active ? '' : 'opacity-40'}`}>
+                    <td className={td}><input value={s.name} onChange={(e) => patch('hk_staff', 'id', s.id, { name: e.target.value }, setStaff)} className={`${inp} w-24`} /></td>
+                    <td className={td}><input value={s.code} onChange={(e) => patch('hk_staff', 'id', s.id, { code: e.target.value }, setStaff)} className={`${inp} w-20`} /></td>
+                    <td className={td}>
+                      {/* 陣列:排班系統上的顯示名會改,舊事件裡兩種寫法會並存 */}
+                      <input value={(s.source_names ?? []).join(', ')}
+                        onChange={(e) => patch('hk_staff', 'id', s.id, {
+                          source_names: e.target.value.split(',').map((x) => x.trim()).filter(Boolean),
+                        }, setStaff)}
+                        placeholder="多個用逗號分隔" className={`${inp} w-52`} />
+                    </td>
+                    <td className={td}>
+                      <select value={s.count_mode} onChange={(e) => patch('hk_staff', 'id', s.id, { count_mode: e.target.value as any }, setStaff)} className={inp}>
+                        {Object.entries(MODE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                      </select>
+                    </td>
+                    <td className={td}>
+                      <input type="checkbox" checked={s.count_cleans} onChange={(e) => patch('hk_staff', 'id', s.id, { count_cleans: e.target.checked }, setStaff)} />
+                    </td>
+                    <td className={td}><input value={s.leave_prefix ?? ''} onChange={(e) => patch('hk_staff', 'id', s.id, { leave_prefix: e.target.value || null }, setStaff)} placeholder="U休" className={`${inp} w-16`} /></td>
+                    <td className={td}>
+                      <div className="flex items-center gap-1">
+                        <span className="inline-block rounded px-2 py-0.5 text-xs border-l-4"
+                          style={{ backgroundColor: bg, color: fg, borderLeftColor: `#${s.color_bar ?? '999999'}` }}>範例</span>
+                        {(['color', 'color_text', 'color_bar'] as const).map((f) => (
+                          <input key={f} type="color" value={`#${(s[f] as string) ?? '000000'}`}
+                            onChange={(e) => patch('hk_staff', 'id', s.id, { [f]: e.target.value.slice(1).toUpperCase() } as any, setStaff)}
+                            title={f === 'color' ? '底色' : f === 'color_text' ? '文字' : '左側色條'}
+                            className="w-6 h-6 rounded border border-gray-300 p-0" />
+                        ))}
+                        {/* WCAG AA 要求 4.5:1。色盲使用者靠左側色條分辨,對比不足只是難讀不是不能用 */}
+                        {ratio < 4.5 && <span className="text-[10px] text-amber-600" title={`對比 ${ratio.toFixed(1)}:1，建議 ≥ 4.5`}>對比不足</span>}
+                      </div>
+                    </td>
+                    <td className={td}>
+                      {/* 停用而非刪除:歷史報表要保留這個人的資料 */}
+                      <input type="checkbox" checked={s.active} onChange={(e) => patch('hk_staff', 'id', s.id, { active: e.target.checked }, setStaff)} />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* ── 房源 ───────────────────────────────── */}
+      {tab === 'property' && (
+        <div className="rounded-xl border border-mor-line bg-white overflow-x-auto">
+          <div className="px-4 py-2.5 border-b border-mor-line bg-mor-sand/40 flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium mr-auto">房源主檔（{filteredProps.length}）</span>
+            <input value={kw} onChange={(e) => setKw(e.target.value)} placeholder="搜尋代碼或別名" className={`${inp} w-40`} />
+            <label className="flex items-center gap-1 text-xs text-gray-500">
+              <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} />含停用
+            </label>
+            <button onClick={addProp} className="text-xs text-mor-blue underline">+ 新增房源</button>
+          </div>
+          <div className="px-4 py-2 text-xs text-gray-400 border-b border-mor-line/40">
+            <b>別名</b>會在解析標題時一併比對 —— 例外清單出現「未識別房源」時,多半是這裡少一個別名。
+            <b>幾床</b>留白代表尚未建檔,會在例外清單提醒;填 0 代表確定不算床（公區）。
+            改幾床只影響之後的重算,已下載的報表不會變動。
+          </div>
+          <table className="w-full text-sm">
+            <thead><tr className="border-b border-mor-line/60">
+              <th className={th}>代碼</th><th className={th}>別名</th>
+              <th className={th}>幾床</th><th className={th}>布巾表</th>
+              <th className={th}>類型</th><th className={th}>計布巾</th><th className={th}>啟用</th>
+            </tr></thead>
+            <tbody>
+              {filteredProps.map((p) => (
+                <tr key={p.id} className={`border-b border-mor-line/40 last:border-0 ${p.active ? '' : 'opacity-40'}`}>
+                  <td className={td}><input value={p.code} onChange={(e) => patch('hk_property', 'id', p.id, { code: e.target.value }, setProps)} className={`${inp} w-24`} /></td>
+                  <td className={td}>
+                    <input value={(p.aliases ?? []).join(', ')}
+                      onChange={(e) => patch('hk_property', 'id', p.id, { aliases: e.target.value.split(',').map((x) => x.trim()).filter(Boolean) }, setProps)}
+                      placeholder="多個用逗號分隔" className={`${inp} w-56`} />
+                  </td>
+                  <td className={td}>
+                    <input type="number" min="0" value={p.beds ?? ''}
+                      onChange={(e) => patch('hk_property', 'id', p.id, { beds: e.target.value === '' ? null : Number(e.target.value) }, setProps)}
+                      className={`${inp} w-16 text-right ${p.beds == null ? 'bg-amber-50' : ''}`} />
+                  </td>
+                  <td className={td}>
+                    <select value={p.linen_group} onChange={(e) => patch('hk_property', 'id', p.id, { linen_group: e.target.value }, setProps)} className={inp}>
+                      {Object.entries(GROUP_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                    </select>
+                  </td>
+                  <td className={td}>
+                    <select value={p.ptype ?? 'room'} onChange={(e) => patch('hk_property', 'id', p.id, { ptype: e.target.value }, setProps)} className={inp}>
+                      {Object.entries(PTYPE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                    </select>
+                  </td>
+                  <td className={td}><input type="checkbox" checked={p.count_linen !== false} onChange={(e) => patch('hk_property', 'id', p.id, { count_linen: e.target.checked }, setProps)} /></td>
+                  <td className={td}><input type="checkbox" checked={p.active} onChange={(e) => patch('hk_property', 'id', p.id, { active: e.target.checked }, setProps)} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* ── 工作類型 ───────────────────────────── */}
+      {tab === 'wtype' && (
+        <div className="rounded-xl border border-mor-line bg-white overflow-x-auto">
+          <div className="px-4 py-2.5 border-b border-mor-line bg-mor-sand/40 text-sm font-medium">工作類型</div>
+          <div className="px-4 py-2 text-xs text-gray-400 border-b border-mor-line/40">
+            兩個開關是分開的:<b>計間數</b>影響個人工作量,<b>計布巾</b>影響床單推算。
+            例如「贈品補充」算工作量但不一定換床單,可以只關後者。
+          </div>
+          <table className="w-full text-sm">
+            <thead><tr className="border-b border-mor-line/60">
+              <th className={th}>類型</th><th className={th}>計間數</th><th className={th}>計布巾</th><th className={th}>啟用</th>
+            </tr></thead>
+            <tbody>
+              {wtypes.map((w) => (
+                <tr key={w.code} className={`border-b border-mor-line/40 last:border-0 ${w.active ? '' : 'opacity-40'}`}>
+                  <td className={td}>{w.name}</td>
+                  <td className={td}><input type="checkbox" checked={w.count_workload} onChange={(e) => patch('hk_work_type', 'code', w.code, { count_workload: e.target.checked }, setWtypes)} /></td>
+                  <td className={td}><input type="checkbox" checked={w.count_linen} onChange={(e) => patch('hk_work_type', 'code', w.code, { count_linen: e.target.checked }, setWtypes)} /></td>
+                  <td className={td}><input type="checkbox" checked={w.active} onChange={(e) => patch('hk_work_type', 'code', w.code, { active: e.target.checked }, setWtypes)} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* ── 系統參數 ───────────────────────────── */}
+      {tab === 'setting' && (
+        <div className="rounded-xl border border-mor-line bg-white divide-y divide-mor-line/40">
+          <div className="px-4 py-2.5 bg-mor-sand/40 text-sm font-medium">系統參數</div>
+          {settings.map((s) => (
+            <div key={s.key} className="px-4 py-3 flex flex-wrap items-start gap-3">
+              <div className="flex-1 min-w-48">
+                <div className="text-sm font-medium">{s.key}</div>
+                <div className="text-xs text-gray-400 mt-0.5">{s.description}</div>
+              </div>
+              <div className="shrink-0">
+                {s.vtype === 'bool' ? (
+                  <input type="checkbox" checked={s.value === 'true'}
+                    onChange={(e) => patch('hk_setting', 'key', s.key, { value: String(e.target.checked) }, setSettings)} />
+                ) : s.vtype === 'enum' ? (
+                  <select value={s.value ?? ''} onChange={(e) => patch('hk_setting', 'key', s.key, { value: e.target.value }, setSettings)} className={inp}>
+                    {(s.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                ) : (
+                  <input value={s.value ?? ''} onChange={(e) => patch('hk_setting', 'key', s.key, { value: e.target.value }, setSettings)} className={`${inp} w-56`} />
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}

@@ -13,9 +13,23 @@
 
 export type HkStaff = {
   id: string; source_name: string; code: string; name: string;
+  /** 排班表上可能出現的顯示名,可多個 —— 同一個人的顯示名會隨時間改 */
+  source_names?: string[];
   count_mode: 'rooms' | 'hours' | 'none';
-  count_cleans: boolean; color: string | null; leave_prefix: string | null;
+  count_cleans: boolean;
+  color: string | null; color_text?: string | null; color_bar?: string | null;
+  leave_prefix: string | null;
 };
+
+/** 一個人可能對應多個顯示名,全部展開成 名稱 → 人員 的查表 */
+export function staffLookup(staff: HkStaff[]) {
+  const m = new Map<string, HkStaff>();
+  for (const s of staff) {
+    const names = (s.source_names?.length ? s.source_names : [s.source_name]).filter(Boolean);
+    for (const n of names) m.set(n, s);
+  }
+  return m;
+}
 
 export type HkProperty = {
   code: string; aliases: string[]; beds: number | null;
@@ -178,7 +192,7 @@ export function parseRows(
   opts: { includeGift?: boolean } = {},
 ): ParsedEvent[] {
   const lk = buildLookup(props);
-  const byName = new Map(staff.map((s) => [s.source_name, s]));
+  const byName = staffLookup(staff);
   const leaveMap = staff.filter((s) => s.leave_prefix)
     .map((s) => [s.leave_prefix!, s.code] as const);
 
