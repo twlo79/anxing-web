@@ -191,9 +191,18 @@ export default function DepositsPage() {
     };
   }
 
-  /** 送出退款申請。房客帳戶與預計匯款日在這一步就要填齊,審核者才有東西可看。 */
+  /**
+   * 送出／更新退款申請。房客帳戶與預計匯款日在這一步就要填齊,審核者才有東西可看。
+   *
+   * 審核中改內容會清掉既有的票 —— 不清的話,「改收款帳號」就能在核可後
+   * 把錢導到別的地方,兩票等於白審。跟請款單同一個道理。
+   */
   async function submitRefund() {
     if (!edit) return;
+    const wasPending = edit.refund_status === 'pending';
+    const hadVotes = !!edit.manager_approved_at || !!edit.admin_approved_at;
+    if (wasPending && hadVotes
+        && !confirm('這筆退款已經有人核可。更新資訊會清掉既有核可票並重新送審,確定嗎?')) return;
     if (!edit.payee_account?.trim()) return flash('請填房客的收款帳號');
     if (!edit.payee_name?.trim()) return flash('請填戶名');
     if (!edit.planned_refund_on) return flash('請填預計匯款日');
@@ -209,10 +218,13 @@ export default function DepositsPage() {
       returned_account: edit.returned_method !== 'cash' ? (edit.returned_account || null) : null,
       refund_requested_by: me?.id ?? null,
       note: edit.note || null,
+      // 內容變了,既有的票就不算數
+      manager_approved_by: null, manager_approved_at: null,
+      admin_approved_by: null, admin_approved_at: null,
     }).eq('id', edit.id);
     setSaving(false);
     if (error) return flash('送審失敗:' + error.message);
-    setEdit(null); flash('已送出退款審核'); load();
+    setEdit(null); flash(wasPending ? '已更新並重新送審' : '已送出退款審核'); load();
   }
 
   /** 投票。兩票到齊由觸發器翻成 approved,前端不自己算狀態。 */
@@ -307,6 +319,21 @@ export default function DepositsPage() {
     XLSX.utils.book_append_sheet(wb, ws, '押金');
     XLSX.writeFile(wb, `押金_${todayStr().replace(/-/g, '')}.xlsx`);
   }
+
+  /**
+   * 核可票。○ 未投、✓ 已投 —— 一眼看得出卡在誰身上。
+   * 只在審核中顯示;核可完了兩個都是 ✓,再顯示只是佔位置。
+   */
+  const voteLine = (r: Dep) => {
+    if (r.refund_status !== 'pending') return null;
+    return (
+      <div className="text-[11px] text-gray-400 mt-0.5 whitespace-nowrap">
+        <span className={r.manager_approved_at ? 'text-mor-green' : ''}>{r.manager_approved_at ? '✓' : '○'} 主管</span>
+        <span className="mx-1">·</span>
+        <span className={r.admin_approved_at ? 'text-mor-green' : ''}>{r.admin_approved_at ? '✓' : '○'} 總經理</span>
+      </div>
+    );
+  };
 
   /** 退款流程的狀態標籤。跟押金本身的狀態（暫收/已退）是兩回事。 */
   const refundChip = (r: Dep) => {
@@ -442,7 +469,7 @@ export default function DepositsPage() {
               </div>
               <div className="text-right shrink-0">
                 <div className="stat-num font-bold">{r.currency === 'TWD' ? 'NT$' : r.currency} {fmt(r.amount)}</div>
-                <div className="mt-1">{statusChip(r)}</div>
+                <div className="mt-1">{statusChip(r)}{voteLine(r)}</div>
               </div>
             </div>
             <div className="mt-2 text-xs text-gray-500">
@@ -495,7 +522,7 @@ export default function DepositsPage() {
                   {r.returned_method ? METHOD_LABEL[r.returned_method] ?? r.returned_method : '—'}
                   {r.returned_account && <div className="text-gray-400">{acctName[r.returned_account] ?? r.returned_account}</div>}
                 </td>
-                <td className="px-3 py-2 whitespace-nowrap">{statusChip(r)}</td>
+                <td className="px-3 py-2 whitespace-nowrap">{statusChip(r)}{voteLine(r)}</td>
                 <td className="px-3 py-2 text-right whitespace-nowrap">
                   <button onClick={() => setDetail(r)} className="text-xs text-mor-slate underline hover:text-mor-blue">檢視</button>
                 </td>
@@ -722,6 +749,19 @@ export default function DepositsPage() {
 
                 {!edit.received_on ? (
                   <div className="text-xs text-gray-400">還沒收到押金,先填收款資訊。</div>
+                ) : edit.refund_status === 'approved' ? (
+                  /* 核可後鎖住。錢要出去了,改收款帳號等於繞過審核 —— 要改就先駁回。 */
+                  <div className="space-y-1 text-xs text-gray-600">
+                    <div className="rounded-lg bg-mor-greenlight text-mor-green px-3 py-2">
+                      已核可,等待匯款。要修改內容請先請主管或總經理駁回。
+                    </div>
+                    <div className="pt-1">退到:{edit.payee_name} {edit.payee_bank_code} {edit.payee_account}</div>
+                    <div>預計匯款日:{edit.planned_refund_on}</div>
+                    <div>
+                      我方出款:{edit.returned_method ? METHOD_LABEL[edit.returned_method] : '—'}
+                      {edit.returned_account ? `・${acctName[edit.returned_account] ?? edit.returned_account}` : ''}
+                    </div>
+                  </div>
                 ) : edit.returned_on ? (
                   <div className="text-xs text-gray-500">
                     已於 {edit.returned_on} 退還・
