@@ -59,6 +59,8 @@ export default function HousekeepingPage() {
   const [undo, setUndo] = useState<{ it: Wi; until: number } | null>(null);
   /** 正在新增房源格的儲存格 */
   const [adding, setAdding] = useState<{ date: string; staffId: string; code: string; type: string } | null>(null);
+  /** 就地編輯某個房源格 */
+  const [editItem, setEditItem] = useState<{ id: string; staffId: string; code: string; type: string } | null>(null);
 
   function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 4000); }
 
@@ -230,6 +232,25 @@ export default function HousekeepingPage() {
     setItems((xs) => [...xs, data as Wi]);
   }
 
+  /**
+   * 改房源格。同步來的項目被改過要標記 timetree_edited ——
+   * 下次同步才知道這筆使用者動過,不能直接覆蓋。
+   */
+  async function saveItem() {
+    if (!editItem) return;
+    const cur = items.find((x) => x.id === editItem.id);
+    const patch: any = {
+      property_code: editItem.code || null,
+      work_type: editItem.type,
+      staff_id: editItem.staffId,
+      source: cur?.source === 'manual' ? 'manual' : 'timetree_edited',
+    };
+    setItems((xs) => xs.map((x) => (x.id === editItem.id ? { ...x, ...patch } : x)));
+    setEditItem(null);
+    const { error } = await supabase.from('hk_work_item').update(patch).eq('id', editItem.id);
+    if (error) { flash('儲存失敗:' + error.message); loadPeriod(); }
+  }
+
   async function delItem(it: Wi) {
     setItems((xs) => xs.filter((x) => x.id !== it.id));
     const { error } = await supabase.from('hk_work_item').delete().eq('id', it.id);
@@ -385,7 +406,7 @@ export default function HousekeepingPage() {
 
       {/* 分頁放在摘要卡片之後 —— 卡片是整月總覽,不該被分頁切掉 */}
       <div className="flex flex-wrap items-center gap-2 mb-4">
-        {tabBtn('sheet', '排班與布巾')}
+        {tabBtn('sheet', '房務排班與床單')}
         {tabBtn('exception', `例外 ${exceptions.noAssignee.length + exceptions.unknownProp.length + exceptions.noBeds.length}`)}
       </div>
 
@@ -472,8 +493,34 @@ export default function HousekeepingPage() {
                         {its.map((it) => {
                           const s = staffById[it.staff_id];
                           const manual = it.source === 'manual';
+
+                          // 就地編輯:點標籤展開,可以改負責人、房源、工作類型
+                          if (editItem?.id === it.id) {
+                            return (
+                              <span key={it.id} className="inline-flex items-center gap-1 rounded bg-mor-sand/60 px-1 py-0.5">
+                                <select value={editItem.staffId} onChange={(e) => setEditItem({ ...editItem, staffId: e.target.value })}
+                                  className={`${inp} w-20`}>
+                                  {staff.filter((x) => x.count_mode !== 'none').map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                                </select>
+                                <input list="hk-props" value={editItem.code} autoFocus
+                                  onChange={(e) => setEditItem({ ...editItem, code: e.target.value })}
+                                  onKeyDown={(e) => { if (e.key === 'Enter') saveItem(); if (e.key === 'Escape') setEditItem(null); }}
+                                  placeholder="房源" className={`${inp} w-24`} />
+                                <select value={editItem.type} onChange={(e) => setEditItem({ ...editItem, type: e.target.value })}
+                                  className={`${inp} w-24`}>
+                                  {WORK_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                                </select>
+                                <button onClick={saveItem} className="text-xs text-mor-blue underline">存</button>
+                                <button onClick={() => setEditItem(null)} className="text-xs text-gray-400 underline">取消</button>
+                                <button onClick={() => { setEditItem(null); delItem(it); }} className="text-xs text-red-500 underline">刪除</button>
+                              </span>
+                            );
+                          }
+
                           return (
-                            <span key={it.id} className="group inline-flex items-center rounded text-xs pl-1.5 pr-0.5 py-0.5 border-l-4"
+                            <span key={it.id}
+                              onClick={() => setEditItem({ id: it.id, staffId: it.staff_id, code: it.property_code ?? '', type: it.work_type })}
+                              className="group inline-flex items-center rounded text-xs pl-1.5 pr-0.5 py-0.5 border-l-4 cursor-pointer hover:brightness-95"
                               style={{
                                 backgroundColor: s?.color ? `#${s.color}` : '#f3f4f6',
                                 color: s?.color_text ? `#${s.color_text}` : undefined,
@@ -482,10 +529,12 @@ export default function HousekeepingPage() {
                                 outline: manual ? '1px dashed #9ca3af' : undefined,
                                 outlineOffset: manual ? '-1px' : undefined,
                               }}
-                              title={`${s?.name ?? ''}・${it.work_type}${manual ? '・手動新增' : ''}`}>
+                              title={`${s?.name ?? ''}・${it.work_type}${manual ? '・手動新增' : it.source === 'timetree_edited' ? '・已編輯' : ''}　點擊可編輯`}>
                               <span className="opacity-60 mr-0.5">{s?.name}</span>
                               {it.work_type === '贈品補充' ? `${it.property_code ?? ''}-贈` : (it.property_code ?? it.work_type)}
-                              <button onClick={() => delItem(it)}
+                              {it.source === 'timetree_edited' && <span className="ml-0.5 opacity-50" title="同步後被改過">✎</span>}
+                              {/* stopPropagation:不然點刪除會先觸發外層的編輯 */}
+                              <button onClick={(e) => { e.stopPropagation(); delItem(it); }}
                                 className="ml-1 w-4 h-4 rounded-full opacity-0 group-hover:opacity-70 hover:!opacity-100 hover:bg-black/10 leading-none"
                                 aria-label="刪除">×</button>
                             </span>
@@ -566,10 +615,22 @@ export default function HousekeepingPage() {
                             {p.beds == null && <span className="ml-1 text-[10px] text-amber-600">待補幾床</span>}
                           </td>
                           <td className="px-3 py-1.5 text-right">
-                            <input type="number" min="0" value={c}
-                              onChange={(e) => setMp(p.code, { count_override: e.target.value === '' ? null : Number(e.target.value) })}
-                              className={`${inp} w-14 text-right ${over ? 'bg-amber-50 text-amber-700' : ''}`}
-                              title={over ? `自動值 ${auto},已手動覆寫` : '自動計算'} />
+                            <span className="inline-flex items-center gap-1 justify-end">
+                              <input type="number" min="0" value={c}
+                                onChange={(e) => setMp(p.code, { count_override: e.target.value === '' ? null : Number(e.target.value) })}
+                                className={`${inp} w-14 text-right ${over ? 'bg-amber-50 text-amber-700 border-amber-300' : ''}`}
+                                title={over ? `手動覆寫。房源格算出來的是 ${auto},清空可還原` : '由房源格自動計算'} />
+                              {/*
+                                覆寫值跟自動值不一致時要講出來。
+                                不講的話,改了房源格卻看不到次數變動,會以為連動壞掉 ——
+                                實際上是覆寫值一直贏過自動值,而且贏得很安靜。
+                              */}
+                              {over && auto !== c && (
+                                <button onClick={() => setMp(p.code, { count_override: null })}
+                                  title={`房源格現在算出 ${auto} 次,但這裡被手動改成 ${c}。點一下改回 ${auto}。`}
+                                  className="text-[10px] text-amber-600 underline whitespace-nowrap">≠{auto}</button>
+                              )}
+                            </span>
                           </td>
                           <td className="px-3 py-1.5 text-right">
                             {/* 幾床是房源主檔的屬性,改了會影響所有月份 —— 但不改就永遠算不出床單 */}
@@ -583,6 +644,7 @@ export default function HousekeepingPage() {
                           <td className="px-3 py-1.5 text-right">
                             <input type="number" min="0" value={lt || ''}
                               onChange={(e) => setMp(p.code, { linen_taken: Number(e.target.value) || 0 })}
+                              title="額外領用的床單,跟清掃次數無關。改房源格不會把這個數字搬走。"
                               className={`${inp} w-14 text-right`} />
                           </td>
                           <td className="px-3 py-1.5 text-right font-medium">{c * beds + lt}</td>
