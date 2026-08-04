@@ -9,7 +9,7 @@ type Expense = {
   id: string; spent_on: string; item_name: string; amount: number;
   account_code: string | null; purpose_type: string; estate_id: string | null;
   property_id?: string | null;   // 選填,用途的細分
-  voucher_no: string | null; payment_method: string | null; pay_account: string | null;
+  voucher_no: string | null; no_voucher?: boolean; payment_method: string | null; pay_account: string | null;
   note: string | null; source_item_id: string | null;
   // amount 一律台幣;外幣的單另存原幣別與原金額供對帳
   currency?: string | null; fx_rate?: number | null; amount_original?: number | null;
@@ -148,7 +148,7 @@ export default function ExpensesPage() {
   function blank(): Expense {
     return {
       id: '', spent_on: todayStr(), item_name: '', amount: 0, account_code: null,
-      purpose_type: 'estate', estate_id: null, property_id: null, voucher_no: null,
+      purpose_type: 'estate', estate_id: null, property_id: null, voucher_no: null, no_voucher: false,
       payment_method: 'cash', pay_account: null, note: null, source_item_id: null,
       currency: 'TWD', fx_rate: 1, amount_original: 0,
     };
@@ -177,7 +177,9 @@ export default function ExpensesPage() {
       estate_id: edit.purpose_type === 'office' ? null : edit.estate_id,
       // 房源選填。選了辦公室就沒有房源可言,清成 null。
       property_id: edit.purpose_type === 'office' ? null : (edit.property_id || null),
-      voucher_no: edit.voucher_no || null,
+      // 互斥,見 exp_voucher_chk
+      voucher_no: edit.no_voucher ? null : (edit.voucher_no?.trim() || null),
+      no_voucher: !!edit.no_voucher,
       payment_method: edit.payment_method || null,
       // 匯款與信用卡都要記錄從哪個帳戶/哪張卡付出去;現金沒有帳戶,清成 null。
       // 這裡的條件必須與畫面上顯示下拉的條件一致 —— 先前只判斷 transfer,
@@ -402,7 +404,8 @@ export default function ExpensesPage() {
                 </td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{r.account_code ? codeName[r.account_code] ?? r.account_code : '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{purposeLabel(r)}</td>
-                <td className="px-3 py-2 whitespace-nowrap text-gray-500">{r.voucher_no ?? '—'}</td>
+                <td className="px-3 py-2 whitespace-nowrap text-gray-500">
+                  {r.voucher_no ?? (r.no_voucher ? <span className="text-gray-400 text-xs">無憑證</span> : '—')}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-500">
                   {r.payment_method ? PAY_LABEL[r.payment_method] ?? r.payment_method : '—'}
                   {r.pay_account && <span className="text-xs text-gray-400 ml-1">{r.pay_account}</span>}
@@ -490,9 +493,22 @@ export default function ExpensesPage() {
                     <option value="">未分類</option>
                     {codes.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
                   </select></label>
-                <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">憑證號碼</span>
-                  <input value={edit.voucher_no ?? ''} onChange={(e) => setEdit({ ...edit, voucher_no: e.target.value })}
-                    className="rounded-lg border border-mor-line px-2 py-1.5" placeholder="發票/收據號碼" /></label>
+                {/* 憑證號碼與「無憑證」互斥 —— 分開才知道空白是漏填還是本來就沒有 */}
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs text-gray-500">憑證號碼</span>
+                  <div className="flex items-center gap-2">
+                    <input value={edit.voucher_no ?? ''} disabled={!!edit.no_voucher}
+                      onChange={(e) => setEdit({ ...edit, voucher_no: e.target.value })}
+                      className="flex-1 min-w-0 rounded-lg border border-mor-line px-2 py-1.5 disabled:bg-gray-100 disabled:text-gray-400"
+                      placeholder={edit.no_voucher ? '已註記無憑證' : '發票/收據號碼'} />
+                    <label className={`flex items-center gap-1 text-sm whitespace-nowrap
+                      ${(edit.voucher_no ?? '').trim() ? 'text-gray-300' : 'text-gray-600'}`}>
+                      <input type="checkbox" disabled={!!(edit.voucher_no ?? '').trim()} checked={!!edit.no_voucher}
+                        onChange={(e) => setEdit({ ...edit, no_voucher: e.target.checked, voucher_no: e.target.checked ? null : edit.voucher_no })} />
+                      無憑證
+                    </label>
+                  </div>
+                </div>
               </div>
               <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">用途 *</span>
                 <select

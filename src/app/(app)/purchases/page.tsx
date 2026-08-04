@@ -22,6 +22,7 @@ type Req = {
   rejected_by: string | null; rejected_at: string | null; reject_reason: string | null;
   purchased_on: string | null; expense_generated_at: string | null; created_at: string;
   planned_transfer_on: string | null; payout_account: string | null;
+  voucher_no?: string | null; no_voucher?: boolean;
   currency: string; fx_rate: number;
   purchase_request_items?: Item[];
 };
@@ -246,6 +247,7 @@ export default function PurchasesPage() {
       admin_approved_by: null, admin_approved_at: null, rejected_by: null, rejected_at: null, reject_reason: null,
       purchased_on: null, expense_generated_at: null, created_at: '',
       planned_transfer_on: null, payout_account: null,
+      voucher_no: null, no_voucher: false,
       currency: 'TWD', fx_rate: 1,
     });
     setItems([blankItem()]);
@@ -290,9 +292,13 @@ export default function PurchasesPage() {
         note: edit.note || null,
         currency: edit.currency || 'TWD',
         fx_rate: edit.currency === 'TWD' ? 1 : fxRate,
-        // 現金沒有出款帳號，換了付款方式要把舊值清掉，否則會違反 pr_planned_chk
+        // 現金沒有出款帳號，換了付款方式要把舊值清掉，否則會違反 pr_planned_chk。
+        // 預定出款日則三種付款方式都有，不受限制。
         payout_account: needsPayout ? (edit.payout_account || null) : null,
-        planned_transfer_on: needsPayout ? (edit.planned_transfer_on || null) : null,
+        planned_transfer_on: edit.planned_transfer_on || null,
+        // 互斥,見 pr_voucher_chk
+        no_voucher: !!edit.no_voucher,
+        voucher_no: edit.no_voucher ? null : (edit.voucher_no?.trim() || null),
         // 送審中被編輯:退回草稿並清空核可票。
         // 退回 draft 有兩個作用 —— 項目的 pri_write policy 只認 draft/rejected,
         // 而且之後再送 pending 會走既有狀態機,免核門檻依「新金額」重算。
@@ -879,6 +885,7 @@ export default function PurchasesPage() {
                     {d.payee_tax_id ? <div>統編 {d.payee_tax_id}</div> : null}
                   </span>
                 )) : null}
+                {row('憑證號碼', d.voucher_no ?? (d.no_voucher ? <span className="text-gray-400 text-xs">無憑證</span> : '—'))}
                 {row(`預定${dateWord(d.payment_method)}`, d.planned_transfer_on ?? '—')}
                 {row(`確認${dateWord(d.payment_method)}`, d.purchased_on ?? '—')}
                 {row('備註', d.note ? <span className="whitespace-pre-wrap">{d.note}</span> : '—')}
@@ -1085,12 +1092,12 @@ export default function PurchasesPage() {
                     會計在核可後可以覆寫 —— 這裡填的是「打算」，不是「已付」。
                     現金沒有出款帳號可言，所以只在匯款／信用卡時出現。
                   */}
-                  {(edit.payment_method === 'transfer' || edit.payment_method === 'credit_card') && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {/* 現金沒有帳號可選，但一樣有「打算哪天付」 */}
+                    {(edit.payment_method === 'transfer' || edit.payment_method === 'credit_card') && (
                       <label className="flex flex-col gap-1">
                         <span className="text-xs text-gray-500">
-                          {edit.payment_method === 'credit_card' ? '刷卡卡片' : '出款帳號'}
-                          <span className="text-gray-400">（選填）</span>
+                          {acctWord(edit.payment_method)}<span className="text-gray-400">（選填）</span>
                         </span>
                         <select disabled={readOnly} value={edit.payout_account ?? ''}
                           onChange={(e) => setEdit({ ...edit, payout_account: e.target.value || null })}
@@ -1099,19 +1106,39 @@ export default function PurchasesPage() {
                           {payAccounts.filter((a) => a.method === edit.payment_method)
                             .map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
                         </select></label>
-                      <label className="flex flex-col gap-1">
-                        <span className="text-xs text-gray-500">
-                          {edit.payment_method === 'credit_card' ? '預定刷卡日' : '預定出款日'}
-                          <span className="text-gray-400">（選填）</span>
-                        </span>
-                        <input disabled={readOnly} type="date" value={edit.planned_transfer_on ?? ''}
-                          onChange={(e) => setEdit({ ...edit, planned_transfer_on: e.target.value || null })}
-                          className="w-full h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50" /></label>
-                      <div className="md:col-span-2 text-xs text-gray-400">
-                        核可後由會計確認實際出款日，這裡填的只是預定。
-                      </div>
+                    )}
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs text-gray-500">
+                        預定{dateWord(edit.payment_method)}<span className="text-gray-400">（選填）</span>
+                      </span>
+                      <input disabled={readOnly} type="date" value={edit.planned_transfer_on ?? ''}
+                        onChange={(e) => setEdit({ ...edit, planned_transfer_on: e.target.value || null })}
+                        className="w-full h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50" /></label>
+                    <div className="md:col-span-2 text-xs text-gray-400">
+                      核可後由會計確認實際{dateWord(edit.payment_method)}，這裡填的只是預定。
                     </div>
-                  )}
+                  </div>
+
+                  {/*
+                    憑證號碼與「無憑證」互斥。
+                    分成兩件事是為了讓「還沒填」和「本來就沒有」在帳上分得出來 ——
+                    只留一個空白欄位的話，會計永遠不知道還要不要追這張發票。
+                  */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-end">
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs text-gray-500">憑證號碼<span className="text-gray-400">（發票/收據號碼）</span></span>
+                      <input disabled={readOnly || !!edit.no_voucher} value={edit.voucher_no ?? ''}
+                        onChange={(e) => setEdit({ ...edit, voucher_no: e.target.value })}
+                        placeholder={edit.no_voucher ? '已註記無憑證' : ''}
+                        className="w-full h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-100 disabled:text-gray-400" /></label>
+                    <label className={`flex items-center gap-2 text-sm h-12 md:h-auto md:pb-1.5
+                      ${(edit.voucher_no ?? '').trim() ? 'text-gray-300' : 'text-gray-600'}`}>
+                      <input type="checkbox" disabled={readOnly || !!(edit.voucher_no ?? '').trim()}
+                        checked={!!edit.no_voucher}
+                        onChange={(e) => setEdit({ ...edit, no_voucher: e.target.checked, voucher_no: e.target.checked ? null : edit.voucher_no })} />
+                      無憑證
+                    </label>
+                  </div>
                   <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">備註</span>
                     <textarea disabled={readOnly} value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })}
                       className="bg-white rounded-lg border border-mor-line px-2 py-2 h-24 md:h-16 disabled:bg-gray-50" /></label>
