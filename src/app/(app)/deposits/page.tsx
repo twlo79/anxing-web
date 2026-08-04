@@ -21,7 +21,7 @@ type Dep = {
   currency: string; amount: number;
   received_on: string | null; received_method: string | null; received_account: string | null;
   returned_on: string | null; returned_method: string | null; returned_account: string | null;
-  note: string | null; orphaned: boolean; created_at: string;
+  note: string | null; orphaned: boolean; is_manual?: boolean; created_at: string;
 };
 type Estate = { id: string; name: string };
 type PayAccount = { code: string; name: string; method: string };
@@ -130,11 +130,27 @@ export default function DepositsPage() {
     orphan: filtered.filter((r) => r.orphaned).length,
   }), [filtered]);
 
+  /** 手動押金:不掛在任何訂單/契約下,金額與房源姓名可以直接填 */
+  function blankManual(): Dep {
+    return {
+      id: '', order_id: null, contract_id: null, estate_id: null, property_id: null,
+      room: '', guest_name: '', currency: 'TWD', amount: 0,
+      received_on: null, received_method: null, received_account: null,
+      returned_on: null, returned_method: null, returned_account: null,
+      note: null, orphaned: false, is_manual: true, created_at: '',
+    };
+  }
+
   async function save() {
     if (!edit) return;
     if (edit.returned_on && !edit.received_on) return flash('還沒收到押金,不能填退款日');
+    const manual = !!edit.is_manual;
+    if (manual) {
+      if (!(Number(edit.amount) > 0)) return flash('請填押金金額');
+      if (!edit.room?.trim() && !edit.guest_name?.trim()) return flash('房源與姓名至少要填一個');
+    }
     setSaving(true);
-    const { error } = await supabase.from('deposits').update({
+    const payload: any = {
       received_on: edit.received_on || null,
       received_method: edit.received_on ? (edit.received_method || null) : null,
       // 現金沒有帳戶可言。換了方式要把舊帳號清掉,否則會留下「現金 + 元大8088」這種組合。
@@ -143,10 +159,31 @@ export default function DepositsPage() {
       returned_method: edit.returned_on ? (edit.returned_method || null) : null,
       returned_account: edit.returned_on && edit.returned_method !== 'cash' ? (edit.returned_account || null) : null,
       note: edit.note || null,
-    }).eq('id', edit.id);
+    };
+    // 連動列的這幾欄是來源的快照,改了下次同步就被蓋回去,所以只有手動列能改
+    if (manual) {
+      Object.assign(payload, {
+        is_manual: true,
+        estate_id: edit.estate_id || null,
+        room: edit.room?.trim() || null,
+        guest_name: edit.guest_name?.trim() || null,
+        currency: edit.currency || 'TWD',
+        amount: Number(edit.amount) || 0,
+      });
+    }
+    const { error } = edit.id
+      ? await supabase.from('deposits').update(payload).eq('id', edit.id)
+      : await supabase.from('deposits').insert(payload);
     setSaving(false);
     if (error) return flash('儲存失敗:' + error.message);
     setEdit(null); flash('已儲存'); load();
+  }
+
+  async function del(d: Dep) {
+    if (!confirm(`刪除這筆押金紀錄（${d.room ?? ''} ${d.guest_name ?? ''}）?`)) return;
+    const { error } = await supabase.from('deposits').delete().eq('id', d.id);
+    if (error) return flash('刪除失敗:' + error.message);
+    setEdit(null); setDetail(null); flash('已刪除'); load();
   }
 
   function exportXlsx() {
@@ -256,6 +293,8 @@ export default function DepositsPage() {
         <div className="ml-auto flex gap-2">
           <button onClick={() => { setFromD(''); setToD(''); setEstateF(''); setRoomF(''); setMethodF(''); setAcctF(''); setStatusF(''); setKwInput(''); setKw(''); }}
             className="rounded-lg border border-gray-300 px-3 py-1.5">清除</button>
+          <button onClick={() => setEdit(blankManual())}
+            className="rounded-lg border border-mor-slate text-mor-slate px-3 py-1.5 font-medium hover:bg-mor-sand/60">+ 手動新增</button>
           <button onClick={exportXlsx} disabled={!sorted.length}
             className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark disabled:opacity-40">⬇ 下載 Excel</button>
         </div>
@@ -309,7 +348,10 @@ export default function DepositsPage() {
             : sorted.map((r) => (
               <tr key={r.id} className="border-b border-mor-line/60 last:border-0 hover:bg-mor-sand/30">
                 <td className="px-3 py-2 whitespace-nowrap text-gray-500">{r.estate_id ? estateName[r.estate_id] ?? '—' : '—'}</td>
-                <td className="px-3 py-2 whitespace-nowrap font-medium">{r.room ?? '—'}</td>
+                <td className="px-3 py-2 whitespace-nowrap font-medium">
+                  {r.room ?? '—'}
+                  {r.is_manual && <span className="ml-1 text-[10px] text-gray-400">手動</span>}
+                </td>
                 <td className="px-3 py-2 whitespace-nowrap">{r.guest_name ?? '—'}</td>
                 <td className="px-3 py-2 text-right whitespace-nowrap">
                   {r.currency !== 'TWD' && <span className="text-xs text-gray-400 mr-1">{r.currency}</span>}
@@ -354,7 +396,7 @@ export default function DepositsPage() {
                 <div className="min-w-0">
                   <div className="font-bold">{d.room ?? '—'}・{d.guest_name ?? '—'}</div>
                   <div className="text-xs text-gray-500 mt-0.5">
-                    {d.contract_id ? '契約押金' : '短租押金'}
+                    {d.is_manual ? '手動建立' : d.contract_id ? '契約押金' : '短租押金'}
                     {d.orphaned && <span className="text-red-600 ml-1">・來源已刪除</span>}
                   </div>
                 </div>
@@ -375,10 +417,12 @@ export default function DepositsPage() {
                   : '—')}
                 {row('備註', d.note ? <span className="whitespace-pre-wrap">{d.note}</span> : '—')}
 
-                <div className="mt-3 rounded-lg bg-mor-sand/60 text-gray-500 px-3 py-2 text-xs">
-                  押金金額不在這裡改 —— 那是契約條件的一部分,請到
-                  {d.contract_id ? '契約' : '短租訂單'}頁修改,這裡會自動同步。
-                </div>
+                {!d.is_manual && (
+                  <div className="mt-3 rounded-lg bg-mor-sand/60 text-gray-500 px-3 py-2 text-xs">
+                    押金金額不在這裡改 —— 那是契約條件的一部分,請到
+                    {d.contract_id ? '契約' : '短租訂單'}頁修改,這裡會自動同步。
+                  </div>
+                )}
               </div>
 
               <div className="sticky bottom-0 bg-white border-t border-mor-line px-6 py-3 flex gap-2"
@@ -401,16 +445,51 @@ export default function DepositsPage() {
             onClick={(e) => e.stopPropagation()}>
             <div className="sticky top-0 bg-white border-b border-mor-line px-4 md:px-6 py-4 font-bold flex items-center justify-between z-10"
               style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
-              管理押金・{edit.room ?? '—'}
+              {edit.id ? `管理押金・${edit.room ?? '—'}` : '手動新增押金'}
               <button onClick={() => setEdit(null)} aria-label="關閉"
                 className="w-10 h-10 -mr-2 flex items-center justify-center text-gray-400 hover:text-gray-600 text-xl">✕</button>
             </div>
 
             <div className="p-4 md:p-6 space-y-4 text-sm">
-              <div className="rounded-lg bg-mor-sand/60 px-3 py-2 text-xs text-gray-600">
-                {edit.guest_name ?? '—'}・押金 <span className="font-bold">{edit.currency === 'TWD' ? 'NT$' : edit.currency} {fmt(edit.amount)}</span>
-                <span className="text-gray-400 ml-1">(金額請到來源頁修改)</span>
-              </div>
+              {edit.is_manual ? (
+                /* 手動列沒有來源可同步,這幾欄就在這裡填 */
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {!edit.id && (
+                    <div className="md:col-span-2 rounded-lg bg-amber-50 text-amber-700 px-3 py-2 text-xs">
+                      手動押金不掛在任何訂單或契約下,適合舊約押金、代收、還沒開單就先收的訂金。
+                    </div>
+                  )}
+                  <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">物業</span>
+                    <select value={edit.estate_id ?? ''} onChange={(e) => setEdit({ ...edit, estate_id: e.target.value || null })}
+                      className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5">
+                      <option value="">未指定</option>
+                      {estates.map((es) => <option key={es.id} value={es.id}>{es.name}</option>)}
+                    </select></label>
+                  <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">房源</span>
+                    <input value={edit.room ?? ''} onChange={(e) => setEdit({ ...edit, room: e.target.value })}
+                      placeholder="例:14B5"
+                      className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5" /></label>
+                  <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">姓名</span>
+                    <input value={edit.guest_name ?? ''} onChange={(e) => setEdit({ ...edit, guest_name: e.target.value })}
+                      className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5" /></label>
+                  <div className="flex gap-2">
+                    <label className="flex flex-col gap-1 w-24"><span className="text-xs text-gray-500">幣別</span>
+                      <select value={edit.currency} onChange={(e) => setEdit({ ...edit, currency: e.target.value })}
+                        className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5">
+                        {['TWD', 'USD', 'JPY', 'CNY', 'EUR'].map((c) => <option key={c} value={c}>{c}</option>)}
+                      </select></label>
+                    <label className="flex flex-col gap-1 flex-1 min-w-0"><span className="text-xs text-gray-500">押金金額 *</span>
+                      <input type="number" min="0" value={edit.amount || ''}
+                        onChange={(e) => setEdit({ ...edit, amount: e.target.value === '' ? 0 : Number(e.target.value) })}
+                        className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 text-right" /></label>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-lg bg-mor-sand/60 px-3 py-2 text-xs text-gray-600">
+                  {edit.guest_name ?? '—'}・押金 <span className="font-bold">{edit.currency === 'TWD' ? 'NT$' : edit.currency} {fmt(edit.amount)}</span>
+                  <span className="text-gray-400 ml-1">(金額請到來源頁修改)</span>
+                </div>
+              )}
 
               <div className="border-t border-mor-line pt-3">
                 <div className="text-xs font-semibold text-gray-500 mb-2">收押金</div>
@@ -491,6 +570,11 @@ export default function DepositsPage() {
 
             <div className="sticky bottom-0 md:static bg-white border-t border-mor-line px-4 md:px-6 py-3 md:py-4 flex gap-2 md:justify-end"
               style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
+              {/* 連動列不能刪 —— 刪了下次來源同步又會長回來,只會讓人以為壞掉 */}
+              {edit.id && (edit.is_manual || edit.orphaned) && (
+                <button onClick={() => del(edit)}
+                  className="h-12 md:h-auto rounded-lg border border-red-300 text-red-600 px-4 md:py-1.5 text-sm">刪除</button>
+              )}
               <button onClick={() => setEdit(null)}
                 className="h-12 md:h-auto flex-1 md:flex-none rounded-lg border border-gray-300 px-4 md:py-1.5 text-sm">取消</button>
               <button onClick={save} disabled={saving}
