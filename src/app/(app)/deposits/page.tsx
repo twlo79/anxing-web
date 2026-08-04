@@ -57,7 +57,8 @@ export default function DepositsPage() {
   const [roomF, setRoomF] = useState('');
   const [methodF, setMethodF] = useState('');
   const [acctF, setAcctF] = useState('');
-  const [statusF, setStatusF] = useState('');
+  // 分頁籤:一筆押金一定屬於其中一類,不會同時出現在兩個頁籤
+  const [statusF, setStatusF] = useState<'pending' | 'held' | 'returned' | 'orphan'>('held');
   const [kwInput, setKwInput] = useState('');
   const [kw, setKw] = useState('');
 
@@ -89,46 +90,57 @@ export default function DepositsPage() {
     () => Array.from(new Set(rows.map((r) => r.room).filter(Boolean) as string[])).sort(),
     [rows]);
 
-  const filtered = useMemo(() => rows.filter((r) => {
-    // 日期區間比對收押金日;還沒收的單子在有設區間時不顯示 ——
-    // 「這段期間收了哪些押金」不該混進還沒發生的
+  // base 是「除了分頁籤以外」都套用的結果。
+  // 卡片的數字要算在 base 上,不是 filtered —— 否則點進「未收款」之後,
+  // 其他兩張卡片會全部歸零,那就不是總覽而是同一個數字抄三遍。
+  const base = useMemo(() => rows.filter((r) => {
+    // 日期區間比對「這筆押金最近一次動作」的日期:退了看退款日,否則看收款日。
+    // 還沒收的沒有日期可比,設了區間就不顯示 —— 區間問的是「這段期間發生了什麼」,
+    // 還沒發生的事不該混進來。未收款頁籤會另外提示。
     if (fromD || toD) {
-      if (!r.received_on) return false;
-      if (fromD && r.received_on < fromD) return false;
-      if (toD && r.received_on > toD) return false;
+      const d = r.returned_on ?? r.received_on;
+      if (!d) return false;
+      if (fromD && d < fromD) return false;
+      if (toD && d > toD) return false;
     }
     if (estateF && r.estate_id !== estateF) return false;
     if (roomF && r.room !== roomF) return false;
     if (methodF && r.received_method !== methodF) return false;
     if (acctF && r.received_account !== acctF) return false;
-    if (statusF === 'held' && !(r.received_on && !r.returned_on)) return false;
-    if (statusF === 'pending' && r.received_on) return false;
-    if (statusF === 'returned' && !r.returned_on) return false;
-    if (statusF === 'orphan' && !r.orphaned) return false;
     if (kw) {
       const hay = `${r.room ?? ''} ${r.guest_name ?? ''} ${r.note ?? ''}`.toLowerCase();
       if (!hay.includes(kw.toLowerCase())) return false;
     }
     return true;
-  }), [rows, fromD, toD, estateF, roomF, methodF, acctF, statusF, kw]);
+  }), [rows, fromD, toD, estateF, roomF, methodF, acctF, kw]);
+
+  /** 一筆押金必定落在三類的其中一類,順序不能顛倒:退了就是已退,不管收款日 */
+  const bucketOf = (r: Dep) => (r.returned_on ? 'returned' : r.received_on ? 'held' : 'pending');
+
+  const filtered = useMemo(
+    () => base.filter((r) => (statusF === 'orphan' ? r.orphaned : bucketOf(r) === statusF)),
+    [base, statusF]);
 
   const sorted = useMemo(() => sortRows(filtered, sort, COLS), [filtered, sort]);
 
-  // 暫收 = 收了還沒退。依幣別分開,外幣原幣退還不換匯,加總沒有意義。
-  const held = useMemo(() => {
-    const m: Record<string, number> = {};
-    for (const r of filtered) {
-      if (r.received_on && !r.returned_on) m[r.currency] = (m[r.currency] ?? 0) + Number(r.amount || 0);
+  /** 各分頁籤的金額與筆數。依幣別分開 —— 外幣原幣退還不換匯,加總沒有意義。 */
+  const stats = useMemo(() => {
+    const mk = () => ({ n: 0, cur: {} as Record<string, number> });
+    const s = { pending: mk(), held: mk(), returned: mk(), orphan: mk() };
+    for (const r of base) {
+      const b = bucketOf(r) as 'pending' | 'held' | 'returned';
+      s[b].n++;
+      s[b].cur[r.currency] = (s[b].cur[r.currency] ?? 0) + Number(r.amount || 0);
+      if (r.orphaned) {
+        s.orphan.n++;
+        s.orphan.cur[r.currency] = (s.orphan.cur[r.currency] ?? 0) + Number(r.amount || 0);
+      }
     }
-    return m;
-  }, [filtered]);
+    return s;
+  }, [base]);
 
-  const counts = useMemo(() => ({
-    held: filtered.filter((r) => r.received_on && !r.returned_on).length,
-    pending: filtered.filter((r) => !r.received_on).length,
-    returned: filtered.filter((r) => r.returned_on).length,
-    orphan: filtered.filter((r) => r.orphaned).length,
-  }), [filtered]);
+  const fxLine = (cur: Record<string, number>) =>
+    Object.entries(cur).filter(([c]) => c !== 'TWD').map(([c, v]) => `${c} ${fmt(v)}`).join('・');
 
   /** 手動押金:不掛在任何訂單/契約下,金額與房源姓名可以直接填 */
   function blankManual(): Dep {
@@ -214,41 +226,60 @@ export default function DepositsPage() {
 
   const inp = 'rounded-lg border border-gray-300 px-2 py-1.5';
 
+  // 未收款的列沒有任何日期,設了區間必然全空。直接說明,不要讓人以為資料不見了。
+  const emptyHint = statusF === 'pending' && (fromD || toD)
+    ? '未收款的押金還沒有收退日期,清除日期區間才看得到。'
+    : '這一類目前沒有押金紀錄';
+
   return (
     <div>
       {msg && <div className="mb-3 rounded-lg bg-mor-greenlight text-mor-green px-3 py-2 text-sm">{msg}</div>}
 
-      {/* 卡片 */}
+      {/*
+        三張卡片同時是分頁籤。數字算在 base 上(不含分頁籤本身的篩選),
+        所以切到哪一類,另外兩類的數字都還在 —— 卡片是總覽,不是當前清單的重複。
+      */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-        <div className="rounded-xl bg-mor-slate text-white p-5 min-w-0">
-          <div className="text-xs opacity-80">暫收款(已收未退)</div>
-          <div className="stat-num-lg font-bold mt-1">
-            NT$ {fmt(held['TWD'] ?? 0)}
-          </div>
-          <div className="text-xs opacity-90 mt-1">
-            {Object.entries(held).filter(([c]) => c !== 'TWD').map(([c, v]) => (
-              <span key={c} className="mr-2">{c} {fmt(v)}</span>
-            ))}
-            <span className="opacity-70">共 {counts.held} 筆</span>
-          </div>
-        </div>
-        <div className="rounded-xl bg-white border border-mor-line p-5 min-w-0">
-          <div className="text-xs text-gray-500">尚未收款</div>
-          <div className="stat-num font-bold mt-1 text-amber-600">{counts.pending} 筆</div>
-          <div className="text-xs text-gray-400 mt-1">已填押金但還沒收到錢</div>
-        </div>
-        <div className="rounded-xl bg-white border border-mor-line p-5 min-w-0">
-          <div className="text-xs text-gray-500">已退還 / 孤兒</div>
-          <div className="stat-num font-bold mt-1">{counts.returned} <span className="text-sm font-normal text-gray-400">筆</span>
-            {counts.orphan > 0 && <span className="text-red-600 text-sm ml-2">孤兒 {counts.orphan}</span>}
-          </div>
-          <div className="text-xs text-gray-400 mt-1">孤兒 = 來源已刪除但錢還在</div>
-        </div>
+        {([
+          { k: 'pending', title: '未收款', hint: '已填押金但還沒收到錢', tone: 'amber' },
+          { k: 'held', title: '已收款(暫收中)', hint: '錢在我們手上,尚未退還', tone: 'slate' },
+          { k: 'returned', title: '已退款', hint: '押金已退還給房客', tone: 'gray' },
+        ] as const).map((t) => {
+          const s = stats[t.k];
+          const on = statusF === t.k;
+          const fx = fxLine(s.cur);
+          return (
+            <button key={t.k} onClick={() => setStatusF(t.k)}
+              className={`text-left rounded-xl p-5 min-w-0 border transition
+                ${on
+                  ? (t.tone === 'slate' ? 'bg-mor-slate text-white border-mor-slate'
+                    : t.tone === 'amber' ? 'bg-amber-500 text-white border-amber-500'
+                    : 'bg-gray-600 text-white border-gray-600')
+                  : 'bg-white border-mor-line hover:border-gray-300'}`}>
+              <div className={`text-xs ${on ? 'opacity-80' : 'text-gray-500'}`}>{t.title}</div>
+              <div className="stat-num-lg font-bold mt-1">NT$ {fmt(s.cur['TWD'] ?? 0)}</div>
+              <div className={`text-xs mt-1 ${on ? 'opacity-90' : 'text-gray-400'}`}>
+                {fx && <span className="mr-2">{fx}</span>}
+                共 {s.n} 筆
+              </div>
+              <div className={`text-xs mt-0.5 ${on ? 'opacity-70' : 'text-gray-400'}`}>{t.hint}</div>
+            </button>
+          );
+        })}
       </div>
+
+      {/* 孤兒是跨類別的狀態(可能未收也可能已收),沒有東西時完全不顯示 */}
+      {stats.orphan.n > 0 && (
+        <button onClick={() => setStatusF('orphan')}
+          className={`mb-4 rounded-lg px-3 py-2 text-xs border w-full md:w-auto text-left
+            ${statusF === 'orphan' ? 'bg-red-600 text-white border-red-600' : 'bg-red-50 text-red-600 border-red-200'}`}>
+          ⚠ 孤兒 {stats.orphan.n} 筆・NT$ {fmt(stats.orphan.cur['TWD'] ?? 0)} —— 來源訂單或契約已刪除,但錢還在
+        </button>
+      )}
 
       {/* 篩選 */}
       <div className="filter-bar bg-white rounded-xl border border-mor-line p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
-        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">收押金日</span>
+        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">日期區間(收/退款日)</span>
           <div className="flex items-center gap-1">
             <input type="date" value={fromD} onChange={(e) => setFromD(e.target.value)} className={inp} />
             <span className="text-gray-400">~</span>
@@ -274,14 +305,6 @@ export default function DepositsPage() {
             <option value="">全部</option>
             {payAccounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
           </select></label>
-        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">狀態</span>
-          <select value={statusF} onChange={(e) => setStatusF(e.target.value)} className={inp}>
-            <option value="">全部</option>
-            <option value="held">暫收中</option>
-            <option value="pending">尚未收</option>
-            <option value="returned">已退</option>
-            <option value="orphan">孤兒</option>
-          </select></label>
         <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">關鍵字(房源/姓名/備註)</span>
           <div className="flex items-center gap-1">
             <input value={kwInput} onChange={(e) => setKwInput(e.target.value)}
@@ -291,7 +314,7 @@ export default function DepositsPage() {
               className="rounded-lg bg-mor-slate text-white px-3 py-1.5 hover:bg-mor-slatedark">搜尋</button>
           </div></label>
         <div className="ml-auto flex gap-2">
-          <button onClick={() => { setFromD(''); setToD(''); setEstateF(''); setRoomF(''); setMethodF(''); setAcctF(''); setStatusF(''); setKwInput(''); setKw(''); }}
+          <button onClick={() => { setFromD(''); setToD(''); setEstateF(''); setRoomF(''); setMethodF(''); setAcctF(''); setKwInput(''); setKw(''); }}
             className="rounded-lg border border-gray-300 px-3 py-1.5">清除</button>
           <button onClick={() => setEdit(blankManual())}
             className="rounded-lg border border-mor-slate text-mor-slate px-3 py-1.5 font-medium hover:bg-mor-sand/60">+ 手動新增</button>
@@ -303,7 +326,7 @@ export default function DepositsPage() {
       {/* 手機卡片 */}
       <div className="md:hidden space-y-2">
         {loading ? <div className="text-center text-gray-400 py-10">載入中…</div>
-        : sorted.length === 0 ? <div className="text-center text-gray-400 py-10">無押金紀錄</div>
+        : sorted.length === 0 ? <div className="text-center text-gray-400 py-10 px-6 text-sm">{emptyHint}</div>
         : sorted.map((r) => (
           <div key={r.id} onClick={() => setDetail(r)}
             className="rounded-xl border border-mor-line bg-white p-4 active:bg-mor-sand/40">
@@ -344,7 +367,7 @@ export default function DepositsPage() {
           </thead>
           <tbody>
             {loading ? <tr><td colSpan={10} className="px-4 py-10 text-center text-gray-400">載入中…</td></tr>
-            : sorted.length === 0 ? <tr><td colSpan={10} className="px-4 py-10 text-center text-gray-400">無押金紀錄</td></tr>
+            : sorted.length === 0 ? <tr><td colSpan={10} className="px-4 py-10 text-center text-gray-400 text-sm">{emptyHint}</td></tr>
             : sorted.map((r) => (
               <tr key={r.id} className="border-b border-mor-line/60 last:border-0 hover:bg-mor-sand/30">
                 <td className="px-3 py-2 whitespace-nowrap text-gray-500">{r.estate_id ? estateName[r.estate_id] ?? '—' : '—'}</td>
