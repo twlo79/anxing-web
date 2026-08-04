@@ -10,6 +10,8 @@ type Expense = {
   account_code: string | null; purpose_type: string; estate_id: string | null;
   property_id?: string | null;   // 選填,用途的細分
   voucher_no: string | null; no_voucher?: boolean; payment_method: string | null; pay_account: string | null;
+  // 由哪張請款單產生。憑證照片沿用那張單上的，不另外複製檔案。
+  request_id?: string | null;
   note: string | null; source_item_id: string | null;
   // amount 一律台幣;外幣的單另存原幣別與原金額供對帳
   currency?: string | null; fx_rate?: number | null; amount_original?: number | null;
@@ -557,7 +559,8 @@ export default function ExpensesPage() {
               <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">備註</span>
                 <textarea value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })}
                   className="rounded-lg border border-mor-line px-2 py-1.5 h-20" /></label>
-              <Receipts ref={receiptsRef} kind="exp" parentId={edit.id || null} label="憑證圖片" />
+              <Receipts ref={receiptsRef} kind="exp" parentId={edit.id || null} label="憑證圖片"
+                inheritFromRequestId={edit.request_id ?? null} />
             </div>
             <div className="border-t border-mor-line px-6 py-4 flex justify-end gap-2">
               <button onClick={() => setEdit(null)} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>

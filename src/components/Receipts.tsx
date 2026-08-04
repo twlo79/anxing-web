@@ -73,9 +73,15 @@ const Receipts = forwardRef<ReceiptsHandle, {
   parentId: string | null | undefined;
   canEdit?: boolean;
   label?: string;
-}>(function Receipts({ kind, parentId, canEdit = true, label = '憑證' }, ref) {
+  /**
+   * 這筆支出來自哪張請款單。有值的話，請款單上的憑證會一起顯示（唯讀）。
+   * 檔案不複製 —— 一張請款單常拆成多筆支出，複製會讓同一張發票在 storage 出現好幾份。
+   */
+  inheritFromRequestId?: string | null;
+}>(function Receipts({ kind, parentId, canEdit = true, label = '憑證', inheritFromRequestId }, ref) {
   const supabase = createClient();
   const [rows, setRows] = useState<Att[]>([]);
+  const [inherited, setInherited] = useState<Att[]>([]);
   const [urls, setUrls] = useState<Record<string, string>>({});
   const [staged, setStaged] = useState<Staged[]>([]);
   const [busy, setBusy] = useState(false);
@@ -94,11 +100,22 @@ const Receipts = forwardRef<ReceiptsHandle, {
 
   useEffect(() => { load(); }, [load]);
 
+  // 母單（請款單）上的憑證。只顯示，不能在支出頁刪 —— 那是請款單的東西。
+  useEffect(() => {
+    (async () => {
+      if (!inheritFromRequestId) { setInherited([]); return; }
+      const { data } = await supabase.from('attachments')
+        .select('id, path, file_name, mime_type, size_bytes, created_at')
+        .eq('request_id', inheritFromRequestId).order('created_at');
+      setInherited(data ?? []);
+    })();
+  }, [supabase, inheritFromRequestId]);
+
   // 私有 bucket 看不到就是看不到，每張圖都要換一次簽名網址。
   // 一小時到期 —— 對話框開著看發票的情境綽綽有餘。
   useEffect(() => {
     (async () => {
-      const missing = rows.filter((r) => !urls[r.path]).map((r) => r.path);
+      const missing = [...rows, ...inherited].filter((r) => !urls[r.path]).map((r) => r.path);
       if (!missing.length) return;
       const { data } = await supabase.storage.from(BUCKET).createSignedUrls(missing, 3600);
       if (!data) return;
@@ -108,7 +125,7 @@ const Receipts = forwardRef<ReceiptsHandle, {
     })();
     // urls 故意不放進相依 —— 放了會因為 setUrls 觸發自己而無限迴圈
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, supabase]);
+  }, [rows, inherited, supabase]);
 
   /** 傳一個檔案並登記。回傳錯誤訊息，成功為 null。 */
   const putOne = useCallback(async (file: File, pid: string, userId: string): Promise<string | null> => {
@@ -208,7 +225,40 @@ const Receipts = forwardRef<ReceiptsHandle, {
     setBusy(false); load();
   }
 
-  const total = rows.length + staged.length;
+  const total = rows.length + staged.length + inherited.length;
+
+  /** fromRequest：來自請款單的憑證，只能看不能刪 —— 那是請款單的東西 */
+  function tile(a: Att, removable: boolean, fromRequest: boolean) {
+    const isPdf = a.mime_type === 'application/pdf';
+    const url = urls[a.path];
+    return (
+      <div key={a.id} className="relative group">
+        <a href={url ?? '#'} target="_blank" rel="noopener noreferrer"
+          onClick={(e) => { if (!url) e.preventDefault(); }}
+          className={`block aspect-square rounded-lg border overflow-hidden bg-mor-sand/40
+            ${fromRequest ? 'border-mor-blue/40' : 'border-mor-line'}`}>
+          {isPdf || !url ? (
+            <div className="w-full h-full flex items-center justify-center text-xs text-gray-400">
+              {isPdf ? 'PDF' : '…'}
+            </div>
+          ) : (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img src={url} alt={a.file_name ?? '憑證'} className="w-full h-full object-cover" />
+          )}
+        </a>
+        <div className={`mt-0.5 text-[10px] truncate ${fromRequest ? 'text-mor-blue' : 'text-gray-400'}`}>
+          {fromRequest ? '來自請款單' : fmtSize(a.size_bytes)}
+        </div>
+        {removable && (
+          <button onClick={() => remove(a)} disabled={busy}
+            className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/50 text-white text-xs leading-none
+                       flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100
+                       md:opacity-0 max-md:opacity-100"
+            aria-label="刪除">✕</button>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="border-t border-mor-line pt-3">
@@ -246,34 +296,8 @@ const Receipts = forwardRef<ReceiptsHandle, {
                 aria-label="移除">✕</button>
             </div>
           ))}
-          {rows.map((a) => {
-            const isPdf = a.mime_type === 'application/pdf';
-            const url = urls[a.path];
-            return (
-              <div key={a.id} className="relative group">
-                <a href={url ?? '#'} target="_blank" rel="noopener noreferrer"
-                  onClick={(e) => { if (!url) e.preventDefault(); }}
-                  className="block aspect-square rounded-lg border border-mor-line overflow-hidden bg-mor-sand/40">
-                  {isPdf || !url ? (
-                    <div className="w-full h-full flex items-center justify-center text-xs text-gray-400">
-                      {isPdf ? 'PDF' : '…'}
-                    </div>
-                  ) : (
-                    /* eslint-disable-next-line @next/next/no-img-element */
-                    <img src={url} alt={a.file_name ?? '憑證'} className="w-full h-full object-cover" />
-                  )}
-                </a>
-                <div className="mt-0.5 text-[10px] text-gray-400 truncate">{fmtSize(a.size_bytes)}</div>
-                {canEdit && (
-                  <button onClick={() => remove(a)} disabled={busy}
-                    className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/50 text-white text-xs leading-none
-                               flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100
-                               md:opacity-0 max-md:opacity-100"
-                    aria-label="刪除">✕</button>
-                )}
-              </div>
-            );
-          })}
+          {rows.map((a) => tile(a, canEdit, false))}
+          {inherited.map((a) => tile(a, false, true))}
         </div>
       )}
     </div>
