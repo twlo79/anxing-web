@@ -26,6 +26,9 @@ type Wi = {
 };
 type Day = { period: string; work_date: string; staff_id: string; status: string | null; hours: number | null; rooms_override?: number | null };
 type MP = { period: string; property_code: string; count_override: number | null; linen_taken: number };
+/** 工作類型主檔。兩個開關獨立:計間數影響個人工作量,計布巾影響床單推算。 */
+type WType = { code: string; name: string; count_workload: boolean; count_linen: boolean; active: boolean };
+type Setting = { key: string; value: string | null };
 
 // ab 原本叫「A、B 系」,改成棟別「時兆」—— A1~A18 與 B1~B8 全在時兆,
 // 用棟別命名之後加新房號不用改標題（migration_64）
@@ -53,6 +56,8 @@ export default function HousekeepingPage() {
   const [items, setItems] = useState<Wi[]>([]);
   const [days, setDays] = useState<Day[]>([]);
   const [mps, setMps] = useState<MP[]>([]);
+  const [wtypes, setWtypes] = useState<WType[]>([]);
+  const [settings, setSettings] = useState<Record<string, string | null>>({});
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState('');
   const [importOpen, setImportOpen] = useState(false);
@@ -67,12 +72,16 @@ export default function HousekeepingPage() {
   function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 4000); }
 
   const loadMaster = useCallback(async () => {
-    const [s, p] = await Promise.all([
+    const [s, p, w, st] = await Promise.all([
       supabase.from('hk_staff').select('*').eq('active', true).order('sort'),
       supabase.from('hk_property').select('*').eq('active', true).order('sort'),
+      supabase.from('hk_work_type').select('*'),
+      supabase.from('hk_setting').select('key, value'),
     ]);
     setStaff((s.data ?? []) as HkStaff[]);
     setProps((p.data ?? []) as HkProperty[]);
+    setWtypes((w.data ?? []) as WType[]);
+    setSettings(Object.fromEntries(((st.data ?? []) as Setting[]).map((x) => [x.key, x.value])));
   }, [supabase]);
 
   const loadPeriod = useCallback(async () => {
@@ -98,12 +107,43 @@ export default function HousekeepingPage() {
   const hourStaff = useMemo(() => staff.filter((s) => s.count_mode === 'hours'), [staff]);
   const propByCode = useMemo(() => Object.fromEntries(props.map((p) => [p.code, p])), [props]);
 
+  // ── 設定（hk_setting / hk_work_type） ───────────────────────
+  // 這些開關以前是寫死的，設定頁按了沒反應。現在真的接上計算。
+  const countMode = (settings['count_mode'] === 'headcount' ? 'headcount' : 'clean') as 'clean' | 'headcount';
+  const includeGift = settings['include_gift'] !== 'false';
+
+  const wtMap = useMemo(() => Object.fromEntries(wtypes.map((w) => [w.code, w])), [wtypes]);
+  /** 主檔沒有這個類型時預設兩個開關都開 —— 不能因為漏建檔就讓資料靜靜消失 */
+  const wt = useCallback((code: string) => wtMap[code] ?? { count_workload: true, count_linen: true }, [wtMap]);
+
+  /**
+   * 計間數用的工作項。
+   * 「贈品補充」若被設定成不計，或該工作類型的「計間數」被關掉，就不算進個人工作量。
+   */
+  const roomItems = useMemo(() => items.filter((i) => {
+    if (!includeGift && i.work_type === '贈品補充') return false;
+    return wt(i.work_type).count_workload !== false;
+  }), [items, includeGift, wt]);
+
+  /**
+   * 計布巾用的工作項。條件比間數多一層：
+   *   工作類型要計布巾（點交、拆備品、公區清潔預設不計）
+   *   而且該房源本身也要計布巾（hk_property.count_linen）
+   * 兩個都通過才會進入打掃次數 → 床數 → 床單。
+   */
+  const linenItems = useMemo(() => items.filter((i) => {
+    if (!includeGift && i.work_type === '贈品補充') return false;
+    if (wt(i.work_type).count_linen === false) return false;
+    if (i.property_code && propByCode[i.property_code]?.count_linen === false) return false;
+    return true;
+  }), [items, includeGift, wt, propByCode]);
+
   /** 每人每日間數（由房源格推導的自動值） */
   const autoRooms = useMemo(() => {
     const m: Record<string, number> = {};
-    for (const i of items) m[`${i.work_date}|${i.staff_id}`] = (m[`${i.work_date}|${i.staff_id}`] ?? 0) + 1;
+    for (const i of roomItems) m[`${i.work_date}|${i.staff_id}`] = (m[`${i.work_date}|${i.staff_id}`] ?? 0) + 1;
     return m;
-  }, [items]);
+  }, [roomItems]);
 
   const dayMap = useMemo(
     () => Object.fromEntries(days.map((d) => [`${d.work_date}|${d.staff_id}`, d])), [days]);
@@ -120,8 +160,8 @@ export default function HousekeepingPage() {
     return m;
   }, [autoRooms, days]);
 
-  /** 打掃次數（自動值）。手動覆寫在 mpMap。 */
-  const autoCounts = useMemo(() => cleanCounts(items, 'clean'), [items]);
+  /** 打掃次數（自動值）。計法由 hk_setting.count_mode 決定，手動覆寫在 mpMap。 */
+  const autoCounts = useMemo(() => cleanCounts(linenItems, countMode), [linenItems, countMode]);
   const mpMap = useMemo(() => Object.fromEntries(mps.map((m) => [m.property_code, m])), [mps]);
   const countOf = (code: string) => mpMap[code]?.count_override ?? autoCounts[code] ?? 0;
   const linenOf = (code: string) => mpMap[code]?.linen_taken ?? 0;
@@ -147,7 +187,7 @@ export default function HousekeepingPage() {
       const parts = l.split(/[,\t]/).map((x) => x.trim());
       return { date: parts[0], title: parts[1] ?? '', assignees: parts.slice(2).join(',') };
     }).filter((r) => /^\d{4}-\d{2}-\d{2}$/.test(r.date));
-    const parsed = parseRows(rows, staff, props, { includeGift: true });
+    const parsed = parseRows(rows, staff, props, { includeGift });
     const unknownNames = new Set<string>();
     for (const r of rows) {
       for (const n of splitAssignees(r.assignees)) {
@@ -155,7 +195,7 @@ export default function HousekeepingPage() {
       }
     }
     return { rows, parsed, unknownNames: Array.from(unknownNames) };
-  }, [raw, staff, props]);
+  }, [raw, staff, props, includeGift]);
 
   async function doImport() {
     if (!preview) return;

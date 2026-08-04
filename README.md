@@ -625,7 +625,7 @@ values ('<user_uuid>', '名字', 'housekeeper');  -- housekeeper | accountant | 
 
 | 項目 | 說明 |
 |---|---|
-| **`supabase/migrations/` 缺基準 schema** | 版控只從 `migration_30` 開始,之前的表結構、policy、函式都只存在於線上資料庫。已經因此踩過至少 4 次「repo 裡沒有但 DB 裡有」的坑(`staff_staff_type_check`、`gen_expenses_from_pr()`、`gen_recognitions()`…)。**動任何既有函式前先 `pg_get_functiondef` 撈線上定義** |
+| ~~`supabase/migrations/` 缺基準 schema~~ | **已補**:`supabase/schema-baseline.sql` 是 2026-08 的線上快照（表、約束、索引、函式、觸發器、RLS）。產生方式見 `supabase/dump-schema.sql`。<br>那份是**參考用不是可重跑**的 —— `create table` 沒有依賴排序。它的用途是讓「線上到底長什麼樣」在 repo 裡 grep 得到,改既有函式前先看那裡,不要照 `migration_30` 的舊版猜（`gen_expenses_from_pr()` 已被改過六輪）。 |
 | 爬蟲不送 `listingId` | 評價被指到錯誤房源的**根因**。4 間開封的 Airbnb 標題完全相同,靠名稱比對必然出錯(全站有 23 個共用名稱)。`migration_45` 已用日曆訂單修正既有資料,匯入端也改成用訂單回查,但來源沒修就還是治標 |
 | 出款日無撤銷路徑 | 填錯只能改日期(會同步支出),無法退回未出款。要補得設計作廢流程,含已產生支出的處理 |
 | 損益未整合 | 收入鏈與支出鏈各自獨立,要看損益得兩邊各自匯出 Excel 再合併 |
