@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
+import Receipts from '@/components/Receipts';
 
 /**
  * 押金管理。
@@ -22,6 +23,12 @@ type Dep = {
   received_on: string | null; received_method: string | null; received_account: string | null;
   returned_on: string | null; returned_method: string | null; returned_account: string | null;
   note: string | null; orphaned: boolean; is_manual?: boolean; created_at: string;
+  // 退款審核流程（migration_61）
+  refund_status?: 'none' | 'pending' | 'approved' | 'rejected';
+  payee_bank_code?: string | null; payee_name?: string | null; payee_account?: string | null;
+  planned_refund_on?: string | null;
+  manager_approved_at?: string | null; admin_approved_at?: string | null;
+  reject_reason?: string | null;
 };
 type Estate = { id: string; name: string };
 type PayAccount = { code: string; name: string; method: string };
@@ -66,6 +73,9 @@ export default function DepositsPage() {
   const [detail, setDetail] = useState<Dep | null>(null);
   const [edit, setEdit] = useState<Dep | null>(null);
   const [saving, setSaving] = useState(false);
+  const [me, setMe] = useState<{ id: string; role: string } | null>(null);
+  const [rejecting, setRejecting] = useState<Dep | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
 
   function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 3000); }
 
@@ -82,6 +92,12 @@ export default function DepositsPage() {
       .then(({ data }) => setEstates(data ?? []));
     supabase.from('payment_accounts').select('code, name, method').eq('active', true).order('sort')
       .then(({ data }) => setPayAccounts(data ?? []));
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data } = await supabase.from('profiles').select('role').eq('id', user.id).single();
+      setMe({ id: user.id, role: data?.role ?? '' });
+    })();
   }, [load, supabase]);
 
   const estateName = useMemo(() => Object.fromEntries(estates.map((e) => [e.id, e.name])), [estates]);
@@ -150,7 +166,82 @@ export default function DepositsPage() {
       received_on: null, received_method: null, received_account: null,
       returned_on: null, returned_method: null, returned_account: null,
       note: null, orphaned: false, is_manual: true, created_at: '',
+      refund_status: 'none', payee_bank_code: null, payee_name: null, payee_account: null,
+      planned_refund_on: null,
     };
+  }
+
+  const role = me?.role ?? '';
+  const isManager = role === 'manager';
+  const isAdmin = role === 'super_admin';
+  const canRequest = ['accountant', 'manager', 'super_admin'].includes(role);
+
+  /** 退款流程的權限判斷,集中一處 —— 分散寫遲早有一邊漏改 */
+  function refundPerms(d: Dep) {
+    const st = d.refund_status ?? 'none';
+    return {
+      st,
+      // 還沒收到錢就沒有錢可以退
+      canRequest: canRequest && !!d.received_on && !d.returned_on && (st === 'none' || st === 'rejected'),
+      canVoteMgr: isManager && st === 'pending' && !d.manager_approved_at,
+      canVoteAdm: isAdmin && st === 'pending' && !d.admin_approved_at,
+      canReject: (isManager || isAdmin) && st === 'pending',
+      // 核可後才填實際退款日。這條也寫在 CHECK 約束裡,不是只靠前端。
+      canSettle: canRequest && st === 'approved' && !d.returned_on,
+    };
+  }
+
+  /** 送出退款申請。房客帳戶與預計匯款日在這一步就要填齊,審核者才有東西可看。 */
+  async function submitRefund() {
+    if (!edit) return;
+    if (!edit.payee_account?.trim()) return flash('請填房客的收款帳號');
+    if (!edit.payee_name?.trim()) return flash('請填戶名');
+    if (!edit.planned_refund_on) return flash('請填預計匯款日');
+    if (!edit.returned_method) return flash('請選我方出款方式');
+    setSaving(true);
+    const { error } = await supabase.from('deposits').update({
+      refund_status: 'pending',
+      payee_bank_code: edit.payee_bank_code?.trim() || null,
+      payee_name: edit.payee_name.trim(),
+      payee_account: edit.payee_account.trim(),
+      planned_refund_on: edit.planned_refund_on,
+      returned_method: edit.returned_method,
+      returned_account: edit.returned_method !== 'cash' ? (edit.returned_account || null) : null,
+      refund_requested_by: me?.id ?? null,
+      note: edit.note || null,
+    }).eq('id', edit.id);
+    setSaving(false);
+    if (error) return flash('送審失敗:' + error.message);
+    setEdit(null); flash('已送出退款審核'); load();
+  }
+
+  /** 投票。兩票到齊由觸發器翻成 approved,前端不自己算狀態。 */
+  async function vote(d: Dep) {
+    if (!me) return;
+    const patch: any = {};
+    if (isManager) { patch.manager_approved_by = me.id; patch.manager_approved_at = new Date().toISOString(); }
+    else if (isAdmin) { patch.admin_approved_by = me.id; patch.admin_approved_at = new Date().toISOString(); }
+    else return flash('你的角色不能核可');
+    const { error } = await supabase.from('deposits').update(patch).eq('id', d.id);
+    if (error) return flash('核可失敗:' + error.message);
+    setDetail(null); flash('已核可'); load();
+  }
+
+  async function doReject() {
+    if (!rejecting || !me) return;
+    if (!rejectReason.trim()) return flash('請填駁回原因');
+    const { error } = await supabase.from('deposits').update({
+      refund_status: 'rejected', rejected_by: me.id, reject_reason: rejectReason.trim(),
+    }).eq('id', rejecting.id);
+    if (error) return flash('駁回失敗:' + error.message);
+    setRejecting(null); setRejectReason(''); flash('已駁回'); load();
+  }
+
+  /** 實際匯出後填退款日。填了才算「已退款」。 */
+  async function settle(d: Dep, date: string) {
+    const { error } = await supabase.from('deposits').update({ returned_on: date }).eq('id', d.id);
+    if (error) return flash('儲存失敗:' + error.message);
+    setDetail(null); flash('已完成退款'); load();
   }
 
   async function save() {
@@ -217,10 +308,24 @@ export default function DepositsPage() {
     XLSX.writeFile(wb, `押金_${todayStr().replace(/-/g, '')}.xlsx`);
   }
 
+  /** 退款流程的狀態標籤。跟押金本身的狀態（暫收/已退）是兩回事。 */
+  const refundChip = (r: Dep) => {
+    const st = r.refund_status ?? 'none';
+    if (r.returned_on) return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-gray-100 text-gray-500">已退款</span>;
+    if (st === 'approved') return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-mor-greenlight text-mor-green">已核可・待匯款</span>;
+    if (st === 'pending') return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-amber-50 text-amber-700">退款審核中</span>;
+    if (st === 'rejected') return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-red-50 text-red-600">已駁回</span>;
+    return null;
+  };
+
   const statusChip = (r: Dep) => {
     if (r.orphaned) return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-red-50 text-red-600">孤兒</span>;
     if (r.returned_on) return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-gray-100 text-gray-500">已退</span>;
-    if (r.received_on) return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-mor-bluelight text-mor-slate">暫收中</span>;
+    if (r.received_on) {
+      // 退款流程進行中的,狀態欄直接顯示流程狀態 —— 「暫收中」看不出有人正在等核可
+      const rc = refundChip(r);
+      return rc ?? <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-mor-bluelight text-mor-slate">暫收中</span>;
+    }
     return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-amber-50 text-amber-600">尚未收</span>;
   };
 
@@ -434,11 +539,28 @@ export default function DepositsPage() {
                 {row('入款方式', d.received_method
                   ? `${METHOD_LABEL[d.received_method] ?? d.received_method}${d.received_account ? `・${acctName[d.received_account] ?? d.received_account}` : ''}`
                   : '—')}
+                {(d.refund_status ?? 'none') !== 'none' && <>
+                  {row('退款狀態', <span className="space-x-1">
+                    {refundChip(d)}
+                    {d.refund_status === 'pending' && (
+                      <span className="text-xs text-gray-400">
+                        主管 {d.manager_approved_at ? '✓' : '○'}・總經理 {d.admin_approved_at ? '✓' : '○'}
+                      </span>
+                    )}
+                  </span>)}
+                  {row('退到', d.payee_account
+                    ? <span className="text-xs">{d.payee_name ?? ''} {d.payee_bank_code ?? ''} {d.payee_account}</span>
+                    : '—')}
+                  {row('預計匯款日', d.planned_refund_on ?? '—')}
+                  {d.reject_reason ? row('駁回原因', <span className="text-red-600 text-xs">{d.reject_reason}</span>) : null}
+                </>}
                 {row('退押金日', d.returned_on ?? '—')}
                 {row('退款方式', d.returned_method
                   ? `${METHOD_LABEL[d.returned_method] ?? d.returned_method}${d.returned_account ? `・${acctName[d.returned_account] ?? d.returned_account}` : ''}`
                   : '—')}
                 {row('備註', d.note ? <span className="whitespace-pre-wrap">{d.note}</span> : '—')}
+
+                <div className="mt-3"><Receipts kind="dep" parentId={d.id} label="憑證圖片" /></div>
 
                 {!d.is_manual && (
                   <div className="mt-3 rounded-lg bg-mor-sand/60 text-gray-500 px-3 py-2 text-xs">
@@ -450,15 +572,53 @@ export default function DepositsPage() {
 
               <div className="sticky bottom-0 bg-white border-t border-mor-line px-6 py-3 flex gap-2"
                 style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
-                <button onClick={() => { setEdit({ ...d }); setDetail(null); }}
-                  className="flex-1 h-11 rounded-lg bg-mor-slate text-white text-sm font-medium hover:bg-mor-slatedark">管理押金</button>
-                <button onClick={() => setDetail(null)}
-                  className="flex-1 h-11 rounded-lg border border-gray-300 text-sm">關閉</button>
+                {(() => {
+                  const p = refundPerms(d);
+                  const btn = 'flex-1 min-w-[5rem] h-11 rounded-lg text-sm font-medium';
+                  return <>
+                    <button onClick={() => { setEdit({ ...d }); setDetail(null); }}
+                      className={`${btn} border border-mor-line`}>管理押金</button>
+                    {(p.canVoteMgr || p.canVoteAdm) && (
+                      <button onClick={() => vote(d)} className={`${btn} bg-mor-green text-white`}>核可退款</button>
+                    )}
+                    {p.canReject && (
+                      <button onClick={() => { setDetail(null); setRejecting(d); setRejectReason(''); }}
+                        className={`${btn} border border-amber-400 text-amber-700`}>駁回</button>
+                    )}
+                    {p.canSettle && (
+                      <button onClick={() => {
+                        const v = prompt('實際退款日（YYYY-MM-DD）', d.planned_refund_on ?? todayStr());
+                        if (v && /^\d{4}-\d{2}-\d{2}$/.test(v)) settle(d, v);
+                        else if (v) flash('日期格式要是 YYYY-MM-DD');
+                      }} className={`${btn} bg-mor-slate text-white`}>確認已退款</button>
+                    )}
+                    <button onClick={() => setDetail(null)}
+                      className={`${btn} border border-gray-300`}>關閉</button>
+                  </>;
+                })()}
               </div>
             </div>
           </div>
         );
       })()}
+
+      {/* 駁回 */}
+      {rejecting && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setRejecting(null)}>
+          <div className="bg-white rounded-xl w-[420px] max-w-[92vw] shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="border-b border-mor-line px-6 py-4 font-bold">駁回退款・{rejecting.room ?? ''}</div>
+            <div className="p-6 text-sm space-y-2">
+              <div className="text-xs text-gray-500">駁回後退回申請人,可修改後重新送審。已投的票會一併清空。</div>
+              <textarea value={rejectReason} onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="駁回原因(必填)" className="w-full rounded-lg border border-mor-line px-2 py-1.5 h-24" />
+            </div>
+            <div className="border-t border-mor-line px-6 py-4 flex justify-end gap-2">
+              <button onClick={() => setRejecting(null)} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>
+              <button onClick={doReject} className="rounded-lg bg-amber-600 text-white px-4 py-1.5 text-sm font-medium hover:bg-amber-700">確認駁回</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 管理押金 */}
       {edit && (
@@ -546,26 +706,73 @@ export default function DepositsPage() {
                 )}
               </div>
 
+              {/*
+                退押金是一條審核流,不是填個日期就好。
+                押金動輒十幾二十萬,退錯追不回來 —— 這裡的關卡跟請款單同一套。
+
+                兩個帳戶方向相反,命名沿用請款單:
+                  payee_*          = 房客的收款帳戶（錢退到哪）
+                  returned_account = 我方的出款帳號（錢從哪出）
+              */}
               <div className="border-t border-mor-line pt-3">
-                <div className="text-xs font-semibold text-gray-500 mb-2">退押金</div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-semibold text-gray-500">退押金</span>
+                  {refundChip(edit)}
+                </div>
+
                 {!edit.received_on ? (
                   <div className="text-xs text-gray-400">還沒收到押金,先填收款資訊。</div>
+                ) : edit.returned_on ? (
+                  <div className="text-xs text-gray-500">
+                    已於 {edit.returned_on} 退還・
+                    {edit.returned_method ? METHOD_LABEL[edit.returned_method] : ''}
+                    {edit.returned_account ? `・${acctName[edit.returned_account] ?? edit.returned_account}` : ''}
+                  </div>
                 ) : (
                   <>
+                    {edit.refund_status === 'rejected' && edit.reject_reason && (
+                      <div className="rounded-lg bg-red-50 text-red-600 px-3 py-2 text-xs mb-3">
+                        駁回原因:{edit.reject_reason}
+                      </div>
+                    )}
+                    {edit.refund_status === 'pending' && (
+                      <div className="rounded-lg bg-amber-50 text-amber-700 px-3 py-2 text-xs mb-3">
+                        審核中,等待主管與總經理核可。這期間仍可修改後重新送審。
+                      </div>
+                    )}
+
+                    <div className="text-xs text-gray-400 mb-1.5">房客的收款帳戶</div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">退押金日</span>
-                        <input type="date" value={edit.returned_on ?? ''}
-                          onChange={(e) => setEdit({ ...edit, returned_on: e.target.value || null })}
+                      <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">銀行代碼</span>
+                        <input value={edit.payee_bank_code ?? ''}
+                          onChange={(e) => setEdit({ ...edit, payee_bank_code: e.target.value })}
+                          placeholder="例:806"
                           className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5" /></label>
-                      <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">退款方式</span>
-                        <select value={edit.returned_method ?? ''} disabled={!edit.returned_on}
+                      <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">戶名 *</span>
+                        <input value={edit.payee_name ?? ''}
+                          onChange={(e) => setEdit({ ...edit, payee_name: e.target.value })}
+                          className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5" /></label>
+                      <label className="flex flex-col gap-1 md:col-span-2"><span className="text-xs text-gray-500">帳號 *</span>
+                        <input value={edit.payee_account ?? ''}
+                          onChange={(e) => setEdit({ ...edit, payee_account: e.target.value })}
+                          className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5" /></label>
+                    </div>
+
+                    <div className="text-xs text-gray-400 mt-3 mb-1.5">我方出款</div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">預計匯款日 *</span>
+                        <input type="date" value={edit.planned_refund_on ?? ''}
+                          onChange={(e) => setEdit({ ...edit, planned_refund_on: e.target.value || null })}
+                          className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5" /></label>
+                      <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">出款方式 *</span>
+                        <select value={edit.returned_method ?? ''}
                           onChange={(e) => setEdit({ ...edit, returned_method: e.target.value || null, returned_account: null })}
-                          className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-100">
+                          className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5">
                           <option value="">請選擇</option>
                           {METHOD_OPTS.map((m) => <option key={m} value={m}>{METHOD_LABEL[m]}</option>)}
                         </select></label>
                       {edit.returned_method && edit.returned_method !== 'cash' && (
-                        <label className="flex flex-col gap-1 md:col-span-2"><span className="text-xs text-gray-500">退款帳號</span>
+                        <label className="flex flex-col gap-1 md:col-span-2"><span className="text-xs text-gray-500">出款帳號（我方）</span>
                           <select value={edit.returned_account ?? ''}
                             onChange={(e) => setEdit({ ...edit, returned_account: e.target.value || null })}
                             className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5">
@@ -575,16 +782,19 @@ export default function DepositsPage() {
                           </select></label>
                       )}
                     </div>
-                    {!edit.returned_on && (
-                      <button onClick={() => setEdit({ ...edit, returned_on: todayStr() })}
-                        className="mt-2 text-xs text-mor-blue underline">填入今天</button>
-                    )}
+
                     {edit.currency !== 'TWD' && (
                       <p className="text-xs text-gray-400 mt-2">外幣押金原幣退還,不換匯。</p>
                     )}
+                    <p className="text-xs text-gray-400 mt-2">
+                      送出後由主管與總經理各核可一次,核可後才能填實際退款日。
+                    </p>
                   </>
                 )}
               </div>
+
+              {/* 匯款水單、房客提供的帳戶截圖都放這裡 */}
+              {edit.id && <Receipts kind="dep" parentId={edit.id} label="憑證圖片" />}
 
               <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">備註</span>
                 <textarea value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })}
@@ -601,8 +811,19 @@ export default function DepositsPage() {
               <button onClick={() => setEdit(null)}
                 className="h-12 md:h-auto flex-1 md:flex-none rounded-lg border border-gray-300 px-4 md:py-1.5 text-sm">取消</button>
               <button onClick={save} disabled={saving}
-                className="h-12 md:h-auto flex-1 md:flex-none rounded-lg bg-mor-slate text-white px-4 md:py-1.5 text-sm font-medium hover:bg-mor-slatedark disabled:opacity-40">
+                className="h-12 md:h-auto flex-1 md:flex-none rounded-lg border border-mor-line px-4 md:py-1.5 text-sm hover:bg-mor-sand/60 disabled:opacity-40">
                 {saving ? '儲存中…' : '儲存'}</button>
+              {/* 送審是獨立動作 —— 「儲存」只是留著待辦,不該悄悄啟動審核流程 */}
+              {edit.id && refundPerms(edit).canRequest && (
+                <button onClick={submitRefund} disabled={saving}
+                  className="h-12 md:h-auto flex-1 md:flex-none rounded-lg bg-mor-slate text-white px-4 md:py-1.5 text-sm font-medium hover:bg-mor-slatedark disabled:opacity-40">
+                  送出退款審核</button>
+              )}
+              {edit.id && edit.refund_status === 'pending' && (
+                <button onClick={submitRefund} disabled={saving}
+                  className="h-12 md:h-auto flex-1 md:flex-none rounded-lg bg-mor-slate text-white px-4 md:py-1.5 text-sm font-medium hover:bg-mor-slatedark disabled:opacity-40">
+                  更新退款資訊</button>
+              )}
             </div>
           </div>
         </div>

@@ -69,7 +69,7 @@ function fmtSize(n: number | null) {
 type Staged = { key: string; file: File; preview: string };
 
 const Receipts = forwardRef<ReceiptsHandle, {
-  kind: 'pr' | 'exp';
+  kind: 'pr' | 'exp' | 'dep';
   parentId: string | null | undefined;
   canEdit?: boolean;
   label?: string;
@@ -88,7 +88,7 @@ const Receipts = forwardRef<ReceiptsHandle, {
   const [err, setErr] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const col = kind === 'pr' ? 'request_id' : 'expense_id';
+  const col = kind === 'pr' ? 'request_id' : kind === 'dep' ? 'deposit_id' : 'expense_id';
 
   const load = useCallback(async () => {
     if (!parentId) { setRows([]); return; }
