@@ -56,8 +56,9 @@ src/
     api/import/*                 外部資料匯入端點(排程與爬蟲呼叫)
   components/Receipts.tsx        憑證上傳共用元件(壓縮、暫存、簽名網址)
   lib/sortable.tsx               表頭排序共用元件(SortTh / sortRows)
+  lib/period.ts                  期間與日期格式的**單一定義**(ym 是 YYYYMM 不是 YYYY-MM)
   lib/hkParse.ts                 排班解析與計數(**全專案風險最高的邏輯**)
-  lib/hkParse.test.ts            上面那支的測試(`npm test`,32 則)
+  lib/hkParse.test.ts            上面那支的測試(`npm test`,44 則含 period)
   lib/__fixtures__/hk-202607.ts  7 月真實排班資料,測試的黃金基準
 public/
   manifest.webmanifest           PWA
@@ -74,6 +75,8 @@ docs/                            會計手冊、模組設計文件
 ```
 
 `src/data/` 的一次性 seed 資料與四支 seed 端點已移到 `archive/seed-2026-07/`。它們沒有防重跑機制,再呼叫一次會產生整批重複訂單 —— 一個只會用一次卻能造成大範圍損害的端點,留在線上是純風險。
+
+`revenue_recognitions.ym` 存的是**六碼無連字號**(`202608`),不是 `2026-08`。拿 `2026-08` 去比會**安靜地回空集合** —— 字串比較下 `'202608' >= '2026-08'` 成立、`<= '2026-08'` 不成立,整個區間被排除。儀表板上線當天就中了這一發,畫面顯示營收 0 而那個月實際有八百多萬。格式一律用 `lib/period.ts`,那裡有測試釘住。
 
 `middleware.ts` 有一個容易重蹈的坑:**redirect 時必須把刷新後的 auth cookie 一起帶上**。`NextResponse.redirect()` 會丟掉 `response.cookies` 裡的內容,而 Supabase 的 refresh token 是**一次性**的 —— 一旦刷新後的新 token 沒寫回瀏覽器,舊的那顆也同時失效,症狀是「隔天要重新登入」。
 

@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
+import { ymOf, ymShow, ymMonth, monthsAgo, todayStr } from '@/lib/period';
 
 /**
  * 財務儀表板。
@@ -58,16 +59,7 @@ const short = (n: number) => {
   if (a >= 1e4) return (n / 1e4).toFixed(a >= 1e6 ? 0 : 1) + '萬';
   return nf(n);
 };
-const ymOf = (d: string) => d.slice(0, 7);
 
-/** 今天往前推 n 個月的月初 */
-function monthsAgo(n: number) {
-  const d = new Date();
-  d.setDate(1);
-  d.setMonth(d.getMonth() - n);
-  return d.toISOString().slice(0, 10);
-}
-const todayStr = () => new Date().toISOString().slice(0, 10);
 
 export default function DashboardPage() {
   const supabase = useMemo(() => createClient(), []);
@@ -150,11 +142,17 @@ export default function DashboardPage() {
     () => properties.filter((p) => !estF || p.estate_id === estF), [properties, estF]);
 
   // ── 物業/房源篩選在前端做（資料已按期間縮小）──────
+  // 認列與支出的 estate_id 有機會是空的（訂單本身沒歸物業，或匯入時漏帶）。
+  // 那種列若直接排除，物業視角的營收就會憑空少一塊而且不會有人發現 ——
+  // 所以 estate_id 空的時候用 property_id 回推它屬於哪個物業。
+  const estateOfProp = useMemo(
+    () => Object.fromEntries(properties.map((p) => [p.id, p.estate_id])), [properties]);
+
   const matchScope = useCallback((estate_id: string | null, property_id: string | null) => {
     if (propF) return property_id === propF;
-    if (estF) return estate_id === estF;
+    if (estF) return (estate_id ?? (property_id ? estateOfProp[property_id] : null)) === estF;
     return true;
-  }, [estF, propF]);
+  }, [estF, propF, estateOfProp]);
 
   const fRevs = useMemo(() => revs.filter((r) => matchScope(r.estate_id, r.property_id)), [revs, matchScope]);
   const fExps = useMemo(() => exps.filter((e) => matchScope(e.estate_id, e.property_id)), [exps, matchScope]);
@@ -175,6 +173,20 @@ export default function DashboardPage() {
     () => fOrds.filter((o) => !o.paid).reduce((s, o) => s + Number(o.amount || 0), 0), [fOrds]);
   const unpaidCount = useMemo(() => fOrds.filter((o) => !o.paid).length, [fOrds]);
   const toPay = useMemo(() => pending.reduce((s, r) => s + Number(r.total_amount || 0), 0), [pending]);
+
+  /**
+   * 認列缺漏警示。
+   *
+   * 儀表板的營收一律看認列（訂單營收認列制），不是收款日期也不是 orders.amount。
+   * 但如果訂單有金額、認列卻是 0，畫面會安靜地顯示「營收 NT$0」——
+   * 那看起來像「這個月沒生意」，實際上是資料沒產生。兩者差很多，要講出來。
+   */
+  const revGap = useMemo(() => {
+    const ordAmt = fOrds.reduce((s, o) => s + Number(o.amount || 0), 0);
+    if (ordAmt <= 0) return null;
+    if (totalRev > 0 && totalRev >= ordAmt * 0.5) return null;   // 跨月拆分本來就會有落差
+    return { ordAmt, ordCount: fOrds.length };
+  }, [fOrds, totalRev]);
 
   // ── 月度趨勢（營收 / 支出 / 淨額）────────────────────
   const months = useMemo(() => {
@@ -209,8 +221,11 @@ export default function DashboardPage() {
 
   const revBySource = useMemo(
     () => groupSum(fRevs, (r) => r.source, (r) => Number(r.month_amount || 0)), [fRevs]);
+  const estKey = useCallback((estate_id: string | null, property_id: string | null) =>
+    estate_id ?? (property_id ? estateOfProp[property_id] : null) ?? '(未指定物業)', [estateOfProp]);
+
   const revByEstate = useMemo(
-    () => groupSum(fRevs, (r) => r.estate_id ?? '(未指定)', (r) => Number(r.month_amount || 0)), [fRevs]);
+    () => groupSum(fRevs, (r) => estKey(r.estate_id, r.property_id), (r) => Number(r.month_amount || 0)), [fRevs, estKey]);
   const ordBySource = useMemo(() => {
     const m: Record<string, number> = {};
     fOrds.forEach((o) => { m[o.source] = (m[o.source] ?? 0) + 1; });
@@ -219,25 +234,25 @@ export default function DashboardPage() {
   const expByCode = useMemo(
     () => groupSum(fExps, (e) => e.account_code ?? '(未分類)', (e) => Number(e.amount || 0)), [fExps]);
   const expByEstate = useMemo(
-    () => groupSum(fExps, (e) => e.purpose_type === 'office' ? '(安幸辦公室)' : (e.estate_id ?? '(未指定)'),
-      (e) => Number(e.amount || 0)), [fExps]);
+    () => groupSum(fExps, (e) => e.purpose_type === 'office' ? '(安幸辦公室)' : estKey(e.estate_id, e.property_id),
+      (e) => Number(e.amount || 0)), [fExps, estKey]);
 
   /** 各物業損益 —— 收入鏈與支出鏈第一次接在一起。這張是整個儀表板最有價值的。 */
   const pnl = useMemo(() => {
     const m: Record<string, { rev: number; exp: number }> = {};
     fRevs.forEach((r) => {
-      const k = r.estate_id ?? '(未指定)';
+      const k = estKey(r.estate_id, r.property_id);
       (m[k] ??= { rev: 0, exp: 0 }).rev += Number(r.month_amount || 0);
     });
     fExps.forEach((e) => {
       if (e.purpose_type === 'office') return;   // 辦公室不屬於任何物業
-      const k = e.estate_id ?? '(未指定)';
+      const k = estKey(e.estate_id, e.property_id);
       (m[k] ??= { rev: 0, exp: 0 }).exp += Number(e.amount || 0);
     });
     return Object.entries(m)
       .map(([k, v]) => ({ k, ...v, net: v.rev - v.exp }))
       .sort((a, b) => b.net - a.net);
-  }, [fRevs, fExps]);
+  }, [fRevs, fExps, estKey]);
 
   const revStats = useMemo(() => {
     if (!fRvs.length) return null;
@@ -264,7 +279,12 @@ export default function DashboardPage() {
   return (
     <div className="max-w-[1400px]">
       <div className="flex items-center justify-between mb-4">
-        <h1 className="text-xl font-bold">財務儀表板</h1>
+        <div>
+          <h1 className="text-xl font-bold">財務儀表板</h1>
+          <p className="text-xs text-gray-400 mt-0.5">
+            營收採<b>訂單營收認列制</b> —— 跨月訂單已按天數拆到各月,與收款日期無關。
+          </p>
+        </div>
         {loading && <span className="text-sm text-gray-400">載入中…</span>}
       </div>
 
@@ -320,6 +340,21 @@ export default function DashboardPage() {
         <Kpi label="待付款" value={money(toPay)} sub={`${pending.length} 張已核可`}
           hint="已核可但還沒填出款日，不受上方期間影響" />
       </div>
+
+      {revGap && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 mb-5 text-sm text-amber-800">
+          <b>營收看起來偏低,可能是認列沒產生。</b>
+          {' '}這個範圍有 {revGap.ordCount} 張訂單、合計 {money(revGap.ordAmt)},但認列只有 {money(totalRev)}。
+          <div className="text-xs mt-1 text-amber-700">
+            儀表板的營收讀的是<b>訂單營收認列</b>（跨月已按天數拆好）,不是收款日期也不是訂單原始金額。
+            認列由訂單的觸發器產生 —— 沒產生的話這裡會偏低。
+            跑 <code className="px-1 bg-amber-100 rounded">supabase/查-營收認列為何是零.sql</code> 找原因,
+            確認是缺漏之後用 <code className="px-1 bg-amber-100 rounded">select rebuild_recognitions();</code> 重算。
+            <br />
+            （若這個區間本來就有大量跨月訂單,落差是正常的 —— 錢會認列在之後的月份。）
+          </div>
+        </div>
+      )}
 
       {/* ═══ 趨勢 ═══ */}
       <Panel title="營收與支出趨勢" hint="營收用已按月拆分的認列金額，跨月訂單已經分好了">
@@ -561,7 +596,7 @@ function TrendChart({ data }: { data: { m: string; rev: number; exp: number; net
         {data.map((d, i) => (
           <text key={d.m} x={i * step + step / 2} y={H - 8} textAnchor="middle"
             fontSize="11" fill={hover === i ? '#2E3840' : '#9AA29C'}>
-            {d.m.slice(5)}
+            {ymMonth(d.m)}
           </text>
         ))}
       </svg>
@@ -573,7 +608,7 @@ function TrendChart({ data }: { data: { m: string; rev: number; exp: number; net
         <span className="ml-auto text-gray-500 tabular-nums">
           {hover != null ? (
             <>
-              <b>{data[hover].m}</b>　營收 {short(data[hover].rev)}　支出 {short(data[hover].exp)}
+              <b>{ymShow(data[hover].m)}</b>　營收 {short(data[hover].rev)}　支出 {short(data[hover].exp)}
               <span className={data[hover].net >= 0 ? 'text-mor-green font-semibold' : 'text-red-600 font-semibold'}>
                 淨額 {short(data[hover].net)}
               </span>
