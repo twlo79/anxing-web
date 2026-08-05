@@ -207,10 +207,22 @@ export default function PurchasesPage() {
      * 上個月送出、到現在還卡著沒審的單,正是最該被看到的那一筆,
      * 卻會因為預設月份而完全不出現在待核可清單裡,而且沒有任何跡象。
      */
+    /*
+     * 撈「還沒付」與「本月已付」兩種。
+     *
+     * 為什麼已付的也要:未滿 3,000 的單是自動核可的,會計常常當下就把付款日填掉。
+     * 只撈未付款的話,那些單一產生就結案,主管永遠不知道有哪些錢沒經過他就出去了。
+     *
+     * 為什麼只留本月:不設界線的話這份清單會一直長,幾個月後幾百筆,
+     * 手機上滾不完,反而把真正要動作的那幾筆蓋掉。
+     */
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    const mStart = `${monthStart.getFullYear()}-${String(monthStart.getMonth() + 1).padStart(2, '0')}-01`;
     const { data: pd } = await supabase.from('purchase_requests')
       .select('*, purchase_request_items(*)')
       .in('status', ['pending', 'approved'])
-      .is('purchased_on', null)      // 錢已經出去的就結案了,不留在待辦畫面上
+      .or(`purchased_on.is.null,purchased_on.gte.${mStart}`)
       .order('submitted_at', { nullsFirst: false });
     setPendRows((pd as Req[]) ?? []);
 
@@ -229,7 +241,8 @@ export default function PurchasesPage() {
       const { data: dp } = await supabase.from('deposits')
         .select('id, estate_id, room, guest_name, currency, amount, refund_status, payee_bank_code, payee_name, payee_account, planned_refund_on, returned_on, returned_method, returned_account, manager_approved_by, manager_approved_at, admin_approved_by, admin_approved_at, refund_requested_by, reject_reason, note, created_at')
         .in('refund_status', ['pending', 'approved'])
-        .is('returned_on', null)
+        // 跟請款單同一條規則:還沒退的全部,加上本月已退的
+        .or(`returned_on.is.null,returned_on.gte.${mStart}`)
         .order('planned_refund_on', { nullsFirst: false });
       setDeps((dp as Dep[]) ?? []);
     } else setDeps([]);
@@ -339,6 +352,8 @@ export default function PurchasesPage() {
      * 主管會去追一張根本不需要他簽的單。
      */
     freePass: boolean;
+    /** 錢已經出去了。已核可那一段裡混著待付與已付,不標的話分不出來。 */
+    paid: boolean;
     pr?: Req; dep?: Dep;
   };
 
@@ -353,7 +368,9 @@ export default function PurchasesPage() {
         who: personName[r.requester_id] ?? '—',
         what: its.map((i) => i.item_name).filter(Boolean).join('、') || '—',
         meta: [
-          r.submitted_at ? r.submitted_at.slice(5, 10).replace('-', '/') + ' 送出' : '',
+          r.purchased_on
+            ? `${r.purchased_on.slice(5).replace('-', '/')} 已付款`
+            : (r.submitted_at ? r.submitted_at.slice(5, 10).replace('-', '/') + ' 送出' : ''),
           r.payment_method ? PAY_LABEL[r.payment_method] ?? r.payment_method : '',
           its.length ? `${its.length} 個項目` : '',
         ].filter(Boolean).join('・'),
@@ -365,6 +382,7 @@ export default function PurchasesPage() {
         mine: r.status === 'pending'
           && ((isManager && !r.manager_approved_at) || (isAdmin && !r.admin_approved_at)),
         freePass: r.status === 'approved' && !r.manager_approved_at && !r.admin_approved_at,
+        paid: !!r.purchased_on,
         pr: r,
       });
     }
@@ -376,7 +394,9 @@ export default function PurchasesPage() {
         who: d.guest_name ?? '—',
         what: [d.room, d.estate_id ? estateName[d.estate_id] : ''].filter(Boolean).join('・') || '—',
         meta: [
-          d.planned_refund_on ? `預計 ${d.planned_refund_on.slice(5).replace('-', '/')} 匯出` : '',
+          d.returned_on
+            ? `${d.returned_on.slice(5).replace('-', '/')} 已退款`
+            : (d.planned_refund_on ? `預計 ${d.planned_refund_on.slice(5).replace('-', '/')} 匯出` : ''),
           d.payee_name ? `退至 ${d.payee_name}` : '',
           d.returned_method ? DEP_METHOD[d.returned_method] ?? d.returned_method : '',
         ].filter(Boolean).join('・'),
@@ -387,13 +407,20 @@ export default function PurchasesPage() {
           && ((isManager && !d.manager_approved_at) || (isAdmin && !d.admin_approved_at)),
         // 押金沒有免核門檻,一律兩票。留著同一條判斷是為了「將來加了門檻也不用回來改這裡」
         freePass: d.refund_status === 'approved' && !d.manager_approved_at && !d.admin_approved_at,
+        paid: !!d.returned_on,
         dep: d,
       });
     }
-    // 等我投票的排前面,其餘依「等多久」由久到新 ——
-    // 用金額排會讓小額的單永遠沉在最底下,放到沒人記得。
+    /*
+     * 排序三層:
+     *   1. 等我投票的最前面
+     *   2. 還沒付款的排在已付款的前面 —— 已付的是紀錄,沒事要做
+     *   3. 依「等多久」由久到新
+     * 不用金額排:小額的單會永遠沉在最底下,放到沒人記得。
+     */
     return out.sort((a, b) =>
       (a.mine === b.mine ? 0 : a.mine ? -1 : 1)
+      || (a.paid === b.paid ? 0 : a.paid ? 1 : -1)
       || (a.since ?? '').localeCompare(b.since ?? ''));
   }, [pendRows, deps, personName, estateName, isManager, isAdmin]);
 
@@ -409,10 +436,14 @@ export default function PurchasesPage() {
   const pendMine = useMemo(() => pendings.filter((p) => p.mine), [pendings]);
 
   /** 待核可分頁的兩段。手機卡片與桌機表格共用這份定義,不會有一邊漏改。 */
-  const GROUPS = useMemo(() => ([
-    ['wait', '未核可', '等主管與總經理投票', pendWait],
-    ['done', '已核可', '等會計把錢付出去', pendDone],
-  ] as const), [pendWait, pendDone]);
+  const GROUPS = useMemo(() => {
+    const unpaid = pendDone.filter((p) => !p.paid).length;
+    return ([
+      ['wait', '未核可', '等主管與總經理投票', pendWait],
+      ['done', '已核可',
+        unpaid > 0 ? `${unpaid} 筆等會計付款,其餘是本月已付` : '本月已付款', pendDone],
+    ] as const);
+  }, [pendWait, pendDone]);
 
   /*
    * 進頁面時停在哪一個分頁,依角色決定 ——
@@ -1043,7 +1074,9 @@ export default function PurchasesPage() {
                   </div>
               {glist.map((p) => (
                 <div key={p.kind + p.id}
-                  className={`rounded-xl border bg-white p-3 ${p.mine ? 'border-amber-300' : 'border-mor-line'}`}>
+                  className={`rounded-xl border p-3 ${
+                    p.mine ? 'border-amber-300 bg-white'
+                      : p.paid ? 'border-mor-line bg-gray-50/70' : 'border-mor-line bg-white'}`}>
                   {/* 兩種單都點得開抽屜,各自走各自的 —— 使用者不該記得哪一種才能點 */}
                   <div onClick={() => (p.kind === 'pr' ? setDetail(p.pr!) : setDepDetail(p.dep!))}>
                     <div className="flex items-start justify-between gap-2">
@@ -1114,7 +1147,8 @@ export default function PurchasesPage() {
                   {glist.map((p) => (
                     <tr key={p.kind + p.id}
                       className={`border-b border-mor-line/60 last:border-0 ${
-                        p.mine ? 'bg-amber-50/40' : ''} cursor-pointer hover:bg-mor-sand/30`}
+                        p.mine ? 'bg-amber-50/40' : p.paid ? 'bg-gray-50/70 text-gray-500' : ''
+                      } cursor-pointer hover:bg-mor-sand/30`}
                       onClick={() => (p.kind === 'pr' ? setDetail(p.pr!) : setDepDetail(p.dep!))}>
                       <td className="px-3 py-2.5 whitespace-nowrap">
                         <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
