@@ -47,7 +47,7 @@ type Dep = {
   manager_approved_by: string | null; manager_approved_at: string | null;
   admin_approved_by: string | null; admin_approved_at: string | null;
   refund_requested_by: string | null;
-  reject_reason: string | null; note: string | null;
+  reject_reason: string | null; note: string | null; created_at: string;
 };
 /** 押金頁的出款方式多一個加密貨幣,請款單沒有 —— 標籤要各自對照,不能共用 PAY_LABEL */
 const DEP_METHOD_LABEL: Record<string, string> = {
@@ -112,6 +112,19 @@ export default function PurchasesPage() {
   // 上個月建的單可能排在這個月付,混在同一個查詢裡會漏掉。
   const [schedule, setSchedule] = useState<Req[]>([]);
   const [detail, setDetail] = useState<Req | null>(null);
+  /*
+   * 分頁。這一頁原本把三件事疊在同一個畫面上:
+   *   審核（主管、總經理）／管理與對帳（會計）／送單（管家）
+   * 三種人都得滾過另外兩種人的東西才找得到自己要的。
+   *
+   * 待核可刻意排第一個,而且是唯一把請款與押金合在一起的地方 ——
+   * 核可的人只關心「有什麼等我」,那筆錢的來源是採購還是退押金,對投票這個動作沒差別。
+   */
+  const [tab, setTab] = useState<'approve' | 'pr' | 'dep'>('pr');
+  // 待核可的請款單:獨立於列表的查詢,不受月份/狀態/申請人篩選影響(見 load)
+  const [pendRows, setPendRows] = useState<Req[]>([]);
+  /** 角色預設分頁只挑一次。分享連結進來時會先把它設成 true,免得預設把分頁搶走。 */
+  const tabPicked = useRef(false);
   // 押金退款:未結案的(送審中 + 已核可未匯出)。跟請款單的資料完全分開放,
   // 混進 rows 的話筆數、金額卡、篩選、Excel 全都要多一層判斷,遲早有一處漏改。
   const [deps, setDeps] = useState<Dep[]>([]);
@@ -190,6 +203,19 @@ export default function PurchasesPage() {
     } else setSchedule([]);
 
     /*
+     * 待核可的請款單:獨立查詢,**不套任何篩選**。
+     *
+     * 不能重用上面的 rows —— 那個查詢帶了月份(預設本月)、狀態、申請人。
+     * 上個月送出、到現在還卡著沒審的單,正是最該被看到的那一筆,
+     * 卻會因為預設月份而完全不出現在待核可清單裡,而且沒有任何跡象。
+     */
+    const { data: pd } = await supabase.from('purchase_requests')
+      .select('*, purchase_request_items(*)')
+      .eq('status', 'pending')
+      .order('submitted_at', { nullsFirst: false });
+    setPendRows((pd as Req[]) ?? []);
+
+    /*
      * 押金退款的待辦。**刻意不套月份篩選** ——
      * 這一區回答的是「還有什麼卡著沒處理」,一筆卡了三個月的退款正是最該被看見的,
      * 用建立月份把它藏起來剛好相反。請款單那邊有月份是因為它同時是流水帳,押金這區不是。
@@ -202,7 +228,7 @@ export default function PurchasesPage() {
       // select 一定要寫成單一字串字面量。用 + 串成多行的話 supabase-js 推不出回傳型別
       // （它是靠字面量做型別解析的），會變成 GenericStringError[],型別轉換就過不了。
       const { data: dp } = await supabase.from('deposits')
-        .select('id, estate_id, room, guest_name, currency, amount, refund_status, payee_bank_code, payee_name, payee_account, planned_refund_on, returned_on, returned_method, returned_account, manager_approved_by, manager_approved_at, admin_approved_by, admin_approved_at, refund_requested_by, reject_reason, note')
+        .select('id, estate_id, room, guest_name, currency, amount, refund_status, payee_bank_code, payee_name, payee_account, planned_refund_on, returned_on, returned_method, returned_account, manager_approved_by, manager_approved_at, admin_approved_by, admin_approved_at, refund_requested_by, reject_reason, note, created_at')
         .in('refund_status', ['pending', 'approved'])
         .is('returned_on', null)
         .order('planned_refund_on', { nullsFirst: false });
@@ -222,6 +248,8 @@ export default function PurchasesPage() {
     const dq = sp.get('dep');
     if (dq) {
       setDepHi(dq);
+      setTab('dep');
+      tabPicked.current = true;   // 別讓角色預設把分頁搶回去
       window.history.replaceState({}, '', window.location.pathname);
       return;
     }
@@ -280,6 +308,101 @@ export default function PurchasesPage() {
     r.status === 'approved' && !r.purchased_on
     && (r.payment_method === 'cash' || !!r.planned_transfer_on)), [filtered]);
   const sum = (xs: Req[]) => xs.reduce((a, r) => a + (Number(r.total_amount) || 0), 0);
+
+  /* ══════════════════════════════════════════════════════
+   * 待核可佇列 —— 請款單與押金退款合成同一份清單
+   *
+   * 【為什麼要正規化成同一個型別】
+   * 之前兩種單各畫各的:請款的手機卡片是「申請人 → 項目 → 底部整排大按鈕」,
+   * 押金是「房源房客 → 退款帳戶 → 右下小連結」。同一個動作(核可)在兩個地方
+   * 長得不一樣、按鈕大小不一樣、位置也不一樣。
+   *
+   * 統一的做法不是把兩邊的樣式各自調到看起來像,那下次改一邊又會歪。
+   * 是先把兩種單攤平成同一個形狀(Pend),再只寫一份畫面。
+   *
+   * 【欄位怎麼對應】
+   *   who    請款=申請人      押金=房客
+   *   what   請款=項目名稱     押金=房源・退款帳戶
+   *   meta   請款=送出日・支付方式・項目數   押金=預計匯款日
+   *   since  排序用的「等多久了」
+   */
+  type Pend = {
+    kind: 'pr' | 'dep';
+    id: string; who: string; what: string; meta: string;
+    amount: number; since: string;
+    mgrAt: string | null; admAt: string | null;
+    mine: boolean;              // 這一筆缺的正好是我這一票
+    pr?: Req; dep?: Dep;
+  };
+
+  const pendings = useMemo<Pend[]>(() => {
+    const out: Pend[] = [];
+    // pendRows 是獨立查詢的結果,不受列表篩選影響 —— 見 load() 裡的說明
+    for (const r of pendRows) {
+      const its = r.purchase_request_items ?? [];
+      out.push({
+        kind: 'pr', id: r.id,
+        who: personName[r.requester_id] ?? '—',
+        what: its.map((i) => i.item_name).filter(Boolean).join('、') || '—',
+        meta: [
+          r.submitted_at ? r.submitted_at.slice(5, 10).replace('-', '/') + ' 送出' : '',
+          r.payment_method ? PAY_LABEL[r.payment_method] ?? r.payment_method : '',
+          its.length ? `${its.length} 個項目` : '',
+        ].filter(Boolean).join('・'),
+        amount: Number(r.total_amount) || 0,
+        since: r.submitted_at ?? r.created_at,
+        mgrAt: r.manager_approved_at, admAt: r.admin_approved_at,
+        mine: (isManager && !r.manager_approved_at) || (isAdmin && !r.admin_approved_at),
+        pr: r,
+      });
+    }
+    for (const d of deps) {
+      if (d.refund_status !== 'pending') continue;
+      out.push({
+        kind: 'dep', id: d.id,
+        who: d.guest_name ?? '—',
+        what: [d.room, d.estate_id ? estateName[d.estate_id] : ''].filter(Boolean).join('・') || '—',
+        meta: [
+          d.planned_refund_on ? `預計 ${d.planned_refund_on.slice(5).replace('-', '/')} 匯出` : '',
+          d.payee_name ? `退至 ${d.payee_name}` : '',
+          d.returned_method ? DEP_METHOD_LABEL[d.returned_method] ?? d.returned_method : '',
+        ].filter(Boolean).join('・'),
+        amount: Number(d.amount) || 0,
+        since: d.created_at,
+        mgrAt: d.manager_approved_at, admAt: d.admin_approved_at,
+        mine: (isManager && !d.manager_approved_at) || (isAdmin && !d.admin_approved_at),
+        dep: d,
+      });
+    }
+    // 等我投票的排前面,其餘依「等多久」由久到新 ——
+    // 用金額排會讓小額的單永遠沉在最底下,放到沒人記得。
+    return out.sort((a, b) =>
+      (a.mine === b.mine ? 0 : a.mine ? -1 : 1)
+      || (a.since ?? '').localeCompare(b.since ?? ''));
+  }, [pendRows, deps, personName, estateName, isManager, isAdmin]);
+
+  const pendMine = useMemo(() => pendings.filter((p) => p.mine), [pendings]);
+
+  /*
+   * 進頁面時停在哪一個分頁,依角色決定 ——
+   *   主管 / 總經理  → 待核可。他們來這一頁基本上只有這件事。
+   *                   就算是空的也停在這裡,「都審完了」本身就是他們要的答案。
+   *   會計 / 管家    → 請款單。會計要編輯與確認帳款(排匯款、填出款日),
+   *                   那些操作都在請款單列表上;管家是來看自己送的單。
+   *
+   * 只判斷一次(tabPicked)。之後使用者切到哪就留在哪 ——
+   * 不然投完最後一票、清單變空,畫面會自己跳走,會以為是按錯了。
+   */
+  useEffect(() => {
+    if (tabPicked.current || !me) return;
+    tabPicked.current = true;
+    if (isManager || isAdmin) setTab('approve');
+  }, [me, isManager, isAdmin]);
+
+  /** 一鍵核可,兩種單走各自的表 */
+  const pendVote = (p: Pend) => (p.kind === 'pr' ? vote(p.pr!) : depVote(p.dep!));
+  const pendReject = (p: Pend) => (p.kind === 'pr' ? setRejecting(p.pr!) : setDepRejecting(p.dep!));
+  const pendShare = (p: Pend) => (p.kind === 'pr' ? shareReq(p.pr!) : shareDep(p.dep!));
 
   // 押金退款:等我投票的、以及已核可等著匯出去的。
   // 押金的筆數與金額**不併進上面的請款單卡片** —— 那些數字是「這個月請了多少款」,
@@ -790,7 +913,150 @@ export default function PurchasesPage() {
         </a>
       </div>
 
+      {/*
+        分頁。全站的分頁樣式以權限管理頁為準（底線式,不是膠囊）。
+        數字徽章只在「有東西要做」時出現 —— 顯示 0 等於每次都在報告沒事發生。
+      */}
       {canSeeAll && (
+        <div className="flex flex-wrap gap-1 mb-4 border-b border-mor-line">
+          {([
+            ['approve', '待核可', pendings.length],
+            ['pr', '請款單', 0],
+            ['dep', '押金退款', deps.length],
+          ] as const).map(([k, label, n]) => (
+            <button key={k} onClick={() => setTab(k)}
+              className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px whitespace-nowrap ${
+                tab === k ? 'border-mor-slate text-mor-slate' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+              {label}
+              {n > 0 && (
+                <span className={`ml-1.5 rounded px-1.5 py-0.5 text-[11px] ${
+                  k === 'approve' && pendMine.length > 0
+                    ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'}`}>
+                  {k === 'approve' && pendMine.length > 0 ? pendMine.length : n}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* ══════════ 待核可 ══════════
+        請款單與押金退款用**同一份版面**。核可這個動作跟錢的來源無關,
+        兩種單各畫一套的話,同一顆按鈕會在兩個地方長得不一樣、位置也不同。
+
+        手機版是主要場景 —— 主管與總經理多半是在 LINE 收到連結後用手機投票,
+        所以按鈕是滿版高 48px,不是右下角的小連結。
+      */}
+      {canSeeAll && tab === 'approve' && (
+        pendings.length === 0 ? (
+          <div className="rounded-xl border border-mor-line bg-white py-16 text-center">
+            <div className="text-gray-400 text-sm">目前沒有待核可的單</div>
+            <div className="text-gray-300 text-xs mt-1">請款單與押金退款都審完了</div>
+          </div>
+        ) : (
+          <>
+            {pendMine.length > 0 && (
+              <div className="mb-3 rounded-lg bg-amber-50 text-amber-800 px-3 py-2 text-sm">
+                有 <span className="font-bold">{pendMine.length}</span> 筆等你這一票
+                {pendings.length > pendMine.length &&
+                  <span className="text-amber-700/70">・另外 {pendings.length - pendMine.length} 筆在等其他人</span>}
+              </div>
+            )}
+
+            {/* 手機:卡片 */}
+            <div className="md:hidden space-y-2">
+              {pendings.map((p) => (
+                <div key={p.kind + p.id}
+                  className={`rounded-xl border bg-white p-3 ${p.mine ? 'border-amber-300' : 'border-mor-line'}`}>
+                  <div onClick={() => p.kind === 'pr' && setDetail(p.pr!)}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
+                            p.kind === 'pr' ? 'bg-mor-bluelight text-mor-slate' : 'bg-purple-50 text-purple-700'}`}>
+                            {p.kind === 'pr' ? '請款' : '押金'}
+                          </span>
+                          <span className="font-medium truncate">{p.who}</span>
+                        </div>
+                        <div className="text-sm text-gray-600 mt-1 line-clamp-2">{p.what}</div>
+                        <div className="text-xs text-gray-400 mt-0.5">{p.meta || '—'}</div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <div className="font-bold">${fmt(p.amount)}</div>
+                        <div className="text-[11px] text-gray-400 mt-1">
+                          <div className={p.mgrAt ? 'text-mor-green' : ''}>{p.mgrAt ? '✓' : '○'} 主管</div>
+                          <div className={p.admAt ? 'text-mor-green' : ''}>{p.admAt ? '✓' : '○'} 總經理</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex gap-2">
+                    {p.mine && (
+                      <button onClick={() => pendVote(p)}
+                        className="flex-1 h-12 rounded-lg bg-mor-green text-white text-sm font-medium active:opacity-80">核可</button>
+                    )}
+                    {(isManager || isAdmin) && (
+                      <button onClick={() => pendReject(p)}
+                        className="h-12 px-4 rounded-lg border border-red-200 text-red-500 text-sm font-medium active:bg-red-50">駁回</button>
+                    )}
+                    <button onClick={() => pendShare(p)}
+                      className={`h-12 px-4 rounded-lg border border-mor-line text-sm font-medium active:bg-mor-sand/60 ${p.mine ? '' : 'flex-1'}`}>↗ 分享</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* 桌機:表格。欄位跟手機卡片是同一組資訊,只是排法不同 */}
+            <div className="hidden md:block rounded-xl border border-mor-line bg-white overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-mor-line bg-mor-sand/40 text-left">
+                    <th className="px-3 py-2.5">類型</th>
+                    <th className="px-3 py-2.5">對象</th>
+                    <th className="px-3 py-2.5">內容</th>
+                    <th className="px-3 py-2.5 text-right">金額</th>
+                    <th className="px-3 py-2.5">核可進度</th>
+                    <th className="px-3 py-2.5 text-right">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pendings.map((p) => (
+                    <tr key={p.kind + p.id}
+                      className={`border-b border-mor-line/60 last:border-0 ${
+                        p.mine ? 'bg-amber-50/40' : ''} ${p.kind === 'pr' ? 'cursor-pointer hover:bg-mor-sand/30' : ''}`}
+                      onClick={() => p.kind === 'pr' && setDetail(p.pr!)}>
+                      <td className="px-3 py-2.5 whitespace-nowrap">
+                        <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
+                          p.kind === 'pr' ? 'bg-mor-bluelight text-mor-slate' : 'bg-purple-50 text-purple-700'}`}>
+                          {p.kind === 'pr' ? '請款' : '押金'}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2.5 whitespace-nowrap font-medium">{p.who}</td>
+                      <td className="px-3 py-2.5">
+                        <div className="max-w-md truncate">{p.what}</div>
+                        <div className="text-[11px] text-gray-400">{p.meta}</div>
+                      </td>
+                      <td className="px-3 py-2.5 text-right font-medium whitespace-nowrap">${fmt(p.amount)}</td>
+                      <td className="px-3 py-2.5 text-[11px] whitespace-nowrap">
+                        <div className={p.mgrAt ? 'text-mor-green' : 'text-gray-400'}>{p.mgrAt ? '✓' : '○'} 主管</div>
+                        <div className={p.admAt ? 'text-mor-green' : 'text-gray-400'}>{p.admAt ? '✓' : '○'} 總經理</div>
+                      </td>
+                      <td className="px-3 py-2.5 text-right whitespace-nowrap space-x-2" onClick={(e) => e.stopPropagation()}>
+                        {p.mine && <button onClick={() => pendVote(p)} className="text-xs text-mor-green underline hover:text-mor-slate font-medium">核可</button>}
+                        {(isManager || isAdmin) && <button onClick={() => pendReject(p)} className="text-xs text-red-500 underline">駁回</button>}
+                        <button onClick={() => pendShare(p)} className="text-xs text-mor-slate underline hover:text-mor-blue">分享</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )
+      )}
+
+      {canSeeAll && tab === 'pr' && (
         <>
           {/* 上排:該做什麼 */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3 mb-2 md:mb-3">
@@ -841,6 +1107,13 @@ export default function PurchasesPage() {
           )}
         </>
       )}
+
+      {/*
+        以下是「請款單」分頁的內容:篩選列 + 列表。
+        管家看不到分頁列(那是 canSeeAll 才有的),所以對他們來說永遠顯示 ——
+        他們只有一件事要做:看自己送的單。
+      */}
+      {(!canSeeAll || tab === 'pr') && (<>
 
       {/* 工具列 —— 手機只留狀態篩選,其餘收在 details 裡 */}
       <details className="md:hidden mb-3 rounded-xl border border-mor-line bg-white">
@@ -1056,19 +1329,28 @@ export default function PurchasesPage() {
         </table>
       </div>
 
-      {/*
-        押金退款 —— 獨立一區,不混進上面的請款單列表。
-        請款單有單號、申請人、項目明細,押金一個都沒有;混在同一張表會有一半的欄位是空的。
+      </>)}
 
-        這一區不受上面的篩選影響（月份、申請人、物業、支出方式都不適用於押金），
+      {/*
+        押金退款分頁 —— 完整清單,不只是待核可的那些。
+        待核可的部分在「待核可」分頁跟請款單合在一起;這裡多的是已核可等著匯出去的,
+        那是會計的工作,跟核可是兩件事。
+
+        這一區不受請款單那邊的篩選影響（月份、申請人、物業、支出方式都不適用於押金），
         它固定顯示「所有還沒結案的退款」。標題有寫,免得有人以為篩選壞了。
 
         實際匯款(填退款日)還是在押金管理頁做 —— 那要選我方帳戶、要傳水單,
         整套搬過來會讓這一區變成第二個押金頁,兩邊都要維護。
         這裡只做審核:核可、駁回、把單子丟給主管。
       */}
-      {canSeeAll && deps.length > 0 && (
-        <div className="rounded-xl border border-mor-line bg-white mt-4 md:mt-5 overflow-hidden">
+      {canSeeAll && tab === 'dep' && (
+        deps.length === 0 ? (
+          <div className="rounded-xl border border-mor-line bg-white py-16 text-center">
+            <div className="text-gray-400 text-sm">目前沒有未結案的押金退款</div>
+            <div className="text-gray-300 text-xs mt-1">收退押金請到「押金管理」</div>
+          </div>
+        ) : (
+        <div className="rounded-xl border border-mor-line bg-white overflow-hidden">
           <div className="px-4 py-2.5 border-b border-mor-line bg-mor-sand/40 flex flex-wrap items-center justify-between gap-2">
             <span className="text-sm font-medium">
               押金退款
@@ -1083,7 +1365,7 @@ export default function PurchasesPage() {
               押金退的是代收款,把它的總額放在請款頁只會讓人不小心跟請款總額相加。
             */}
             <span className="text-xs text-gray-500">
-              未結案 {deps.length} 筆・不受上方篩選影響
+              未結案 {deps.length} 筆・送審中與已核可待匯款
             </span>
           </div>
 
@@ -1199,6 +1481,7 @@ export default function PurchasesPage() {
             實際匯款後要到「押金管理」填退款日 —— 那一步要選我方出款帳戶並上傳水單。
           </div>
         </div>
+        )
       )}
 
       {/* 押金駁回 */}
