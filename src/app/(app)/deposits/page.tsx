@@ -38,10 +38,17 @@ const METHOD_LABEL: Record<string, string> = {
 };
 const METHOD_OPTS = ['cash', 'transfer', 'credit_card', 'crypto'];
 
-/** 押金狀態。all 是「不分類」,其餘四類互斥（orphan 除外,它跨類別） */
-type Status = 'all' | 'pending' | 'held' | 'returned' | 'orphan';
+/**
+ * 押金狀態。all 是「不分類」,pending/held/returned 三類互斥。
+ *
+ * orphan 與兩個 refund_* 都是**跨類別**的:一筆退款審核中的押金,
+ * 錢還在我們手上,所以它同時也是 held。它們是「這筆押金現在卡在什麼事情上」,
+ * 不是「錢在誰手上」,兩個問題不同,不能塞進同一組互斥分類。
+ */
+type Status = 'all' | 'pending' | 'held' | 'returned' | 'orphan' | 'refund_pending' | 'refund_approved';
 const STATUS_LABEL: Record<Status, string> = {
   all: '全部', pending: '未收款', held: '已收款(暫收中)', returned: '已退款', orphan: '孤兒',
+  refund_pending: '退款審核中', refund_approved: '已核可待匯款',
 };
 
 const fmt = (n: number | null) => (n == null ? '0' : Math.round(n).toLocaleString());
@@ -139,9 +146,15 @@ export default function DepositsPage() {
   /** 一筆押金必定落在三類的其中一類,順序不能顛倒:退了就是已退,不管收款日 */
   const bucketOf = (r: Dep) => (r.returned_on ? 'returned' : r.received_on ? 'held' : 'pending');
 
+  /** 退款流程走到哪。returned_on 有值就是結案了,不再算在流程裡。 */
+  const refundStage = (r: Dep) =>
+    (r.returned_on ? 'done' : (r.refund_status ?? 'none'));
+
   const filtered = useMemo(() => base.filter((r) => {
     if (statusF === 'all') return true;
     if (statusF === 'orphan') return r.orphaned;
+    if (statusF === 'refund_pending') return refundStage(r) === 'pending';
+    if (statusF === 'refund_approved') return refundStage(r) === 'approved';
     return bucketOf(r) === statusF;
   }), [base, statusF]);
 
@@ -150,14 +163,24 @@ export default function DepositsPage() {
   /** 各分頁籤的金額與筆數。依幣別分開 —— 外幣原幣退還不換匯,加總沒有意義。 */
   const stats = useMemo(() => {
     const mk = () => ({ n: 0, cur: {} as Record<string, number> });
-    const s = { pending: mk(), held: mk(), returned: mk(), orphan: mk() };
+    const s = {
+      pending: mk(), held: mk(), returned: mk(), orphan: mk(),
+      refund_pending: mk(), refund_approved: mk(),
+    };
     for (const r of base) {
       const b = bucketOf(r) as 'pending' | 'held' | 'returned';
       s[b].n++;
       s[b].cur[r.currency] = (s[b].cur[r.currency] ?? 0) + Number(r.amount || 0);
+      // 以下兩組跟上面三類重疊,是故意的 —— 見 Status 的說明
       if (r.orphaned) {
         s.orphan.n++;
         s.orphan.cur[r.currency] = (s.orphan.cur[r.currency] ?? 0) + Number(r.amount || 0);
+      }
+      const rs = refundStage(r);
+      if (rs === 'pending' || rs === 'approved') {
+        const k = rs === 'pending' ? 'refund_pending' : 'refund_approved';
+        s[k].n++;
+        s[k].cur[r.currency] = (s[k].cur[r.currency] ?? 0) + Number(r.amount || 0);
       }
     }
     return s;
@@ -498,6 +521,43 @@ export default function DepositsPage() {
           );
         })}
       </div>
+
+      {/*
+        退款流程指標。
+
+        上面三張卡回答「錢在誰手上」,這一列回答「有什麼卡著等人動作」——
+        兩者刻意分開:一筆已核可待匯款的押金,錢還在我們手上,它同時算在「暫收中」裡。
+        把它從暫收中扣掉的話,「我們現在保管多少錢」這個數字就不對了。
+
+        這一列存在的理由很具體:核可已經搬到請款頁做了,
+        會計回到這一頁時必須看得到「有幾筆等我匯出去」,否則那些單會安靜地卡著。
+
+        沒有東西時整列不顯示 —— 兩個 0 只是視覺雜訊。
+      */}
+      {(stats.refund_pending.n > 0 || stats.refund_approved.n > 0) && (
+        <div className="flex flex-wrap gap-2 mb-4">
+          {stats.refund_pending.n > 0 && (
+            <button onClick={() => setStatusF('refund_pending')}
+              className={`rounded-lg px-3 py-2 text-xs border text-left transition
+                ${statusF === 'refund_pending'
+                  ? 'bg-amber-600 text-white border-amber-600'
+                  : 'bg-amber-50 text-amber-700 border-amber-200 hover:border-amber-400'}`}>
+              退款審核中 {stats.refund_pending.n} 筆・NT$ {fmt(stats.refund_pending.cur['TWD'] ?? 0)}
+              <span className={`ml-2 ${statusF === 'refund_pending' ? 'opacity-80' : 'text-amber-600/70'}`}>等主管或總經理核可</span>
+            </button>
+          )}
+          {stats.refund_approved.n > 0 && (
+            <button onClick={() => setStatusF('refund_approved')}
+              className={`rounded-lg px-3 py-2 text-xs border text-left transition
+                ${statusF === 'refund_approved'
+                  ? 'bg-mor-green text-white border-mor-green'
+                  : 'bg-mor-greenlight text-mor-green border-mor-green/30 hover:border-mor-green/60'}`}>
+              已核可待匯款 {stats.refund_approved.n} 筆・NT$ {fmt(stats.refund_approved.cur['TWD'] ?? 0)}
+              <span className={`ml-2 ${statusF === 'refund_approved' ? 'opacity-80' : 'opacity-70'}`}>匯出後回來填退款日</span>
+            </button>
+          )}
+        </div>
+      )}
 
       {/* 孤兒是跨類別的狀態(可能未收也可能已收),沒有東西時完全不顯示 */}
       {stats.orphan.n > 0 && (
