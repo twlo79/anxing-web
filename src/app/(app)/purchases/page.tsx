@@ -446,7 +446,11 @@ export default function PurchasesPage() {
     const T = (v: any, st: any) => ({ v: v ?? '', t: typeof v === 'number' ? 'n' : 's', s: st, z: typeof v === 'number' ? '#,##0' : undefined });
 
     // 一列一個請款項目,單頭資訊重複帶上 —— 這樣才能在 Excel 裡對科目或房源做樞紐分析。
-    const header = ['單號', '申請人', '狀態', '送出日', '採購日', '項目', '金額', '會計科目', '用途', '房源', '支付方式', '收款帳號', '單據總額', '項目備註'];
+    // 銀行代號與戶名排在收款帳號前面 —— 匯款時就是照這個順序填,
+    // 欄位順序跟實際操作一致,複製貼上才不用左右跳。
+    // 單據總額拿掉:一張單拆成多列時那個數字每列重複,做樞紐分析會被重複加總。
+    const header = ['單號', '申請人', '狀態', '送出日', '採購日', '項目', '金額', '會計科目',
+      '用途', '房源', '支付方式', '銀行代號', '戶名', '收款帳號', '項目備註'];
     const aoa: any[][] = [header.map((h) => T(h, stHead))];
     for (const r of sorted) {
       const its = (r.purchase_request_items ?? []).slice().sort((a, b) => a.sort - b.sort);
@@ -464,14 +468,33 @@ export default function PurchasesPage() {
           T(i ? (i.purpose_type === 'office' ? '安幸辦公室' : (i.estate_id ? estateName[i.estate_id] ?? '' : '')) : '', stCell),
           T(i?.property_id ? properties.find((pp) => pp.id === i.property_id)?.name ?? '' : '', stCell),
           T(r.payment_method ? PAY_LABEL[r.payment_method] ?? r.payment_method : '', stCell),
+          T(r.payee_bank_code ?? '', stCell),
+          T(r.payee_company ?? '', stCell),
+          // 帳號一律當文字。當數字的話 Excel 會吃掉開頭的 0,而且長帳號會變科學記號
           T(r.payee_account ?? '', stCell),
-          T(Math.round(Number(r.total_amount) || 0), stNum),
           T(i?.note ?? '', stCell),
         ]);
       }
     }
     const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws['!cols'] = [{ wch: 15 }, { wch: 10 }, { wch: 9 }, { wch: 12 }, { wch: 12 }, { wch: 22 }, { wch: 11 }, { wch: 11 }, { wch: 14 }, { wch: 10 }, { wch: 16 }, { wch: 11 }, { wch: 24 }];
+    // 欄寬要跟 header 一樣長。原本只有 13 個對 14 欄,最後一欄一直是預設寬度。
+    ws['!cols'] = [
+      { wch: 15 },  // 單號
+      { wch: 10 },  // 申請人
+      { wch: 9 },   // 狀態
+      { wch: 12 },  // 送出日
+      { wch: 12 },  // 採購日
+      { wch: 22 },  // 項目
+      { wch: 11 },  // 金額
+      { wch: 11 },  // 會計科目
+      { wch: 12 },  // 用途
+      { wch: 10 },  // 房源
+      { wch: 10 },  // 支付方式
+      { wch: 10 },  // 銀行代號
+      { wch: 18 },  // 戶名
+      { wch: 20 },  // 收款帳號
+      { wch: 24 },  // 項目備註
+    ];
     ws['!freeze'] = { xSplit: 0, ySplit: 1 };
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, '請款單');
