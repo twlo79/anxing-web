@@ -449,8 +449,11 @@ export default function PurchasesPage() {
     // 銀行代號與戶名排在收款帳號前面 —— 匯款時就是照這個順序填,
     // 欄位順序跟實際操作一致,複製貼上才不用左右跳。
     // 單據總額拿掉:一張單拆成多列時那個數字每列重複,做樞紐分析會被重複加總。
+    // 欄位順序刻意分成三段:單據基本 → 項目明細 → 錢怎麼走。
+    // 錢那一段先「我方出款帳號」再「對方收款資訊」,跟實際匯款時填的順序一致。
     const header = ['單號', '申請人', '狀態', '送出日', '採購日', '項目', '金額', '會計科目',
-      '用途', '房源', '支付方式', '銀行代號', '戶名', '收款帳號', '項目備註'];
+      '用途', '房源', '支付方式', '預定出款日', '出款帳號',
+      '銀行代號', '戶名', '收款帳號', '項目備註'];
     const aoa: any[][] = [header.map((h) => T(h, stHead))];
     for (const r of sorted) {
       const its = (r.purchase_request_items ?? []).slice().sort((a, b) => a.sort - b.sort);
@@ -468,6 +471,10 @@ export default function PurchasesPage() {
           T(i ? (i.purpose_type === 'office' ? '安幸辦公室' : (i.estate_id ? estateName[i.estate_id] ?? '' : '')) : '', stCell),
           T(i?.property_id ? properties.find((pp) => pp.id === i.property_id)?.name ?? '' : '', stCell),
           T(r.payment_method ? PAY_LABEL[r.payment_method] ?? r.payment_method : '', stCell),
+          T(r.planned_transfer_on ?? '', stCell),
+          // 出款帳號 = 錢從我方哪個帳戶出去。對帳時要靠它跟銀行對單。
+          // 現金沒有帳號,那一格就會是空的。
+          T(r.payout_account ? (acctName[r.payout_account] ?? r.payout_account) : '', stCell),
           T(r.payee_bank_code ?? '', stCell),
           T(r.payee_company ?? '', stCell),
           // 帳號一律當文字。當數字的話 Excel 會吃掉開頭的 0,而且長帳號會變科學記號
@@ -490,6 +497,8 @@ export default function PurchasesPage() {
       { wch: 12 },  // 用途
       { wch: 10 },  // 房源
       { wch: 10 },  // 支付方式
+      { wch: 12 },  // 預定出款日
+      { wch: 18 },  // 出款帳號
       { wch: 10 },  // 銀行代號
       { wch: 18 },  // 戶名
       { wch: 20 },  // 收款帳號
