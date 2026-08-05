@@ -333,6 +333,12 @@ export default function PurchasesPage() {
     amount: number; since: string;
     mgrAt: string | null; admAt: string | null;
     mine: boolean;              // 這一筆缺的正好是我這一票
+    /**
+     * 已核可但兩張票都空的 = 未滿 3,000 自動放行的單。
+     * 沒有這個旗標的話畫面會畫成「○ 主管 ○ 總經理」,看起來像沒人審過,
+     * 主管會去追一張根本不需要他簽的單。
+     */
+    freePass: boolean;
     pr?: Req; dep?: Dep;
   };
 
@@ -358,6 +364,7 @@ export default function PurchasesPage() {
         // 但兩張票都是空的。只看票的話,已經通過的單上會冒出「核可」按鈕。
         mine: r.status === 'pending'
           && ((isManager && !r.manager_approved_at) || (isAdmin && !r.admin_approved_at)),
+        freePass: r.status === 'approved' && !r.manager_approved_at && !r.admin_approved_at,
         pr: r,
       });
     }
@@ -378,6 +385,8 @@ export default function PurchasesPage() {
         mgrAt: d.manager_approved_at, admAt: d.admin_approved_at,
         mine: d.refund_status === 'pending'
           && ((isManager && !d.manager_approved_at) || (isAdmin && !d.admin_approved_at)),
+        // 押金沒有免核門檻,一律兩票。留著同一條判斷是為了「將來加了門檻也不用回來改這裡」
+        freePass: d.refund_status === 'approved' && !d.manager_approved_at && !d.admin_approved_at,
         dep: d,
       });
     }
@@ -1052,8 +1061,10 @@ export default function PurchasesPage() {
                       <div className="text-right shrink-0">
                         <div className="font-bold">${fmt(p.amount)}</div>
                         <div className="text-[11px] text-gray-400 mt-1">
-                          <div className={p.mgrAt ? 'text-mor-green' : ''}>{p.mgrAt ? '✓' : '○'} 主管</div>
-                          <div className={p.admAt ? 'text-mor-green' : ''}>{p.admAt ? '✓' : '○'} 總經理</div>
+                          {p.freePass ? <div>未達門檻免核</div> : (<>
+                            <div className={p.mgrAt ? 'text-mor-green' : ''}>{p.mgrAt ? '✓' : '○'} 主管</div>
+                            <div className={p.admAt ? 'text-mor-green' : ''}>{p.admAt ? '✓' : '○'} 總經理</div>
+                          </>)}
                         </div>
                       </div>
                     </div>
@@ -1118,8 +1129,10 @@ export default function PurchasesPage() {
                       </td>
                       <td className="px-3 py-2.5 text-right font-medium whitespace-nowrap">${fmt(p.amount)}</td>
                       <td className="px-3 py-2.5 text-[11px] whitespace-nowrap">
-                        <div className={p.mgrAt ? 'text-mor-green' : 'text-gray-400'}>{p.mgrAt ? '✓' : '○'} 主管</div>
-                        <div className={p.admAt ? 'text-mor-green' : 'text-gray-400'}>{p.admAt ? '✓' : '○'} 總經理</div>
+                        {p.freePass ? <span className="text-gray-400">未達門檻免核</span> : (<>
+                          <div className={p.mgrAt ? 'text-mor-green' : 'text-gray-400'}>{p.mgrAt ? '✓' : '○'} 主管</div>
+                          <div className={p.admAt ? 'text-mor-green' : 'text-gray-400'}>{p.admAt ? '✓' : '○'} 總經理</div>
+                        </>)}
                       </td>
                       <td className="px-3 py-2.5 text-right whitespace-nowrap space-x-2" onClick={(e) => e.stopPropagation()}>
                         {p.mine && <button onClick={() => pendVote(p)} className="text-xs text-mor-green underline hover:text-mor-slate font-medium">核可</button>}
