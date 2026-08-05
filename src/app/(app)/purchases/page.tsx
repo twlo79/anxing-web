@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
@@ -209,7 +209,8 @@ export default function PurchasesPage() {
      */
     const { data: pd } = await supabase.from('purchase_requests')
       .select('*, purchase_request_items(*)')
-      .eq('status', 'pending')
+      .in('status', ['pending', 'approved'])
+      .is('purchased_on', null)      // 錢已經出去的就結案了,不留在待辦畫面上
       .order('submitted_at', { nullsFirst: false });
     setPendRows((pd as Req[]) ?? []);
 
@@ -326,6 +327,8 @@ export default function PurchasesPage() {
    */
   type Pend = {
     kind: 'pr' | 'dep';
+    /** pending = 還在等票;approved = 兩票到齊,等著把錢付出去 */
+    stage: 'pending' | 'approved';
     id: string; who: string; what: string; meta: string;
     amount: number; since: string;
     mgrAt: string | null; admAt: string | null;
@@ -340,6 +343,7 @@ export default function PurchasesPage() {
       const its = r.purchase_request_items ?? [];
       out.push({
         kind: 'pr', id: r.id,
+        stage: r.status === 'approved' ? 'approved' : 'pending',
         who: personName[r.requester_id] ?? '—',
         what: its.map((i) => i.item_name).filter(Boolean).join('、') || '—',
         meta: [
@@ -350,14 +354,18 @@ export default function PurchasesPage() {
         amount: Number(r.total_amount) || 0,
         since: r.submitted_at ?? r.created_at,
         mgrAt: r.manager_approved_at, admAt: r.admin_approved_at,
-        mine: (isManager && !r.manager_approved_at) || (isAdmin && !r.admin_approved_at),
+        // status 一定要一起檢查:未滿 3,000 的單是自動核可的,狀態已經是 approved
+        // 但兩張票都是空的。只看票的話,已經通過的單上會冒出「核可」按鈕。
+        mine: r.status === 'pending'
+          && ((isManager && !r.manager_approved_at) || (isAdmin && !r.admin_approved_at)),
         pr: r,
       });
     }
+    // deps 撈的就是未結案的(pending + approved 且尚未匯出),不用再篩
     for (const d of deps) {
-      if (d.refund_status !== 'pending') continue;
       out.push({
         kind: 'dep', id: d.id,
+        stage: d.refund_status === 'approved' ? 'approved' : 'pending',
         who: d.guest_name ?? '—',
         what: [d.room, d.estate_id ? estateName[d.estate_id] : ''].filter(Boolean).join('・') || '—',
         meta: [
@@ -368,7 +376,8 @@ export default function PurchasesPage() {
         amount: Number(d.amount) || 0,
         since: d.created_at,
         mgrAt: d.manager_approved_at, admAt: d.admin_approved_at,
-        mine: (isManager && !d.manager_approved_at) || (isAdmin && !d.admin_approved_at),
+        mine: d.refund_status === 'pending'
+          && ((isManager && !d.manager_approved_at) || (isAdmin && !d.admin_approved_at)),
         dep: d,
       });
     }
@@ -379,7 +388,22 @@ export default function PurchasesPage() {
       || (a.since ?? '').localeCompare(b.since ?? ''));
   }, [pendRows, deps, personName, estateName, isManager, isAdmin]);
 
+  /*
+   * 分兩段:上面是還在等票的,下面是已核可等著付錢的。
+   *
+   * 已核可的放同一個分頁但**分開一段**,不是混進去按時間排 ——
+   * 兩者要做的事完全不同:上面等的是投票,下面等的是把錢匯出去。
+   * 混在一起的話,主管會一直滑過不需要他動作的列。
+   */
+  const pendWait = useMemo(() => pendings.filter((p) => p.stage === 'pending'), [pendings]);
+  const pendDone = useMemo(() => pendings.filter((p) => p.stage === 'approved'), [pendings]);
   const pendMine = useMemo(() => pendings.filter((p) => p.mine), [pendings]);
+
+  /** 待核可分頁的兩段。手機卡片與桌機表格共用這份定義,不會有一邊漏改。 */
+  const GROUPS = useMemo(() => ([
+    ['wait', '未核可', '等主管與總經理投票', pendWait],
+    ['done', '已核可', '等會計把錢付出去', pendDone],
+  ] as const), [pendWait, pendDone]);
 
   /*
    * 進頁面時停在哪一個分頁,依角色決定 ——
@@ -956,8 +980,9 @@ export default function PurchasesPage() {
       */}
       {canSeeAll && (
         <div className="flex flex-wrap gap-1 mb-4 border-b border-mor-line">
+          {/* 徽章只算「未核可」—— 已核可的那一段不是催人投票用的 */}
           {([
-            ['approve', '待核可', pendings.length],
+            ['approve', '待核可', pendWait.length],
             ['pr', '請款單', 0],
           ] as const).map(([k, label, n]) => (
             <button key={k} onClick={() => setTab(k)}
@@ -986,22 +1011,28 @@ export default function PurchasesPage() {
       {canSeeAll && tab === 'approve' && (
         pendings.length === 0 ? (
           <div className="rounded-xl border border-mor-line bg-white py-16 text-center">
-            <div className="text-gray-400 text-sm">目前沒有待核可的單</div>
-            <div className="text-gray-300 text-xs mt-1">請款單與押金退款都審完了</div>
+            <div className="text-gray-400 text-sm">目前沒有待處理的單</div>
+            <div className="text-gray-300 text-xs mt-1">請款單與押金退款都審完也付完了</div>
           </div>
         ) : (
           <>
             {pendMine.length > 0 && (
               <div className="mb-3 rounded-lg bg-amber-50 text-amber-800 px-3 py-2 text-sm">
                 有 <span className="font-bold">{pendMine.length}</span> 筆等你這一票
-                {pendings.length > pendMine.length &&
-                  <span className="text-amber-700/70">・另外 {pendings.length - pendMine.length} 筆在等其他人</span>}
+                {pendWait.length > pendMine.length &&
+                  <span className="text-amber-700/70">・另外 {pendWait.length - pendMine.length} 筆在等其他人</span>}
               </div>
             )}
 
-            {/* 手機:卡片 */}
+            {/* 手機:卡片。上下兩段,中間一條分隔標題 */}
             <div className="md:hidden space-y-2">
-              {pendings.map((p) => (
+              {GROUPS.map(([gk, glabel, ghint, glist]) => glist.length === 0 ? null : (
+                <div key={gk} className="space-y-2 pt-1">
+                  <div className="flex items-baseline gap-2 px-1 pt-2">
+                    <span className="text-sm font-semibold">{glabel}</span>
+                    <span className="text-xs text-gray-400">{glist.length} 筆・{ghint}</span>
+                  </div>
+              {glist.map((p) => (
                 <div key={p.kind + p.id}
                   className={`rounded-xl border bg-white p-3 ${p.mine ? 'border-amber-300' : 'border-mor-line'}`}>
                   {/* 兩種單都點得開抽屜,各自走各自的 —— 使用者不該記得哪一種才能點 */}
@@ -1033,13 +1064,16 @@ export default function PurchasesPage() {
                       <button onClick={() => pendVote(p)}
                         className="flex-1 h-12 rounded-lg bg-mor-green text-white text-sm font-medium active:opacity-80">核可</button>
                     )}
-                    {(isManager || isAdmin) && (
+                    {/* 已核可的不給駁回 —— 要退回重審得先改內容,那是抽屜裡的事 */}
+                    {(isManager || isAdmin) && p.stage === 'pending' && (
                       <button onClick={() => pendReject(p)}
                         className="h-12 px-4 rounded-lg border border-red-200 text-red-500 text-sm font-medium active:bg-red-50">駁回</button>
                     )}
                     <button onClick={() => pendShare(p)}
                       className={`h-12 px-4 rounded-lg border border-mor-line text-sm font-medium active:bg-mor-sand/60 ${p.mine ? '' : 'flex-1'}`}>↗ 分享</button>
                   </div>
+                </div>
+              ))}
                 </div>
               ))}
             </div>
@@ -1058,7 +1092,15 @@ export default function PurchasesPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {pendings.map((p) => (
+                  {GROUPS.map(([gk, glabel, ghint, glist]) => glist.length === 0 ? null : (
+                    <Fragment key={gk}>
+                      <tr className="bg-mor-sand/60 border-b border-mor-line/60">
+                        <td colSpan={6} className="px-3 py-1.5">
+                          <span className="text-xs font-semibold text-gray-700">{glabel}</span>
+                          <span className="text-xs text-gray-400 ml-2">{glist.length} 筆・{ghint}</span>
+                        </td>
+                      </tr>
+                  {glist.map((p) => (
                     <tr key={p.kind + p.id}
                       className={`border-b border-mor-line/60 last:border-0 ${
                         p.mine ? 'bg-amber-50/40' : ''} cursor-pointer hover:bg-mor-sand/30`}
@@ -1081,10 +1123,13 @@ export default function PurchasesPage() {
                       </td>
                       <td className="px-3 py-2.5 text-right whitespace-nowrap space-x-2" onClick={(e) => e.stopPropagation()}>
                         {p.mine && <button onClick={() => pendVote(p)} className="text-xs text-mor-green underline hover:text-mor-slate font-medium">核可</button>}
-                        {(isManager || isAdmin) && <button onClick={() => pendReject(p)} className="text-xs text-red-500 underline">駁回</button>}
+                        {(isManager || isAdmin) && p.stage === 'pending' &&
+                          <button onClick={() => pendReject(p)} className="text-xs text-red-500 underline">駁回</button>}
                         <button onClick={() => pendShare(p)} className="text-xs text-mor-slate underline hover:text-mor-blue">分享</button>
                       </td>
                     </tr>
+                  ))}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>
