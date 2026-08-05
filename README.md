@@ -44,6 +44,7 @@ src/
     (app)/layout.tsx             側邊選單(依 profiles.role 過濾)
     (app)/shortterm/page.tsx     短租訂單與收款(orders)
     (app)/contracts/page.tsx     契約訂單與收款(contracts + orders)
+    (app)/dashboard/page.tsx     財務儀表板(手寫 SVG 圖表,零圖表相依)
     (app)/revenues/page.tsx      營收報表(revenue_recognitions)+ xlsx 匯出
     (app)/purchases/page.tsx     請款填寫(purchase_requests + items)+ 兩票核可
     (app)/expenses/page.tsx      支出(expenses)+ 科目/房源分項統計
@@ -110,8 +111,8 @@ create function current_role_of() returns text
 | 角色 | 側邊選單 | 資料權限重點 |
 |---|---|---|
 | 一般(管家/房務) | 短租、契約、請款、評價、清潔 | 讀寫 `orders` / `contracts` / `contract_payments`;請款單**只看得到自己送的**;**看不到** `expenses`、`revenue_recognitions`、`revenue_snapshots` |
-| 主管 `manager` | + 營收、支出 | 讀寫 `orders`/`reviews`/`cleaning_records`/`expenses`;請款**投主管那一票**;可排付款與確認出款 |
-| 會計 `accountant` | 短租、契約、營收、請款、支出 | **讀寫** `orders`/`contracts`/`invoices`/`expenses`(見下);請款單看得到全部但**不得核可**;可排付款與確認出款 |
+| 主管 `manager` | + 儀表板、營收、支出 | 讀寫 `orders`/`reviews`/`cleaning_records`/`expenses`;請款**投主管那一票**;可排付款與確認出款 |
+| 會計 `accountant` | 短租、契約、儀表板、營收、請款、支出 | **讀寫** `orders`/`contracts`/`invoices`/`expenses`(見下);請款單看得到全部但**不得核可**;可排付款與確認出款 |
 | 總經理 `super_admin` | + 設定 | 全部,含 `estates`/`properties`/`staff`/`profiles`/`account_codes`/`payment_accounts`;請款**投總經理那一票**;可編輯任何人未核可的請款單 |
 
 所有 public schema 的表都已啟用 RLS。
@@ -151,7 +152,9 @@ RLS 是列層級的,無法表達「這個角色不能改這一欄」。以下規
 |---|---|
 | `draft` / `rejected` | 申請人本人、總經理 |
 | `pending` 審核中 | 申請人本人、總經理 —— **存檔會清空既有核可票並重新送審** |
-| `approved` 已核可 | 不能編輯。錢要出去了,改內容等於繞過審核 |
+| `approved` 已核可 | 申請人本人、總經理 —— **同樣清票重送審**。但**出款日一填、支出一產生就鎖住**(`migration_73`) |
+
+原本 approved 完全不能改,理由是「錢要出去了,改內容等於繞過審核」。那個理由只在「改了不用重審」的前提下成立 —— 現在改內容一定伴隨重新送審,就不成立了。真正的紅線移到 `purchased_on` / `expense_generated_at`:支出一產生就是錢真的花掉的紀錄,只能到支出頁調整或撤銷重開。押金退款流程同一套規則,紅線是 `returned_on`。
 
 重新送審的實作是把 `status` 先退回 `draft`、清空兩個 `*_approved_at`,寫完項目再送 `pending`。這樣直接重用既有狀態機,而且**免核門檻會依新金額重算** —— 5,000 改成 2,000 會自動核可,不會卡在 pending 等兩張不需要的票。
 
@@ -659,7 +662,7 @@ values ('<user_uuid>', '名字', 'housekeeper');  -- housekeeper | accountant | 
 | ~~`supabase/migrations/` 缺基準 schema~~ | **已補**:`supabase/schema-baseline.sql` 是 2026-08 的線上快照（表、約束、索引、函式、觸發器、RLS）。產生方式見 `supabase/dump-schema.sql`。<br>那份是**參考用不是可重跑**的 —— `create table` 沒有依賴排序。它的用途是讓「線上到底長什麼樣」在 repo 裡 grep 得到,改既有函式前先看那裡,不要照 `migration_30` 的舊版猜（`gen_expenses_from_pr()` 已被改過六輪）。 |
 | 爬蟲不送 `listingId` | 評價被指到錯誤房源的**根因**。4 間開封的 Airbnb 標題完全相同,靠名稱比對必然出錯(全站有 23 個共用名稱)。`migration_45` 已用日曆訂單修正既有資料,匯入端也改成用訂單回查,但來源沒修就還是治標 |
 | 出款日無撤銷路徑 | 填錯只能改日期(會同步支出),無法退回未出款。要補得設計作廢流程,含已產生支出的處理 |
-| 損益未整合 | 收入鏈與支出鏈各自獨立,要看損益得兩邊各自匯出 Excel 再合併 |
+| ~~損益未整合~~ | **已補**:財務儀表板的〈各物業損益〉把 `revenue_recognitions` 與 `expenses` 按物業接起來。**支出只算有指定物業的**,辦公室的公共費用不分攤 —— 分攤比例沒人決定過,亂攤比不攤更誤導 |
 | 評價分項評分缺漏 | `ReviewsSectionQuery` 不回傳分項評分與房東回覆,那 7 欄目前留 null |
 | ~~錢的紀錄沒有刪除軌跡~~ | **已修**(`migration_72`):`data_audit` 記下支出、請款單、押金、訂單、契約的增刪改。2026-08-04 有人問「支出之前比較多筆是不是被刪了」,查遍 migration 與 baseline 都排除了,最後只能說「可能有人刪的,但沒紀錄」—— 那次查不出來就是這張表存在的理由 |
 | ~~撤評哨兵綁在單一機器~~ | **已修**(`migration_71`):狀態改存 `sync_state`,排程改打 `GET /api/import/reviews/state`。舊版存在 `sync-backups/sync-state.json`,換路徑後「找不到 topReviewId」天天成立,於是天天多跑一次 30 次請求的全量對帳,而且不會有人發現 |
@@ -721,6 +724,7 @@ values ('<user_uuid>', '名字', 'housekeeper');  -- housekeeper | accountant | 
 | 69 | 移除 `hk_staff.source_name`,顯示名只看 `source_names[]` + 重名防呆 |
 | 70 | **`schema_migrations` 執行紀錄** —— 每支結尾要 `select record_migration('編號_名稱')` |
 | 71 | `sync_state`:排程同步狀態改存 DB(原本在本機 json,換機器就失效) |
+| 73 | 核可後仍可編輯(存檔即清票重送審),紅線移到出款日 |
 | 72 | **`data_audit` 編輯紀錄**:支出/請款/押金/訂單/契約的增刪改。刪除與新增存整列,修改只存變動欄位 |
 
 ---
