@@ -2,7 +2,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
-import { ymOf, ymShow, ymMonth, monthsAgo, todayStr } from '@/lib/period';
+import { ymOf, ymShow, ymMonth, monthsAgo, todayStr, fmtRange } from '@/lib/period';
+import { FilterBar, FilterSelect, FilterDateRange, FilterClear } from '@/lib/filters';
 
 /**
  * 財務儀表板。
@@ -289,57 +290,22 @@ export default function DashboardPage() {
       </div>
 
       {/* ═══ 篩選列 ═══ */}
-      <div className="bg-white rounded-xl border border-mor-line p-3 mb-5 flex flex-wrap items-end gap-2">
-        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">起</span>
-          <input type="date" value={fromD} onChange={(e) => setFromD(e.target.value)}
-            className="rounded-lg border border-mor-line px-2 py-1.5 text-sm" /></label>
-        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">迄</span>
-          <input type="date" value={toD} onChange={(e) => setToD(e.target.value)}
-            className="rounded-lg border border-mor-line px-2 py-1.5 text-sm" /></label>
-
-        {/* 快捷鈕：多數時候要的就是這三個區間，不用每次點兩次日曆 */}
-        <div className="flex gap-1">
-          {([['本月', 0], ['近 3 月', 2], ['近 6 月', 5], ['近 12 月', 11]] as [string, number][]).map(([lbl, n]) => (
-            <button key={lbl} onClick={() => { setFromD(monthsAgo(n)); setToD(todayStr()); }}
-              className="rounded-lg border border-mor-line px-2.5 py-1.5 text-xs hover:bg-mor-sand/60">{lbl}</button>
-          ))}
-        </div>
-
-        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">物業</span>
-          <select value={estF} onChange={(e) => pickEstate(e.target.value)}
-            className="rounded-lg border border-mor-line px-2 py-1.5 text-sm">
-            <option value="">全部物業</option>
-            {estates.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-          </select></label>
-        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">房源</span>
-          <select value={propF} onChange={(e) => setPropF(e.target.value)}
-            className="rounded-lg border border-mor-line px-2 py-1.5 text-sm">
-            <option value="">全部房源</option>
-            {propsOfEstate.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select></label>
-
-        <button onClick={clearFilters}
-          className="rounded-lg border border-mor-line px-3 py-1.5 text-sm hover:bg-mor-sand/60">清除</button>
-
-        {(estF || propF) && (
-          <span className="ml-auto text-xs text-mor-slate self-center">
-            目前只看 {propF ? propName[propF] : estateName[estF]}
-          </span>
-        )}
-      </div>
-
-      {/* ═══ 核心數字 ═══ */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
-        <Kpi label="營收" value={money(totalRev)} sub={mom != null ? `較前期 ${mom >= 0 ? '▲' : '▼'} ${Math.abs(mom).toFixed(1)}%` : undefined}
-          subTone={mom == null ? undefined : mom >= 0 ? 'good' : 'bad'} />
-        <Kpi label="支出" value={money(totalExp)} sub={`${fExps.length} 筆`} />
-        <Kpi label="淨額" value={money(net)} tone={net >= 0 ? 'good' : 'bad'}
-          sub={totalRev > 0 ? `毛利率 ${margin.toFixed(1)}%` : undefined} />
-        <Kpi label="應收未收" value={money(unpaid)} tone={unpaid > 0 ? 'warn' : undefined}
-          sub={`${unpaidCount} 張訂單`} />
-        <Kpi label="待付款" value={money(toPay)} sub={`${pending.length} 張已核可`}
-          hint="已核可但還沒填出款日，不受上方期間影響" />
-      </div>
+      {/* 版型比照短租訂單頁（lib/filters）。這頁沒有關鍵字搜尋,
+          所以清除直接接在最後一個欄位後面。 */}
+      <FilterBar right={<span className="text-xs text-gray-400 pb-1.5">{fmtRange(fromD, toD)}</span>}>
+        <FilterDateRange label="期間" from={fromD} to={toD} onFrom={setFromD} onTo={setToD}
+          quick={[
+            { label: '本月', from: monthsAgo(0), to: todayStr() },
+            { label: '近 3 月', from: monthsAgo(2), to: todayStr() },
+            { label: '近 6 月', from: monthsAgo(5), to: todayStr() },
+            { label: '近 12 月', from: monthsAgo(11), to: todayStr() },
+          ]} />
+        <FilterSelect label="物業" value={estF} onChange={pickEstate}
+          options={estates.map((e) => ({ value: e.id, label: e.name }))} />
+        <FilterSelect label="房源" value={propF} onChange={setPropF}
+          options={propsOfEstate.map((p2) => ({ value: p2.id, label: p2.name }))} />
+        <FilterClear active={!!(estF || propF)} onClear={clearFilters} />
+      </FilterBar>
 
       {revGap && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 mb-5 text-sm text-amber-800">

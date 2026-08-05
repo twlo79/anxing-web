@@ -54,6 +54,9 @@ export default function ContractsPage() {
   const [collect, setCollect] = useState<Contract | null>(null);
   const [detail, setDetail] = useState<Contract | null>(null);
   const [kw, setKw] = useState('');
+  // 輸入框與實際查詢分開 —— 邊打邊查會在每個字上跑一次全表比對,
+  // 而前幾次的結果沒有人要看。跟短租頁同一套。
+  const [kwIn, setKwIn] = useState('');
   const [sort, setSort] = useState<SortState>({ key: 'start_date', dir: 'desc' });
   const [cadFilter, setCadFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
@@ -447,8 +450,9 @@ export default function ContractsPage() {
         </div>
       )}
 
-      {/* 篩選列走 lib/filters 的共用元件 —— 清除只有一顆,永遠在篩選欄位的最後面。
-          原本這裡有三顆（日期一顆、關鍵字一顆、全部清除一顆）,同一個動作三個位置。 */}
+      {/* 篩選列走 lib/filters 的共用元件，版型以短租訂單頁為準。
+          原本這裡有三顆清除鈕（日期一顆、關鍵字一顆、全部清除一顆），
+          同一個動作三個位置。現在只有一顆，底線文字，在搜尋右邊。 */}
       <FilterBar
         right={<>
           <FilterCount n={filtered.length} />
@@ -457,23 +461,23 @@ export default function ContractsPage() {
           <button onClick={() => setEdit(blank())}
             className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 新增契約</button>
         </>}>
-        <FilterSelect value={estateFilter} onChange={setEstateFilter} all="全部物業"
+        <FilterSelect label="物業" value={estateFilter} onChange={setEstateFilter}
           options={estates.map((e) => ({ value: e.name, label: e.name }))} />
-        <FilterSelect value={cadFilter} onChange={setCadFilter} all="全部繳別" options={[
+        <FilterSelect label="繳別" value={cadFilter} onChange={setCadFilter} options={[
           { value: 'monthly', label: '月繳' }, { value: 'quarterly', label: '季繳' },
           { value: 'halfyear', label: '半年繳' }, { value: 'yearly', label: '年繳' }]} />
-        <FilterSelect value={typeFilter} onChange={setTypeFilter} all="全部類別" options={[
+        <FilterSelect label="類別" value={typeFilter} onChange={setTypeFilter} options={[
           { value: 'longterm', label: '長租' }, { value: 'office', label: '辦公室' },
           { value: 'company', label: '公司登記' }]} />
-        <FilterSelect value={statusFilter} onChange={setStatusFilter} all="全部狀態" options={[
+        <FilterSelect label="狀態" value={statusFilter} onChange={setStatusFilter} options={[
           { value: 'active', label: '進行中' }, { value: 'expired', label: '已到期' },
           { value: 'disabled', label: '已停用' }]} />
-        <FilterDateRange from={fromD} to={toD} onFrom={setFromD} onTo={setToD}
-          title="依租期(起訖)篩選" />
-        <FilterSearch value={kw} onChange={setKw} placeholder="搜尋 房源/租戶/電話" />
+        <FilterDateRange label="租期(期間內有交集)" from={fromD} to={toD} onFrom={setFromD} onTo={setToD} />
+        <FilterSearch label="關鍵字(房源/租戶/電話)" value={kwIn} onChange={setKwIn}
+          onSubmit={() => setKw(kwIn.trim())} />
         <FilterClear
-          active={!!(estateFilter || cadFilter || typeFilter || statusFilter || fromD || toD || kw)}
-          onClear={() => { setEstateFilter(''); setCadFilter(''); setTypeFilter(''); setStatusFilter(''); setFromD(''); setToD(''); setKw(''); }} />
+          active={!!(estateFilter || cadFilter || typeFilter || statusFilter || fromD || toD || kw || kwIn)}
+          onClear={() => { setEstateFilter(''); setCadFilter(''); setTypeFilter(''); setStatusFilter(''); setFromD(''); setToD(''); setKw(''); setKwIn(''); }} />
       </FilterBar>
 
       <div className="bg-white rounded-xl border border-mor-line overflow-x-auto">
