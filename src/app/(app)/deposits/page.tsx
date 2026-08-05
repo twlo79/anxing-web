@@ -195,8 +195,12 @@ export default function DepositsPage() {
     const st = d.refund_status ?? 'none';
     return {
       st,
-      // 還沒收到錢就沒有錢可以退
-      canRequest: canRequest && !!d.received_on && !d.returned_on && (st === 'none' || st === 'rejected'),
+      // 還沒收到錢就沒有錢可以退。
+      // pending 與 approved 也開放編輯 —— 存檔會清票重新送審(見 submitRefund),
+      // 所以「改內容」跟「重新被審一次」永遠綁在一起,不可能繞過審核。
+      // 真正的紅線是 returned_on:錢已經匯出去了就不能再改。
+      canRequest: canRequest && !!d.received_on && !d.returned_on
+        && ['none', 'rejected', 'pending', 'approved'].includes(st),
       canVoteMgr: isManager && st === 'pending' && !d.manager_approved_at,
       canVoteAdm: isAdmin && st === 'pending' && !d.admin_approved_at,
       canReject: (isManager || isAdmin) && st === 'pending',
@@ -208,15 +212,19 @@ export default function DepositsPage() {
   /**
    * 送出／更新退款申請。房客帳戶與預計匯款日在這一步就要填齊,審核者才有東西可看。
    *
-   * 審核中改內容會清掉既有的票 —— 不清的話,「改收款帳號」就能在核可後
-   * 把錢導到別的地方,兩票等於白審。跟請款單同一個道理。
+   * 審核中或已核可改內容,都會清掉既有的票並退回重新送審 ——
+   * 不清的話,「改收款帳號」就能在核可後把錢導到別的地方,兩票等於白審。
+   * 跟請款單同一個道理。錢真的匯出去之後(returned_on)才不能再改。
    */
   async function submitRefund() {
     if (!edit) return;
-    const wasPending = edit.refund_status === 'pending';
+    const wasSubmitted = edit.refund_status === 'pending' || edit.refund_status === 'approved';
     const hadVotes = !!edit.manager_approved_at || !!edit.admin_approved_at;
-    if (wasPending && hadVotes
-        && !confirm('這筆退款已經有人核可。更新資訊會清掉既有核可票並重新送審,確定嗎?')) return;
+    if (wasSubmitted && hadVotes && !confirm(
+      edit.refund_status === 'approved'
+        ? '這筆退款已經核可通過。更新資訊會清掉核可票、退回重新送審,確定嗎?'
+        : '這筆退款已經有人核可。更新資訊會清掉既有核可票並重新送審,確定嗎?'
+    )) return;
     if (!edit.payee_account?.trim()) return flash('請填房客的收款帳號');
     if (!edit.payee_name?.trim()) return flash('請填戶名');
     if (!edit.planned_refund_on) return flash('請填預計匯款日');
@@ -238,7 +246,7 @@ export default function DepositsPage() {
     }).eq('id', edit.id);
     setSaving(false);
     if (error) return flash('送審失敗:' + error.message);
-    setEdit(null); flash(wasPending ? '已更新並重新送審' : '已送出退款審核'); load();
+    setEdit(null); flash(wasSubmitted ? '已更新並重新送審' : '已送出退款審核'); load();
   }
 
   /** 投票。兩票到齊由觸發器翻成 approved,前端不自己算狀態。 */
