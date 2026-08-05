@@ -729,6 +729,7 @@ values ('<user_uuid>', '名字', 'housekeeper');  -- housekeeper | accountant | 
 | 70 | **`schema_migrations` 執行紀錄** —— 每支結尾要 `select record_migration('編號_名稱')` |
 | 71 | `sync_state`:排程同步狀態改存 DB(原本在本機 json,換機器就失效) |
 | 73 | 核可後仍可編輯(存檔即清票重送審),紅線移到出款日 |
+| 74 | 會計科目新增「零用金」(小額現金支出) |
 | 72 | **`data_audit` 編輯紀錄**:支出/請款/押金/訂單/契約的增刪改。刪除與新增存整列,修改只存變動欄位 |
 
 ---

@@ -328,23 +328,95 @@ export default function DepositsPage() {
     setEdit(null); setDetail(null); flash('已刪除'); load();
   }
 
+  /**
+   * 下載 Excel。格式與請款單那份一致 —— 同一個人同一天可能兩份都要下載,
+   * 長得不一樣只會讓對帳的人多花時間適應。
+   *
+   * 【欄位順序刻意分成四段】
+   *   基本      物業 → 房源 → 姓名 → 幣別 → 押金
+   *   收進來    收押金日 → 入款方式 → 入款帳號        ← 我方收在哪個帳戶
+   *   退出去    預定退款日 → 退押金日 → 退款方式 → 退款帳號   ← 我方從哪個帳戶付
+   *   對方      銀行代號 → 戶名 → 收款帳號            ← 錢要匯去哪
+   *
+   * 「我方帳號」在前、「對方資訊」在後,跟請款單同一個順序,
+   * 也跟實際操作網銀時填的順序一致,複製貼上不用左右跳。
+   *
+   * 預定退款日與實際退押金日並排 —— 差幾天一眼就看得出來,
+   * 那是「核可了但還沒匯」的積壓,分開放就沒人會去比。
+   */
   function exportXlsx() {
-    const head = ['物業', '房源', '姓名', '幣別', '押金', '收押金日', '入款方式', '入款帳號',
-      '退押金日', '退款方式', '退款帳號', '狀態', '備註'];
-    const body = sorted.map((r) => [
-      r.estate_id ? estateName[r.estate_id] ?? '' : '', r.room ?? '', r.guest_name ?? '',
-      r.currency, Math.round(Number(r.amount) || 0),
-      r.received_on ?? '', r.received_method ? METHOD_LABEL[r.received_method] ?? '' : '',
-      r.received_account ? acctName[r.received_account] ?? r.received_account : '',
-      r.returned_on ?? '', r.returned_method ? METHOD_LABEL[r.returned_method] ?? '' : '',
-      r.returned_account ? acctName[r.returned_account] ?? r.returned_account : '',
-      r.orphaned ? '孤兒' : r.returned_on ? '已退' : r.received_on ? '暫收中' : '尚未收',
-      r.note ?? '',
-    ]);
-    const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
+    if (!sorted.length) return flash('沒有符合條件的押金紀錄');
+    const BR = { style: 'thin', color: { rgb: 'C9C6BE' } };
+    const BORD = { top: BR, bottom: BR, left: BR, right: BR };
+    const stHead = { font: { bold: true, sz: 11 }, fill: { fgColor: { rgb: 'E7E4DC' } }, border: BORD, alignment: { horizontal: 'center' } };
+    const stCell = { border: BORD };
+    const stNum = { border: BORD, alignment: { horizontal: 'right' } };
+    const T = (v: any, st: any) => ({ v: v ?? '', t: typeof v === 'number' ? 'n' : 's', s: st, z: typeof v === 'number' ? '#,##0' : undefined });
+
+    const header = ['物業', '房源', '姓名', '幣別', '押金',
+      '收押金日', '入款方式', '入款帳號',
+      '預定退款日', '退押金日', '退款方式', '退款帳號',
+      '銀行代號', '戶名', '收款帳號',
+      '狀態', '備註'];
+    const aoa: any[][] = [header.map((h) => T(h, stHead))];
+    for (const r of sorted) {
+      aoa.push([
+        T(r.estate_id ? estateName[r.estate_id] ?? '' : '', stCell),
+        T(r.room ?? '', stCell),
+        T(r.guest_name ?? '', stCell),
+        T(r.currency, stCell),
+        T(Math.round(Number(r.amount) || 0), stNum),
+        T(r.received_on ?? '', stCell),
+        T(r.received_method ? METHOD_LABEL[r.received_method] ?? r.received_method : '', stCell),
+        // 入款帳號 = 押金收進我方哪個帳戶。跟銀行對帳要靠它。現金收的就是空的。
+        T(r.received_account ? acctName[r.received_account] ?? r.received_account : '', stCell),
+        T(r.planned_refund_on ?? '', stCell),
+        T(r.returned_on ?? '', stCell),
+        T(r.returned_method ? METHOD_LABEL[r.returned_method] ?? r.returned_method : '', stCell),
+        // 退款帳號 = 錢從我方哪個帳戶出去
+        T(r.returned_account ? acctName[r.returned_account] ?? r.returned_account : '', stCell),
+        // 以下三欄是對方(房客)的收款資訊,退款申請核可時填的
+        T(r.payee_bank_code ?? '', stCell),
+        T(r.payee_name ?? '', stCell),
+        // 帳號一律當文字。當數字的話 Excel 會吃掉開頭的 0,長帳號還會變科學記號
+        T(r.payee_account ?? '', stCell),
+        T(r.orphaned ? '孤兒' : r.returned_on ? '已退' : r.received_on ? '暫收中' : '尚未收', stCell),
+        T(r.note ?? '', stCell),
+      ]);
+    }
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [
+      { wch: 12 },  // 物業
+      { wch: 10 },  // 房源
+      { wch: 12 },  // 姓名
+      { wch: 6 },   // 幣別
+      { wch: 11 },  // 押金
+      { wch: 12 },  // 收押金日
+      { wch: 10 },  // 入款方式
+      { wch: 18 },  // 入款帳號
+      { wch: 12 },  // 預定退款日
+      { wch: 12 },  // 退押金日
+      { wch: 10 },  // 退款方式
+      { wch: 18 },  // 退款帳號
+      { wch: 10 },  // 銀行代號
+      { wch: 18 },  // 戶名
+      { wch: 20 },  // 收款帳號
+      { wch: 10 },  // 狀態
+      { wch: 24 },  // 備註
+    ];
+    ws['!freeze'] = { xSplit: 0, ySplit: 1 };
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, '押金');
-    XLSX.writeFile(wb, `押金_${todayStr().replace(/-/g, '')}.xlsx`);
+    // 檔名帶上當下的篩選條件 —— 下載三份不同條件的檔案放在同一個資料夾時,
+    // 只靠日期分不出哪份是哪份。
+    const tag = [statusF === 'all' ? '' : STATUS_LABEL[statusF],
+      estateF ? estateName[estateF] ?? '' : '', roomF,
+      methodF ? METHOD_LABEL[methodF] ?? '' : '',
+      acctF ? acctName[acctF] ?? '' : '', kw].filter(Boolean).join('_');
+    // 用本地日期,不用 toISOString() —— 那是 UTC,台灣凌晨下載會標成前一天
+    const d = new Date();
+    const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+    XLSX.writeFile(wb, `押金${tag ? '_' + tag : ''}_${stamp}.xlsx`);
   }
 
   /**
