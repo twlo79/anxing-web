@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
 import Receipts from '@/components/Receipts';
+import RefundFields, { METHOD_LABEL, METHOD_OPTS } from '@/components/RefundFields';
 
 /**
  * 押金管理。
@@ -33,10 +34,7 @@ type Dep = {
 type Estate = { id: string; name: string };
 type PayAccount = { code: string; name: string; method: string };
 
-const METHOD_LABEL: Record<string, string> = {
-  cash: '現金', transfer: '匯款', credit_card: '信用卡', crypto: '加密貨幣',
-};
-const METHOD_OPTS = ['cash', 'transfer', 'credit_card', 'crypto'];
+// METHOD_LABEL / METHOD_OPTS 的定義搬到 @/components/RefundFields —— 只留一份
 
 /**
  * 押金狀態。all 是「不分類」,pending/held/returned 三類互斥。
@@ -953,51 +951,10 @@ export default function DepositsPage() {
                       </div>
                     )}
 
-                    <div className="text-xs text-gray-400 mb-1.5">房客的收款帳戶</div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">銀行代碼</span>
-                        <input value={edit.payee_bank_code ?? ''}
-                          onChange={(e) => setEdit({ ...edit, payee_bank_code: e.target.value })}
-                          placeholder="例:806"
-                          className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5" /></label>
-                      <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">戶名 *</span>
-                        <input value={edit.payee_name ?? ''}
-                          onChange={(e) => setEdit({ ...edit, payee_name: e.target.value })}
-                          className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5" /></label>
-                      <label className="flex flex-col gap-1 md:col-span-2"><span className="text-xs text-gray-500">帳號 *</span>
-                        <input value={edit.payee_account ?? ''}
-                          onChange={(e) => setEdit({ ...edit, payee_account: e.target.value })}
-                          className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5" /></label>
-                    </div>
+                    {/* 欄位跟請款頁的押金抽屜共用同一支元件,不會各自演化 */}
+                    <RefundFields v={edit} payAccounts={payAccounts} currency={edit.currency}
+                      onChange={(patch) => setEdit({ ...edit, ...patch })} />
 
-                    <div className="text-xs text-gray-400 mt-3 mb-1.5">我方出款</div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">預計匯款日 *</span>
-                        <input type="date" value={edit.planned_refund_on ?? ''}
-                          onChange={(e) => setEdit({ ...edit, planned_refund_on: e.target.value || null })}
-                          className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5" /></label>
-                      <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">出款方式 *</span>
-                        <select value={edit.returned_method ?? ''}
-                          onChange={(e) => setEdit({ ...edit, returned_method: e.target.value || null, returned_account: null })}
-                          className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5">
-                          <option value="">請選擇</option>
-                          {METHOD_OPTS.map((m) => <option key={m} value={m}>{METHOD_LABEL[m]}</option>)}
-                        </select></label>
-                      {edit.returned_method && edit.returned_method !== 'cash' && (
-                        <label className="flex flex-col gap-1 md:col-span-2"><span className="text-xs text-gray-500">出款帳號（我方）</span>
-                          <select value={edit.returned_account ?? ''}
-                            onChange={(e) => setEdit({ ...edit, returned_account: e.target.value || null })}
-                            className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5">
-                            <option value="">未指定</option>
-                            {payAccounts.filter((a) => a.method === edit.returned_method)
-                              .map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
-                          </select></label>
-                      )}
-                    </div>
-
-                    {edit.currency !== 'TWD' && (
-                      <p className="text-xs text-gray-400 mt-2">外幣押金原幣退還,不換匯。</p>
-                    )}
                     <p className="text-xs text-gray-400 mt-2">
                       送出後由主管與總經理各核可一次,核可後才能填實際退款日。
                     </p>

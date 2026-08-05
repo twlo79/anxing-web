@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
 import Receipts, { type ReceiptsHandle } from '@/components/Receipts';
+import RefundFields, { METHOD_LABEL as DEP_METHOD } from '@/components/RefundFields';
 import PushToggle from '../push-toggle';
 
 type Item = {
@@ -49,11 +50,6 @@ type Dep = {
   refund_requested_by: string | null;
   reject_reason: string | null; note: string | null; created_at: string;
 };
-/** 押金頁的出款方式多一個加密貨幣,請款單沒有 —— 標籤要各自對照,不能共用 PAY_LABEL */
-const DEP_METHOD_LABEL: Record<string, string> = {
-  cash: '現金', transfer: '匯款', credit_card: '信用卡', crypto: '加密貨幣',
-};
-
 type AccountCode = { code: string; name: string };
 type Estate = { id: string; name: string };
 type PayAccount = { code: string; name: string; method: string };
@@ -120,7 +116,7 @@ export default function PurchasesPage() {
    * 待核可刻意排第一個,而且是唯一把請款與押金合在一起的地方 ——
    * 核可的人只關心「有什麼等我」,那筆錢的來源是採購還是退押金,對投票這個動作沒差別。
    */
-  const [tab, setTab] = useState<'approve' | 'pr' | 'dep'>('pr');
+  const [tab, setTab] = useState<'approve' | 'pr'>('pr');
   // 待核可的請款單:獨立於列表的查詢,不受月份/狀態/申請人篩選影響(見 load)
   const [pendRows, setPendRows] = useState<Req[]>([]);
   /** 角色預設分頁只挑一次。分享連結進來時會先把它設成 true,免得預設把分頁搶走。 */
@@ -130,6 +126,8 @@ export default function PurchasesPage() {
   const [deps, setDeps] = useState<Dep[]>([]);
   const [depRejecting, setDepRejecting] = useState<Dep | null>(null);
   const [depReason, setDepReason] = useState('');
+  /** 押金抽屜。跟請款單一樣:列上只留最高頻的動作,其餘都在抽屜裡。 */
+  const [depDetail, setDepDetail] = useState<Dep | null>(null);
   /** 從分享連結進來時要標記哪一筆 */
   const [depHi, setDepHi] = useState<string | null>(null);
   // 新單還沒有 id，憑證要等母單建立後才傳得上去 —— 存檔時呼叫 flush()
@@ -248,7 +246,7 @@ export default function PurchasesPage() {
     const dq = sp.get('dep');
     if (dq) {
       setDepHi(dq);
-      setTab('dep');
+      setTab('approve');
       tabPicked.current = true;   // 別讓角色預設把分頁搶回去
       window.history.replaceState({}, '', window.location.pathname);
       return;
@@ -365,7 +363,7 @@ export default function PurchasesPage() {
         meta: [
           d.planned_refund_on ? `預計 ${d.planned_refund_on.slice(5).replace('-', '/')} 匯出` : '',
           d.payee_name ? `退至 ${d.payee_name}` : '',
-          d.returned_method ? DEP_METHOD_LABEL[d.returned_method] ?? d.returned_method : '',
+          d.returned_method ? DEP_METHOD[d.returned_method] ?? d.returned_method : '',
         ].filter(Boolean).join('・'),
         amount: Number(d.amount) || 0,
         since: d.created_at,
@@ -404,17 +402,14 @@ export default function PurchasesPage() {
   const pendReject = (p: Pend) => (p.kind === 'pr' ? setRejecting(p.pr!) : setDepRejecting(p.dep!));
   const pendShare = (p: Pend) => (p.kind === 'pr' ? shareReq(p.pr!) : shareDep(p.dep!));
 
-  // 押金退款:等我投票的、以及已核可等著匯出去的。
-  // 押金的筆數與金額**不併進上面的請款單卡片** —— 那些數字是「這個月請了多少款」,
-  // 押金退的是代收的錢,不是公司的費用,加在一起會讓兩個數字都失去意義。
-  const depWaitMe = useMemo(() => deps.filter((d) => d.refund_status === 'pending'
-    && ((isManager && !d.manager_approved_at) || (isAdmin && !d.admin_approved_at))), [deps, isManager, isAdmin]);
-
-  // 從分享連結進來時捲到那一筆。等載入完才捲,不然元素還不在畫面上。
+  // 從分享連結(?dep=)進來時直接打開那一筆的抽屜。
+  // 等載入完才做 —— deps 還是空的時候找不到人。
   useEffect(() => {
     if (!depHi || loading || !deps.length) return;
-    const el = document.getElementById('dep-' + depHi);
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const hit = deps.find((d) => d.id === depHi);
+    if (hit) setDepDetail(hit);
+    else flash('這筆押金退款已經結案或找不到');
+    setDepHi(null);   // 只做一次,否則關掉抽屜又會被打開
   }, [depHi, loading, deps]);
 
   // 金額卡:依目前篩選結果,排除草稿與已駁回(那些不算數)
@@ -622,6 +617,48 @@ export default function PurchasesPage() {
   }
 
   /**
+   * 抽屜裡改完退款資訊 → 存檔並重新送審。
+   *
+   * **一定會清掉既有的核可票。** 不清的話,「改收款帳號」就能在核可後把錢導到別的地方,
+   * 兩票等於白審。這條規則跟押金管理頁與請款單完全一致 —— 三個地方同一個道理,
+   * 只要有一處放寬,整套審核就失去意義。
+   *
+   * 錢真的匯出去之後(returned_on)就不能再改,那種情況這個抽屜不會給編輯欄位。
+   */
+  async function depSaveResubmit() {
+    if (!depDetail || !me) return;
+    const d = depDetail;
+    if (!d.payee_account?.trim()) return flash('請填房客的收款帳號');
+    if (!d.payee_name?.trim()) return flash('請填戶名');
+    if (!d.planned_refund_on) return flash('請填預計匯款日');
+    if (!d.returned_method) return flash('請選我方出款方式');
+    const hadVotes = !!d.manager_approved_at || !!d.admin_approved_at;
+    if (hadVotes && !confirm(
+      d.refund_status === 'approved'
+        ? '這筆退款已經核可通過。更新資訊會清掉核可票、退回重新送審,確定嗎?'
+        : '這筆退款已經有人核可。更新資訊會清掉既有核可票並重新送審,確定嗎?'
+    )) return;
+    setSaving(true);
+    const { error } = await supabase.from('deposits').update({
+      refund_status: 'pending',
+      payee_bank_code: d.payee_bank_code?.trim() || null,
+      payee_name: d.payee_name.trim(),
+      payee_account: d.payee_account.trim(),
+      planned_refund_on: d.planned_refund_on,
+      returned_method: d.returned_method,
+      returned_account: d.returned_method !== 'cash' ? (d.returned_account || null) : null,
+      refund_requested_by: me.id,
+      note: d.note || null,
+      manager_approved_by: null, manager_approved_at: null,
+      admin_approved_by: null, admin_approved_at: null,
+    }).eq('id', d.id);
+    setSaving(false);
+    if (error) return flash('儲存失敗:' + error.message);
+    setDepDetail(null);
+    flash(hadVotes ? '已更新並重新送審' : '已更新'); load();
+  }
+
+  /**
    * 分享押金退款到 LINE。跟請款單同一個用途:讓主管點連結直接進來核可。
    *
    * 請款單的連結帶單號(?req=),押金沒有單號,所以帶 id(?dep=)。
@@ -765,7 +802,7 @@ export default function PurchasesPage() {
         T('', stCell),
         T(d.estate_id ? estateName[d.estate_id] ?? '' : '', stCell),
         T(d.room ?? '', stCell),
-        T(d.returned_method ? DEP_METHOD_LABEL[d.returned_method] ?? d.returned_method : '', stCell),
+        T(d.returned_method ? DEP_METHOD[d.returned_method] ?? d.returned_method : '', stCell),
         T(d.planned_refund_on ?? '', stCell),
         T(d.returned_account ? acctName[d.returned_account] ?? d.returned_account : '', stCell),
         T(d.payee_bank_code ?? '', stCell),
@@ -922,7 +959,6 @@ export default function PurchasesPage() {
           {([
             ['approve', '待核可', pendings.length],
             ['pr', '請款單', 0],
-            ['dep', '押金退款', deps.length],
           ] as const).map(([k, label, n]) => (
             <button key={k} onClick={() => setTab(k)}
               className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px whitespace-nowrap ${
@@ -968,7 +1004,8 @@ export default function PurchasesPage() {
               {pendings.map((p) => (
                 <div key={p.kind + p.id}
                   className={`rounded-xl border bg-white p-3 ${p.mine ? 'border-amber-300' : 'border-mor-line'}`}>
-                  <div onClick={() => p.kind === 'pr' && setDetail(p.pr!)}>
+                  {/* 兩種單都點得開抽屜,各自走各自的 —— 使用者不該記得哪一種才能點 */}
+                  <div onClick={() => (p.kind === 'pr' ? setDetail(p.pr!) : setDepDetail(p.dep!))}>
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
@@ -1024,8 +1061,8 @@ export default function PurchasesPage() {
                   {pendings.map((p) => (
                     <tr key={p.kind + p.id}
                       className={`border-b border-mor-line/60 last:border-0 ${
-                        p.mine ? 'bg-amber-50/40' : ''} ${p.kind === 'pr' ? 'cursor-pointer hover:bg-mor-sand/30' : ''}`}
-                      onClick={() => p.kind === 'pr' && setDetail(p.pr!)}>
+                        p.mine ? 'bg-amber-50/40' : ''} cursor-pointer hover:bg-mor-sand/30`}
+                      onClick={() => (p.kind === 'pr' ? setDetail(p.pr!) : setDepDetail(p.dep!))}>
                       <td className="px-3 py-2.5 whitespace-nowrap">
                         <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
                           p.kind === 'pr' ? 'bg-mor-bluelight text-mor-slate' : 'bg-purple-50 text-purple-700'}`}>
@@ -1332,157 +1369,119 @@ export default function PurchasesPage() {
       </>)}
 
       {/*
-        押金退款分頁 —— 完整清單,不只是待核可的那些。
-        待核可的部分在「待核可」分頁跟請款單合在一起;這裡多的是已核可等著匯出去的,
-        那是會計的工作,跟核可是兩件事。
+        押金抽屜 —— 版型跟請款單的抽屜一致（滿版進場、標題吸頂、動作列吸底）。
+        列上只留核可與分享,其餘都在這裡,跟請款單同一個原則。
 
-        這一區不受請款單那邊的篩選影響（月份、申請人、物業、支出方式都不適用於押金），
-        它固定顯示「所有還沒結案的退款」。標題有寫,免得有人以為篩選壞了。
-
-        實際匯款(填退款日)還是在押金管理頁做 —— 那要選我方帳戶、要傳水單,
-        整套搬過來會讓這一區變成第二個押金頁,兩邊都要維護。
-        這裡只做審核:核可、駁回、把單子丟給主管。
+        可編輯的只有退款那一段。金額、房源、收押金日屬於押金本身,
+        來源是訂單或契約,要改得到押金管理頁 —— 在核可的畫面上開放改金額,
+        等於讓審核者自己改自己要審的數字。
       */}
-      {canSeeAll && tab === 'dep' && (
-        deps.length === 0 ? (
-          <div className="rounded-xl border border-mor-line bg-white py-16 text-center">
-            <div className="text-gray-400 text-sm">目前沒有未結案的押金退款</div>
-            <div className="text-gray-300 text-xs mt-1">收退押金請到「押金管理」</div>
+      {depDetail && (() => {
+        const d = depDetail;
+        const canVote = d.refund_status === 'pending'
+          && ((isManager && !d.manager_approved_at) || (isAdmin && !d.admin_approved_at));
+        const editable = !d.returned_on;
+        const row = (label: string, value: React.ReactNode) => (
+          <div className="flex gap-3 py-1.5 border-b border-mor-line/40 last:border-0">
+            <div className="w-24 shrink-0 text-xs text-gray-500 pt-0.5">{label}</div>
+            <div className="flex-1 min-w-0 text-sm">{value}</div>
           </div>
-        ) : (
-        <div className="rounded-xl border border-mor-line bg-white overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-mor-line bg-mor-sand/40 flex flex-wrap items-center justify-between gap-2">
-            <span className="text-sm font-medium">
-              押金退款
-              {depWaitMe.length > 0 && (
-                <span className="ml-2 rounded px-1.5 py-0.5 text-[11px] bg-amber-50 text-amber-700">
-                  {depWaitMe.length} 筆等你核可
+        );
+        return (
+          <div className="fixed inset-0 bg-black/30 flex items-stretch md:items-start justify-center overflow-auto md:py-10 z-50"
+            onClick={() => setDepDetail(null)}>
+            <div className="bg-white w-full md:w-[560px] md:max-w-[95vw] md:rounded-xl shadow-xl min-h-full md:min-h-0"
+              onClick={(e) => e.stopPropagation()}>
+              <div className="sticky top-0 bg-white border-b border-mor-line px-4 md:px-6 py-4 font-bold flex items-center justify-between z-10"
+                style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
+                <span className="flex items-center gap-2 min-w-0">
+                  <span className="rounded px-1.5 py-0.5 text-[11px] font-medium bg-purple-50 text-purple-700 shrink-0">押金</span>
+                  <span className="truncate">{d.room ?? '—'}・{d.guest_name ?? '—'}</span>
                 </span>
-              )}
-            </span>
-            {/*
-              這裡只寫筆數,不寫金額合計 —— 金額統計是儀表板的事。
-              押金退的是代收款,把它的總額放在請款頁只會讓人不小心跟請款總額相加。
-            */}
-            <span className="text-xs text-gray-500">
-              未結案 {deps.length} 筆・送審中與已核可待匯款
-            </span>
-          </div>
+                <button onClick={() => setDepDetail(null)} aria-label="關閉"
+                  className="w-10 h-10 -mr-2 flex items-center justify-center text-gray-400 hover:text-gray-600 text-xl">✕</button>
+              </div>
 
-          {/* 手機:卡片 */}
-          <div className="md:hidden divide-y divide-mor-line/40">
-            {deps.map((d) => {
-              const canVote = d.refund_status === 'pending'
-                && ((isManager && !d.manager_approved_at) || (isAdmin && !d.admin_approved_at));
-              return (
-                <div key={d.id} id={'dep-' + d.id}
-                  className={`p-3 ${depHi === d.id ? 'bg-amber-50' : ''}`}>
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="font-medium">{d.room ?? '—'}　{d.guest_name ?? '—'}</div>
-                      <div className="text-xs text-gray-500 mt-0.5">
-                        {d.estate_id ? estateName[d.estate_id] ?? '' : ''}
-                        {d.planned_refund_on ? `・預計 ${d.planned_refund_on}` : ''}
-                      </div>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <div className="font-bold">${fmt(d.amount)}</div>
-                      <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] mt-0.5 ${
-                        d.refund_status === 'approved' ? 'bg-mor-greenlight text-mor-green' : 'bg-amber-50 text-amber-700'}`}>
-                        {d.refund_status === 'approved' ? '已核可・待匯款' : '待核可'}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="text-xs text-gray-500 mt-1.5">
-                    退至　{d.payee_name ?? '—'}　{d.payee_bank_code ?? ''} {d.payee_account ?? '—'}
-                  </div>
-                  <div className="flex items-center justify-between mt-2">
-                    <div className="text-[11px] text-gray-400">
-                      <span className={d.manager_approved_at ? 'text-mor-green' : ''}>{d.manager_approved_at ? '✓' : '○'} 主管</span>
-                      <span className="mx-1">·</span>
-                      <span className={d.admin_approved_at ? 'text-mor-green' : ''}>{d.admin_approved_at ? '✓' : '○'} 總經理</span>
-                    </div>
-                    <div className="space-x-3">
-                      {canVote && <button onClick={() => depVote(d)} className="text-xs text-mor-green underline font-medium">核可</button>}
-                      {(isManager || isAdmin) && d.refund_status === 'pending' &&
-                        <button onClick={() => setDepRejecting(d)} className="text-xs text-red-500 underline">駁回</button>}
-                      <button onClick={() => shareDep(d)} className="text-xs text-mor-slate underline">分享</button>
-                    </div>
-                  </div>
+              <div className="p-4 md:p-6 space-y-4 text-sm">
+                <div className="rounded-lg bg-mor-sand/60 px-3 py-2 text-xs text-gray-600">
+                  押金 <span className="font-bold text-base">{d.currency === 'TWD' ? 'NT$' : d.currency} {fmt(d.amount)}</span>
+                  <span className="text-gray-400 ml-1">(金額與房源請到押金管理頁修改)</span>
                 </div>
-              );
-            })}
-          </div>
 
-          {/* 桌機:表格 */}
-          <div className="hidden md:block overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs text-gray-500 border-b border-mor-line/60">
-                  <th className="px-4 py-2">物業 / 房源</th>
-                  <th className="px-4 py-2">房客</th>
-                  <th className="px-4 py-2 text-right">押金</th>
-                  <th className="px-4 py-2">退款帳戶</th>
-                  <th className="px-4 py-2">預計匯款</th>
-                  <th className="px-4 py-2">狀態</th>
-                  <th className="px-4 py-2 text-right">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {deps.map((d) => {
-                  const canVote = d.refund_status === 'pending'
-                    && ((isManager && !d.manager_approved_at) || (isAdmin && !d.admin_approved_at));
-                  return (
-                    <tr key={d.id} id={'dep-' + d.id}
-                      className={`border-b border-mor-line/40 last:border-0 ${depHi === d.id ? 'bg-amber-50' : ''}`}>
-                      <td className="px-4 py-2 whitespace-nowrap">
-                        <div>{d.room ?? '—'}</div>
-                        <div className="text-[11px] text-gray-400">{d.estate_id ? estateName[d.estate_id] ?? '' : ''}</div>
-                      </td>
-                      <td className="px-4 py-2 whitespace-nowrap">{d.guest_name ?? '—'}</td>
-                      <td className="px-4 py-2 text-right font-medium whitespace-nowrap">${fmt(d.amount)}</td>
-                      <td className="px-4 py-2">
-                        <div>{d.payee_name ?? '—'}</div>
-                        <div className="text-[11px] text-gray-400">{d.payee_bank_code ?? ''} {d.payee_account ?? ''}</div>
-                      </td>
-                      <td className="px-4 py-2 whitespace-nowrap">
-                        <div>{d.planned_refund_on ?? '—'}</div>
-                        {d.returned_method &&
-                          <div className="text-[11px] text-gray-400">
-                            {DEP_METHOD_LABEL[d.returned_method] ?? d.returned_method}
-                            {d.returned_account ? `・${acctName[d.returned_account] ?? d.returned_account}` : ''}
-                          </div>}
-                      </td>
-                      <td className="px-4 py-2 whitespace-nowrap">
-                        <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] ${
-                          d.refund_status === 'approved' ? 'bg-mor-greenlight text-mor-green' : 'bg-amber-50 text-amber-700'}`}>
-                          {d.refund_status === 'approved' ? '已核可・待匯款' : '待核可'}
-                        </span>
-                        <div className="text-[11px] text-gray-400 mt-1">
-                          <span className={d.manager_approved_at ? 'text-mor-green' : ''}>{d.manager_approved_at ? '✓' : '○'} 主管</span>
-                          <span className="mx-1">·</span>
-                          <span className={d.admin_approved_at ? 'text-mor-green' : ''}>{d.admin_approved_at ? '✓' : '○'} 總經理</span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-2 text-right whitespace-nowrap space-x-2">
-                        {canVote && <button onClick={() => depVote(d)} className="text-xs text-mor-green underline hover:text-mor-slate font-medium">核可</button>}
-                        {(isManager || isAdmin) && d.refund_status === 'pending' &&
-                          <button onClick={() => setDepRejecting(d)} className="text-xs text-red-500 underline">駁回</button>}
-                        <button onClick={() => shareDep(d)} className="text-xs text-mor-slate underline hover:text-mor-blue">分享</button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                <div>
+                  {row('物業', d.estate_id ? estateName[d.estate_id] ?? '—' : '—')}
+                  {row('房源', d.room ?? '—')}
+                  {row('房客', d.guest_name ?? '—')}
+                  {row('核可進度', (
+                    <span className="text-xs">
+                      <span className={d.manager_approved_at ? 'text-mor-green' : 'text-gray-400'}>
+                        {d.manager_approved_at ? '✓' : '○'} 主管
+                        {d.manager_approved_by ? `・${personName[d.manager_approved_by] ?? ''}` : ''}
+                      </span>
+                      <span className="mx-2 text-gray-300">|</span>
+                      <span className={d.admin_approved_at ? 'text-mor-green' : 'text-gray-400'}>
+                        {d.admin_approved_at ? '✓' : '○'} 總經理
+                        {d.admin_approved_by ? `・${personName[d.admin_approved_by] ?? ''}` : ''}
+                      </span>
+                    </span>
+                  ))}
+                </div>
 
-          <div className="px-4 py-2 text-[11px] text-gray-400 border-t border-mor-line/60">
-            實際匯款後要到「押金管理」填退款日 —— 那一步要選我方出款帳戶並上傳水單。
+                {d.refund_status === 'rejected' && d.reject_reason && (
+                  <div className="rounded-lg bg-red-50 text-red-600 px-3 py-2 text-xs">駁回原因:{d.reject_reason}</div>
+                )}
+                {d.refund_status === 'approved' && (
+                  <div className="rounded-lg bg-mor-greenlight text-mor-green px-3 py-2 text-xs">
+                    已核可,等待匯款。在這裡改內容會清掉核可票、退回重新送審。
+                  </div>
+                )}
+
+                <div className="border-t border-mor-line pt-3">
+                  <div className="text-xs font-semibold text-gray-500 mb-2">退押金</div>
+                  {editable ? (
+                    /* 跟押金管理頁共用同一支元件 —— 兩邊的欄位永遠一樣 */
+                    <RefundFields v={d} payAccounts={payAccounts.map((a) => ({ ...a }))} currency={d.currency}
+                      onChange={(patch) => setDepDetail({ ...d, ...patch })} />
+                  ) : (
+                    <div className="text-xs text-gray-500">
+                      已於 {d.returned_on} 退還・{d.returned_method ? DEP_METHOD[d.returned_method] : ''}
+                      {d.returned_account ? `・${acctName[d.returned_account] ?? d.returned_account}` : ''}
+                    </div>
+                  )}
+                </div>
+
+                <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">備註</span>
+                  <textarea value={d.note ?? ''} onChange={(e) => setDepDetail({ ...d, note: e.target.value })}
+                    disabled={!editable}
+                    className="bg-white rounded-lg border border-mor-line px-2 py-2 h-20 disabled:bg-gray-50" /></label>
+
+                {/* 匯款水單、房客提供的帳戶截圖 */}
+                <Receipts kind="dep" parentId={d.id} canEdit={editable} label="憑證圖片" />
+              </div>
+
+              <div className="sticky bottom-0 md:static bg-white border-t border-mor-line px-4 md:px-6 py-3 md:py-4 flex flex-wrap gap-2 md:justify-end"
+                style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
+                <button onClick={() => shareDep(d)}
+                  className="h-12 md:h-auto rounded-lg border border-mor-line px-4 md:py-1.5 text-sm">↗ 分享</button>
+                {(isManager || isAdmin) && d.refund_status === 'pending' && (
+                  <button onClick={() => { setDepDetail(null); setDepRejecting(d); }}
+                    className="h-12 md:h-auto rounded-lg border border-red-300 text-red-500 px-4 md:py-1.5 text-sm">駁回</button>
+                )}
+                {editable && (
+                  <button onClick={depSaveResubmit} disabled={saving}
+                    className="h-12 md:h-auto flex-1 md:flex-none rounded-lg border border-mor-line px-4 md:py-1.5 text-sm hover:bg-mor-sand/60 disabled:opacity-40">
+                    {saving ? '儲存中…' : '儲存並重新送審'}</button>
+                )}
+                {canVote && (
+                  <button onClick={() => { depVote(d); setDepDetail(null); }}
+                    className="h-12 md:h-auto flex-1 md:flex-none rounded-lg bg-mor-green text-white px-4 md:py-1.5 text-sm font-medium active:opacity-80">
+                    核可</button>
+                )}
+              </div>
+            </div>
           </div>
-        </div>
-        )
-      )}
+        );
+      })()}
 
       {/* 押金駁回 */}
       {depRejecting && (
