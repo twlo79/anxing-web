@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { ymOf, ymShow, ymMonth, monthsAgo, todayStr, fmtDate, fmtDateShort, fmtAt } from './period.ts';
+import { ymOf, ymShow, ymMonth, monthsAgo, todayStr, fmtDate, fmtDateShort, fmtAt, fmtRange } from './period.ts';
 
 /**
  * 期間與日期格式的測試。
@@ -85,14 +85,23 @@ describe('往前推月份', () => {
 });
 
 describe('顯示格式', () => {
-  test('日期', () => {
-    assert.equal(fmtDate('2026-08-15'), '2026-08-15');
-    assert.equal(fmtDate('2026-08-15T10:30:00Z'), '2026-08-15');
-    assert.equal(fmtDateShort('2026-08-15'), '08-15');
+  test('日期一律用斜線 —— 全站統一 YYYY/MM/DD', () => {
+    // 資料庫存 ISO 的 2026-08-15，畫面顯示 2026/08/15。
+    // 兩種寫法分得出「這是顯示值」還是「這是查得動的值」。
+    assert.equal(fmtDate('2026-08-15'), '2026/08/15');
+    assert.equal(fmtDate('2026-08-15T10:30:00Z'), '2026/08/15');
+    assert.equal(fmtDateShort('2026-08-15'), '08/15');
   });
 
   test('時間戳', () => {
-    assert.equal(fmtAt('2026-08-15T10:30:00+00:00'), '08-15 10:30');
+    assert.equal(fmtAt('2026-08-15T10:30:00+00:00'), '08/15 10:30');
+  });
+
+  test('日期區間', () => {
+    assert.equal(fmtRange('2026-08-01', '2026-08-31'), '2026/08/01 ~ 2026/08/31');
+    assert.equal(fmtRange('2026-08-01', null), '2026/08/01 起');
+    assert.equal(fmtRange(null, '2026-08-31'), '至 2026/08/31');
+    assert.equal(fmtRange(null, null), '全部期間');
   });
 
   test('空值一律顯示破折號,不要露出 null', () => {

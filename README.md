@@ -57,6 +57,7 @@ src/
   components/Receipts.tsx        憑證上傳共用元件(壓縮、暫存、簽名網址)
   lib/sortable.tsx               表頭排序共用元件(SortTh / sortRows)
   lib/period.ts                  期間與日期格式的**單一定義**(ym 是 YYYYMM 不是 YYYY-MM)
+  lib/filters.tsx                篩選列共用元件 —— 清除只有一顆,版面全站一致
   lib/hkParse.ts                 排班解析與計數(**全專案風險最高的邏輯**)
   lib/hkParse.test.ts            上面那支的測試(`npm test`,44 則含 period)
   lib/__fixtures__/hk-202607.ts  7 月真實排班資料,測試的黃金基準

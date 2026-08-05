@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FilterBar, FilterSelect, FilterDateRange, FilterSearch, FilterClear, FilterCount } from '@/lib/filters';
 import { createClient } from '@/lib/supabase';
 import { onlyLtOf } from '@/lib/ltKey';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
@@ -446,26 +447,34 @@ export default function ContractsPage() {
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-3 mb-3 text-sm">
-        <select value={estateFilter} onChange={(e) => setEstateFilter(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
-          <option value="">全部物業</option>{estates.map((e) => <option key={e.id} value={e.name}>{e.name}</option>)}
-        </select>
-        <select value={cadFilter} onChange={(e) => setCadFilter(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">全部繳別</option><option value="monthly">月繳</option><option value="quarterly">季繳</option><option value="halfyear">半年繳</option><option value="yearly">年繳</option></select>
-        <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">全部類別</option><option value="longterm">長租</option><option value="office">辦公室</option><option value="company">公司登記</option></select>
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">全部狀態</option><option value="active">進行中</option><option value="expired">已到期</option><option value="disabled">已停用</option></select>
-        <div className="flex items-center gap-1" title="依租期(起訖)篩選">
-          <input type="date" value={fromD} onChange={(e) => setFromD(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5" />
-          <span className="text-gray-400">~</span>
-          <input type="date" value={toD} onChange={(e) => setToD(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5" />
-          {(fromD || toD) && <button onClick={() => { setFromD(''); setToD(''); }} className="text-gray-400 underline text-xs">清除</button>}
-        </div>
-        <input value={kw} onChange={(e) => setKw(e.target.value)} placeholder="搜尋 房源/租戶/電話" className="rounded-lg border border-gray-300 px-2 py-1.5 w-44" />
-        {kw && <button onClick={() => setKw('')} className="text-gray-400 underline text-xs">清除</button>}
-        {(estateFilter || cadFilter || typeFilter || statusFilter || fromD || toD || kw) && <button onClick={() => { setEstateFilter(''); setCadFilter(''); setTypeFilter(''); setStatusFilter(''); setFromD(''); setToD(''); setKw(''); }} className="text-gray-500 underline text-xs">全部清除</button>}
-        <div className="text-xs text-gray-400">共 {filtered.length} 筆</div>
-        <button onClick={exportXlsx} disabled={!filtered.length} className="ml-auto rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 disabled:opacity-40">⬇ 下載 Excel</button>
-        <button onClick={() => setEdit(blank())} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 新增契約</button>
-      </div>
+      {/* 篩選列走 lib/filters 的共用元件 —— 清除只有一顆,永遠在篩選欄位的最後面。
+          原本這裡有三顆（日期一顆、關鍵字一顆、全部清除一顆）,同一個動作三個位置。 */}
+      <FilterBar
+        right={<>
+          <FilterCount n={filtered.length} />
+          <button onClick={exportXlsx} disabled={!filtered.length}
+            className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 disabled:opacity-40">⬇ 下載 Excel</button>
+          <button onClick={() => setEdit(blank())}
+            className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 新增契約</button>
+        </>}>
+        <FilterSelect value={estateFilter} onChange={setEstateFilter} all="全部物業"
+          options={estates.map((e) => ({ value: e.name, label: e.name }))} />
+        <FilterSelect value={cadFilter} onChange={setCadFilter} all="全部繳別" options={[
+          { value: 'monthly', label: '月繳' }, { value: 'quarterly', label: '季繳' },
+          { value: 'halfyear', label: '半年繳' }, { value: 'yearly', label: '年繳' }]} />
+        <FilterSelect value={typeFilter} onChange={setTypeFilter} all="全部類別" options={[
+          { value: 'longterm', label: '長租' }, { value: 'office', label: '辦公室' },
+          { value: 'company', label: '公司登記' }]} />
+        <FilterSelect value={statusFilter} onChange={setStatusFilter} all="全部狀態" options={[
+          { value: 'active', label: '進行中' }, { value: 'expired', label: '已到期' },
+          { value: 'disabled', label: '已停用' }]} />
+        <FilterDateRange from={fromD} to={toD} onFrom={setFromD} onTo={setToD}
+          title="依租期(起訖)篩選" />
+        <FilterSearch value={kw} onChange={setKw} placeholder="搜尋 房源/租戶/電話" />
+        <FilterClear
+          active={!!(estateFilter || cadFilter || typeFilter || statusFilter || fromD || toD || kw)}
+          onClear={() => { setEstateFilter(''); setCadFilter(''); setTypeFilter(''); setStatusFilter(''); setFromD(''); setToD(''); setKw(''); }} />
+      </FilterBar>
 
       <div className="bg-white rounded-xl border border-mor-line overflow-x-auto">
         <table className="w-full text-sm">

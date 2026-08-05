@@ -60,20 +60,37 @@ function localDate(d: Date): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
-/** 列表用的日期顯示。空值一律顯示 '—'，不要出現 'null' 或空白格。 */
+/**
+ * 列表用的日期顯示：`YYYY/MM/DD`。
+ *
+ * 全站統一用斜線 —— 資料庫存的是 ISO 的 `YYYY-MM-DD`，畫面用斜線，
+ * 一眼就分得出「這是顯示值」還是「這是可以拿去查詢的值」。
+ * 空值一律 '—'，不要出現 'null' 或空白格。
+ *
+ * 注意：`<input type="date">` 的顯示格式**不受這裡影響** ——
+ * 那是瀏覽器與作業系統的地區設定決定的，網頁改不了。
+ */
 export function fmtDate(d: string | null | undefined): string {
   if (!d) return '—';
-  return d.slice(0, 10);
+  return d.slice(0, 10).replace(/-/g, '/');
 }
 
-/** 短版日期 'MM-DD'。同一年的資料列表用,省掉重複的年份。 */
+/** 短版日期 `MM/DD`。同一年的資料列表用,省掉重複的年份。 */
 export function fmtDateShort(d: string | null | undefined): string {
   if (!d) return '—';
-  return d.slice(5, 10);
+  return d.slice(5, 10).replace('-', '/');
 }
 
-/** 時間戳 → 'MM-DD HH:mm'。編輯紀錄那種「什麼時候做的」用。 */
+/** 時間戳 → `MM/DD HH:mm`。編輯紀錄那種「什麼時候做的」用。 */
 export function fmtAt(ts: string | null | undefined): string {
   if (!ts) return '—';
-  return ts.slice(5, 16).replace('T', ' ');
+  return ts.slice(5, 16).replace('T', ' ').replace('-', '/');
+}
+
+/** 日期區間 → `YYYY/MM/DD ~ YYYY/MM/DD`。只有一邊就顯示單邊。 */
+export function fmtRange(from?: string | null, to?: string | null): string {
+  if (!from && !to) return '全部期間';
+  if (from && !to) return fmtDate(from) + ' 起';
+  if (!from && to) return '至 ' + fmtDate(to);
+  return `${fmtDate(from)} ~ ${fmtDate(to)}`;
 }
