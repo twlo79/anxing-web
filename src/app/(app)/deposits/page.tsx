@@ -5,6 +5,7 @@ import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable'
 import { createClient } from '@/lib/supabase';
 import Receipts from '@/components/Receipts';
 import RefundFields, { METHOD_LABEL, METHOD_OPTS } from '@/components/RefundFields';
+import { shareDeposit } from '@/lib/share';
 
 /**
  * 押金管理。
@@ -693,8 +694,13 @@ export default function DepositsPage() {
                   {r.returned_account && <div className="text-gray-400">{acctName[r.returned_account] ?? r.returned_account}</div>}
                 </td>
                 <td className="px-3 py-2 whitespace-nowrap">{statusChip(r)}{voteLine(r)}</td>
-                <td className="px-3 py-2 text-right whitespace-nowrap">
+                <td className="px-3 py-2 text-right whitespace-nowrap space-x-2">
                   <button onClick={() => setDetail(r)} className="text-xs text-mor-slate underline hover:text-mor-blue">檢視</button>
+                  {/* 只有進了退款流程的才給分享 —— 還沒送審的單分享出去,對方點進待核可也看不到 */}
+                  {(r.refund_status === 'pending' || r.refund_status === 'approved') && !r.returned_on && (
+                    <button onClick={(e) => { e.stopPropagation(); shareDeposit(r); }}
+                      className="text-xs text-mor-slate underline hover:text-mor-blue">分享</button>
+                  )}
                 </td>
               </tr>
             ))}
@@ -767,7 +773,7 @@ export default function DepositsPage() {
                 )}
               </div>
 
-              <div className="sticky bottom-0 bg-white border-t border-mor-line px-6 py-3 flex gap-2"
+              <div className="sticky bottom-0 bg-white border-t border-mor-line px-6 py-3 flex flex-wrap gap-2"
                 style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
                 {(() => {
                   const p = refundPerms(d);
@@ -775,6 +781,12 @@ export default function DepositsPage() {
                   return <>
                     <button onClick={() => { setEdit({ ...d }); setDetail(null); }}
                       className={`${btn} border border-mor-line`}>管理押金</button>
+                    {/*
+                      分享的連結指向請款頁的待核可分頁,不是這一頁 ——
+                      核可統一在那裡做,主管點進去就能直接投票,不用自己找那一筆。
+                    */}
+                    <button onClick={() => shareDeposit(d)}
+                      className={`${btn} border border-mor-line`}>↗ 分享</button>
                     {(p.canVoteMgr || p.canVoteAdm) && (
                       <button onClick={() => vote(d)} className={`${btn} bg-mor-green text-white`}>核可退款</button>
                     )}

@@ -5,6 +5,7 @@ import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable'
 import { createClient } from '@/lib/supabase';
 import Receipts, { type ReceiptsHandle } from '@/components/Receipts';
 import RefundFields, { METHOD_LABEL as DEP_METHOD } from '@/components/RefundFields';
+import { shareDeposit } from '@/lib/share';
 import PushToggle from '../push-toggle';
 
 type Item = {
@@ -44,6 +45,7 @@ type Dep = {
   refund_status: 'none' | 'pending' | 'approved' | 'rejected' | null;
   payee_bank_code: string | null; payee_name: string | null; payee_account: string | null;
   planned_refund_on: string | null;
+  received_on: string | null;
   returned_on: string | null; returned_method: string | null; returned_account: string | null;
   manager_approved_by: string | null; manager_approved_at: string | null;
   admin_approved_by: string | null; admin_approved_at: string | null;
@@ -239,7 +241,7 @@ export default function PurchasesPage() {
       // select 一定要寫成單一字串字面量。用 + 串成多行的話 supabase-js 推不出回傳型別
       // （它是靠字面量做型別解析的），會變成 GenericStringError[],型別轉換就過不了。
       const { data: dp } = await supabase.from('deposits')
-        .select('id, estate_id, room, guest_name, currency, amount, refund_status, payee_bank_code, payee_name, payee_account, planned_refund_on, returned_on, returned_method, returned_account, manager_approved_by, manager_approved_at, admin_approved_by, admin_approved_at, refund_requested_by, reject_reason, note, created_at')
+        .select('id, estate_id, room, guest_name, currency, amount, refund_status, payee_bank_code, payee_name, payee_account, planned_refund_on, received_on, returned_on, returned_method, returned_account, manager_approved_by, manager_approved_at, admin_approved_by, admin_approved_at, refund_requested_by, reject_reason, note, created_at')
         .in('refund_status', ['pending', 'approved'])
         // 跟請款單同一條規則:還沒退的全部,加上本月已退的
         .or(`returned_on.is.null,returned_on.gte.${mStart}`)
@@ -723,34 +725,13 @@ export default function PurchasesPage() {
   }
 
   /**
-   * 分享押金退款到 LINE。跟請款單同一個用途:讓主管點連結直接進來核可。
+   * 分享押金退款。實作在 @/lib/share —— 押金管理頁用同一支,訊息格式永遠一致。
    *
    * 請款單的連結帶單號(?req=),押金沒有單號,所以帶 id(?dep=)。
    * id 是 uuid,看起來不好看,但押金本來就沒有對外的編號可用,
    * 硬編一組出來只是為了好看,反而多一個要維護的東西。
    */
-  function shareDep(d: Dep) {
-    const url = `${typeof window !== 'undefined' ? window.location.origin : ''}/purchases?dep=${encodeURIComponent(d.id)}`;
-    const text = [
-      d.refund_status === 'pending' ? '💰 押金退款待核可' : '💰 押金退款',
-      '',
-      `${d.room ?? '—'}　${d.guest_name ?? '—'}`,
-      `NT$ ${fmt(d.amount)}`,
-      '',
-      `退款帳戶　${d.payee_name ?? '—'}`,
-      `　　　　　${d.payee_bank_code ?? ''} ${d.payee_account ?? '—'}`,
-      `預計匯款　${d.planned_refund_on ?? '—'}`,
-      '',
-      '前往核可',
-      url,
-    ].join('\n');
-
-    if (typeof navigator !== 'undefined' && navigator.share) {
-      navigator.share({ title: `押金退款 ${d.room ?? ''}`, text }).catch(() => {});
-      return;
-    }
-    window.open('https://line.me/R/msg/text/?' + encodeURIComponent(text), '_blank', 'noopener');
-  }
+  const shareDep = (d: Dep) => shareDeposit(d);
 
   async function doSetDate() {
     if (!dating) return;
@@ -1504,6 +1485,16 @@ export default function PurchasesPage() {
                   {row('物業', d.estate_id ? estateName[d.estate_id] ?? '—' : '—')}
                   {row('房源', d.room ?? '—')}
                   {row('房客', d.guest_name ?? '—')}
+                  {row('收押金日', d.received_on ?? '—')}
+                  {/*
+                    退押金日 = 錢真的匯出去的那天,是這張單的紅線:
+                    有值就代表結案,底下的退款欄位會整組變成唯讀。
+                    放在摘要區而不是只在退款那段裡 —— 一打開就要看得到,
+                    不然會有人往下拉去改帳號,才發現改不了。
+                  */}
+                  {row('退押金日', d.returned_on
+                    ? <span className="text-mor-green font-medium">{d.returned_on}　已退款</span>
+                    : <span className="text-gray-400">尚未退款{d.planned_refund_on ? `（預計 ${d.planned_refund_on}）` : ''}</span>)}
                   {row('核可進度', (
                     <span className="text-xs">
                       <span className={d.manager_approved_at ? 'text-mor-green' : 'text-gray-400'}>
