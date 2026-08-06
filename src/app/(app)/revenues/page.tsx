@@ -5,13 +5,15 @@ import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, roomKey, type SortState, type SortCols } from '@/lib/sortable';
 import {
   isOffice, isCompany, inEstateBlock, estateOf, guestOf, roomOf,
-  classOf, skeleton, roomLines, reconcile, SHORT_SOURCES,
+  classOf, itemLabel, oneoffItems, skeleton, roomLines, reconcile, SHORT_SOURCES,
 } from '@/lib/revenue-report';
 
 type Row = {
   order_id: string; source: string; estate_id: string | null; estate_name: string | null;
   property_raw: string | null; guest_name: string | null; checkin: string; checkout: string;
   period_start: string | null; period_end: string | null; fee_type?: string | null;
+  /** 一次性收入的項目(洗衣機/垃圾代收費…)。會計科目底下再細一層。 */
+  item_name?: string | null;
   total_amount: number; total_nights: number; month_nights: number; month_amount: number;
 };
 
@@ -86,7 +88,7 @@ export default function RevenuesPage() {
     return ((data as any[]) ?? []).map((r) => ({
       order_id: r.id, source: r.source, estate_id: r.estate_id, estate_name: r.estate_name,
       property_raw: r.property_raw, guest_name: r.guest_name, checkin: r.checkin, checkout: r.checkout,
-      period_start: r.period_start ?? pstart, period_end: r.period_end ?? pend, fee_type: r.fee_type ?? null,
+      period_start: r.period_start ?? pstart, period_end: r.period_end ?? pend, fee_type: r.fee_type ?? null, item_name: r.item_name ?? null,
       total_amount: Number(r.total_amount ?? 0), total_nights: r.total_nights ?? 0,
       month_nights: r.month_nights ?? 0, month_amount: Number(r.month_amount),
     })).filter((r) => r.month_amount !== 0);
@@ -237,6 +239,10 @@ export default function RevenuesPage() {
       A.push(line('短租小計', (r) => SHORT_SOURCES.includes(r.source), stSubtotal, '　'));
       A.push(line('長租', (r) => r.source === 'longterm', stCell, '　'));
       A.push(line('一次性費用', (r) => r.source === 'oneoff', stCell, '　'));
+      // 一次性底下再依項目拆。洗衣機/烘衣機/垃圾代收費的會計科目都是清潔費,
+      // 只看科目會併成一格 —— 這幾列就是為了看得出組成。
+      oneoffItems(allRows).forEach(({ item }) =>
+        A.push(line(item, (r) => r.source === 'oneoff' && (r.item_name || '未指定項目') === item, stCell, '　　')));
       A.push(line('辦公室租金', isOffice, stCell, '　'));
       A.push(line('公司登記', isCompany, stCell, '　'));
       A.push(line('其他', (r) => r.source === 'other', stCell, '　'));
@@ -303,7 +309,7 @@ export default function RevenuesPage() {
         });
         for (const { room, cls } of lines) {
           A.push(line3(e, room, cls,
-            (r) => inEstate(r) && roomOf(r) === room && classOf(r) === cls, stCell));
+            (r) => inEstate(r) && roomOf(r) === room && itemLabel(r) === cls, stCell));
         }
         A.push(line3(`${e} 小計`, '', '', inEstate, stSubtotal));
       }

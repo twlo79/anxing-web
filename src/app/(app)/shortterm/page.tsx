@@ -11,6 +11,8 @@ type Order = {
   amount: number; deposit: number | null; account: string | null; note: string | null;
   /** 一次性收入的會計科目。只有 source='oneoff' 用得到,其餘一律 null。 */
   fee_type?: string | null;
+  /** 一次性收入的項目(洗衣機/垃圾代收費…)。科目底下再細一層。 */
+  item_name?: string | null;
   // 【已淘汰】押金收退改由 deposits 表管理(migration_56),這裡不再讀寫
   fx_revenue?: { cur: string; amt: number; rate: number }[];
   fx_deposit?: { cur: string; amt: number }[];
@@ -97,6 +99,14 @@ export default function ShortTermPage() {
   const delFee = (i: number) => setFees((fs) => fs.filter((_, idx) => idx !== i));
   const [properties, setProperties] = useState<{ id: string; name: string; estate_id: string | null }[]>([]);
   useEffect(() => { supabase.from('properties').select('id, name, estate_id').order('name').then(({ data }) => setProperties(data ?? [])); }, [supabase]);
+  /**
+   * 用過的項目名稱,給 datalist 提示。
+   * 只從目前載入的列取 —— 不另外查一次資料庫。提示不完整不會出錯,
+   * 使用者照樣可以自己打,而多打一次查詢就是每次開頁都多一趟。
+   */
+  const usedItems = useMemo(
+    () => Array.from(new Set(rows.map((r: any) => r.item_name).filter(Boolean))).sort() as string[],
+    [rows]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -213,6 +223,7 @@ export default function ShortTermPage() {
       // 只有一次性收入有會計科目。其他來源一律寫 null,不要留著切換來源前選的值 ——
       // 那會讓一筆 Airbnb 訂單帶著「水費」這種科目跑進營收報表。
       fee_type: edit.source === 'oneoff' ? (edit.fee_type || null) : null,
+      item_name: edit.source === 'oneoff' ? (edit.item_name?.trim() || null) : null,
       fx_revenue: fxRev.filter((l) => l.cur && l.amt), fx_deposit: fxDep.filter((l) => l.cur && l.amt) };
     let orderId = edit.id;
     if (edit.id) {
@@ -539,6 +550,22 @@ export default function ShortTermPage() {
                     <option value="">—</option>
                     {FEE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                   </select>
+                </label>
+              )}
+              {/*
+                項目 —— 會計科目底下再細一層。
+                洗衣機、烘衣機、垃圾代收費的科目都是「清潔費」,沒有這一欄的話
+                營收報表只會看到一格清潔費,拆不出是哪一項。
+
+                自由輸入但提示用過的 —— 「洗衣機」跟「洗衣機費」會變成報表上兩列,
+                那種錯不會報錯,只會讓數字少一截。
+              */}
+              {edit.source === 'oneoff' && (
+                <label className="flex flex-col gap-1">項目<span className="text-xs text-gray-400 ml-1">(非必填)</span>
+                  <input list="st-items" value={edit.item_name ?? ''} placeholder="例:洗衣機"
+                    onChange={(e) => setEdit({ ...edit, item_name: e.target.value || null })}
+                    className="rounded-lg border border-gray-300 px-2 py-1.5" />
+                  <datalist id="st-items">{usedItems.map((i) => <option key={i} value={i} />)}</datalist>
                 </label>
               )}
               {edit.source !== 'oneoff' && <label className="flex flex-col gap-1">押金(台幣)<input type="number" value={edit.deposit ?? ''} onChange={(e) => setEdit({ ...edit, deposit: e.target.value ? parseFloat(e.target.value) : 0 })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>}

@@ -2,7 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   type RevRow, sum, classOf, skeleton, roomLines, reconcile,
-  inEstateBlock, isOffice, isCompany, estateOf, ROOM_NONE,
+  inEstateBlock, isOffice, isCompany, estateOf, ROOM_NONE, itemLabel, oneoffItems,
 } from './revenue-report.ts';
 
 /**
@@ -121,6 +121,42 @@ describe('房源分類', () => {
     const lines = roomLines(rows, '時兆');
     assert.equal(lines.length, 2, '合成一列就看不出組成');
     assert.deepEqual(lines.map((l) => l.cls).sort(), ['一次性', '長租']);
+  });
+
+  test('一次性收入依項目再拆一層', () => {
+    // 洗衣機、烘衣機、垃圾代收費的會計科目都是「清潔費」。
+    // 不依項目拆的話,報表上就是一格清潔費,看不出哪一項在賺。
+    const rows = [
+      r({ estate_name: '時兆', property_raw: null, source: 'oneoff', item_name: '洗衣機', month_amount: 2150 }),
+      r({ estate_name: '時兆', property_raw: null, source: 'oneoff', item_name: '烘衣機', month_amount: 3550 }),
+      r({ estate_name: '時兆', property_raw: null, source: 'oneoff', item_name: '垃圾代收費', month_amount: 5070 }),
+    ];
+    const lines = roomLines(rows, '時兆');
+    assert.equal(lines.length, 3, '三個項目要各自成列');
+    assert.deepEqual(lines.map((l) => l.cls).sort(),
+      ['一次性・垃圾代收費', '一次性・洗衣機', '一次性・烘衣機'].sort());
+  });
+
+  test('沒有項目的不要留一個空尾巴', () => {
+    assert.equal(itemLabel(r({ source: 'oneoff', item_name: null })), '一次性');
+    assert.equal(itemLabel(r({ source: 'oneoff', item_name: '洗衣機' })), '一次性・洗衣機');
+    // 項目只對一次性有意義,其餘來源不該被加尾巴
+    assert.equal(itemLabel(r({ source: 'longterm', item_name: null })), '長租');
+  });
+
+  test('依項目彙總,金額大到小,空的歸未指定', () => {
+    const rows = [
+      r({ source: 'oneoff', item_name: '洗衣機', month_amount: 100 }),
+      r({ source: 'oneoff', item_name: '洗衣機', month_amount: 50 }),
+      r({ source: 'oneoff', item_name: '垃圾代收費', month_amount: 5070 }),
+      r({ source: 'oneoff', item_name: null, month_amount: 7 }),
+      r({ source: 'airbnb', item_name: '不該被算到', month_amount: 9999 }),
+    ];
+    assert.deepEqual(oneoffItems(rows), [
+      { item: '垃圾代收費', amount: 5070 },
+      { item: '洗衣機', amount: 150 },
+      { item: '未指定項目', amount: 7 },
+    ]);
   });
 
   test('房號空白要單獨成一列,不能整筆不見', () => {
