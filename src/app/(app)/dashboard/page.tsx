@@ -44,7 +44,22 @@ type Estate = { id: string; name: string };
 type Property = { id: string; name: string; estate_id: string | null };
 type Code = { code: string; name: string };
 type Pending = { total_amount: number; planned_transfer_on: string | null };
-/** 比較期的彙總。只留要對比的幾個數字,不用把整批列拉回來。 */
+/**
+ * 比較期的原始列。
+ *
+ * **刻意不在 load 裡就彙總。** 彙總需要 matchScope(物業/房源篩選),
+ * 而 matchScope 是從 properties 算出來的、properties 又是 load 設定的 ——
+ * 把它放進 load 的相依會變成:
+ *     load → setProperties → 新 matchScope → 新 load → 無限迴圈
+ * 症狀是右上角「載入中」一直閃。
+ *
+ * 所以 load 只負責拿資料,篩選與加總都留到 useMemo。
+ */
+type CmpRaw = {
+  rev: { source: string; estate_id: string | null; property_id: string | null; month_amount: number }[];
+  exp: { estate_id: string | null; property_id: string | null; amount: number }[];
+  ord: { estate_id: string | null; property_id: string | null }[];
+};
 type Cmp = { rev: number; exp: number; ordN: number; bySource: Record<string, number> };
 
 // 來源標籤改用 @/lib/revenue-report 的 SOURCE_LABEL ——
@@ -101,7 +116,7 @@ export default function DashboardPage() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   });
   /** 比較用的兩組數字。環比=上一期,同比=去年同期。 */
-  const [cmp, setCmp] = useState<{ prev: Cmp; yoy: Cmp } | null>(null);
+  const [cmpRaw, setCmpRaw] = useState<{ prev: CmpRaw; yoy: CmpRaw } | null>(null);
 
   function applyMode(m: PeriodMode, y = yearSel, ym = monthSel) {
     setMode(m);
@@ -177,33 +192,26 @@ export default function DashboardPage() {
      */
     const [pf, pt] = prevPeriod(mode, fromD, toD);
     const [yf, yt] = lastYearPeriod(mode, fromD, toD);
-    const fetchCmp = async (f: string, t: string): Promise<Cmp> => {
+    const fetchCmp = async (f: string, t: string): Promise<CmpRaw> => {
       const [r1, e1, o1] = await Promise.all([
         supabase.from('revenue_recognitions')
-          .select('ym, source, estate_id, property_id, month_amount')
+          .select('source, estate_id, property_id, month_amount')
           .gte('ym', ymOf(f)).lte('ym', ymOf(t)),
         supabase.from('expenses').select('amount, estate_id, property_id')
           .gte('spent_on', f).lte('spent_on', t),
         supabase.from('orders').select('estate_id, property_id')
           .gte('checkin', f).lte('checkin', t),
       ]);
-      const rr = ((r1.data ?? []) as any[]).filter((x) => matchScope(x.estate_id, x.property_id));
-      const ee = ((e1.data ?? []) as any[]).filter((x) => matchScope(x.estate_id, x.property_id));
-      const oo = ((o1.data ?? []) as any[]).filter((x) => matchScope(x.estate_id, x.property_id));
-      const bySource: Record<string, number> = {};
-      rr.forEach((x) => { bySource[x.source] = (bySource[x.source] ?? 0) + Number(x.month_amount || 0); });
       return {
-        rev: rr.reduce((a, x) => a + Number(x.month_amount || 0), 0),
-        exp: ee.reduce((a, x) => a + Number(x.amount || 0), 0),
-        ordN: oo.length,
-        bySource,
+        rev: (r1.data ?? []) as any[], exp: (e1.data ?? []) as any[], ord: (o1.data ?? []) as any[],
       };
     };
     const [prevC, yoyC] = await Promise.all([fetchCmp(pf, pt), fetchCmp(yf, yt)]);
-    setCmp({ prev: prevC, yoy: yoyC });
+    setCmpRaw({ prev: prevC, yoy: yoyC });
 
     setLoading(false);
-  }, [supabase, fromD, toD, mode, matchScope]);
+    // matchScope 不能放進來 —— 見 CmpRaw 的說明,會變成無限迴圈
+  }, [supabase, fromD, toD, mode]);
 
   useEffect(() => { if (role) load(); }, [role, load]);
 
@@ -219,6 +227,24 @@ export default function DashboardPage() {
   const propsOfEstate = useMemo(
     () => properties.filter((p) => !estF || p.estate_id === estF), [properties, estF]);
 
+
+  /** 比較期的彙總。篩選在這裡才套,load 只負責拿資料(見 CmpRaw)。 */
+  const cmp = useMemo(() => {
+    if (!cmpRaw) return null;
+    const roll = (c: CmpRaw): Cmp => {
+      const rr = c.rev.filter((x) => matchScope(x.estate_id, x.property_id));
+      const bySource: Record<string, number> = {};
+      rr.forEach((x) => { bySource[x.source] = (bySource[x.source] ?? 0) + Number(x.month_amount || 0); });
+      return {
+        rev: rr.reduce((a, x) => a + Number(x.month_amount || 0), 0),
+        exp: c.exp.filter((x) => matchScope(x.estate_id, x.property_id))
+          .reduce((a, x) => a + Number(x.amount || 0), 0),
+        ordN: c.ord.filter((x) => matchScope(x.estate_id, x.property_id)).length,
+        bySource,
+      };
+    };
+    return { prev: roll(cmpRaw.prev), yoy: roll(cmpRaw.yoy) };
+  }, [cmpRaw, matchScope]);
 
   const fRevs = useMemo(() => revs.filter((r) => matchScope(r.estate_id, r.property_id)), [revs, matchScope]);
   const fExps = useMemo(() => exps.filter((e) => matchScope(e.estate_id, e.property_id)), [exps, matchScope]);
