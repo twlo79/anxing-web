@@ -305,7 +305,15 @@ export default function RevenuesPage() {
      * ═══════════════════════════════════════════════════════════ */
     // 金額右對齊 —— 明細列很多,靠左的話位數對不齊,掃不出量級
     const stNum = { border: BORD, alignment: { horizontal: 'right' } };
-    const MHEAD = ['物業', '房源', '分類', '客戶', '起日', '迄日',
+    /*
+     * 訂單起訖與認列起訖**都要有**,那是兩件事。
+     *
+     * 3A3 首安那筆:訂單是 2026-06-22~2026-08-15(整張單),
+     * 認列是 2026-07-01~2026-07-31(這個月分到的那一段)。
+     * 只寫訂單起訖的話,看的人會問「這是七月的表,為什麼日期是六月」。
+     */
+    const MHEAD = ['物業', '房源', '分類', '客戶',
+      '訂單起日', '訂單迄日', '認列起日', '認列迄日',
       '訂單總額', '當月收入', '當月天數', '總天數', '均價', '負責人', '評價', '入帳', '帳戶', '押金'];
     const MC = MHEAD.length;
 
@@ -338,6 +346,9 @@ export default function RevenuesPage() {
         return [
           T(est, stCell), T(room, stCell), T(cls, stCell), T(r.guest_name ?? '', stCell),
           T(r.checkin ?? '', stCell), T(r.checkout ?? '', stCell),
+          // 認列迄日存的是「下個月一號」(半開區間),顯示要減一天,
+          // 否則七月的表上會出現 8/1,看起來像跨月了
+          T(r.period_start ?? '', stCell), T(r.period_end ? minus1(r.period_end) : '', stCell),
           T(Math.round(r.total_amount), stCell), T(Math.round(r.month_amount), stNum),
           T(r.month_nights, stCell), T(r.total_nights, stCell),
           // 一次性收入沒有天數,均價除下去會是 Infinity —— 沒有天數就留空
@@ -350,14 +361,41 @@ export default function RevenuesPage() {
       const sub = (label: string, rs: Row[], st: any) => {
         const row = Array(MC).fill(T('', st));
         row[0] = T(label, st);
-        row[7] = T(Math.round(rs.reduce((a, r) => a + Number(r.month_amount || 0), 0)), st);
+        // 索引 9 是「當月收入」。欄位順序一改這裡就要跟著改,
+        // 忘了改的話小計會出現在別的欄位底下而沒人發現。
+        row[MHEAD.indexOf('當月收入')] = T(Math.round(rs.reduce((a, r) => a + Number(r.month_amount || 0), 0)), st);
         return row;
       };
 
+      const inEst = md.rows.filter(inEstateBlock);
+      const offs0 = md.rows.filter(isOffice);
+      const coms0 = md.rows.filter(isCompany);
+      const estList = Array.from(new Set(inEst.map(estateOf))).sort(eSort);
+
+      /*
+       * ── 結算 ──
+       *
+       * 放在最上面。明細有兩百多列,物業小計散在中間,
+       * 「這個月各棟各賺多少」得滾很久才拼得出來 —— 那是最常被問的問題,
+       * 應該一開表就看得到。
+       *
+       * 下面的明細是同一批數字的展開,兩邊必然相等。
+       */
+      S.push([T('【結算】', stGroup), ...Array(MC - 1).fill(T('', stGroup))]);
+      estList.forEach((e) =>
+        S.push(sub(`　${e}`, inEst.filter((r) => estateOf(r) === e), stCell)));
+      S.push(sub('物業小計', inEst, stSubtotal));
+      S.push(sub('　租辦公室', offs0, stCell));
+      S.push(sub('　公司登記', coms0, stCell));
+      // 其他收入(清潔費、取消費、垃圾代收…)已經含在物業小計裡,
+      // 這一列是「其中有多少」,不是另外加上去的 —— 標題寫清楚免得被重複加總。
+      S.push(sub('　其中:其他收入', md.rows.filter((r) => r.source === 'oneoff'), stCell));
+      S.push(sub('總營收', md.rows, stTotal));
+      S.push(mblank(MC));
+
       // ── 依房源 ──
       S.push([T('【依房源】不含辦公室出租與公司登記', stGroup), ...Array(MC - 1).fill(T('', stGroup))]);
-      const inEst = md.rows.filter(inEstateBlock);
-      for (const e of Array.from(new Set(inEst.map(estateOf))).sort(eSort)) {
+      for (const e of estList) {
         const grp = inEst.filter((r) => estateOf(r) === e);
         // 房號自然排序,空的排最後 —— 那些是整棟或漏填,不該卡在房號中間
         const rooms = Array.from(new Set(grp.map(roomOf))).sort((a, b) => {
@@ -381,16 +419,18 @@ export default function RevenuesPage() {
       S.push(mblank(MC));
 
       // ── 辦公室出租 ──
-      const offs = md.rows.filter(isOffice);
+      const offs = offs0;
       S.push([T('【辦公室出租】不掛物業房源', stGroup), ...Array(MC - 1).fill(T('', stGroup))]);
-      offs.forEach((r) => S.push(detail(r, '', ROOM_NONE, '辦公室租金')));
+      // 辦公室出租與公司登記不掛物業房源,那兩欄留空 ——
+      // 寫破折號會讓人以為「有房源但沒填」,實際上是這類收入本來就沒有房源。
+      offs.forEach((r) => S.push(detail(r, '', '', '辦公室租金')));
       S.push(sub('辦公室小計', offs, stSubtotal));
       S.push(mblank(MC));
 
       // ── 公司登記 ──
-      const coms = md.rows.filter(isCompany);
+      const coms = coms0;
       S.push([T('【公司登記】不掛物業房源', stGroup), ...Array(MC - 1).fill(T('', stGroup))]);
-      coms.forEach((r) => S.push(detail(r, '', ROOM_NONE, '公司登記')));
+      coms.forEach((r) => S.push(detail(r, '', '', '公司登記')));
       S.push(sub('公司登記小計', coms, stSubtotal));
       S.push(mblank(MC));
 
@@ -402,10 +442,11 @@ export default function RevenuesPage() {
         { s: { r: 0, c: 0 }, e: { r: 0, c: MC - 1 } },
         { s: { r: 1, c: 0 }, e: { r: 1, c: MC - 1 } },
       ];
-      wsM['!cols'] = [{ wch: 12 }, { wch: 12 }, { wch: 24 }, { wch: 16 }, { wch: 11 }, { wch: 11 },
+      wsM['!cols'] = [{ wch: 12 }, { wch: 12 }, { wch: 24 }, { wch: 18 },
+        { wch: 11 }, { wch: 11 }, { wch: 11 }, { wch: 11 },
         { wch: 12 }, { wch: 12 }, { wch: 9 }, { wch: 8 }, { wch: 9 }, { wch: 8 }, { wch: 6 },
         { wch: 10 }, { wch: 8 }, { wch: 10 }];
-      wsM['!freeze'] = { xSplit: 3, ySplit: 3 };
+      wsM['!freeze'] = { xSplit: 4, ySplit: 3 };
       XLSX.utils.book_append_sheet(wb, wsM, md.ym);
     }
     XLSX.writeFile(wb, `營收_${fromM}_${toM}.xlsx`);
