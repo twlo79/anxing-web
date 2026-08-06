@@ -6,11 +6,18 @@ import { createClient } from '@/lib/supabase';
 import { FEE_TYPES } from '@/lib/fee-types';
 import { ONEOFF_LABEL } from '@/lib/revenue-report';
 import RecurringPanel from '@/components/RecurringPanel';
+import OrderPayments from '@/components/OrderPayments';
+import { payStatus, remaining, isExempt, STATUS_LABEL, STATUS_CLASS, STATUS_FILTER } from '@/lib/order-payment';
 
 type Order = {
   id: string; order_key: string; source: string; estate_id: string | null; property_id?: string | null; property_raw: string | null;
   guest_name: string | null; checkin: string; checkout: string; nights: number;
   amount: number; deposit: number | null; account: string | null; note: string | null;
+  /**
+   * 收款。paid_amount 是 order_payments 的合計,由觸發器維護（migration_84）——
+   * 前端只讀不寫,狀態一律用 lib/order-payment 的 payStatus() 算,不另外存欄位。
+   */
+  paid?: boolean; paid_at?: string | null; paid_amount?: number | null;
   /** 一次性收入的會計科目。只有 source='oneoff' 用得到,其餘一律 null。 */
   fee_type?: string | null;
   /** 一次性收入的項目(洗衣機/垃圾代收費…)。科目底下再細一層。 */
@@ -63,6 +70,8 @@ export default function ShortTermPage() {
   const [fromD, setFromD] = useState('');
   const [toD, setToD] = useState('');
   const [sort, setSort] = useState<SortState>({ key: 'checkin', dir: 'desc' });
+  const [collect, setCollect] = useState<Order | null>(null);
+  const [payF, setPayF] = useState('');   // '' | unpaid | partial | paid
   const [agg, setAgg] = useState<any[]>([]);
   // 定期收費的設定只有會計/主管/總經理能改 —— 跟 recurring_charges 的 RLS 一致。
   // 前端擋只是少讓人白按一次,真正的把關在資料庫。
@@ -83,6 +92,12 @@ export default function ShortTermPage() {
       .eq('for_income', true).eq('active', true).order('sort')
       .then(({ data }) => setPayAccounts(data ?? []));
   }, [supabase]);
+  /*
+   * 收款只有會計/主管/總經理能做 —— 跟 order_payments 的 RLS 一致。
+   * 沒有這道的話,其他角色點得到「收款」但視窗裡永遠是空的（RLS 擋掉查詢,
+   * 而 RLS 擋掉不會報錯,只會回空陣列）—— 看起來像壞掉,實際上是沒權限。
+   */
+  const canCollect = useMemo(() => ['accountant', 'manager', 'super_admin'].includes(role), [role]);
   const estateName = useMemo(() => Object.fromEntries(estates.map((e) => [e.id, e.name])), [estates]);
   const [fees, setFees] = useState<Fee[]>([]);
   const [fxRev, setFxRev] = useState<{ cur: string; amt: number; rate: number }[]>([]);
@@ -132,11 +147,27 @@ export default function ShortTermPage() {
     if (toD) q = q.lte('checkin', toD);
     if (fromD) q = q.gte('checkout', fromD);
     if (kw) q = q.or(`guest_name.ilike.%${kw}%,property_raw.ilike.%${kw}%,note.ilike.%${kw}%`);
+    /*
+     * 收款狀態篩選走伺服器端 —— 本頁是伺服器端分頁,
+     * 在前端過濾只會篩到當前這 50 筆,分頁數字還會是錯的。
+     *
+     * 三種狀態都用 paid + paid_amount 兩個實體欄位表達,對應 payStatus():
+     *   未收款  paid=false 且 paid_amount<=0
+     *   部分    paid=false 且 paid_amount>0
+     *   已收款  paid=true
+     * 平台代收的來源一律排除 —— 那些不是使用者要追的。
+     */
+    if (payF) {
+      q = q.not('source', 'in', '(airbnb,agoda,airbnb_cancelled)');
+      if (payF === 'paid') q = q.eq('paid', true);
+      else if (payF === 'partial') q = q.eq('paid', false).gt('paid_amount', 0);
+      else if (payF === 'unpaid') q = q.eq('paid', false).lte('paid_amount', 0);
+    }
     const { data, count } = await q.range(page * PAGE, page * PAGE + PAGE - 1);
     setRows((data as any) ?? []); setTotal(count ?? 0); setLoading(false);
-  }, [supabase, src, kw, estF, fromD, toD, sort, page]);
+  }, [supabase, src, kw, estF, fromD, toD, sort, page, payF]);
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { setPage(0); }, [src, kw, estF, fromD, toD, sort]);
+  useEffect(() => { setPage(0); }, [src, kw, estF, fromD, toD, sort, payF]);
 
   const loadAgg = useCallback(async () => {
     let all: any[] = []; let from = 0;
@@ -197,6 +228,14 @@ export default function ShortTermPage() {
         if (toD) q = q.lte('checkin', toD);
         if (fromD) q = q.gte('checkout', fromD);
         if (kw) q = q.or(`guest_name.ilike.%${kw}%,property_raw.ilike.%${kw}%,note.ilike.%${kw}%`);
+        // 收款狀態篩選必須跟 load() 一模一樣,否則匯出的內容跟畫面對不上,
+        // 而那種不一致沒有任何跡象 —— 使用者會以為 Excel 才是對的。
+        if (payF) {
+          q = q.not('source', 'in', '(airbnb,agoda,airbnb_cancelled)');
+          if (payF === 'paid') q = q.eq('paid', true);
+          else if (payF === 'partial') q = q.eq('paid', false).gt('paid_amount', 0);
+          else if (payF === 'unpaid') q = q.eq('paid', false).lte('paid_amount', 0);
+        }
         const { data, error } = await q.range(from, from + 999);
         if (error) { flash('匯出失敗:' + error.message); return; }
         const chunk = (data as any[]) ?? [];
@@ -213,7 +252,7 @@ export default function ShortTermPage() {
       const stNum = { border: BORD, alignment: { horizontal: 'right' } };
       const T = (v: any, st: any) => ({ v: v ?? '', t: typeof v === 'number' ? 'n' : 's', s: st, z: typeof v === 'number' ? '#,##0' : undefined });
 
-      const header = ['來源', '物業', '房源', '客戶', '入住日', '退房日', '晚數', '金額', '押金', '入款方式', '備註'];
+      const header = ['來源', '物業', '房源', '客戶', '入住日', '退房日', '晚數', '金額', '已收', '尚欠', '收款狀態', '押金', '入款方式', '備註'];
       const aoa: any[][] = [header.map((h) => T(h, stHead))];
       for (const o of all) {
         aoa.push([
@@ -225,13 +264,16 @@ export default function ShortTermPage() {
           T(o.checkout ?? '', stCell),
           T(Number(o.nights) || 0, stNum),
           T(Math.round(Number(o.amount) || 0), stNum),
+          T(Math.round(Number(o.paid_amount) || 0), stNum),
+          T(remaining(o), stNum),
+          T(STATUS_LABEL[payStatus(o)], stCell),
           T(Math.round(Number(o.deposit) || 0), stNum),
           T(o.account ?? '', stCell),
           T(o.note ?? '', stCell),
         ]);
       }
       const ws = XLSX.utils.aoa_to_sheet(aoa);
-      ws['!cols'] = [{ wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 18 }, { wch: 12 }, { wch: 12 }, { wch: 7 }, { wch: 12 }, { wch: 10 }, { wch: 12 }, { wch: 30 }];
+      ws['!cols'] = [{ wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 18 }, { wch: 12 }, { wch: 12 }, { wch: 7 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 11 }, { wch: 10 }, { wch: 12 }, { wch: 30 }];
       ws['!freeze'] = { xSplit: 0, ySplit: 1 };   // 凍結表頭
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, '短租訂單');
@@ -278,8 +320,23 @@ export default function ShortTermPage() {
     }
     flash('已儲存'); setEdit(null); setFees([]); load();
   }
+  /**
+   * 刪除訂單。
+   *
+   * order_payments 是 on delete cascade —— 收款紀錄會跟著一起消失，
+   * 營收認列也是（revenue_recognitions.order_id 同樣 cascade）。
+   * 所以有收過款就要把數字講出來，跟契約刪除的處理一致：不擋，但不能不知情。
+   */
   async function del(o: Order) {
-    if (!confirm(`刪除訂單「${o.guest_name} ${o.property_raw}」?`)) return;
+    const { data: ps } = await supabase.from('order_payments')
+      .select('amount').eq('order_id', o.id);
+    const n = (ps ?? []).length;
+    const got = (ps ?? []).reduce((a: number, p: any) => a + (Number(p.amount) || 0), 0);
+    const msgText = `刪除訂單「${o.guest_name ?? ''} ${o.property_raw ?? ''}」?\n\n`
+      + `金額 $${fmt(o.amount)}\n`
+      + (n ? `⚠ 已有 ${n} 筆收款紀錄（$${fmt(got)}）會一併刪除。\n` : '')
+      + `這筆的營收認列也會跟著消失，無法復原。`;
+    if (!confirm(msgText)) return;
     const { error } = await supabase.from('orders').delete().eq('id', o.id);
     if (error) return flash('刪除失敗:' + error.message);
     flash('已刪除'); load();
@@ -320,6 +377,36 @@ export default function ShortTermPage() {
     const chain = segs.map((s) => s.room).join('>');
     const grp = move.grp, isMulti = segs.length > 1;
     const s0 = segs[0];
+    /*
+     * 【移房會動到收款紀錄，動手前一定要講清楚】
+     *
+     * 底下的流程是：主段（id = grp）用 update 改掉，其他分段一律 delete 再重建。
+     * order_payments 的外鍵是 on delete cascade，所以**被重建的那些分段，
+     * 它們身上的收款紀錄會一起消失**，而且不會有任何錯誤訊息。
+     *
+     * 主段的收款會留著，但金額通常會變小（10,000 拆成 4,000 + 6,000），
+     * 觸發器重算之後可能變成「超收」—— 那不是錯，只是要先讓人知道。
+     *
+     * 不擋，只問一聲 —— 跟契約刪除的處理一致：使用者決定要做就做得到，
+     * 但不能在不知情的狀況下把收過的錢弄不見。
+     */
+    const { data: segIds } = await supabase.from('orders')
+      .select('id').eq('move_group', grp).neq('id', grp);
+    const doomed = (segIds ?? []).map((x: any) => x.id);
+    if (doomed.length) {
+      const { data: lost } = await supabase.from('order_payments')
+        .select('amount').in('order_id', doomed);
+      const n = (lost ?? []).length;
+      if (n) {
+        const amt = (lost ?? []).reduce((a: number, p: any) => a + (Number(p.amount) || 0), 0);
+        if (!confirm(
+          `這次移房會重建分段，其中 ${n} 筆收款紀錄（$${fmt(amt)}）會一併刪除。\n\n`
+          + `主段的收款會保留，但金額改變後收款狀態會重新計算。\n\n`
+          + `確定要繼續嗎？`
+        )) return;
+      }
+    }
+
     const patch: any = { estate_id: s0.estateId, property_id: s0.propertyId, property_raw: s0.room, checkin: s0.from, checkout: s0.to, nights: s0.nights, amount: s0.amount, move_group: isMulti ? grp : null };
     if (isMulti) patch.note = `移房 ${chain}`;
     const { error: e1 } = await supabase.from('orders').update(patch).eq('id', grp);
@@ -407,6 +494,14 @@ export default function ShortTermPage() {
           </select>
         </div>
         <div>
+          {/* 選了收款狀態就自動排除 Airbnb/Agoda —— 平台代收沒有「收款狀態」可言 */}
+          <label className="block text-xs text-gray-500 mb-1">收款狀態</label>
+          <select value={payF} onChange={(e) => setPayF(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
+            <option value="">全部</option>
+            {STATUS_FILTER.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+          </select>
+        </div>
+        <div>
           <label className="block text-xs text-gray-500 mb-1">訂單日期(期間內有交集)</label>
           <div className="flex items-center gap-1">
             <input type="date" value={fromD} onChange={(e) => setFromD(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5" />
@@ -438,12 +533,13 @@ export default function ShortTermPage() {
               <SortTh label="客戶" sortKey="guest_name" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <SortTh label="訂單起訖" sortKey="checkin" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="whitespace-nowrap" />
               <SortTh label="金額" sortKey="amount" type="number" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="text-right" align="right" />
+              <th className="px-3 py-2.5 whitespace-nowrap">收款</th>
               <th className="px-3 py-2.5 text-right">操作</th>
             </tr>
           </thead>
           <tbody>
-            {loading ? <tr><td colSpan={6} className="px-4 py-10 text-center text-gray-400">載入中…</td></tr>
-            : rows.length === 0 ? <tr><td colSpan={6} className="px-4 py-10 text-center text-gray-400">無訂單</td></tr>
+            {loading ? <tr><td colSpan={7} className="px-4 py-10 text-center text-gray-400">載入中…</td></tr>
+            : rows.length === 0 ? <tr><td colSpan={7} className="px-4 py-10 text-center text-gray-400">無訂單</td></tr>
             : rows.map((o) => (
               // 整列可點,開啟右側詳細抽屜。
               // 刪除與移房移進抽屜:1,900 多筆的列表上,刪除只差 8px 就在編輯旁邊,
@@ -458,7 +554,28 @@ export default function ShortTermPage() {
                 <td className="px-3 py-2 whitespace-nowrap">{o.guest_name ?? '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-500">{o.checkin}~{o.checkout}</td>
                 <td className="px-3 py-2 text-right font-medium">${fmt(o.amount)}</td>
+                <td className="px-3 py-2 whitespace-nowrap">
+                  {(() => {
+                    const st = payStatus(o);
+                    const rest = remaining(o);
+                    return (
+                      <>
+                        <span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${STATUS_CLASS[st]}`}>
+                          {STATUS_LABEL[st]}
+                        </span>
+                        {/* 部分收款才顯示尚欠 —— 未收款的尚欠就是金額,那一欄已經有了 */}
+                        {st === 'partial' && (
+                          <div className="text-[11px] text-gray-400 mt-0.5">尚欠 ${fmt(rest)}</div>
+                        )}
+                      </>
+                    );
+                  })()}
+                </td>
                 <td className="px-3 py-2 text-right whitespace-nowrap">
+                  {!isExempt(o.source) && canCollect && (
+                    <button onClick={(e) => { e.stopPropagation(); setCollect(o); }}
+                      className="text-xs text-mor-green underline hover:opacity-80 mr-3">收款</button>
+                  )}
                   <button onClick={(e) => { e.stopPropagation(); setDetail(o); }} className="text-xs text-mor-slate underline hover:text-mor-blue">檢視</button>
                 </td>
               </tr>
@@ -504,6 +621,23 @@ export default function ShortTermPage() {
                 {row('來源', <span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${SRC_COLOR[d.source]}`}>{SRC_LABEL[d.source] ?? d.source}</span>)}
                 {row('訂單起訖', <span>{d.checkin} ~ {d.checkout}<span className="text-gray-400 ml-2">{d.nights} 晚</span></span>)}
                 {row('金額', <span className="font-medium">${fmt(d.amount)}</span>)}
+                {row('收款', (() => {
+                  const st = payStatus(d);
+                  const rest = remaining(d);
+                  return (
+                    <span>
+                      <span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${STATUS_CLASS[st]}`}>
+                        {STATUS_LABEL[st]}
+                      </span>
+                      {!isExempt(d.source) && (
+                        <span className="ml-2 text-xs text-gray-500">
+                          已收 ${fmt(Number(d.paid_amount) || 0)}
+                          {rest > 0 && <span className="text-red-500">・尚欠 ${fmt(rest)}</span>}
+                        </span>
+                      )}
+                    </span>
+                  );
+                })())}
                 {/* 收退狀態改看「押金管理」頁,這裡只顯示金額 */}
                 {row('押金', d.deposit ? (
                   <span>
@@ -522,6 +656,10 @@ export default function ShortTermPage() {
                 style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
                 <button onClick={() => { setDetail(null); setEdit(d); }}
                   className="flex-1 h-11 rounded-lg bg-mor-slate text-white text-sm font-medium hover:bg-mor-slatedark">編輯</button>
+                {!isExempt(d.source) && canCollect && (
+                  <button onClick={() => { setDetail(null); setCollect(d); }}
+                    className="flex-1 h-11 rounded-lg border border-mor-green text-mor-green text-sm font-medium hover:bg-mor-greenlight">收款</button>
+                )}
                 {canMove && (
                   <button onClick={() => { setDetail(null); openMove(d); }}
                     className="flex-1 h-11 rounded-lg border border-mor-green text-mor-green text-sm font-medium hover:bg-mor-greenlight">移房</button>
@@ -533,6 +671,20 @@ export default function ShortTermPage() {
           </div>
         );
       })()}
+
+      {/*
+        收款視窗。合計與狀態由 migration_84 的觸發器維護,
+        這裡改完只要重新載入列表,標籤就會跟著變 —— 前端不自己算合計寫回 orders。
+      */}
+      {collect && (
+        <OrderPayments
+          order={collect}
+          accounts={payAccounts}
+          canEdit={canCollect}
+          onClose={() => setCollect(null)}
+          onChanged={() => { load(); loadAgg(); }}
+        />
+      )}
 
       {edit && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
