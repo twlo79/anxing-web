@@ -27,6 +27,13 @@ type Req = {
   purchased_on: string | null; expense_generated_at: string | null; created_at: string;
   planned_transfer_on: string | null; payout_account: string | null;
   voucher_no?: string | null; no_voucher?: boolean;
+  /**
+   * 匯款手續費。
+   *   included 內扣   受款人吸收 —— 我方支出就是請款金額,帳上不多記
+   *   extra    不內扣 我方負擔 —— 確認出款後自動產生一筆「郵電費」支出
+   * 詳細規則（含多房源時歸辦公室）在 migration_83。
+   */
+  fee_mode?: string; fee_amount?: number | null;
   currency: string; fx_rate: number;
   purchase_request_items?: Item[];
 };
@@ -511,6 +518,7 @@ export default function PurchasesPage() {
       purchased_on: null, expense_generated_at: null, created_at: '',
       planned_transfer_on: null, payout_account: null,
       voucher_no: null, no_voucher: false,
+      fee_mode: 'included', fee_amount: 0,
       currency: 'TWD', fx_rate: 1,
     });
     setItems([blankItem()]);
@@ -539,6 +547,13 @@ export default function PurchasesPage() {
     }
     if (edit.payment_method === 'transfer' && !edit.payee_account) return flash('匯款需填收款帳號');
     if (edit.currency !== 'TWD' && !(fxRate > 0)) return flash('請填匯率');
+    // 手續費只在匯款時成立。非匯款就算 fee_mode 還留著舊值也一律當成內扣。
+    const feeApplies = edit.payment_method === 'transfer' && edit.fee_mode === 'extra';
+    // 草稿可以先不填金額（送單當下未必問得到銀行實收多少），送審就要填。
+    // 不內扣卻是 0 等於沒有手續費,那該勾內扣,否則之後不會產生任何支出。
+    if (submit && feeApplies && !(Number(edit.fee_amount) > 0)) {
+      return flash('選了「不內扣」就要填手續費金額,若無手續費請改選「內扣」');
+    }
     const needsPayout = edit.payment_method === 'transfer' || edit.payment_method === 'credit_card';
     // 送審中或已核可的單被改動,既有的票就不算數了 —— 有人投過票的話先問一聲。
     // 不清票的話,「核可後改金額」就等於繞過審核,兩票白審。
@@ -572,6 +587,12 @@ export default function PurchasesPage() {
         // 互斥,見 pr_voucher_chk
         no_voucher: !!edit.no_voucher,
         voucher_no: edit.no_voucher ? null : (edit.voucher_no?.trim() || null),
+        // 只有匯款會有手續費。非匯款一律歸零 —— 這裡是最後一道,
+        // 因為 payment_method 有可能被別的路徑改掉而沒經過上面那個 onChange。
+        // pr_fee_chk 會擋「內扣卻有金額」與「非匯款卻不內扣」,
+        // 但約束擋下來的錯誤訊息是約束名稱,沒人看得懂,所以前端先對齊。
+        fee_mode: feeApplies ? 'extra' : 'included',
+        fee_amount: feeApplies ? (Number(edit.fee_amount) || 0) : 0,
         // 送審中或已核可被編輯:退回草稿並清空核可票。
         // 退回 draft 有兩個作用 —— 項目的 pri_write policy 只認 draft/rejected,
         // 而且之後再送 pending 會走既有狀態機,免核門檻依「新金額」重算。
@@ -1652,6 +1673,13 @@ export default function PurchasesPage() {
                   </span>
                 )) : null}
                 {row('憑證號碼', d.voucher_no ?? (d.no_voucher ? <span className="text-gray-400 text-xs">無憑證</span> : '—'))}
+                {d.payment_method === 'transfer' && row('手續費', d.fee_mode === 'extra'
+                  ? <span>不內扣 ${fmt(Number(d.fee_amount) || 0)}
+                      <span className="text-gray-400 text-xs ml-1">
+                        {d.purchased_on ? '・已產生郵電費支出' : '・出款後產生郵電費支出'}
+                      </span>
+                    </span>
+                  : <span className="text-gray-400 text-xs">內扣</span>)}
                 {row(`預定${dateWord(d.payment_method)}`, d.planned_transfer_on ?? '—')}
                 {row(`確認${dateWord(d.payment_method)}`, d.purchased_on ?? '—')}
                 {row('備註', d.note ? <span className="whitespace-pre-wrap">{d.note}</span> : '—')}
@@ -1852,9 +1880,17 @@ export default function PurchasesPage() {
 
                 {/* 付款 */}
                 <div className="border-t border-mor-line pt-3 space-y-3">
+                  {/*
+                    換成非匯款要把手續費清乾淨 —— 現金與信用卡沒有匯款手續費。
+                    只藏欄位不清值的話，舊值會留在資料庫繼續產生郵電費支出，
+                    而畫面上完全看不到它（pr_fee_chk 也會擋，但錯誤訊息是約束名稱，沒人看得懂）。
+                  */}
                   <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">支出方式</span>
                     <select disabled={readOnly} value={edit.payment_method ?? 'cash'}
-                      onChange={(e) => setEdit({ ...edit, payment_method: e.target.value })}
+                      onChange={(e) => setEdit({
+                        ...edit, payment_method: e.target.value,
+                        ...(e.target.value === 'transfer' ? {} : { fee_mode: 'included', fee_amount: 0 }),
+                      })}
                       className="w-full md:w-40 h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50">
                       {PAY_OPTS.map((p) => <option key={p} value={p}>{PAY_LABEL[p]}</option>)}
                     </select></label>
@@ -1927,6 +1963,49 @@ export default function PurchasesPage() {
                       無憑證
                     </label>
                   </div>
+                  {/*
+                    匯款手續費。
+
+                    內扣   = 受款人吸收。我方支出就是請款金額,帳上不用多記什麼。
+                    不內扣 = 我方額外負擔。我方總支出 = 請款金額 + 手續費,
+                             那筆手續費要單獨記帳,否則帳上永遠少那幾十塊。
+
+                    所以只有「不內扣」會產生東西:確認出款後自動多一筆郵電費支出,
+                    日期用出款日,物業/房源跟這張單走。實際產生的邏輯在 migration_83,
+                    這裡只負責讓人把意圖表達清楚。
+                  */}
+                  {edit.payment_method === 'transfer' && (
+                  <div className="rounded-lg border border-mor-line p-3">
+                    <div className="text-xs text-gray-500 mb-2">匯款手續費</div>
+                    <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+                      {[['included', '內扣'], ['extra', '不內扣']].map(([v, label]) => (
+                        <label key={v} className="flex items-center gap-2 text-sm">
+                          <input type="radio" name="feeMode" disabled={readOnly}
+                            checked={(edit.fee_mode ?? 'included') === v}
+                            onChange={() => setEdit({ ...edit, fee_mode: v, fee_amount: v === 'extra' ? edit.fee_amount : 0 })} />
+                          {label}
+                        </label>
+                      ))}
+                      {edit.fee_mode === 'extra' && (
+                        <label className="flex items-center gap-2 text-sm">
+                          <span className="text-gray-500">金額</span>
+                          <input disabled={readOnly} type="number" inputMode="numeric" min={0}
+                            value={edit.fee_amount ? String(edit.fee_amount) : ''}
+                            onChange={(e) => setEdit({ ...edit, fee_amount: e.target.value === '' ? 0 : Number(e.target.value) })}
+                            placeholder="0"
+                            className="w-28 h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 text-right disabled:bg-gray-50" />
+                          <span className="text-gray-500">NTD</span>
+                        </label>
+                      )}
+                    </div>
+                    <div className="text-xs text-gray-400 mt-2 leading-relaxed">
+                      {edit.fee_mode === 'extra'
+                        ? '確認出款後會自動產生一筆支出:日期為出款日、會計科目「郵電費」、金額為上方手續費。物業／房源跟這張單走（項目分屬多個房源時歸辦公室）。'
+                        : '內扣由受款人吸收,我方支出就是請款金額,不會另外產生支出。'}
+                    </div>
+                  </div>
+                  )}
+
                   <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">備註</span>
                     <textarea disabled={readOnly} value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })}
                       className="bg-white rounded-lg border border-mor-line px-2 py-2 h-24 md:h-16 disabled:bg-gray-50" /></label>
