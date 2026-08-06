@@ -5,6 +5,7 @@ import { SortTh, type SortState } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
 import { FEE_TYPES } from '@/lib/fee-types';
 import { ONEOFF_LABEL } from '@/lib/revenue-report';
+import RecurringPanel from '@/components/RecurringPanel';
 
 type Order = {
   id: string; order_key: string; source: string; estate_id: string | null; property_id?: string | null; property_raw: string | null;
@@ -63,6 +64,16 @@ export default function ShortTermPage() {
   const [toD, setToD] = useState('');
   const [sort, setSort] = useState<SortState>({ key: 'checkin', dir: 'desc' });
   const [agg, setAgg] = useState<any[]>([]);
+  // 定期收費的設定只有會計/主管/總經理能改 —— 跟 recurring_charges 的 RLS 一致。
+  // 前端擋只是少讓人白按一次,真正的把關在資料庫。
+  const [role, setRole] = useState('');
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) return;
+      supabase.from('profiles').select('role').eq('id', user.id).single()
+        .then(({ data }) => setRole(data?.role ?? ''));
+    });
+  }, [supabase]);
 
   useEffect(() => { supabase.from('estates').select('id, name, sort, active').order('sort').then(({ data }) => setEstates(data ?? [])); }, [supabase]);
   // 入款帳號改讀主檔,不再寫死。現金與加密貨幣沒有帳號,直接列在選單上。
@@ -371,6 +382,16 @@ export default function ShortTermPage() {
           </div>
         </div>
       </div>
+
+      {/*
+        定期收費。收合狀態只有一列,展開才查資料 ——
+        它是附屬面板,不該讓每次開短租頁都多兩趟查詢。
+
+        放這裡而不是側邊選單獨立一頁:它跟「其他收入」是同一種東西,
+        差別只在「要不要每個月自動長出來」。分兩個頁面會讓人以為是兩件事,
+        而且側邊選單每多一項,真正每天要用的功能就被往下擠一格。
+      */}
+      <RecurringPanel canEdit={['accountant', 'manager', 'super_admin'].includes(role)} />
 
       <div className="filter-bar bg-white rounded-xl border border-mor-line p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
         <div>
