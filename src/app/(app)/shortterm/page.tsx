@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx-js-style';
 import { SortTh, type SortState } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
 import { FEE_TYPES } from '@/lib/fee-types';
+import { ONEOFF_LABEL } from '@/lib/revenue-report';
 
 type Order = {
   id: string; order_key: string; source: string; estate_id: string | null; property_id?: string | null; property_raw: string | null;
@@ -27,7 +28,7 @@ type MoveState = { grp: string; checkin: string; checkout: string; totalNights: 
 const SRC = ['airbnb', 'agoda', 'private', 'oneoff', 'partner', 'airbnb_cancelled'];
 const MANUAL_SRC = ['private', 'oneoff'];  // 可手動新增的來源
 const FILTER_SRC = ['airbnb', 'agoda', 'private', 'oneoff'];  // 來源篩選下拉
-const SRC_LABEL: Record<string, string> = { airbnb: 'Airbnb', agoda: 'Agoda', private: '私下', oneoff: '其他收入(一次性)', partner: '搭檔收款', airbnb_cancelled: 'Airbnb取消' };
+const SRC_LABEL: Record<string, string> = { airbnb: 'Airbnb', agoda: 'Agoda', private: '私下', oneoff: ONEOFF_LABEL, partner: '搭檔收款', airbnb_cancelled: 'Airbnb取消' };
 const SRC_COLOR: Record<string, string> = {
   airbnb: 'bg-mor-bluelight text-mor-slate', agoda: 'bg-purple-50 text-purple-700',
   private: 'bg-mor-greenlight text-mor-green', oneoff: 'bg-rose-50 text-rose-600', partner: 'bg-teal-50 text-teal-700', airbnb_cancelled: 'bg-red-50 text-red-600',
@@ -642,10 +643,10 @@ export default function ShortTermPage() {
               {edit.source !== 'oneoff' && (
                 <div className="col-span-2 border-t border-mor-line pt-3 mt-1">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="font-medium">加費(一次性收入)</span>
+                    <span className="font-medium">加費({ONEOFF_LABEL})</span>
                     <button type="button" onClick={addFee} className="text-xs text-mor-blue underline hover:text-mor-slate">+ 新增加費</button>
                   </div>
-                  {fees.length === 0 && <p className="text-xs text-gray-400">尚無加費。清潔費/修繕費等一次性費用,認列在該費用日期當月,並以「其他收入(一次性)」計入營收報表。</p>}
+                  {fees.length === 0 && <p className="text-xs text-gray-400">尚無加費。清潔費/修繕費等收入,認列在該日期當月,並以「其他收入」計入營收報表。</p>}
                   <div className="flex flex-col gap-2">
                     {fees.map((f, i) => (
                       <div key={i} className="flex flex-wrap items-center gap-2 bg-mor-sand/30 rounded-lg px-2 py-2">

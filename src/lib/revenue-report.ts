@@ -22,9 +22,28 @@ export type RevRow = {
   property_raw: string | null;
   guest_name: string | null;
   month_amount: number | string;
+  /** 一次性收入的會計科目(清潔費…)。 */
+  fee_type?: string | null;
   /** 一次性收入的項目(洗衣機/垃圾代收費…)。會計科目底下再細一層。 */
   item_name?: string | null;
 };
+
+/**
+ * source='oneoff' 這一類的顯示名稱,**全站只定義這一次**。
+ *
+ * 內容是清潔費、修繕費、水電費、取消費、垃圾代收費、洗衣機收入、折讓(負數)…
+ * 共同點是「不是租金的收入」。
+ *
+ * 【為什麼不叫「一次性收入」】
+ * 定期收費上線後,洗衣機每月都有、垃圾代收費每月固定 5,070 ——
+ * 那些不是一次性。名字跟內容對不上會讓看報表的人誤判。
+ *
+ * 【為什麼要集中定義】
+ * 之前同一筆錢有四個名字:短租頁叫「其他收入(一次性)」、營收頁叫「其他收入」、
+ * Excel 總表叫「一次性費用」、Excel 分類欄叫「一次性」。
+ * 對帳的人得自己在腦裡對應,而且改名時必然漏掉幾處。
+ */
+export const ONEOFF_LABEL = '其他收入';
 
 /** 認列表裡實際會出現的來源。partner 在寫入時已歸到 airbnb,airbnb_cancelled 歸到 oneoff。 */
 export const SHORT_SOURCES = ['airbnb', 'agoda', 'private'];
@@ -43,17 +62,18 @@ export const guestOf = (r: RevRow) => r.guest_name ?? '未填客戶';
  *   刻意留白 —— 這筆錢算在整棟上（公區清潔、整棟修繕、管理費分攤）
  *   真的沒填 —— 匯入時漏掉、或建單時忘了選
  *
- * 所以不寫死成其中一種。寫「整棟」會讓漏填的資料看起來是正常的,
- * 寫「未指定」又會讓刻意留白的看起來像錯誤 —— 兩個都寫出來最誠實。
+ * 表格裡一律寫破折號,不寫「整棟」也不寫「未指定」——
+ * 寫「整棟」會讓漏填的資料看起來是正常的,寫「未指定」又會讓刻意留白的看起來像錯誤。
+ * 破折號只陳述「這一格沒有值」,不替使用者解釋原因。
  */
-export const ROOM_NONE = '整棟／未指定';
+export const ROOM_NONE = '—';
 export const roomOf = (r: RevRow) => r.property_raw ?? ROOM_NONE;
 
 /** 房源月報的分類欄 */
-export function classOf(r: RevRow): '短租' | '長租' | '一次性' | '其他' {
+export function classOf(r: RevRow): string {
   if (SHORT_SOURCES.includes(r.source)) return '短租';
   if (r.source === 'longterm') return '長租';
-  if (r.source === 'oneoff') return '一次性';
+  if (r.source === 'oneoff') return ONEOFF_LABEL;
   return '其他';
 }
 
@@ -66,15 +86,26 @@ export function classOf(r: RevRow): '短租' | '長租' | '一次性' | '其他'
  */
 export function itemLabel(r: RevRow): string {
   const c = classOf(r);
-  return r.item_name ? `${c}・${r.item_name}` : c;
+  return c === ONEOFF_LABEL ? `${c}・${oneoffLabel(r)}` : c;
 }
 
-/** 一次性收入依項目彙總,金額大到小。項目空的歸「未指定項目」。 */
+/**
+ * 一次性收入的細分標籤:`會計科目・項目`。
+ *
+ * 兩層都要顯示 —— 科目是給會計看的分類(清潔費),項目是給營運看的明細(洗衣機)。
+ * 只有科目的話,洗衣機/烘衣機/垃圾代收費會全部併成一格「清潔費」。
+ * 空的一律寫破折號,不要留 `清潔費・` 這種尾巴空著的字串。
+ */
+export function oneoffLabel(r: RevRow): string {
+  return `${r.fee_type || ROOM_NONE}・${r.item_name || ROOM_NONE}`;
+}
+
+/** 一次性收入依「科目・項目」彙總,金額大到小。 */
 export function oneoffItems(rows: RevRow[]): { item: string; amount: number }[] {
   const m = new Map<string, number>();
   for (const r of rows) {
     if (r.source !== 'oneoff') continue;
-    const k = r.item_name || '未指定項目';
+    const k = oneoffLabel(r);
     m.set(k, (m.get(k) ?? 0) + Number(r.month_amount || 0));
   }
   return [...m.entries()]

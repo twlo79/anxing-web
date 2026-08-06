@@ -2,7 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   type RevRow, sum, classOf, skeleton, roomLines, reconcile,
-  inEstateBlock, isOffice, isCompany, estateOf, ROOM_NONE, itemLabel, oneoffItems,
+  inEstateBlock, isOffice, isCompany, estateOf, ROOM_NONE, itemLabel, oneoffItems, ONEOFF_LABEL,
 } from './revenue-report.ts';
 
 /**
@@ -109,7 +109,7 @@ describe('房源分類', () => {
     assert.equal(classOf(r({ source: 'agoda' })), '短租');
     assert.equal(classOf(r({ source: 'private' })), '短租');
     assert.equal(classOf(r({ source: 'longterm' })), '長租');
-    assert.equal(classOf(r({ source: 'oneoff' })), '一次性');
+    assert.equal(classOf(r({ source: 'oneoff' })), ONEOFF_LABEL);
     assert.equal(classOf(r({ source: 'other' })), '其他');
   });
 
@@ -120,48 +120,63 @@ describe('房源分類', () => {
     ];
     const lines = roomLines(rows, '時兆');
     assert.equal(lines.length, 2, '合成一列就看不出組成');
-    assert.deepEqual(lines.map((l) => l.cls).sort(), ['一次性', '長租']);
+    assert.deepEqual(lines.map((l) => l.cls).sort(), [`${ONEOFF_LABEL}・—・—`, '長租']);
   });
 
   test('一次性收入依項目再拆一層', () => {
     // 洗衣機、烘衣機、垃圾代收費的會計科目都是「清潔費」。
     // 不依項目拆的話,報表上就是一格清潔費,看不出哪一項在賺。
     const rows = [
-      r({ estate_name: '時兆', property_raw: null, source: 'oneoff', item_name: '洗衣機', month_amount: 2150 }),
-      r({ estate_name: '時兆', property_raw: null, source: 'oneoff', item_name: '烘衣機', month_amount: 3550 }),
-      r({ estate_name: '時兆', property_raw: null, source: 'oneoff', item_name: '垃圾代收費', month_amount: 5070 }),
+      r({ estate_name: '時兆', property_raw: null, source: 'oneoff', fee_type: '清潔費', item_name: '洗衣機', month_amount: 2150 }),
+      r({ estate_name: '時兆', property_raw: null, source: 'oneoff', fee_type: '清潔費', item_name: '烘衣機', month_amount: 3550 }),
+      r({ estate_name: '時兆', property_raw: null, source: 'oneoff', fee_type: '清潔費', item_name: '垃圾代收費', month_amount: 5070 }),
     ];
     const lines = roomLines(rows, '時兆');
     assert.equal(lines.length, 3, '三個項目要各自成列');
     assert.deepEqual(lines.map((l) => l.cls).sort(),
-      ['一次性・垃圾代收費', '一次性・洗衣機', '一次性・烘衣機'].sort());
+      [`${ONEOFF_LABEL}・清潔費・垃圾代收費`, `${ONEOFF_LABEL}・清潔費・洗衣機`,
+       `${ONEOFF_LABEL}・清潔費・烘衣機`].sort());
   });
 
-  test('沒有項目的不要留一個空尾巴', () => {
-    assert.equal(itemLabel(r({ source: 'oneoff', item_name: null })), '一次性');
-    assert.equal(itemLabel(r({ source: 'oneoff', item_name: '洗衣機' })), '一次性・洗衣機');
-    // 項目只對一次性有意義,其餘來源不該被加尾巴
-    assert.equal(itemLabel(r({ source: 'longterm', item_name: null })), '長租');
+  test('一次性一律帶出科目與項目,空的寫破折號', () => {
+    // 「要有會計科目,空的呈現 —」:兩層都要看得到,缺的那層用破折號佔位,
+    // 不要留 `清潔費・` 這種尾巴空著的字串。
+    assert.equal(itemLabel(r({ source: 'oneoff', fee_type: null, item_name: null })), `${ONEOFF_LABEL}・—・—`);
+    assert.equal(itemLabel(r({ source: 'oneoff', fee_type: '清潔費', item_name: null })), `${ONEOFF_LABEL}・清潔費・—`);
+    assert.equal(itemLabel(r({ source: 'oneoff', fee_type: '清潔費', item_name: '洗衣機' })), `${ONEOFF_LABEL}・清潔費・洗衣機`);
+    // 科目與項目只對一次性有意義,其餘來源不該被加尾巴
+    assert.equal(itemLabel(r({ source: 'longterm', fee_type: '清潔費', item_name: 'x' })), '長租');
   });
 
-  test('依項目彙總,金額大到小,空的歸未指定', () => {
+  test('依「科目・項目」彙總,金額大到小', () => {
     const rows = [
-      r({ source: 'oneoff', item_name: '洗衣機', month_amount: 100 }),
-      r({ source: 'oneoff', item_name: '洗衣機', month_amount: 50 }),
-      r({ source: 'oneoff', item_name: '垃圾代收費', month_amount: 5070 }),
-      r({ source: 'oneoff', item_name: null, month_amount: 7 }),
-      r({ source: 'airbnb', item_name: '不該被算到', month_amount: 9999 }),
+      r({ source: 'oneoff', fee_type: '清潔費', item_name: '洗衣機', month_amount: 100 }),
+      r({ source: 'oneoff', fee_type: '清潔費', item_name: '洗衣機', month_amount: 50 }),
+      r({ source: 'oneoff', fee_type: '清潔費', item_name: '垃圾代收費', month_amount: 5070 }),
+      r({ source: 'oneoff', fee_type: null, item_name: null, month_amount: 7 }),
+      r({ source: 'airbnb', fee_type: '清潔費', item_name: '不該被算到', month_amount: 9999 }),
     ];
     assert.deepEqual(oneoffItems(rows), [
-      { item: '垃圾代收費', amount: 5070 },
-      { item: '洗衣機', amount: 150 },
-      { item: '未指定項目', amount: 7 },
+      { item: '清潔費・垃圾代收費', amount: 5070 },
+      { item: '清潔費・洗衣機', amount: 150 },
+      { item: '—・—', amount: 7 },
     ]);
+  });
+
+  test('同科目不同項目不能被併在一起', () => {
+    // 洗衣機與烘衣機的科目都是清潔費。只用科目分組會併成一格,
+    // 那正是這一層存在的理由。
+    const rows = [
+      r({ source: 'oneoff', fee_type: '清潔費', item_name: '洗衣機', month_amount: 2150 }),
+      r({ source: 'oneoff', fee_type: '清潔費', item_name: '烘衣機', month_amount: 3550 }),
+    ];
+    assert.equal(oneoffItems(rows).length, 2);
   });
 
   test('房號空白要單獨成一列,不能整筆不見', () => {
     // 空白有兩種意思:刻意算在整棟上,或真的漏填。分不出來,所以兩個都寫。
     const lines = roomLines([r({ property_raw: null, month_amount: 5 })], '時兆');
     assert.deepEqual(lines, [{ room: ROOM_NONE, cls: '短租' }]);
+    assert.equal(ROOM_NONE, '—', '表格裡空值一律破折號');
   });
 });

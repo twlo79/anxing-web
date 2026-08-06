@@ -5,7 +5,7 @@ import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, roomKey, type SortState, type SortCols } from '@/lib/sortable';
 import {
   isOffice, isCompany, inEstateBlock, estateOf, guestOf, roomOf,
-  classOf, itemLabel, oneoffItems, skeleton, roomLines, reconcile, SHORT_SOURCES,
+  itemLabel, oneoffItems, oneoffLabel, skeleton, reconcile, SHORT_SOURCES, ROOM_NONE, ONEOFF_LABEL,
 } from '@/lib/revenue-report';
 
 type Row = {
@@ -19,7 +19,7 @@ type Row = {
 
 const SOURCE_LABEL: Record<string, string> = {
   airbnb: 'Airbnb', agoda: 'Agoda', private: '私下', longterm: '長租',
-  office: '辦公室租金', company: '公司登記', oneoff: '其他收入', other: '其他',
+  office: '辦公室租金', company: '公司登記', oneoff: ONEOFF_LABEL, other: '其他',
   partner: '搭檔收款', airbnb_cancelled: 'Airbnb取消',
 };
 const SOURCE_COLOR: Record<string, string> = {
@@ -238,11 +238,15 @@ export default function RevenuesPage() {
       // 短租 = 那三個平台的小計。搭檔收款(partner)在寫入認列時已經歸到 airbnb。
       A.push(line('短租小計', (r) => SHORT_SOURCES.includes(r.source), stSubtotal, '　'));
       A.push(line('長租', (r) => r.source === 'longterm', stCell, '　'));
-      A.push(line('一次性費用', (r) => r.source === 'oneoff', stCell, '　'));
+      // 叫「收入」不叫「費用」—— 這是我們收進來的錢。
+      // 在營收報表裡寫「費用」會讓人以為那是要扣掉的成本。
+      A.push(line(ONEOFF_LABEL, (r) => r.source === 'oneoff', stCell, '　'));
       // 一次性底下再依項目拆。洗衣機/烘衣機/垃圾代收費的會計科目都是清潔費,
       // 只看科目會併成一格 —— 這幾列就是為了看得出組成。
+      // 篩選條件要跟 oneoffItems 用同一支 oneoffLabel() 產生標籤 ——
+      // 兩邊各自拼字串的話,標籤格式一改就永遠比不中,而且不會報錯,只會全部顯示 0。
       oneoffItems(allRows).forEach(({ item }) =>
-        A.push(line(item, (r) => r.source === 'oneoff' && (r.item_name || '未指定項目') === item, stCell, '　　')));
+        A.push(line(item, (r) => r.source === 'oneoff' && oneoffLabel(r) === item, stCell, '　　')));
       A.push(line('辦公室租金', isOffice, stCell, '　'));
       A.push(line('公司登記', isCompany, stCell, '　'));
       A.push(line('其他', (r) => r.source === 'other', stCell, '　'));
@@ -283,64 +287,28 @@ export default function RevenuesPage() {
       XLSX.utils.book_append_sheet(wb, ws, '營收總表');
     }
 
-    // ===== 分頁2:房源月報 =====
-    {
-      const A: any[][] = [];
-      A.push([T('房源月報', stTitle), ...blank(nC + 1)]);
-      A.push([T(`${fromM} ~ ${toM}・月份由新到舊`, stSub), ...blank(nC + 1)]);
-      A.push([T('物業', stHead), T('房源', stHead), T('分類', stHead),
-        ...cols.map((md) => T(md.ym, stHead)), T('合計', stHead)]);
+    /* ═══════════════════════════════════════════════════════════
+     * 每個月一張分頁,分頁名就是 YYYYMM。
+     *
+     * 版面跟營收總表同一個骨架:
+     *   【依房源】物業 → 房源 → 分類   ← 一次性收入排在所屬房源裡,不另立一區
+     *   【辦公室出租】依客戶
+     *   【公司登記】依客戶
+     *   總營收
+     *
+     * 一次性收入不再獨立一段,而是照房號混在房源列表裡 ——
+     * 「這間房這個月帶進多少錢」才是完整的,租金與清潔費分兩處看是拼不起來的。
+     * 分類欄看得出它是一次性以及科目、項目(一次性・清潔費・洗衣機)。
+     *
+     * 房源空的一律寫破折號。空值有兩種來源(刻意算整棟 / 真的漏填),
+     * 分不出來就不要替使用者解釋,只陳述「這一格沒有值」。
+     * ═══════════════════════════════════════════════════════════ */
+    // 金額右對齊 —— 明細列很多,靠左的話位數對不齊,掃不出量級
+    const stNum = { border: BORD, alignment: { horizontal: 'right' } };
+    const MHEAD = ['物業', '房源', '分類', '客戶', '起日', '迄日',
+      '訂單總額', '當月收入', '當月天數', '總天數', '均價', '負責人', '評價', '入帳', '帳戶', '押金'];
+    const MC = MHEAD.length;
 
-      const nC2 = cols.length + 4;
-      const line3 = (a: string, b: string, c: string, f: (r: Row) => boolean, st: any) => {
-        const vals = cols.map((md) => SUM(md.rows, f));
-        return [T(a, st), T(b, st), T(c, st), ...vals.map((v) => T(v, st)), T(vals.reduce((x, y) => x + y, 0), st)];
-      };
-
-      A.push([T('【依房源】不含辦公室出租與公司登記', stGroup), ...Array(nC2 - 1).fill(T('', stGroup))]);
-      for (const e of sk.estates) {
-        const inEstate = (r: Row) => inEstateBlock(r) && estateOf(r) === e;
-        // 列的粒度是 房源 × 分類 —— 一間房同一個月可能同時有長租與一次性,
-        // 合成一列就看不出組成。roomLines 有測試釘住這件事。
-        const lines = roomLines(allRows, e).sort((x, y) => {
-          const kx = roomKey(x.room), ky = roomKey(y.room);
-          return kx[0] - ky[0] || (kx[1] < ky[1] ? -1 : kx[1] > ky[1] ? 1 : 0)
-            || x.cls.localeCompare(y.cls);
-        });
-        for (const { room, cls } of lines) {
-          A.push(line3(e, room, cls,
-            (r) => inEstate(r) && roomOf(r) === room && itemLabel(r) === cls, stCell));
-        }
-        A.push(line3(`${e} 小計`, '', '', inEstate, stSubtotal));
-      }
-      A.push(line3('物業小計', '', '', inEstateBlock, stSubtotal));
-      A.push(blank(nC2));
-
-      A.push([T('【辦公室出租】不掛房源', stGroup), ...Array(nC2 - 1).fill(T('', stGroup))]);
-      Array.from(new Set(allRows.filter(isOffice).map((r) => r.guest_name ?? '未填客戶'))).sort()
-        .forEach((g) => A.push(line3('', '', g, (r) => isOffice(r) && (r.guest_name ?? '未填客戶') === g, stCell)));
-      A.push(line3('辦公室小計', '', '', isOffice, stSubtotal));
-      A.push(blank(nC2));
-
-      A.push([T('【公司登記】不掛房源', stGroup), ...Array(nC2 - 1).fill(T('', stGroup))]);
-      Array.from(new Set(allRows.filter(isCompany).map((r) => r.guest_name ?? '未填客戶'))).sort()
-        .forEach((g) => A.push(line3('', '', g, (r) => isCompany(r) && (r.guest_name ?? '未填客戶') === g, stCell)));
-      A.push(line3('公司登記小計', '', '', isCompany, stSubtotal));
-      A.push(blank(nC2));
-
-      A.push(line3('總營收', '', '', () => true, stTotal));
-
-      const ws = XLSX.utils.aoa_to_sheet(A);
-      ws['!merges'] = [
-        { s: { r: 0, c: 0 }, e: { r: 0, c: nC2 - 1 } },
-        { s: { r: 1, c: 0 }, e: { r: 1, c: nC2 - 1 } },
-      ];
-      ws['!cols'] = [{ wch: 14 }, { wch: 14 }, { wch: 10 }, ...cols.map(() => ({ wch: 13 })), { wch: 14 }];
-      ws['!freeze'] = { xSplit: 3, ySplit: 3 };
-      XLSX.utils.book_append_sheet(wb, ws, '房源月報');
-    }
-
-    // ===== 各月明細分頁(由新到舊,跟上面兩張表一致)=====
     for (const md of cols) {
       const ms = `${md.y}-${String(md.m).padStart(2, '0')}-01`;
       const lastDay = new Date(Date.UTC(md.m === 12 ? md.y + 1 : md.y, md.m === 12 ? 0 : md.m, 0)).getUTCDate();
@@ -355,31 +323,89 @@ export default function RevenuesPage() {
         ratingByKey[`${pn}|${rv.checkout_date}`] = rv.overall_rating;
         ratingByGuest[`${pn}|${(rv.guest_name || '').split(' ')[0]}`] = rv.overall_rating;
       }
-      const header = ['姓名', '房源', '來源', '起日', '迄日', '訂單總金額', '當月收入', '當月天數', '總天數', '均價', '負責人', '評價', '入帳', '帳戶', '押金'];
-      const sheet: any[][] = [];
-      sheet.push([T('收入明細總表', stTitle), ...Array(14).fill(T('', {}))]);
-      sheet.push([T(`${md.y - 1911}年${md.m}月1日~${md.y - 1911}年${md.m}月${lastDay}日`, stSub), ...Array(14).fill(T('', {}))]);
-      sheet.push(header.map((h) => T(h, stHead)));
-      const groups = Array.from(new Set(md.rows.map((r) => r.estate_name ?? '無物業'))).sort(eSort);
-      for (const e of groups) {
-        const grp = md.rows.filter((r) => (r.estate_name ?? '無物業') === e);
-        for (const r of grp) {
-          const pn = r.property_raw ?? '';
-          const rating = ratingByKey[`${pn}|${r.checkout}`] ?? ratingByGuest[`${pn}|${(r.guest_name || '').split(' ')[0]}`] ?? '';
-          sheet.push([
-            T(r.guest_name ?? '', stCell), T(pn, stCell), T(r.source === 'oneoff' ? `一次性·${r.fee_type ?? '其他'}` : (SOURCE_LABEL[r.source] ?? r.source), stCell),
-            T(r.checkin, stCell), T(r.checkout, stCell), T(Math.round(r.total_amount), stCell), T(Math.round(r.month_amount), stCell),
-            T(r.month_nights, stCell), T(r.total_nights, stCell),
-            T(r.month_nights ? Math.round(Number(r.month_amount) / r.month_nights) : '', stCell),
-            T(managerOf[e] ?? '', stCell), T(rating, stCell), T('', stCell), T('', stCell), T('', stCell),
-          ]);
+
+      const S: any[][] = [];
+      const mblank = (n: number) => Array(n).fill(T('', {}));
+      S.push([T('收入明細', stTitle), ...mblank(MC - 1)]);
+      S.push([T(`${md.y - 1911}年${md.m}月1日~${md.y - 1911}年${md.m}月${lastDay}日`, stSub), ...mblank(MC - 1)]);
+      S.push(MHEAD.map((h) => T(h, stHead)));
+
+      /** 明細列。訂單層級,一列一筆認列。 */
+      const detail = (r: Row, est: string, room: string, cls: string) => {
+        const pn = r.property_raw ?? '';
+        const rating = ratingByKey[`${pn}|${r.checkout}`]
+          ?? ratingByGuest[`${pn}|${(r.guest_name || '').split(' ')[0]}`] ?? '';
+        return [
+          T(est, stCell), T(room, stCell), T(cls, stCell), T(r.guest_name ?? '', stCell),
+          T(r.checkin ?? '', stCell), T(r.checkout ?? '', stCell),
+          T(Math.round(r.total_amount), stCell), T(Math.round(r.month_amount), stNum),
+          T(r.month_nights, stCell), T(r.total_nights, stCell),
+          // 一次性收入沒有天數,均價除下去會是 Infinity —— 沒有天數就留空
+          T(r.month_nights ? Math.round(Number(r.month_amount) / r.month_nights) : '', stCell),
+          T(managerOf[est] ?? '', stCell), T(rating, stCell),
+          T('', stCell), T('', stCell), T('', stCell),   // 入帳 / 帳戶 / 押金:留白給人手填
+        ];
+      };
+      /** 小計列。金額對齊「當月收入」那一欄(索引 7)。 */
+      const sub = (label: string, rs: Row[], st: any) => {
+        const row = Array(MC).fill(T('', st));
+        row[0] = T(label, st);
+        row[7] = T(Math.round(rs.reduce((a, r) => a + Number(r.month_amount || 0), 0)), st);
+        return row;
+      };
+
+      // ── 依房源 ──
+      S.push([T('【依房源】不含辦公室出租與公司登記', stGroup), ...Array(MC - 1).fill(T('', stGroup))]);
+      const inEst = md.rows.filter(inEstateBlock);
+      for (const e of Array.from(new Set(inEst.map(estateOf))).sort(eSort)) {
+        const grp = inEst.filter((r) => estateOf(r) === e);
+        // 房號自然排序,空的排最後 —— 那些是整棟或漏填,不該卡在房號中間
+        const rooms = Array.from(new Set(grp.map(roomOf))).sort((a, b) => {
+          if (a === ROOM_NONE) return 1;
+          if (b === ROOM_NONE) return -1;
+          const ka = roomKey(a), kb = roomKey(b);
+          return ka[0] - kb[0] || (ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0);
+        });
+        for (const room of rooms) {
+          const rr = grp.filter((r) => roomOf(r) === room)
+            .sort((a, b) => itemLabel(a).localeCompare(itemLabel(b))
+              || (a.checkin ?? '').localeCompare(b.checkin ?? ''));
+          rr.forEach((r) => S.push(detail(r, e, room, itemLabel(r))));
+          // 只有一列時不加小計 —— 同一個數字寫兩遍只是雜訊
+          if (rr.length > 1) S.push(sub(`　↑ ${room} 小計`, rr, stCell));
         }
-        sheet.push([T(`↑${e}`, stSubtotal), ...Array(5).fill(T('', stSubtotal)), T(Math.round(grp.reduce((a, r) => a + Number(r.month_amount), 0)), stSubtotal), ...Array(8).fill(T('', stSubtotal))]);
-        sheet.push([]);
+        S.push(sub(`↑ ${e} 小計`, grp, stSubtotal));
+        S.push(mblank(MC));
       }
-      const wsM = XLSX.utils.aoa_to_sheet(sheet);
-      wsM['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 14 } }, { s: { r: 1, c: 0 }, e: { r: 1, c: 14 } }];
-      wsM['!cols'] = [{ wch: 16 }, { wch: 18 }, { wch: 10 }, { wch: 11 }, { wch: 11 }, { wch: 12 }, { wch: 12 }, { wch: 9 }, { wch: 8 }, { wch: 9 }, { wch: 8 }, { wch: 6 }, { wch: 10 }, { wch: 8 }, { wch: 10 }];
+      S.push(sub('物業小計', inEst, stSubtotal));
+      S.push(mblank(MC));
+
+      // ── 辦公室出租 ──
+      const offs = md.rows.filter(isOffice);
+      S.push([T('【辦公室出租】不掛物業房源', stGroup), ...Array(MC - 1).fill(T('', stGroup))]);
+      offs.forEach((r) => S.push(detail(r, '', ROOM_NONE, '辦公室租金')));
+      S.push(sub('辦公室小計', offs, stSubtotal));
+      S.push(mblank(MC));
+
+      // ── 公司登記 ──
+      const coms = md.rows.filter(isCompany);
+      S.push([T('【公司登記】不掛物業房源', stGroup), ...Array(MC - 1).fill(T('', stGroup))]);
+      coms.forEach((r) => S.push(detail(r, '', ROOM_NONE, '公司登記')));
+      S.push(sub('公司登記小計', coms, stSubtotal));
+      S.push(mblank(MC));
+
+      // 三段相加要等於總營收。對不起來就代表有列被漏掉,不用另外寫檢查。
+      S.push(sub('總營收', md.rows, stTotal));
+
+      const wsM = XLSX.utils.aoa_to_sheet(S);
+      wsM['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: MC - 1 } },
+        { s: { r: 1, c: 0 }, e: { r: 1, c: MC - 1 } },
+      ];
+      wsM['!cols'] = [{ wch: 12 }, { wch: 12 }, { wch: 24 }, { wch: 16 }, { wch: 11 }, { wch: 11 },
+        { wch: 12 }, { wch: 12 }, { wch: 9 }, { wch: 8 }, { wch: 9 }, { wch: 8 }, { wch: 6 },
+        { wch: 10 }, { wch: 8 }, { wch: 10 }];
+      wsM['!freeze'] = { xSplit: 3, ySplit: 3 };
       XLSX.utils.book_append_sheet(wb, wsM, md.ym);
     }
     XLSX.writeFile(wb, `營收_${fromM}_${toM}.xlsx`);
