@@ -4,6 +4,10 @@ import { FilterBar, FilterSelect, FilterDateRange, FilterSearch, FilterClear, Fi
 import { createClient } from '@/lib/supabase';
 import { FEE_TYPES } from '@/lib/fee-types';
 import { keyBase, onlyKeyOf } from '@/lib/ltKey';
+import {
+  summarize, needsTypedConfirm, deleteConfirmText, typedConfirmPrompt,
+  strayPaid, endLeaseRemoved, endLeaseConfirmText, type OrderLite,
+} from '@/lib/contract-lifecycle';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import * as XLSX from 'xlsx-js-style';
 
@@ -71,6 +75,8 @@ export default function ContractsPage() {
   const [overdue, setOverdue] = useState<{ order_key: string; property_raw: string | null; guest_name: string | null; amount: number; checkin: string }[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [invOrders, setInvOrders] = useState<{ property_raw: string | null; amount: number; paid: boolean; checkin: string }[]>([]);
+  // 改完租期後「掉在租期外但已收款」的提示。null = 沒有。
+  const [stray, setStray] = useState<{ name: string; n: number; amt: number; months: string } | null>(null);
   const curFirst = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`; })();
   const curMon = (() => { const d = new Date(); return `${d.getFullYear()}/${d.getMonth() + 1}`; })();
   const curYm = (() => { const d = new Date(); return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`; })();
@@ -244,13 +250,91 @@ export default function ContractsPage() {
       : await supabase.from('contracts').insert(payload);
     if (error) return flash('儲存失敗:' + error.message);
     flash('已儲存'); setEdit(null); load();
+    // 改租期會讓月租單重產。等觸發器跑完再檢查有沒有「租期外但已收款」的殘留。
+    if (edit.id) { setTimeout(() => { warnStray({ ...(edit as Contract) }); }, 500); }
   }
+  /** 一張契約底下的全部訂單。刪除與結束租約都要先知道會動到什麼。 */
+  async function ordersOf(id: string): Promise<OrderLite[]> {
+    const { data } = await supabase.from('orders')
+      .select('id, order_key, checkin, amount, paid, imported_via')
+      .eq('contract_id', id).order('checkin');
+    return (data ?? []) as OrderLite[];
+  }
+
+  const nameOf = (c: Contract) =>
+    (c.display_name || [c.tenant_name, c.room].filter(Boolean).join(' ') || '(未命名契約)').trim();
+
+  /**
+   * 刪除契約。
+   *
+   * migration_81 之後 orders.contract_id 是 on delete cascade ——
+   * 按下去會連同月租單（含已收款）、加費、續約與營收認列一起消失。
+   * 所以先把「會失去什麼」算出來給人看,有已收款的還要打字確認。
+   *
+   * 不擋 —— 要刪就刪得掉。只是不能在不知情的狀況下刪掉。
+   */
   async function del(c: Contract) {
-    if (!confirm(`刪除契約「${c.tenant_name} ${c.room}」?`)) return;
+    const name = nameOf(c);
+    const im = summarize(await ordersOf(c.id));
+    if (!confirm(deleteConfirmText(name, im))) return;
+    if (needsTypedConfirm(im)) {
+      const typed = prompt(typedConfirmPrompt(name, im));
+      if (typed === null) return;
+      if (typed.trim() !== name) return flash('名稱不符,已取消刪除');
+    }
     const { error } = await supabase.from('contracts').delete().eq('id', c.id);
     if (error) return flash('刪除失敗:' + error.message);
-    flash('已刪除'); load();
+    flash(im.total.n ? `已刪除契約與 ${im.total.n} 筆訂單` : '已刪除'); load();
   }
+
+  /**
+   * 結束租約 —— 這才是「租約完成」該走的路。
+   *
+   * 設迄日 + 停用,剩下的交給 gen_contract_orders:它會清掉迄日之後
+   * **未收款**的月租單,已收款的一列都不動。
+   *
+   * 為什麼要清未來的未收款:那些是還沒發生的應收,留著會讓營收預估虛高。
+   * 停用本身不會清 —— 觸發器看到 active=false 就 return 了,
+   * 是「改 end_date」這件事讓它清的,所以兩個一定要一起送。
+   */
+  async function endLease(c: Contract) {
+    const name = nameOf(c);
+    const d = prompt(`結束租約「${name}」\n\n請輸入租約結束日 (YYYY-MM-DD)`,
+      c.end_date || new Date().toISOString().slice(0, 10));
+    if (d === null) return;
+    const end = d.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(end)) return flash('日期格式要像 2026-06-30');
+
+    const rows = await ordersOf(c.id);
+    if (!confirm(endLeaseConfirmText(name, end, endLeaseRemoved(rows, end)))) return;
+
+    const { error } = await supabase.from('contracts')
+      .update({ end_date: end, active: false }).eq('id', c.id);
+    if (error) return flash('結束失敗:' + error.message);
+    // 觸發器是非同步生效的,等一下再回頭查租期外已收款
+    await new Promise((r) => setTimeout(r, 500));
+    await warnStray({ ...c, end_date: end });
+    flash('已結束租約,契約改為停用'); load();
+  }
+
+  /**
+   * 改完租期之後,把「掉在租期外但已收款」的月租單指出來。
+   *
+   * gen_contract_orders 只刪未收款的 —— 錢收了是既成事實,不該因為改了
+   * 一個日期就從帳上消失。但如果那筆其實是誤標成已收款,它就會變成
+   * 契約上看不到、營收裡卻還在的殘留。所以主動講出來讓人自己判斷。
+   */
+  const warnStray = useCallback(async (c: Contract) => {
+    const rows = await ordersOf(c.id);
+    const s = strayPaid(rows, c.start_date, c.end_date);
+    if (!s.length) { setStray(null); return; }
+    setStray({
+      name: nameOf(c), n: s.length,
+      amt: s.reduce((a, o) => a + Number(o.amount || 0), 0),
+      months: s.map((o) => o.checkin.slice(0, 7)).join('、'),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supabase]);
   const loadExtBatches = useCallback(async () => {
     if (!edit?.id || !edit?.room) { setExtBatches([]); return; }
     const eb = keyBase(edit);
@@ -356,6 +440,31 @@ export default function ContractsPage() {
         <h1 className="text-xl font-bold">契約訂單與收款</h1>
         {msg && <span className="text-sm text-mor-green font-medium">{msg}</span>}
       </div>
+
+      {/*
+        租期外但已收款的殘留。
+        gen_contract_orders 清租期外的列時刻意跳過已收款的 —— 錢收了是既成事實。
+        代價是誤標成已收款的那種會留在營收裡,而契約上已經看不到那個月。
+        所以改完租期主動指出來,讓人自己判斷是真的收過還是標錯。
+      */}
+      {stray && (
+        <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="font-medium text-amber-900">
+                「{stray.name}」有 {stray.n} 筆月租單掉在租期外,但標記為已收款（${fmt(stray.amt)}）
+              </div>
+              <div className="text-amber-800 mt-1 break-words">月份:{stray.months}</div>
+              <div className="text-amber-700 text-xs mt-1.5 leading-relaxed">
+                系統不會自動刪已收款的列 —— 錢真的收過就不該因為改日期而消失。
+                若這幾筆是誤標成已收款,請到收租視窗把它們改回未收或直接刪除,否則營收會偏高。
+              </div>
+            </div>
+            <button onClick={() => setStray(null)}
+              className="shrink-0 text-amber-500 hover:text-amber-700 text-lg leading-none">✕</button>
+          </div>
+        </div>
+      )}
 
       {/*
         手機是兩欄,每張卡扣掉間距與內距後只剩約 150px。
@@ -591,14 +700,29 @@ export default function ContractsPage() {
                 {row('備註', c.note ? <span className="whitespace-pre-wrap">{c.note}</span> : '—')}
               </div>
 
-              <div className="sticky bottom-0 bg-white border-t border-mor-line px-6 py-3 flex gap-2"
+              {/*
+                租約結束走「結束租約」,不是刪除。
+                所以結束租約做成正常大小的按鈕,刪除縮成一行小字 ——
+                大部分人想做的是前者,以前卻只看得到後者那顆紅色大按鈕。
+              */}
+              <div className="sticky bottom-0 bg-white border-t border-mor-line px-6 py-3"
                 style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
-                <button onClick={() => { setDetail(null); setEdit(c); }}
-                  className="flex-1 h-11 rounded-lg bg-mor-slate text-white text-sm font-medium hover:bg-mor-slatedark">編輯</button>
-                <button onClick={() => { setDetail(null); setCollect(c); }}
-                  className="flex-1 h-11 rounded-lg border border-mor-green text-mor-green text-sm font-medium hover:bg-mor-greenlight">收租</button>
-                <button onClick={() => { del(c); setDetail(null); }}
-                  className="flex-1 h-11 rounded-lg border border-red-300 text-red-500 text-sm font-medium hover:bg-red-50">刪除</button>
+                <div className="flex gap-2">
+                  <button onClick={() => { setDetail(null); setEdit(c); }}
+                    className="flex-1 h-11 rounded-lg bg-mor-slate text-white text-sm font-medium hover:bg-mor-slatedark">編輯</button>
+                  <button onClick={() => { setDetail(null); setCollect(c); }}
+                    className="flex-1 h-11 rounded-lg border border-mor-green text-mor-green text-sm font-medium hover:bg-mor-greenlight">收租</button>
+                  {c.active && (
+                    <button onClick={() => { endLease(c); setDetail(null); }}
+                      className="flex-1 h-11 rounded-lg border border-mor-slate text-mor-slate text-sm font-medium hover:bg-mor-sand/40">結束租約</button>
+                  )}
+                </div>
+                <div className="mt-2 text-center">
+                  <button onClick={() => { del(c); setDetail(null); }}
+                    className="text-xs text-red-400 underline hover:text-red-600">
+                    刪除契約（連同所有訂單與營收,不可復原）
+                  </button>
+                </div>
               </div>
             </div>
           </div>
