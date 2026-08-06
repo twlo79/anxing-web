@@ -2,7 +2,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import * as XLSX from 'xlsx-js-style';
-import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
+import { SortTh, sortRows, roomKey, type SortState, type SortCols } from '@/lib/sortable';
+import {
+  isOffice, isCompany, inEstateBlock, estateOf, guestOf, roomOf,
+  classOf, skeleton, roomLines, reconcile, SHORT_SOURCES,
+} from '@/lib/revenue-report';
 
 type Row = {
   order_id: string; source: string; estate_id: string | null; estate_name: string | null;
@@ -165,55 +169,173 @@ export default function RevenuesPage() {
     const T = (v: any, s: any) => ({ v, t: typeof v === 'number' ? 'n' : 's', s, z: typeof v === 'number' ? '#,##0' : undefined });
 
     const wb = XLSX.utils.book_new();
-    const AB = ['airbnb', 'agoda'];
     const eSort = (a: string, b: string) => (estateSort[a] ?? 99) - (estateSort[b] ?? 99);
 
-    // ===== 分頁1:營收總表 =====
-    const blocks: any[][][] = [];
-    for (const md of monthData) {
-      const rs = md.rows;
-      const S = (f: (r: Row) => boolean) => Math.round(rs.filter(f).reduce((a, r) => a + Number(r.month_amount), 0));
-      const b: any[][] = [];
-      b.push([T(`${md.m}月份總收入`, stTotal), T(S(() => true), stTotal)]);
-      b.push([T('總營收分類', stGroup), T('', stGroup)]);
-      for (const s0 of SOURCE_ORDER) { const v0 = S((r) => r.source === s0); if (v0) b.push([T(SOURCE_LABEL[s0], stCell), T(v0, stCell)]); }
-      b.push([T('', {}), T('', {})]);
-      b.push([T('AIRBNB', stGroup), T(S((r) => AB.includes(r.source)), stGroup)]);
-      Array.from(new Set(rs.filter((r) => AB.includes(r.source)).map((r) => r.estate_name ?? '無物業'))).sort(eSort)
-        .forEach((e) => b.push([T(e, stCell), T(S((r) => AB.includes(r.source) && (r.estate_name ?? '無物業') === e), stCell)]));
-      b.push([T('私下', stGroup), T(S((r) => r.source === 'private'), stGroup)]);
-      Array.from(new Set(rs.filter((r) => r.source === 'private').map((r) => r.estate_name ?? '無物業'))).sort(eSort)
-        .forEach((e) => b.push([T(e, stCell), T(S((r) => r.source === 'private' && (r.estate_name ?? '無物業') === e), stCell)]));
-      b.push([T('長租', stGroup), T(S((r) => r.source === 'longterm' && r.estate_name !== '正隆'), stGroup)]);
-      Array.from(new Set(rs.filter((r) => r.source === 'longterm' && r.estate_name !== '正隆').map((r) => r.property_raw ?? ''))).sort()
-        .forEach((pp) => b.push([T(pp, stCell), T(S((r) => r.source === 'longterm' && r.estate_name !== '正隆' && r.property_raw === pp), stCell)]));
-      b.push([T('正隆官邸', stGroup), T(S((r) => r.source === 'longterm' && r.estate_name === '正隆'), stGroup)]);
-      Array.from(new Set(rs.filter((r) => r.source === 'longterm' && r.estate_name === '正隆').map((r) => r.property_raw ?? ''))).sort()
-        .forEach((pp) => b.push([T(pp, stCell), T(S((r) => r.source === 'longterm' && r.estate_name === '正隆' && r.property_raw === pp), stCell)]));
-      b.push([T('辦公室租金', stGroup), T(S((r) => r.source === 'office'), stGroup)]);
-      Array.from(new Set(rs.filter((r) => r.source === 'office').map((r) => r.guest_name ?? '')))
-        .forEach((g) => b.push([T(g, stCell), T(S((r) => r.source === 'office' && r.guest_name === g), stCell)]));
-      b.push([T('公司登記', stGroup), T(S((r) => r.source === 'company'), stGroup)]);
-      Array.from(new Set(rs.filter((r) => r.source === 'company').map((r) => r.guest_name ?? '')))
-        .forEach((g) => b.push([T(g, stCell), T(S((r) => r.source === 'company' && r.guest_name === g), stCell)]));
-      b.push([T('其他收入(一次性)', stGroup), T(S((r) => r.source === 'oneoff'), stGroup)]);
-      Array.from(new Set(rs.filter((r) => r.source === 'oneoff').map((r) => r.fee_type ?? '未分類'))).sort()
-        .forEach((ft) => b.push([T(ft, stCell), T(S((r) => r.source === 'oneoff' && (r.fee_type ?? '未分類') === ft), stCell)]));
-      blocks.push(b);
-    }
-    const maxLen = Math.max(...blocks.map((b) => b.length));
-    const nCols = blocks.length * 2;
-    const aoa: any[][] = [];
-    aoa.push([T(`${monthData[0].y}年營收總表`, stTitle), ...Array(nCols - 1).fill(T('', {}))]);
-    aoa.push(blocks.flatMap((_, i) => [T(`${monthData[i].m}月`, stHead), T('', stHead)]));
-    for (let i = 0; i < maxLen; i++) aoa.push(blocks.flatMap((b) => b[i] ?? [T('', {}), T('', {})]));
-    const wsT = XLSX.utils.aoa_to_sheet(aoa);
-    wsT['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: nCols - 1 } }];
-    wsT['!cols'] = Array.from({ length: nCols }, (_, i) => ({ wch: i % 2 === 0 ? 16 : 12 }));
-    XLSX.utils.book_append_sheet(wb, wsT, '營收總表');
+    /* ═══════════════════════════════════════════════════════════════
+     * 【總表與房源月報的共同原則】
+     *
+     * 1. 一列一個科目,一欄一個月。
+     *    舊版是「每個月各佔兩欄(標籤+金額)」,而且每個月的標籤是各自長出來的
+     *    (有值才 push 一列)。8 月的 AIRBNB 底下有 5 個物業、7 月有 6 個,
+     *    兩邊的列從那裡開始錯開 —— 同一列左右兩個數字根本不是同一個科目,
+     *    橫著讀是錯的。這一版先掃過所有月份取聯集,建出固定的列骨架。
+     *
+     * 2. 零就寫 0,不讓列消失。
+     *    某個科目這個月掛零,本身就是要看見的資訊;讓它消失會把下面全部推上來。
+     *
+     * 3. 月份由新到舊。最新的月份最常看,放最左邊。
+     *
+     * 4. 辦公室出租與公司登記不掛物業房源,各自獨立一段。
+     *    它們不是租金收入,混進物業會讓「這個物業帶進多少錢」失真。
+     *    兩個分頁用同一個結構,所以兩邊的物業小計必然相同 ——
+     *    那是內建的對帳點,對不上就代表有資料掉了。
+     *
+     * 5. 沒有任何寫死的物業名稱。
+     *    舊版有 `estate_name !== '正隆'` 這種判斷,新增或改名一個物業
+     *    就會靜靜地算錯而不報錯。
+     * ═══════════════════════════════════════════════════════════════ */
 
-    // ===== 各月明細分頁 =====
-    for (const md of monthData) {
+    // 由新到舊。monthsInRange 給的是由舊到新。
+    const cols = [...monthData].reverse();
+    const SUM = (rs: Row[], f: (r: Row) => boolean) =>
+      Math.round(rs.filter(f).reduce((a, r) => a + Number(r.month_amount), 0));
+    /** 一列:標籤 + 每月金額 + 合計 */
+    const line = (label: string, f: (r: Row) => boolean, st: any, indent = '') => {
+      const vals = cols.map((md) => SUM(md.rows, f));
+      return [T(indent + label, st), ...vals.map((v) => T(v, st)), T(vals.reduce((a, b) => a + b, 0), st)];
+    };
+    const blank = (n: number) => Array(n).fill(T('', {}));
+    const headRow = (first: string) =>
+      [T(first, stHead), ...cols.map((md) => T(md.ym, stHead)), T('合計', stHead)];
+    const nC = cols.length + 2;   // 標籤 + 各月 + 合計
+
+    // 三段的歸屬與骨架都走 lib/revenue-report —— 那支有測試(revenue-report.test.ts),
+    // 釘住「三段相加等於總營收」與「骨架取所有月份的聯集」這兩件事。
+    const allRows = monthData.flatMap((md) => md.rows);
+    const sk = skeleton(allRows, eSort);
+
+    // ===== 分頁1:營收總表 =====
+    {
+      const A: any[][] = [];
+      A.push([T('營收總表', stTitle), ...blank(nC - 1)]);
+      A.push([T(`${fromM} ~ ${toM}・月份由新到舊`, stSub), ...blank(nC - 1)]);
+      // 三段相加對不上總營收就把差額寫在最上面。
+      // 正常情況這一列不存在 —— 出現了就代表有來源沒被任何一段收進去。
+      const bad = reconcile(allRows);
+      if (bad) {
+        A.push([T(`⚠ 對帳不符:總營收 ${bad.total},三段相加 ${bad.parts},差 ${bad.diff}`,
+          { font: { bold: true, color: { rgb: 'C00000' } } }), ...blank(nC - 1)]);
+      }
+      A.push(headRow('項目'));
+
+      // ── 依營收分類 ──
+      A.push([T('【依營收分類】', stGroup), ...Array(nC - 1).fill(T('', stGroup))]);
+      A.push(line('Airbnb', (r) => r.source === 'airbnb', stCell, '　'));
+      A.push(line('Agoda', (r) => r.source === 'agoda', stCell, '　'));
+      A.push(line('私下', (r) => r.source === 'private', stCell, '　'));
+      // 短租 = 那三個平台的小計。搭檔收款(partner)在寫入認列時已經歸到 airbnb。
+      A.push(line('短租小計', (r) => SHORT_SOURCES.includes(r.source), stSubtotal, '　'));
+      A.push(line('長租', (r) => r.source === 'longterm', stCell, '　'));
+      A.push(line('一次性費用', (r) => r.source === 'oneoff', stCell, '　'));
+      A.push(line('辦公室租金', isOffice, stCell, '　'));
+      A.push(line('公司登記', isCompany, stCell, '　'));
+      A.push(line('其他', (r) => r.source === 'other', stCell, '　'));
+      A.push(line('總營收', () => true, stTotal));
+      A.push(blank(nC));
+
+      // ── 依物業(不含辦公室與公司登記)──
+      A.push([T('【依物業】不含辦公室出租與公司登記', stGroup), ...Array(nC - 1).fill(T('', stGroup))]);
+      sk.estates.forEach((e) => A.push(line(e, (r) => inEstateBlock(r) && estateOf(r) === e, stCell, '　')));
+      A.push(line('物業小計', inEstateBlock, stSubtotal));
+      A.push(blank(nC));
+
+      // ── 辦公室出租 ──
+      A.push([T('【辦公室出租】不掛物業房源', stGroup), ...Array(nC - 1).fill(T('', stGroup))]);
+      sk.offices.forEach((g) => A.push(line(g, (r) => isOffice(r) && guestOf(r) === g, stCell, '　')));
+      A.push(line('辦公室小計', isOffice, stSubtotal));
+      A.push(blank(nC));
+
+      // ── 公司登記 ──
+      A.push([T('【公司登記】不掛物業房源', stGroup), ...Array(nC - 1).fill(T('', stGroup))]);
+      sk.companies.forEach((g) => A.push(line(g, (r) => isCompany(r) && guestOf(r) === g, stCell, '　')));
+      A.push(line('公司登記小計', isCompany, stSubtotal));
+      A.push(blank(nC));
+
+      // 收尾再放一次總營收:上面兩個分法各自加總都要等於它。
+      // 對不起來就代表有列被漏掉,不用另外寫檢查程式。
+      A.push(line('總營收', () => true, stTotal));
+
+      const ws = XLSX.utils.aoa_to_sheet(A);
+      ws['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: nC - 1 } },
+        { s: { r: 1, c: 0 }, e: { r: 1, c: nC - 1 } },
+      ];
+      ws['!cols'] = [{ wch: 30 }, ...cols.map(() => ({ wch: 13 })), { wch: 14 }];
+      // 標籤欄與表頭凍住 —— 月份多的時候橫向捲動,不凍會不知道自己在看哪一列。
+      // ySplit 要跟著算,對帳警告列出現時表頭會往下移一格。
+      ws['!freeze'] = { xSplit: 1, ySplit: bad ? 4 : 3 };
+      XLSX.utils.book_append_sheet(wb, ws, '營收總表');
+    }
+
+    // ===== 分頁2:房源月報 =====
+    {
+      const A: any[][] = [];
+      A.push([T('房源月報', stTitle), ...blank(nC + 1)]);
+      A.push([T(`${fromM} ~ ${toM}・月份由新到舊`, stSub), ...blank(nC + 1)]);
+      A.push([T('物業', stHead), T('房源', stHead), T('分類', stHead),
+        ...cols.map((md) => T(md.ym, stHead)), T('合計', stHead)]);
+
+      const nC2 = cols.length + 4;
+      const line3 = (a: string, b: string, c: string, f: (r: Row) => boolean, st: any) => {
+        const vals = cols.map((md) => SUM(md.rows, f));
+        return [T(a, st), T(b, st), T(c, st), ...vals.map((v) => T(v, st)), T(vals.reduce((x, y) => x + y, 0), st)];
+      };
+
+      A.push([T('【依房源】不含辦公室出租與公司登記', stGroup), ...Array(nC2 - 1).fill(T('', stGroup))]);
+      for (const e of sk.estates) {
+        const inEstate = (r: Row) => inEstateBlock(r) && estateOf(r) === e;
+        // 列的粒度是 房源 × 分類 —— 一間房同一個月可能同時有長租與一次性,
+        // 合成一列就看不出組成。roomLines 有測試釘住這件事。
+        const lines = roomLines(allRows, e).sort((x, y) => {
+          const kx = roomKey(x.room), ky = roomKey(y.room);
+          return kx[0] - ky[0] || (kx[1] < ky[1] ? -1 : kx[1] > ky[1] ? 1 : 0)
+            || x.cls.localeCompare(y.cls);
+        });
+        for (const { room, cls } of lines) {
+          A.push(line3(e, room, cls,
+            (r) => inEstate(r) && roomOf(r) === room && classOf(r) === cls, stCell));
+        }
+        A.push(line3(`${e} 小計`, '', '', inEstate, stSubtotal));
+      }
+      A.push(line3('物業小計', '', '', inEstateBlock, stSubtotal));
+      A.push(blank(nC2));
+
+      A.push([T('【辦公室出租】不掛房源', stGroup), ...Array(nC2 - 1).fill(T('', stGroup))]);
+      Array.from(new Set(allRows.filter(isOffice).map((r) => r.guest_name ?? '未填客戶'))).sort()
+        .forEach((g) => A.push(line3('', '', g, (r) => isOffice(r) && (r.guest_name ?? '未填客戶') === g, stCell)));
+      A.push(line3('辦公室小計', '', '', isOffice, stSubtotal));
+      A.push(blank(nC2));
+
+      A.push([T('【公司登記】不掛房源', stGroup), ...Array(nC2 - 1).fill(T('', stGroup))]);
+      Array.from(new Set(allRows.filter(isCompany).map((r) => r.guest_name ?? '未填客戶'))).sort()
+        .forEach((g) => A.push(line3('', '', g, (r) => isCompany(r) && (r.guest_name ?? '未填客戶') === g, stCell)));
+      A.push(line3('公司登記小計', '', '', isCompany, stSubtotal));
+      A.push(blank(nC2));
+
+      A.push(line3('總營收', '', '', () => true, stTotal));
+
+      const ws = XLSX.utils.aoa_to_sheet(A);
+      ws['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: nC2 - 1 } },
+        { s: { r: 1, c: 0 }, e: { r: 1, c: nC2 - 1 } },
+      ];
+      ws['!cols'] = [{ wch: 14 }, { wch: 14 }, { wch: 10 }, ...cols.map(() => ({ wch: 13 })), { wch: 14 }];
+      ws['!freeze'] = { xSplit: 3, ySplit: 3 };
+      XLSX.utils.book_append_sheet(wb, ws, '房源月報');
+    }
+
+    // ===== 各月明細分頁(由新到舊,跟上面兩張表一致)=====
+    for (const md of cols) {
       const ms = `${md.y}-${String(md.m).padStart(2, '0')}-01`;
       const lastDay = new Date(Date.UTC(md.m === 12 ? md.y + 1 : md.y, md.m === 12 ? 0 : md.m, 0)).getUTCDate();
       const me = new Date(Date.UTC(md.m === 12 ? md.y + 1 : md.y, md.m === 12 ? 0 : md.m, 1)).toISOString().slice(0, 10);
