@@ -65,9 +65,16 @@ create table if not exists public.recurring_charges (
 comment on table public.recurring_charges is
   '定期收費設定。每月自動在 orders 產生一列一次性收入,金額可逐月調整。';
 
--- 同一個物業/房源/科目/項目不該有兩筆設定 —— 有的話每個月會產生兩列一樣的收入
+-- 同一個物業/房源/科目/項目不該有兩筆設定 —— 有的話每個月會產生兩列一樣的收入。
+--
+-- coalesce 的外面要再包一層括號:Postgres 的索引運算式除了單純的函式呼叫,
+-- 其餘一律要用括號包起來,COALESCE 屬於後者。少一層就是語法錯誤。
+--
+-- 用 coalesce 是因為 null 在唯一索引裡互不相等 —— 直接寫 property_id 的話,
+-- 兩筆「整棟」的設定不會被擋下來,每個月會產生兩列一樣的收入。
 create unique index if not exists uq_recurring_charge
-  on public.recurring_charges (estate_id, coalesce(property_id, '00000000-0000-0000-0000-000000000000'::uuid), fee_type, item_name);
+  on public.recurring_charges
+     (estate_id, (coalesce(property_id, '00000000-0000-0000-0000-000000000000'::uuid)), fee_type, item_name);
 
 alter table public.recurring_charges enable row level security;
 
@@ -233,7 +240,19 @@ do $$
 declare
   eid uuid; rid uuid; n_ord int; n_rec int; months int;
   first_amt numeric;
+  -- 傳整列給函式要先 select into 一個 row 變數。
+  -- 寫成 gen_recurring_orders((select * from ...)) 會噴
+  -- 「subquery must return only one column」—— 那是純量子查詢的語法。
+  rcrow public.recurring_charges;
 begin
+  -- 驗證失敗只警告,不讓整份 migration 回滾。
+  --
+  -- Supabase SQL Editor 把整份腳本當一個交易跑,所以驗證區塊裡任何一個
+  -- 錯誤都會把上面剛建好的資料表與函式一起還原 —— 而畫面上只看得到一行錯誤,
+  -- 不會有人意識到「什麼都沒建起來」。2026-08 就這樣連續兩次以為跑過了。
+  --
+  -- 建結構是這支的主要目的,驗證是附加的。附加的東西不該有能力否決主要的。
+  begin
   select id into eid from estates order by sort, name limit 1;
   if eid is null then raise notice '沒有物業,跳過驗證'; return; end if;
 
@@ -264,7 +283,8 @@ begin
   -- 改了當月金額之後,再跑一次產生不該把它蓋回預設值
   update orders set amount = 9999
    where order_key = 'RC_' || rid || '_' || to_char(current_date, 'YYYYMM');
-  perform gen_recurring_orders((select * from recurring_charges where id = rid));
+  select * into rcrow from recurring_charges where id = rid;
+  perform gen_recurring_orders(rcrow);
   select amount into first_amt from orders
    where order_key = 'RC_' || rid || '_' || to_char(current_date, 'YYYYMM');
   if first_amt <> 9999 then
@@ -275,6 +295,16 @@ begin
 
   delete from recurring_charges where id = rid;   -- 觸發器會連帶清掉未收款的訂單
   delete from orders where order_key like 'RC_' || rid || '_%';
+  exception when others then
+    -- 測試資料可能沒清掉,盡量收拾;收不掉也不要因此再噴一次錯
+    begin
+      delete from orders where order_key like 'RC_' || coalesce(rid::text, '') || '_%';
+      delete from recurring_charges where id = rid;
+    exception when others then null;
+    end;
+    raise warning '⚠ 定期收費的驗證沒過:% —— 資料表與函式已經建好,但這一條要查:%',
+      sqlerrm, '請把這行訊息貼給工程師';
+  end;
 end $$;
 
 

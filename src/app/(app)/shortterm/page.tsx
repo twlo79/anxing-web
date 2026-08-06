@@ -144,7 +144,26 @@ export default function ShortTermPage() {
     setAgg(all);
   }, [supabase, src, kw, estF, fromD, toD]);
   useEffect(() => { loadAgg(); }, [loadAgg]);
-  function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 2500); }
+  /**
+   * 提示訊息。
+   *
+   * 【為什麼要分成功與失敗】
+   * 原本不管什麼訊息都用綠色、2.5 秒後消失 —— 包含資料庫回傳的錯誤。
+   * 2026-08 遇到:訂單存不進去,使用者只看到「按了沒反應」,
+   * 錯誤訊息用綠色一閃而過,沒人來得及看清楚,更不可能複製下來回報。
+   * （實際原因是程式推上去了但 migration 沒跑,少了一個欄位。）
+   *
+   * 失敗要紅色、要停久一點、而且要能點掉。錯誤訊息是拿來讀的,不是拿來閃的。
+   *
+   * 靠內容判斷而不是多一個參數 —— 現有的呼叫點都寫成「…失敗:」,
+   * 改參數要動十幾處,漏一處就又變成綠色的錯誤訊息。
+   */
+  const [msgErr, setMsgErr] = useState(false);
+  function flash(t: string) {
+    const bad = /失敗|錯誤|不能|無法/.test(t);
+    setMsg(t); setMsgErr(bad);
+    setTimeout(() => setMsg(''), bad ? 15000 : 2500);
+  }
 
   // 匯出 Excel:輸出「目前篩選 + 排序後」的結果,與畫面所見一致。
   //
@@ -315,7 +334,12 @@ export default function ShortTermPage() {
     <div>
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-xl font-bold">短租訂單與收款 <span className="text-sm font-normal text-gray-400">Airbnb・Agoda・私下・一次性</span></h1>
-        {msg && <span className="text-sm text-mor-green font-medium">{msg}</span>}
+        {msg && (msgErr
+          ? <button onClick={() => setMsg('')} title="點一下關閉"
+              className="text-sm text-left rounded-lg bg-red-50 text-red-700 border border-red-200 px-3 py-1.5 font-medium max-w-2xl">
+              {msg}
+            </button>
+          : <span className="text-sm text-mor-green font-medium">{msg}</span>)}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-4 items-stretch">

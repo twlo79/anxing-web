@@ -83,9 +83,18 @@ export default function ContractsPage() {
     setLoading(true);
     const { data } = await supabase.from('contracts').select('*, estates(name)').order('room');
     setRows((data as any) ?? []);
-    const { data: lts } = await supabase.from('orders').select('property_raw, amount, paid').in('source', ['longterm', 'company', 'office']).eq('checkin', curFirst);
+    /*
+     * 本月應收:**用 contract_id 當鍵,不用房號。**
+     *
+     * 原本是 m[o.property_raw] —— 沒有房號的契約(公司登記、辦公室租金)
+     * 在 `if (o.property_raw)` 就被整筆跳過,列表的「收租」欄永遠顯示「—」,
+     * 看起來像這張契約本月沒有應收,實際上月租單好好地在那裡。
+     *
+     * contract_id 是契約產生月租單時一定會寫的,而且不受房號改名或刪除影響。
+     */
+    const { data: lts } = await supabase.from('orders').select('contract_id, amount, paid').in('source', ['longterm', 'company', 'office']).eq('checkin', curFirst);
     const m: Record<string, { amount: number; paid: boolean }> = {};
-    (lts ?? []).forEach((o: any) => { if (o.property_raw) m[o.property_raw] = { amount: Number(o.amount || 0), paid: !!o.paid }; });
+    (lts ?? []).forEach((o: any) => { if (o.contract_id) m[o.contract_id] = { amount: Number(o.amount || 0), paid: !!o.paid }; });
     setCurLT(m);
     // 跨月欠款:本月之前已到期但仍未收的月租單(本月未收另計,兩者不重疊)
     const { data: ovd } = await supabase.from('orders')
@@ -131,13 +140,15 @@ export default function ContractsPage() {
     return sortRows(out, sort, SORT_COLS);
   }, [rows, estateFilter, cadFilter, typeFilter, statusFilter, fromD, toD, kw, sort]);
   const activeCount = useMemo(() => filtered.filter((r) => r.active).length, [filtered]);
-  const monthAR = useMemo(() => filtered.filter((r) => r.active).reduce((s, r) => s + (curLT[r.room ?? '']?.amount ?? 0), 0), [filtered, curLT]);
-  const monthPaid = useMemo(() => filtered.filter((r) => r.active).reduce((s, r) => s + (curLT[r.room ?? '']?.paid ? (curLT[r.room ?? ''].amount) : 0), 0), [filtered, curLT]);
+  const monthAR = useMemo(() => filtered.filter((r) => r.active).reduce((s, r) => s + (curLT[r.id]?.amount ?? 0), 0), [filtered, curLT]);
+  const monthPaid = useMemo(() => filtered.filter((r) => r.active).reduce((s, r) => s + (curLT[r.id]?.paid ? curLT[r.id].amount : 0), 0), [filtered, curLT]);
   const roomLists = useMemo(() => {
     const rk = (x: string) => { const m = String(x || '').match(/^(\d+)/); return [m ? parseInt(m[1]) : 999, String(x || '')] as [number, string]; };
     const cmp = (a: { room: string }, b: { room: string }) => { const ka = rk(a.room), kb = rk(b.room); return ka[0] - kb[0] || (ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0); };
     const paid: { room: string; label: string }[] = [], unpaid: { room: string; label: string }[] = [];
-    filtered.filter((r) => r.active && r.watch).forEach((r) => { const lt = curLT[r.room ?? '']; if (!lt) return; const it = { room: r.room ?? '', label: (r.display_name || r.room || '') as string }; (lt.paid ? paid : unpaid).push(it); });
+    // label 依序退回 顯示名稱 → 房號 → 租戶 —— 三個都空的話會是一個看不見的項目,
+    // 使用者只會看到清單裡多了一個空白列而不知道那是什麼。沒有房號的契約靠租戶名認。
+    filtered.filter((r) => r.active && r.watch).forEach((r) => { const lt = curLT[r.id]; if (!lt) return; const it = { room: r.room ?? '', label: (r.display_name || r.room || r.tenant_name || '(未命名契約)') as string }; (lt.paid ? paid : unpaid).push(it); });
     return { paid: paid.sort(cmp), unpaid: unpaid.sort(cmp) };
   }, [filtered, curLT]);
 
@@ -508,7 +519,14 @@ export default function ContractsPage() {
                 <td className="px-3 py-2 text-right">{(() => { const step = STEP_OF[c.cadence] || 1; const per = c.amount_per_period || (c.monthly_rent || 0) * step; const mo = Math.round(per / step); return (<><div className="font-medium">${fmt(per)}</div><div className="text-xs text-gray-400">{CAD_LABEL[c.cadence] ?? c.cadence}・月 ${fmt(mo)}</div></>); })()}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-500">{c.start_date ?? '—'} ~ {c.end_date ?? '—'}</td>
                 <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
-                  {(() => { const lt = curLT[c.room ?? '']; if (!lt) return <span className="text-xs text-gray-300" title="本月無應收(缺租期或不在租期內)">—</span>; return <button onClick={() => setCollect(c)} title="點擊開啟收款" className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${lt.paid ? 'bg-mor-greenlight text-mor-green' : 'bg-orange-50 text-orange-600'}`}>{lt.paid ? '本月已收' : '本月未收'}</button>; })()}
+                  {(() => {
+                    const lt = curLT[c.id];
+                    if (!lt) return <span className="text-xs text-gray-300" title="本月無應收(缺租期、不在租期內,或月租金是空的)">—</span>;
+                    // 月繳講「本月」,季繳/半年繳/年繳講「本期」—— 那些繳別是整期一起確認收款的,
+                    // 對他們說「本月」會讓人以為只收了其中一個月。
+                    const unit = c.cadence === 'monthly' ? '本月' : '本期';
+                    return <button onClick={() => setCollect(c)} title="點擊開啟收款" className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${lt.paid ? 'bg-mor-greenlight text-mor-green' : 'bg-orange-50 text-orange-600'}`}>{unit}{lt.paid ? '已收' : '未收'}</button>;
+                  })()}
                 </td>
                 <td className="px-3 py-2 text-right whitespace-nowrap space-x-2" onClick={(e) => e.stopPropagation()}>
                   <button onClick={() => togglePin(c)} title={c.watch ? '已關注(顯示於已收/未收清單)' : '關注收租(釘選)'} className={`text-xs ${c.watch ? 'text-amber-500' : 'text-gray-300 hover:text-amber-400'}`}>{c.watch ? '★' : '☆'}</button>
