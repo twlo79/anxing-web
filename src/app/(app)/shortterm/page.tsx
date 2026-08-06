@@ -3,11 +3,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, type SortState } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
+import { FEE_TYPES } from '@/lib/fee-types';
 
 type Order = {
   id: string; order_key: string; source: string; estate_id: string | null; property_id?: string | null; property_raw: string | null;
   guest_name: string | null; checkin: string; checkout: string; nights: number;
   amount: number; deposit: number | null; account: string | null; note: string | null;
+  /** 一次性收入的會計科目。只有 source='oneoff' 用得到,其餘一律 null。 */
+  fee_type?: string | null;
   // 【已淘汰】押金收退改由 deposits 表管理(migration_56),這裡不再讀寫
   fx_revenue?: { cur: string; amt: number; rate: number }[];
   fx_deposit?: { cur: string; amt: number }[];
@@ -206,7 +209,11 @@ export default function ShortTermPage() {
     if (!edit) return;
     const co = edit.source === 'oneoff' ? (edit.checkout || edit.checkin) : edit.checkout;
     const nights = (edit.checkin && co) ? Math.max(0, Math.round((new Date(co).getTime() - new Date(edit.checkin).getTime()) / 86400000)) : 0;
-    const payload = { source: edit.source, estate_id: edit.estate_id, property_id: edit.property_id ?? null, property_raw: edit.property_raw, guest_name: edit.guest_name, checkin: edit.checkin || null, checkout: co || null, nights, amount: (twdBase || 0) + revFxTwd, deposit: edit.deposit, account: edit.account, note: edit.note, fx_revenue: fxRev.filter((l) => l.cur && l.amt), fx_deposit: fxDep.filter((l) => l.cur && l.amt) };
+    const payload = { source: edit.source, estate_id: edit.estate_id, property_id: edit.property_id ?? null, property_raw: edit.property_raw, guest_name: edit.guest_name, checkin: edit.checkin || null, checkout: co || null, nights, amount: (twdBase || 0) + revFxTwd, deposit: edit.deposit, account: edit.account, note: edit.note,
+      // 只有一次性收入有會計科目。其他來源一律寫 null,不要留著切換來源前選的值 ——
+      // 那會讓一筆 Airbnb 訂單帶著「水費」這種科目跑進營收報表。
+      fee_type: edit.source === 'oneoff' ? (edit.fee_type || null) : null,
+      fx_revenue: fxRev.filter((l) => l.cur && l.amt), fx_deposit: fxDep.filter((l) => l.cur && l.amt) };
     let orderId = edit.id;
     if (edit.id) {
       const { error } = await supabase.from('orders').update(payload).eq('id', edit.id);
@@ -478,11 +485,62 @@ export default function ShortTermPage() {
             <div className="px-6 py-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
               <label className="flex flex-col gap-1">來源<select value={edit.source} onChange={(e) => setEdit({ ...edit, source: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5">{Array.from(new Set([...(edit.id ? [edit.source] : []), ...MANUAL_SRC])).map((s) => <option key={s} value={s}>{SRC_LABEL[s] ?? s}</option>)}</select></label>
               <label className="flex flex-col gap-1">物業<select value={edit.estate_id ?? ''} onChange={(e) => setEdit({ ...edit, estate_id: e.target.value || null, property_raw: null, property_id: null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option>{estates.map((es) => <option key={es.id} value={es.id}>{es.name}{es.active ? '' : '(停用)'}</option>)}</select></label>
-              <label className="flex flex-col gap-1">房源<select value={edit.property_raw ?? ''} onChange={(e) => { const nm = e.target.value; const pr = properties.find((x) => x.estate_id === edit.estate_id && x.name === nm); setEdit({ ...edit, property_raw: nm || null, property_id: pr?.id ?? null }); }} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option>{properties.filter((x) => x.estate_id === edit.estate_id).map((x) => <option key={x.id} value={x.name}>{x.name}</option>)}</select></label>
+              {/*
+                房源非必填。
+
+                原本這裡只列「已選物業底下的房源」,所以物業還沒選時整個下拉是空的 ——
+                看起來像不能選。一次性收費常常是先知道房號才想起是哪個物業
+                （取消預訂、賠償、修繕代收都是這樣),順序被綁死很難用。
+
+                改成:沒選物業就列出全部(標上物業名),選了房源自動把物業補上。
+
+                【留白 = 整棟】
+                空值不是「還沒填」,是明確的意思:這筆錢算在整個物業上,不歸任何一間房。
+                公共區域清潔、整棟修繕、管理費分攤都是這種。
+                所以空的那個選項寫「整棟」而不是「—」—— 寫「—」的話,
+                看的人分不出是刻意留白還是漏填,報表上也解讀不了。
+              */}
+              <label className="flex flex-col gap-1">
+                房源<span className="text-xs text-gray-400 ml-1">(非必填)</span>
+                <select value={edit.property_raw ?? ''}
+                  onChange={(e) => {
+                    const nm = e.target.value;
+                    if (!nm) return setEdit({ ...edit, property_raw: null, property_id: null });
+                    // 選了房源就以它為準,連帶把物業補上 —— 兩者不一致的資料最難查
+                    const pool = edit.estate_id ? properties.filter((x) => x.estate_id === edit.estate_id) : properties;
+                    const pr = pool.find((x) => x.name === nm);
+                    setEdit({ ...edit, property_raw: nm, property_id: pr?.id ?? null, estate_id: pr?.estate_id ?? edit.estate_id });
+                  }}
+                  className="rounded-lg border border-gray-300 px-2 py-1.5">
+                  <option value="">{edit.estate_id ? '整棟(不指定房源)' : '整棟／尚未指定'}</option>
+                  {(edit.estate_id ? properties.filter((x) => x.estate_id === edit.estate_id) : properties)
+                    .map((x) => (
+                      <option key={x.id} value={x.name}>
+                        {x.name}{!edit.estate_id && estates.find((es) => es.id === x.estate_id)
+                          ? `（${estates.find((es) => es.id === x.estate_id)!.name}）` : ''}
+                      </option>
+                    ))}
+                </select>
+              </label>
               <label className="flex flex-col gap-1">客戶<input value={edit.guest_name ?? ''} onChange={(e) => setEdit({ ...edit, guest_name: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">{edit.source === 'oneoff' ? '日期(認列月份)' : '起日'}<input type="date" value={edit.checkin} onChange={(e) => setEdit({ ...edit, checkin: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               {edit.source !== 'oneoff' && <label className="flex flex-col gap-1">迄日<input type="date" value={edit.checkout} onChange={(e) => setEdit({ ...edit, checkout: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>}
               <label className="flex flex-col gap-1">{edit.source === 'oneoff' ? '金額' : '訂單總額(台幣)'}<input type="number" value={twdBase} onChange={(e) => setTwdBase(parseFloat(e.target.value) || 0)} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+              {/*
+                一次性收入的會計科目。清單跟契約加費、短租加費共用(@/lib/fee-types)。
+
+                這一欄以前不存在 —— 取消預定之類的只能記成「其他」再把說明寫進備註,
+                營收報表按 fee_type 分組時全部擠在同一格,看不出組成。
+              */}
+              {edit.source === 'oneoff' && (
+                <label className="flex flex-col gap-1">會計科目
+                  <select value={edit.fee_type ?? ''} onChange={(e) => setEdit({ ...edit, fee_type: e.target.value || null })}
+                    className="rounded-lg border border-gray-300 px-2 py-1.5">
+                    <option value="">—</option>
+                    {FEE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </label>
+              )}
               {edit.source !== 'oneoff' && <label className="flex flex-col gap-1">押金(台幣)<input type="number" value={edit.deposit ?? ''} onChange={(e) => setEdit({ ...edit, deposit: e.target.value ? parseFloat(e.target.value) : 0 })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>}
               {edit.source !== 'oneoff' && (
                 <div className="col-span-2 border-t border-mor-line pt-2">
@@ -541,7 +599,7 @@ export default function ShortTermPage() {
                     {fees.map((f, i) => (
                       <div key={i} className="flex flex-wrap items-center gap-2 bg-mor-sand/30 rounded-lg px-2 py-2">
                         <input type="date" value={f.date} onChange={(e) => updFee(i, { date: e.target.value })} className="rounded border border-gray-300 px-2 py-1 text-xs" />
-                        <select value={f.type} onChange={(e) => updFee(i, { type: e.target.value })} className="rounded border border-gray-300 px-2 py-1 text-xs"><option value="清潔費">清潔費</option><option value="修繕費">修繕費</option><option value="其他">其他</option></select>
+                        <select value={f.type} onChange={(e) => updFee(i, { type: e.target.value })} className="rounded border border-gray-300 px-2 py-1 text-xs">{FEE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}</select>
                         <input type="number" value={f.amount} onChange={(e) => updFee(i, { amount: parseFloat(e.target.value) || 0 })} placeholder="費用" className="rounded border border-gray-300 px-2 py-1 text-xs w-24" />
                         <input value={f.note} onChange={(e) => updFee(i, { note: e.target.value })} placeholder="備註" className="rounded border border-gray-300 px-2 py-1 text-xs flex-1 min-w-[6rem]" />
                         <button type="button" onClick={() => delFee(i)} className="text-xs text-red-500 underline">刪除</button>

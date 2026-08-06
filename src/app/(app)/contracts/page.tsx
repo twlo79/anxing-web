@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FilterBar, FilterSelect, FilterDateRange, FilterSearch, FilterClear, FilterCount } from '@/lib/filters';
 import { createClient } from '@/lib/supabase';
+import { FEE_TYPES } from '@/lib/fee-types';
 import { onlyLtOf } from '@/lib/ltKey';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import * as XLSX from 'xlsx-js-style';
@@ -28,7 +29,7 @@ const CAD_LABEL: Record<string, string> = { monthly: '月繳', quarterly: '季�
 const TYPE_LABEL: Record<string, string> = { longterm: '長租', company: '公司登記', office: '辦公室' };
 const STEP_OF: Record<string, number> = { monthly: 1, quarterly: 3, halfyear: 6, yearly: 12 };
 const TYPE_SRC: Record<string, string> = { longterm: 'longterm', company: 'company', office: 'office' };
-const FEE_TYPES = ['水費', '電費', '網路費', '瓦斯費', '管理費', '清潔費', '修繕費', '其他'];
+// FEE_TYPES 的定義搬到 @/lib/fee-types —— 契約加費、短租加費、一次性收入共用一份
 const fmt = (n: number | null) => (n == null ? '' : Math.round(n).toLocaleString());
 
 // 表頭排序:key 對應欄位型別與取值。租金一律換算成「每期租金」比較,

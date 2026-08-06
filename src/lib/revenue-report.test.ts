@@ -2,7 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   type RevRow, sum, classOf, skeleton, roomLines, reconcile,
-  inEstateBlock, isOffice, isCompany, estateOf,
+  inEstateBlock, isOffice, isCompany, estateOf, ROOM_NONE,
 } from './revenue-report.ts';
 
 /**
@@ -123,8 +123,9 @@ describe('房源分類', () => {
     assert.deepEqual(lines.map((l) => l.cls).sort(), ['一次性', '長租']);
   });
 
-  test('房號沒填的歸到「未指定房源」,不能整筆不見', () => {
+  test('房號空白要單獨成一列,不能整筆不見', () => {
+    // 空白有兩種意思:刻意算在整棟上,或真的漏填。分不出來,所以兩個都寫。
     const lines = roomLines([r({ property_raw: null, month_amount: 5 })], '時兆');
-    assert.deepEqual(lines, [{ room: '未指定房源', cls: '短租' }]);
+    assert.deepEqual(lines, [{ room: ROOM_NONE, cls: '短租' }]);
   });
 });
