@@ -929,8 +929,19 @@ export default function DepositsPage() {
                   {refundChip(edit)}
                 </div>
 
+                {/*
+                  分支順序很重要:**已退款一定要排在已核可前面**。
+                  錢匯出去之後 refund_status 仍然是 'approved' —— 那一欄記的是「審過了」,
+                  不是「還在等」。反過來排的話,一筆早就退完的押金會顯示「等待匯款」。
+                */}
                 {!edit.received_on ? (
                   <div className="text-xs text-gray-400">還沒收到押金,先填收款資訊。</div>
+                ) : edit.returned_on ? (
+                  <div className="text-xs text-gray-500">
+                    已於 {edit.returned_on} 退還・
+                    {edit.returned_method ? METHOD_LABEL[edit.returned_method] : ''}
+                    {edit.returned_account ? `・${acctName[edit.returned_account] ?? edit.returned_account}` : ''}
+                  </div>
                 ) : edit.refund_status === 'approved' ? (
                   /* 核可後鎖住。錢要出去了,改收款帳號等於繞過審核 —— 要改就先駁回。 */
                   <div className="space-y-1 text-xs text-gray-600">
@@ -943,12 +954,6 @@ export default function DepositsPage() {
                       我方出款:{edit.returned_method ? METHOD_LABEL[edit.returned_method] : '—'}
                       {edit.returned_account ? `・${acctName[edit.returned_account] ?? edit.returned_account}` : ''}
                     </div>
-                  </div>
-                ) : edit.returned_on ? (
-                  <div className="text-xs text-gray-500">
-                    已於 {edit.returned_on} 退還・
-                    {edit.returned_method ? METHOD_LABEL[edit.returned_method] : ''}
-                    {edit.returned_account ? `・${acctName[edit.returned_account] ?? edit.returned_account}` : ''}
                   </div>
                 ) : (
                   <>

@@ -838,9 +838,11 @@ export default function PurchasesPage() {
         T('押金退款', stCell),
         T('', stCell),                                        // 押金沒有單號
         T(d.refund_requested_by ? personName[d.refund_requested_by] ?? '' : '', stCell),
-        T(d.refund_status === 'approved' ? '已核可' : '待核可', stCell),
-        T('', stCell),                                        // 沒有送出日欄位
-        T('', stCell),                                        // 已匯出的不會出現在這份清單
+        // 已退款要排在已核可前面 —— 退款後 refund_status 仍然是 approved
+        T(d.returned_on ? '已退款' : d.refund_status === 'approved' ? '已核可' : '待核可', stCell),
+        T('', stCell),                                        // 押金沒有送出日欄位
+        // 「採購日」這一欄對請款單來說是實際出款日,押金的對應欄位就是退款日
+        T(d.returned_on ?? '', stCell),
         T(`押金退還・${d.guest_name ?? ''}`.trim(), stCell),
         T(Math.round(Number(d.amount) || 0), stNum),
         // 會計科目留空是對的:押金是代收款,退還它不是公司的費用,不該掛任何費用科目。
@@ -1513,9 +1515,19 @@ export default function PurchasesPage() {
                 {d.refund_status === 'rejected' && d.reject_reason && (
                   <div className="rounded-lg bg-red-50 text-red-600 px-3 py-2 text-xs">駁回原因:{d.reject_reason}</div>
                 )}
-                {d.refund_status === 'approved' && (
+                {/*
+                  錢已經匯出去之後 refund_status 仍然是 'approved' —— 它記的是「審過了」,
+                  不是「還在等」。只看它就會對一筆早就退完的押金說「等待匯款」。
+                  紅線一律是 returned_on,這一頁其他地方也都是用它判斷。
+                */}
+                {d.refund_status === 'approved' && !d.returned_on && (
                   <div className="rounded-lg bg-mor-greenlight text-mor-green px-3 py-2 text-xs">
                     已核可,等待匯款。在這裡改內容會清掉核可票、退回重新送審。
+                  </div>
+                )}
+                {d.returned_on && (
+                  <div className="rounded-lg bg-gray-100 text-gray-500 px-3 py-2 text-xs">
+                    這筆押金已經退還完畢,內容不能再修改。
                   </div>
                 )}
 
