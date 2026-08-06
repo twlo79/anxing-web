@@ -427,7 +427,7 @@ export default function ExpensesPage() {
 
       {/* 表單 */}
       {edit && (
-        <div className="fixed inset-0 bg-black/30 flex items-start justify-center overflow-auto py-10 z-50" onClick={() => setEdit(null)}>
+        <div className="fixed inset-0 bg-black/30 flex items-start justify-center overflow-auto py-10 z-50">
           <div className="bg-white rounded-xl w-[560px] max-w-[94vw] shadow-xl" onClick={(e) => e.stopPropagation()}>
             <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 font-bold flex items-center justify-between">
               {edit.id ? '編輯支出' : '填寫支出'}

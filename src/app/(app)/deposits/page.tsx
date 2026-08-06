@@ -813,7 +813,7 @@ export default function DepositsPage() {
 
       {/* 駁回 */}
       {rejecting && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setRejecting(null)}>
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl w-[420px] max-w-[92vw] shadow-xl" onClick={(e) => e.stopPropagation()}>
             <div className="border-b border-mor-line px-6 py-4 font-bold">駁回退款・{rejecting.room ?? ''}</div>
             <div className="p-6 text-sm space-y-2">
@@ -831,8 +831,7 @@ export default function DepositsPage() {
 
       {/* 管理押金 */}
       {edit && (
-        <div className="fixed inset-0 bg-black/30 flex items-stretch md:items-start justify-center overflow-auto md:py-10 z-50"
-          onClick={() => setEdit(null)}>
+        <div className="fixed inset-0 bg-black/30 flex items-stretch md:items-start justify-center overflow-auto md:py-10 z-50">
           <div className="bg-white w-full md:w-[560px] md:max-w-[95vw] md:rounded-xl shadow-xl min-h-full md:min-h-0"
             onClick={(e) => e.stopPropagation()}>
             <div className="sticky top-0 bg-white border-b border-mor-line px-4 md:px-6 py-4 font-bold flex items-center justify-between z-10"

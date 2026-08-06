@@ -1463,8 +1463,7 @@ export default function PurchasesPage() {
           </div>
         );
         return (
-          <div className="fixed inset-0 bg-black/30 flex items-stretch md:items-start justify-center overflow-auto md:py-10 z-50"
-            onClick={() => setDepDetail(null)}>
+          <div className="fixed inset-0 bg-black/30 flex items-stretch md:items-start justify-center overflow-auto md:py-10 z-50">
             <div className="bg-white w-full md:w-[560px] md:max-w-[95vw] md:rounded-xl shadow-xl min-h-full md:min-h-0"
               onClick={(e) => e.stopPropagation()}>
               <div className="sticky top-0 bg-white border-b border-mor-line px-4 md:px-6 py-4 font-bold flex items-center justify-between z-10"
@@ -1580,7 +1579,7 @@ export default function PurchasesPage() {
 
       {/* 押金駁回 */}
       {depRejecting && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => setDepRejecting(null)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/30" />
           <div onClick={(e) => e.stopPropagation()} className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm p-6">
             <div className="font-bold mb-1">駁回押金退款</div>
@@ -1721,7 +1720,7 @@ export default function PurchasesPage() {
         const editingApproved = !readOnly && (edit.status === 'pending' || edit.status === 'approved');
         // 手機:整頁式(貼齊上下邊)。桌機:置中對話框
         return (
-          <div className="fixed inset-0 bg-black/30 flex items-stretch md:items-start justify-center overflow-auto md:py-10 z-50" onClick={() => setEdit(null)}>
+          <div className="fixed inset-0 bg-black/30 flex items-stretch md:items-start justify-center overflow-auto md:py-10 z-50">
             <div className="bg-white w-full md:w-[760px] md:max-w-[95vw] md:rounded-xl shadow-xl min-h-full md:min-h-0" onClick={(e) => e.stopPropagation()}>
               <div className="sticky top-0 bg-white border-b border-mor-line px-4 md:px-6 py-4 font-bold flex items-center justify-between z-10"
                 style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
@@ -1954,7 +1953,7 @@ export default function PurchasesPage() {
 
       {/* 駁回 */}
       {rejecting && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setRejecting(null)}>
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl w-[420px] max-w-[92vw] shadow-xl" onClick={(e) => e.stopPropagation()}>
             <div className="border-b border-mor-line px-6 py-4 font-bold">駁回 {rejecting.req_no}</div>
             <div className="p-6 text-sm space-y-2">
@@ -1972,7 +1971,7 @@ export default function PurchasesPage() {
 
       {/* 採購日 */}
       {dating && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setDating(null)}>
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl w-[420px] max-w-[92vw] shadow-xl" onClick={(e) => e.stopPropagation()}>
             <div className="border-b border-mor-line px-6 py-4 font-bold">{dating.purchased_on ? `修改${dateWord(dating.payment_method)}` : `確認${dateWord(dating.payment_method)}`} · {dating.req_no}</div>
             <div className="p-6 text-sm space-y-2">
@@ -2010,7 +2009,7 @@ export default function PurchasesPage() {
 
       {/* 排匯款:只寫計畫,不產生支出 */}
       {planning && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setPlanning(null)}>
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl w-[420px] max-w-[92vw] shadow-xl" onClick={(e) => e.stopPropagation()}>
             <div className="border-b border-mor-line px-6 py-4 font-bold">
               {planning.planned_transfer_on ? '修改付款計畫' : `排${dateWord(planning.payment_method)}`} · {planning.req_no}

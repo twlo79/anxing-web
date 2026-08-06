@@ -284,7 +284,7 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
 
       {/* 設定視窗 */}
       {edit && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => setEdit(null)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/30" />
           <div onClick={(e) => e.stopPropagation()} className="relative bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[85vh] overflow-y-auto">
             <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 font-bold flex items-center justify-between">

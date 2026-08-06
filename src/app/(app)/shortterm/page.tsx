@@ -535,7 +535,7 @@ export default function ShortTermPage() {
       })()}
 
       {edit && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => setEdit(null)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/30" />
           <div onClick={(e) => e.stopPropagation()} className="relative bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[85vh] overflow-y-auto">
             <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 font-bold flex items-center justify-between">{edit.id ? '編輯訂單' : '新增訂單(私下/一次性)'}<button onClick={() => setEdit(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button></div>
@@ -582,7 +582,7 @@ export default function ShortTermPage() {
               <label className="flex flex-col gap-1">客戶<input value={edit.guest_name ?? ''} onChange={(e) => setEdit({ ...edit, guest_name: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">{edit.source === 'oneoff' ? '日期(認列月份)' : '起日'}<input type="date" value={edit.checkin} onChange={(e) => setEdit({ ...edit, checkin: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               {edit.source !== 'oneoff' && <label className="flex flex-col gap-1">迄日<input type="date" value={edit.checkout} onChange={(e) => setEdit({ ...edit, checkout: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>}
-              <label className="flex flex-col gap-1">{edit.source === 'oneoff' ? '金額' : '訂單總額(台幣)'}<input type="number" value={twdBase} onChange={(e) => setTwdBase(parseFloat(e.target.value) || 0)} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+              <label className="flex flex-col gap-1">{edit.source === 'oneoff' ? '金額' : '訂單總額(台幣)'}<input type="number" value={twdBase || ''} placeholder="0" onChange={(e) => setTwdBase(parseFloat(e.target.value) || 0)} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               {/*
                 一次性收入的會計科目。清單跟契約加費、短租加費共用(@/lib/fee-types)。
 
@@ -624,9 +624,9 @@ export default function ShortTermPage() {
                   {fxRev.map((l, i) => (
                     <div key={i} className="flex flex-wrap items-center gap-2 mb-1">
                       <input value={l.cur} onChange={(e) => updFxRev(i, { cur: e.target.value.toUpperCase() })} placeholder="幣別" className="rounded border border-gray-300 px-2 py-1 text-xs w-16" />
-                      <input type="number" value={l.amt} onChange={(e) => updFxRev(i, { amt: parseFloat(e.target.value) || 0 })} placeholder="金額" className="rounded border border-gray-300 px-2 py-1 text-xs w-24" />
+                      <input type="number" value={l.amt || ''} onChange={(e) => updFxRev(i, { amt: parseFloat(e.target.value) || 0 })} placeholder="金額" className="rounded border border-gray-300 px-2 py-1 text-xs w-24" />
                       <span className="text-xs text-gray-400">× 匯率</span>
-                      <input type="number" value={l.rate} onChange={(e) => updFxRev(i, { rate: parseFloat(e.target.value) || 0 })} placeholder="匯率" className="rounded border border-gray-300 px-2 py-1 text-xs w-20" />
+                      <input type="number" value={l.rate || ''} onChange={(e) => updFxRev(i, { rate: parseFloat(e.target.value) || 0 })} placeholder="匯率" className="rounded border border-gray-300 px-2 py-1 text-xs w-20" />
                       <span className="text-xs text-gray-600">= ${fmt((Number(l.amt) || 0) * (Number(l.rate) || 0))}</span>
                       <button type="button" onClick={() => delFxRev(i)} className="text-xs text-red-500 underline">刪除</button>
                     </div>
@@ -653,7 +653,7 @@ export default function ShortTermPage() {
                   {fxDep.map((l, i) => (
                     <div key={i} className="flex flex-wrap items-center gap-2 mb-1">
                       <input value={l.cur} onChange={(e) => updFxDep(i, { cur: e.target.value.toUpperCase() })} placeholder="幣別" className="rounded border border-gray-300 px-2 py-1 text-xs w-16" />
-                      <input type="number" value={l.amt} onChange={(e) => updFxDep(i, { amt: parseFloat(e.target.value) || 0 })} placeholder="金額" className="rounded border border-gray-300 px-2 py-1 text-xs w-24" />
+                      <input type="number" value={l.amt || ''} onChange={(e) => updFxDep(i, { amt: parseFloat(e.target.value) || 0 })} placeholder="金額" className="rounded border border-gray-300 px-2 py-1 text-xs w-24" />
                       <button type="button" onClick={() => delFxDep(i)} className="text-xs text-red-500 underline">刪除</button>
                     </div>
                   ))}
@@ -673,7 +673,7 @@ export default function ShortTermPage() {
                       <div key={i} className="flex flex-wrap items-center gap-2 bg-mor-sand/30 rounded-lg px-2 py-2">
                         <input type="date" value={f.date} onChange={(e) => updFee(i, { date: e.target.value })} className="rounded border border-gray-300 px-2 py-1 text-xs" />
                         <select value={f.type} onChange={(e) => updFee(i, { type: e.target.value })} className="rounded border border-gray-300 px-2 py-1 text-xs">{FEE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}</select>
-                        <input type="number" value={f.amount} onChange={(e) => updFee(i, { amount: parseFloat(e.target.value) || 0 })} placeholder="費用" className="rounded border border-gray-300 px-2 py-1 text-xs w-24" />
+                        <input type="number" value={f.amount || ''} onChange={(e) => updFee(i, { amount: parseFloat(e.target.value) || 0 })} placeholder="費用" className="rounded border border-gray-300 px-2 py-1 text-xs w-24" />
                         <input value={f.note} onChange={(e) => updFee(i, { note: e.target.value })} placeholder="備註" className="rounded border border-gray-300 px-2 py-1 text-xs flex-1 min-w-[6rem]" />
                         <button type="button" onClick={() => delFee(i)} className="text-xs text-red-500 underline">刪除</button>
                       </div>
@@ -694,7 +694,7 @@ export default function ShortTermPage() {
         const segs = moveWithAmounts(move);
         const err = moveErr(move);
         return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => setMove(null)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/30" />
           <div onClick={(e) => e.stopPropagation()} className="relative bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[85vh] overflow-y-auto">
             <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 font-bold flex items-center justify-between">移房 · {move.guest ?? ''}<button onClick={() => setMove(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button></div>

@@ -607,7 +607,7 @@ export default function ContractsPage() {
 
       {collect && <CollectModal contract={collect} onClose={() => { setCollect(null); load(); }} supabase={supabase} />}
       {edit && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => setEdit(null)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/30" />
           <div onClick={(e) => e.stopPropagation()} className="relative bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[85vh] overflow-y-auto">
             <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 font-bold flex items-center justify-between">
@@ -708,10 +708,10 @@ export default function ContractsPage() {
                     <label className="flex flex-col gap-0.5 text-xs text-gray-500">追加月數
                       <input type="number" min={1} value={ext.months} onChange={(e) => { const m = e.target.value; const mn = parseInt(m) || 0; const mo = parseFloat(ext.monthly) || 0; setExt({ months: m, monthly: ext.monthly, total: mo && mn ? String(mo * mn) : ext.total }); }} className="w-24 rounded-lg border border-gray-300 px-2 py-1.5" /></label>
                     <label className="flex flex-col gap-0.5 text-xs text-gray-500">月租金
-                      <input type="number" value={ext.monthly} onChange={(e) => { const v = e.target.value; const mn = parseInt(ext.months) || 0; const mo = parseFloat(v) || 0; setExt({ months: ext.months, monthly: v, total: mn ? String(mo * mn) : '' }); }} className="w-28 rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+                      <input type="number" value={ext.monthly || ''} placeholder="0" onChange={(e) => { const v = e.target.value; const mn = parseInt(ext.months) || 0; const mo = parseFloat(v) || 0; setExt({ months: ext.months, monthly: v, total: mn ? String(mo * mn) : '' }); }} className="w-28 rounded-lg border border-gray-300 px-2 py-1.5" /></label>
                     <span className="pb-2 text-gray-400">或</span>
                     <label className="flex flex-col gap-0.5 text-xs text-gray-500">總共租金
-                      <input type="number" value={ext.total} onChange={(e) => { const v = e.target.value; const mn = parseInt(ext.months) || 0; const tt = parseFloat(v) || 0; setExt({ months: ext.months, total: v, monthly: mn ? String(Math.round(tt / mn)) : '' }); }} className="w-32 rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+                      <input type="number" value={ext.total || ''} placeholder="0" onChange={(e) => { const v = e.target.value; const mn = parseInt(ext.months) || 0; const tt = parseFloat(v) || 0; setExt({ months: ext.months, total: v, monthly: mn ? String(Math.round(tt / mn)) : '' }); }} className="w-32 rounded-lg border border-gray-300 px-2 py-1.5" /></label>
                     <button type="button" onClick={doExtend} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark">展延</button>
                   </div>
                   <div className="text-[11px] text-gray-400 mt-1">目前租期迄 {edit.end_date || '—'}・月租金與總共租金擇一輸入,另一個自動換算(月租金 × 月數 = 總共租金)。展延後租期迄自動延後。</div>
