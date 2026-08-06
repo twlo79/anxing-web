@@ -801,10 +801,70 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
     });
   }
 
+  const keysOf = (chunk: any[]) => chunk.map((mm) => `LT_${c.room}_${mm.ym}`);
+  const ordersOf = (chunk: any[]) => keysOf(chunk).map((k) => existing[k]).filter(Boolean);
+
+  /**
+   * 這一期記的金額跟契約現在的月租對不對得起來。
+   *
+   * 【為什麼會對不起來】
+   * gen_contract_orders 的 upsert 有 `and orders.paid = false` ——
+   * 已收款的月份不覆蓋。那個保護是對的:錢收了之後金額是既成事實,
+   * 不該被後來的編輯無聲改掉(改了會連帶重算已認列的營收)。
+   *
+   * 但代價是「契約改了、已收的期別沒跟上」完全看不出來 ——
+   * 2026-08 就遇到:契約月租從 117 改成 1470,已收的 12 期還是照 117 顯示,
+   * 畫面上沒有任何跡象。所以這裡把差額標出來,並給一個明確的重算動作。
+   */
+  function periodMismatch(chunk: any[]) {
+    const rent = Math.round(Number(c.monthly_rent) || 0);
+    if (!rent) return null;
+    const os = ordersOf(chunk);
+    if (!os.length) return null;
+    const now = os.reduce((a: number, o: any) => a + Math.round(Number(o.amount) || 0), 0);
+    const expect = os.length * rent;
+    if (now === expect) return null;
+    return { now, expect, months: os.length, rent, paidCount: os.filter((o: any) => o.paid).length };
+  }
+
+  /**
+   * 重算這一期的應收:金額改成契約現值,已收款的退回「未收」。
+   *
+   * **收款日刻意保留。** 退回未收之後使用者要重按「確認收款」,
+   * 而確認收款預設會填今天 —— 12 期一路重按下去,原本 2023 年的收款日會全部變成今天。
+   * 所以這裡只動 paid,不碰 paid_at;重按時也沿用既有的日期(見 setPeriodPaid)。
+   */
+  async function rebuildPeriod(chunk: any[]) {
+    const m = periodMismatch(chunk);
+    if (!m) return;
+    const diff = m.expect - m.now;
+    if (!confirm(
+      `重算這一期的應收\n\n`
+      + `契約現值　${m.months} 個月 × $${fmt(m.rent)} = $${fmt(m.expect)}\n`
+      + `目前記的　$${fmt(m.now)}\n`
+      + `差額　　　${diff > 0 ? '+' : ''}$${fmt(diff)}\n\n`
+      + (m.paidCount
+        ? `其中 ${m.paidCount} 個月已收款,會退回「未收」並保留原收款日,\n請確認金額後重新按「確認收款」。\n\n`
+        : '')
+      + `這幾個月的已認列營收會跟著重算,營收報表的數字會變。`
+    )) return;
+    setBusy(chunk[0].ym);
+    const keys = keysOf(chunk);
+    patchLocal(keys, { amount: m.rent, paid: false });
+    const { error } = await supabase.from('orders')
+      .update({ amount: m.rent, paid: false })   // paid_at 不動
+      .in('order_key', keys);
+    setBusy('');
+    if (error) { alert('重算失敗:' + error.message); loadExisting(false); }
+  }
+
   async function setPeriodPaid(chunk: any[], v: boolean) {
     setBusy(chunk[0].ym);
     const keys = chunk.map((mm) => `LT_${c.room}_${mm.ym}`);
-    const paidAt = v ? today() : null;
+    // 已經有收款日就沿用,不要覆蓋成今天 ——
+    // 「重算應收」會把已收的期別退回未收但留著日期,重按確認時要拿得回來。
+    const kept = ordersOf(chunk).find((o: any) => o?.paid_at)?.paid_at;
+    const paidAt = v ? (kept ?? today()) : null;
     // 先更新畫面,再寫資料庫 —— 按下去立刻有反應,不用等網路來回
     patchLocal(keys, { paid: v, paid_at: paidAt });
     const { error } = await supabase.from('orders').update({ paid: v, paid_at: paidAt }).in('order_key', keys);
@@ -983,6 +1043,22 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
               <span className="text-xs text-gray-400">收退狀態請到「押金管理」頁</span>
             </div>
           )}
+          {/*
+            首繳日不在租期內。
+
+            每一期的「應繳 X 月 X 日」是從 first_payment_date 往後推算的,
+            那個欄位跟租期是分開存的 —— 改了租期沒改首繳日,應繳日就會整排落在
+            幾年前,而畫面上不會有任何跡象(2026-08 就遇到:租期 2026-06 起,
+            應繳日卻顯示 2023/6/6)。這裡直接講出來。
+          */}
+          {c.first_payment_date && c.start_date && c.end_date
+            && (c.first_payment_date < c.start_date || c.first_payment_date > c.end_date) && (
+            <div className="mb-3 rounded-lg bg-amber-50 text-amber-800 px-3 py-2 text-xs">
+              首繳日 <b>{c.first_payment_date}</b> 不在租期 {c.start_date} ~ {c.end_date} 內 ——
+              底下每一期的「應繳日」都是從首繳日往後推的,所以會跟著偏掉。
+              請到編輯視窗修正首繳日。
+            </div>
+          )}
           <div className="text-xs font-semibold text-gray-500 mb-2">收款({CAD_LABEL[c.cadence]},每期確認)</div>
           {!c.start_date || !c.end_date ? <div className="text-center text-orange-600 py-8 text-sm">此契約缺租期,請先編輯補上起訖日</div>
           : loading ? <div className="text-center text-gray-400 py-8">載入中…</div>
@@ -1010,6 +1086,18 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
                           <span className="ml-1 text-gray-400">（原 ${fmt(amount)} − 折讓 ${fmt(discTotal)}）</span>
                         )}
                       </div>
+                      {(() => {
+                        const m = periodMismatch(chunk);
+                        if (!m) return null;
+                        return (
+                          <div className="mt-1 rounded-lg bg-amber-50 text-amber-800 px-2 py-1 text-[11px] leading-relaxed">
+                            與契約不符：契約現值 {m.months} × ${fmt(m.rent)} = <b>${fmt(m.expect)}</b>，這一期記的是 ${fmt(m.now)}
+                            {m.paidCount > 0 && <span className="text-amber-700/70">（{m.paidCount} 個月已收款，所以沒有自動更新）</span>}
+                            <button onClick={() => rebuildPeriod(chunk)} disabled={!!busy}
+                              className="ml-2 underline font-medium hover:text-amber-900 disabled:opacity-40">重算應收</button>
+                          </div>
+                        );
+                      })()}
                     </div>
                     {os.length > 0 && (allPaid
                       ? <div className="flex items-center gap-1.5">
@@ -1076,6 +1164,17 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
                     <div>
                       <div className="font-medium"><span className="rounded bg-mor-bluelight text-mor-blue px-1.5 py-0.5 text-[10px]">延展</span> <span className="text-mor-blue">第 {j + 1} 期</span> <span className="text-gray-700">{mm.label}</span></div>
                       <div className="text-xs text-gray-500">應收 ${fmt(amount)}</div>
+                      {(() => {
+                        const m = periodMismatch(chunk);
+                        if (!m) return null;
+                        return (
+                          <div className="mt-1 rounded-lg bg-amber-50 text-amber-800 px-2 py-1 text-[11px]">
+                            與契約不符：應為 ${fmt(m.expect)}
+                            <button onClick={() => rebuildPeriod(chunk)} disabled={!!busy}
+                              className="ml-2 underline font-medium disabled:opacity-40">重算應收</button>
+                          </div>
+                        );
+                      })()}
                     </div>
                     {o && (paid
                       ? <div className="flex items-center gap-1.5">
