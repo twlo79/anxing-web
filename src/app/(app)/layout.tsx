@@ -8,16 +8,23 @@ const ROLE_LABEL: Record<string, string> = {
   housekeeper: '一般', accountant: '會計', manager: '主管', super_admin: '總經理',
 };
 
+/*
+ * 側邊選單。**順序就是使用頻率**,不是功能分類 ——
+ * 每天要用的排前面,設定類的沉底。改順序前先想「誰一天會點幾次」。
+ *
+ * 名稱刻意短。原本叫「短租訂單與收款」「契約訂單與收款」,
+ * 兩個十個字的項目擺在一起,實際要分辨的只有前兩個字。
+ */
 const NAV = [
-  { href: '/shortterm', label: '短租訂單與收款', icon: '🏨', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
-  { href: '/contracts', label: '契約訂單與收款', icon: '📋', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
-  { href: '/dashboard', label: '財務儀表板', icon: '📊', roles: ['accountant', 'manager', 'super_admin'] },
-  { href: '/revenues', label: '營收報表', icon: '💰', roles: ['accountant', 'manager', 'super_admin'] },
-  { href: '/purchases', label: '請款填寫', icon: '🧾', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
-  { href: '/expenses', label: '支出', icon: '📒', roles: ['accountant', 'manager', 'super_admin'] },
+  { href: '/shortterm', label: '訂單 | 收入', icon: '🏨', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/contracts', label: '契約 | 收入', icon: '📋', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/revenues', label: '營收表', icon: '💰', roles: ['accountant', 'manager', 'super_admin'] },
+  { href: '/purchases', label: '請款單控管', icon: '🧾', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/deposits', label: '押金管理', icon: '🔐', roles: ['accountant', 'manager', 'super_admin'] },
+  { href: '/expenses', label: '支出明細', icon: '📒', roles: ['accountant', 'manager', 'super_admin'] },
+  { href: '/dashboard', label: '財務儀錶板', icon: '📊', roles: ['accountant', 'manager', 'super_admin'] },
   { href: '/housekeeping', label: '房務管理', icon: '🛏️', roles: ['manager', 'super_admin'] },
-  { href: '/reviews', label: '評價', icon: '⭐', roles: ['housekeeper', 'manager', 'super_admin'] },
+  { href: '/reviews', label: '房源評價', icon: '⭐', roles: ['housekeeper', 'manager', 'super_admin'] },
   { href: '/cleaning', label: '清潔記錄', icon: '🧹', roles: ['housekeeper', 'manager', 'super_admin'] },
   { href: '/admin', label: '權限管理', icon: '⚙️', roles: ['super_admin'] },
 ];
@@ -52,11 +59,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const navList = (
     <nav className="flex-1 py-3 overflow-y-auto">
       {items.map((n) => (
+        // 15px 而不是 14px。側邊欄是整天盯著的東西,而且中文在小字級下
+        // 筆畫會糊在一起 —— 拉丁字母在 14px 還很清楚,中文不是。
         <Link key={n.href} href={n.href}
-          className={`flex items-center gap-3 px-5 py-3 md:py-2.5 text-sm font-medium ${
+          className={`flex items-center gap-3 px-5 py-3 md:py-2.5 text-[15px] font-medium ${
             pathname.startsWith(n.href) ? 'bg-mor-slate text-white' : 'text-gray-700 hover:bg-gray-100'
           }`}>
-          <span>{n.icon}</span>{n.label}
+          <span className="text-base leading-none">{n.icon}</span>{n.label}
         </Link>
       ))}
     </nav>
