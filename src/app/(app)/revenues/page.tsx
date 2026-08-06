@@ -109,7 +109,8 @@ export default function RevenuesPage() {
 
   const filtered = useMemo(() => rows.filter((r) => {
     if (estateFilter && (r.estate_name ?? '無') !== estateFilter) return false;
-    if (roomFilter && (r.property_raw ?? '') !== roomFilter) return false;
+    // 房源篩選只作用在物業段。辦公室與公司登記不掛房源,選了房號就不該出現
+    if (roomFilter && (isOffice(r) || isCompany(r) || (r.property_raw ?? '') !== roomFilter)) return false;
     if (sourceFilter && r.source !== sourceFilter) return false;
     if (kw) { const s = `${r.guest_name ?? ''}${r.property_raw ?? ''}${r.estate_name ?? ''}`; if (!s.includes(kw)) return false; }
     return true;
@@ -143,6 +144,8 @@ export default function RevenuesPage() {
   // 否則 200 多間全部列出來根本找不到。
   const roomOptions = useMemo(() => Array.from(new Set(
     rows.filter((r) => !estateFilter || (r.estate_name ?? '無') === estateFilter)
+        // 辦公室與公司登記的房號不列進下拉 —— 表格上不顯示,篩選卻篩得到會很奇怪
+        .filter((r) => !isOffice(r) && !isCompany(r))
         .map((r) => r.property_raw ?? '').filter(Boolean)
   )).sort(), [rows, estateFilter]);
 
@@ -409,8 +412,15 @@ export default function RevenuesPage() {
             .sort((a, b) => itemLabel(a).localeCompare(itemLabel(b))
               || (a.checkin ?? '').localeCompare(b.checkin ?? ''));
           rr.forEach((r) => S.push(detail(r, e, room, itemLabel(r))));
-          // 只有一列時不加小計 —— 同一個數字寫兩遍只是雜訊
-          if (rr.length > 1) S.push(sub(`　↑ ${room} 小計`, rr, stCell));
+          /*
+           * 不做房源小計。
+           *
+           * 一間房兩三筆的小計沒有回答任何問題 —— 兩個數字加起來心算就有了,
+           * 而插進來的那一列會把明細切碎:掃過去看短租週轉時,視線每兩三列就被打斷一次。
+           *
+           * 真正要看「各房源多少錢」的時候,篩選房源或用樞紐分析比小計列好用,
+           * 因為那能跨月比較,小計列只有當月。
+           */
         }
         S.push(sub(`↑ ${e} 小計`, grp, stSubtotal));
         S.push(mblank(MC));
@@ -569,9 +579,20 @@ export default function RevenuesPage() {
             : filtered.length === 0 ? <tr><td colSpan={9} className="px-4 py-10 text-center text-gray-400">此期間無認列營收</td></tr>
             : pageRows.map((r) => (
               <tr key={r.order_id} className="border-b border-mor-line/60 hover:bg-mor-bluelight/30">
-                <td className="px-3 py-2 whitespace-nowrap"><span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${SOURCE_COLOR[r.source]}`}>{r.source === 'oneoff' ? `一次性·${r.fee_type ?? '其他'}` : (SOURCE_LABEL[r.source] ?? r.source)}</span></td>
+                <td className="px-3 py-2 whitespace-nowrap"><span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${SOURCE_COLOR[r.source]}`}>{r.source === 'oneoff' ? `${ONEOFF_LABEL}・${oneoffLabel(r)}` : (SOURCE_LABEL[r.source] ?? r.source)}</span></td>
                 <td className="px-3 py-2 whitespace-nowrap">{r.estate_name ?? '—'}</td>
-                <td className="px-3 py-2 whitespace-nowrap">{r.property_raw ?? '—'}</td>
+                {/*
+                  辦公室出租與公司登記不顯示房源。
+
+                  資料上 property_raw 是有值的 —— 契約產生月租單時會帶 contracts.room,
+                  而那些契約確實填了房號(公司登記在 2F-28)。那個資訊本身有用,
+                  所以不清資料,只是不在營收報表上顯示。
+
+                  理由:這兩類不是租金收入,報表上依物業房源分組時它們本來就不參與
+                  (見 lib/revenue-report 的三段分法)。顯示房號會讓人以為
+                  「這間房這個月有這筆收入」,然後拿去跟房源營收對帳,對不起來。
+                */}
+                <td className="px-3 py-2 whitespace-nowrap">{isOffice(r) || isCompany(r) ? '—' : (r.property_raw ?? '—')}</td>
                 <td className="px-3 py-2 whitespace-nowrap">{r.guest_name ?? '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-500 text-xs">{orderRange(r)}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-500 text-xs">{recogRange(r)}</td>
