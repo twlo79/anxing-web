@@ -4,6 +4,11 @@ import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
 import { ymOf, ymShow, ymMonth, monthsAgo, todayStr, fmtRange } from '@/lib/period';
 import { FilterBar, FilterSelect, FilterDateRange, FilterClear } from '@/lib/filters';
+import { srcLabel } from '@/lib/revenue-report';
+import {
+  type PeriodMode, yearRange, monthRange, prevPeriod, lastYearPeriod,
+  yoySameAsPrev, growth, partialMonth,
+} from '@/lib/compare';
 
 /**
  * 財務儀表板。
@@ -39,11 +44,11 @@ type Estate = { id: string; name: string };
 type Property = { id: string; name: string; estate_id: string | null };
 type Code = { code: string; name: string };
 type Pending = { total_amount: number; planned_transfer_on: string | null };
+/** 比較期的彙總。只留要對比的幾個數字,不用把整批列拉回來。 */
+type Cmp = { rev: number; exp: number; ordN: number; bySource: Record<string, number> };
 
-const SRC_LABEL: Record<string, string> = {
-  airbnb: 'Airbnb', agoda: 'Agoda', longterm: '長租', private: '私下',
-  oneoff: '一次性收費', partner: '搭檔收款', airbnb_cancelled: 'Airbnb 取消',
-};
+// 來源標籤改用 @/lib/revenue-report 的 SOURCE_LABEL ——
+// 這裡原本自己寫一份,漏了 office 與 company,畫面上就直接吐英文鍵出來。
 // 顏色跟系統其他頁一致，讓「藍=一般、綠=好、紅=要注意」這組語言在全站通用
 const SRC_COLOR: Record<string, string> = {
   airbnb: '#41689B', agoda: '#4E96D1', longterm: '#3FAE7C', private: '#8FB98A',
@@ -83,6 +88,29 @@ export default function DashboardPage() {
   const [toD, setToD] = useState(todayStr());
   const [estF, setEstF] = useState('');
   const [propF, setPropF] = useState('');
+  /*
+   * 期間模式。年/月只是「產生 fromD/toD 的捷徑」,底層仍然是同一組起訖日 ——
+   * 所有查詢與圖表都不用知道模式的存在。
+   *
+   * 預設 custom + 近 12 個月:一年的區間才看得出季節性,那是短租最重要的形狀。
+   */
+  const [mode, setMode] = useState<PeriodMode>('custom');
+  const [yearSel, setYearSel] = useState(new Date().getFullYear());
+  const [monthSel, setMonthSel] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
+  /** 比較用的兩組數字。環比=上一期,同比=去年同期。 */
+  const [cmp, setCmp] = useState<{ prev: Cmp; yoy: Cmp } | null>(null);
+
+  function applyMode(m: PeriodMode, y = yearSel, ym = monthSel) {
+    setMode(m);
+    if (m === 'year') { const [f, t] = yearRange(y); setFromD(f); setToD(t); }
+    else if (m === 'month') {
+      const [f, t] = monthRange(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)));
+      setFromD(f); setToD(t);
+    }
+  }
 
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data: { user } }) => {
@@ -91,6 +119,19 @@ export default function DashboardPage() {
       setRole(data?.role ?? null);
     });
   }, [supabase, router]);
+
+  // ── 物業/房源篩選在前端做（資料已按期間縮小）──────
+  // 認列與支出的 estate_id 有機會是空的（訂單本身沒歸物業，或匯入時漏帶）。
+  // 那種列若直接排除，物業視角的營收就會憑空少一塊而且不會有人發現 ——
+  // 所以 estate_id 空的時候用 property_id 回推它屬於哪個物業。
+  const estateOfProp = useMemo(
+    () => Object.fromEntries(properties.map((p) => [p.id, p.estate_id])), [properties]);
+
+  const matchScope = useCallback((estate_id: string | null, property_id: string | null) => {
+    if (propF) return property_id === propF;
+    if (estF) return (estate_id ?? (property_id ? estateOfProp[property_id] : null)) === estF;
+    return true;
+  }, [estF, propF, estateOfProp]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -125,8 +166,44 @@ export default function DashboardPage() {
     setProperties((pr.data ?? []) as Property[]);
     setCodes((cd.data ?? []) as Code[]);
     setPending((pd.data ?? []) as Pending[]);
+
+    /*
+     * 比較期。環比(上一期)與同比(去年同期)各撈一次。
+     *
+     * 為什麼分開查而不是拉一個大區間再切:2026-08 對 2025-08 中間隔了 11 個月,
+     * 一次撈會把不需要的月份全部拉回來。分開查各自有界,而且平行跑不會比較慢。
+     *
+     * 物業/房源篩選在這裡就套用 —— 比較期跟當期不同範圍的話,成長率是假的。
+     */
+    const [pf, pt] = prevPeriod(mode, fromD, toD);
+    const [yf, yt] = lastYearPeriod(mode, fromD, toD);
+    const fetchCmp = async (f: string, t: string): Promise<Cmp> => {
+      const [r1, e1, o1] = await Promise.all([
+        supabase.from('revenue_recognitions')
+          .select('ym, source, estate_id, property_id, month_amount')
+          .gte('ym', ymOf(f)).lte('ym', ymOf(t)),
+        supabase.from('expenses').select('amount, estate_id, property_id')
+          .gte('spent_on', f).lte('spent_on', t),
+        supabase.from('orders').select('estate_id, property_id')
+          .gte('checkin', f).lte('checkin', t),
+      ]);
+      const rr = ((r1.data ?? []) as any[]).filter((x) => matchScope(x.estate_id, x.property_id));
+      const ee = ((e1.data ?? []) as any[]).filter((x) => matchScope(x.estate_id, x.property_id));
+      const oo = ((o1.data ?? []) as any[]).filter((x) => matchScope(x.estate_id, x.property_id));
+      const bySource: Record<string, number> = {};
+      rr.forEach((x) => { bySource[x.source] = (bySource[x.source] ?? 0) + Number(x.month_amount || 0); });
+      return {
+        rev: rr.reduce((a, x) => a + Number(x.month_amount || 0), 0),
+        exp: ee.reduce((a, x) => a + Number(x.amount || 0), 0),
+        ordN: oo.length,
+        bySource,
+      };
+    };
+    const [prevC, yoyC] = await Promise.all([fetchCmp(pf, pt), fetchCmp(yf, yt)]);
+    setCmp({ prev: prevC, yoy: yoyC });
+
     setLoading(false);
-  }, [supabase, fromD, toD]);
+  }, [supabase, fromD, toD, mode, matchScope]);
 
   useEffect(() => { if (role) load(); }, [role, load]);
 
@@ -142,18 +219,6 @@ export default function DashboardPage() {
   const propsOfEstate = useMemo(
     () => properties.filter((p) => !estF || p.estate_id === estF), [properties, estF]);
 
-  // ── 物業/房源篩選在前端做（資料已按期間縮小）──────
-  // 認列與支出的 estate_id 有機會是空的（訂單本身沒歸物業，或匯入時漏帶）。
-  // 那種列若直接排除，物業視角的營收就會憑空少一塊而且不會有人發現 ——
-  // 所以 estate_id 空的時候用 property_id 回推它屬於哪個物業。
-  const estateOfProp = useMemo(
-    () => Object.fromEntries(properties.map((p) => [p.id, p.estate_id])), [properties]);
-
-  const matchScope = useCallback((estate_id: string | null, property_id: string | null) => {
-    if (propF) return property_id === propF;
-    if (estF) return (estate_id ?? (property_id ? estateOfProp[property_id] : null)) === estF;
-    return true;
-  }, [estF, propF, estateOfProp]);
 
   const fRevs = useMemo(() => revs.filter((r) => matchScope(r.estate_id, r.property_id)), [revs, matchScope]);
   const fExps = useMemo(() => exps.filter((e) => matchScope(e.estate_id, e.property_id)), [exps, matchScope]);
@@ -293,13 +358,48 @@ export default function DashboardPage() {
       {/* 版型比照短租訂單頁（lib/filters）。這頁沒有關鍵字搜尋,
           所以清除直接接在最後一個欄位後面。 */}
       <FilterBar right={<span className="text-xs text-gray-400 pb-1.5">{fmtRange(fromD, toD)}</span>}>
-        <FilterDateRange label="期間" from={fromD} to={toD} onFrom={setFromD} onTo={setToD}
-          quick={[
-            { label: '本月', from: monthsAgo(0), to: todayStr() },
-            { label: '近 3 月', from: monthsAgo(2), to: todayStr() },
-            { label: '近 6 月', from: monthsAgo(5), to: todayStr() },
-            { label: '近 12 月', from: monthsAgo(11), to: todayStr() },
-          ]} />
+        {/*
+          期間分三種模式,不是四顆「往回推 N 個月」的快捷鍵。
+
+          原本的「本月／近3月／近6月／近12月」都是同一種東西 —— 從今天往回推。
+          沒有一個能回答「2025 整年多少」或「單看去年 3 月」,
+          而那正是要做年度回顧或抓某個月異常時最常問的。
+        */}
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">期間</label>
+          <div className="flex items-center gap-1">
+            {([['year', '年'], ['month', '月'], ['custom', '自訂']] as const).map(([m, lb]) => (
+              <button key={m} onClick={() => applyMode(m)}
+                className={`rounded-lg border px-2.5 py-1.5 text-xs ${
+                  mode === m ? 'bg-mor-slate text-white border-mor-slate'
+                    : 'border-gray-300 hover:bg-mor-sand/60'}`}>{lb}</button>
+            ))}
+            {mode === 'year' && (
+              <select value={yearSel}
+                onChange={(e) => { const y = Number(e.target.value); setYearSel(y); applyMode('year', y); }}
+                className="rounded-lg border border-gray-300 px-2 py-1.5 ml-1">
+                {Array.from({ length: 6 }, (_, i) => new Date().getFullYear() - i)
+                  .map((y) => <option key={y} value={y}>{y} 年</option>)}
+              </select>
+            )}
+            {mode === 'month' && (
+              <input type="month" value={monthSel}
+                onChange={(e) => { setMonthSel(e.target.value); applyMode('month', yearSel, e.target.value); }}
+                className="rounded-lg border border-gray-300 px-2 py-1.5 ml-1" />
+            )}
+            {mode === 'custom' && (
+              <>
+                <input type="date" value={fromD} onChange={(e) => setFromD(e.target.value)}
+                  className="rounded-lg border border-gray-300 px-2 py-1.5 ml-1" />
+                <span className="text-gray-400">~</span>
+                <input type="date" value={toD} onChange={(e) => setToD(e.target.value)}
+                  className="rounded-lg border border-gray-300 px-2 py-1.5" />
+                <button onClick={() => { setFromD(monthsAgo(11)); setToD(todayStr()); }}
+                  className="rounded-lg border border-gray-300 px-2 py-1.5 text-xs hover:bg-mor-sand/60">近 12 月</button>
+              </>
+            )}
+          </div>
+        </div>
         <FilterSelect label="物業" value={estF} onChange={pickEstate}
           options={estates.map((e) => ({ value: e.id, label: e.name }))} />
         <FilterSelect label="房源" value={propF} onChange={setPropF}
@@ -322,6 +422,106 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {/* ═══ 環比與同比 ═══
+        兩個一起看,少一個都會誤判:
+          環比(比上一期) 看短期動能
+          同比(比去年同期) 避開季節性 —— 短租淡旺季差很多,
+                          八月比七月掉 20% 可能完全正常,
+                          但比去年八月掉 20% 就是真的在退。
+      */}
+      {cmp && (() => {
+        const part = partialMonth(toD);
+        const sameYoY = yoySameAsPrev(mode);
+        const [pf, pt] = prevPeriod(mode, fromD, toD);
+        const [yf, yt] = lastYearPeriod(mode, fromD, toD);
+        const label = (f: string, t: string) =>
+          mode === 'month' ? f.slice(0, 7) : mode === 'year' ? f.slice(0, 4) + ' 年' : `${f} ~ ${t}`;
+
+        /** ▲ 12.4% / ▼ 3.1% / — 。比較期是 0 時寫「新增」,不寫 Infinity。 */
+        const delta = (cur: number, base: number, goodUp = true) => {
+          const g = growth(cur, base);
+          if (g === null) return <span className="text-gray-400">{cur ? '新增' : '—'}</span>;
+          const up = g >= 0;
+          // 支出上升是壞事,營收上升是好事 —— 顏色跟著意義走,不是跟著箭頭
+          const good = goodUp ? up : !up;
+          return (
+            <span className={good ? 'text-mor-green' : 'text-red-600'}>
+              {up ? '▲' : '▼'} {Math.abs(g).toFixed(1)}%
+            </span>
+          );
+        };
+        const row = (name: string, cur: number, p: number, y: number, f: (n: number) => string, goodUp = true) => (
+          <tr className="border-b border-mor-line/60 last:border-0">
+            <td className="px-3 py-2.5 font-medium whitespace-nowrap">{name}</td>
+            <td className="px-3 py-2.5 text-right font-bold whitespace-nowrap">{f(cur)}</td>
+            <td className="px-3 py-2.5 text-right text-gray-500 whitespace-nowrap">{f(p)}</td>
+            <td className="px-3 py-2.5 text-right whitespace-nowrap">{delta(cur, p, goodUp)}</td>
+            {!sameYoY && <>
+              <td className="px-3 py-2.5 text-right text-gray-500 whitespace-nowrap">{f(y)}</td>
+              <td className="px-3 py-2.5 text-right whitespace-nowrap">{delta(cur, y, goodUp)}</td>
+            </>}
+          </tr>
+        );
+        const cnt = (n: number) => `${nf(n)} 筆`;
+
+        return (
+          <div className="rounded-xl border border-mor-line bg-white p-4 md:p-5 mb-4">
+            <div className="flex flex-wrap items-baseline justify-between gap-2 mb-1">
+              <h2 className="font-bold">期間比較</h2>
+              <span className="text-xs text-gray-400">
+                {sameYoY ? '年度模式下環比與同比是同一段,只顯示一組' : '環比看動能,同比避開季節性'}
+              </span>
+            </div>
+            {/*
+              本月還沒走完的警語。認列表是按月存的,沒有日粒度,
+              所以沒辦法真的算「8/1~8/6 的營收」來對比 —— 只能把這件事講出來。
+            */}
+            {part && (
+              <div className="rounded-lg bg-amber-50 text-amber-800 px-3 py-2 text-xs mb-3">
+                本月才過了 <b>{part.passed} / {part.total}</b> 天。下面的比較是
+                「不完整的本月」對「完整的上月」,百分比會偏低 —— 看趨勢就好,不要當結論。
+              </div>
+            )}
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-xs text-gray-500 border-b border-mor-line">
+                    <th className="px-3 py-2 text-left">項目</th>
+                    <th className="px-3 py-2 text-right">本期<div className="font-normal text-gray-400">{label(fromD, toD)}</div></th>
+                    <th className="px-3 py-2 text-right">上一期<div className="font-normal text-gray-400">{label(pf, pt)}</div></th>
+                    <th className="px-3 py-2 text-right">環比</th>
+                    {!sameYoY && <>
+                      <th className="px-3 py-2 text-right">去年同期<div className="font-normal text-gray-400">{label(yf, yt)}</div></th>
+                      <th className="px-3 py-2 text-right">同比</th>
+                    </>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {row('營收', totalRev, cmp.prev.rev, cmp.yoy.rev, money)}
+                  {row('支出', totalExp, cmp.prev.exp, cmp.yoy.exp, money, false)}
+                  {row('淨額', net, cmp.prev.rev - cmp.prev.exp, cmp.yoy.rev - cmp.yoy.exp, money)}
+                  {row('訂單數', fOrds.length, cmp.prev.ordN, cmp.yoy.ordN, cnt)}
+                  <tr><td colSpan={sameYoY ? 4 : 6} className="px-3 pt-3 pb-1 text-xs font-semibold text-gray-500">依來源</td></tr>
+                  {/* 總營收成長時,要看得出是哪一塊在撐 —— 可能長租在漲而短租在退 */}
+                  {revBySource.map(([k, v]) => (
+                    <tr key={k} className="border-b border-mor-line/60 last:border-0">
+                      <td className="px-3 py-2 pl-6 text-gray-600 whitespace-nowrap">{srcLabel(k)}</td>
+                      <td className="px-3 py-2 text-right font-medium whitespace-nowrap">{money(v)}</td>
+                      <td className="px-3 py-2 text-right text-gray-500 whitespace-nowrap">{money(cmp.prev.bySource[k] ?? 0)}</td>
+                      <td className="px-3 py-2 text-right whitespace-nowrap">{delta(v, cmp.prev.bySource[k] ?? 0)}</td>
+                      {!sameYoY && <>
+                        <td className="px-3 py-2 text-right text-gray-500 whitespace-nowrap">{money(cmp.yoy.bySource[k] ?? 0)}</td>
+                        <td className="px-3 py-2 text-right whitespace-nowrap">{delta(v, cmp.yoy.bySource[k] ?? 0)}</td>
+                      </>}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* ═══ 趨勢 ═══ */}
       <Panel title="營收與支出趨勢" hint="營收用已按月拆分的認列金額，跨月訂單已經分好了">
         {trend.length === 0 ? <Empty /> : <TrendChart data={trend} />}
@@ -330,12 +530,12 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
         <Panel title="營收來源" hint="點圖例可以只看單一來源的佔比">
           <BarList rows={revBySource.map(([k, v]) => ({
-            label: SRC_LABEL[k] ?? k, value: v, color: SRC_COLOR[k] ?? '#7A8B99',
+            label: srcLabel(k), value: v, color: SRC_COLOR[k] ?? '#7A8B99',
           }))} fmt={money} />
         </Panel>
         <Panel title="訂單數分布" hint="看的是筆數不是金額 —— 跟營收比對得出「哪個通路單價高」">
           <BarList rows={ordBySource.map(([k, v]) => ({
-            label: SRC_LABEL[k] ?? k, value: v, color: SRC_COLOR[k] ?? '#7A8B99',
+            label: srcLabel(k), value: v, color: SRC_COLOR[k] ?? '#7A8B99',
           }))} fmt={(n) => nf(n) + ' 筆'} />
         </Panel>
       </div>

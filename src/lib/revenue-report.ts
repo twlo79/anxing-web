@@ -45,6 +45,28 @@ export type RevRow = {
  */
 export const ONEOFF_LABEL = '其他收入';
 
+/**
+ * 營收來源的顯示名稱,**全站只定義這一次**。
+ *
+ * 儀表板原本自己寫了一份而且漏了 office 與 company,結果畫面上直接吐出
+ * 資料庫的英文鍵 —— 使用者看到「office」「company」不知道那是什麼。
+ * 少寫兩個鍵不會報錯,只會安靜地把英文顯示出來,所以要有單一來源。
+ */
+export const SOURCE_LABEL: Record<string, string> = {
+  airbnb: 'Airbnb',
+  agoda: 'Agoda',
+  private: '私下',
+  longterm: '長租',
+  office: '辦公室租賃',
+  company: '公司登記',
+  oneoff: ONEOFF_LABEL,
+  other: '其他',
+  partner: '搭檔收款',
+  airbnb_cancelled: 'Airbnb 取消',
+};
+/** 顯示名稱。沒對應到就回原始鍵 —— 至少看得出是哪個來源,而不是空白。 */
+export const srcLabel = (s: string) => SOURCE_LABEL[s] ?? s;
+
 /** 認列表裡實際會出現的來源。partner 在寫入時已歸到 airbnb,airbnb_cancelled 歸到 oneoff。 */
 export const SHORT_SOURCES = ['airbnb', 'agoda', 'private'];
 
