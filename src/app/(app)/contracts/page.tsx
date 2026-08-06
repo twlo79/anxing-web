@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FilterBar, FilterSelect, FilterDateRange, FilterSearch, FilterClear, FilterCount } from '@/lib/filters';
 import { createClient } from '@/lib/supabase';
 import { FEE_TYPES } from '@/lib/fee-types';
-import { onlyLtOf } from '@/lib/ltKey';
+import { keyBase, onlyKeyOf } from '@/lib/ltKey';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import * as XLSX from 'xlsx-js-style';
 
@@ -242,8 +242,9 @@ export default function ContractsPage() {
   }
   const loadExtBatches = useCallback(async () => {
     if (!edit?.id || !edit?.room) { setExtBatches([]); return; }
-    const { data } = await supabase.from('orders').select('order_key, amount').eq('imported_via', 'extend').like('order_key', `LT_${edit.room}_%`);
-    const rows = onlyLtOf(data as any[], edit.room).map((o: any) => ({ ym: o.order_key.split('_').pop() as string, amount: Number(o.amount || 0) })).sort((a, b) => (a.ym < b.ym ? -1 : 1));
+    const eb = keyBase(edit);
+    const { data } = await supabase.from('orders').select('order_key, amount').eq('imported_via', 'extend').like('order_key', `${eb}%`);
+    const rows = onlyKeyOf(data as any[], eb).map((o: any) => ({ ym: o.order_key.slice(eb.length), amount: Number(o.amount || 0) })).sort((a, b) => (a.ym < b.ym ? -1 : 1));
     const batches: any[] = [];
     for (const r of rows) {
       const last = batches[batches.length - 1];
@@ -256,8 +257,9 @@ export default function ContractsPage() {
 
   async function delExtBatch(b: any) {
     if (!edit?.id) return;
-    const { data: all } = await supabase.from('orders').select('id, order_key').eq('imported_via', 'extend').like('order_key', `LT_${edit.room}_%`);
-    const toDel = onlyLtOf(all as any[], edit.room).filter((o: any) => (o.order_key.split('_').pop() || '') >= b.startYm).map((o: any) => o.id);
+    const eb = keyBase(edit);
+    const { data: all } = await supabase.from('orders').select('id, order_key').eq('imported_via', 'extend').like('order_key', `${eb}%`);
+    const toDel = onlyKeyOf(all as any[], eb).filter((o: any) => o.order_key.slice(eb.length) >= b.startYm).map((o: any) => o.id);
     if (toDel.length) { const { error } = await supabase.from('orders').delete().in('id', toDel); if (error) return flash('刪除失敗:' + error.message); }
     const y = +b.startYm.slice(0, 4), m = +b.startYm.slice(4, 6);
     const pe = new Date(y, m - 1, 0);
@@ -279,7 +281,8 @@ export default function ContractsPage() {
     const fmtLocal = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     const newEndStr = fmtLocal(newEnd);
     const yms: string[] = []; let cur = new Date(ed.getFullYear(), ed.getMonth() + 1, 1);
-    for (let i = 0; i < N; i++) { yms.push(`LT_${edit.room}_${cur.getFullYear()}${String(cur.getMonth() + 1).padStart(2, '0')}`); cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1); }
+    const eb = keyBase(edit);
+    for (let i = 0; i < N; i++) { yms.push(`${eb}${cur.getFullYear()}${String(cur.getMonth() + 1).padStart(2, '0')}`); cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1); }
     const { error: e1 } = await supabase.from('contracts').update({ end_date: newEndStr }).eq('id', edit.id);
     if (e1) return flash('展延失敗:' + e1.message);
     await new Promise((r) => setTimeout(r, 400));
@@ -779,14 +782,21 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
 
   // showSpinner=false 用於背景重新整理:不切 loading 狀態,列表就不會被換成
   // 「載入中」再重建,捲軸位置得以保留。首次載入才需要 spinner。
+  /** 這張契約的月租單鍵基底。房號空的走 LTC_{契約id}_ —— 見 lib/ltKey。 */
+  const kb = keyBase(c);
+
   const loadExisting = useCallback(async (showSpinner = true) => {
     if (showSpinner) setLoading(true);
-    const { data } = await supabase.from('orders').select('id, order_key, paid, amount, paid_at, imported_via').like('order_key', `LT_${c.room}_%`);
+    // 房號空的契約鍵是 LTC_{契約id}_,不是 LT_{房號}_ —— 一律走 keyBase()
+    const base = keyBase(c);
+    const { data } = await supabase.from('orders')
+      .select('id, order_key, paid, amount, paid_at, imported_via').like('order_key', `${base}%`);
     const m: Record<string, any> = {};
-    onlyLtOf(data as any[], c.room).forEach((o: any) => { m[o.order_key] = o; });
+    onlyKeyOf(data as any[], base).forEach((o: any) => { m[o.order_key] = o; });
     setExisting(m);
     if (showSpinner) setLoading(false);
-  }, [supabase, c.room]);
+    // c.id 也要在相依裡 —— 房號空的契約鍵是靠 id 組的,漏了就會沿用上一張契約的結果
+  }, [supabase, c.room, c.id]);
   useEffect(() => { loadExisting(); }, [loadExisting]);
 
   /**
@@ -802,7 +812,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
     });
   }
 
-  const keysOf = (chunk: any[]) => chunk.map((mm) => `LT_${c.room}_${mm.ym}`);
+  const keysOf = (chunk: any[]) => chunk.map((mm) => kb + mm.ym);
   const ordersOf = (chunk: any[]) => keysOf(chunk).map((k) => existing[k]).filter(Boolean);
 
   /**
@@ -861,7 +871,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
 
   async function setPeriodPaid(chunk: any[], v: boolean) {
     setBusy(chunk[0].ym);
-    const keys = chunk.map((mm) => `LT_${c.room}_${mm.ym}`);
+    const keys = chunk.map((mm) => kb + mm.ym);
     // 已經有收款日就沿用,不要覆蓋成今天 ——
     // 「重算應收」會把已收的期別退回未收但留著日期,重按確認時要拿得回來。
     const kept = ordersOf(chunk).find((o: any) => o?.paid_at)?.paid_at;
@@ -888,7 +898,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
    */
   const paidAtTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   function setPeriodPaidAt(chunk: any[], date: string) {
-    const keys = chunk.map((mm) => `LT_${c.room}_${mm.ym}`);
+    const keys = chunk.map((mm) => kb + mm.ym);
     const id = keys.join('|');
     patchLocal(keys, { paid_at: date || null });
     clearTimeout(paidAtTimers.current[id]);
@@ -960,7 +970,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
     const no = invDraft.no.trim().toUpperCase();
     if (!INV_NO_RE.test(no)) { alert('發票號碼格式應為 2 碼英文 + 8 碼數字,例 AB12345678'); return; }
     if (!invDraft.date) { alert('請填開票日期'); return; }
-    const o = existing[`LT_${c.room}_${invDraft.ym}`];
+    const o = existing[kb + invDraft.ym];
     const payload = {
       contract_id: c.id, order_id: o?.id ?? null, room: c.room, ym: invDraft.ym,
       amount: Number(o?.amount || 0) || null,
@@ -990,7 +1000,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
   // 發票以「月」為單位:月繳一期一個月,年繳一期 12 個月會展開成 12 列。
   function invRow(mm: any) {
     if (!c.invoice_required) return null;
-    const o = existing[`LT_${c.room}_${mm.ym}`];
+    const o = existing[kb + mm.ym];
     if (!o) return null;
     const inv = invMap[mm.ym];
     const canIssue = c.invoice_after_paid === false || !!o.paid;
@@ -1065,7 +1075,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
           : loading ? <div className="text-center text-gray-400 py-8">載入中…</div>
           : <div className="space-y-2">
             {cadPeriods.map((chunk: any[], i: number) => {
-              const os = chunk.map((mm) => existing[`LT_${c.room}_${mm.ym}`]).filter(Boolean);
+              const os = chunk.map((mm) => existing[kb + mm.ym]).filter(Boolean);
               const amount = os.reduce((a: number, o: any) => a + Number(o.amount || 0), 0);
               const allPaid = os.length > 0 && os.every((o: any) => o.paid);
               const paidAt = os.find((o: any) => o.paid_at)?.paid_at;
@@ -1155,7 +1165,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
             {extPeriods.length > 0 && <div className="text-[11px] font-semibold text-mor-blue pt-1 pb-0.5">— 延展期數(每月一期確認)—</div>}
             {extPeriods.map((chunk: any[], j: number) => {
               const mm = chunk[0];
-              const o = existing[`LT_${c.room}_${mm.ym}`];
+              const o = existing[kb + mm.ym];
               const amount = Number(o?.amount || 0);
               const paid = !!o?.paid;
               const paidAt = o?.paid_at;
@@ -1206,7 +1216,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
               <div className="rounded-lg bg-amber-50/60 px-3 py-2 text-xs space-y-0.5">
                 <div className="text-gray-600">抬頭 <span className="font-medium text-gray-800">{c.invoice_title || c.tenant_name || '—'}</span></div>
                 <div className="text-gray-600">統編 <span className="font-medium text-gray-800">{c.invoice_tax_id || '—'}</span></div>
-                <div className="text-gray-600">金額 <span className="font-medium text-gray-800">${fmt(Number(existing[`LT_${c.room}_${invDraft.ym}`]?.amount || 0))}</span> <span className="text-gray-400">(參考,實際以平台開立為準)</span></div>
+                <div className="text-gray-600">金額 <span className="font-medium text-gray-800">${fmt(Number(existing[kb + invDraft.ym]?.amount || 0))}</span> <span className="text-gray-400">(參考,實際以平台開立為準)</span></div>
               </div>
               <label className="flex flex-col gap-1 text-xs text-gray-500">開票日期
                 <input type="date" value={invDraft.date} onChange={(e) => setInvDraft({ ...invDraft, date: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm" /></label>
