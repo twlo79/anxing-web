@@ -92,7 +92,7 @@ test('checkPayment:0 元訂單不做超收檢查', () => {
 });
 
 const p = (paid_on: string, amount: number): PaymentRow =>
-  ({ id: Math.random().toString(36).slice(2), paid_on, amount, account: null, note: null });
+  ({ id: Math.random().toString(36).slice(2), paid_on, amount, method: 'transfer', account: null, note: null });
 
 test('sumPayments', () => {
   assert.equal(sumPayments([p('2026-01-01', 3000), p('2026-02-01', 7000)]), 10000);

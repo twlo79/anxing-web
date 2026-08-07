@@ -8,6 +8,8 @@ import { createClient } from '@/lib/supabase';
  * 檔案本體放在 storage 的 receipts bucket，路徑約定為
  *   pr/{request_id}/{uuid}.{ext}
  *   exp/{expense_id}/{uuid}.{ext}
+ *   dep/{deposit_id}/{uuid}.{ext}
+ *   op/{order_payment_id}/{uuid}.{ext}
  * storage 的 RLS policy 直接讀這個路徑判斷權限，所以路徑格式不能亂改
  * （見 migration_51_receipts.sql）。
  *
@@ -69,7 +71,7 @@ function fmtSize(n: number | null) {
 type Staged = { key: string; file: File; preview: string };
 
 const Receipts = forwardRef<ReceiptsHandle, {
-  kind: 'pr' | 'exp' | 'dep';
+  kind: 'pr' | 'exp' | 'dep' | 'op';
   parentId: string | null | undefined;
   canEdit?: boolean;
   label?: string;
@@ -88,7 +90,10 @@ const Receipts = forwardRef<ReceiptsHandle, {
   const [err, setErr] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const col = kind === 'pr' ? 'request_id' : kind === 'dep' ? 'deposit_id' : 'expense_id';
+  const col = kind === 'pr' ? 'request_id'
+    : kind === 'dep' ? 'deposit_id'
+    : kind === 'op' ? 'order_payment_id'   // 短租收款的證明照片（migration_85）
+    : 'expense_id';
 
   const load = useCallback(async () => {
     if (!parentId) { setRows([]); return; }

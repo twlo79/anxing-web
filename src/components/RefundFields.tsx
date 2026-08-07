@@ -29,11 +29,17 @@ export type RefundDraft = {
 
 export type RefundPayAccount = { code: string; name: string; method: string };
 
-/** 押金的收退方式。比請款單多一個加密貨幣 —— 押金真的收過。 */
-export const METHOD_LABEL: Record<string, string> = {
-  cash: '現金', transfer: '匯款', credit_card: '信用卡', crypto: '加密貨幣',
-};
-export const METHOD_OPTS = ['cash', 'transfer', 'credit_card', 'crypto'];
+/**
+ * 押金的收退方式。比請款單多一個加密貨幣 —— 押金真的收過。
+ *
+ * 定義已搬到 @/lib/pay-method（短租收款也要用同一組,
+ * 而 lib 不該為了兩個常數去 import 一個 React 元件）。
+ * 這裡保留再匯出,既有的 import 一行都不用改。
+ */
+// 注意:`export { X } from '…'` 只轉發,不會讓 X 出現在本檔的作用域。
+// 這個元件自己下面也要用,所以 import 與 export 兩行都要有。
+import { METHOD_LABEL, METHOD_OPTS } from '@/lib/pay-method';
+export { METHOD_LABEL, METHOD_OPTS };
 
 const CTRL = 'h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5';
 

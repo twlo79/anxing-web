@@ -113,7 +113,14 @@ export function checkPayment(amount: number, rest: number, due: number): Payment
   return { ok: true };
 }
 
-export type PaymentRow = { id: string; paid_on: string; amount: number | null; account: string | null; note: string | null };
+export type PaymentRow = {
+  id: string; paid_on: string; amount: number | null;
+  /** cash | transfer | credit_card | crypto —— 見 lib/pay-method。 */
+  method: string | null;
+  /** 我方收款帳戶。只有 method='transfer' 會有值（migration_85 的 op_account_chk）。 */
+  account: string | null;
+  note: string | null;
+};
 
 /** 收款合計。畫面上要跟 orders.paid_amount 對得起來,所以取整方式必須一致。 */
 export function sumPayments(rows: PaymentRow[]): number {
