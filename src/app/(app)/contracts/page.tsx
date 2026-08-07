@@ -2,7 +2,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FilterBar, FilterSelect, FilterDateRange, FilterSearch, FilterClear, FilterCount } from '@/lib/filters';
 import { createClient } from '@/lib/supabase';
-import { FEE_TYPES } from '@/lib/fee-types';
+import { FEE_TYPES, feeLabel } from '@/lib/fee-types';
+import ContractFees from '@/components/ContractFees';
 import { keyBase, onlyKeyOf } from '@/lib/ltKey';
 import {
   summarize, needsTypedConfirm, deleteConfirmText, typedConfirmPrompt,
@@ -1035,13 +1036,36 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
     // 「重算應收」會把已收的期別退回未收但留著日期,重按確認時要拿得回來。
     const kept = ordersOf(chunk).find((o: any) => o?.paid_at)?.paid_at;
     const paidAt = v ? (kept ?? today()) : null;
+
+    /*
+     * 固定加費要跟租金一起收。
+     *
+     * 沒有這一段的話,「確認收款」只會標記月租單 —— 管理費那筆永遠停在未收,
+     * 而使用者看到整期都變綠了,不會發現底下還掛著一筆。
+     *
+     * 只帶 imported_via='contract_fee'（固定加費）。手動加費與折讓不碰:
+     * 那些是臨時發生的,收款時機不一定跟租金同一天。
+     */
+    const feeIds = feeRows
+      .filter((f: any) => f.imported_via === 'contract_fee' && f.checkin
+        && chunk.some((mm: any) => (f.checkin.slice(0, 4) + f.checkin.slice(5, 7)) === mm.ym))
+      .map((f: any) => f.id);
+
     // 先更新畫面,再寫資料庫 —— 按下去立刻有反應,不用等網路來回
     patchLocal(keys, { paid: v, paid_at: paidAt });
+    setFeeRows((fs: any[]) => fs.map((f) => (feeIds.includes(f.id) ? { ...f, paid: v } : f)));
+
     const { error } = await supabase.from('orders').update({ paid: v, paid_at: paidAt }).in('order_key', keys);
+    let feeErr = null;
+    if (feeIds.length) {
+      const r = await supabase.from('orders').update({ paid: v, paid_at: paidAt }).in('id', feeIds);
+      feeErr = r.error;
+    }
     setBusy('');
-    if (error) {
-      alert('失敗:' + error.message);
+    if (error || feeErr) {
+      alert('失敗:' + (error?.message ?? feeErr?.message));
       loadExisting(false);   // 寫入失敗才回頭跟資料庫對齊,且不顯示 spinner
+      loadFees();
     }
   }
   // 「刪除此期起」已移除:它會一次刪掉該期之後的所有月租單(含已收款者)並回推租期迄,
@@ -1072,7 +1096,12 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
     return () => { Object.values(timers).forEach(clearTimeout); };
   }, []);
   const loadFees = useCallback(async () => {
-    const { data } = await supabase.from('orders').select('id, checkin, amount, fee_type, note').eq('contract_id', c.id).eq('source', 'oneoff').order('checkin');
+    // imported_via 用來分辨固定加費（contract_fee）與手動加費（manual）——
+    // 固定加費不給在期別列上刪,刪了觸發器下次又會長回來。
+    // paid 是「與租金一起收」需要的:確認收款要把該期的加費一併標記。
+    const { data } = await supabase.from('orders')
+      .select('id, checkin, amount, fee_type, item_name, note, imported_via, paid, order_key')
+      .eq('contract_id', c.id).eq('source', 'oneoff').order('checkin');
     setFeeRows(data ?? []);
   }, [supabase, c.id]);
   useEffect(() => { loadFees(); }, [loadFees]);
@@ -1229,6 +1258,12 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
               請到編輯視窗修正首繳日。
             </div>
           )}
+          {/*
+            固定加費放在期別清單「上面」—— 它是設定,先看設定再看結果。
+            放下面的話使用者會先在某一期看到一筆莫名其妙的管理費,再往下捲才知道為什麼。
+          */}
+          <ContractFees contract={c} canEdit onChanged={() => { loadExisting(false); loadFees(); }} />
+
           <div className="text-xs font-semibold text-gray-500 mb-2">收款({CAD_LABEL[c.cadence]},每期確認)</div>
           {!c.start_date || !c.end_date ? <div className="text-center text-orange-600 py-8 text-sm">此契約缺租期,請先編輯補上起訖日</div>
           : loading ? <div className="text-center text-gray-400 py-8">載入中…</div>
@@ -1236,7 +1271,6 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
             {cadPeriods.map((chunk: any[], i: number) => {
               const os = chunk.map((mm) => existing[kb + mm.ym]).filter(Boolean);
               const amount = os.reduce((a: number, o: any) => a + Number(o.amount || 0), 0);
-              const allPaid = os.length > 0 && os.every((o: any) => o.paid);
               const paidAt = os.find((o: any) => o.paid_at)?.paid_at;
               const first = chunk[0], last = chunk[chunk.length - 1];
               const due = c.first_payment_date ? (() => { const base = addMonths(new Date(c.first_payment_date + 'T00:00:00'), i * STEP); const day = c.pay_day || base.getDate(); const dd = new Date(base.getFullYear(), base.getMonth(), day); return `${dd.getFullYear()}/${dd.getMonth() + 1}/${dd.getDate()}`; })() : '';
@@ -1244,7 +1278,23 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
               // 折讓是 fee_type='折讓' 的負數列。應收顯示淨額,但保留原始金額供對帳。
               const pdisc = pfees.filter((f: any) => Number(f.amount) < 0);
               const discTotal = pdisc.reduce((a: number, f: any) => a + Math.abs(Number(f.amount) || 0), 0);
-              const netAmount = amount - discTotal;
+              /*
+               * 這一期實際要收多少 = 租金 + 加費 − 折讓。
+               *
+               * 不把加費算進去的話,畫面說要收 $170,000,實際要跟房客收 $173,500 ——
+               * 而那 $3,500 就掛在下面幾行,沒有人會把兩個數字自己加起來。
+               */
+              const feeTotal = pfees.filter((f: any) => Number(f.amount) > 0)
+                .reduce((a: number, f: any) => a + Number(f.amount || 0), 0);
+              const netAmount = amount + feeTotal - discTotal;
+              /*
+               * 整期收齊 = 月租單全收 **且** 該期的固定加費也全收。
+               * 只看月租單的話,管理費還沒收但整期已經變綠,底下那筆就永遠沒人理。
+               * 手動加費不列入 —— 那是臨時發生的,收款時機不一定跟租金同一天。
+               */
+              const autoFees = pfees.filter((f: any) => f.imported_via === 'contract_fee' && Number(f.amount) > 0);
+              const allPaid = os.length > 0 && os.every((o: any) => o.paid)
+                && autoFees.every((f: any) => f.paid);
               return (
                 <div key={i} className={`rounded-xl border px-4 py-2.5 text-sm ${allPaid ? 'border-mor-greenlight bg-mor-greenlight/30' : 'border-mor-line'}`}>
                   <div className="flex items-center justify-between">
@@ -1252,8 +1302,12 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
                       <div className="font-medium"><span className="text-mor-blue">第 {i + 1} 期</span> <span className="text-gray-700">{first.label}{STEP > 1 ? `~${last.label}` : ''}</span>{due ? <span className="ml-2 text-xs text-gray-400">應繳 {due}</span> : null}</div>
                       <div className="text-xs text-gray-500">
                         應收 ${fmt(netAmount)}
-                        {discTotal > 0 && (
-                          <span className="ml-1 text-gray-400">（原 ${fmt(amount)} − 折讓 ${fmt(discTotal)}）</span>
+                        {(feeTotal > 0 || discTotal > 0) && (
+                          <span className="ml-1 text-gray-400">
+                            （租金 ${fmt(amount)}
+                            {feeTotal > 0 && ` ＋ 加費 $${fmt(feeTotal)}`}
+                            {discTotal > 0 && ` − 折讓 $${fmt(discTotal)}`}）
+                          </span>
                         )}
                       </div>
                       {(() => {
@@ -1277,12 +1331,24 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
                       : <button onClick={() => setPeriodPaid(chunk, true)} disabled={!!busy} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">{busy === first.ym ? '…' : '確認收款'}</button>)}
                   </div>
                   <div className="mt-2 border-t border-mor-line/50 pt-1.5">
-                    {pfees.map((f: any) => (
-                      <div key={f.id} className={`flex items-center justify-between text-xs py-0.5 ${Number(f.amount) < 0 ? 'text-orange-600' : 'text-gray-600'}`}>
-                        <span>· {f.fee_type} {Number(f.amount) < 0 ? '−' : ''}${fmt(Math.abs(Number(f.amount) || 0))} <span className="text-gray-400">({f.checkin})</span></span>
-                        <button onClick={() => delFee(f.id)} className="text-red-400 underline">刪</button>
-                      </div>
-                    ))}
+                    {pfees.map((f: any) => {
+                      // 固定加費是設定產生的。這裡給「刪」會很誤導 ——
+                      // 刪掉之後觸發器下次重產又長回來,使用者會以為系統壞了。
+                      // 要停止收費請到上面的「固定加費」按「停止收費」。
+                      const auto = f.imported_via === 'contract_fee';
+                      return (
+                        <div key={f.id} className={`flex items-center justify-between text-xs py-0.5 ${Number(f.amount) < 0 ? 'text-orange-600' : 'text-gray-600'}`}>
+                          <span>
+                            · {auto ? feeLabel(f.fee_type, f.item_name) : f.fee_type} {Number(f.amount) < 0 ? '−' : ''}${fmt(Math.abs(Number(f.amount) || 0))}
+                            <span className="text-gray-400"> ({f.checkin})</span>
+                            {auto && <span className="ml-1 text-[10px] text-gray-400">固定</span>}
+                          </span>
+                          {auto
+                            ? <span className="text-[10px] text-gray-400">於上方「固定加費」調整</span>
+                            : <button onClick={() => delFee(f.id)} className="text-red-400 underline">刪</button>}
+                        </div>
+                      );
+                    })}
                     {feeDraft?.pi === i ? (
                       <div className="flex flex-wrap items-center gap-1 mt-1">
                         <select value={feeDraft.type} onChange={(e) => setFeeDraft({ ...feeDraft, type: e.target.value })} className="rounded border border-gray-300 px-1.5 py-0.5 text-xs">{FEE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}</select>
