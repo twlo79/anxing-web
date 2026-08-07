@@ -78,6 +78,14 @@ export default function DepositsPage() {
   const [acctF, setAcctF] = useState('');
   // 分頁籤:一筆押金一定屬於其中一類,不會同時出現在兩個頁籤
   const [statusF, setStatusF] = useState<Status>('held');
+  /**
+   * 從訂單／契約跳過來時只顯示那一筆的押金。
+   *
+   * 一張訂單可能有好幾筆押金（台幣一筆、每種外幣各一筆），所以帶的是
+   * 母體的 id 而不是押金 id —— 帶押金 id 只會看到其中一種幣別，
+   * 而使用者按的是「看這張訂單的押金」。
+   */
+  const [focus, setFocus] = useState<{ kind: 'order' | 'contract'; id: string } | null>(null);
   const [kwInput, setKwInput] = useState('');
   const [kw, setKw] = useState('');
 
@@ -97,6 +105,25 @@ export default function DepositsPage() {
     setRows((data ?? []) as Dep[]);
     setLoading(false);
   }, [supabase]);
+
+  /*
+   * 從短租訂單／契約的抽屜按「押金」跳過來:?order=<id> 或 ?contract=<id>。
+   *
+   * 分頁籤一併切到「全部」—— 預設是「已收款(暫收中)」,
+   * 而使用者要看的那筆很可能還沒收款,不切的話會看到空清單,像是壞掉。
+   *
+   * 網址處理完就清掉,否則重新整理又會套用一次,使用者不知道為什麼清單一直被鎖住。
+   */
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const sp = new URLSearchParams(window.location.search);
+    const oid = sp.get('order');
+    const cid = sp.get('contract');
+    if (!oid && !cid) return;
+    setFocus(oid ? { kind: 'order', id: oid } : { kind: 'contract', id: cid! });
+    setStatusF('all');
+    window.history.replaceState({}, '', window.location.pathname);
+  }, []);
 
   useEffect(() => {
     load();
@@ -122,6 +149,12 @@ export default function DepositsPage() {
   // 卡片的數字要算在 base 上,不是 filtered —— 否則點進「未收款」之後,
   // 其他兩張卡片會全部歸零,那就不是總覽而是同一個數字抄三遍。
   const base = useMemo(() => rows.filter((r) => {
+    // 訂單／契約聚焦。放在最前面 —— 這是使用者當下唯一想看的東西,
+    // 其他篩選條件（日期、物業…）不該把它篩掉。
+    if (focus) {
+      if (focus.kind === 'order' && r.order_id !== focus.id) return false;
+      if (focus.kind === 'contract' && r.contract_id !== focus.id) return false;
+    }
     // 日期區間比對「這筆押金最近一次動作」的日期:退了看退款日,否則看收款日。
     // 還沒收的沒有日期可比,設了區間就不顯示 —— 區間問的是「這段期間發生了什麼」,
     // 還沒發生的事不該混進來。未收款頁籤會另外提示。
@@ -140,7 +173,7 @@ export default function DepositsPage() {
       if (!hay.includes(kw.toLowerCase())) return false;
     }
     return true;
-  }), [rows, fromD, toD, estateF, roomF, methodF, acctF, kw]);
+  }), [rows, fromD, toD, estateF, roomF, methodF, acctF, kw, focus]);
 
   /** 一筆押金必定落在三類的其中一類,順序不能顛倒:退了就是已退,不管收款日 */
   const bucketOf = (r: Dep) => (r.returned_on ? 'returned' : r.received_on ? 'held' : 'pending');
@@ -487,6 +520,23 @@ export default function DepositsPage() {
   return (
     <div>
       {msg && <div className="mb-3 rounded-lg bg-mor-greenlight text-mor-green px-3 py-2 text-sm">{msg}</div>}
+
+      {/*
+        聚焦提示。**一定要有** —— 沒有這一列的話,使用者看到的是一個
+        「莫名其妙只有兩筆」的押金頁,而且找不到原因。
+      */}
+      {focus && (
+        <div className="mb-3 rounded-lg bg-mor-bluelight border border-mor-line px-3 py-2 text-sm flex items-center justify-between gap-3">
+          <span className="min-w-0">
+            只顯示這張{focus.kind === 'order' ? '訂單' : '契約'}的押金
+            <span className="text-gray-500 ml-2 text-xs">
+              （{base.length} 筆{base.length === 0 ? '：這張單還沒有押金紀錄' : ''}）
+            </span>
+          </span>
+          <button onClick={() => setFocus(null)}
+            className="shrink-0 text-xs text-mor-slate underline hover:text-mor-blue">顯示全部</button>
+        </div>
+      )}
 
       {/*
         三張卡片同時是分頁籤。數字算在 base 上(不含分頁籤本身的篩選),

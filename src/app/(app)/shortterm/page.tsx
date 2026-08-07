@@ -7,6 +7,8 @@ import { FEE_TYPES } from '@/lib/fee-types';
 import { ONEOFF_LABEL } from '@/lib/revenue-report';
 import RecurringPanel from '@/components/RecurringPanel';
 import OrderPayments from '@/components/OrderPayments';
+import MoneyLines from '@/components/MoneyLines';
+import { toLines, fromLines, totalTwd, validateLines, type Line } from '@/lib/money-lines';
 import { payStatus, remaining, isExempt, STATUS_LABEL, STATUS_CLASS, STATUS_FILTER } from '@/lib/order-payment';
 
 type Order = {
@@ -100,27 +102,29 @@ export default function ShortTermPage() {
   const canCollect = useMemo(() => ['accountant', 'manager', 'super_admin'].includes(role), [role]);
   const estateName = useMemo(() => Object.fromEntries(estates.map((e) => [e.id, e.name])), [estates]);
   const [fees, setFees] = useState<Fee[]>([]);
-  const [fxRev, setFxRev] = useState<{ cur: string; amt: number; rate: number }[]>([]);
-  const [fxDep, setFxDep] = useState<{ cur: string; amt: number }[]>([]);
-  const [twdBase, setTwdBase] = useState(0);
-  const revFxTwd = useMemo(() => fxRev.reduce((a, l) => a + (Number(l.amt) || 0) * (Number(l.rate) || 0), 0), [fxRev]);
-  const addFxRev = () => setFxRev((x) => [...x, { cur: 'USD', amt: 0, rate: 0 }]);
-  const updFxRev = (i: number, patch: Partial<{ cur: string; amt: number; rate: number }>) => setFxRev((x) => x.map((l, idx) => idx === i ? { ...l, ...patch } : l));
-  const delFxRev = (i: number) => setFxRev((x) => x.filter((_, idx) => idx !== i));
-  const addFxDep = () => setFxDep((x) => [...x, { cur: 'USD', amt: 0 }]);
-  const updFxDep = (i: number, patch: Partial<{ cur: string; amt: number }>) => setFxDep((x) => x.map((l, idx) => idx === i ? { ...l, ...patch } : l));
-  const delFxDep = (i: number) => setFxDep((x) => x.filter((_, idx) => idx !== i));
+  /*
+   * 金額與押金都改成「一列一種幣別」,台幣只是其中一列（見 lib/money-lines）。
+   * 資料庫存的東西完全沒變 —— 台幣仍然回到 amount / deposit,
+   * 非台幣仍然回到 fx_revenue / fx_deposit。轉換由 toLines / fromLines 負責。
+   */
+  const [revLines, setRevLines] = useState<Line[]>([]);
+  const [depLines, setDepLines] = useState<Line[]>([]);
+  /*
+   * 表單開啟次數。初始化 effect 綁在這個計數器上,不是綁在 edit.id ——
+   * 新訂單的 id 一直是空字串,綁 id 的話「新增 → 取消 → 再新增」
+   * 不會重跑初始化,第二張單會帶著第一張單的金額與幣別,而且沒有任何跡象。
+   */
+  const [formSeq, setFormSeq] = useState(0);
+  const openEdit = (o: Order | null) => { setEdit(o); if (o) setFormSeq((n) => n + 1); };
   useEffect(() => {
-    const fr = ((edit as any)?.fx_revenue ?? []) as { cur: string; amt: number; rate: number }[];
-    const fd = ((edit as any)?.fx_deposit ?? []) as { cur: string; amt: number }[];
-    setFxRev(fr); setFxDep(fd);
-    const fxTwd = fr.reduce((a, l) => a + (Number(l.amt) || 0) * (Number(l.rate) || 0), 0);
-    setTwdBase(Math.max(0, Number(edit?.amount || 0) - fxTwd));
+    setRevLines(toLines(edit?.amount, (edit as any)?.fx_revenue, 'revenue'));
+    setDepLines(toLines(edit?.deposit, (edit as any)?.fx_deposit, 'deposit'));
     if (edit?.id) {
       supabase.from('orders').select('id, checkin, amount, fee_type, note').eq('parent_order_id', edit.id).eq('source', 'oneoff').then(({ data }) => setFees((data ?? []).map((f: any) => ({ id: f.id, date: f.checkin ?? '', type: f.fee_type ?? '其他', amount: Number(f.amount) || 0, note: f.note ?? '' }))));
     } else { setFees([]); }
+    // formSeq 而不是 edit?.id —— 理由見上面 formSeq 的宣告。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [edit?.id, supabase]);
+  }, [formSeq, supabase]);
   const addFee = () => setFees((fs) => [...fs, { date: edit?.checkout || edit?.checkin || '', type: '清潔費', amount: 0, note: '' }]);
   const updFee = (i: number, patch: Partial<Fee>) => setFees((fs) => fs.map((f, idx) => idx === i ? { ...f, ...patch } : f));
   const delFee = (i: number) => setFees((fs) => fs.filter((_, idx) => idx !== i));
@@ -292,12 +296,19 @@ export default function ShortTermPage() {
     if (!edit) return;
     const co = edit.source === 'oneoff' ? (edit.checkout || edit.checkin) : edit.checkout;
     const nights = (edit.checkin && co) ? Math.max(0, Math.round((new Date(co).getTime() - new Date(edit.checkin).getTime()) / 86400000)) : 0;
-    const payload = { source: edit.source, estate_id: edit.estate_id, property_id: edit.property_id ?? null, property_raw: edit.property_raw, guest_name: edit.guest_name, checkin: edit.checkin || null, checkout: co || null, nights, amount: (twdBase || 0) + revFxTwd, deposit: edit.deposit, account: edit.account, note: edit.note,
+    // 幣別清單 → 資料庫格式。台幣回 amount / deposit,其餘回 fx_*,格式與改版前一致。
+    const revErr = validateLines(revLines, 'revenue');
+    if (revErr) return flash('訂單金額:' + revErr);
+    const depErr = validateLines(depLines, 'deposit');
+    if (depErr) return flash('押金:' + depErr);
+    const rev = fromLines(revLines, 'revenue');
+    const dep = fromLines(depLines, 'deposit');
+    const payload = { source: edit.source, estate_id: edit.estate_id, property_id: edit.property_id ?? null, property_raw: edit.property_raw, guest_name: edit.guest_name, checkin: edit.checkin || null, checkout: co || null, nights, amount: rev.twd, deposit: dep.twd, account: edit.account, note: edit.note,
       // 只有一次性收入有會計科目。其他來源一律寫 null,不要留著切換來源前選的值 ——
       // 那會讓一筆 Airbnb 訂單帶著「水費」這種科目跑進營收報表。
       fee_type: edit.source === 'oneoff' ? (edit.fee_type || null) : null,
       item_name: edit.source === 'oneoff' ? (edit.item_name?.trim() || null) : null,
-      fx_revenue: fxRev.filter((l) => l.cur && l.amt), fx_deposit: fxDep.filter((l) => l.cur && l.amt) };
+      fx_revenue: rev.fx, fx_deposit: dep.fx };
     let orderId = edit.id;
     if (edit.id) {
       const { error } = await supabase.from('orders').update(payload).eq('id', edit.id);
@@ -520,7 +531,7 @@ export default function ShortTermPage() {
         <div className="ml-auto flex items-end gap-3">
           <div className="text-xs text-gray-400 pb-1.5">共 {total.toLocaleString()} 筆</div>
           <button onClick={exportXlsx} disabled={exporting || !total} className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 disabled:opacity-40">{exporting ? '匯出中…' : '⬇ 下載 Excel'}</button>
-          <button onClick={() => setEdit(blank())} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 新增訂單</button>
+          <button onClick={() => openEdit(blank())} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 新增訂單</button>
         </div>
       </div>
 
@@ -638,11 +649,19 @@ export default function ShortTermPage() {
                     </span>
                   );
                 })())}
-                {/* 收退狀態改看「押金管理」頁,這裡只顯示金額 */}
-                {row('押金', d.deposit ? (
-                  <span>
-                    ${fmt(d.deposit)}
-                    <span className="ml-2 text-xs text-gray-400">收退狀態見押金管理</span>
+                {/*
+                  收退狀態改看「押金管理」頁,這裡只顯示金額。
+                  外幣押金各自是一筆,所以連結帶的是訂單 id 而不是某一筆押金 id ——
+                  帶押金 id 只會看到其中一種幣別,而使用者按的是「這張單的押金」。
+                */}
+                {row('押金', (d.deposit || d.fx_deposit?.length) ? (
+                  <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span>${fmt(d.deposit)}</span>
+                    {d.fx_deposit?.filter((f) => f.cur && f.amt).map((f, i) => (
+                      <span key={i} className="text-xs text-gray-500">＋{f.cur} {fmt(f.amt)}</span>
+                    ))}
+                    <a href={`/deposits?order=${d.id}`}
+                      className="text-xs text-mor-blue underline hover:text-mor-slate">到押金管理 →</a>
                   </span>
                 ) : '—')}
                 {row('入款方式', d.account ?? '—')}
@@ -654,7 +673,7 @@ export default function ShortTermPage() {
 
               <div className="sticky bottom-0 bg-white border-t border-mor-line px-6 py-3 flex gap-2"
                 style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
-                <button onClick={() => { setDetail(null); setEdit(d); }}
+                <button onClick={() => { setDetail(null); openEdit(d); }}
                   className="flex-1 h-11 rounded-lg bg-mor-slate text-white text-sm font-medium hover:bg-mor-slatedark">編輯</button>
                 {!isExempt(d.source) && canCollect && (
                   <button onClick={() => { setDetail(null); setCollect(d); }}
@@ -734,7 +753,18 @@ export default function ShortTermPage() {
               <label className="flex flex-col gap-1">客戶<input value={edit.guest_name ?? ''} onChange={(e) => setEdit({ ...edit, guest_name: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">{edit.source === 'oneoff' ? '日期(認列月份)' : '起日'}<input type="date" value={edit.checkin} onChange={(e) => setEdit({ ...edit, checkin: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               {edit.source !== 'oneoff' && <label className="flex flex-col gap-1">迄日<input type="date" value={edit.checkout} onChange={(e) => setEdit({ ...edit, checkout: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>}
-              <label className="flex flex-col gap-1">{edit.source === 'oneoff' ? '金額' : '訂單總額(台幣)'}<input type="number" value={twdBase || ''} placeholder="0" onChange={(e) => setTwdBase(parseFloat(e.target.value) || 0)} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+              {/*
+                一次性收入不會有外幣,給一個單純的金額欄就好 ——
+                多一個「+ 新增幣別」只是讓最常用的路徑多一個看不懂的東西。
+                它一樣寫進 revLines 的台幣列,所以存檔那段不用分兩套。
+              */}
+              {edit.source === 'oneoff' && (
+                <label className="flex flex-col gap-1">金額
+                  <input type="number" inputMode="numeric" placeholder="0"
+                    value={revLines[0]?.amt || ''}
+                    onChange={(e) => setRevLines([{ cur: 'TWD', amt: parseFloat(e.target.value) || 0, rate: 1 }])}
+                    className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+              )}
               {/*
                 一次性收入的會計科目。清單跟契約加費、短租加費共用(@/lib/fee-types)。
 
@@ -766,26 +796,12 @@ export default function ShortTermPage() {
                   <datalist id="st-items">{usedItems.map((i) => <option key={i} value={i} />)}</datalist>
                 </label>
               )}
-              {edit.source !== 'oneoff' && <label className="flex flex-col gap-1">押金(台幣)<input type="number" value={edit.deposit ?? ''} onChange={(e) => setEdit({ ...edit, deposit: e.target.value ? parseFloat(e.target.value) : 0 })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>}
+
               {edit.source !== 'oneoff' && (
-                <div className="col-span-2 border-t border-mor-line pt-2">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs text-gray-500">訂單其他幣別(外幣營收,換匯併入營收)</span>
-                    <button type="button" onClick={addFxRev} className="text-xs text-mor-blue underline">+ 新增其他幣別</button>
-                  </div>
-                  {fxRev.map((l, i) => (
-                    <div key={i} className="flex flex-wrap items-center gap-2 mb-1">
-                      <input value={l.cur} onChange={(e) => updFxRev(i, { cur: e.target.value.toUpperCase() })} placeholder="幣別" className="rounded border border-gray-300 px-2 py-1 text-xs w-16" />
-                      <input type="number" value={l.amt || ''} onChange={(e) => updFxRev(i, { amt: parseFloat(e.target.value) || 0 })} placeholder="金額" className="rounded border border-gray-300 px-2 py-1 text-xs w-24" />
-                      <span className="text-xs text-gray-400">× 匯率</span>
-                      <input type="number" value={l.rate || ''} onChange={(e) => updFxRev(i, { rate: parseFloat(e.target.value) || 0 })} placeholder="匯率" className="rounded border border-gray-300 px-2 py-1 text-xs w-20" />
-                      <span className="text-xs text-gray-600">= ${fmt((Number(l.amt) || 0) * (Number(l.rate) || 0))}</span>
-                      <button type="button" onClick={() => delFxRev(i)} className="text-xs text-red-500 underline">刪除</button>
-                    </div>
-                  ))}
-                  <div className="text-xs text-gray-500 mt-1">營收合計(台幣):<span className="font-semibold text-mor-slate">${fmt((twdBase || 0) + revFxTwd)}</span>{revFxTwd ? ` (台幣 ${fmt(twdBase)} + 外幣換算 ${fmt(revFxTwd)})` : ''}</div>
-                </div>
+                <MoneyLines mode="revenue" label="訂單金額" lines={revLines} onChange={setRevLines}
+                  hint="外幣換匯後併入營收。台幣是清單裡的一列,不必另外找欄位。" />
               )}
+
               {/*
                 收退押金的動作搬到「押金管理」頁了(migration_56)。
                 這裡只填金額 —— 金額是訂單條件的一部分,收退是之後才發生的事,
@@ -797,19 +813,8 @@ export default function ShortTermPage() {
                 </div>
               )}
               {edit.source !== 'oneoff' && (
-                <div className="col-span-2">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs text-gray-500">押金其他幣別(暫收,原幣退還,不換匯)</span>
-                    <button type="button" onClick={addFxDep} className="text-xs text-mor-blue underline">+ 新增其他幣別</button>
-                  </div>
-                  {fxDep.map((l, i) => (
-                    <div key={i} className="flex flex-wrap items-center gap-2 mb-1">
-                      <input value={l.cur} onChange={(e) => updFxDep(i, { cur: e.target.value.toUpperCase() })} placeholder="幣別" className="rounded border border-gray-300 px-2 py-1 text-xs w-16" />
-                      <input type="number" value={l.amt || ''} onChange={(e) => updFxDep(i, { amt: parseFloat(e.target.value) || 0 })} placeholder="金額" className="rounded border border-gray-300 px-2 py-1 text-xs w-24" />
-                      <button type="button" onClick={() => delFxDep(i)} className="text-xs text-red-500 underline">刪除</button>
-                    </div>
-                  ))}
-                </div>
+                <MoneyLines mode="deposit" label="押金" lines={depLines} onChange={setDepLines}
+                  hint="押金原幣退還,不換匯,所以沒有匯率欄。填了金額就會自動出現在押金管理頁。" />
               )}
               <label className="flex flex-col gap-1">入款方式<select value={edit.account ?? ''} onChange={(e) => setEdit({ ...edit, account: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option><option value="現金">現金</option>{payAccounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}<option value="加密貨幣">加密貨幣</option></select></label>
               <label className="flex flex-col gap-1 col-span-2">備註<input value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>

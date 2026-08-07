@@ -637,9 +637,17 @@ export default function ContractsPage() {
                     return <button onClick={() => setCollect(c)} title="點擊開啟收款" className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${lt.paid ? 'bg-mor-greenlight text-mor-green' : 'bg-orange-50 text-orange-600'}`}>{unit}{lt.paid ? '已收' : '未收'}</button>;
                   })()}
                 </td>
+                {/*
+                  「收租」收進抽屜,列上只留「檢視」—— 跟短租頁一致。
+                  收租視窗會列出整份租期的每一期、能改金額、能折讓、能開發票,
+                  那是進去做事的地方,不該在列表上一鍵就打開。
+                  真的要快速收款的話,左邊「收租」欄的「本月已收/未收」標籤本來就點得開。
+
+                  關注(★)留在列上:它是一鍵切換的顯示偏好,不是要進去做的事。
+                */}
                 <td className="px-3 py-2 text-right whitespace-nowrap space-x-2" onClick={(e) => e.stopPropagation()}>
                   <button onClick={() => togglePin(c)} title={c.watch ? '已關注(顯示於已收/未收清單)' : '關注收租(釘選)'} className={`text-xs ${c.watch ? 'text-amber-500' : 'text-gray-300 hover:text-amber-400'}`}>{c.watch ? '★' : '☆'}</button>
-                  <button onClick={() => setCollect(c)} className="text-xs text-mor-green underline hover:text-emerald-700 font-medium">收租</button>
+                  <button onClick={() => setDetail(c)} className="text-xs text-mor-slate underline hover:text-mor-blue">檢視</button>
                 </td>
               </tr>
             ))}
@@ -675,7 +683,14 @@ export default function ContractsPage() {
               <div className="px-6 py-4">
                 {row('類型', TYPE_LABEL[c.type] ?? c.type ?? '—')}
                 {row('租金', <span><span className="font-medium">${fmt(per)}</span> <span className="text-gray-500">/ {CAD_LABEL[c.cadence] ?? c.cadence}</span><div className="text-xs text-gray-400">對應月租 ${fmt(Math.round(per / step))}</div></span>)}
-                {row('押金', c.deposit ? <span>${fmt(c.deposit)}</span> : '—')}
+                {/* 收退狀態在「押金管理」頁。帶契約 id 而不是押金 id —— 一張契約可能有多幣別押金。 */}
+                {row('押金', c.deposit ? (
+                  <span className="flex flex-wrap items-center gap-x-2">
+                    <span>${fmt(c.deposit)}</span>
+                    <a href={`/deposits?contract=${c.id}`}
+                      className="text-xs text-mor-blue underline hover:text-mor-slate">到押金管理 →</a>
+                  </span>
+                ) : '—')}
                 {row('租期', `${c.start_date ?? '—'} ~ ${c.end_date ?? '—'}`)}
                 {row('繳款日', c.pay_day ? `每期 ${c.pay_day} 號` : '—')}
                 {row('首期繳款', c.first_payment_date ?? '—')}
