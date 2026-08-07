@@ -23,6 +23,52 @@
 
 export const TWD = 'TWD';
 
+/**
+ * 幣別下拉選單。
+ *
+ * 【為什麼是選單不是自由輸入】
+ * 自由輸入會長出 usd / Usd / US$ / 美金 這種同一種幣別的好幾種寫法，
+ * 而營收報表是按幣別字串分組的 —— 分組就會裂開，而且不會有人發現。
+ *
+ * 【收錄範圍】
+ * 台幣第一（最常用），接著是實際會收到的：美金、日圓、港幣、人民幣、歐元、
+ * 英鎊、韓元、新加坡幣、澳幣、加幣、瑞士法郎，以及東南亞幾個常見的。
+ * 沒收錄的還是填得進去 —— 選單最後一項是「其他」，選了會切成自由輸入。
+ */
+export const CURRENCIES: { code: string; name: string }[] = [
+  { code: 'TWD', name: '新台幣' },
+  { code: 'USD', name: '美金' },
+  { code: 'JPY', name: '日圓' },
+  { code: 'HKD', name: '港幣' },
+  { code: 'CNY', name: '人民幣' },
+  { code: 'EUR', name: '歐元' },
+  { code: 'GBP', name: '英鎊' },
+  { code: 'KRW', name: '韓元' },
+  { code: 'SGD', name: '新加坡幣' },
+  { code: 'AUD', name: '澳幣' },
+  { code: 'CAD', name: '加幣' },
+  { code: 'CHF', name: '瑞士法郎' },
+  { code: 'THB', name: '泰銖' },
+  { code: 'MYR', name: '馬來西亞令吉' },
+  { code: 'PHP', name: '菲律賓披索' },
+  { code: 'VND', name: '越南盾' },
+  { code: 'IDR', name: '印尼盾' },
+  { code: 'NZD', name: '紐幣' },
+  { code: 'MOP', name: '澳門幣' },
+];
+
+export const CURRENCY_CODES = CURRENCIES.map((c) => c.code);
+
+/** 這個幣別在選單裡嗎。不在的話（舊資料或自訂）要另外處理，不能讓它從選單消失。 */
+export const isKnownCurrency = (cur: string) =>
+  CURRENCY_CODES.includes((cur || '').trim().toUpperCase());
+
+/** 選單顯示文字：「USD 美金」。只有代碼的話沒人分得出 KRW 跟 MYR。 */
+export function currencyLabel(code: string): string {
+  const hit = CURRENCIES.find((c) => c.code === code);
+  return hit ? `${hit.code} ${hit.name}` : code;
+}
+
 export type Line = {
   cur: string;
   amt: number;

@@ -1,5 +1,9 @@
 'use client';
-import { blankLine, isTwd, lineTwd, totalTwd, TWD, type Line } from '@/lib/money-lines';
+import { useState } from 'react';
+import {
+  blankLine, isTwd, lineTwd, totalTwd, TWD,
+  CURRENCIES, isKnownCurrency, currencyLabel, type Line,
+} from '@/lib/money-lines';
 
 /**
  * 多幣別金額輸入：一列一種幣別，台幣只是其中一列。
@@ -23,8 +27,10 @@ import { blankLine, isTwd, lineTwd, totalTwd, TWD, type Line } from '@/lib/money
 const fmt = (n: number) => Math.round(n || 0).toLocaleString('en-US');
 const CTRL = 'h-11 md:h-8 bg-white rounded-lg border border-mor-line px-2 text-sm';
 
+const OTHER = '__other__';
+
 export default function MoneyLines({
-  lines, onChange, mode, label, hint, disabled = false,
+  lines, onChange, mode, label, hint, disabled = false, action,
 }: {
   lines: Line[];
   onChange: (next: Line[]) => void;
@@ -32,20 +38,41 @@ export default function MoneyLines({
   label: string;
   hint?: string;
   disabled?: boolean;
+  /** 標題右邊的額外連結（例如「到押金管理」）。 */
+  action?: React.ReactNode;
 }) {
   const withRate = mode === 'revenue';
+  /**
+   * 哪幾列切成了自由輸入。
+   *
+   * 選單收了 19 種幣別，覆蓋實際會收到的絕大多數，但不該是死路 ——
+   * 選「其他」就把那一列換成文字框。用索引記是因為這時 cur 還是空的，
+   * 沒有別的東西可以當識別。
+   */
+  const [custom, setCustom] = useState<Set<number>>(new Set());
+  const markCustom = (i: number, on: boolean) => setCustom((s) => {
+    const n = new Set(s); if (on) n.add(i); else n.delete(i); return n;
+  });
+
   const upd = (i: number, patch: Partial<Line>) =>
     onChange(lines.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
-  const del = (i: number) => onChange(lines.filter((_, idx) => idx !== i));
+  const del = (i: number) => {
+    onChange(lines.filter((_, idx) => idx !== i));
+    // 索引會往前移，自由輸入的標記要跟著搬，否則刪一列之後換成別列變成文字框
+    setCustom((s) => new Set([...s].filter((x) => x !== i).map((x) => (x > i ? x - 1 : x))));
+  };
 
   return (
     <div className="col-span-2 rounded-lg border border-mor-line p-3">
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-center justify-between gap-2 mb-2">
         <span className="text-xs text-gray-500">{label}</span>
-        {!disabled && (
-          <button type="button" onClick={() => onChange([...lines, blankLine(lines)])}
-            className="text-xs text-mor-blue underline hover:text-mor-slate">+ 新增幣別</button>
-        )}
+        <span className="flex items-center gap-3">
+          {action}
+          {!disabled && (
+            <button type="button" onClick={() => onChange([...lines, blankLine(lines)])}
+              className="text-xs text-mor-blue underline hover:text-mor-slate">+ 新增幣別</button>
+          )}
+        </span>
       </div>
 
       <div className="flex flex-col gap-2">
@@ -56,12 +83,37 @@ export default function MoneyLines({
           return (
             <div key={i} className="flex flex-wrap items-center gap-2">
               {locked ? (
-                <span className="w-16 h-11 md:h-8 rounded-lg bg-mor-bluelight text-mor-slate
+                <span className="w-24 h-11 md:h-8 rounded-lg bg-mor-bluelight text-mor-slate
                                  text-xs font-medium flex items-center justify-center shrink-0">{TWD}</span>
+              ) : custom.has(i) ? (
+                // 選了「其他」的那一列。旁邊留一個「選單」把它切回去，免得選錯了出不來。
+                <span className="flex items-center gap-1 shrink-0">
+                  <input value={l.cur} disabled={disabled} autoFocus maxLength={5}
+                    onChange={(e) => upd(i, { cur: e.target.value.toUpperCase().replace(/[^A-Z]/g, '') })}
+                    placeholder="代碼" className={`${CTRL} w-16 uppercase`} />
+                  <button type="button" onClick={() => { markCustom(i, false); upd(i, { cur: '' }); }}
+                    className="text-[11px] text-mor-blue underline">選單</button>
+                </span>
               ) : (
-                <input value={l.cur} disabled={disabled}
-                  onChange={(e) => upd(i, { cur: e.target.value.toUpperCase() })}
-                  placeholder="幣別" className={`${CTRL} w-16 shrink-0 uppercase`} />
+                /*
+                  下拉而不是自由輸入 —— 自由輸入會長出 usd / Usd / US$ / 美金
+                  這種同一種幣別的好幾種寫法，而營收報表是按幣別字串分組的，
+                  分組會裂開而且不會有人發現。
+                */
+                <select value={isKnownCurrency(l.cur) || !l.cur ? l.cur : l.cur} disabled={disabled}
+                  onChange={(e) => {
+                    if (e.target.value === OTHER) { markCustom(i, true); upd(i, { cur: '' }); return; }
+                    upd(i, { cur: e.target.value });
+                  }}
+                  className={`${CTRL} w-24 shrink-0`}>
+                  <option value="">幣別</option>
+                  {/* 舊資料若是選單沒收的幣別，要保留成一個選項，否則一存檔就被清掉 */}
+                  {l.cur && !isKnownCurrency(l.cur) && <option value={l.cur}>{l.cur}</option>}
+                  {CURRENCIES.filter((c) => c.code !== TWD).map((c) => (
+                    <option key={c.code} value={c.code}>{currencyLabel(c.code)}</option>
+                  ))}
+                  <option value={OTHER}>其他（自行輸入）</option>
+                </select>
               )}
 
               <input type="number" inputMode="numeric" value={l.amt || ''} disabled={disabled}

@@ -684,13 +684,7 @@ export default function ContractsPage() {
                 {row('類型', TYPE_LABEL[c.type] ?? c.type ?? '—')}
                 {row('租金', <span><span className="font-medium">${fmt(per)}</span> <span className="text-gray-500">/ {CAD_LABEL[c.cadence] ?? c.cadence}</span><div className="text-xs text-gray-400">對應月租 ${fmt(Math.round(per / step))}</div></span>)}
                 {/* 收退狀態在「押金管理」頁。帶契約 id 而不是押金 id —— 一張契約可能有多幣別押金。 */}
-                {row('押金', c.deposit ? (
-                  <span className="flex flex-wrap items-center gap-x-2">
-                    <span>${fmt(c.deposit)}</span>
-                    <a href={`/deposits?contract=${c.id}`}
-                      className="text-xs text-mor-blue underline hover:text-mor-slate">到押金管理 →</a>
-                  </span>
-                ) : '—')}
+                {row('押金', c.deposit ? <span>${fmt(c.deposit)}</span> : '—')}
                 {row('租期', `${c.start_date ?? '—'} ~ ${c.end_date ?? '—'}`)}
                 {row('繳款日', c.pay_day ? `每期 ${c.pay_day} 號` : '—')}
                 {row('首期繳款', c.first_payment_date ?? '—')}
@@ -722,14 +716,22 @@ export default function ContractsPage() {
               */}
               <div className="sticky bottom-0 bg-white border-t border-mor-line px-6 py-3"
                 style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
-                <div className="flex gap-2">
+                {/*
+                  四顆按鈕用 flex-wrap + min-w —— 手機一排放不下時自動折成兩排,
+                  不會壓成四個 60px 寬、字擠成兩行的方塊。
+                  「押金」帶契約 id 而不是押金 id:一張契約可能有多幣別押金,
+                  帶押金 id 只會看到其中一種。
+                */}
+                <div className="flex flex-wrap gap-2">
                   <button onClick={() => { setDetail(null); setEdit(c); }}
-                    className="flex-1 h-11 rounded-lg bg-mor-slate text-white text-sm font-medium hover:bg-mor-slatedark">編輯</button>
+                    className="flex-1 min-w-[6rem] h-11 rounded-lg bg-mor-slate text-white text-sm font-medium hover:bg-mor-slatedark">編輯</button>
                   <button onClick={() => { setDetail(null); setCollect(c); }}
-                    className="flex-1 h-11 rounded-lg border border-mor-green text-mor-green text-sm font-medium hover:bg-mor-greenlight">收租</button>
+                    className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-green text-mor-green text-sm font-medium hover:bg-mor-greenlight">收租</button>
+                  <a href={`/deposits?contract=${c.id}`}
+                    className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-blue text-mor-blue text-sm font-medium hover:bg-mor-bluelight flex items-center justify-center">押金</a>
                   {c.active && (
                     <button onClick={() => { endLease(c); setDetail(null); }}
-                      className="flex-1 h-11 rounded-lg border border-mor-slate text-mor-slate text-sm font-medium hover:bg-mor-sand/40">結束租約</button>
+                      className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-slate text-mor-slate text-sm font-medium hover:bg-mor-sand/40">結束租約</button>
                   )}
                 </div>
                 <div className="mt-2 text-center">

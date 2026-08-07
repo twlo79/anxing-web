@@ -654,14 +654,13 @@ export default function ShortTermPage() {
                   外幣押金各自是一筆,所以連結帶的是訂單 id 而不是某一筆押金 id ——
                   帶押金 id 只會看到其中一種幣別,而使用者按的是「這張單的押金」。
                 */}
+                {/* 收退狀態在「押金管理」頁,入口在下面的操作列。這裡只顯示金額。 */}
                 {row('押金', (d.deposit || d.fx_deposit?.length) ? (
                   <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
                     <span>${fmt(d.deposit)}</span>
                     {d.fx_deposit?.filter((f) => f.cur && f.amt).map((f, i) => (
                       <span key={i} className="text-xs text-gray-500">＋{f.cur} {fmt(f.amt)}</span>
                     ))}
-                    <a href={`/deposits?order=${d.id}`}
-                      className="text-xs text-mor-blue underline hover:text-mor-slate">到押金管理 →</a>
                   </span>
                 ) : '—')}
                 {row('入款方式', d.account ?? '—')}
@@ -671,20 +670,27 @@ export default function ShortTermPage() {
                 {row('訂單編號', <span className="text-xs text-gray-500 break-all">{d.order_key}</span>)}
               </div>
 
-              <div className="sticky bottom-0 bg-white border-t border-mor-line px-6 py-3 flex gap-2"
+              {/*
+                最多五顆按鈕,用 flex-wrap + min-w 讓手機自動折行 ——
+                固定一排的話每顆會被壓到 60px 寬,字擠成兩行。
+              */}
+              <div className="sticky bottom-0 bg-white border-t border-mor-line px-6 py-3 flex flex-wrap gap-2"
                 style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
                 <button onClick={() => { setDetail(null); openEdit(d); }}
-                  className="flex-1 h-11 rounded-lg bg-mor-slate text-white text-sm font-medium hover:bg-mor-slatedark">編輯</button>
+                  className="flex-1 min-w-[6rem] h-11 rounded-lg bg-mor-slate text-white text-sm font-medium hover:bg-mor-slatedark">編輯</button>
                 {!isExempt(d.source) && canCollect && (
                   <button onClick={() => { setDetail(null); setCollect(d); }}
-                    className="flex-1 h-11 rounded-lg border border-mor-green text-mor-green text-sm font-medium hover:bg-mor-greenlight">收款</button>
+                    className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-green text-mor-green text-sm font-medium hover:bg-mor-greenlight">收款</button>
                 )}
                 {canMove && (
                   <button onClick={() => { setDetail(null); openMove(d); }}
-                    className="flex-1 h-11 rounded-lg border border-mor-green text-mor-green text-sm font-medium hover:bg-mor-greenlight">移房</button>
+                    className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-green text-mor-green text-sm font-medium hover:bg-mor-greenlight">移房</button>
                 )}
+                {/* 帶訂單 id 而不是押金 id —— 一張訂單可能有台幣與多種外幣好幾筆押金 */}
+                <a href={`/deposits?order=${d.id}`}
+                  className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-blue text-mor-blue text-sm font-medium hover:bg-mor-bluelight flex items-center justify-center">押金</a>
                 <button onClick={() => { del(d); setDetail(null); }}
-                  className="flex-1 h-11 rounded-lg border border-red-300 text-red-500 text-sm font-medium hover:bg-red-50">刪除</button>
+                  className="flex-1 min-w-[6rem] h-11 rounded-lg border border-red-300 text-red-500 text-sm font-medium hover:bg-red-50">刪除</button>
               </div>
             </div>
           </div>
@@ -814,7 +820,15 @@ export default function ShortTermPage() {
               )}
               {edit.source !== 'oneoff' && (
                 <MoneyLines mode="deposit" label="押金" lines={depLines} onChange={setDepLines}
-                  hint="押金原幣退還,不換匯,所以沒有匯率欄。填了金額就會自動出現在押金管理頁。" />
+                  /*
+                    新單還沒有 id，押金也還沒產生，這時給連結會連到空的清單，
+                    所以只有已存檔的訂單才顯示。
+                  */
+                  action={edit.id ? (
+                    <a href={`/deposits?order=${edit.id}`} target="_blank" rel="noreferrer"
+                      className="text-xs text-mor-blue underline hover:text-mor-slate">收退狀態 →</a>
+                  ) : null}
+                  hint="押金原幣退還,不換匯,所以沒有匯率欄。填了金額就會自動出現在押金管理頁,收退日期與帳戶在那裡維護。" />
               )}
               <label className="flex flex-col gap-1">入款方式<select value={edit.account ?? ''} onChange={(e) => setEdit({ ...edit, account: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option><option value="現金">現金</option>{payAccounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}<option value="加密貨幣">加密貨幣</option></select></label>
               <label className="flex flex-col gap-1 col-span-2">備註<input value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
