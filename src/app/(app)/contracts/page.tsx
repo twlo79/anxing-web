@@ -4,8 +4,6 @@ import { FilterBar, FilterSelect, FilterDateRange, FilterSearch, FilterClear, Fi
 import { createClient } from '@/lib/supabase';
 import { FEE_TYPES, feeLabel } from '@/lib/fee-types';
 import ContractFees from '@/components/ContractFees';
-import MoneyLines from '@/components/MoneyLines';
-import { toLines, fromLines, validateLines, type Line } from '@/lib/money-lines';
 import { keyBase, onlyKeyOf } from '@/lib/ltKey';
 import {
   summarize, needsTypedConfirm, deleteConfirmText, typedConfirmPrompt,
@@ -82,21 +80,10 @@ export default function ContractsPage() {
   const [invOrders, setInvOrders] = useState<{ property_raw: string | null; amount: number; paid: boolean; checkin: string }[]>([]);
   // 改完租期後「掉在租期外但已收款」的提示。null = 沒有。
   const [stray, setStray] = useState<{ name: string; n: number; amt: number; months: string } | null>(null);
-  /*
-   * 押金改成多幣別清單,跟短租頁用同一個元件與同一套轉換（lib/money-lines）。
-   * 台幣仍存回 contracts.deposit,外幣進 contracts.fx_deposit —— 儲存格式沒變,
-   * 押金管理頁那邊的同步觸發器照舊吃得到。
-   */
-  const [depLines, setDepLines] = useState<Line[]>([]);
   // 表單開啟次數。綁 edit.id 的話「新增 → 取消 → 再新增」不會重跑初始化,
   // 第二張契約會帶著第一張的押金 —— 短租頁踩過同一個坑。
   const [formSeq, setFormSeq] = useState(0);
   const openEdit = (o: Contract | null) => { setEdit(o); if (o) setFormSeq((n) => n + 1); };
-  useEffect(() => {
-    if (!edit) return;
-    setDepLines(toLines(edit.deposit, edit.fx_deposit ?? [], 'deposit'));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formSeq]);
   const curFirst = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`; })();
   const curMon = (() => { const d = new Date(); return `${d.getFullYear()}/${d.getMonth() + 1}`; })();
   const curYm = (() => { const d = new Date(); return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`; })();
@@ -250,16 +237,13 @@ export default function ContractsPage() {
   }
   async function save() {
     if (!edit) return;
-    const depErr = validateLines(depLines, 'deposit');
-    if (depErr) return flash('押金:' + depErr);
-    const dep = fromLines(depLines, 'deposit');
     const payload = {
       estate_id: edit.estate_id, room: edit.room, tenant_name: edit.tenant_name, phone: edit.phone,
       cadence: edit.cadence, type: edit.type, amount_per_period: edit.amount_per_period,
       monthly_rent: Math.round((edit.amount_per_period || 0) / (STEP_OF[edit.cadence] || 1)),
-      // 台幣回 deposit、外幣回 fx_deposit —— 儲存格式與改版前一致,
-      // 押金管理的同步觸發器（migration_87）照舊吃得到。
-      deposit: dep.twd, fx_deposit: dep.fx,
+      // 契約押金只有台幣。fx_deposit 一律清空 —— 之前短暫支援過多幣別,
+      // 舊資料若留著外幣,押金管理會多出一筆沒人維護的外幣押金。
+      deposit: edit.deposit, fx_deposit: [],
       start_date: edit.start_date || null, end_date: edit.end_date || null, first_payment_date: edit.first_payment_date || null, pay_day: edit.pay_day ?? null,
       account: edit.account, note: edit.note, active: edit.active, watch: edit.watch ?? false, display_name: edit.display_name || null, name: `${edit.tenant_name ?? ''}-${edit.room ?? ''}`,
       invoice_required: edit.invoice_required ?? false,
@@ -788,6 +772,23 @@ export default function ContractsPage() {
               <label className="flex flex-col gap-1">電話<input value={edit.phone ?? ''} onChange={(e) => setEdit({ ...edit, phone: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">繳別<select value={edit.cadence} onChange={(e) => setEdit({ ...edit, cadence: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="monthly">月繳</option><option value="quarterly">季繳</option><option value="halfyear">半年繳</option><option value="yearly">年繳</option></select></label>
               <label className="flex flex-col gap-1">類別<select value={edit.type ?? 'longterm'} onChange={(e) => setEdit({ ...edit, type: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="longterm">長租</option><option value="company">公司登記</option><option value="office">辦公室</option></select></label>
+              <label className="flex flex-col gap-1">每期租金({CAD_LABEL[edit.cadence]})<input type="number" inputMode="numeric" placeholder="0" value={edit.amount_per_period || ''} onChange={(e) => setEdit({ ...edit, amount_per_period: e.target.value ? parseFloat(e.target.value) : 0 })} className="rounded-lg border border-gray-300 px-2 py-1.5" /><span className="text-xs text-gray-500 mt-0.5">對應月租金:${fmt(Math.round((edit.amount_per_period || 0) / (STEP_OF[edit.cadence] || 1)))}</span></label>
+              {/*
+                契約押金只收台幣 —— 長租不會有外幣押金,多一個幣別清單只是讓最常用的
+                路徑多兩個看不懂的控制項。短租那邊才需要（外籍旅客）。
+              */}
+              <label className="flex flex-col gap-1">押金(台幣)
+                <input type="number" inputMode="numeric" placeholder="0"
+                  value={edit.deposit || ''}
+                  onChange={(e) => setEdit({ ...edit, deposit: e.target.value ? parseFloat(e.target.value) : 0 })}
+                  className="rounded-lg border border-gray-300 px-2 py-1.5" />
+                {edit.id && (
+                  <a href={`/deposits?contract=${edit.id}`} target="_blank" rel="noreferrer"
+                    className="text-xs text-mor-blue underline hover:text-mor-slate mt-0.5">收退狀態 →</a>
+                )}
+              </label>
+              <label className="flex flex-col gap-1">租期起<input type="date" value={edit.start_date ?? ''} onChange={(e) => setEdit({ ...edit, start_date: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+              <label className="flex flex-col gap-1">租期迄<input type="date" value={edit.end_date ?? ''} onChange={(e) => setEdit({ ...edit, end_date: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">首繳日<input type="date" value={edit.first_payment_date ?? ''} onChange={(e) => setEdit({ ...edit, first_payment_date: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <div className="col-span-2 -mt-1 text-xs text-gray-500 flex items-center gap-1 flex-wrap">
                 <span>租金對應:</span>
@@ -797,20 +798,6 @@ export default function ContractsPage() {
                 <input type="number" min={1} max={31} value={edit.pay_day ?? (edit.first_payment_date ? Number(edit.first_payment_date.slice(8, 10)) : '')} onChange={(e) => setEdit({ ...edit, pay_day: e.target.value ? parseInt(e.target.value) : null })} className="w-14 rounded border border-gray-300 px-1 py-0.5" />
                 <span>日</span>
               </div>
-              <label className="flex flex-col gap-1">每期租金({CAD_LABEL[edit.cadence]})<input type="number" value={edit.amount_per_period ?? ''} onChange={(e) => setEdit({ ...edit, amount_per_period: e.target.value ? parseFloat(e.target.value) : 0 })} className="rounded-lg border border-gray-300 px-2 py-1.5" /><span className="text-xs text-gray-500 mt-0.5">對應月租金:${fmt(Math.round((edit.amount_per_period || 0) / (STEP_OF[edit.cadence] || 1)))}</span></label>
-              {/*
-                押金改成多幣別清單,跟短租頁完全一樣的元件與操作。
-                台幣是清單裡的第一列,不再是獨立欄位 —— 外籍房客付日圓押金時
-                不用再想「這筆該填哪一格」。
-              */}
-              <MoneyLines mode="deposit" label="押金" lines={depLines} onChange={setDepLines}
-                action={edit.id ? (
-                  <a href={`/deposits?contract=${edit.id}`} target="_blank" rel="noreferrer"
-                    className="text-xs text-mor-blue underline hover:text-mor-slate">收退狀態 →</a>
-                ) : null}
-                hint="押金原幣退還,不換匯,所以沒有匯率欄。填了金額就會自動出現在押金管理頁。" />
-              <label className="flex flex-col gap-1">租期起<input type="date" value={edit.start_date ?? ''} onChange={(e) => setEdit({ ...edit, start_date: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
-              <label className="flex flex-col gap-1">租期迄<input type="date" value={edit.end_date ?? ''} onChange={(e) => setEdit({ ...edit, end_date: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">安幸收款帳號<select value={edit.account ?? ''} onChange={(e) => setEdit({ ...edit, account: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option>{payAccounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}</select></label>
               <label className="flex items-center gap-2 mt-6"><input type="checkbox" checked={edit.active} onChange={(e) => setEdit({ ...edit, active: e.target.checked })} />啟用中</label>
               <label className="flex items-center gap-2 mt-6" title="釘選後才會出現在上方「本月已收/未收」清單"><input type="checkbox" checked={edit.watch ?? false} onChange={(e) => setEdit({ ...edit, watch: e.target.checked })} />關注收租(釘選)</label>
