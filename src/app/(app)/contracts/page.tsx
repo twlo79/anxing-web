@@ -4,6 +4,7 @@ import { FilterBar, FilterSelect, FilterDateRange, FilterSearch, FilterClear, Fi
 import { createClient } from '@/lib/supabase';
 import { FEE_TYPES, feeLabel } from '@/lib/fee-types';
 import ContractFees from '@/components/ContractFees';
+import { dueDateOf, resolvePayDay, checkFirstDue, fmtDue } from '@/lib/due-date';
 import { keyBase, onlyKeyOf } from '@/lib/ltKey';
 import {
   summarize, needsTypedConfirm, deleteConfirmText, typedConfirmPrompt,
@@ -908,7 +909,6 @@ export default function ContractsPage() {
 
 
 const CAD_MONTHS: Record<string, number> = { monthly: 1, quarterly: 3, halfyear: 6, yearly: 12 };
-function addMonths(d: Date, n: number) { const x = new Date(d); x.setMonth(x.getMonth() + n); return x; }
 function payScheduleText(cadence: string, fpd: string | null | undefined, payDay?: number | null) {
   const p = fpd ? fpd.split('-').map(Number) : null;
   const m = p ? p[1] : null;
@@ -940,6 +940,12 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
   const [invDraft, setInvDraft] = useState<{ id?: string; ym: string; date: string; no: string; note: string } | null>(null);
   const today = () => new Date().toISOString().slice(0, 10);
   const STEP = ({ monthly: 1, quarterly: 3, halfyear: 6, yearly: 12 } as any)[c.cadence] || 1;
+  /*
+   * 「幾號繳」—— 應繳日的唯一依據。
+   * pay_day 沒設定就取首繳日的日數；兩個都沒有時是 null,底下會提示要去設。
+   */
+  const payDay = resolvePayDay(c.pay_day, c.first_payment_date);
+  const firstDue = checkFirstDue(c.start_date, c.cadence, payDay, c.first_payment_date);
 
   const months = useMemo(() => {
     if (!c.start_date) return [] as { ym: string; y: number; m: number; label: string }[];
@@ -1265,19 +1271,28 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
             </div>
           )}
           {/*
-            首繳日不在租期內。
+            應繳日的依據。
 
-            每一期的「應繳 X 月 X 日」是從 first_payment_date 往後推算的,
-            那個欄位跟租期是分開存的 —— 改了租期沒改首繳日,應繳日就會整排落在
-            幾年前,而畫面上不會有任何跡象(2026-08 就遇到:租期 2026-06 起,
-            應繳日卻顯示 2023/6/6)。這裡直接講出來。
+            舊版是「首繳日 + i × 繳別」,首繳日填錯就整排跟著偏,而且不會自己修正
+            （2026-08 遇過整排顯示 2023 年）。現在錨在期別本身,首繳日只用來猜「幾號」。
+
+            兩種情況要講出來:
+              沒有「幾號繳」    → 算不出應繳日,整欄會是空的,要去設
+              首繳日跟系統算的不一樣 → 使用者可能以為他填的那天生效了
           */}
-          {c.first_payment_date && c.start_date && c.end_date
-            && (c.first_payment_date < c.start_date || c.first_payment_date > c.end_date) && (
+          {c.start_date && !payDay && (
             <div className="mb-3 rounded-lg bg-amber-50 text-amber-800 px-3 py-2 text-xs">
-              首繳日 <b>{c.first_payment_date}</b> 不在租期 {c.start_date} ~ {c.end_date} 內 ——
-              底下每一期的「應繳日」都是從首繳日往後推的,所以會跟著偏掉。
-              請到編輯視窗修正首繳日。
+              還沒設定「幾號繳」,所以底下算不出應繳日。
+              請到編輯視窗填「租金對應:每月 __ 日」,或填一個首繳日讓系統取它的日數。
+            </div>
+          )}
+          {firstDue.mismatch && (
+            <div className="mb-3 rounded-lg bg-mor-bluelight text-mor-slate px-3 py-2 text-xs leading-relaxed">
+              首繳日填的是 <b>{c.first_payment_date}</b>,系統實際用的第一期應繳日是
+              <b> {fmtDue(firstDue.firstDue)}</b>（每期 {payDay} 號繳,租金當期的前一個月收）。
+              <span className="block text-mor-slate/70 mt-0.5">
+                應繳日只看「幾號繳」與期別,不受首繳日的年月影響 —— 所以首繳日填錯不會讓整排偏掉。
+              </span>
             </div>
           )}
           {/*
@@ -1295,7 +1310,12 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
               const amount = os.reduce((a: number, o: any) => a + Number(o.amount || 0), 0);
               const paidAt = os.find((o: any) => o.paid_at)?.paid_at;
               const first = chunk[0], last = chunk[chunk.length - 1];
-              const due = c.first_payment_date ? (() => { const base = addMonths(new Date(c.first_payment_date + 'T00:00:00'), i * STEP); const day = c.pay_day || base.getDate(); const dd = new Date(base.getFullYear(), base.getMonth(), day); return `${dd.getFullYear()}/${dd.getMonth() + 1}/${dd.getDate()}`; })() : '';
+              /*
+                應繳日錨在「期別本身」,不是錨在首繳日 —— 見 lib/due-date。
+                舊算法是「首繳日 + i × 繳別」,首繳日填錯就整排跟著偏,
+                而且永遠不會自己修正（2026-08 遇過整排顯示 2023 年）。
+              */
+              const due = fmtDue(dueDateOf(c.start_date, c.cadence, i, payDay));
               const pfees = feeRows.filter((f: any) => f.checkin && chunk.some((mm: any) => (f.checkin.slice(0, 4) + f.checkin.slice(5, 7)) === mm.ym));
               // 折讓是 fee_type='折讓' 的負數列。應收顯示淨額,但保留原始金額供對帳。
               const pdisc = pfees.filter((f: any) => Number(f.amount) < 0);
