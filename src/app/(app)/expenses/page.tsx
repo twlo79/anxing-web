@@ -4,6 +4,8 @@ import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
 import Receipts, { type ReceiptsHandle } from '@/components/Receipts';
+import DeferralPanel from '@/components/DeferralPanel';
+import { deferralLabel, childLabel, recognizedTotal, paidTotal, paidCell } from '@/lib/deferral';
 
 type Expense = {
   id: string; spent_on: string; item_name: string; amount: number;
@@ -15,6 +17,12 @@ type Expense = {
   note: string | null; source_item_id: string | null;
   // amount 一律台幣;外幣的單另存原幣別與原金額供對帳
   currency?: string | null; fx_rate?: number | null; amount_original?: number | null;
+  /**
+   * 遞延認列（migration_88）。
+   * 母單:deferred=true、gross_amount=實付總額、amount=這一天認列多少。
+   * 子單:parent_expense_id 指回母單,不可單獨編輯或刪除。
+   */
+  parent_expense_id?: string | null; gross_amount?: number | null; deferred?: boolean;
 };
 type AccountCode = { code: string; name: string; sort: number; active: boolean };
 type Estate = { id: string; name: string; sort: number; active: boolean };
@@ -73,6 +81,8 @@ export default function ExpensesPage() {
   }, [supabase]);
 
   const codeName = useMemo(() => Object.fromEntries(codes.map((c) => [c.code, c.name])), [codes]);
+  /** id → 支出。子單要靠它找到母單（顯示母單日期、點了跳過去）。 */
+  const byId = useMemo(() => Object.fromEntries(rows.map((r) => [r.id, r])), [rows]);
   const estateName = useMemo(() => Object.fromEntries(estates.map((e) => [e.id, e.name])), [estates]);
   // 停用的物業不再出現在下拉,但既有支出仍要顯示得出名字,所以 estateName 用全部物業
   const activeEstates = useMemo(() => estates.filter((e) => e.active), [estates]);
@@ -114,7 +124,19 @@ export default function ExpensesPage() {
   }), []);
   const sorted = useMemo(() => sortRows(rows, sort, SORT_COLS), [rows, sort, SORT_COLS]);
 
-  const total = useMemo(() => rows.reduce((a, r) => a + (Number(r.amount) || 0), 0), [rows]);
+  /*
+   * 遞延之後支出有兩個數字,兩個都要看得到:
+   *
+   *   認列支出  這段期間的費用是多少（sum(amount),跟改版前完全一樣）
+   *   實際支出  這段期間真的付出去多少錢（子單不算,它們沒有付款事實）
+   *
+   * 只看認列會以為 8 月沒花錢,銀行對帳對不上;
+   * 只看實際會讓 9、10 月的費用憑空消失。
+   * **沒有任何遞延時兩個數字完全相同**,所以舊資料的行為不變。
+   */
+  const total = useMemo(() => recognizedTotal(rows), [rows]);
+  const paid = useMemo(() => paidTotal(rows), [rows]);
+  const hasDeferral = useMemo(() => rows.some((r) => r.deferred || r.parent_expense_id), [rows]);
 
   const byCode = useMemo(() => {
     const m: Record<string, number> = {};
@@ -166,11 +188,22 @@ export default function ExpensesPage() {
     if (cur !== 'TWD' && !(rate > 0)) return flash('請填匯率');
     setSaving(true);
     const orig = Number(edit.amount_original) || 0;
+    /*
+     * 【遞延母單的金額不能在這裡重算】
+     *
+     * 一般支出的 amount = 原幣 × 匯率。但遞延母單的 amount 是
+     * 「這一天認列多少」= 實付總額 − 子單合計,可能是 0。
+     * 照一般規則重算會把它蓋成全額,母單 + 子單就不等於實付總額,
+     * migration_88 的觸發器會直接把整筆存檔打回來。
+     *
+     * 母單金額本來就不允許改（使用者定的規則）——
+     * 要改先取消遞延,或刪掉重建。
+     */
     const payload: any = {
       spent_on: edit.spent_on,
       item_name: edit.item_name.trim(),
       // amount 一律台幣,與請款單同一套規則 —— 報表與統計都只看這欄
-      amount: Math.round(orig * rate),
+      ...(edit.deferred ? {} : { amount: Math.round(orig * rate) }),
       amount_original: orig,
       currency: cur,
       fx_rate: rate,
@@ -226,13 +259,16 @@ export default function ExpensesPage() {
     const T = (v: any, st: any) => ({ v: v ?? '', t: typeof v === 'number' ? 'n' : 's', s: st, z: typeof v === 'number' ? '#,##0' : undefined });
 
     // 用途已是物業層級,原本的「物業」欄與「用途」欄內容重複,合併成一欄
-    const header = ['支出日期', '支出項目', '金額', '會計科目', '用途', '憑證號碼', '支付方式', '安幸付款帳號', '備註'];
+    const header = ['支出日期', '支出項目', '認列金額', '實際支出', '遞延', '會計科目', '用途', '憑證號碼', '支付方式', '安幸付款帳號', '備註'];
     const aoa: any[][] = [header.map((h) => T(h, stHead))];
     for (const r of sorted) {
       aoa.push([
         T(r.spent_on ?? '', stCell),
         T(r.item_name ?? '', stCell),
         T(Math.round(Number(r.amount) || 0), stNum),
+        // 實際支出:子單留空 —— 那一列沒有付款事實,印 0 會讓人以為那天付了 0 元
+        T(paidCell(r), stNum),
+        T(r.deferred ? '母單' : (r.parent_expense_id ? '子單' : ''), stCell),
         T(r.account_code ? codeName[r.account_code] ?? r.account_code : '', stCell),
         T(purposeLabel(r), stCell),
         T(r.voucher_no ?? '', stCell),
@@ -242,7 +278,7 @@ export default function ExpensesPage() {
       ]);
     }
     const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws['!cols'] = [{ wch: 12 }, { wch: 24 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 28 }];
+    ws['!cols'] = [{ wch: 12 }, { wch: 24 }, { wch: 12 }, { wch: 12 }, { wch: 7 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 28 }];
     ws['!freeze'] = { xSplit: 0, ySplit: 1 };
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, '支出');
@@ -269,11 +305,24 @@ export default function ExpensesPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
         <div className="rounded-xl min-w-0 bg-mor-slate text-white p-5">
           <div className="flex items-baseline justify-between">
-            <div className="text-sm opacity-80">總支出</div>
+            <div className="text-sm opacity-80">認列支出</div>
             <div className="text-xs opacity-60">{rows.length.toLocaleString()} 筆</div>
           </div>
           <div className="stat-num-lg font-bold mt-2">${fmt(total)}</div>
-          <div className="text-xs opacity-60 mt-1">{fromD || toD ? `${fromD || '起始'} ~ ${toD || '至今'}` : '全部期間'}</div>
+          {/*
+            有遞延才顯示第二個數字。沒有的話兩者永遠相同,
+            多印一行只是讓每天都在看的人多讀一次一樣的數字。
+          */}
+          {hasDeferral && (
+            <div className="text-sm mt-1.5 pt-1.5 border-t border-white/20 flex items-baseline justify-between">
+              <span className="opacity-80">實際支出</span>
+              <span className="font-semibold">${fmt(paid)}</span>
+            </div>
+          )}
+          <div className="text-xs opacity-60 mt-1">
+            {fromD || toD ? `${fromD || '起始'} ~ ${toD || '至今'}` : '全部期間'}
+            {hasDeferral && <span className="block mt-0.5">認列＝費用發生在哪個月・實際＝錢哪天出去</span>}
+          </div>
         </div>
 
         <div className="rounded-xl border border-mor-line bg-white p-4">
@@ -393,11 +442,29 @@ export default function ExpensesPage() {
               <tr key={r.id} className="border-b border-mor-line/60 hover:bg-mor-bluelight/30">
                 <td className="px-3 py-2 whitespace-nowrap">{r.spent_on}</td>
                 <td className="px-3 py-2">
+                  {/* 子單縮排並標明來自哪一張母單,點了跳到母單 */}
+                  {r.parent_expense_id && (
+                    <button onClick={() => { const p = byId[r.parent_expense_id!]; if (p) setEdit(p); }}
+                      className="mr-1 text-[11px] text-mor-blue underline hover:text-mor-slate"
+                      title="回到母單修改">
+                      {childLabel(byId[r.parent_expense_id]?.spent_on ?? '', null)}
+                    </button>
+                  )}
                   {r.item_name}
                   {r.source_item_id && <span className="ml-2 inline-block rounded-md bg-mor-bluelight text-mor-slate px-1.5 py-0.5 text-[10px]">請款</span>}
                 </td>
                 <td className="px-3 py-2 text-right font-medium">
                   {fmt(r.amount)}
+                  {/*
+                    遞延母單的紅字。**一定要同時講出實付總額**——
+                    母單的 amount 可能是 0,只顯示本期的話,
+                    會計拿 10,000 的發票會搜不到任何一列。
+                  */}
+                  {r.deferred && (
+                    <div className="text-[11px] font-normal text-red-500 whitespace-nowrap">
+                      {deferralLabel(Number(r.gross_amount) || 0, Number(r.amount) || 0)}
+                    </div>
+                  )}
                   {r.currency && r.currency !== 'TWD' && (
                     <div className="text-[11px] font-normal text-gray-400">
                       {r.currency} {fmt(r.amount_original)} × {r.fx_rate}
@@ -414,10 +481,20 @@ export default function ExpensesPage() {
                 </td>
                 <td className="px-3 py-2 text-gray-500 max-w-56 truncate" title={r.note ?? ''}>{r.note ?? '—'}</td>
                 <td className="px-3 py-2 text-right whitespace-nowrap space-x-2">
-                  <button onClick={() => setEdit(r)} className="text-xs text-mor-slate underline hover:text-mor-blue">編輯</button>
-                  {canDelete(r)
-                    ? <button onClick={() => del(r)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
-                    : <span className="text-xs text-gray-300" title="來自請款單的支出不可刪除,需由 Super Admin 處理">刪除</span>}
+                  {/*
+                    子單不給單獨編輯或刪除 —— 刪一筆就會破壞
+                    「母單 + 子單 = 實付總額」那條等式（資料庫也會擋）。
+                    要改一律回母單重設整組。
+                  */}
+                  {r.parent_expense_id ? (
+                    <button onClick={() => { const p = byId[r.parent_expense_id!]; if (p) setEdit(p); }}
+                      className="text-xs text-mor-blue underline hover:text-mor-slate">到母單</button>
+                  ) : (<>
+                    <button onClick={() => setEdit(r)} className="text-xs text-mor-slate underline hover:text-mor-blue">編輯</button>
+                    {canDelete(r)
+                      ? <button onClick={() => del(r)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
+                      : <span className="text-xs text-gray-300" title="來自請款單的支出不可刪除,需由 Super Admin 處理">刪除</span>}
+                  </>)}
                 </td>
               </tr>
             ))}
@@ -450,11 +527,17 @@ export default function ExpensesPage() {
                       {(edit.currency ?? 'TWD') === 'TWD' ? 'NT$' : edit.currency}
                     </span>
                     {/* 空字串而非 0 —— 否則打字會接在 0 後面變成 0500 */}
-                    <input type="number" inputMode="decimal" min="0"
+                    <input type="number" inputMode="decimal" min="0" disabled={!!edit.deferred}
                       value={edit.amount_original === 0 || edit.amount_original == null ? '' : edit.amount_original}
                       onChange={(e) => setEdit({ ...edit, amount_original: e.target.value === '' ? 0 : Number(e.target.value) })}
-                      className="w-full rounded-lg border border-mor-line pl-9 pr-2 py-1.5 text-right" />
+                      className="w-full rounded-lg border border-mor-line pl-9 pr-2 py-1.5 text-right disabled:bg-gray-100 disabled:text-gray-400" />
                   </div>
+                  {edit.deferred && (
+                    <span className="text-[11px] text-gray-500 mt-0.5">
+                      已設遞延認列,金額不可改。實付總額 ${fmt(edit.gross_amount)}、本期認列 ${fmt(edit.amount)}。
+                      要改金額請先在下方取消遞延。
+                    </span>
+                  )}
                 </label>
               </div>
 
@@ -560,6 +643,13 @@ export default function ExpensesPage() {
               <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">備註</span>
                 <textarea value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })}
                   className="rounded-lg border border-mor-line px-2 py-1.5 h-20" /></label>
+              {/*
+                遞延認列。只有已存檔的支出才能設 —— 新增中的那筆還沒有 id,
+                子單掛不上去。母單金額不可改也是在這裡強制的（見 DeferralPanel）。
+              */}
+              {edit.id && (
+                <DeferralPanel expense={edit} canEdit onChanged={() => { setEdit(null); load(); }} />
+              )}
               <Receipts ref={receiptsRef} kind="exp" parentId={edit.id || null} label="憑證圖片"
                 inheritFromRequestId={edit.request_id ?? null} />
             </div>

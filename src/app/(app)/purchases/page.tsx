@@ -756,6 +756,8 @@ export default function PurchasesPage() {
 
   async function doSetDate() {
     if (!dating) return;
+    // 前端按鈕已經藏起來,這裡再擋一次 —— 按鈕藏起來擋不住重新整理後的舊畫面
+    if (dating.purchased_on) return flash('出款日已經填過,不能再改。要調整請撤銷整張單,或到支出頁修改。');
     if (!dateVal) return flash('請選擇日期');
     // 匯款/信用卡一定要記錄從哪個帳戶付出去。
     // 這個檢查放在「匯出」而不是「排匯款」—— 排匯款可以跳過,匯出不行,
@@ -767,7 +769,7 @@ export default function PurchasesPage() {
     const { error } = await supabase.from('purchase_requests').update(patch).eq('id', dating.id);
     if (error) return flash('儲存失敗:' + error.message);
     setDating(null);
-    flash(dating.purchased_on ? '已更新,連動支出的日期一併調整' : '已匯出,費用已連動到支出');
+    flash('已確認出款,費用已連動到支出');
     load();
   }
 
@@ -936,8 +938,19 @@ export default function PurchasesPage() {
       needPlan: r.payment_method === 'transfer' || r.payment_method === 'credit_card',
       canPlan: canSetDate && r.status === 'approved' && !r.purchased_on
                && (r.payment_method === 'transfer' || r.payment_method === 'credit_card'),
-      canDate: canSetDate && r.status === 'approved'
-               && (r.payment_method === 'cash' || !!r.planned_transfer_on || !!r.purchased_on),
+      /*
+       * 出款日填了就鎖住 —— 不再出現「改出款日」。
+       *
+       * 【為什麼】
+       * 出款日一改,gen_expenses_from_pr 以前會連動改支出的日期。
+       * 有遞延認列時,母單日期被改而子單留在原地,母子單就散了
+       * （migration_88 已經把那段連動拿掉,這裡是同一條規則的前端面）。
+       *
+       * 填錯了怎麼辦:撤銷整張單重來,或直接到支出頁改那一筆 ——
+       * 支出才是錢的最終紀錄。
+       */
+      canDate: canSetDate && r.status === 'approved' && !r.purchased_on
+               && (r.payment_method === 'cash' || !!r.planned_transfer_on),
       // 撤銷:提交者本人 / 主管 / 會計 / 總經理,任何狀態皆可,已產生支出除外
       canCancel: (mine || isManager || isAccountant || isAdmin) && !r.expense_generated_at,
     };
