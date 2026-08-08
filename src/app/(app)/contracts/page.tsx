@@ -4,6 +4,8 @@ import { FilterBar, FilterSelect, FilterDateRange, FilterSearch, FilterClear, Fi
 import { createClient } from '@/lib/supabase';
 import { FEE_TYPES, feeLabel } from '@/lib/fee-types';
 import ContractFees from '@/components/ContractFees';
+import MoneyLines from '@/components/MoneyLines';
+import { toLines, fromLines, validateLines, type Line } from '@/lib/money-lines';
 import { keyBase, onlyKeyOf } from '@/lib/ltKey';
 import {
   summarize, needsTypedConfirm, deleteConfirmText, typedConfirmPrompt,
@@ -19,6 +21,8 @@ type Contract = {
   paid: boolean; account: string | null; note: string | null; active: boolean; watch?: boolean; display_name?: string | null;
   invoice_required?: boolean; invoice_day?: number | null; invoice_after_paid?: boolean;
   invoice_title?: string | null; invoice_tax_id?: string | null; invoice_note?: string | null;
+  /** 外幣押金 [{cur,amt}]。台幣仍在 deposit —— 格式與 orders.fx_deposit 一致（migration_87）。 */
+  fx_deposit?: { cur: string; amt: number }[] | null;
   concessions?: Concession[] | null;
 };
 /** 折讓約定：純文字備查，不影響金額。實際折讓走 oneoff 負數訂單。 */
@@ -78,6 +82,21 @@ export default function ContractsPage() {
   const [invOrders, setInvOrders] = useState<{ property_raw: string | null; amount: number; paid: boolean; checkin: string }[]>([]);
   // 改完租期後「掉在租期外但已收款」的提示。null = 沒有。
   const [stray, setStray] = useState<{ name: string; n: number; amt: number; months: string } | null>(null);
+  /*
+   * 押金改成多幣別清單,跟短租頁用同一個元件與同一套轉換（lib/money-lines）。
+   * 台幣仍存回 contracts.deposit,外幣進 contracts.fx_deposit —— 儲存格式沒變,
+   * 押金管理頁那邊的同步觸發器照舊吃得到。
+   */
+  const [depLines, setDepLines] = useState<Line[]>([]);
+  // 表單開啟次數。綁 edit.id 的話「新增 → 取消 → 再新增」不會重跑初始化,
+  // 第二張契約會帶著第一張的押金 —— 短租頁踩過同一個坑。
+  const [formSeq, setFormSeq] = useState(0);
+  const openEdit = (o: Contract | null) => { setEdit(o); if (o) setFormSeq((n) => n + 1); };
+  useEffect(() => {
+    if (!edit) return;
+    setDepLines(toLines(edit.deposit, edit.fx_deposit ?? [], 'deposit'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formSeq]);
   const curFirst = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`; })();
   const curMon = (() => { const d = new Date(); return `${d.getFullYear()}/${d.getMonth() + 1}`; })();
   const curYm = (() => { const d = new Date(); return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`; })();
@@ -231,10 +250,16 @@ export default function ContractsPage() {
   }
   async function save() {
     if (!edit) return;
+    const depErr = validateLines(depLines, 'deposit');
+    if (depErr) return flash('押金:' + depErr);
+    const dep = fromLines(depLines, 'deposit');
     const payload = {
       estate_id: edit.estate_id, room: edit.room, tenant_name: edit.tenant_name, phone: edit.phone,
       cadence: edit.cadence, type: edit.type, amount_per_period: edit.amount_per_period,
-      monthly_rent: Math.round((edit.amount_per_period || 0) / (STEP_OF[edit.cadence] || 1)), deposit: edit.deposit,
+      monthly_rent: Math.round((edit.amount_per_period || 0) / (STEP_OF[edit.cadence] || 1)),
+      // 台幣回 deposit、外幣回 fx_deposit —— 儲存格式與改版前一致,
+      // 押金管理的同步觸發器（migration_87）照舊吃得到。
+      deposit: dep.twd, fx_deposit: dep.fx,
       start_date: edit.start_date || null, end_date: edit.end_date || null, first_payment_date: edit.first_payment_date || null, pay_day: edit.pay_day ?? null,
       account: edit.account, note: edit.note, active: edit.active, watch: edit.watch ?? false, display_name: edit.display_name || null, name: `${edit.tenant_name ?? ''}-${edit.room ?? ''}`,
       invoice_required: edit.invoice_required ?? false,
@@ -583,7 +608,7 @@ export default function ContractsPage() {
           <FilterCount n={filtered.length} />
           <button onClick={exportXlsx} disabled={!filtered.length}
             className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 disabled:opacity-40">⬇ 下載 Excel</button>
-          <button onClick={() => setEdit(blank())}
+          <button onClick={() => openEdit(blank())}
             className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 新增契約</button>
         </>}>
         <FilterSelect label="物業" value={estateFilter} onChange={setEstateFilter}
@@ -724,7 +749,7 @@ export default function ContractsPage() {
                   帶押金 id 只會看到其中一種。
                 */}
                 <div className="flex flex-wrap gap-2">
-                  <button onClick={() => { setDetail(null); setEdit(c); }}
+                  <button onClick={() => { setDetail(null); openEdit(c); }}
                     className="flex-1 min-w-[6rem] h-11 rounded-lg bg-mor-slate text-white text-sm font-medium hover:bg-mor-slatedark">編輯</button>
                   <button onClick={() => { setDetail(null); setCollect(c); }}
                     className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-green text-mor-green text-sm font-medium hover:bg-mor-greenlight">收租</button>
@@ -773,7 +798,17 @@ export default function ContractsPage() {
                 <span>日</span>
               </div>
               <label className="flex flex-col gap-1">每期租金({CAD_LABEL[edit.cadence]})<input type="number" value={edit.amount_per_period ?? ''} onChange={(e) => setEdit({ ...edit, amount_per_period: e.target.value ? parseFloat(e.target.value) : 0 })} className="rounded-lg border border-gray-300 px-2 py-1.5" /><span className="text-xs text-gray-500 mt-0.5">對應月租金:${fmt(Math.round((edit.amount_per_period || 0) / (STEP_OF[edit.cadence] || 1)))}</span></label>
-              <label className="flex flex-col gap-1">押金<input type="number" value={edit.deposit ?? ''} onChange={(e) => setEdit({ ...edit, deposit: e.target.value ? parseFloat(e.target.value) : 0 })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+              {/*
+                押金改成多幣別清單,跟短租頁完全一樣的元件與操作。
+                台幣是清單裡的第一列,不再是獨立欄位 —— 外籍房客付日圓押金時
+                不用再想「這筆該填哪一格」。
+              */}
+              <MoneyLines mode="deposit" label="押金" lines={depLines} onChange={setDepLines}
+                action={edit.id ? (
+                  <a href={`/deposits?contract=${edit.id}`} target="_blank" rel="noreferrer"
+                    className="text-xs text-mor-blue underline hover:text-mor-slate">收退狀態 →</a>
+                ) : null}
+                hint="押金原幣退還,不換匯,所以沒有匯率欄。填了金額就會自動出現在押金管理頁。" />
               <label className="flex flex-col gap-1">租期起<input type="date" value={edit.start_date ?? ''} onChange={(e) => setEdit({ ...edit, start_date: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">租期迄<input type="date" value={edit.end_date ?? ''} onChange={(e) => setEdit({ ...edit, end_date: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">入款帳號<select value={edit.account ?? ''} onChange={(e) => setEdit({ ...edit, account: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option>{payAccounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}</select></label>

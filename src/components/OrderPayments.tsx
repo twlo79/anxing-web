@@ -36,7 +36,14 @@ import { METHOD_LABEL, METHOD_OPTS, needsAccount, normalizeMethod, methodText } 
 type Order = {
   id: string; source: string; amount: number | null;
   paid_amount?: number | null; guest_name?: string | null;
+  invoice_required?: boolean; invoice_title?: string | null; invoice_tax_id?: string | null;
+  room?: string | null; property_raw?: string | null; checkin?: string | null;
 };
+
+type Inv = { id: string; invoice_no: string; invoice_date: string; note: string | null };
+
+/** 發票號碼格式:2 碼英文 + 8 碼數字。跟契約頁同一條規則。 */
+const INV_NO_RE = /^[A-Z]{2}[0-9]{8}$/;
 
 const fmt = (n: number | null | undefined) => Math.round(Number(n) || 0).toLocaleString('en-US');
 const today = () => new Date().toISOString().slice(0, 10);
@@ -70,6 +77,16 @@ export default function OrderPayments({
   const [draftNote, setDraftNote] = useState('');
   const receiptsRef = useRef<ReceiptsHandle>(null);
 
+  /*
+   * 發票。訂單勾了「需開立發票」才會出現。
+   *
+   * 存進 invoices 表(跟契約共用),contract_id 留空、order_id 指到這張訂單。
+   * migration_87 的 inv_order_once_idx 保證一張短租訂單只會有一張已開立的發票。
+   */
+  const [inv, setInv] = useState<Inv | null>(null);
+  const [invNo, setInvNo] = useState('');
+  const [invDate, setInvDate] = useState(today());
+
   const due = Math.round(Number(order.amount) || 0);
   const cur = { source: order.source, amount: order.amount, paid_amount: paidAmount };
   const rest = remaining(cur);
@@ -86,8 +103,16 @@ export default function OrderPayments({
     ]);
     setRows((ps ?? []) as PaymentRow[]);
     setPaidAmount(Number(od?.paid_amount) || 0);
+
+    if (order.invoice_required) {
+      const { data: iv } = await supabase.from('invoices')
+        .select('id, invoice_no, invoice_date, note')
+        .eq('order_id', order.id).is('contract_id', null).eq('status', 'issued').maybeSingle();
+      setInv((iv as Inv) ?? null);
+      if (iv) { setInvNo(iv.invoice_no); setInvDate(iv.invoice_date); }
+    }
     setLoading(false);
-  }, [supabase, order.id]);
+  }, [supabase, order.id, order.invoice_required]);
   useEffect(() => { load(); }, [load]);
 
   // 尚欠金額當預設 —— 大部分情況是一次收清，少打幾個字。
@@ -136,6 +161,54 @@ export default function OrderPayments({
     if (openId === r.id) setOpenId(null);
     await load();
     onChanged();
+  }
+
+  /**
+   * 存發票號碼。
+   *
+   * 【為什麼不用 upsert】
+   * 已經有一張時走 update,沒有才 insert —— upsert 需要指定衝突目標,
+   * 而 inv_order_once_idx 是帶 where 的部分索引,推斷條件寫錯就會靜靜地
+   * 變成插入第二張。分開寫意圖最清楚。
+   */
+  async function saveInv() {
+    const no = invNo.trim().toUpperCase();
+    if (!INV_NO_RE.test(no)) return flash('發票號碼格式應為 2 碼英文 + 8 碼數字,例 AB12345678');
+    if (!invDate) return flash('請填開票日期');
+    setBusy(true);
+    const payload = {
+      order_id: order.id, contract_id: null,
+      room: order.room ?? order.property_raw ?? null,
+      ym: (order.checkin ?? today()).slice(0, 7).replace('-', ''),
+      amount: Math.round(Number(order.amount) || 0) || null,
+      invoice_no: no, invoice_date: invDate,
+      title: order.invoice_title || order.guest_name || null,
+      tax_id: order.invoice_tax_id || null,
+      status: 'issued',
+    };
+    const { error } = inv
+      ? await supabase.from('invoices').update(payload).eq('id', inv.id)
+      : await supabase.from('invoices').insert(payload);
+    setBusy(false);
+    if (error) {
+      return flash(error.code === '23505'
+        ? '這張訂單已經有一張已開立的發票,請重新整理確認。'
+        : '儲存失敗:' + error.message);
+    }
+    flash('發票已記錄');
+    await load();
+  }
+
+  async function delInv() {
+    if (!inv) return;
+    if (!confirm(`刪除發票記錄 ${inv.invoice_no}?\n\n（不會影響已在平台開立的發票）`)) return;
+    setBusy(true);
+    const { error } = await supabase.from('invoices').delete().eq('id', inv.id);
+    setBusy(false);
+    if (error) return flash('刪除失敗:' + error.message);
+    setInv(null); setInvNo('');
+    flash('已刪除發票記錄');
+    await load();
   }
 
   const acctName = useMemo(
@@ -192,6 +265,54 @@ export default function OrderPayments({
                   <span className="ml-2 text-xs text-amber-600">超收 ${fmt(paidAmount - due)}</span>
                 )}
               </div>
+
+              {/*
+                發票。放在金額摘要底下、收款明細上面 ——
+                「收到錢」跟「開發票」是同一次動作的兩件事,擺在一起才不會漏。
+              */}
+              {order.invoice_required && (
+                <div className={`rounded-lg border p-3 ${inv ? 'border-mor-line' : 'border-amber-300 bg-amber-50/40'}`}>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs text-gray-500">發票</span>
+                    {inv
+                      ? <span className="text-[11px] rounded bg-mor-greenlight text-mor-green px-1.5 py-0.5">已開立</span>
+                      : <span className="text-[11px] text-amber-700">尚未開立</span>}
+                  </div>
+                  {canEdit ? (
+                    <>
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className="flex flex-col gap-1">
+                          <span className="text-[11px] text-gray-400">發票號碼</span>
+                          <input value={invNo} maxLength={10} placeholder="AB12345678"
+                            onChange={(e) => setInvNo(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
+                            className={`${CTRL} uppercase tracking-wide`} />
+                        </label>
+                        <label className="flex flex-col gap-1">
+                          <span className="text-[11px] text-gray-400">開票日</span>
+                          <input type="date" value={invDate} onChange={(e) => setInvDate(e.target.value)} className={CTRL} />
+                        </label>
+                      </div>
+                      <div className="flex gap-2 mt-2">
+                        <button onClick={saveInv} disabled={busy}
+                          className="flex-1 h-11 md:h-9 rounded-lg border border-mor-slate text-mor-slate text-sm font-medium disabled:opacity-40">
+                          {inv ? '更新發票' : '記錄發票'}
+                        </button>
+                        {inv && (
+                          <button onClick={delInv} disabled={busy}
+                            className="h-11 md:h-9 px-3 rounded-lg text-xs text-red-400 hover:text-red-600 disabled:opacity-40">刪除</button>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-gray-400 mt-1.5">
+                        抬頭 {order.invoice_title || order.guest_name || '—'}
+                        {order.invoice_tax_id ? `・統編 ${order.invoice_tax_id}` : ''}
+                        ・號碼格式 2 碼英文 + 8 碼數字
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-sm">{inv ? `${inv.invoice_no}・${inv.invoice_date}` : '—'}</div>
+                  )}
+                </div>
+              )}
 
               {/* 已收明細 */}
               <div>

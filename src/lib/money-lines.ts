@@ -36,25 +36,27 @@ export const TWD = 'TWD';
  * 沒收錄的還是填得進去 —— 選單最後一項是「其他」，選了會切成自由輸入。
  */
 export const CURRENCIES: { code: string; name: string }[] = [
+  // ── 常用的擺前面。下拉一打開就看得到,不用捲。
   { code: 'TWD', name: '新台幣' },
   { code: 'USD', name: '美金' },
-  { code: 'JPY', name: '日圓' },
-  { code: 'HKD', name: '港幣' },
-  { code: 'CNY', name: '人民幣' },
   { code: 'EUR', name: '歐元' },
-  { code: 'GBP', name: '英鎊' },
+  { code: 'JPY', name: '日圓' },
+  { code: 'CNY', name: '人民幣' },
   { code: 'KRW', name: '韓元' },
+  { code: 'HKD', name: '港幣' },
+  // ── 其餘照地區排
+  { code: 'GBP', name: '英鎊' },
   { code: 'SGD', name: '新加坡幣' },
-  { code: 'AUD', name: '澳幣' },
-  { code: 'CAD', name: '加幣' },
-  { code: 'CHF', name: '瑞士法郎' },
+  { code: 'MOP', name: '澳門幣' },
   { code: 'THB', name: '泰銖' },
   { code: 'MYR', name: '馬來西亞令吉' },
   { code: 'PHP', name: '菲律賓披索' },
   { code: 'VND', name: '越南盾' },
   { code: 'IDR', name: '印尼盾' },
+  { code: 'AUD', name: '澳幣' },
   { code: 'NZD', name: '紐幣' },
-  { code: 'MOP', name: '澳門幣' },
+  { code: 'CAD', name: '加幣' },
+  { code: 'CHF', name: '瑞士法郎' },
 ];
 
 export const CURRENCY_CODES = CURRENCIES.map((c) => c.code);

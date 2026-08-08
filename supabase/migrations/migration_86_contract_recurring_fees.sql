@@ -288,10 +288,10 @@ select coalesce(c.display_name, c.tenant_name) as 契約,
        rc.start_ym as 起, coalesce(rc.end_ym, '—') as 迄, rc.active as 啟用,
        (select count(*) from public.orders o
          where o.imported_via = 'contract_fee'
-           and o.left(order_key, length('CRC_' || rc.id || '_')) = 'CRC_' || rc.id || '_')            as 已產生,
+           and left(o.order_key, length('CRC_' || rc.id || '_')) = 'CRC_' || rc.id || '_')            as 已產生,
        (select count(*) from public.orders o
          where o.imported_via = 'contract_fee'
-           and o.left(order_key, length('CRC_' || rc.id || '_')) = 'CRC_' || rc.id || '_' and o.paid)  as 已收款
+           and left(o.order_key, length('CRC_' || rc.id || '_')) = 'CRC_' || rc.id || '_' and o.paid)  as 已收款
 from public.contract_recurring_charges rc
 join public.contracts c on c.id = rc.contract_id
 order by 1, 2, 3;

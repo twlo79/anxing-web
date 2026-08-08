@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   toLines, fromLines, totalTwd, validateLines, blankLine, isTwd, fxTwd, TWD,
+  CURRENCIES,
   type Line,
 } from './money-lines.ts';
 
@@ -139,6 +140,24 @@ test('isTwd:大小寫與空白都要認得', () => {
   assert.equal(isTwd('twd'), true);
   assert.equal(isTwd(' TWD '), true);
   assert.equal(isTwd('USD'), false);
+});
+
+test('常用幣別擺在前七個 —— 下拉打開不用捲就選得到', () => {
+  const top = CURRENCIES.slice(0, 7).map((c) => c.code);
+  assert.deepEqual(top, ['TWD', 'USD', 'EUR', 'JPY', 'CNY', 'KRW', 'HKD']);
+});
+
+test('台幣一定是第一個 —— blankLine 與 toLines 都預設它', () => {
+  assert.equal(CURRENCIES[0].code, TWD);
+});
+
+test('幣別代碼不重複', () => {
+  const codes = CURRENCIES.map((c) => c.code);
+  assert.equal(new Set(codes).size, codes.length);
+});
+
+test('每個幣別都有中文名 —— 只有代碼分不出 KRW 跟 MYR', () => {
+  for (const c of CURRENCIES) assert.ok(c.name, `${c.code} 沒有名稱`);
 });
 
 test('fxTwd:押金那種沒有 rate 的當 1', () => {

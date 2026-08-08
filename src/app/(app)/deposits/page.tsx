@@ -5,6 +5,10 @@ import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable'
 import { createClient } from '@/lib/supabase';
 import Receipts from '@/components/Receipts';
 import RefundFields, { METHOD_LABEL, METHOD_OPTS } from '@/components/RefundFields';
+import {
+  depLines, primaryText, extraLines, summaryText, isMultiCurrency, sumByCurrency,
+  lineText, type DepLine,
+} from '@/lib/deposit-lines';
 import { shareDeposit } from '@/lib/share';
 
 /**
@@ -22,6 +26,11 @@ type Dep = {
   estate_id: string | null; property_id: string | null;
   room: string | null; guest_name: string | null;
   currency: string; amount: number;
+  /**
+   * 幣別明細（migration_87）。多幣別是一起收、一起退的,所以一筆押金一列。
+   * amount 只有台幣那部分 —— 要看全部幣別一律走 lib/deposit-lines。
+   */
+  lines?: DepLine[] | null;
   received_on: string | null; received_method: string | null; received_account: string | null;
   returned_on: string | null; returned_method: string | null; returned_account: string | null;
   note: string | null; orphaned: boolean; is_manual?: boolean; created_at: string;
@@ -192,27 +201,30 @@ export default function DepositsPage() {
 
   const sorted = useMemo(() => sortRows(filtered, sort, COLS), [filtered, sort]);
 
-  /** 各分頁籤的金額與筆數。依幣別分開 —— 外幣原幣退還不換匯,加總沒有意義。 */
+  /**
+   * 各分頁籤的金額與筆數。依幣別分開 —— 外幣原幣退還不換匯,加總沒有意義。
+   *
+   * **一定要走 depLines(),不能只加 r.amount** —— amount 只有台幣那部分,
+   * 外幣全在 lines 裡。只加 amount 的話統計會少掉所有外幣,
+   * 而且數字看起來很正常,沒有人會發現少了（migration_87）。
+   */
   const stats = useMemo(() => {
     const mk = () => ({ n: 0, cur: {} as Record<string, number> });
     const s = {
       pending: mk(), held: mk(), returned: mk(), orphan: mk(),
       refund_pending: mk(), refund_approved: mk(),
     };
+    const add = (t: { n: number; cur: Record<string, number> }, r: Dep) => {
+      t.n++;
+      for (const l of depLines(r)) t.cur[l.cur] = (t.cur[l.cur] ?? 0) + l.amt;
+    };
     for (const r of base) {
-      const b = bucketOf(r) as 'pending' | 'held' | 'returned';
-      s[b].n++;
-      s[b].cur[r.currency] = (s[b].cur[r.currency] ?? 0) + Number(r.amount || 0);
+      add(s[bucketOf(r) as 'pending' | 'held' | 'returned'], r);
       // 以下兩組跟上面三類重疊,是故意的 —— 見 Status 的說明
-      if (r.orphaned) {
-        s.orphan.n++;
-        s.orphan.cur[r.currency] = (s.orphan.cur[r.currency] ?? 0) + Number(r.amount || 0);
-      }
+      if (r.orphaned) add(s.orphan, r);
       const rs = refundStage(r);
       if (rs === 'pending' || rs === 'approved') {
-        const k = rs === 'pending' ? 'refund_pending' : 'refund_approved';
-        s[k].n++;
-        s[k].cur[r.currency] = (s[k].cur[r.currency] ?? 0) + Number(r.amount || 0);
+        add(s[rs === 'pending' ? 'refund_pending' : 'refund_approved'], r);
       }
     }
     return s;
@@ -419,7 +431,8 @@ export default function DepositsPage() {
         T(r.estate_id ? estateName[r.estate_id] ?? '' : '', stCell),
         T(r.room ?? '', stCell),
         T(r.guest_name ?? '', stCell),
-        T(r.currency, stCell),
+        // 多幣別的押金是一筆,幣別欄放完整摘要,只印 currency 會漏掉外幣
+        T(summaryText(r), stCell),
         T(Math.round(Number(r.amount) || 0), stNum),
         T(r.received_on ?? '', stCell),
         T(r.received_method ? METHOD_LABEL[r.received_method] ?? r.received_method : '', stCell),
@@ -689,7 +702,11 @@ export default function DepositsPage() {
                 <div className="text-xs text-gray-500 truncate">{r.guest_name ?? '—'}</div>
               </div>
               <div className="text-right shrink-0">
-                <div className="stat-num font-bold">{r.currency === 'TWD' ? 'NT$' : r.currency} {fmt(r.amount)}</div>
+                {/* 多幣別是一起收退的一筆押金,主要金額大字、其餘小字列在下面 */}
+                <div className="stat-num font-bold">{primaryText(r)}</div>
+                {extraLines(r).map((l) => (
+                  <div key={l.cur} className="text-[11px] text-gray-500">＋{lineText(l)}</div>
+                ))}
                 <div className="mt-1">{statusChip(r)}{voteLine(r)}</div>
               </div>
             </div>
@@ -730,8 +747,10 @@ export default function DepositsPage() {
                 </td>
                 <td className="px-3 py-2 whitespace-nowrap">{r.guest_name ?? '—'}</td>
                 <td className="px-3 py-2 text-right whitespace-nowrap">
-                  {r.currency !== 'TWD' && <span className="text-xs text-gray-400 mr-1">{r.currency}</span>}
-                  {fmt(r.amount)}
+                  <div>{primaryText(r)}</div>
+                  {extraLines(r).map((l) => (
+                    <div key={l.cur} className="text-[11px] text-gray-500 font-normal">＋{lineText(l)}</div>
+                  ))}
                 </td>
                 <td className="px-3 py-2 whitespace-nowrap">{r.received_on ?? '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-500 text-xs">
@@ -787,7 +806,14 @@ export default function DepositsPage() {
               <div className="px-6 py-4">
                 {row('狀態', statusChip(d))}
                 {row('物業', d.estate_id ? estateName[d.estate_id] ?? '—' : '—')}
-                {row('押金', <span className="font-bold">{d.currency === 'TWD' ? 'NT$' : d.currency} {fmt(d.amount)}</span>)}
+                {row('押金', (
+                  <span>
+                    <span className="font-bold">{primaryText(d)}</span>
+                    {extraLines(d).map((l) => (
+                      <span key={l.cur} className="ml-2 text-xs text-gray-500">＋{lineText(l)}</span>
+                    ))}
+                  </span>
+                ))}
                 {row('收押金日', d.received_on ?? '—')}
                 {row('入款方式', d.received_method
                   ? `${METHOD_LABEL[d.received_method] ?? d.received_method}${d.received_account ? `・${acctName[d.received_account] ?? d.received_account}` : ''}`
@@ -927,7 +953,19 @@ export default function DepositsPage() {
                 </div>
               ) : (
                 <div className="rounded-lg bg-mor-sand/60 px-3 py-2 text-xs text-gray-600">
-                  {edit.guest_name ?? '—'}・押金 <span className="font-bold">{edit.currency === 'TWD' ? 'NT$' : edit.currency} {fmt(edit.amount)}</span>
+                  {/*
+                    多幣別逐列列出來。擠在同一行的話「NT$160,000＋JPY10,000」
+                    會讓人以為那是加起來的一個數字。
+                    底下的收退款只有一組 —— 錢放在同一個保險箱,一次收、一次退。
+                  */}
+                  {edit.guest_name ?? '—'}・押金
+                  {isMultiCurrency(edit) ? (
+                    <span className="block mt-1 font-bold">
+                      {depLines(edit).map((l) => (
+                        <span key={l.cur} className="block">{lineText(l)}</span>
+                      ))}
+                    </span>
+                  ) : <span className="font-bold"> {primaryText(edit)}</span>}
                   <span className="text-gray-400 ml-1">(金額請到來源頁修改)</span>
                 </div>
               )}

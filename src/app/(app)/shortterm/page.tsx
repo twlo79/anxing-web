@@ -20,6 +20,8 @@ type Order = {
    * 前端只讀不寫,狀態一律用 lib/order-payment 的 payStatus() 算,不另外存欄位。
    */
   paid?: boolean; paid_at?: string | null; paid_amount?: number | null;
+  /** 需要開發票。打勾之後收款視窗才會出現發票號碼欄位（migration_87）。 */
+  invoice_required?: boolean; invoice_title?: string | null; invoice_tax_id?: string | null;
   /** 一次性收入的會計科目。只有 source='oneoff' 用得到,其餘一律 null。 */
   fee_type?: string | null;
   /** 一次性收入的項目(洗衣機/垃圾代收費…)。科目底下再細一層。 */
@@ -308,7 +310,12 @@ export default function ShortTermPage() {
       // 那會讓一筆 Airbnb 訂單帶著「水費」這種科目跑進營收報表。
       fee_type: edit.source === 'oneoff' ? (edit.fee_type || null) : null,
       item_name: edit.source === 'oneoff' ? (edit.item_name?.trim() || null) : null,
-      fx_revenue: rev.fx, fx_deposit: dep.fx };
+      fx_revenue: rev.fx, fx_deposit: dep.fx,
+      // 不需開發票就把抬頭與統編清掉 —— 留著的話取消勾選之後那些值還在資料庫裡,
+      // 畫面上看不到卻會被 Excel 匯出帶走。
+      invoice_required: !!edit.invoice_required,
+      invoice_title: edit.invoice_required ? (edit.invoice_title?.trim() || null) : null,
+      invoice_tax_id: edit.invoice_required ? (edit.invoice_tax_id?.trim() || null) : null };
     let orderId = edit.id;
     if (edit.id) {
       const { error } = await supabase.from('orders').update(payload).eq('id', edit.id);
@@ -433,7 +440,7 @@ export default function ShortTermPage() {
   const addStay = () => move && setMove({ ...move, stays: [...move.stays, { room: '', estateId: move.stays[move.stays.length - 1]?.estateId ?? null, propertyId: null, from: '' }] });
   const updStay = (i: number, patch: Partial<Stay>) => move && setMove({ ...move, stays: move.stays.map((s, idx) => idx === i ? { ...s, ...patch } : s) });
   const delStay = (i: number) => move && setMove({ ...move, stays: move.stays.filter((_, idx) => idx !== i) });
-  function blank(): Order { return { id: '', order_key: '', source: 'private', estate_id: null, property_id: null, property_raw: '', guest_name: '', checkin: '', checkout: '', nights: 0, amount: 0, deposit: 0, account: null, note: '', fx_revenue: [], fx_deposit: [] }; }
+  function blank(): Order { return { id: '', order_key: '', source: 'private', estate_id: null, property_id: null, property_raw: '', guest_name: '', checkin: '', checkout: '', nights: 0, amount: 0, deposit: 0, account: null, note: '', fx_revenue: [], fx_deposit: [], invoice_required: false, invoice_title: '', invoice_tax_id: '' }; }
 
   const totRevenue = useMemo(() => agg.reduce((a, o) => a + Number(o.amount || 0), 0), [agg]);
   const bySource = useMemo(() => { const m: Record<string, number> = {}; for (const o of agg) m[o.source] = (m[o.source] || 0) + Number(o.amount || 0); return m; }, [agg]);
@@ -666,6 +673,12 @@ export default function ShortTermPage() {
                 {row('入款方式', d.account ?? '—')}
                 {d.fx_revenue?.length ? row('外幣營收', d.fx_revenue.map((f, i) => <div key={i}>{f.cur} {fmt(f.amt)} × {f.rate}</div>)) : null}
                 {d.fx_deposit?.length ? row('外幣押金', d.fx_deposit.map((f, i) => <div key={i}>{f.cur} {fmt(f.amt)}</div>)) : null}
+                {d.invoice_required ? row('發票',
+                  <span>需開立
+                    {d.invoice_title ? <span className="text-xs text-gray-500 ml-2">抬頭 {d.invoice_title}</span> : null}
+                    {d.invoice_tax_id ? <span className="text-xs text-gray-500 ml-1">・統編 {d.invoice_tax_id}</span> : null}
+                    <span className="block text-[11px] text-gray-400 mt-0.5">號碼在「收款」視窗填寫</span>
+                  </span>) : null}
                 {row('備註', d.note ? <span className="whitespace-pre-wrap">{d.note}</span> : '—')}
                 {row('訂單編號', <span className="text-xs text-gray-500 break-all">{d.order_key}</span>)}
               </div>
@@ -831,6 +844,39 @@ export default function ShortTermPage() {
                   hint="押金原幣退還,不換匯,所以沒有匯率欄。填了金額就會自動出現在押金管理頁,收退日期與帳戶在那裡維護。" />
               )}
               <label className="flex flex-col gap-1">入款方式<select value={edit.account ?? ''} onChange={(e) => setEdit({ ...edit, account: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option><option value="現金">現金</option>{payAccounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}<option value="加密貨幣">加密貨幣</option></select></label>
+              {/*
+                發票。設計比照契約:勾了才會在收款視窗出現號碼欄位。
+                抬頭留空時用客戶名稱 —— 大部分情況兩者相同,不該強迫再打一次。
+              */}
+              <div className="col-span-2 rounded-lg border border-mor-line p-3">
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={!!edit.invoice_required}
+                    onChange={(e) => setEdit({ ...edit, invoice_required: e.target.checked })} />
+                  需開立發票
+                </label>
+                {edit.invoice_required && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[11px] text-gray-400">發票抬頭<span className="ml-1">（留空用客戶名稱）</span></span>
+                      <input value={edit.invoice_title ?? ''} placeholder={edit.guest_name ?? ''}
+                        onChange={(e) => setEdit({ ...edit, invoice_title: e.target.value })}
+                        className="h-11 md:h-8 rounded-lg border border-gray-300 px-2 text-sm" />
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[11px] text-gray-400">統一編號</span>
+                      <input value={edit.invoice_tax_id ?? ''} inputMode="numeric" maxLength={8}
+                        onChange={(e) => setEdit({ ...edit, invoice_tax_id: e.target.value.replace(/\D/g, '') })}
+                        className="h-11 md:h-8 rounded-lg border border-gray-300 px-2 text-sm" />
+                    </label>
+                  </div>
+                )}
+                <div className="text-[11px] text-gray-400 mt-2">
+                  {edit.invoice_required
+                    ? '發票號碼在「收款」視窗填寫,收到錢的同時記下來。'
+                    : '勾選後,收款視窗會出現發票號碼欄位。'}
+                </div>
+              </div>
+
               <label className="flex flex-col gap-1 col-span-2">備註<input value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               {edit.source !== 'oneoff' && (
                 <div className="col-span-2 border-t border-mor-line pt-3 mt-1">
