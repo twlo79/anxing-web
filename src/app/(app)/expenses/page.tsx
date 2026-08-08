@@ -49,7 +49,7 @@ export default function ExpensesPage() {
   const [codeF, setCodeF] = useState('');
   const [payF, setPayF] = useState('');
   const [purposeF, setPurposeF] = useState('');   // '' | 'office' | estate id
-  const [acctF, setAcctF] = useState('');         // 付款帳號 / 卡別
+  const [acctF, setAcctF] = useState('');         // 安幸付款帳號 / 卡別
   const [kw, setKw] = useState('');
   const [kwIn, setKwIn] = useState('');
   const [sort, setSort] = useState<SortState>({ key: 'spent_on', dir: 'desc' });
@@ -226,7 +226,7 @@ export default function ExpensesPage() {
     const T = (v: any, st: any) => ({ v: v ?? '', t: typeof v === 'number' ? 'n' : 's', s: st, z: typeof v === 'number' ? '#,##0' : undefined });
 
     // 用途已是物業層級,原本的「物業」欄與「用途」欄內容重複,合併成一欄
-    const header = ['支出日期', '支出項目', '金額', '會計科目', '用途', '憑證號碼', '支付方式', '付款帳號', '備註'];
+    const header = ['支出日期', '支出項目', '金額', '會計科目', '用途', '憑證號碼', '支付方式', '安幸付款帳號', '備註'];
     const aoa: any[][] = [header.map((h) => T(h, stHead))];
     for (const r of sorted) {
       aoa.push([
@@ -548,7 +548,7 @@ export default function ExpensesPage() {
                   </select></label>
                 {/* 現金沒有帳號可選,匯款與信用卡才需要 */}
                 {(edit.payment_method === 'transfer' || edit.payment_method === 'credit_card') && (
-                  <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">付款帳號</span>
+                  <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">安幸付款帳號</span>
                     <select value={edit.pay_account ?? ''} onChange={(e) => setEdit({ ...edit, pay_account: e.target.value || null })}
                       className="rounded-lg border border-mor-line px-2 py-1.5">
                       <option value="">請選擇</option>

@@ -117,7 +117,7 @@ export type PaymentRow = {
   id: string; paid_on: string; amount: number | null;
   /** cash | transfer | credit_card | crypto —— 見 lib/pay-method。 */
   method: string | null;
-  /** 我方收款帳戶。只有 method='transfer' 會有值（migration_85 的 op_account_chk）。 */
+  /** 安幸收款帳號。只有 method='transfer' 會有值（migration_85 的 op_account_chk）。 */
   account: string | null;
   note: string | null;
 };

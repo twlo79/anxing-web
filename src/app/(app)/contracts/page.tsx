@@ -145,7 +145,7 @@ export default function ContractsPage() {
   }, [supabase, curFirst, lookFirst, lookYm]);
   useEffect(() => {
     supabase.from('estates').select('id, name, sort').eq('active', true).order('sort').then(({ data }) => setEstates(data ?? []));
-    // 入款帳號改讀主檔,不再寫死
+    // 安幸收款帳號改讀主檔,不再寫死
     supabase.from('payment_accounts').select('code, name')
       .eq('for_income', true).eq('active', true).order('sort')
       .then(({ data }) => setPayAccounts(data ?? []));
@@ -340,7 +340,7 @@ export default function ContractsPage() {
     // 觸發器是非同步生效的,等一下再回頭查租期外已收款
     await new Promise((r) => setTimeout(r, 500));
     await warnStray({ ...c, end_date: end });
-    flash('已結束租約,契約改為停用'); load();
+    flash('已結束租約'); load();
   }
 
   /**
@@ -423,7 +423,7 @@ export default function ContractsPage() {
     const stNum = { border: BORD, alignment: { horizontal: 'right' } };
     const T = (v: any, st: any) => ({ v: v ?? '', t: typeof v === 'number' ? 'n' : 's', s: st, z: typeof v === 'number' ? '#,##0' : undefined });
 
-    const header = ['租戶', '物業', '房源', '類別', '租期起', '租期迄', '繳別', '每期租金', '對應月租', '押金', '入款帳號', '備註'];
+    const header = ['房客', '物業', '房源', '類別', '租期起', '租期迄', '繳別', '每期租金', '對應月租', '押金', '安幸收款帳號', '備註'];
     const aoa: any[][] = [header.map((h) => T(h, stHead))];
     for (const c of filtered as any[]) {
       const step = STEP_OF[c.cadence] || 1;
@@ -550,7 +550,7 @@ export default function ContractsPage() {
                   <div className="flex items-center gap-2 min-w-0">
                     <span className="font-medium shrink-0">{g.label}</span>
                     <span className="text-gray-600 truncate">{g.tenant ?? ''}</span>
-                    {c && !c.active && <span className="shrink-0 rounded bg-gray-200 text-gray-500 px-1.5 py-0.5 text-[11px]">已終止</span>}
+                    {c && !c.active && <span className="shrink-0 rounded bg-gray-200 text-gray-500 px-1.5 py-0.5 text-[11px]">已結束</span>}
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
                     <span className="text-xs text-red-600">欠 {g.periods} 期</span>
@@ -623,7 +623,7 @@ export default function ContractsPage() {
           { value: 'active', label: '進行中' }, { value: 'expired', label: '已到期' },
           { value: 'disabled', label: '已停用' }]} />
         <FilterDateRange label="租期(期間內有交集)" from={fromD} to={toD} onFrom={setFromD} onTo={setToD} />
-        <FilterSearch label="關鍵字(房源/租戶/電話)" value={kwIn} onChange={setKwIn}
+        <FilterSearch label="關鍵字(房源/房客/電話)" value={kwIn} onChange={setKwIn}
           onSubmit={() => setKw(kwIn.trim())} />
         <FilterClear
           active={!!(estateFilter || cadFilter || typeFilter || statusFilter || fromD || toD || kw || kwIn)}
@@ -714,7 +714,7 @@ export default function ContractsPage() {
                 {row('租期', `${c.start_date ?? '—'} ~ ${c.end_date ?? '—'}`)}
                 {row('繳款日', c.pay_day ? `每期 ${c.pay_day} 號` : '—')}
                 {row('首期繳款', c.first_payment_date ?? '—')}
-                {row('入款帳號', c.account ?? '—')}
+                {row('安幸收款帳號', c.account ?? '—')}
                 {row('電話', c.phone ?? '—')}
                 {row('狀態', (
                   <span className="space-x-1">
@@ -811,7 +811,7 @@ export default function ContractsPage() {
                 hint="押金原幣退還,不換匯,所以沒有匯率欄。填了金額就會自動出現在押金管理頁。" />
               <label className="flex flex-col gap-1">租期起<input type="date" value={edit.start_date ?? ''} onChange={(e) => setEdit({ ...edit, start_date: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">租期迄<input type="date" value={edit.end_date ?? ''} onChange={(e) => setEdit({ ...edit, end_date: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
-              <label className="flex flex-col gap-1">入款帳號<select value={edit.account ?? ''} onChange={(e) => setEdit({ ...edit, account: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option>{payAccounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}</select></label>
+              <label className="flex flex-col gap-1">安幸收款帳號<select value={edit.account ?? ''} onChange={(e) => setEdit({ ...edit, account: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option>{payAccounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}</select></label>
               <label className="flex items-center gap-2 mt-6"><input type="checkbox" checked={edit.active} onChange={(e) => setEdit({ ...edit, active: e.target.checked })} />啟用中</label>
               <label className="flex items-center gap-2 mt-6" title="釘選後才會出現在上方「本月已收/未收」清單"><input type="checkbox" checked={edit.watch ?? false} onChange={(e) => setEdit({ ...edit, watch: e.target.checked })} />關注收租(釘選)</label>
               <label className="flex flex-col gap-1 col-span-2">顯示名稱(釘選清單顯示,可填人名或自訂;留空則用房源)<input value={edit.display_name ?? ''} onChange={(e) => setEdit({ ...edit, display_name: e.target.value })} placeholder={edit.room ?? ''} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
@@ -1214,7 +1214,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
     setInvDraft(null); loadInvoices();
   }
   async function delInvoice(id: string) {
-    if (!confirm('刪除這筆發票記錄?(不會影響已在平台開立的發票)')) return;
+    if (!confirm('刪除這筆發票紀錄?(不會影響已在平台開立的發票)')) return;
     const { error } = await supabase.from('invoices').delete().eq('id', id);
     if (error) { alert('刪除失敗:' + error.message); return; }
     setInvDraft(null); loadInvoices();
@@ -1487,7 +1487,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
             </div>
             <div className="border-t border-mor-line px-5 py-3 flex justify-between items-center">
               {invDraft.id
-                ? <button onClick={() => delInvoice(invDraft.id!)} className="text-xs text-red-500 underline hover:text-red-700">刪除記錄</button>
+                ? <button onClick={() => delInvoice(invDraft.id!)} className="text-xs text-red-500 underline hover:text-red-700">刪除紀錄</button>
                 : <span />}
               <div className="flex gap-2">
                 <button onClick={() => setInvDraft(null)} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>

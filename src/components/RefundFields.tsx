@@ -9,9 +9,9 @@
  * 錢會照著這裡填的帳號匯出去,兩份長得不一樣的表單是不能接受的。
  *
  * 【兩個帳戶方向相反,不要看錯】
- *   payee_*          = 房客的收款帳戶 —— 錢**退到哪**
- *   returned_method  = 我方的出款方式
- *   returned_account = 我方的出款帳號 —— 錢**從哪出**
+ *   payee_*          = 房客收款帳號 —— 錢**退到哪**
+ *   returned_method  = 安幸方式
+ *   returned_account = 安幸帳號 —— 錢**從哪出**
  * 命名沿用請款單,全站一致。
  *
  * 這支只管欄位。狀態分支(已核可鎖住、已退款、駁回原因)留在各自的頁面 ——
@@ -52,7 +52,7 @@ export default function RefundFields({ v, onChange, payAccounts, currency }: {
 }) {
   return (
     <>
-      <div className="text-xs text-gray-400 mb-1.5">房客的收款帳戶</div>
+      <div className="text-xs text-gray-400 mb-1.5">房客收款帳號</div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">銀行代碼</span>
           <input value={v.payee_bank_code ?? ''}
@@ -66,12 +66,12 @@ export default function RefundFields({ v, onChange, payAccounts, currency }: {
             onChange={(e) => onChange({ payee_account: e.target.value })} className={CTRL} /></label>
       </div>
 
-      <div className="text-xs text-gray-400 mt-3 mb-1.5">我方出款</div>
+      <div className="text-xs text-gray-400 mt-3 mb-1.5">安幸付款</div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">預計匯款日 *</span>
           <input type="date" value={v.planned_refund_on ?? ''}
             onChange={(e) => onChange({ planned_refund_on: e.target.value || null })} className={CTRL} /></label>
-        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">出款方式 *</span>
+        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">安幸付款方式 *</span>
           {/* 換方式就把帳號清掉 —— 留著上一個方式的帳號會匯錯地方 */}
           <select value={v.returned_method ?? ''}
             onChange={(e) => onChange({ returned_method: e.target.value || null, returned_account: null })}
@@ -81,7 +81,7 @@ export default function RefundFields({ v, onChange, payAccounts, currency }: {
           </select></label>
         {/* 現金沒有帳戶可言 */}
         {v.returned_method && v.returned_method !== 'cash' && (
-          <label className="flex flex-col gap-1 md:col-span-2"><span className="text-xs text-gray-500">出款帳號（我方）</span>
+          <label className="flex flex-col gap-1 md:col-span-2"><span className="text-xs text-gray-500">安幸付款帳號</span>
             <select value={v.returned_account ?? ''}
               onChange={(e) => onChange({ returned_account: e.target.value || null })} className={CTRL}>
               <option value="">未指定</option>

@@ -34,7 +34,7 @@ export function shareDeposit(d: ShareDep) {
     `${d.room ?? '—'}　${d.guest_name ?? '—'}`,
     `NT$ ${money(d.amount)}`,
     '',
-    `退款帳戶　${d.payee_name ?? '—'}`,
+    `房客收款帳號　${d.payee_name ?? '—'}`,
     `　　　　　${d.payee_bank_code ?? ''} ${d.payee_account ?? '—'}`,
     `預計匯款　${d.planned_refund_on ?? '—'}`,
     '',

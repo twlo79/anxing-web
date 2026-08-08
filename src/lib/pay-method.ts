@@ -8,7 +8,7 @@
  * 既有的 import 一行都不用改。
  *
  * 【account 什麼時候有意義】
- * 只有「匯款」對得到我方的收款帳戶（元大 8088／0564／4145）。
+ * 只有「匯款」對得到安幸收款帳號（元大 8088／0564／4145）。
  * 現金是當面收的、信用卡走收單行、加密貨幣走錢包 —— 那三種硬要指定
  * payment_accounts 裡的某個帳號只會讓對帳的人以為錢真的進了那個戶頭。
  */
@@ -19,7 +19,7 @@ export const METHOD_LABEL: Record<string, string> = {
 
 export const METHOD_OPTS = ['cash', 'transfer', 'credit_card', 'crypto'];
 
-/** 只有匯款需要（也才允許）指定收款帳戶。 */
+/** 只有匯款需要（也才允許）指定收款帳號。 */
 export const needsAccount = (method: string | null | undefined) => method === 'transfer';
 
 /**

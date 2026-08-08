@@ -195,19 +195,19 @@ export default function OrderPayments({
         ? '這張訂單已經有一張已開立的發票,請重新整理確認。'
         : '儲存失敗:' + error.message);
     }
-    flash('發票已記錄');
+    flash('已記錄發票');
     await load();
   }
 
   async function delInv() {
     if (!inv) return;
-    if (!confirm(`刪除發票記錄 ${inv.invoice_no}?\n\n（不會影響已在平台開立的發票）`)) return;
+    if (!confirm(`刪除發票紀錄 ${inv.invoice_no}?\n\n（不會影響已在平台開立的發票）`)) return;
     setBusy(true);
     const { error } = await supabase.from('invoices').delete().eq('id', inv.id);
     setBusy(false);
     if (error) return flash('刪除失敗:' + error.message);
     setInv(null); setInvNo('');
-    flash('已刪除發票記錄');
+    flash('已刪除發票紀錄');
     await load();
   }
 
@@ -390,7 +390,7 @@ export default function OrderPayments({
                     </label>
                     {needsAccount(draftMethod) && (
                       <label className="flex flex-col gap-1">
-                        <span className="text-[11px] text-gray-400">收款帳戶（我方）</span>
+                        <span className="text-[11px] text-gray-400">安幸收款帳號</span>
                         <select value={draftAcct} onChange={(e) => setDraftAcct(e.target.value)} className={CTRL}>
                           <option value="">未指定</option>
                           {accounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}

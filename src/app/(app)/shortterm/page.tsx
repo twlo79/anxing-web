@@ -89,7 +89,7 @@ export default function ShortTermPage() {
   }, [supabase]);
 
   useEffect(() => { supabase.from('estates').select('id, name, sort, active').order('sort').then(({ data }) => setEstates(data ?? [])); }, [supabase]);
-  // 入款帳號改讀主檔,不再寫死。現金與加密貨幣沒有帳號,直接列在選單上。
+  // 安幸收款帳號改讀主檔,不再寫死。現金與加密貨幣沒有帳號,直接列在選單上。
   const [payAccounts, setPayAccounts] = useState<{ code: string; name: string }[]>([]);
   useEffect(() => {
     supabase.from('payment_accounts').select('code, name')
@@ -258,7 +258,7 @@ export default function ShortTermPage() {
       const stNum = { border: BORD, alignment: { horizontal: 'right' } };
       const T = (v: any, st: any) => ({ v: v ?? '', t: typeof v === 'number' ? 'n' : 's', s: st, z: typeof v === 'number' ? '#,##0' : undefined });
 
-      const header = ['來源', '物業', '房源', '客戶', '入住日', '退房日', '晚數', '金額', '已收', '尚欠', '收款狀態', '押金', '入款方式', '備註'];
+      const header = ['來源', '物業', '房源', '房客', '入住日', '退房日', '晚數', '金額', '已收', '尚欠', '收款狀態', '押金', '收款方式', '備註'];
       const aoa: any[][] = [header.map((h) => T(h, stHead))];
       for (const o of all) {
         aoa.push([
@@ -528,7 +528,7 @@ export default function ShortTermPage() {
           </div>
         </div>
         <div>
-          <label className="block text-xs text-gray-500 mb-1">關鍵字(客戶/房源)</label>
+          <label className="block text-xs text-gray-500 mb-1">關鍵字(房客/房源)</label>
           <div className="flex gap-1">
             <input value={kwIn} onChange={(e) => setKwIn(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') setKw(kwIn.trim()); }} placeholder="搜尋" className="rounded-lg border border-gray-300 px-2 py-1.5 w-36" />
             <button onClick={() => setKw(kwIn.trim())} className="rounded-lg bg-mor-slate text-white px-3 hover:bg-mor-slatedark">搜尋</button>
@@ -548,7 +548,7 @@ export default function ShortTermPage() {
             <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/50">
               <SortTh label="來源" sortKey="source" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <SortTh label="房源" sortKey="property_raw" type="room" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
-              <SortTh label="客戶" sortKey="guest_name" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
+              <SortTh label="房客" sortKey="guest_name" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <SortTh label="訂單起訖" sortKey="checkin" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="whitespace-nowrap" />
               <SortTh label="金額" sortKey="amount" type="number" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="text-right" align="right" />
               <th className="px-3 py-2.5 whitespace-nowrap">收款</th>
@@ -670,7 +670,7 @@ export default function ShortTermPage() {
                     ))}
                   </span>
                 ) : '—')}
-                {row('入款方式', d.account ?? '—')}
+                {row('收款方式', d.account ?? '—')}
                 {d.fx_revenue?.length ? row('外幣營收', d.fx_revenue.map((f, i) => <div key={i}>{f.cur} {fmt(f.amt)} × {f.rate}</div>)) : null}
                 {d.fx_deposit?.length ? row('外幣押金', d.fx_deposit.map((f, i) => <div key={i}>{f.cur} {fmt(f.amt)}</div>)) : null}
                 {d.invoice_required ? row('發票',
@@ -843,7 +843,7 @@ export default function ShortTermPage() {
                   ) : null}
                   hint="押金原幣退還,不換匯,所以沒有匯率欄。填了金額就會自動出現在押金管理頁,收退日期與帳戶在那裡維護。" />
               )}
-              <label className="flex flex-col gap-1">入款方式<select value={edit.account ?? ''} onChange={(e) => setEdit({ ...edit, account: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option><option value="現金">現金</option>{payAccounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}<option value="加密貨幣">加密貨幣</option></select></label>
+              <label className="flex flex-col gap-1">收款方式<select value={edit.account ?? ''} onChange={(e) => setEdit({ ...edit, account: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option><option value="現金">現金</option>{payAccounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}<option value="加密貨幣">加密貨幣</option></select></label>
               {/*
                 發票。設計比照契約:勾了才會在收款視窗出現號碼欄位。
                 抬頭留空時用客戶名稱 —— 大部分情況兩者相同,不該強迫再打一次。

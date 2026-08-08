@@ -68,8 +68,8 @@ const FREE_THRESHOLD = 3000;   // 與 migration 的 pr_apply_status() 一致
 const PAY_LABEL: Record<string, string> = { cash: '現金', transfer: '匯款', credit_card: '信用卡' };
 const PAY_OPTS = ['cash', 'transfer', 'credit_card'];
 // 信用卡是「刷」不是「匯」，同一個欄位在兩種付款方式下要用不同說法
-const dateWord = (m?: string | null) => (m === 'credit_card' ? '刷卡日' : '出款日');
-const acctWord = (m?: string | null) => (m === 'credit_card' ? '刷卡卡片' : '出款帳號');
+const dateWord = (m?: string | null) => (m === 'credit_card' ? '刷卡日' : '付款日');
+const acctWord = (m?: string | null) => (m === 'credit_card' ? '刷卡卡片' : '安幸付款帳號');
 const CURRENCIES = ['TWD', 'USD', 'JPY', 'CNY', 'EUR'];
 const PURCHASE_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSc3ZE8jE6dIDTzrrDDeYYL6EcMKUniPRhhhKXCRbWddGt4bbw/viewform';
 const ST_LABEL: Record<string, string> = { draft: '草稿', pending: '待核可', approved: '已核可', rejected: '已駁回' };
@@ -335,7 +335,7 @@ export default function PurchasesPage() {
    *
    * 【為什麼要正規化成同一個型別】
    * 之前兩種單各畫各的:請款的手機卡片是「申請人 → 項目 → 底部整排大按鈕」,
-   * 押金是「房源房客 → 退款帳戶 → 右下小連結」。同一個動作(核可)在兩個地方
+   * 押金是「房源房客 → 房客收款帳號 → 右下小連結」。同一個動作(核可)在兩個地方
    * 長得不一樣、按鈕大小不一樣、位置也不一樣。
    *
    * 統一的做法不是把兩邊的樣式各自調到看起來像,那下次改一邊又會歪。
@@ -343,7 +343,7 @@ export default function PurchasesPage() {
    *
    * 【欄位怎麼對應】
    *   who    請款=申請人      押金=房客
-   *   what   請款=項目名稱     押金=房源・退款帳戶
+   *   what   請款=項目名稱     押金=房源・房客收款帳號
    *   meta   請款=送出日・支付方式・項目數   押金=預計匯款日
    *   since  排序用的「等多久了」
    */
@@ -545,7 +545,7 @@ export default function PurchasesPage() {
       if (!(Number(i.amount_original) > 0)) return flash(`「${i.item_name}」請填金額`);
       if (i.purpose_type === 'estate' && !i.estate_id) return flash(`「${i.item_name}」請選擇用途`);
     }
-    if (edit.payment_method === 'transfer' && !edit.payee_account) return flash('匯款需填收款帳號');
+    if (edit.payment_method === 'transfer' && !edit.payee_account) return flash('匯款需填廠商收款帳號');
     if (edit.currency !== 'TWD' && !(fxRate > 0)) return flash('請填匯率');
     // 手續費只在匯款時成立。非匯款就算 fee_mode 還留著舊值也一律當成內扣。
     const feeApplies = edit.payment_method === 'transfer' && edit.fee_mode === 'extra';
@@ -575,13 +575,13 @@ export default function PurchasesPage() {
         note: edit.note || null,
         currency: edit.currency || 'TWD',
         fx_rate: edit.currency === 'TWD' ? 1 : fxRate,
-        // 現金沒有出款帳號，換了付款方式要把舊值清掉，否則會違反 pr_planned_chk。
-        // 預定出款日則三種付款方式都有，不受限制。
+        // 現金沒有安幸付款帳號，換了付款方式要把舊值清掉，否則會違反 pr_planned_chk。
+        // 預定付款日則三種付款方式都有，不受限制。
         //
         // payout_account 有三個寫入點：這裡（填單）、savePlan（排付款）、doSetDate（確認出款）。
         // 三者都只在自己那個階段跑，狀態機保證不會互相蓋掉 ——
         // 但改動前務必確認這個前提還成立。押金頁就是因為兩處寫入規則不一致，
-        // 「儲存」把退款流程剛填的出款帳號清成 null，看起來像存不進去。
+        // 「儲存」把退款流程剛填的安幸付款帳號清成 null，看起來像存不進去。
         payout_account: needsPayout ? (edit.payout_account || null) : null,
         planned_transfer_on: edit.planned_transfer_on || null,
         // 互斥,見 pr_voucher_chk
@@ -715,10 +715,10 @@ export default function PurchasesPage() {
   async function depSaveResubmit() {
     if (!depDetail || !me) return;
     const d = depDetail;
-    if (!d.payee_account?.trim()) return flash('請填房客的收款帳號');
+    if (!d.payee_account?.trim()) return flash('請填房客收款帳號');
     if (!d.payee_name?.trim()) return flash('請填戶名');
     if (!d.planned_refund_on) return flash('請填預計匯款日');
-    if (!d.returned_method) return flash('請選我方出款方式');
+    if (!d.returned_method) return flash('請選安幸付款方式');
     const hadVotes = !!d.manager_approved_at || !!d.admin_approved_at;
     if (hadVotes && !confirm(
       d.refund_status === 'approved'
@@ -761,7 +761,7 @@ export default function PurchasesPage() {
     // 這個檢查放在「匯出」而不是「排匯款」—— 排匯款可以跳過,匯出不行,
     // 把必填綁在可跳過的步驟上,等於沒綁。
     const needAcct = dating.payment_method === 'transfer' || dating.payment_method === 'credit_card';
-    if (needAcct && !dateAcct) return flash('請選擇匯出帳號');
+    if (needAcct && !dateAcct) return flash('請選擇安幸付款帳號');
     const patch: Record<string, unknown> = { purchased_on: dateVal };
     if (needAcct) patch.payout_account = dateAcct;
     const { error } = await supabase.from('purchase_requests').update(patch).eq('id', dating.id);
@@ -775,7 +775,7 @@ export default function PurchasesPage() {
   async function savePlan() {
     if (!planning) return;
     if (!planDate) return flash('請選擇預定匯款日');
-    if (!planAcct) return flash('請選擇匯出帳號');
+    if (!planAcct) return flash('請選擇安幸付款帳號');
     const { error } = await supabase.from('purchase_requests')
       .update({ planned_transfer_on: planDate, payout_account: planAcct }).eq('id', planning.id);
     if (error) return flash('儲存失敗:' + error.message);
@@ -808,12 +808,12 @@ export default function PurchasesPage() {
     // 欄位順序跟實際操作一致,複製貼上才不用左右跳。
     // 單據總額拿掉:一張單拆成多列時那個數字每列重複,做樞紐分析會被重複加總。
     // 欄位順序刻意分成三段:單據基本 → 項目明細 → 錢怎麼走。
-    // 錢那一段先「我方出款帳號」再「對方收款資訊」,跟實際匯款時填的順序一致。
+    // 錢那一段先「我方安幸付款帳號」再「對方收款資訊」,跟實際匯款時填的順序一致。
     // 類型放第一欄:會計拿這份去網銀匯款,押金退款跟請款單的錢一起出去,
     // 但一個是公司的費用、一個是退還代收的錢,對帳時必須分得出來。
     const header = ['類型', '單號', '申請人', '狀態', '送出日', '採購日', '項目', '金額', '會計科目',
-      '用途', '房源', '支付方式', '預定出款日', '出款帳號',
-      '銀行代號', '戶名', '收款帳號', '項目備註'];
+      '用途', '房源', '支付方式', '預定付款日', '安幸付款帳號',
+      '銀行代號', '戶名', '廠商收款帳號', '項目備註'];
     const aoa: any[][] = [header.map((h) => T(h, stHead))];
     for (const r of sorted) {
       const TYPE = T('請款', stCell);
@@ -834,7 +834,7 @@ export default function PurchasesPage() {
           T(i?.property_id ? properties.find((pp) => pp.id === i.property_id)?.name ?? '' : '', stCell),
           T(r.payment_method ? PAY_LABEL[r.payment_method] ?? r.payment_method : '', stCell),
           T(r.planned_transfer_on ?? '', stCell),
-          // 出款帳號 = 錢從我方哪個帳戶出去。對帳時要靠它跟銀行對單。
+          // 安幸付款帳號 = 錢從我方哪個帳戶出去。對帳時要靠它跟銀行對單。
           // 現金沒有帳號,那一格就會是空的。
           T(r.payout_account ? (acctName[r.payout_account] ?? r.payout_account) : '', stCell),
           T(r.payee_bank_code ?? '', stCell),
@@ -895,11 +895,11 @@ export default function PurchasesPage() {
       { wch: 12 },  // 用途
       { wch: 10 },  // 房源
       { wch: 10 },  // 支付方式
-      { wch: 12 },  // 預定出款日
-      { wch: 18 },  // 出款帳號
+      { wch: 12 },  // 預定付款日
+      { wch: 18 },  // 安幸付款帳號
       { wch: 10 },  // 銀行代號
       { wch: 18 },  // 戶名
-      { wch: 20 },  // 收款帳號
+      { wch: 20 },  // 廠商收款帳號
       { wch: 24 },  // 項目備註
     ];
     ws['!freeze'] = { xSplit: 0, ySplit: 1 };
@@ -1899,7 +1899,7 @@ export default function PurchasesPage() {
                       <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">銀行代碼</span>
                         <input disabled={readOnly} value={edit.payee_bank_code ?? ''} onChange={(e) => setEdit({ ...edit, payee_bank_code: e.target.value })}
                           className="rounded-lg border border-mor-line px-2 py-1.5 disabled:bg-gray-50" /></label>
-                      <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">入款帳號 *</span>
+                      <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">廠商收款帳號 *</span>
                         <input disabled={readOnly} value={edit.payee_account ?? ''} onChange={(e) => setEdit({ ...edit, payee_account: e.target.value })}
                           className="rounded-lg border border-mor-line px-2 py-1.5 disabled:bg-gray-50" /></label>
                       <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">公司名／戶名</span>
@@ -1912,9 +1912,9 @@ export default function PurchasesPage() {
                   )}
 
                   {/*
-                    出款帳號與預定日期：申請時就能填，但都是選填。
+                    安幸付款帳號與預定日期：申請時就能填，但都是選填。
                     會計在核可後可以覆寫 —— 這裡填的是「打算」，不是「已付」。
-                    現金沒有出款帳號可言，所以只在匯款／信用卡時出現。
+                    現金沒有安幸付款帳號可言，所以只在匯款／信用卡時出現。
                   */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     {/* 現金沒有帳號可選，但一樣有「打算哪天付」 */}

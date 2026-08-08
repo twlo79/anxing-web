@@ -292,10 +292,10 @@ export default function DepositsPage() {
         ? '這筆退款已經核可通過。更新資訊會清掉核可票、退回重新送審,確定嗎?'
         : '這筆退款已經有人核可。更新資訊會清掉既有核可票並重新送審,確定嗎?'
     )) return;
-    if (!edit.payee_account?.trim()) return flash('請填房客的收款帳號');
+    if (!edit.payee_account?.trim()) return flash('請填房客收款帳號');
     if (!edit.payee_name?.trim()) return flash('請填戶名');
     if (!edit.planned_refund_on) return flash('請填預計匯款日');
-    if (!edit.returned_method) return flash('請選我方出款方式');
+    if (!edit.returned_method) return flash('請選安幸付款方式');
     setSaving(true);
     const { error } = await supabase.from('deposits').update({
       refund_status: 'pending',
@@ -349,7 +349,7 @@ export default function DepositsPage() {
    * 儲存「收押金」那一段與備註。
    *
    * 刻意不碰 returned_* —— 那三欄屬於退款流程,由 submitRefund() 與 settle() 管。
-   * 早期版本這裡也一併寫,結果是:退款申請填好出款帳號後按「儲存」,
+   * 早期版本這裡也一併寫,結果是:退款申請填好安幸付款帳號後按「儲存」,
    * 因為 returned_on 還是空的,就把 returned_method / returned_account 清成 null,
    * 看起來像「存不進去」,實際上是存進去了但把值洗掉。
    * 一個欄位只該有一個地方負責寫。
@@ -401,7 +401,7 @@ export default function DepositsPage() {
    *
    * 【欄位順序刻意分成四段】
    *   基本      物業 → 房源 → 姓名 → 幣別 → 押金
-   *   收進來    收押金日 → 入款方式 → 入款帳號        ← 我方收在哪個帳戶
+   *   收進來    收押金日 → 收款方式 → 安幸收款帳號        ← 我方收在哪個帳戶
    *   退出去    預定退款日 → 退押金日 → 退款方式 → 退款帳號   ← 我方從哪個帳戶付
    *   對方      銀行代號 → 戶名 → 收款帳號            ← 錢要匯去哪
    *
@@ -421,9 +421,9 @@ export default function DepositsPage() {
     const T = (v: any, st: any) => ({ v: v ?? '', t: typeof v === 'number' ? 'n' : 's', s: st, z: typeof v === 'number' ? '#,##0' : undefined });
 
     const header = ['物業', '房源', '姓名', '幣別', '押金',
-      '收押金日', '入款方式', '入款帳號',
+      '收押金日', '收款方式', '安幸收款帳號',
       '預定退款日', '退押金日', '退款方式', '退款帳號',
-      '銀行代號', '戶名', '收款帳號',
+      '銀行代號', '戶名', '房客收款帳號',
       '狀態', '備註'];
     const aoa: any[][] = [header.map((h) => T(h, stHead))];
     for (const r of sorted) {
@@ -436,7 +436,7 @@ export default function DepositsPage() {
         T(Math.round(Number(r.amount) || 0), stNum),
         T(r.received_on ?? '', stCell),
         T(r.received_method ? METHOD_LABEL[r.received_method] ?? r.received_method : '', stCell),
-        // 入款帳號 = 押金收進我方哪個帳戶。跟銀行對帳要靠它。現金收的就是空的。
+        // 安幸收款帳號 = 押金收進我方哪個帳戶。跟銀行對帳要靠它。現金收的就是空的。
         T(r.received_account ? acctName[r.received_account] ?? r.received_account : '', stCell),
         T(r.planned_refund_on ?? '', stCell),
         T(r.returned_on ?? '', stCell),
@@ -460,15 +460,15 @@ export default function DepositsPage() {
       { wch: 6 },   // 幣別
       { wch: 11 },  // 押金
       { wch: 12 },  // 收押金日
-      { wch: 10 },  // 入款方式
-      { wch: 18 },  // 入款帳號
+      { wch: 10 },  // 收款方式
+      { wch: 18 },  // 安幸收款帳號
       { wch: 12 },  // 預定退款日
       { wch: 12 },  // 退押金日
       { wch: 10 },  // 退款方式
       { wch: 18 },  // 退款帳號
       { wch: 10 },  // 銀行代號
       { wch: 18 },  // 戶名
-      { wch: 20 },  // 收款帳號
+      { wch: 20 },  // 房客收款帳號
       { wch: 10 },  // 狀態
       { wch: 24 },  // 備註
     ];
@@ -648,12 +648,12 @@ export default function DepositsPage() {
             <option value="">全部</option>
             {rooms.map((r) => <option key={r} value={r}>{r}</option>)}
           </select></label>
-        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">入款方式</span>
+        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">收款方式</span>
           <select value={methodF} onChange={(e) => setMethodF(e.target.value)} className={inp}>
             <option value="">全部</option>
             {METHOD_OPTS.map((m) => <option key={m} value={m}>{METHOD_LABEL[m]}</option>)}
           </select></label>
-        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">入款帳號</span>
+        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">安幸收款帳號</span>
           <select value={acctF} onChange={(e) => setAcctF(e.target.value)} className={`${inp} min-w-28`}>
             <option value="">全部</option>
             {payAccounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
@@ -728,7 +728,7 @@ export default function DepositsPage() {
               <SortTh label="姓名" sortKey="guest_name" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <SortTh label="押金" sortKey="amount" type="number" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="text-right" align="right" />
               <SortTh label="收押金日" sortKey="received_on" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
-              <th className="px-3 py-2.5">入款方式</th>
+              <th className="px-3 py-2.5">收款方式</th>
               <SortTh label="退押金日" sortKey="returned_on" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <th className="px-3 py-2.5">退款方式</th>
               <th className="px-3 py-2.5">狀態</th>
@@ -815,7 +815,7 @@ export default function DepositsPage() {
                   </span>
                 ))}
                 {row('收押金日', d.received_on ?? '—')}
-                {row('入款方式', d.received_method
+                {row('收款方式', d.received_method
                   ? `${METHOD_LABEL[d.received_method] ?? d.received_method}${d.received_account ? `・${acctName[d.received_account] ?? d.received_account}` : ''}`
                   : '—')}
                 {(d.refund_status ?? 'none') !== 'none' && <>
@@ -977,7 +977,7 @@ export default function DepositsPage() {
                     <input type="date" value={edit.received_on ?? ''}
                       onChange={(e) => setEdit({ ...edit, received_on: e.target.value || null })}
                       className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5" /></label>
-                  <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">入款方式</span>
+                  <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">收款方式</span>
                     <select value={edit.received_method ?? ''} disabled={!edit.received_on}
                       onChange={(e) => setEdit({ ...edit, received_method: e.target.value || null, received_account: null })}
                       className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-100">
@@ -986,7 +986,7 @@ export default function DepositsPage() {
                     </select></label>
                   {/* 現金沒有帳戶可言 */}
                   {edit.received_method && edit.received_method !== 'cash' && (
-                    <label className="flex flex-col gap-1 md:col-span-2"><span className="text-xs text-gray-500">入款帳號</span>
+                    <label className="flex flex-col gap-1 md:col-span-2"><span className="text-xs text-gray-500">安幸收款帳號</span>
                       <select value={edit.received_account ?? ''}
                         onChange={(e) => setEdit({ ...edit, received_account: e.target.value || null })}
                         className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5">
@@ -1007,8 +1007,8 @@ export default function DepositsPage() {
                 押金動輒十幾二十萬,退錯追不回來 —— 這裡的關卡跟請款單同一套。
 
                 兩個帳戶方向相反,命名沿用請款單:
-                  payee_*          = 房客的收款帳戶（錢退到哪）
-                  returned_account = 我方的出款帳號（錢從哪出）
+                  payee_*          = 房客收款帳號（錢退到哪）
+                  returned_account = 安幸付款帳號（錢從哪出）
               */}
               <div className="border-t border-mor-line pt-3">
                 <div className="flex items-center justify-between mb-2">
@@ -1038,7 +1038,7 @@ export default function DepositsPage() {
                     <div className="pt-1">退到:{edit.payee_name} {edit.payee_bank_code} {edit.payee_account}</div>
                     <div>預計匯款日:{edit.planned_refund_on}</div>
                     <div>
-                      我方出款:{edit.returned_method ? METHOD_LABEL[edit.returned_method] : '—'}
+                      安幸付款:{edit.returned_method ? METHOD_LABEL[edit.returned_method] : '—'}
                       {edit.returned_account ? `・${acctName[edit.returned_account] ?? edit.returned_account}` : ''}
                     </div>
                   </div>
