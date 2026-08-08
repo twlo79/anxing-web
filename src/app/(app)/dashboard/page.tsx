@@ -32,8 +32,14 @@ type Rev = {
   month_amount: number; fee_type: string | null;
 };
 type Exp = {
+  id: string;
   spent_on: string; amount: number; account_code: string | null;
   estate_id: string | null; property_id: string | null; purpose_type: string;
+  item_name: string | null;
+  /** 關注支出。遞延母子單會一起亮（migration_89）。 */
+  starred?: boolean;
+  /** 遞延認列。母單的 amount 是「這一天認列多少」,實付總額在 gross_amount。 */
+  deferred?: boolean; gross_amount?: number | null; parent_expense_id?: string | null;
 };
 type Ord = {
   source: string; checkin: string; estate_id: string | null; property_id: string | null;
@@ -155,7 +161,7 @@ export default function DashboardPage() {
       .select('ym, source, estate_id, property_id, month_amount, fee_type')
       .gte('ym', ymOf(fromD)).lte('ym', ymOf(toD));
     const expQ = supabase.from('expenses')
-      .select('spent_on, amount, account_code, estate_id, property_id, purpose_type')
+      .select('id, spent_on, amount, account_code, estate_id, property_id, purpose_type, item_name, starred, deferred, gross_amount, parent_expense_id')
       .gte('spent_on', fromD).lte('spent_on', toD);
     const ordQ = supabase.from('orders')
       .select('source, checkin, estate_id, property_id, amount, paid')
@@ -258,6 +264,15 @@ export default function DashboardPage() {
   // ── 核心數字 ────────────────────────────────────────
   const totalRev = useMemo(() => fRevs.reduce((s, r) => s + Number(r.month_amount || 0), 0), [fRevs]);
   const totalExp = useMemo(() => fExps.reduce((s, e) => s + Number(e.amount || 0), 0), [fExps]);
+  /*
+   * 關注支出。日期新的排前面 —— 要追蹤的通常是最近發生的。
+   * 子單也會亮（母子連動),所以一組遞延會出現好幾列 ——
+   * 那是對的:每一列是不同月份的認列,本來就該分開看。
+   */
+  const starred = useMemo(
+    () => fExps.filter((e) => e.starred).sort((a, b) => (a.spent_on < b.spent_on ? 1 : -1)),
+    [fExps]);
+  const starredTotal = useMemo(() => starred.reduce((s, e) => s + Number(e.amount || 0), 0), [starred]);
   const net = totalRev - totalExp;
   const margin = totalRev > 0 ? (net / totalRev) * 100 : 0;
   // 應收未收：訂單已成立但錢還沒收到。這是現金流最直接的風險部位。
@@ -678,6 +693,54 @@ export default function DashboardPage() {
           </>
         )}
       </Panel>
+
+      {/*
+        關注支出。放在最後 —— 它是「要追的那幾筆」,不是總覽,
+        看完上面的數字之後才會想看細節。
+
+        沒有關注時整塊不出現,不留一個空面板佔位置。
+      */}
+      {starred.length > 0 && (
+        <Panel title={`關注支出（${starred.length} 筆・合計 $${nf(starredTotal)}）`}>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-gray-500 border-b border-mor-line">
+                  <th className="py-2 pr-3">日期</th>
+                  <th className="py-2 pr-3">項目</th>
+                  <th className="py-2 pr-3">會計科目</th>
+                  <th className="py-2 pr-3 text-right">認列金額</th>
+                  <th className="py-2 text-right">實付</th>
+                </tr>
+              </thead>
+              <tbody>
+                {starred.map((e) => (
+                  <tr key={e.id} className="border-b border-mor-line/50 last:border-0">
+                    <td className="py-2 pr-3 whitespace-nowrap text-gray-600">{e.spent_on}</td>
+                    <td className="py-2 pr-3">
+                      {e.item_name ?? '—'}
+                      {/* 一組遞延會出現好幾列,標明哪一列是母單、哪些是分攤出去的 */}
+                      {e.deferred && <span className="ml-1.5 text-[10px] text-red-500">遞延母單</span>}
+                      {e.parent_expense_id && <span className="ml-1.5 text-[10px] text-gray-400">遞延分攤</span>}
+                    </td>
+                    <td className="py-2 pr-3 text-gray-500 whitespace-nowrap">{e.account_code ?? '—'}</td>
+                    <td className="py-2 pr-3 text-right font-medium tabular-nums">${nf(Number(e.amount) || 0)}</td>
+                    <td className="py-2 text-right text-gray-500 tabular-nums">
+                      {/* 子單沒有付款事實,留空不印 0 */}
+                      {e.parent_expense_id ? '—' : `$${nf(Number(e.gross_amount ?? e.amount) || 0)}`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-gray-400 mt-2">
+            在「支出明細」頁按星星加入。遞延的母子單會一起亮 ——
+            所以一筆錢可能出現好幾列，每一列是不同月份的認列。
+            <a href="/expenses" className="ml-1 text-mor-blue underline">到支出明細 →</a>
+          </p>
+        </Panel>
+      )}
     </div>
   );
 }
@@ -724,7 +787,7 @@ function BarList({ rows, fmt }: { rows: { label: string; value: number; color: s
   return (
     <div className="flex flex-col gap-2">
       {rows.map((r) => (
-        <div key={r.label} className="group" title={`${r.label}　${fmt(r.value)}　${total > 0 ? ((r.value / total) * 100).toFixed(1) : 0}%`}>
+        <div key={r.label} className="group" title={`${r.label}　${nf(r.value)}　${total > 0 ? ((r.value / total) * 100).toFixed(1) : 0}%`}>
           <div className="flex items-baseline justify-between text-sm mb-1">
             <span className="font-medium">{r.label}</span>
             <span className="tabular-nums text-gray-600">

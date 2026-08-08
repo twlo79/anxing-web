@@ -23,6 +23,8 @@ type Expense = {
    * 子單:parent_expense_id 指回母單,不可單獨編輯或刪除。
    */
   parent_expense_id?: string | null; gross_amount?: number | null; deferred?: boolean;
+  /** 關注支出。遞延母子單會一起連動（migration_89 的觸發器）。 */
+  starred?: boolean;
 };
 type AccountCode = { code: string; name: string; sort: number; active: boolean };
 type Estate = { id: string; name: string; sort: number; active: boolean };
@@ -46,6 +48,7 @@ export default function ExpensesPage() {
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState('');
   const [edit, setEdit] = useState<Expense | null>(null);
+  const [starF, setStarF] = useState(false);   // 只看關注
   const [saving, setSaving] = useState(false);
   // 新支出還沒有 id，憑證要等這筆建立後才傳得上去 —— 存檔時呼叫 flush()
   const receiptsRef = useRef<ReceiptsHandle>(null);
@@ -104,6 +107,7 @@ export default function ExpensesPage() {
       if (acctF === '__cash') q = q.is('pay_account', null);
       else if (acctF) q = q.eq('pay_account', acctF);
       if (kw) q = q.or(`item_name.ilike.%${kw}%,note.ilike.%${kw}%,voucher_no.ilike.%${kw}%`);
+      if (starF) q = q.eq('starred', true);
       const { data, error } = await q.range(from, from + 999);
       if (error) { flash('載入失敗:' + error.message); break; }
       const chunk = (data as Expense[]) ?? [];
@@ -113,7 +117,7 @@ export default function ExpensesPage() {
     }
     setRows(all);
     setLoading(false);
-  }, [supabase, fromD, toD, codeF, payF, purposeF, acctF, kw]);
+  }, [supabase, fromD, toD, codeF, payF, purposeF, acctF, kw, starF]);
   useEffect(() => { load(); }, [load]);
 
   const SORT_COLS: SortCols<Expense> = useMemo(() => ({
@@ -176,6 +180,25 @@ export default function ExpensesPage() {
       payment_method: 'cash', pay_account: null, note: null, source_item_id: null,
       currency: 'TWD', fx_rate: 1, amount_original: 0,
     };
+  }
+
+  /**
+   * 打星／取消。
+   *
+   * **只寫這一筆,不管母子連動** —— 那是資料庫觸發器的事（migration_89）。
+   * 前端自己去更新兄弟的話,從別的路徑改（匯入、API、儀表板）就不會同步,
+   * 而不同步不會報錯,只會讓篩選出來的清單少幾張子單。
+   *
+   * 畫面先動再寫資料庫,按下去立刻有反應。連動的結果要重載才看得到,
+   * 所以有母子關係時多重載一次。
+   */
+  async function toggleStar(r: Expense) {
+    const next = !r.starred;
+    const group = r.deferred || r.parent_expense_id;
+    setRows((rs) => rs.map((x) => (x.id === r.id ? { ...x, starred: next } : x)));
+    const { error } = await supabase.from('expenses').update({ starred: next }).eq('id', r.id);
+    if (error) { flash('失敗:' + error.message); load(); return; }
+    if (group) load();   // 母子連動由觸發器做,要重載才看得到整組
   }
 
   async function save() {
@@ -259,10 +282,11 @@ export default function ExpensesPage() {
     const T = (v: any, st: any) => ({ v: v ?? '', t: typeof v === 'number' ? 'n' : 's', s: st, z: typeof v === 'number' ? '#,##0' : undefined });
 
     // 用途已是物業層級,原本的「物業」欄與「用途」欄內容重複,合併成一欄
-    const header = ['支出日期', '支出項目', '認列金額', '實際支出', '遞延', '會計科目', '用途', '憑證號碼', '支付方式', '安幸付款帳號', '備註'];
+    const header = ['關注', '支出日期', '支出項目', '認列金額', '實際支出', '遞延', '會計科目', '用途', '憑證號碼', '支付方式', '安幸付款帳號', '備註'];
     const aoa: any[][] = [header.map((h) => T(h, stHead))];
     for (const r of sorted) {
       aoa.push([
+        T(r.starred ? '★' : '', stCell),
         T(r.spent_on ?? '', stCell),
         T(r.item_name ?? '', stCell),
         T(Math.round(Number(r.amount) || 0), stNum),
@@ -278,7 +302,7 @@ export default function ExpensesPage() {
       ]);
     }
     const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws['!cols'] = [{ wch: 12 }, { wch: 24 }, { wch: 12 }, { wch: 12 }, { wch: 7 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 28 }];
+    ws['!cols'] = [{ wch: 5 }, { wch: 12 }, { wch: 24 }, { wch: 12 }, { wch: 12 }, { wch: 7 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 28 }];
     ws['!freeze'] = { xSplit: 0, ySplit: 1 };
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, '支出');
@@ -407,8 +431,14 @@ export default function ExpensesPage() {
               className="rounded-l-lg border border-mor-line px-2 py-1.5 w-44" placeholder="含否關鍵字" />
             <button onClick={() => setKw(kwIn.trim())} className="rounded-r-lg bg-mor-slate text-white px-3 hover:bg-mor-slatedark">搜尋</button>
           </div></label>
-        {(fromD || toD || codeF || payF || purposeF || acctF || kw) &&
-          <button onClick={() => { setFromD(''); setToD(''); setCodeF(''); setPayF(''); setPurposeF(''); setAcctF(''); setKw(''); setKwIn(''); }}
+        {/* 只看關注。做成切換鈕而不是下拉 —— 它只有開/關兩種狀態,而且會常按。 */}
+        <button onClick={() => setStarF(!starF)}
+          className={`rounded-lg border px-3 py-1.5 font-medium ${
+            starF ? 'border-amber-400 bg-amber-50 text-amber-700' : 'border-mor-line bg-white text-gray-600 hover:bg-mor-sand/60'}`}>
+          {starF ? '★ 只看關注' : '☆ 只看關注'}
+        </button>
+        {(fromD || toD || codeF || payF || purposeF || acctF || kw || starF) &&
+          <button onClick={() => { setFromD(''); setToD(''); setCodeF(''); setPayF(''); setPurposeF(''); setAcctF(''); setKw(''); setKwIn(''); setStarF(false); }}
             className="text-gray-500 underline pb-1.5">清除</button>}
         <div className="ml-auto flex items-end gap-2">
           <div className="text-xs text-gray-400 pb-1.5">共 {rows.length.toLocaleString()} 筆</div>
@@ -486,6 +516,15 @@ export default function ExpensesPage() {
                     「母單 + 子單 = 實付總額」那條等式（資料庫也會擋）。
                     要改一律回母單重設整組。
                   */}
+                  {/*
+                    關注。遞延的母子單會一起亮 —— 連動由資料庫觸發器做,
+                    所以子單上的星星也可以點,母單與其他兄弟會跟著。
+                  */}
+                  <button onClick={() => toggleStar(r)}
+                    title={r.starred ? '取消關注' : '關注這筆支出'}
+                    className={`text-sm align-middle ${r.starred ? 'text-amber-500' : 'text-gray-300 hover:text-amber-400'}`}>
+                    {r.starred ? '★' : '☆'}
+                  </button>
                   {r.parent_expense_id ? (
                     <button onClick={() => { const p = byId[r.parent_expense_id!]; if (p) setEdit(p); }}
                       className="text-xs text-mor-blue underline hover:text-mor-slate">到母單</button>
