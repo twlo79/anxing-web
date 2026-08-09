@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
 import { ymOf, ymShow, ymMonth, monthsAgo, todayStr, fmtRange } from '@/lib/period';
+// Supabase 一次只回 1000 列且不報錯 —— 這一頁全部是加總,一定要撈完
+import { fetchAll } from '@/lib/fetch-all';
 import { FilterBar, FilterSelect, FilterDateRange, FilterClear } from '@/lib/filters';
 import { srcLabel } from '@/lib/revenue-report';
 import {
@@ -93,6 +95,8 @@ export default function DashboardPage() {
   const router = useRouter();
   const [role, setRole] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  /** 資料沒撈完時的警告。這一頁全部是加總,少一列就是錯的,不能靜靜顯示。 */
+  const [truncated, setTruncated] = useState('');
 
   const [revs, setRevs] = useState<Rev[]>([]);
   const [exps, setExps] = useState<Exp[]>([]);
@@ -156,37 +160,61 @@ export default function DashboardPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    // 期間篩選一律在資料庫端做。全撈回來前端篩，資料一多就會卡在瀏覽器。
-    const revQ = supabase.from('revenue_recognitions')
-      .select('ym, source, estate_id, property_id, month_amount, fee_type')
-      .gte('ym', ymOf(fromD)).lte('ym', ymOf(toD));
-    const expQ = supabase.from('expenses')
-      .select('id, spent_on, amount, account_code, estate_id, property_id, purpose_type, item_name, starred, deferred, gross_amount, parent_expense_id')
-      .gte('spent_on', fromD).lte('spent_on', toD);
-    const ordQ = supabase.from('orders')
-      .select('source, checkin, estate_id, property_id, amount, paid')
-      .gte('checkin', fromD).lte('checkin', toD);
-    const rvQ = supabase.from('reviews')
-      .select('checkout_date, property_id, overall_rating')
-      .gte('checkout_date', fromD).lte('checkout_date', toD);
-
+    setTruncated('');
+    /*
+     * 期間篩選一律在資料庫端做。全撈回來前端篩，資料一多就會卡在瀏覽器。
+     *
+     * 【每一個都要 fetchAll —— 2026-08 的教訓】
+     * Supabase 預設一次只回 1000 列，**超過的靜靜丟掉、不報錯**。
+     * 這一頁原本全部沒有分頁，於是：
+     *   年模式（12 個月的營收認列，早就破 1000）→ 8 月營收顯示 378 萬
+     *   月模式（只撈 8 月，沒破）              → 同一個月顯示 898 萬
+     * 兩個畫面互相矛盾，而且沒有任何錯誤訊息。
+     * 當時「訂單數」本期與上一期都剛好是 1,000 筆 —— 那個整數是唯一的線索。
+     */
     const [rv, ex, od, r5, es, pr, cd, pd] = await Promise.all([
-      revQ, expQ, ordQ, rvQ,
-      supabase.from('estates').select('id, name').order('sort').order('name'),
-      supabase.from('properties').select('id, name, estate_id').order('name'),
-      supabase.from('account_codes').select('code, name'),
+      fetchAll<Rev>((f, t) => supabase.from('revenue_recognitions')
+        .select('ym, source, estate_id, property_id, month_amount, fee_type')
+        .gte('ym', ymOf(fromD)).lte('ym', ymOf(toD)).range(f, t)),
+      fetchAll<Exp>((f, t) => supabase.from('expenses')
+        .select('id, spent_on, amount, account_code, estate_id, property_id, purpose_type, item_name, starred, deferred, gross_amount, parent_expense_id')
+        .gte('spent_on', fromD).lte('spent_on', toD).range(f, t)),
+      fetchAll<Ord>((f, t) => supabase.from('orders')
+        .select('source, checkin, estate_id, property_id, amount, paid')
+        .gte('checkin', fromD).lte('checkin', toD).range(f, t)),
+      fetchAll<Rev5>((f, t) => supabase.from('reviews')
+        .select('checkout_date, property_id, overall_rating')
+        .gte('checkout_date', fromD).lte('checkout_date', toD).range(f, t)),
+      fetchAll<Estate>((f, t) => supabase.from('estates')
+        .select('id, name').order('sort').order('name').range(f, t)),
+      /*
+       * 房源也要分頁。它看起來是小主檔，但 estateOfProp 靠它把
+       * 「沒有 estate_id 的認列」回推到物業 —— 少撈幾間房，
+       * 那些認列就會從物業視角的營收裡整塊消失，而且沒有跡象。
+       */
+      fetchAll<Property>((f, t) => supabase.from('properties')
+        .select('id, name, estate_id').order('name').range(f, t)),
+      fetchAll<Code>((f, t) => supabase.from('account_codes')
+        .select('code, name').range(f, t)),
       // 待付款：已核可但還沒填出款日 —— 這是「錢還沒出去但已經承諾要出」的部位
-      supabase.from('purchase_requests').select('total_amount, planned_transfer_on')
-        .eq('status', 'approved').is('purchased_on', null),
+      fetchAll<Pending>((f, t) => supabase.from('purchase_requests')
+        .select('total_amount, planned_transfer_on')
+        .eq('status', 'approved').is('purchased_on', null).range(f, t)),
     ]);
-    setRevs((rv.data ?? []) as Rev[]);
-    setExps((ex.data ?? []) as Exp[]);
-    setOrds((od.data ?? []) as Ord[]);
-    setRvs((r5.data ?? []) as Rev5[]);
-    setEstates((es.data ?? []) as Estate[]);
-    setProperties((pr.data ?? []) as Property[]);
-    setCodes((cd.data ?? []) as Code[]);
-    setPending((pd.data ?? []) as Pending[]);
+
+    // 撈不完就明講。這一頁的數字全部是加總，少一列就是錯的 ——
+    // 靜靜顯示一個偏低的數字比顯示錯誤訊息糟糕得多。
+    const bad = [rv, ex, od, r5, es, pr, cd, pd].find((r) => r.error);
+    if (bad?.error) setTruncated(bad.error);
+
+    setRevs(rv.rows);
+    setExps(ex.rows);
+    setOrds(od.rows);
+    setRvs(r5.rows);
+    setEstates(es.rows);
+    setProperties(pr.rows);
+    setCodes(cd.rows);
+    setPending(pd.rows);
 
     /*
      * 比較期。環比(上一期)與同比(去年同期)各撈一次。
@@ -198,19 +226,21 @@ export default function DashboardPage() {
      */
     const [pf, pt] = prevPeriod(mode, fromD, toD);
     const [yf, yt] = lastYearPeriod(mode, fromD, toD);
+    // 比較期一樣要分頁。少了的話「去年同期」會偏低，成長率跟著假 ——
+    // 而那個假的百分比看起來完全正常，不會有人懷疑。
     const fetchCmp = async (f: string, t: string): Promise<CmpRaw> => {
       const [r1, e1, o1] = await Promise.all([
-        supabase.from('revenue_recognitions')
+        fetchAll<CmpRaw['rev'][number]>((a, b) => supabase.from('revenue_recognitions')
           .select('source, estate_id, property_id, month_amount')
-          .gte('ym', ymOf(f)).lte('ym', ymOf(t)),
-        supabase.from('expenses').select('amount, estate_id, property_id')
-          .gte('spent_on', f).lte('spent_on', t),
-        supabase.from('orders').select('estate_id, property_id')
-          .gte('checkin', f).lte('checkin', t),
+          .gte('ym', ymOf(f)).lte('ym', ymOf(t)).range(a, b)),
+        fetchAll<CmpRaw['exp'][number]>((a, b) => supabase.from('expenses')
+          .select('amount, estate_id, property_id')
+          .gte('spent_on', f).lte('spent_on', t).range(a, b)),
+        fetchAll<CmpRaw['ord'][number]>((a, b) => supabase.from('orders')
+          .select('estate_id, property_id')
+          .gte('checkin', f).lte('checkin', t).range(a, b)),
       ]);
-      return {
-        rev: (r1.data ?? []) as any[], exp: (e1.data ?? []) as any[], ord: (o1.data ?? []) as any[],
-      };
+      return { rev: r1.rows, exp: e1.rows, ord: o1.rows };
     };
     const [prevC, yoyC] = await Promise.all([fetchCmp(pf, pt), fetchCmp(yf, yt)]);
     setCmpRaw({ prev: prevC, yoy: yoyC });
@@ -448,6 +478,13 @@ export default function DashboardPage() {
           options={propsOfEstate.map((p2) => ({ value: p2.id, label: p2.name }))} />
         <FilterClear active={!!(estF || propF)} onClear={clearFilters} />
       </FilterBar>
+
+      {truncated && (
+        <div className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 mb-4 text-sm text-red-800">
+          <b>資料沒有完整載入，下面的數字全部偏低。</b>
+          <div className="text-xs mt-1">{truncated}</div>
+        </div>
+      )}
 
       {revGap && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 mb-5 text-sm text-amber-800">

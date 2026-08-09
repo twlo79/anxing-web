@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
+import { fetchIn } from '@/lib/fetch-all';
 
 export const dynamic = 'force-dynamic';
 const CORS = {
@@ -76,9 +77,16 @@ export async function POST(req: Request) {
     };
   });
 
+  /*
+   * 「哪些已經存在」—— 撈不全的話 inserted 會虛報。
+   * 寫入是 upsert onConflict order_key,所以不會產生重複資料,
+   * 但這個數字會被拿去發推播通知,虛報等於叮一則假的。
+   */
   const keys = records.map((r) => r.order_key);
-  const { data: existing } = await supabase.from('orders').select('order_key').in('order_key', keys);
-  const has = new Set((existing ?? []).map((e) => e.order_key));
+  const { rows: existing } = await fetchIn<{ order_key: string }>(
+    keys,
+    (chunk, f, t) => supabase.from('orders').select('order_key').in('order_key', chunk).range(f, t));
+  const has = new Set(existing.map((e) => e.order_key));
   const inserted = keys.filter((k) => !has.has(k)).length;
 
   for (let i = 0; i < records.length; i += 500) {

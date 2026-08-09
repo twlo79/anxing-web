@@ -8,6 +8,8 @@ import { dueDateOf, resolvePayDay, checkFirstDue, fmtDue } from '@/lib/due-date'
 import { keyBase, onlyKeyOf } from '@/lib/ltKey';
 // 一期的應收與收齊判斷都走這支 —— 畫面、確認視窗、收款三處共用同一份算式
 import { periodTotal, type PeriodTotal } from '@/lib/period-total';
+// Supabase 一次只回 1000 列且不報錯 —— 欠款是沒有上界的集合,一定要撈完
+import { fetchAll } from '@/lib/fetch-all';
 import {
   summarize, needsTypedConfirm, deleteConfirmText, typedConfirmPrompt,
   strayPaid, endLeaseRemoved, endLeaseConfirmText, type OrderLite,
@@ -112,14 +114,20 @@ export default function ContractsPage() {
     const m: Record<string, { amount: number; paid: boolean }> = {};
     (lts ?? []).forEach((o: any) => { if (o.contract_id) m[o.contract_id] = { amount: Number(o.amount || 0), paid: !!o.paid }; });
     setCurLT(m);
-    // 跨月欠款:本月之前已到期但仍未收的月租單(本月未收另計,兩者不重疊)
-    const { data: ovd } = await supabase.from('orders')
+    /*
+     * 跨月欠款:本月之前已到期但仍未收的月租單(本月未收另計,兩者不重疊)。
+     *
+     * **一定要分頁。** 這是一個沒有上界的集合 —— 只要有契約的月租單沒被標記收款，
+     * 它就會一直累積。撈不全的話「欠多少」會偏低，
+     * 而偏低的欠款數字沒有任何跡象可以察覺（2026-08 儀表板就是這樣被發現的）。
+     */
+    const { rows: ovd } = await fetchAll<any>((f, t) => supabase.from('orders')
       .select('order_key, property_raw, guest_name, amount, checkin')
       .in('source', ['longterm', 'company', 'office'])
       .eq('paid', false)
       .lt('checkin', curFirst)
-      .order('checkin');
-    setOverdue((ovd as any) ?? []);
+      .order('checkin').range(f, t));
+    setOverdue(ovd as any);
     // 發票:回溯窗口內的月租單與已開立發票
     const { data: invO } = await supabase.from('orders')
       .select('property_raw, amount, paid, checkin')

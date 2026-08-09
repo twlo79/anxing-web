@@ -3,6 +3,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
+import { fetchAll } from '@/lib/fetch-all';
 import Receipts, { type ReceiptsHandle } from '@/components/Receipts';
 import RefundFields, { METHOD_LABEL as DEP_METHOD } from '@/components/RefundFields';
 import { shareDeposit } from '@/lib/share';
@@ -191,18 +192,25 @@ export default function PurchasesPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    let q = supabase.from('purchase_requests')
-      .select('*, purchase_request_items(*)')
-      .order('created_at', { ascending: false });
-    if (stF) q = q.eq('status', stF);
-    if (reqF) q = q.eq('requester_id', reqF);
-    if (month) {
-      const [from, to] = monthRange(month);
-      q = q.gte('created_at', from).lt('created_at', to);
-    }
-    const { data, error } = await q;
-    if (error) flash('載入失敗:' + error.message);
-    setRows((data as Req[]) ?? []);
+    /*
+     * 分頁撈完。不選月份時這是「全部的請款單」—— 沒有上界,只會越來越多。
+     * Supabase 一次只回 1000 列且不報錯,撈不全的症狀是「舊的單不見了」,
+     * 而使用者只會以為是自己記錯。
+     */
+    const { rows: data, error } = await fetchAll<Req>((f, t) => {
+      let q = supabase.from('purchase_requests')
+        .select('*, purchase_request_items(*)')
+        .order('created_at', { ascending: false });
+      if (stF) q = q.eq('status', stF);
+      if (reqF) q = q.eq('requester_id', reqF);
+      if (month) {
+        const [from, to] = monthRange(month);
+        q = q.gte('created_at', from).lt('created_at', to);
+      }
+      return q.range(f, t);
+    });
+    if (error) flash('載入失敗:' + error);
+    setRows(data);
 
     // 匯款排程:該月要付出去、但還沒付的單。不受列表其他篩選影響 ——
     // 它回答的是「這個月還要準備多少錢」,那跟你正在看誰的單無關。

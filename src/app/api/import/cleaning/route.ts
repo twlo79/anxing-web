@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
+import { fetchIn } from '@/lib/fetch-all';
 
 export const dynamic = 'force-dynamic';
 
@@ -70,9 +71,12 @@ export async function POST(req: Request) {
     };
   });
 
+  // 同上：撈不全 inserted 會虛報。upsert 不會產生重複資料，錯的只有回報數字。
   const keys = records.map((r) => r.record_key);
-  const { data: existing } = await supabase.from('cleaning_records').select('record_key').in('record_key', keys);
-  const has = new Set((existing ?? []).map((e) => e.record_key));
+  const { rows: existing } = await fetchIn<{ record_key: string }>(
+    keys,
+    (chunk, f, t) => supabase.from('cleaning_records').select('record_key').in('record_key', chunk).range(f, t));
+  const has = new Set(existing.map((e) => e.record_key));
   const inserted = keys.filter((k) => !has.has(k)).length;
 
   for (let i = 0; i < records.length; i += 500) {

@@ -1,6 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { notifyImport } from '@/lib/push';
+// Supabase 一次只回 1000 列且不報錯 —— 「哪些已存在」查不全會覆蓋既有翻譯
+import { fetchIn } from '@/lib/fetch-all';
 
 export const dynamic = 'force-dynamic';
 
@@ -114,11 +116,20 @@ export async function POST(req: Request) {
   {
     const checkouts = Array.from(new Set(parsed.map((p) => p.co).filter(Boolean))) as string[];
     const seen: Record<string, Set<string>> = {};
-    for (let i = 0; i < checkouts.length; i += 200) {
-      const { data } = await supabase.from('orders')
-        .select('guest_name, checkout, property_id')
-        .in('checkout', checkouts.slice(i, i + 200))
-        .not('property_id', 'is', null);
+    {
+      /*
+       * 這裡比對的是 checkout 日期,**一天可能有幾十筆訂單** ——
+       * 200 個日期輕易就回超過 1000 列而被截掉。
+       * 截掉的後果是那幾則評價對不到房源,落進「未對應」——
+       * 看起來像爬蟲沒給 listingId（既有的已知問題），
+       * 實際上是資料撈不全，兩者症狀一模一樣、非常難分辨。
+       */
+      const { rows: data } = await fetchIn<{ guest_name: string | null; checkout: string; property_id: string }>(
+        checkouts,
+        (chunk, f, t) => supabase.from('orders')
+          .select('guest_name, checkout, property_id')
+          .in('checkout', chunk).not('property_id', 'is', null).range(f, t),
+        200);
       for (const o of data ?? []) {
         if (!o.guest_name) continue;
         const k = `${o.guest_name}|${o.checkout}`;
@@ -133,11 +144,21 @@ export async function POST(req: Request) {
   // 既有評價的 property_id:用來避免「這次解析不出房源」時把原本正確的值蓋成 null
   const prevProp = new Map<string, string | null>();
 
-  // 已存在的評價:保留已翻譯成中文的 comment,重新匯入時不覆蓋(只補日期等欄位)
+  /*
+   * 已存在的評價:保留已翻譯成中文的 comment,重新匯入時不覆蓋(只補日期等欄位)。
+   *
+   * ⚠️ **這個查詢撈不全會造成永久性的資料損失。**
+   * Supabase 一次只回 1000 列且不報錯 —— 全量同步送進來兩千則評價時，
+   * 後一千則查不到既有紀錄，就會被當成「沒有翻譯過」而用英文原文覆蓋。
+   * 翻譯是花錢叫 API 做的，蓋掉就沒了，而且不會有任何錯誤訊息。
+   */
   const incomingIds = items.map((m) => String(m.id));
-  const { data: prevRows } = await supabase.from('reviews').select('airbnb_review_id, comment, property_id').in('airbnb_review_id', incomingIds);
-  const prevComment = new Map((prevRows ?? []).map((r) => [r.airbnb_review_id, r.comment as string | null]));
-  (prevRows ?? []).forEach((r) => prevProp.set(r.airbnb_review_id, (r.property_id as string | null) ?? null));
+  const { rows: prevRows } = await fetchIn<{ airbnb_review_id: string; comment: string | null; property_id: string | null }>(
+    incomingIds,
+    (chunk, f, t) => supabase.from('reviews')
+      .select('airbnb_review_id, comment, property_id').in('airbnb_review_id', chunk).range(f, t));
+  const prevComment = new Map(prevRows.map((r) => [r.airbnb_review_id, r.comment as string | null]));
+  prevRows.forEach((r) => prevProp.set(r.airbnb_review_id, (r.property_id as string | null) ?? null));
   const hasCJK = (t: string | null | undefined) => !!t && /[\u4e00-\u9fff]/.test(t);
 
   const unmatched: Record<string, number> = {};
@@ -181,10 +202,17 @@ export async function POST(req: Request) {
     };
   }).filter((r) => r.overall_rating != null);
 
-  // 先查哪些 id 已存在,回報時區分「新增」與「更新」
+  /*
+   * 先查哪些 id 已存在,回報時區分「新增」與「更新」。
+   * 撈不全的話「新增」會虛報 —— 而這個數字現在會被拿去發推播通知
+   * （「爬蟲同步新增 N 則評價」），虛報就等於每天叮一則假的。
+   */
   const ids = records.map((r) => r.airbnb_review_id);
-  const { data: existing } = await supabase.from('reviews').select('airbnb_review_id').in('airbnb_review_id', ids);
-  const existingSet = new Set((existing ?? []).map((e) => e.airbnb_review_id));
+  const { rows: existing } = await fetchIn<{ airbnb_review_id: string }>(
+    ids,
+    (chunk, f, t) => supabase.from('reviews')
+      .select('airbnb_review_id').in('airbnb_review_id', chunk).range(f, t));
+  const existingSet = new Set(existing.map((e) => e.airbnb_review_id));
   const inserted = ids.filter((id) => !existingSet.has(id)).length;
 
   let upserted = 0;

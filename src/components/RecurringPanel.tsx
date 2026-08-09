@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
+import { fetchAll } from '@/lib/fetch-all';
 import { FEE_TYPES } from '@/lib/fee-types';
 import { ymShow } from '@/lib/period';
 
@@ -68,11 +69,16 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
     setEstates((es.data ?? []) as Estate[]);
     setProperties((pr.data ?? []) as Property[]);
     if (list.length) {
-      const { data: od } = await supabase.from('orders')
+      /*
+       * 定期收費產生的訂單**只增不減**,每個月都在長。
+       * 沒有分頁的話總有一天會撞到 Supabase 的 1000 列上限,
+       * 而症狀是「舊的收費紀錄不見了」—— 沒有錯誤訊息,只是列表少一截。
+       */
+      const { rows: od } = await fetchAll<Ord>((f, t) => supabase.from('orders')
         .select('id, order_key, checkin, amount, paid')
-        .eq('imported_via', 'recurring').order('checkin');
+        .eq('imported_via', 'recurring').order('checkin').range(f, t));
       const m: Record<string, Ord[]> = {};
-      for (const o of (od ?? []) as Ord[]) {
+      for (const o of od) {
         const rid = o.order_key.slice(3, 39);   // 'RC_' + uuid(36)
         (m[rid] ??= []).push(o);
       }
