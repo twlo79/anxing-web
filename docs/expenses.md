@@ -82,7 +82,7 @@ insert into public.account_codes (code, name, sort) values
   ('supplies',  '備品消耗品',    30),
   ('utility',   '水電瓦斯',      40),
   ('internet',  '網路第四台',    50),
-  ('rent',      '房租支出',      60),
+  ('rent',      '租金支出',      60),   -- migration_90 由「房租支出」正名
   ('mgmtfee',   '管理費',        70),
   ('insurance', '保險費',        80),
   ('salary',    '薪資勞務',      90),
@@ -93,6 +93,15 @@ insert into public.account_codes (code, name, sort) values
   ('service',   '專業服務費',   140),
   ('other',     '其他',         900)
 on conflict (code) do nothing;
+
+-- migration_90 之後多了 kind 欄（expense / income / both），
+-- 上面 15 個（加上 migration_46 的 travel、entertain、welfare 共 18～20 個）
+-- 全部是 expense。收入方向從 sort 1000 起跳：
+--   ('rent_income', '租金收入', 1000, true, 'income')
+--
+-- both 代表同一個科目兩邊都用（例如清潔費：跟房客收是收入，付清潔公司是支出）。
+-- 支出頁與請款單的下拉會濾掉 kind='income'，資料庫也有觸發器擋
+-- （check_account_kind_expense），因為前端擋不住 API 與匯入。
 
 -- ── 請款單 ──────────────────────────────────────────────────
 create table if not exists public.purchase_requests (

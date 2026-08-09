@@ -450,7 +450,7 @@ export default function HousekeepingPage() {
         // 改一格房源要能立刻看到布巾跟著動,分開兩頁會逼人來回切。
         <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1fr)_560px] gap-4 items-start">
         <div className="rounded-xl border border-mor-line bg-white overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[480px] text-sm">
             <thead>
               <tr className="border-b border-mor-line bg-mor-sand/40 text-left">
                 <th className="px-3 py-2.5 whitespace-nowrap">日期</th>
@@ -612,7 +612,7 @@ export default function HousekeepingPage() {
             return (
               <div key={g} className="rounded-xl border border-mor-line bg-white overflow-x-auto">
                 <div className="px-4 py-2.5 border-b border-mor-line bg-mor-sand/40 font-medium text-sm">{GROUP_LABEL[g]}</div>
-                <table className="w-full text-sm">
+                <table className="w-full min-w-[640px] text-sm">
                   <thead>
                     <tr className="border-b border-mor-line/60 text-left text-xs text-gray-500">
                       <th className="px-3 py-2">房源</th>

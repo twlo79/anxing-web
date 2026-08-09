@@ -283,63 +283,66 @@ export default function AdminPage() {
       {tab === 'people' && (
       <section className="mb-8">
         <div className="bg-white rounded-xl border border-mor-line overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/40">
-                <th className="px-4 py-2.5">姓名</th>
-                <th className="px-4 py-2.5">職位</th>
-                <th className="px-4 py-2.5">權限</th>
-                <th className="px-4 py-2.5">帳號</th>
-                <th className="px-4 py-2.5">狀態</th>
-                <th className="px-4 py-2.5 text-right">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {staff.map((s) => (
-                <tr key={s.id} className={`border-b border-mor-line/60 last:border-0 ${s.active ? '' : 'opacity-50'}`}>
-                  <td className="px-4 py-2 font-medium">
-                    <span className="group inline-flex items-center gap-1.5">
-                      {s.name}{s.aliases?.length ? <span className="text-xs text-gray-400">({s.aliases.join('/')})</span> : null}
-                      <button onClick={() => renameStaff(s)} title="修改姓名"
-                        className="text-xs text-gray-300 hover:text-mor-slate">✎</button>
-                    </span>
-                  </td>
-                  <td className="px-4 py-2">
-                    <select value={s.staff_type} disabled={!s.active} onChange={(e) => changeStaffType(s, e.target.value)}
-                      className="rounded-lg border border-gray-300 px-2 py-1 text-sm disabled:bg-gray-100 disabled:cursor-not-allowed">
-                      {TYPE_OPTS.map((t) => <option key={t} value={t}>{TYPE_LABEL[t]}</option>)}
-                    </select>
-                  </td>
-                  <td className="px-4 py-2">
-                    <span className="text-sm">{ROLE_LABEL[s.role ?? 'housekeeper'] ?? s.role}</span>
-                    <span className="ml-1 text-xs text-gray-400">(依職位)</span>
-                  </td>
-                  <td className="px-4 py-2">
-                    {s.auth_uid ? (
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-gray-500">{s.email}</span>
-                        <button onClick={() => setAcct({ staffId: s.id, name: s.name, mode: 'password', email: s.email ?? '', password: '', role: s.role ?? 'housekeeper' })} className="text-xs text-mor-slate underline hover:text-mor-blue">改密碼</button>
-                        <button onClick={() => deleteAccount(s)} className="text-xs text-red-500 underline hover:text-red-600">刪除帳號</button>
-                      </div>
-                    ) : (
-                      <button onClick={() => setAcct({ staffId: s.id, name: s.name, mode: 'create', email: `u${s.id.slice(0, 8)}@justwork.estia.com.tw`, password: '', role: s.role ?? 'housekeeper' })} className="text-xs text-mor-blue underline">建立登入</button>
-                    )}
-                  </td>
-                  <td className="px-4 py-2">
-                    <span className={`inline-block rounded-full px-2 py-0.5 text-xs ${s.active ? 'bg-mor-greenlight text-mor-green' : 'bg-gray-100 text-gray-400'}`}>
-                      {s.active ? '在職' : '離職'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2 text-right">
-                    <button onClick={() => toggleActive(s)}
-                      className="text-xs text-mor-slate underline hover:text-mor-blue">
-                      {s.active ? '設為離職' : '恢復在職'}
-                    </button>
-                  </td>
+          {/* 手機放不下這幾欄 —— 沒有這層捲軸容器，欄位會被壓到只剩幾個 px 而不是可以滑動 */}
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px] text-sm">
+              <thead>
+                <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/40">
+                  <th className="px-4 py-2.5">姓名</th>
+                  <th className="px-4 py-2.5">職位</th>
+                  <th className="px-4 py-2.5">權限</th>
+                  <th className="px-4 py-2.5">帳號</th>
+                  <th className="px-4 py-2.5">狀態</th>
+                  <th className="px-4 py-2.5 text-right">操作</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {staff.map((s) => (
+                  <tr key={s.id} className={`border-b border-mor-line/60 last:border-0 ${s.active ? '' : 'opacity-50'}`}>
+                    <td className="px-4 py-2 font-medium">
+                      <span className="group inline-flex items-center gap-1.5">
+                        {s.name}{s.aliases?.length ? <span className="text-xs text-gray-400">({s.aliases.join('/')})</span> : null}
+                        <button onClick={() => renameStaff(s)} title="修改姓名"
+                          className="text-xs text-gray-300 hover:text-mor-slate">✎</button>
+                      </span>
+                    </td>
+                    <td className="px-4 py-2">
+                      <select value={s.staff_type} disabled={!s.active} onChange={(e) => changeStaffType(s, e.target.value)}
+                        className="rounded-lg border border-gray-300 px-2 py-1 text-sm disabled:bg-gray-100 disabled:cursor-not-allowed">
+                        {TYPE_OPTS.map((t) => <option key={t} value={t}>{TYPE_LABEL[t]}</option>)}
+                      </select>
+                    </td>
+                    <td className="px-4 py-2">
+                      <span className="text-sm">{ROLE_LABEL[s.role ?? 'housekeeper'] ?? s.role}</span>
+                      <span className="ml-1 text-xs text-gray-400">(依職位)</span>
+                    </td>
+                    <td className="px-4 py-2">
+                      {s.auth_uid ? (
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-gray-500">{s.email}</span>
+                          <button onClick={() => setAcct({ staffId: s.id, name: s.name, mode: 'password', email: s.email ?? '', password: '', role: s.role ?? 'housekeeper' })} className="text-xs text-mor-slate underline hover:text-mor-blue">改密碼</button>
+                          <button onClick={() => deleteAccount(s)} className="text-xs text-red-500 underline hover:text-red-600">刪除帳號</button>
+                        </div>
+                      ) : (
+                        <button onClick={() => setAcct({ staffId: s.id, name: s.name, mode: 'create', email: `u${s.id.slice(0, 8)}@justwork.estia.com.tw`, password: '', role: s.role ?? 'housekeeper' })} className="text-xs text-mor-blue underline">建立登入</button>
+                      )}
+                    </td>
+                    <td className="px-4 py-2">
+                      <span className={`inline-block rounded-full px-2 py-0.5 text-xs ${s.active ? 'bg-mor-greenlight text-mor-green' : 'bg-gray-100 text-gray-400'}`}>
+                        {s.active ? '在職' : '離職'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      <button onClick={() => toggleActive(s)}
+                        className="text-xs text-mor-slate underline hover:text-mor-blue">
+                        {s.active ? '設為離職' : '恢復在職'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           <div className="flex items-center gap-2 px-4 py-3 border-t border-mor-line bg-mor-sand/20 text-sm">
             <input value={newStaffName} onChange={(e) => setNewStaffName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addStaff(); }}
               placeholder="新人員姓名" className="rounded-lg border border-gray-300 px-2 py-1.5 w-40" />
@@ -368,42 +371,45 @@ export default function AdminPage() {
       {tab === 'estates' && (
       <section>
         <div className="bg-white rounded-xl border border-mor-line overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/40">
-                <th className="px-4 py-2.5">物業</th>
-                <th className="px-4 py-2.5">負責管家</th>
-                <th className="px-4 py-2.5 w-20">排序</th>
-                <th className="px-4 py-2.5">狀態</th>
-                <th className="px-4 py-2.5 text-right">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {estates.map((e) => (
-                <tr key={e.id} className={`border-b border-mor-line/60 last:border-0 ${e.active ? '' : 'opacity-50'}`}>
-                  <td className="px-4 py-2 font-medium">{e.name}</td>
-                  <td className="px-4 py-2">
-                    <select value={e.manager ?? ''} disabled={!e.active} onChange={(ev) => updateEstate(e.id, { manager: ev.target.value || null })}
-                      className="rounded-lg border border-gray-300 px-2 py-1 text-sm min-w-24 disabled:bg-gray-100">
-                      <option value="">未指派</option>
-                      {activeHousekeepers.map((h) => <option key={h.id} value={h.name}>{h.name}</option>)}
-                    </select>
-                  </td>
-                  <td className="px-4 py-2">
-                    <input type="number" defaultValue={e.sort} onBlur={(ev) => { const v = parseInt(ev.target.value); if (v !== e.sort) updateEstate(e.id, { sort: v }); }}
-                      className="rounded-lg border border-gray-300 px-2 py-1 w-16 text-sm" />
-                  </td>
-                  <td className="px-4 py-2">
-                    <span className={`inline-block rounded-full px-2 py-0.5 text-xs ${e.active ? 'bg-mor-greenlight text-mor-green' : 'bg-gray-100 text-gray-400'}`}>{e.active ? '啟用' : '停用'}</span>
-                  </td>
-                  <td className="px-4 py-2 text-right space-x-3">
-                    <button onClick={() => updateEstate(e.id, { active: !e.active })} className="text-xs text-mor-slate underline hover:text-mor-blue">{e.active ? '停用' : '啟用'}</button>
-                    <button onClick={() => deleteEstate(e.id, e.name)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
-                  </td>
+          {/* 手機放不下這幾欄 —— 沒有這層捲軸容器，欄位會被壓到只剩幾個 px 而不是可以滑動 */}
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px] text-sm">
+              <thead>
+                <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/40">
+                  <th className="px-4 py-2.5">物業</th>
+                  <th className="px-4 py-2.5">負責管家</th>
+                  <th className="px-4 py-2.5 w-20">排序</th>
+                  <th className="px-4 py-2.5">狀態</th>
+                  <th className="px-4 py-2.5 text-right">操作</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {estates.map((e) => (
+                  <tr key={e.id} className={`border-b border-mor-line/60 last:border-0 ${e.active ? '' : 'opacity-50'}`}>
+                    <td className="px-4 py-2 font-medium">{e.name}</td>
+                    <td className="px-4 py-2">
+                      <select value={e.manager ?? ''} disabled={!e.active} onChange={(ev) => updateEstate(e.id, { manager: ev.target.value || null })}
+                        className="rounded-lg border border-gray-300 px-2 py-1 text-sm min-w-24 disabled:bg-gray-100">
+                        <option value="">未指派</option>
+                        {activeHousekeepers.map((h) => <option key={h.id} value={h.name}>{h.name}</option>)}
+                      </select>
+                    </td>
+                    <td className="px-4 py-2">
+                      <input type="number" defaultValue={e.sort} onBlur={(ev) => { const v = parseInt(ev.target.value); if (v !== e.sort) updateEstate(e.id, { sort: v }); }}
+                        className="rounded-lg border border-gray-300 px-2 py-1 w-16 text-sm" />
+                    </td>
+                    <td className="px-4 py-2">
+                      <span className={`inline-block rounded-full px-2 py-0.5 text-xs ${e.active ? 'bg-mor-greenlight text-mor-green' : 'bg-gray-100 text-gray-400'}`}>{e.active ? '啟用' : '停用'}</span>
+                    </td>
+                    <td className="px-4 py-2 text-right space-x-3">
+                      <button onClick={() => updateEstate(e.id, { active: !e.active })} className="text-xs text-mor-slate underline hover:text-mor-blue">{e.active ? '停用' : '啟用'}</button>
+                      <button onClick={() => deleteEstate(e.id, e.name)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           <div className="flex items-center gap-2 px-4 py-3 border-t border-mor-line bg-mor-sand/20 text-sm">
             <input value={newEstateName} onChange={(e) => setNewEstateName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addEstate(); }}
               placeholder="新物業名稱" className="rounded-lg border border-gray-300 px-2 py-1.5 w-40" />
@@ -419,52 +425,55 @@ export default function AdminPage() {
       <section className="mt-8">
         <h2 className="text-sm font-semibold text-gray-700 mb-2">收付款帳號</h2>
         <div className="bg-white rounded-xl border border-mor-line overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/40">
-                <th className="px-4 py-2.5">方式</th>
-                <th className="px-4 py-2.5">代號</th>
-                <th className="px-4 py-2.5">顯示名稱</th>
-                <th className="px-4 py-2.5 text-center">可收款</th>
-                <th className="px-4 py-2.5 text-center">可付款</th>
-                <th className="px-4 py-2.5 w-20">排序</th>
-                <th className="px-4 py-2.5 text-right">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {payAccounts.map((a) => (
-                <tr key={a.id} className={`border-b border-mor-line/60 last:border-0 ${a.active ? '' : 'opacity-50'}`}>
-                  <td className="px-4 py-2">{METHOD_LABEL[a.method] ?? a.method}</td>
-                  <td className="px-4 py-2 font-medium">{a.code}</td>
-                  <td className="px-4 py-2">
-                    <input defaultValue={a.name}
-                      onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== a.name) updatePayAccount(a.id, { name: v }); }}
-                      className="rounded-lg border border-gray-300 px-2 py-1 w-44" />
-                  </td>
-                  <td className="px-4 py-2 text-center">
-                    <input type="checkbox" checked={a.for_income} className="w-4 h-4"
-                      onChange={(e) => updatePayAccount(a.id, { for_income: e.target.checked })} />
-                  </td>
-                  <td className="px-4 py-2 text-center">
-                    <input type="checkbox" checked={a.for_payment} className="w-4 h-4"
-                      onChange={(e) => updatePayAccount(a.id, { for_payment: e.target.checked })} />
-                  </td>
-                  <td className="px-4 py-2">
-                    <input type="number" defaultValue={a.sort}
-                      onBlur={(e) => { const v = parseInt(e.target.value); if (v !== a.sort) updatePayAccount(a.id, { sort: v }); }}
-                      className="rounded-lg border border-gray-300 px-2 py-1 w-16 text-sm" />
-                  </td>
-                  <td className="px-4 py-2 text-right space-x-3">
-                    <button onClick={() => updatePayAccount(a.id, { active: !a.active })} className="text-xs text-mor-slate underline hover:text-mor-blue">{a.active ? '停用' : '啟用'}</button>
-                    <button onClick={() => deletePayAccount(a)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
-                  </td>
+          {/* 手機放不下這幾欄 —— 沒有這層捲軸容器，欄位會被壓到只剩幾個 px 而不是可以滑動 */}
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px] text-sm">
+              <thead>
+                <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/40">
+                  <th className="px-4 py-2.5">方式</th>
+                  <th className="px-4 py-2.5">代號</th>
+                  <th className="px-4 py-2.5">顯示名稱</th>
+                  <th className="px-4 py-2.5 text-center">可收款</th>
+                  <th className="px-4 py-2.5 text-center">可付款</th>
+                  <th className="px-4 py-2.5 w-20">排序</th>
+                  <th className="px-4 py-2.5 text-right">操作</th>
                 </tr>
-              ))}
-              {payAccounts.length === 0 && (
-                <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-400">尚無帳號</td></tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {payAccounts.map((a) => (
+                  <tr key={a.id} className={`border-b border-mor-line/60 last:border-0 ${a.active ? '' : 'opacity-50'}`}>
+                    <td className="px-4 py-2">{METHOD_LABEL[a.method] ?? a.method}</td>
+                    <td className="px-4 py-2 font-medium">{a.code}</td>
+                    <td className="px-4 py-2">
+                      <input defaultValue={a.name}
+                        onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== a.name) updatePayAccount(a.id, { name: v }); }}
+                        className="rounded-lg border border-gray-300 px-2 py-1 w-44" />
+                    </td>
+                    <td className="px-4 py-2 text-center">
+                      <input type="checkbox" checked={a.for_income} className="w-4 h-4"
+                        onChange={(e) => updatePayAccount(a.id, { for_income: e.target.checked })} />
+                    </td>
+                    <td className="px-4 py-2 text-center">
+                      <input type="checkbox" checked={a.for_payment} className="w-4 h-4"
+                        onChange={(e) => updatePayAccount(a.id, { for_payment: e.target.checked })} />
+                    </td>
+                    <td className="px-4 py-2">
+                      <input type="number" defaultValue={a.sort}
+                        onBlur={(e) => { const v = parseInt(e.target.value); if (v !== a.sort) updatePayAccount(a.id, { sort: v }); }}
+                        className="rounded-lg border border-gray-300 px-2 py-1 w-16 text-sm" />
+                    </td>
+                    <td className="px-4 py-2 text-right space-x-3">
+                      <button onClick={() => updatePayAccount(a.id, { active: !a.active })} className="text-xs text-mor-slate underline hover:text-mor-blue">{a.active ? '停用' : '啟用'}</button>
+                      <button onClick={() => deletePayAccount(a)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
+                    </td>
+                  </tr>
+                ))}
+                {payAccounts.length === 0 && (
+                  <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-400">尚無帳號</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
           <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-t border-mor-line bg-mor-sand/20 text-sm">
             <select value={newAcctMethod} onChange={(e) => setNewAcctMethod(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
               <option value="transfer">匯款</option>
@@ -497,30 +506,33 @@ export default function AdminPage() {
           <span className="text-xs text-gray-400">共 {properties.filter((p) => p.estate_id === selEstate).length} 間</span>
         </div>
         <div className="bg-white rounded-xl border border-mor-line overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/40">
-                <th className="px-4 py-2.5">房源名稱(點擊可改名)</th>
-                <th className="px-4 py-2.5 text-right">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {properties.filter((p) => p.estate_id === selEstate).map((p) => (
-                <tr key={p.id} className="border-b border-mor-line/60 last:border-0">
-                  <td className="px-4 py-2">
-                    <input defaultValue={p.name} onBlur={(ev) => { const v = ev.target.value.trim(); if (v && v !== p.name) updateProperty(p.id, { name: v }); }}
-                      className="rounded-lg border border-gray-300 px-2 py-1 w-64" />
-                  </td>
-                  <td className="px-4 py-2 text-right">
-                    <button onClick={() => deleteProperty(p.id, p.name)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
-                  </td>
+          {/* 手機放不下這幾欄 —— 沒有這層捲軸容器，欄位會被壓到只剩幾個 px 而不是可以滑動 */}
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[520px] text-sm">
+              <thead>
+                <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/40">
+                  <th className="px-4 py-2.5">房源名稱(點擊可改名)</th>
+                  <th className="px-4 py-2.5 text-right">操作</th>
                 </tr>
-              ))}
-              {properties.filter((p) => p.estate_id === selEstate).length === 0 && (
-                <tr><td colSpan={2} className="px-4 py-6 text-center text-gray-400">此物業尚無房源</td></tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {properties.filter((p) => p.estate_id === selEstate).map((p) => (
+                  <tr key={p.id} className="border-b border-mor-line/60 last:border-0">
+                    <td className="px-4 py-2">
+                      <input defaultValue={p.name} onBlur={(ev) => { const v = ev.target.value.trim(); if (v && v !== p.name) updateProperty(p.id, { name: v }); }}
+                        className="rounded-lg border border-gray-300 px-2 py-1 w-64" />
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      <button onClick={() => deleteProperty(p.id, p.name)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
+                    </td>
+                  </tr>
+                ))}
+                {properties.filter((p) => p.estate_id === selEstate).length === 0 && (
+                  <tr><td colSpan={2} className="px-4 py-6 text-center text-gray-400">此物業尚無房源</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
           <div className="flex items-center gap-2 px-4 py-3 border-t border-mor-line bg-mor-sand/20 text-sm">
             <input value={newPropName} onChange={(e) => setNewPropName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addProperty(); }}
               placeholder="新房源名稱" className="rounded-lg border border-gray-300 px-2 py-1.5 w-40" />
@@ -550,58 +562,62 @@ export default function AdminPage() {
               目前沒有紀錄。這張表從 migration_72 之後才開始累積,在那之前的改動查不到。
             </div>
           ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/40">
-                  <th className="px-4 py-2.5 whitespace-nowrap">時間</th>
-                  <th className="px-4 py-2.5">操作人</th>
-                  <th className="px-4 py-2.5">資料</th>
-                  <th className="px-4 py-2.5">對象</th>
-                  <th className="px-4 py-2.5">動作</th>
-                  <th className="px-4 py-2.5">改了什麼</th>
-                </tr>
-              </thead>
-              <tbody>
-                {audits.map((a) => (
-                  <tr key={a.id} className="border-b border-mor-line/50 last:border-0 align-top">
-                    <td className="px-4 py-2 whitespace-nowrap text-xs text-gray-500">
-                      {a.at?.slice(0, 16).replace('T', ' ')}
-                    </td>
-                    <td className="px-4 py-2 whitespace-nowrap">
-                      {a.user_id
-                        ? (nameOfUser[a.user_id] ?? <span className="text-xs text-gray-400">已刪除的帳號</span>)
-                        : <span className="text-xs text-gray-400">系統／排程</span>}
-                    </td>
-                    <td className="px-4 py-2 text-xs text-gray-500 whitespace-nowrap">
-                      {AUDIT_TABLE[a.table_name] ?? a.table_name}
-                    </td>
-                    <td className="px-4 py-2 font-medium">{a.label ?? '—'}</td>
-                    <td className="px-4 py-2">
-                      <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] whitespace-nowrap ${
-                        a.action === 'delete' ? 'bg-red-50 text-red-600'
-                        : a.action === 'insert' ? 'bg-mor-greenlight text-mor-green'
-                        : 'bg-mor-bluelight text-mor-slate'}`}>
-                        {AUDIT_ACTION[a.action] ?? a.action}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2 text-xs">
-                      {a.action === 'update' && a.changes
-                        ? Object.entries(a.changes as Record<string, any>)
-                            .filter(([k]) => !AUDIT_SKIP.has(k))
-                            .map(([k, v]) => (
-                              <div key={k} className="whitespace-nowrap">
-                                <span className="text-gray-400">{k}</span>{' '}
-                                <span className="text-gray-500">{JSON.stringify(Array.isArray(v) ? v[0] : null)}</span>
-                                {' → '}
-                                <span className="font-medium">{JSON.stringify(Array.isArray(v) ? v[1] : v)}</span>
-                              </div>
-                            ))
-                        : <span className="text-gray-400">整筆{AUDIT_ACTION[a.action] ?? a.action}</span>}
-                    </td>
+            /* 外層那個 div 已經有 overflow-x-auto。min-w 是關鍵 ——
+               沒有它，w-full 的表格會乖乖縮到 100%，欄位被壓到剩幾個 px 而永遠不觸發捲軸 */
+            <div>
+              <table className="w-full min-w-[760px] text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/40">
+                    <th className="px-4 py-2.5 whitespace-nowrap">時間</th>
+                    <th className="px-4 py-2.5">操作人</th>
+                    <th className="px-4 py-2.5">資料</th>
+                    <th className="px-4 py-2.5">對象</th>
+                    <th className="px-4 py-2.5">動作</th>
+                    <th className="px-4 py-2.5">改了什麼</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {audits.map((a) => (
+                    <tr key={a.id} className="border-b border-mor-line/50 last:border-0 align-top">
+                      <td className="px-4 py-2 whitespace-nowrap text-xs text-gray-500">
+                        {a.at?.slice(0, 16).replace('T', ' ')}
+                      </td>
+                      <td className="px-4 py-2 whitespace-nowrap">
+                        {a.user_id
+                          ? (nameOfUser[a.user_id] ?? <span className="text-xs text-gray-400">已刪除的帳號</span>)
+                          : <span className="text-xs text-gray-400">系統／排程</span>}
+                      </td>
+                      <td className="px-4 py-2 text-xs text-gray-500 whitespace-nowrap">
+                        {AUDIT_TABLE[a.table_name] ?? a.table_name}
+                      </td>
+                      <td className="px-4 py-2 font-medium">{a.label ?? '—'}</td>
+                      <td className="px-4 py-2">
+                        <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] whitespace-nowrap ${
+                          a.action === 'delete' ? 'bg-red-50 text-red-600'
+                          : a.action === 'insert' ? 'bg-mor-greenlight text-mor-green'
+                          : 'bg-mor-bluelight text-mor-slate'}`}>
+                          {AUDIT_ACTION[a.action] ?? a.action}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 text-xs">
+                        {a.action === 'update' && a.changes
+                          ? Object.entries(a.changes as Record<string, any>)
+                              .filter(([k]) => !AUDIT_SKIP.has(k))
+                              .map(([k, v]) => (
+                                <div key={k} className="whitespace-nowrap">
+                                  <span className="text-gray-400">{k}</span>{' '}
+                                  <span className="text-gray-500">{JSON.stringify(Array.isArray(v) ? v[0] : null)}</span>
+                                  {' → '}
+                                  <span className="font-medium">{JSON.stringify(Array.isArray(v) ? v[1] : v)}</span>
+                                </div>
+                              ))
+                          : <span className="text-gray-400">整筆{AUDIT_ACTION[a.action] ?? a.action}</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
         <p className="text-xs text-gray-400 mt-2">

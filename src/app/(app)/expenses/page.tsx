@@ -26,7 +26,8 @@ type Expense = {
   /** 關注支出。遞延母子單會一起連動（migration_89 的觸發器）。 */
   starred?: boolean;
 };
-type AccountCode = { code: string; name: string; sort: number; active: boolean };
+/** kind：expense=只用於支出 / income=只用於收入 / both=兩邊都用（migration_90） */
+type AccountCode = { code: string; name: string; sort: number; active: boolean; kind?: string };
 type Estate = { id: string; name: string; sort: number; active: boolean };
 type PayAccount = { code: string; name: string; method: string };
 type Property = { id: string; name: string; estate_id: string | null };
@@ -74,7 +75,7 @@ export default function ExpensesPage() {
       const { data } = await supabase.from('profiles').select('role').eq('id', user.id).single();
       setRole(data?.role ?? '');
     })();
-    supabase.from('account_codes').select('code, name, sort, active').order('sort').then(({ data }) => setCodes(data ?? []));
+    supabase.from('account_codes').select('code, name, sort, active, kind').order('sort').then(({ data }) => setCodes(data ?? []));
     supabase.from('estates').select('id, name, sort, active').order('sort').then(({ data }) => setEstates(data ?? []));
     supabase.from('payment_accounts').select('code, name, method')
       .eq('for_payment', true).eq('active', true).order('sort')
@@ -84,6 +85,17 @@ export default function ExpensesPage() {
   }, [supabase]);
 
   const codeName = useMemo(() => Object.fromEntries(codes.map((c) => [c.code, c.name])), [codes]);
+  /*
+   * 下拉只給支出方向的科目。
+   *
+   * codeName 那份刻意保留全部 —— 名稱查表要撈得到每一個 code，
+   * 只留支出的話，萬一有一列掛著別的科目，畫面會顯示原始代碼而不是名稱。
+   * 過濾只發生在「可以選什麼」，不發生在「怎麼顯示」。
+   */
+  const expenseCodes = useMemo(
+    // active=false 的科目也要濾掉 —— migration_91 把「水電瓦斯」停用改成水費/電費/瓦斯費，
+    // 不濾的話停用的科目會繼續出現在選單裡，等於沒停用。
+    () => codes.filter((c) => c.kind !== 'income' && c.active !== false), [codes]);
   /** id → 支出。子單要靠它找到母單（顯示母單日期、點了跳過去）。 */
   const byId = useMemo(() => Object.fromEntries(rows.map((r) => [r.id, r])), [rows]);
   const estateName = useMemo(() => Object.fromEntries(estates.map((e) => [e.id, e.name])), [estates]);
@@ -406,7 +418,7 @@ export default function ExpensesPage() {
         <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">會計科目</span>
           <select value={codeF} onChange={(e) => setCodeF(e.target.value)} className="rounded-lg border border-mor-line px-2 py-1.5">
             <option value="">全部科目</option>
-            {codes.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
+            {expenseCodes.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
           </select></label>
         <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">用途</span>
           <select value={purposeF} onChange={(e) => setPurposeF(e.target.value)} className="rounded-lg border border-mor-line px-2 py-1.5 max-w-44">
@@ -451,7 +463,7 @@ export default function ExpensesPage() {
 
       {/* 列表 */}
       <div className="rounded-xl border border-mor-line bg-white overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full min-w-[900px] text-sm">
           <thead>
             <tr className="border-b border-mor-line bg-mor-sand/40 text-left">
               <SortTh label="支出日" sortKey="spent_on" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="whitespace-nowrap" />
@@ -615,7 +627,7 @@ export default function ExpensesPage() {
                   <select value={edit.account_code ?? ''} onChange={(e) => setEdit({ ...edit, account_code: e.target.value || null })}
                     className="rounded-lg border border-mor-line px-2 py-1.5">
                     <option value="">未分類</option>
-                    {codes.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
+                    {expenseCodes.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
                   </select></label>
                 {/* 憑證號碼與「無憑證」互斥 —— 分開才知道空白是漏填還是本來就沒有 */}
                 <div className="flex flex-col gap-1">

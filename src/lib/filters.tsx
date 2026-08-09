@@ -78,7 +78,8 @@ export function FilterDateRange({ label, from, to, onFrom, onTo, quick }: {
 }) {
   return (
     <Field label={label}>
-      <div className="flex items-center gap-1">
+      {/* 起訖兩個日期框加上快捷鈕，手機一行放不下 —— flex-wrap 讓它自然折行而不是溢出 */}
+      <div className="flex flex-wrap items-center gap-1">
         <input type="date" value={from} onChange={(e) => onFrom(e.target.value)} className={CTRL} />
         <span className="text-gray-400">~</span>
         <input type="date" value={to} onChange={(e) => onTo(e.target.value)} className={CTRL} />

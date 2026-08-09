@@ -59,7 +59,8 @@ type Dep = {
   refund_requested_by: string | null;
   reject_reason: string | null; note: string | null; created_at: string;
 };
-type AccountCode = { code: string; name: string };
+/** kind：expense=只用於支出 / income=只用於收入 / both=兩邊都用（migration_90） */
+type AccountCode = { code: string; name: string; kind?: string; active?: boolean };
 type Estate = { id: string; name: string };
 type PayAccount = { code: string; name: string; method: string };
 type Profile = { id: string; name: string; role: string };
@@ -151,7 +152,7 @@ export default function PurchasesPage() {
       const { data } = await supabase.from('profiles').select('role').eq('id', user.id).single();
       setMe({ id: user.id, role: data?.role ?? 'housekeeper' });
     })();
-    supabase.from('account_codes').select('code, name').order('sort').then(({ data }) => setCodes(data ?? []));
+    supabase.from('account_codes').select('code, name, kind, active').order('sort').then(({ data }) => setCodes(data ?? []));
     supabase.from('estates').select('id, name').eq('active', true).order('sort').order('name').then(({ data }) => setEstates(data ?? []));
     // 停用的房源不出現在下拉,但既有項目仍要顯示得出名字,所以不篩 active
     supabase.from('properties').select('id, name, estate_id').order('name').then(({ data }) => setProperties(data ?? []));
@@ -162,6 +163,13 @@ export default function PurchasesPage() {
   }, [supabase]);
 
   const codeName = useMemo(() => Object.fromEntries(codes.map((c) => [c.code, c.name])), [codes]);
+  /*
+   * 請款是花錢，下拉不該出現收入科目。
+   * codeName 保留全部 —— 過濾只影響「可以選什麼」，不影響「怎麼顯示」。
+   */
+  const expenseCodes = useMemo(
+    // 停用的科目也濾掉（migration_91 停用了「水電瓦斯」）
+    () => codes.filter((c) => c.kind !== 'income' && c.active !== false), [codes]);
   const estateName = useMemo(() => Object.fromEntries(estates.map((e) => [e.id, e.name])), [estates]);
   const personName = useMemo(() => Object.fromEntries(people.map((p) => [p.id, p.name])), [people]);
   // 資料庫存的是 code（如 8088），畫面上要顯示可讀的名稱（如 元大 8088）
@@ -1229,26 +1237,29 @@ export default function PurchasesPage() {
                   依預定付款日・尚未支付・共 NT$ {fmt(scheduleRows.reduce((a, s) => a + s.amt, 0))}
                 </span>
               </div>
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-xs text-gray-500 border-b border-mor-line/60">
-                    <th className="px-4 py-2">預定付款日</th>
-                    <th className="px-4 py-2">帳號 / 卡別</th>
-                    <th className="px-4 py-2 text-right">筆數</th>
-                    <th className="px-4 py-2 text-right">金額</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {scheduleRows.map((s) => (
-                    <tr key={s.date + s.acct} className="border-b border-mor-line/40 last:border-0">
-                      <td className="px-4 py-2 whitespace-nowrap">{s.date}</td>
-                      <td className="px-4 py-2">{s.acct}</td>
-                      <td className="px-4 py-2 text-right text-gray-500">{s.n}</td>
-                      <td className="px-4 py-2 text-right font-medium">NT$ {fmt(s.amt)}</td>
+              {/* 手機放不下這幾欄 —— 沒有這層捲軸容器，欄位會被壓到只剩幾個 px 而不是可以滑動 */}
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[640px] text-sm">
+                  <thead>
+                    <tr className="text-left text-xs text-gray-500 border-b border-mor-line/60">
+                      <th className="px-4 py-2">預定付款日</th>
+                      <th className="px-4 py-2">帳號 / 卡別</th>
+                      <th className="px-4 py-2 text-right">筆數</th>
+                      <th className="px-4 py-2 text-right">金額</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {scheduleRows.map((s) => (
+                      <tr key={s.date + s.acct} className="border-b border-mor-line/40 last:border-0">
+                        <td className="px-4 py-2 whitespace-nowrap">{s.date}</td>
+                        <td className="px-4 py-2">{s.acct}</td>
+                        <td className="px-4 py-2 text-right text-gray-500">{s.n}</td>
+                        <td className="px-4 py-2 text-right font-medium">NT$ {fmt(s.amt)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </>
@@ -1823,7 +1834,7 @@ export default function PurchasesPage() {
                             onChange={(e) => setItems(items.map((x, i) => i === idx ? { ...x, account_code: e.target.value || null } : x))}
                             className="w-full md:w-36 h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50">
                             <option value="">會計科目</option>
-                            {codes.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
+                            {expenseCodes.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
                           </select>
                           <select disabled={readOnly}
                             value={it.purpose_type === 'office' ? 'office' : (it.estate_id ?? '')}

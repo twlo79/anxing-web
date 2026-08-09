@@ -160,61 +160,64 @@ export default function HkSettingsPage() {
             <b>不統計</b> = 事件不匯入（入住準備組）。
             「計打掃次數」獨立於上面三者 —— 劉姐不算間數,但她掃的房間床單確實被換掉了,不算會少領。
           </div>
-          <table className="w-full text-sm">
-            <thead><tr className="border-b border-mor-line/60">
-              <th className={th}>顯示名</th><th className={th}>代號</th>
-              <th className={th}>排班表上的名稱</th><th className={th}>計法</th>
-              <th className={th}>計打掃次數</th><th className={th}>休假前綴</th>
-              <th className={th}>顏色</th><th className={th}>啟用</th>
-            </tr></thead>
-            <tbody>
-              {staff.map((s) => {
-                const bg = `#${s.color ?? 'EEEEEE'}`, fg = `#${s.color_text ?? '333333'}`;
-                const ratio = contrast(bg, fg);
-                return (
-                  <tr key={s.id} className={`border-b border-mor-line/40 last:border-0 ${s.active ? '' : 'opacity-40'}`}>
-                    <td className={td}><input value={s.name} onChange={(e) => patch('hk_staff', 'id', s.id, { name: e.target.value }, setStaff)} className={`${inp} w-24`} /></td>
-                    <td className={td}><input value={s.code} onChange={(e) => patch('hk_staff', 'id', s.id, { code: e.target.value }, setStaff)} className={`${inp} w-20`} /></td>
-                    <td className={td}>
-                      {/* 陣列:排班系統上的顯示名會改,舊事件裡兩種寫法會並存 */}
-                      <input value={(s.source_names ?? []).join(', ')}
-                        onChange={(e) => patch('hk_staff', 'id', s.id, {
-                          source_names: e.target.value.split(',').map((x) => x.trim()).filter(Boolean),
-                        }, setStaff)}
-                        placeholder="多個用逗號分隔" className={`${inp} w-52`} />
-                    </td>
-                    <td className={td}>
-                      <select value={s.count_mode} onChange={(e) => patch('hk_staff', 'id', s.id, { count_mode: e.target.value as any }, setStaff)} className={inp}>
-                        {Object.entries(MODE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                      </select>
-                    </td>
-                    <td className={td}>
-                      <input type="checkbox" checked={s.count_cleans} onChange={(e) => patch('hk_staff', 'id', s.id, { count_cleans: e.target.checked }, setStaff)} />
-                    </td>
-                    <td className={td}><input value={s.leave_prefix ?? ''} onChange={(e) => patch('hk_staff', 'id', s.id, { leave_prefix: e.target.value || null }, setStaff)} placeholder="U休" className={`${inp} w-16`} /></td>
-                    <td className={td}>
-                      <div className="flex items-center gap-1">
-                        <span className="inline-block rounded px-2 py-0.5 text-xs border-l-4"
-                          style={{ backgroundColor: bg, color: fg, borderLeftColor: `#${s.color_bar ?? '999999'}` }}>範例</span>
-                        {(['color', 'color_text', 'color_bar'] as const).map((f) => (
-                          <input key={f} type="color" value={`#${(s[f] as string) ?? '000000'}`}
-                            onChange={(e) => patch('hk_staff', 'id', s.id, { [f]: e.target.value.slice(1).toUpperCase() } as any, setStaff)}
-                            title={f === 'color' ? '底色' : f === 'color_text' ? '文字' : '左側色條'}
-                            className="w-6 h-6 rounded border border-gray-300 p-0" />
-                        ))}
-                        {/* WCAG AA 要求 4.5:1。色盲使用者靠左側色條分辨,對比不足只是難讀不是不能用 */}
-                        {ratio < 4.5 && <span className="text-[10px] text-amber-600" title={`對比 ${ratio.toFixed(1)}:1，建議 ≥ 4.5`}>對比不足</span>}
-                      </div>
-                    </td>
-                    <td className={td}>
-                      {/* 停用而非刪除:歷史報表要保留這個人的資料 */}
-                      <input type="checkbox" checked={s.active} onChange={(e) => patch('hk_staff', 'id', s.id, { active: e.target.checked }, setStaff)} />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          {/* 手機放不下這幾欄 —— 沒有這層捲軸容器，欄位會被壓到只剩幾個 px 而不是可以滑動 */}
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px] text-sm">
+              <thead><tr className="border-b border-mor-line/60">
+                <th className={th}>顯示名</th><th className={th}>代號</th>
+                <th className={th}>排班表上的名稱</th><th className={th}>計法</th>
+                <th className={th}>計打掃次數</th><th className={th}>休假前綴</th>
+                <th className={th}>顏色</th><th className={th}>啟用</th>
+              </tr></thead>
+              <tbody>
+                {staff.map((s) => {
+                  const bg = `#${s.color ?? 'EEEEEE'}`, fg = `#${s.color_text ?? '333333'}`;
+                  const ratio = contrast(bg, fg);
+                  return (
+                    <tr key={s.id} className={`border-b border-mor-line/40 last:border-0 ${s.active ? '' : 'opacity-40'}`}>
+                      <td className={td}><input value={s.name} onChange={(e) => patch('hk_staff', 'id', s.id, { name: e.target.value }, setStaff)} className={`${inp} w-24`} /></td>
+                      <td className={td}><input value={s.code} onChange={(e) => patch('hk_staff', 'id', s.id, { code: e.target.value }, setStaff)} className={`${inp} w-20`} /></td>
+                      <td className={td}>
+                        {/* 陣列:排班系統上的顯示名會改,舊事件裡兩種寫法會並存 */}
+                        <input value={(s.source_names ?? []).join(', ')}
+                          onChange={(e) => patch('hk_staff', 'id', s.id, {
+                            source_names: e.target.value.split(',').map((x) => x.trim()).filter(Boolean),
+                          }, setStaff)}
+                          placeholder="多個用逗號分隔" className={`${inp} w-52`} />
+                      </td>
+                      <td className={td}>
+                        <select value={s.count_mode} onChange={(e) => patch('hk_staff', 'id', s.id, { count_mode: e.target.value as any }, setStaff)} className={inp}>
+                          {Object.entries(MODE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                        </select>
+                      </td>
+                      <td className={td}>
+                        <input type="checkbox" checked={s.count_cleans} onChange={(e) => patch('hk_staff', 'id', s.id, { count_cleans: e.target.checked }, setStaff)} />
+                      </td>
+                      <td className={td}><input value={s.leave_prefix ?? ''} onChange={(e) => patch('hk_staff', 'id', s.id, { leave_prefix: e.target.value || null }, setStaff)} placeholder="U休" className={`${inp} w-16`} /></td>
+                      <td className={td}>
+                        <div className="flex items-center gap-1">
+                          <span className="inline-block rounded px-2 py-0.5 text-xs border-l-4"
+                            style={{ backgroundColor: bg, color: fg, borderLeftColor: `#${s.color_bar ?? '999999'}` }}>範例</span>
+                          {(['color', 'color_text', 'color_bar'] as const).map((f) => (
+                            <input key={f} type="color" value={`#${(s[f] as string) ?? '000000'}`}
+                              onChange={(e) => patch('hk_staff', 'id', s.id, { [f]: e.target.value.slice(1).toUpperCase() } as any, setStaff)}
+                              title={f === 'color' ? '底色' : f === 'color_text' ? '文字' : '左側色條'}
+                              className="w-6 h-6 rounded border border-gray-300 p-0" />
+                          ))}
+                          {/* WCAG AA 要求 4.5:1。色盲使用者靠左側色條分辨,對比不足只是難讀不是不能用 */}
+                          {ratio < 4.5 && <span className="text-[10px] text-amber-600" title={`對比 ${ratio.toFixed(1)}:1，建議 ≥ 4.5`}>對比不足</span>}
+                        </div>
+                      </td>
+                      <td className={td}>
+                        {/* 停用而非刪除:歷史報表要保留這個人的資料 */}
+                        <input type="checkbox" checked={s.active} onChange={(e) => patch('hk_staff', 'id', s.id, { active: e.target.checked }, setStaff)} />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -234,42 +237,45 @@ export default function HkSettingsPage() {
             <b>幾床</b>留白代表尚未建檔,會在例外清單提醒;填 0 代表確定不算床（公區）。
             改幾床只影響之後的重算,已下載的報表不會變動。
           </div>
-          <table className="w-full text-sm">
-            <thead><tr className="border-b border-mor-line/60">
-              <th className={th}>代碼</th><th className={th}>別名</th>
-              <th className={th}>幾床</th><th className={th}>布巾表</th>
-              <th className={th}>類型</th><th className={th}>計布巾</th><th className={th}>啟用</th>
-            </tr></thead>
-            <tbody>
-              {filteredProps.map((p) => (
-                <tr key={p.id} className={`border-b border-mor-line/40 last:border-0 ${p.active ? '' : 'opacity-40'}`}>
-                  <td className={td}><input value={p.code} onChange={(e) => patch('hk_property', 'id', p.id, { code: e.target.value }, setProps)} className={`${inp} w-24`} /></td>
-                  <td className={td}>
-                    <input value={(p.aliases ?? []).join(', ')}
-                      onChange={(e) => patch('hk_property', 'id', p.id, { aliases: e.target.value.split(',').map((x) => x.trim()).filter(Boolean) }, setProps)}
-                      placeholder="多個用逗號分隔" className={`${inp} w-56`} />
-                  </td>
-                  <td className={td}>
-                    <input type="number" min="0" value={p.beds ?? ''}
-                      onChange={(e) => patch('hk_property', 'id', p.id, { beds: e.target.value === '' ? null : Number(e.target.value) }, setProps)}
-                      className={`${inp} w-16 text-right ${p.beds == null ? 'bg-amber-50' : ''}`} />
-                  </td>
-                  <td className={td}>
-                    <select value={p.linen_group} onChange={(e) => patch('hk_property', 'id', p.id, { linen_group: e.target.value }, setProps)} className={inp}>
-                      {Object.entries(GROUP_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                    </select>
-                  </td>
-                  <td className={td}>
-                    <select value={p.ptype ?? 'room'} onChange={(e) => patch('hk_property', 'id', p.id, { ptype: e.target.value }, setProps)} className={inp}>
-                      {Object.entries(PTYPE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                    </select>
-                  </td>
-                  <td className={td}><input type="checkbox" checked={p.count_linen !== false} onChange={(e) => patch('hk_property', 'id', p.id, { count_linen: e.target.checked }, setProps)} /></td>
-                  <td className={td}><input type="checkbox" checked={p.active} onChange={(e) => patch('hk_property', 'id', p.id, { active: e.target.checked }, setProps)} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {/* 手機放不下這幾欄 —— 沒有這層捲軸容器，欄位會被壓到只剩幾個 px 而不是可以滑動 */}
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px] text-sm">
+              <thead><tr className="border-b border-mor-line/60">
+                <th className={th}>代碼</th><th className={th}>別名</th>
+                <th className={th}>幾床</th><th className={th}>布巾表</th>
+                <th className={th}>類型</th><th className={th}>計布巾</th><th className={th}>啟用</th>
+              </tr></thead>
+              <tbody>
+                {filteredProps.map((p) => (
+                  <tr key={p.id} className={`border-b border-mor-line/40 last:border-0 ${p.active ? '' : 'opacity-40'}`}>
+                    <td className={td}><input value={p.code} onChange={(e) => patch('hk_property', 'id', p.id, { code: e.target.value }, setProps)} className={`${inp} w-24`} /></td>
+                    <td className={td}>
+                      <input value={(p.aliases ?? []).join(', ')}
+                        onChange={(e) => patch('hk_property', 'id', p.id, { aliases: e.target.value.split(',').map((x) => x.trim()).filter(Boolean) }, setProps)}
+                        placeholder="多個用逗號分隔" className={`${inp} w-56`} />
+                    </td>
+                    <td className={td}>
+                      <input type="number" min="0" value={p.beds ?? ''}
+                        onChange={(e) => patch('hk_property', 'id', p.id, { beds: e.target.value === '' ? null : Number(e.target.value) }, setProps)}
+                        className={`${inp} w-16 text-right ${p.beds == null ? 'bg-amber-50' : ''}`} />
+                    </td>
+                    <td className={td}>
+                      <select value={p.linen_group} onChange={(e) => patch('hk_property', 'id', p.id, { linen_group: e.target.value }, setProps)} className={inp}>
+                        {Object.entries(GROUP_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                      </select>
+                    </td>
+                    <td className={td}>
+                      <select value={p.ptype ?? 'room'} onChange={(e) => patch('hk_property', 'id', p.id, { ptype: e.target.value }, setProps)} className={inp}>
+                        {Object.entries(PTYPE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                      </select>
+                    </td>
+                    <td className={td}><input type="checkbox" checked={p.count_linen !== false} onChange={(e) => patch('hk_property', 'id', p.id, { count_linen: e.target.checked }, setProps)} /></td>
+                    <td className={td}><input type="checkbox" checked={p.active} onChange={(e) => patch('hk_property', 'id', p.id, { active: e.target.checked }, setProps)} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -285,21 +291,24 @@ export default function HkSettingsPage() {
               計布巾還要看該房源自己的「計布巾」開關 —— 兩個都開才會進床單。
             </div>
           </div>
-          <table className="w-full text-sm">
-            <thead><tr className="border-b border-mor-line/60">
-              <th className={th}>類型</th><th className={th}>計間數</th><th className={th}>計布巾</th><th className={th}>啟用</th>
-            </tr></thead>
-            <tbody>
-              {wtypes.map((w) => (
-                <tr key={w.code} className={`border-b border-mor-line/40 last:border-0 ${w.active ? '' : 'opacity-40'}`}>
-                  <td className={td}>{w.name}</td>
-                  <td className={td}><input type="checkbox" checked={w.count_workload} onChange={(e) => patch('hk_work_type', 'code', w.code, { count_workload: e.target.checked }, setWtypes)} /></td>
-                  <td className={td}><input type="checkbox" checked={w.count_linen} onChange={(e) => patch('hk_work_type', 'code', w.code, { count_linen: e.target.checked }, setWtypes)} /></td>
-                  <td className={td}><input type="checkbox" checked={w.active} onChange={(e) => patch('hk_work_type', 'code', w.code, { active: e.target.checked }, setWtypes)} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {/* 手機放不下這幾欄 —— 沒有這層捲軸容器，欄位會被壓到只剩幾個 px 而不是可以滑動 */}
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] text-sm">
+              <thead><tr className="border-b border-mor-line/60">
+                <th className={th}>類型</th><th className={th}>計間數</th><th className={th}>計布巾</th><th className={th}>啟用</th>
+              </tr></thead>
+              <tbody>
+                {wtypes.map((w) => (
+                  <tr key={w.code} className={`border-b border-mor-line/40 last:border-0 ${w.active ? '' : 'opacity-40'}`}>
+                    <td className={td}>{w.name}</td>
+                    <td className={td}><input type="checkbox" checked={w.count_workload} onChange={(e) => patch('hk_work_type', 'code', w.code, { count_workload: e.target.checked }, setWtypes)} /></td>
+                    <td className={td}><input type="checkbox" checked={w.count_linen} onChange={(e) => patch('hk_work_type', 'code', w.code, { count_linen: e.target.checked }, setWtypes)} /></td>
+                    <td className={td}><input type="checkbox" checked={w.active} onChange={(e) => patch('hk_work_type', 'code', w.code, { active: e.target.checked }, setWtypes)} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -318,43 +327,47 @@ export default function HkSettingsPage() {
               還沒有異動紀錄。到其他分頁改一個設定就會出現。
             </div>
           ) : (
-            <table className="w-full text-sm">
-              <thead><tr className="border-b border-mor-line/60">
-                <th className={th}>時間</th><th className={th}>主檔</th>
-                <th className={th}>對象</th><th className={th}>動作</th><th className={th}>改了什麼</th>
-              </tr></thead>
-              <tbody>
-                {audits.map((a) => (
-                  <tr key={a.id} className="border-b border-mor-line/40 last:border-0 align-top">
-                    <td className={`${td} whitespace-nowrap text-gray-500 text-xs`}>
-                      {a.at?.slice(0, 16).replace('T', ' ')}
-                    </td>
-                    <td className={`${td} text-xs text-gray-500`}>{TABLE_LABEL[a.table_name] ?? a.table_name}</td>
-                    <td className={`${td} font-medium`}>{a.record_key}</td>
-                    <td className={td}>
-                      <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] ${
-                        a.action === 'insert' ? 'bg-mor-greenlight text-mor-green'
-                        : a.action === 'delete' ? 'bg-red-50 text-red-600'
-                        : 'bg-mor-bluelight text-mor-slate'}`}>
-                        {ACTION_LABEL[a.action] ?? a.action}
-                      </span>
-                    </td>
-                    <td className={`${td} text-xs`}>
-                      {a.action === 'update' && a.changes
-                        ? Object.entries(a.changes as Record<string, any>).map(([k, v]) => (
-                            <div key={k}>
-                              <span className="text-gray-400">{k}</span>{' '}
-                              <span className="text-gray-500">{JSON.stringify(Array.isArray(v) ? v[0] : null)}</span>
-                              {' → '}
-                              <span className="font-medium">{JSON.stringify(Array.isArray(v) ? v[1] : v)}</span>
-                            </div>
-                          ))
-                        : <span className="text-gray-400">整筆{ACTION_LABEL[a.action] ?? a.action}</span>}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            /* 外層那個 div 已經有 overflow-x-auto。min-w 是關鍵 ——
+               沒有它，w-full 的表格會乖乖縮到 100%，欄位被壓到剩幾個 px 而永遠不觸發捲軸 */
+            <div>
+              <table className="w-full min-w-[760px] text-sm">
+                <thead><tr className="border-b border-mor-line/60">
+                  <th className={th}>時間</th><th className={th}>主檔</th>
+                  <th className={th}>對象</th><th className={th}>動作</th><th className={th}>改了什麼</th>
+                </tr></thead>
+                <tbody>
+                  {audits.map((a) => (
+                    <tr key={a.id} className="border-b border-mor-line/40 last:border-0 align-top">
+                      <td className={`${td} whitespace-nowrap text-gray-500 text-xs`}>
+                        {a.at?.slice(0, 16).replace('T', ' ')}
+                      </td>
+                      <td className={`${td} text-xs text-gray-500`}>{TABLE_LABEL[a.table_name] ?? a.table_name}</td>
+                      <td className={`${td} font-medium`}>{a.record_key}</td>
+                      <td className={td}>
+                        <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] ${
+                          a.action === 'insert' ? 'bg-mor-greenlight text-mor-green'
+                          : a.action === 'delete' ? 'bg-red-50 text-red-600'
+                          : 'bg-mor-bluelight text-mor-slate'}`}>
+                          {ACTION_LABEL[a.action] ?? a.action}
+                        </span>
+                      </td>
+                      <td className={`${td} text-xs`}>
+                        {a.action === 'update' && a.changes
+                          ? Object.entries(a.changes as Record<string, any>).map(([k, v]) => (
+                              <div key={k}>
+                                <span className="text-gray-400">{k}</span>{' '}
+                                <span className="text-gray-500">{JSON.stringify(Array.isArray(v) ? v[0] : null)}</span>
+                                {' → '}
+                                <span className="font-medium">{JSON.stringify(Array.isArray(v) ? v[1] : v)}</span>
+                              </div>
+                            ))
+                          : <span className="text-gray-400">整筆{ACTION_LABEL[a.action] ?? a.action}</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       )}

@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
 import { ymOf, ymShow, ymMonth, monthsAgo, todayStr, fmtRange } from '@/lib/period';
@@ -408,7 +408,8 @@ export default function DashboardPage() {
         */}
         <div>
           <label className="block text-xs text-gray-500 mb-1">期間</label>
-          <div className="flex items-center gap-1">
+          {/* 自訂模式下是「起日 ~ 迄日 + 近12月」四個控制項，手機一行放不下 —— 要能換行 */}
+          <div className="flex flex-wrap items-center gap-1">
             {([['year', '年'], ['month', '月'], ['custom', '自訂']] as const).map(([m, lb]) => (
               <button key={m} onClick={() => applyMode(m)}
                 className={`rounded-lg border px-2.5 py-1.5 text-xs ${
@@ -523,8 +524,13 @@ export default function DashboardPage() {
                 「不完整的本月」對「完整的上月」,百分比會偏低 —— 看趨勢就好,不要當結論。
               </div>
             )}
+            {/*
+              六欄在手機上一定放不下，而橫向捲軸自己不會說話 ——
+              「去年同期」就這樣被藏在畫面外，使用者以為系統沒算同比。
+            */}
+            {!sameYoY && <p className="md:hidden text-[11px] text-gray-400 mb-1">← 左右滑動看「去年同期」與「同比」</p>}
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full min-w-[640px] text-sm">
                 <thead>
                   <tr className="text-xs text-gray-500 border-b border-mor-line">
                     <th className="px-3 py-2 text-left">項目</th>
@@ -600,14 +606,15 @@ export default function DashboardPage() {
         hint="營收減去該物業的支出。這是系統裡唯一把收入鏈與支出鏈接在一起的地方">
         {pnl.length === 0 ? <Empty /> : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[480px] text-sm">
               <thead><tr className="text-left text-xs text-gray-500 border-b border-mor-line">
                 <th className="py-2">物業</th>
                 <th className="py-2 text-right">營收</th>
                 <th className="py-2 text-right">支出</th>
                 <th className="py-2 text-right">淨額</th>
                 <th className="py-2 text-right w-24">毛利率</th>
-                <th className="py-2 pl-4 w-[38%]">佔比</th>
+                {/* 佔比是視覺化的長條，手機上只剩十幾 px 寬，看不出任何東西又把數字擠掉 —— 直接不顯示 */}
+                <th className="hidden md:table-cell py-2 pl-4 w-[38%]">佔比</th>
               </tr></thead>
               <tbody>
                 {pnl.map((r) => {
@@ -624,7 +631,7 @@ export default function DashboardPage() {
                       <td className={`py-2 text-right tabular-nums text-xs ${mg >= 0 ? 'text-gray-500' : 'text-red-500'}`}>
                         {r.rev > 0 ? mg.toFixed(0) + '%' : '—'}
                       </td>
-                      <td className="py-2 pl-4">
+                      <td className="hidden md:table-cell py-2 pl-4">
                         {/* 上綠下灰的雙軌，一眼看出「賺的比花的多多少」 */}
                         <div className="flex flex-col gap-0.5">
                           <div className="h-2 rounded-sm bg-mor-green" style={{ width: `${(r.rev / max) * 100}%` }} />
@@ -664,7 +671,7 @@ export default function DashboardPage() {
                   <th className="py-2">房源</th>
                   <th className="py-2 text-right w-20">則數</th>
                   <th className="py-2 text-right w-24">平均</th>
-                  <th className="py-2 pl-4 w-[45%]">分數</th>
+                  <th className="hidden md:table-cell py-2 pl-4 w-[45%]">分數</th>
                 </tr></thead>
                 <tbody>
                   {revStats.byProp.map((r) => (
@@ -674,7 +681,7 @@ export default function DashboardPage() {
                       <td className={`py-2 text-right tabular-nums font-semibold ${r.avg >= 4.8 ? 'text-mor-green' : r.avg >= 4.5 ? '' : 'text-amber-600'}`}>
                         {r.avg.toFixed(2)}
                       </td>
-                      <td className="py-2 pl-4">
+                      <td className="hidden md:table-cell py-2 pl-4">
                         {/* 基準線畫在 4.5 —— Airbnb 低於這個數字就會影響曝光 */}
                         <div className="relative h-2.5 rounded-sm bg-gray-100">
                           <div className={`h-2.5 rounded-sm ${r.avg >= 4.8 ? 'bg-mor-green' : r.avg >= 4.5 ? 'bg-mor-blue' : 'bg-amber-400'}`}
@@ -703,7 +710,7 @@ export default function DashboardPage() {
       {starred.length > 0 && (
         <Panel title={`關注支出（${starred.length} 筆・合計 $${nf(starredTotal)}）`}>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[560px] text-sm">
               <thead>
                 <tr className="text-left text-xs text-gray-500 border-b border-mor-line">
                   <th className="py-2 pr-3">日期</th>
@@ -723,7 +730,10 @@ export default function DashboardPage() {
                       {e.deferred && <span className="ml-1.5 text-[10px] text-red-500">遞延母單</span>}
                       {e.parent_expense_id && <span className="ml-1.5 text-[10px] text-gray-400">遞延分攤</span>}
                     </td>
-                    <td className="py-2 pr-3 text-gray-500 whitespace-nowrap">{e.account_code ?? '—'}</td>
+                    {/* 存的是 code（repair），要顯示名稱（修繕維護）—— 對不到才退回印 code */}
+                    <td className="py-2 pr-3 text-gray-500 whitespace-nowrap">
+                      {e.account_code ? codeName[e.account_code] ?? e.account_code : '—'}
+                    </td>
                     <td className="py-2 pr-3 text-right font-medium tabular-nums">${nf(Number(e.amount) || 0)}</td>
                     <td className="py-2 text-right text-gray-500 tabular-nums">
                       {/* 子單沒有付款事實,留空不印 0 */}
@@ -810,17 +820,45 @@ function BarList({ rows, fmt }: { rows: { label: string; value: number; color: s
 /**
  * 月度趨勢：營收與支出並排的柱狀，加一條淨額折線。
  *
- * 手寫 SVG 而不是裝套件。座標系刻意用 0–100 的百分比再靠 viewBox 撐開，
- * 這樣容器寬度變了也不用重算 —— responsive 免費拿到。
+ * 手寫 SVG 而不是裝套件。
+ *
+ * 【為什麼要量容器寬度，不用固定 viewBox】
+ * 原本是固定 viewBox 1000×260 配 preserveAspectRatio="none"。
+ * 桌機看起來沒問題 —— 容器就是 1000 出頭，1 單位差不多 1 px。
+ *
+ * 但手機只有 375px：整張圖被橫向壓成不到 4 成，
+ * 而 preserveAspectRatio="none" 是**非等比**縮放，
+ * 月份文字會跟著被壓扁成不可讀的細長條（字高不變、字寬剩三分之一）。
+ * 這就是「儀表板在手機上顯示不出來」的真正原因 ——
+ * 圖有畫出來，只是文字糊掉了。
+ *
+ * 解法是讓座標系跟著實際寬度走：**1 個 SVG 單位 = 1 個 CSS px**，
+ * 縮放比例永遠是 1，什麼都不會變形。也不必猜斷點。
  */
 function TrendChart({ data }: { data: { m: string; rev: number; exp: number; net: number }[] }) {
   const [hover, setHover] = useState<number | null>(null);
+  const box = useRef<HTMLDivElement>(null);
+  const [W, setW] = useState(1000);
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    // 280 是下限 —— 再窄就不是手機而是量測還沒完成，用 0 去除會得到 Infinity
+    const ro = new ResizeObserver(([e]) => setW(Math.max(280, Math.round(e.contentRect.width))));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   const max = Math.max(...data.map((d) => Math.max(d.rev, d.exp)), 1);
   const minNet = Math.min(...data.map((d) => d.net), 0);
-  const W = 1000, H = 260, PAD_B = 26, PAD_T = 10;
+  const H = 260, PAD_B = 26, PAD_T = 10;
   const plotH = H - PAD_B - PAD_T;
   const step = W / data.length;
-  const barW = Math.min(step * 0.32, 26);
+  const barW = Math.max(Math.min(step * 0.32, 26), 2);
+  /*
+   * 手機上 12 個月只有 ~31px 的間距，「12月」三個字就 22px ——
+   * 全部印會疊在一起變成一團黑。間距不夠時隔一個印一個。
+   */
+  const labelEvery = Math.max(1, Math.ceil(34 / step));
 
   // 淨額可能是負的，所以折線的基準要能往下走
   const range = max - Math.min(minNet, 0);
@@ -830,14 +868,17 @@ function TrendChart({ data }: { data: { m: string; rev: number; exp: number; net
   const zeroY = yOf(0);
 
   return (
-    <div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: 260 }} preserveAspectRatio="none">
+    <div ref={box}>
+      {/* viewBox 的寬度等於容器寬度 → 縮放比 1:1，文字不會被壓扁 */}
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} style={{ display: 'block' }}>
         {/* 零軸。淨額掉到線下就是那個月虧了，這條線比任何數字都直觀 */}
         <line x1="0" y1={zeroY} x2={W} y2={zeroY} stroke="#E0DDD5" strokeWidth="1" />
         {data.map((d, i) => {
           const cx = i * step + step / 2;
           return (
-            <g key={d.m} onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
+            // 手機沒有滑鼠 —— 沒有 onTouchStart 的話下面那行明細永遠是「滑過柱子看該月明細」
+            <g key={d.m} onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}
+              onTouchStart={() => setHover(i)}>
               <rect x={i * step} y={0} width={step} height={H} fill={hover === i ? '#F1F0EC' : 'transparent'} />
               <rect x={cx - barW - 2} y={yOf(d.rev)} width={barW} height={Math.max(zeroY - yOf(d.rev), 0)} fill="#41689B" rx="2" />
               <rect x={cx + 2} y={yOf(d.exp)} width={barW} height={Math.max(zeroY - yOf(d.exp), 0)} fill="#C5C9C4" rx="2" />
@@ -849,26 +890,35 @@ function TrendChart({ data }: { data: { m: string; rev: number; exp: number; net
           <circle key={d.m} cx={i * step + step / 2} cy={yOf(d.net)} r={hover === i ? 5 : 3} fill="#3FAE7C" />
         ))}
         {data.map((d, i) => (
-          <text key={d.m} x={i * step + step / 2} y={H - 8} textAnchor="middle"
-            fontSize="11" fill={hover === i ? '#2E3840' : '#9AA29C'}>
-            {ymMonth(d.m)}
-          </text>
+          // 被跳過的月份仍然滑得到（上面那層透明 rect），只是不印字
+          (i % labelEvery === 0 || hover === i) && (
+            <text key={d.m} x={i * step + step / 2} y={H - 8} textAnchor="middle"
+              fontSize="11" fill={hover === i ? '#2E3840' : '#9AA29C'}>
+              {ymMonth(d.m)}
+            </text>
+          )
         ))}
       </svg>
 
-      <div className="flex flex-wrap items-center gap-4 mt-2 text-xs">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-xs">
         <Legend color="#41689B" label="營收" />
         <Legend color="#C5C9C4" label="支出" />
         <Legend color="#3FAE7C" label="淨額" line />
-        <span className="ml-auto text-gray-500 tabular-nums">
+        {/* 手機上換行擺滿整行 —— ml-auto 在窄螢幕會把它擠成一條看不完的字 */}
+        <span className="w-full sm:w-auto sm:ml-auto text-gray-500 tabular-nums">
           {hover != null ? (
             <>
               <b>{ymShow(data[hover].m)}</b>　營收 {short(data[hover].rev)}　支出 {short(data[hover].exp)}
               <span className={data[hover].net >= 0 ? 'text-mor-green font-semibold' : 'text-red-600 font-semibold'}>
-                淨額 {short(data[hover].net)}
+                　淨額 {short(data[hover].net)}
               </span>
             </>
-          ) : <span className="text-gray-400">滑過柱子看該月明細</span>}
+          ) : (
+            <span className="text-gray-400">
+              <span className="sm:hidden">點柱子看該月明細</span>
+              <span className="hidden sm:inline">滑過柱子看該月明細</span>
+            </span>
+          )}
         </span>
       </div>
     </div>

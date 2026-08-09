@@ -616,7 +616,7 @@ export default function ContractsPage() {
       </FilterBar>
 
       <div className="bg-white rounded-xl border border-mor-line overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full min-w-[640px] text-sm">
           <thead>
             <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/50">
               <SortTh label="房源" sortKey="room" type="room" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
