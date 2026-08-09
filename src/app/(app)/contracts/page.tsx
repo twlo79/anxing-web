@@ -963,6 +963,25 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
   const payDay = resolvePayDay(c.pay_day, c.first_payment_date);
   const firstDue = checkFirstDue(c.start_date, c.cadence, payDay, c.first_payment_date);
 
+  /*
+   * 「零頭月」—— 月中起租時，最後那個日曆月只剩幾天。
+   *
+   * 租期 2025/9/11 ~ 2026/9/10 剛好 12 個月，但它碰到 13 個日曆月
+   * （2025/9 一路到 2026/9）。最後那個 2026/9/1~9/10 的零頭，
+   * 已經含在第 12 期（2026/8/11~2026/9/10）裡面。
+   *
+   * 不排掉的話年繳會被切成「12 個月」+「1 個月」兩期，
+   * 而第 2 期沒有訂單所以顯示應收 $0 —— 使用者看到的就是這個。
+   *
+   * 判斷式跟 migration_93 的資料庫函式**完全一致**：迄日的「日」< 起日的「日」。
+   * 兩邊不一致的話，畫面與資料會各說各話。
+   */
+  const stubYm = useMemo(() => {
+    if (!c.start_date || !c.end_date) return '';
+    if (Number(c.end_date.slice(8, 10)) >= Number(c.start_date.slice(8, 10))) return '';
+    return c.end_date.slice(0, 4) + c.end_date.slice(5, 7);
+  }, [c.start_date, c.end_date]);
+
   const months = useMemo(() => {
     if (!c.start_date) return [] as { ym: string; y: number; m: number; label: string }[];
     const sd = new Date(c.start_date + 'T00:00:00');
@@ -978,8 +997,15 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
       out.push({ ym: `${cur.getFullYear()}${String(cur.getMonth() + 1).padStart(2, '0')}`, y: cur.getFullYear(), m: cur.getMonth() + 1, label: `${cur.getFullYear()}/${cur.getMonth() + 1}` });
       cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1);
     }
-    return out;
-  }, [c, existing, endDate]);
+    /*
+     * 排掉零頭月 —— **但那個月真的有訂單就還是要顯示**。
+     *
+     * migration_93 之前產生的舊資料還掛著那張單,藏起來的話畫面上看不到它,
+     * 而它仍然在營收裡 —— 那比多顯示一期糟糕得多（看不見的錢最難查）。
+     * 跑過 migration_93 之後那些單被清掉,這一期就自然消失。
+     */
+    return out.filter((m) => !(m.ym === stubYm && !existing[keyBase(c) + m.ym]));
+  }, [c, existing, endDate, stubYm]);
   const extYms = useMemo(() => { const set = new Set<string>(); Object.entries(existing).forEach(([k, o]: any) => { if (o?.imported_via === 'extend') set.add(k.split('_').pop()); }); return set; }, [existing]);
   const cadPeriods = useMemo(() => { const base = months.filter((m: any) => !extYms.has(m.ym)); const out: any[] = []; for (let i = 0; i < base.length; i += STEP) out.push(base.slice(i, i + STEP)); return out; }, [months, STEP, extYms]);
   const extPeriods = useMemo(() => months.filter((m: any) => extYms.has(m.ym)).map((m: any) => [m]), [months, extYms]);
