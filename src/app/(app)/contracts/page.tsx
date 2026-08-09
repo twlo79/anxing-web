@@ -6,6 +6,8 @@ import { FEE_TYPES, feeLabel } from '@/lib/fee-types';
 import ContractFees from '@/components/ContractFees';
 import { dueDateOf, resolvePayDay, checkFirstDue, fmtDue } from '@/lib/due-date';
 import { keyBase, onlyKeyOf } from '@/lib/ltKey';
+// 一期的應收與收齊判斷都走這支 —— 畫面、確認視窗、收款三處共用同一份算式
+import { periodTotal, type PeriodTotal } from '@/lib/period-total';
 import {
   summarize, needsTypedConfirm, deleteConfirmText, typedConfirmPrompt,
   strayPaid, endLeaseRemoved, endLeaseConfirmText, type OrderLite,
@@ -935,6 +937,12 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
   const [busy, setBusy] = useState('');
   const [feeRows, setFeeRows] = useState<any[]>([]);
   const [feeDraft, setFeeDraft] = useState<{ pi: number; date: string; type: string; amount: number } | null>(null);
+  /*
+   * 收款確認視窗。自己畫而不是用 confirm() —— 見 setPeriodPaid 的註解：
+   * confirm() 是比例字型，金額欄永遠對不齊。
+   */
+  const [payAsk, setPayAsk] = useState<
+    { chunk: any[]; label: string; paidAt: string; t: PeriodTotal } | null>(null);
   const [concDraft, setConcDraft] = useState<{ pi: number; date: string; amount: number; note: string; baseAmount: number; priorDisc: number } | null>(null);
   const [invMap, setInvMap] = useState<Record<string, any>>({});
   const [invDraft, setInvDraft] = useState<{ id?: string; ym: string; date: string; no: string; note: string } | null>(null);
@@ -1057,25 +1065,56 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
     if (error) { alert('重算失敗:' + error.message); loadExisting(false); }
   }
 
-  async function setPeriodPaid(chunk: any[], v: boolean) {
-    setBusy(chunk[0].ym);
-    const keys = chunk.map((mm) => kb + mm.ym);
+  async function setPeriodPaid(chunk: any[], v: boolean, periodLabel = '') {
+    const keys0 = chunk.map((mm) => kb + mm.ym);
     // 已經有收款日就沿用,不要覆蓋成今天 ——
     // 「重算應收」會把已收的期別退回未收但留著日期,重按確認時要拿得回來。
     const kept = ordersOf(chunk).find((o: any) => o?.paid_at)?.paid_at;
     const paidAt = v ? (kept ?? today()) : null;
 
     /*
-     * 固定加費要跟租金一起收。
+     * 確認前把整份算式攤開讓人核對一次。
      *
-     * 沒有這一段的話,「確認收款」只會標記月租單 —— 管理費那筆永遠停在未收,
-     * 而使用者看到整期都變綠了,不會發現底下還掛著一筆。
+     * 一期可能有五六筆（房租＋管理費＋停車費＋設備費＋這次的電費），
+     * 而這一按會把**全部**標記成已收。金額大的時候，
+     * 「總共 $113,500、其中電費 $1,500」這種細節只有逐行列出來才看得到。
      *
-     * 只帶 imported_via='contract_fee'（固定加費）。手動加費與折讓不碰:
-     * 那些是臨時發生的,收款時機不一定跟租金同一天。
+     * 【為什麼不用瀏覽器的 confirm()】
+     * confirm() 用系統的比例字型 —— 中文佔兩倍寬、數字一倍寬，
+     * 用空白補永遠排不齊（「設備費－冰箱」那行一定會凸出來）。
+     * 金額要對齊只能自己畫，用表格右對齊 + tabular-nums。
+     */
+    if (v) {
+      const pf = feeRows.filter((f: any) => f.checkin
+        && chunk.some((mm: any) => (f.checkin.slice(0, 4) + f.checkin.slice(5, 7)) === mm.ym));
+      const t = periodTotal(chunk.map((mm) => existing[kb + mm.ym]).filter(Boolean), pf);
+      // 只有一行（純房租、沒有任何加費）就不打擾 —— 那種情況畫面上一目了然
+      if (t.lines.length > 1 && !payAsk) {
+        setPayAsk({ chunk, label: periodLabel || chunk[0]?.label || '', paidAt: paidAt ?? today(), t });
+        return;
+      }
+    }
+    setPayAsk(null);
+
+    setBusy(chunk[0].ym);
+    const keys = keys0;
+
+    /*
+     * 這一期的錢**全部一起收**：房租、固定加費、一次性費用、折讓。
+     *
+     * 改版前只標記月租單與固定加費，手動加的一次性費用不碰
+     * （當時的理由是「臨時發生的，收款時機不一定跟租金同一天」）。
+     * 但應收顯示的金額**有把它算進去** —— 畫面說收 $113,500、按下確認整期變綠，
+     * 而那 $1,500 靜靜留在未收清單裡，沒有人會發現。
+     *
+     * 使用者要的是「一次應收包含租金與所有費用」，所以三個口徑統一：
+     * **應收算誰，收款就收誰，收齊判斷也看誰。**
+     *
+     * 折讓（負數）也一起標記 —— 它是這次結算的一部分，
+     * 留著一筆永遠「未收」的負數列，未收清單會一直有個對不起來的東西。
      */
     const feeIds = feeRows
-      .filter((f: any) => f.imported_via === 'contract_fee' && f.checkin
+      .filter((f: any) => f.checkin && Number(f.amount) !== 0
         && chunk.some((mm: any) => (f.checkin.slice(0, 4) + f.checkin.slice(5, 7)) === mm.ym))
       .map((f: any) => f.id);
 
@@ -1317,41 +1356,48 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
               */
               const due = fmtDue(dueDateOf(c.start_date, c.cadence, i, payDay));
               const pfees = feeRows.filter((f: any) => f.checkin && chunk.some((mm: any) => (f.checkin.slice(0, 4) + f.checkin.slice(5, 7)) === mm.ym));
-              // 折讓是 fee_type='折讓' 的負數列。應收顯示淨額,但保留原始金額供對帳。
-              const pdisc = pfees.filter((f: any) => Number(f.amount) < 0);
-              const discTotal = pdisc.reduce((a: number, f: any) => a + Math.abs(Number(f.amount) || 0), 0);
               /*
-               * 這一期實際要收多少 = 租金 + 加費 − 折讓。
+               * 這一期的應收 = 房租 ＋ 固定加費 ＋ 一次性費用 − 折讓，**一個數字**。
                *
-               * 不把加費算進去的話,畫面說要收 $170,000,實際要跟房客收 $173,500 ——
-               * 而那 $3,500 就掛在下面幾行,沒有人會把兩個數字自己加起來。
+               * 算式與收齊判斷都收進 lib/period-total（有 15 個測試釘住）——
+               * 改版前這裡是三段各自算的：應收算了手動加費，但「收齊了沒」沒算它，
+               * 而「確認收款」也不標記它。結果是畫面整期變綠、那筆錢還在未收清單裡。
+               * 三個口徑現在都走同一支函式，不可能再各說各話。
                */
-              const feeTotal = pfees.filter((f: any) => Number(f.amount) > 0)
-                .reduce((a: number, f: any) => a + Number(f.amount || 0), 0);
-              const netAmount = amount + feeTotal - discTotal;
-              /*
-               * 整期收齊 = 月租單全收 **且** 該期的固定加費也全收。
-               * 只看月租單的話,管理費還沒收但整期已經變綠,底下那筆就永遠沒人理。
-               * 手動加費不列入 —— 那是臨時發生的,收款時機不一定跟租金同一天。
-               */
-              const autoFees = pfees.filter((f: any) => f.imported_via === 'contract_fee' && Number(f.amount) > 0);
-              const allPaid = os.length > 0 && os.every((o: any) => o.paid)
-                && autoFees.every((f: any) => f.paid);
+              const pt = periodTotal(os, pfees);
+              const netAmount = pt.net, feeTotal = pt.fixed + pt.oneoff, discTotal = pt.discount;
+              const allPaid = pt.allPaid;
               return (
                 <div key={i} className={`rounded-xl border px-4 py-2.5 text-sm ${allPaid ? 'border-mor-greenlight bg-mor-greenlight/30' : 'border-mor-line'}`}>
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="font-medium"><span className="text-mor-blue">第 {i + 1} 期</span> <span className="text-gray-700">{first.label}{STEP > 1 ? `~${last.label}` : ''}</span>{due ? <span className="ml-2 text-xs text-gray-400">應繳 {due}</span> : null}</div>
-                      <div className="text-xs text-gray-500">
+                      {/*
+                        應收是一個大數字,明細在底下逐行列。
+                        改版前是擠在括號裡的一行「（租金 $110,000 ＋ 加費 $3,500）」——
+                        兩三筆加費就變成看不完的一串,而且分不出哪些是每期固定、哪些是這次臨時加的。
+                      */}
+                      <div className="text-sm font-semibold text-mor-slate">
                         應收 ${fmt(netAmount)}
-                        {(feeTotal > 0 || discTotal > 0) && (
-                          <span className="ml-1 text-gray-400">
-                            （租金 ${fmt(amount)}
-                            {feeTotal > 0 && ` ＋ 加費 $${fmt(feeTotal)}`}
-                            {discTotal > 0 && ` − 折讓 $${fmt(discTotal)}`}）
-                          </span>
-                        )}
                       </div>
+                      {pt.lines.length > 1 && (
+                        <div className="mt-1 space-y-0.5">
+                          {pt.lines.map((l, li) => (
+                            <div key={li} className="flex items-baseline gap-2 text-xs">
+                              {/* 已收的打勾 —— 一期裡有些收了有些沒收時,一眼看得出還差誰 */}
+                              <span className={`w-3 shrink-0 ${l.paid ? 'text-mor-green' : 'text-gray-300'}`}>
+                                {l.paid ? '✓' : '·'}
+                              </span>
+                              <span className="text-gray-600">{l.label}</span>
+                              {l.kind === 'fixed' && <span className="text-[10px] text-gray-400">每期固定</span>}
+                              <span className={`ml-auto tabular-nums ${
+                                l.negative ? 'text-orange-600' : 'text-gray-700'}`}>
+                                {l.negative ? '−' : ''}${fmt(l.amount)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                       {(() => {
                         const m = periodMismatch(chunk);
                         if (!m) return null;
@@ -1370,7 +1416,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
                           <span className="text-xs text-gray-600">收款日 <input type="date" value={paidAt || ''} onChange={(e) => setPeriodPaidAt(chunk, e.target.value)} className="rounded border border-gray-300 px-1.5 py-0.5 text-xs" /></span>
                           <button onClick={() => setPeriodPaid(chunk, false)} disabled={!!busy} className="rounded-lg bg-mor-greenlight text-mor-green px-2.5 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">取消</button>
                         </div>
-                      : <button onClick={() => setPeriodPaid(chunk, true)} disabled={!!busy} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">{busy === first.ym ? '…' : '確認收款'}</button>)}
+                      : <button onClick={() => setPeriodPaid(chunk, true, `第 ${i + 1} 期 ${first.label}${STEP > 1 ? `~${last.label}` : ''}`)} disabled={!!busy} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">{busy === first.ym ? '…' : '確認收款'}</button>)}
                   </div>
                   <div className="mt-2 border-t border-mor-line/50 pt-1.5">
                     {pfees.map((f: any) => {
@@ -1433,15 +1479,41 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
             {extPeriods.map((chunk: any[], j: number) => {
               const mm = chunk[0];
               const o = existing[kb + mm.ym];
-              const amount = Number(o?.amount || 0);
-              const paid = !!o?.paid;
               const paidAt = o?.paid_at;
+              /*
+               * 延展期別走跟正式期別完全一樣的算式。
+               *
+               * 兩邊各寫一份的話，同一筆加費在正式期會被算進應收、在延展期不會 ——
+               * 而使用者看不出這兩塊有什麼不同，只會覺得數字有時候對有時候不對。
+               */
+              const efees = feeRows.filter((f: any) => f.checkin
+                && (f.checkin.slice(0, 4) + f.checkin.slice(5, 7)) === mm.ym);
+              const ept = periodTotal(o ? [o] : [], efees);
+              const amount = ept.net;
+              const paid = ept.allPaid;
               return (
                 <div key={'ext' + j} className={`rounded-xl border px-4 py-2.5 text-sm ${paid ? 'border-mor-greenlight bg-mor-greenlight/30' : 'border-dashed border-mor-blue/40'}`}>
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="font-medium"><span className="rounded bg-mor-bluelight text-mor-blue px-1.5 py-0.5 text-[10px]">延展</span> <span className="text-mor-blue">第 {j + 1} 期</span> <span className="text-gray-700">{mm.label}</span></div>
-                      <div className="text-xs text-gray-500">應收 ${fmt(amount)}</div>
+                      <div className="text-sm font-semibold text-mor-slate">應收 ${fmt(amount)}</div>
+                      {ept.lines.length > 1 && (
+                        <div className="mt-1 space-y-0.5">
+                          {ept.lines.map((l, li) => (
+                            <div key={li} className="flex items-baseline gap-2 text-xs">
+                              <span className={`w-3 shrink-0 ${l.paid ? 'text-mor-green' : 'text-gray-300'}`}>
+                                {l.paid ? '✓' : '·'}
+                              </span>
+                              <span className="text-gray-600">{l.label}</span>
+                              {l.kind === 'fixed' && <span className="text-[10px] text-gray-400">每期固定</span>}
+                              <span className={`ml-auto tabular-nums ${
+                                l.negative ? 'text-orange-600' : 'text-gray-700'}`}>
+                                {l.negative ? '−' : ''}${fmt(l.amount)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                       {(() => {
                         const m = periodMismatch(chunk);
                         if (!m) return null;
@@ -1459,7 +1531,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
                           <span className="text-xs text-gray-600">收款日 <input type="date" value={paidAt || ''} onChange={(e) => setPeriodPaidAt(chunk, e.target.value)} className="rounded border border-gray-300 px-1.5 py-0.5 text-xs" /></span>
                           <button onClick={() => setPeriodPaid(chunk, false)} disabled={!!busy} className="rounded-lg bg-mor-greenlight text-mor-green px-2.5 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">取消</button>
                         </div>
-                      : <button onClick={() => setPeriodPaid(chunk, true)} disabled={!!busy} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">{busy === mm.ym ? '…' : '確認收款'}</button>)}
+                      : <button onClick={() => setPeriodPaid(chunk, true, `延展 第 ${j + 1} 期 ${mm.label}`)} disabled={!!busy} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">{busy === mm.ym ? '…' : '確認收款'}</button>)}
                   </div>
                   {c.invoice_required && (
                     <div className="mt-1.5 border-t border-amber-200/60 pt-1.5">{invRow(mm)}</div>
@@ -1470,6 +1542,79 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
           </div>}
         </div>
       </div>
+
+      {/*
+        收款確認。自己畫而不是用瀏覽器的 confirm()：
+        confirm() 是系統的比例字型，中文兩倍寬、數字一倍寬，用空白補永遠對不齊
+        （「設備費－冰箱」那行一定凸出來）。這裡用表格右對齊 + tabular-nums，
+        金額的個位數必定切齊，加總才好用眼睛核對。
+      */}
+      {payAsk && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4"
+          onClick={(e) => { e.stopPropagation(); setPayAsk(null); }}>
+          <div className="absolute inset-0 bg-black/40" />
+          <div onClick={(e) => e.stopPropagation()}
+            className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm max-h-[85vh] overflow-y-auto">
+            <div className="border-b border-mor-line px-5 py-3">
+              <div className="font-bold text-sm">確認收款</div>
+              <div className="text-xs text-gray-500 mt-0.5">{payAsk.label}</div>
+            </div>
+
+            <div className="px-5 py-4">
+              {/* 總額放最上面 —— 使用者最想確認的是「這次要收多少」,不該讀完明細才看到 */}
+              <div className="rounded-xl bg-mor-sand/50 px-4 py-3 mb-3 text-center">
+                <div className="text-xs text-gray-500">應收合計</div>
+                <div className="text-2xl font-bold text-mor-slate tabular-nums">
+                  ${fmt(payAsk.t.net)}
+                </div>
+                <div className="text-xs text-gray-400 mt-0.5">收款日 {payAsk.paidAt}</div>
+              </div>
+
+              <table className="w-full text-sm">
+                <tbody>
+                  {payAsk.t.lines.map((l, li) => (
+                    <tr key={li} className="border-b border-mor-line/40 last:border-0">
+                      <td className="py-1.5 pr-2 text-gray-600">
+                        {l.label}
+                        {l.kind === 'fixed' && <span className="ml-1 text-[10px] text-gray-400">每期固定</span>}
+                      </td>
+                      {/* tabular-nums + text-right：金額的個位數一定切齊 */}
+                      <td className={`py-1.5 text-right tabular-nums whitespace-nowrap ${
+                        l.negative ? 'text-orange-600' : ''}`}>
+                        {l.negative ? '−' : ''}${fmt(l.amount)}
+                      </td>
+                    </tr>
+                  ))}
+                  <tr className="border-t-2 border-mor-line">
+                    <td className="pt-2 font-medium">合計</td>
+                    <td className="pt-2 text-right tabular-nums font-bold whitespace-nowrap">
+                      ${fmt(payAsk.t.net)}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <p className="text-xs text-gray-400 mt-3 leading-relaxed">
+                按下去會把這一期的 <b>{payAsk.t.lines.length} 筆</b>全部標記為已收 ——
+                房租、固定加費、一次性費用都算在內。
+              </p>
+            </div>
+
+            {/* 手機上按鈕要夠大。取消放左邊,確認放右邊且是主色 */}
+            <div className="border-t border-mor-line px-5 py-3 flex gap-2">
+              <button onClick={() => setPayAsk(null)}
+                className="flex-1 h-11 rounded-lg border border-mor-line text-sm text-gray-600">
+                取消
+              </button>
+              <button onClick={() => setPeriodPaid(payAsk.chunk, true, payAsk.label)}
+                disabled={!!busy}
+                className="flex-1 h-11 rounded-lg bg-mor-slate text-white text-sm font-medium disabled:opacity-40">
+                確認收款
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {invDraft && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center" onClick={(e) => { e.stopPropagation(); setInvDraft(null); }}>
