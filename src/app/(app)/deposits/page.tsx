@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
+import { fetchAll } from '@/lib/fetch-all';
 import Receipts from '@/components/Receipts';
 import RefundFields, { METHOD_LABEL, METHOD_OPTS } from '@/components/RefundFields';
 import {
@@ -110,8 +111,15 @@ export default function DepositsPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase.from('deposits').select('*').limit(5000);
-    setRows((data ?? []) as Dep[]);
+    /*
+     * 押金全撈。原本寫死 .limit(5000) —— 那是一道無聲的懸崖：
+     * 押金只增不減（每張契約、每筆有押金的短租訂單都有一列），
+     * 破了 5000 之後畫面會少一截，而「還在保管中的押金總額」就會偏低。
+     * 沒有錯誤訊息，只是數字變小。
+     */
+    const { rows: data } = await fetchAll<Dep>((f, t) =>
+      supabase.from('deposits').select('*').range(f, t));
+    setRows(data);
     setLoading(false);
   }, [supabase]);
 

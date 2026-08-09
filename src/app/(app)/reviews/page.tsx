@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
+import { fetchAll } from '@/lib/fetch-all';
 
 type Estate = { id: string; name: string; manager: string | null; sort: number };
 type Property = { id: string; name: string; active: boolean; estate_id: string | null };
@@ -572,13 +573,21 @@ function MgrModal({ m, onClose, estates, properties, statsFrom, statsTo, propByI
       .filter((e) => (m.manager === '未指派' ? !e.manager : e.manager === m.manager))
       .map((e) => e.id);
     const propIds = properties.filter((p) => p.estate_id && estateIds.includes(p.estate_id)).map((p) => p.id);
-    let q = supabase.from('reviews').select('*')
-      .in('property_id', propIds.length ? propIds : ['00000000-0000-0000-0000-000000000000'])
-      .order('checkout_date', { ascending: false, nullsFirst: false })
-      .limit(500);
-    if (statsFrom) q = q.gte('checkout_date', statsFrom);
-    if (statsTo) q = q.lte('checkout_date', statsTo);
-    q.then(({ data }) => { setList((data as any) ?? []); setLoading(false); });
+    /*
+     * ⚠️ 這是**統計**用的查詢，撈不全會直接讓平均星等算錯。
+     *
+     * 原本寫死 .limit(500) 且是按退房日新到舊排序 —— 區間一拉大就只算到
+     * 最近 500 則，平均分被最近的評價主導，而且**數字看起來完全正常**。
+     * 統計的查詢尤其不能截斷：少幾列不會少一個項目，只會讓每一個數字都偏。
+     */
+    fetchAll<any>((f, t) => {
+      let q = supabase.from('reviews').select('*')
+        .in('property_id', propIds.length ? propIds : ['00000000-0000-0000-0000-000000000000'])
+        .order('checkout_date', { ascending: false, nullsFirst: false });
+      if (statsFrom) q = q.gte('checkout_date', statsFrom);
+      if (statsTo) q = q.lte('checkout_date', statsTo);
+      return q.range(f, t);
+    }).then(({ rows }) => { setList(rows); setLoading(false); });
   }, [supabase, m, estates, properties, statsFrom, statsTo]);
 
   const total = Number(m.total);
@@ -660,15 +669,18 @@ function ListModal({ cfg, onClose, statsFrom, statsTo, propById, estateById, onS
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let q = supabase.from('reviews').select('*')
-      .order('checkout_date', { ascending: false, nullsFirst: false })
-      .limit(1000);
-    if (cfg.propIds) q = q.in('property_id', cfg.propIds.length ? cfg.propIds : ['00000000-0000-0000-0000-000000000000']);
-    if (cfg.rating === 5) q = q.gte('overall_rating', 5);
-    else if (cfg.rating != null) q = q.gte('overall_rating', cfg.rating).lt('overall_rating', cfg.rating + 1);
-    if (statsFrom) q = q.gte('checkout_date', statsFrom);
-    if (statsTo) q = q.lte('checkout_date', statsTo);
-    q.then(({ data }) => { setList((data as any) ?? []); setLoading(false); });
+    // 這一份也拿掉寫死的 1000 —— 同一頁兩個地方各有自己的上限，
+    // 一邊改了另一邊沒改，兩個清單就會對不起來而且沒人說得出為什麼。
+    fetchAll<any>((f, t) => {
+      let q = supabase.from('reviews').select('*')
+        .order('checkout_date', { ascending: false, nullsFirst: false });
+      if (cfg.propIds) q = q.in('property_id', cfg.propIds.length ? cfg.propIds : ['00000000-0000-0000-0000-000000000000']);
+      if (cfg.rating === 5) q = q.gte('overall_rating', 5);
+      else if (cfg.rating != null) q = q.gte('overall_rating', cfg.rating).lt('overall_rating', cfg.rating + 1);
+      if (statsFrom) q = q.gte('checkout_date', statsFrom);
+      if (statsTo) q = q.lte('checkout_date', statsTo);
+      return q.range(f, t);
+    }).then(({ rows }) => { setList(rows); setLoading(false); });
   }, [supabase, cfg, statsFrom, statsTo]);
 
   const dist = useMemo(() => {

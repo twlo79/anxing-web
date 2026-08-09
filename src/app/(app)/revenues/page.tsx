@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
+import { fetchAll } from '@/lib/fetch-all';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, roomKey, type SortState, type SortCols } from '@/lib/sortable';
 import {
@@ -83,9 +84,19 @@ export default function RevenuesPage() {
     const ym = `${y}${String(m).padStart(2, '0')}`;
     const pstart = `${ym.slice(0, 4)}-${ym.slice(4, 6)}-01`;
     const pend = new Date(Date.UTC(m === 12 ? y + 1 : y, m === 12 ? 0 : m, 1)).toISOString().slice(0, 10);
-    // 全部月份改讀 recognitions(訂單引擎),不再分界讀快照
-    const { data } = await supabase.from('revenue_recognitions').select('*').eq('ym', ym).limit(3000);
-    return ((data as any[]) ?? []).map((r) => ({
+    /*
+     * 全部月份改讀 recognitions(訂單引擎),不再分界讀快照。
+     *
+     * 【為什麼不是 .limit(3000)】
+     * 原本寫死 3000。目前一個月約 143 筆,看起來很安全 ——
+     * 但那是一道**無聲的懸崖**:哪天某個月破了 3000,營收表就會少一截,
+     * 沒有錯誤訊息,只是數字變小。而「哪天」不會有人記得這個數字存在。
+     *
+     * 分頁撈完就沒有懸崖,不管一個月幾筆都對。
+     */
+    const { rows: data } = await fetchAll<any>((f, t) =>
+      supabase.from('revenue_recognitions').select('*').eq('ym', ym).range(f, t));
+    return (data ?? []).map((r) => ({
       order_id: r.id, source: r.source, estate_id: r.estate_id, estate_name: r.estate_name,
       property_raw: r.property_raw, guest_name: r.guest_name, checkin: r.checkin, checkout: r.checkout,
       period_start: r.period_start ?? pstart, period_end: r.period_end ?? pend, fee_type: r.fee_type ?? null, item_name: r.item_name ?? null,
