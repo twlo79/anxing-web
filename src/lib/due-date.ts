@@ -64,6 +64,48 @@ const iso = (y: number, m0: number, d: number) =>
   `${y}-${String(m0 + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 
 /**
+ * 這份租約總共有幾個「月租期」。
+ *
+ * ============================================================
+ * 【為什麼不能數日曆月】
+ *
+ * 系統把月租單存成 `LT_{房號}_{YYYYMM}`，一個日曆月一張。
+ * 但租約是**月中到月中**的，兩者不會一一對應：
+ *
+ *     租期 2026/6/23 ~ 2026/9/23（季繳，每期 $5,040 = 3 × $1,680）
+ *     碰到的日曆月：2026/6、7、8、9  →  4 個
+ *     真正的租期數：                    3 個
+ *
+ * 多出來的那個月會讓季繳被切成「3 個月」+「1 個月」兩期，
+ * 而且**多收一個月的租金、多認列一個月的營收**。
+ *
+ * ============================================================
+ * 【公式】
+ *
+ *     期數 = 月份差 + (迄日的「日」> 起日的「日」? 1 : 0)
+ *
+ * 四種形狀都要對：
+ *
+ *     6/23 → 9/23        月差 3   23 > 23 否   → 3   （季繳一期）
+ *     6/6  → 隔年 6/5    月差 12  5  > 6  否   → 12  （年繳一期）
+ *     9/11 → 隔年 9/10   月差 12  10 > 11 否   → 12
+ *     6/1  → 隔年 5/31   月差 11  31 > 1  是   → 12  （1 號起租，原本就對）
+ *
+ * 這個公式跟 migration_93 的資料庫函式**必須完全一致** ——
+ * 一邊算 3 一邊算 4 的話，畫面與資料會各說各話，而且沒有人查得出來。
+ */
+export function rentMonthCount(
+  startDate: string | null | undefined, endDate: string | null | undefined,
+): number {
+  if (!startDate || !endDate) return 0;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) return 0;
+  const sy = Number(startDate.slice(0, 4)), sm = Number(startDate.slice(5, 7)), sd = Number(startDate.slice(8, 10));
+  const ey = Number(endDate.slice(0, 4)), em = Number(endDate.slice(5, 7)), ed = Number(endDate.slice(8, 10));
+  const diff = (ey * 12 + em) - (sy * 12 + sm);
+  return Math.max(0, diff + (ed > sd ? 1 : 0));
+}
+
+/**
  * 一期實際涵蓋的日期區間。
  *
  * ============================================================

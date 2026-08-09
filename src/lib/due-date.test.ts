@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   dueDateOf, resolvePayDay, checkFirstDue, fmtDue, STEP_OF,
-  periodRange, fmtPeriodRange,
+  periodRange, fmtPeriodRange, rentMonthCount,
 } from './due-date.ts';
 
 // 使用者給的情境：契約 2026/7/1 ~ 2027/6/30、13 號繳、預繳制
@@ -168,4 +168,48 @@ test('沒有起租日就回 null —— 呼叫端要顯示空白,不要自己猜
 test('顯示字串不補零,跟畫面其他地方一致', () => {
   assert.equal(fmtPeriodRange(periodRange('2026-06-13', 'yearly', 0)), '2026/6/13 ~ 2027/6/12');
   assert.equal(fmtPeriodRange(null), '');
+});
+
+// ── 租期總月數：不能數日曆月 ───────────────────────
+
+test('★ 6/23 ~ 9/23 季繳 = 3 個月一期（碰到 4 個日曆月）', () => {
+  assert.equal(rentMonthCount('2026-06-23', '2026-09-23'), 3);
+});
+
+test('★ 6/6 ~ 隔年 6/5 = 12 個月（碰到 13 個日曆月）', () => {
+  assert.equal(rentMonthCount('2026-06-06', '2027-06-05'), 12);
+});
+
+test('★ 9/11 ~ 隔年 9/10 = 12 個月', () => {
+  assert.equal(rentMonthCount('2025-09-11', '2026-09-10'), 12);
+});
+
+test('1 號起租、月底到期 = 12 個月（原本就正確,不能改壞）', () => {
+  assert.equal(rentMonthCount('2026-06-01', '2027-05-31'), 12);
+});
+
+test('1 號起租、隔年 1 號到期 = 12 個月', () => {
+  assert.equal(rentMonthCount('2026-06-01', '2027-06-01'), 12);
+});
+
+test('半年約 6/15 ~ 12/15 = 6 個月', () => {
+  assert.equal(rentMonthCount('2026-06-15', '2026-12-15'), 6);
+});
+
+test('月繳一個月 6/23 ~ 7/23 = 1 個月', () => {
+  assert.equal(rentMonthCount('2026-06-23', '2026-07-23'), 1);
+});
+
+test('每一期的區間要剛好蓋滿整份租期,不多不少', () => {
+  // 6/23~9/23 季繳:只有 1 期,而那一期是 6/23~9/22
+  const n = rentMonthCount('2026-06-23', '2026-09-23');
+  assert.equal(n, 3);
+  const periods = Math.ceil(n / STEP_OF.quarterly);
+  assert.equal(periods, 1, '季繳 3 個月 = 1 期,不該切成 2 期');
+  assert.deepEqual(periodRange('2026-06-23', 'quarterly', 0), ['2026-06-23', '2026-09-22']);
+});
+
+test('缺日期回 0 —— 呼叫端要顯示空白,不要自己猜', () => {
+  assert.equal(rentMonthCount(null, '2026-09-23'), 0);
+  assert.equal(rentMonthCount('2026-06-23', null), 0);
 });
