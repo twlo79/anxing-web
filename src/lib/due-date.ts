@@ -64,6 +64,67 @@ const iso = (y: number, m0: number, d: number) =>
   `${y}-${String(m0 + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 
 /**
+ * 一期實際涵蓋的日期區間。
+ *
+ * ============================================================
+ * 【為什麼不能只寫月份】
+ *
+ * 收租視窗原本把期別寫成「2026/6~2027/5」—— 那是月租單的日曆月，
+ * 不是這一期真正涵蓋的時間。
+ *
+ * 6/13 起租的年繳約，第 1 期實際是 **2026/6/13 ~ 2027/6/12**。
+ * 寫成「2026/6~2027/5」有兩個問題：
+ *
+ *   1. 少寫了 6/1~6/12 與 2027/6/1~6/12 這兩截，起訖都差半個月
+ *   2. 跟旁邊的「應繳 2026/5/13」對不起來 —— 使用者會以為系統算錯
+ *
+ * 系統內部用日曆月存月租單（LT_{room}_{YYYYMM}）是實作選擇，
+ * 但**畫面要講的是租約的語言**：房客租的是 6/13 到隔年 6/12。
+ *
+ * ============================================================
+ * 【月底夾取】
+ *
+ * 1/31 起租的月繳約，第 2 期不能是 2/31。往前夾到 2/28（閏年 2/29）——
+ * 不夾的話 JS 的 Date 會溢位成 3/3，而畫面上看起來像個正常日期。
+ */
+export function periodRange(
+  startDate: string | null | undefined, cadence: string, index: number,
+): [string, string] | null {
+  if (!startDate || !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) return null;
+  const step = STEP_OF[cadence] ?? 1;
+  const y = Number(startDate.slice(0, 4));
+  const m0 = Number(startDate.slice(5, 7)) - 1;
+  const d = Number(startDate.slice(8, 10));
+
+  /** 起租日往後推 n 個月，日數超過該月天數就夾到月底 */
+  const shift = (n: number): [number, number, number] => {
+    const t = m0 + n;
+    const yy = y + Math.floor(t / 12);
+    const mm = ((t % 12) + 12) % 12;
+    return [yy, mm, Math.min(d, daysInMonth(yy, mm))];
+  };
+
+  const [fy, fm, fd] = shift(index * step);
+  // 迄日 = 下一期的起日減一天。用「減一天」而不是「當月最後一天」——
+  // 6/13 起租的話這一期要到隔月 12 號，不是 6/30。
+  const [ny, nm, nd] = shift((index + 1) * step);
+  const end = new Date(ny, nm, nd);
+  end.setDate(end.getDate() - 1);
+
+  return [
+    iso(fy, fm, fd),
+    iso(end.getFullYear(), end.getMonth(), end.getDate()),
+  ];
+}
+
+/** 期別區間的顯示字串：`2026/6/13 ~ 2027/6/12` */
+export function fmtPeriodRange(r: [string, string] | null): string {
+  if (!r) return '';
+  const f = (s: string) => `${Number(s.slice(0, 4))}/${Number(s.slice(5, 7))}/${Number(s.slice(8, 10))}`;
+  return `${f(r[0])} ~ ${f(r[1])}`;
+}
+
+/**
  * 「幾號繳」。優先用契約設定的 pay_day，沒有就取首繳日的日數。
  * 兩個都沒有時回 null —— 呼叫端要顯示「未設定」，不要自己猜一個 1 號出來。
  */

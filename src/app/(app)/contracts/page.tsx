@@ -4,7 +4,7 @@ import { FilterBar, FilterSelect, FilterDateRange, FilterSearch, FilterClear, Fi
 import { createClient } from '@/lib/supabase';
 import { FEE_TYPES, feeLabel } from '@/lib/fee-types';
 import ContractFees from '@/components/ContractFees';
-import { dueDateOf, resolvePayDay, checkFirstDue, fmtDue } from '@/lib/due-date';
+import { dueDateOf, resolvePayDay, checkFirstDue, fmtDue, periodRange, fmtPeriodRange } from '@/lib/due-date';
 import { keyBase, onlyKeyOf } from '@/lib/ltKey';
 // 一期的應收與收齊判斷都走這支 —— 畫面、確認視窗、收款三處共用同一份算式
 import { periodTotal, type PeriodTotal } from '@/lib/period-total';
@@ -1379,7 +1379,20 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
                 <div key={i} className={`rounded-xl border px-4 py-2.5 text-sm ${allPaid ? 'border-mor-greenlight bg-mor-greenlight/30' : 'border-mor-line'}`}>
                   <div className="flex items-center justify-between">
                     <div>
-                      <div className="font-medium"><span className="text-mor-blue">第 {i + 1} 期</span> <span className="text-gray-700">{first.label}{STEP > 1 ? `~${last.label}` : ''}</span>{due ? <span className="ml-2 text-xs text-gray-400">應繳 {due}</span> : null}</div>
+                      {/*
+                        期別要寫到「日」，不能只寫月份。
+                        6/13 起租的年繳約第 1 期實際是 2026/6/13~2027/6/12，
+                        寫成「2026/6~2027/5」起訖都差半個月，而且跟旁邊的
+                        「應繳 2026/5/13」對不起來 —— 使用者會以為系統算錯。
+                        月份是系統存月租單的方式（LT_房號_YYYYMM），不是租約的語言。
+                      */}
+                      <div className="font-medium">
+                        <span className="text-mor-blue">第 {i + 1} 期</span>{' '}
+                        <span className="text-gray-700">
+                          {fmtPeriodRange(periodRange(c.start_date, c.cadence, i)) || `${first.label}${STEP > 1 ? `~${last.label}` : ''}`}
+                        </span>
+                        {due ? <span className="ml-2 text-xs text-gray-400">應繳 {due}</span> : null}
+                      </div>
                       {/*
                         應收是一個大數字,明細在底下逐行列。
                         改版前是擠在括號裡的一行「（租金 $110,000 ＋ 加費 $3,500）」——

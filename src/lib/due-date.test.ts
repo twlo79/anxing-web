@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { dueDateOf, resolvePayDay, checkFirstDue, fmtDue, STEP_OF } from './due-date.ts';
+import {
+  dueDateOf, resolvePayDay, checkFirstDue, fmtDue, STEP_OF,
+  periodRange, fmtPeriodRange,
+} from './due-date.ts';
 
 // 使用者給的情境：契約 2026/7/1 ~ 2027/6/30、13 號繳、預繳制
 const START = '2026-07-01';
@@ -112,4 +115,57 @@ test('fmtDue:不補零,且年份不能被切掉', () => {
   assert.equal(fmtDue('2026-12-31'), '2026/12/31');
   assert.equal(fmtDue('2026-01-05'), '2026/1/5');
   assert.equal(fmtDue(null), '');
+});
+
+// ── 期別區間：月份不夠，要寫到日 ─────────────────────
+
+test('★ 6/13 起租的年繳：第 1 期是 2026/6/13 ~ 2027/6/12', () => {
+  assert.deepEqual(periodRange('2026-06-13', 'yearly', 0), ['2026-06-13', '2027-06-12']);
+});
+
+test('第 2 期接著第 1 期，中間不能有空隙也不能重疊', () => {
+  const p0 = periodRange('2026-06-13', 'yearly', 0)!;
+  const p1 = periodRange('2026-06-13', 'yearly', 1)!;
+  const next = new Date(p0[1] + 'T00:00:00Z');
+  next.setUTCDate(next.getUTCDate() + 1);
+  assert.equal(p1[0], next.toISOString().slice(0, 10), '第 2 期要從第 1 期迄日的隔天開始');
+});
+
+test('月繳：6/13 起租,第 1 期 6/13~7/12', () => {
+  assert.deepEqual(periodRange('2026-06-13', 'monthly', 0), ['2026-06-13', '2026-07-12']);
+});
+
+test('季繳：6/13 起租,第 1 期 6/13~9/12', () => {
+  assert.deepEqual(periodRange('2026-06-13', 'quarterly', 0), ['2026-06-13', '2026-09-12']);
+});
+
+test('半年繳：6/13 起租,第 1 期 6/13~12/12', () => {
+  assert.deepEqual(periodRange('2026-06-13', 'halfyear', 0), ['2026-06-13', '2026-12-12']);
+});
+
+test('1 號起租：第 1 期 6/1~6/30,不是 6/1~7/1', () => {
+  assert.deepEqual(periodRange('2026-06-01', 'monthly', 0), ['2026-06-01', '2026-06-30']);
+});
+
+test('★ 31 號起租要夾到月底,不能溢位到下個月', () => {
+  // 1/31 起租的月繳,第 2 期起日不能是 2/31（JS 會溢位成 3/3）
+  assert.deepEqual(periodRange('2026-01-31', 'monthly', 1), ['2026-02-28', '2026-03-30']);
+});
+
+test('閏年 2 月夾到 29 號', () => {
+  assert.deepEqual(periodRange('2028-01-31', 'monthly', 1)![0], '2028-02-29');
+});
+
+test('跨年：12/13 起租的年繳', () => {
+  assert.deepEqual(periodRange('2026-12-13', 'yearly', 0), ['2026-12-13', '2027-12-12']);
+});
+
+test('沒有起租日就回 null —— 呼叫端要顯示空白,不要自己猜', () => {
+  assert.equal(periodRange(null, 'yearly', 0), null);
+  assert.equal(periodRange('', 'yearly', 0), null);
+});
+
+test('顯示字串不補零,跟畫面其他地方一致', () => {
+  assert.equal(fmtPeriodRange(periodRange('2026-06-13', 'yearly', 0)), '2026/6/13 ~ 2027/6/12');
+  assert.equal(fmtPeriodRange(null), '');
 });
