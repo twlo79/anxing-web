@@ -51,6 +51,16 @@ jobs:
             git fetch origin main
             git reset --hard origin/main
             npm install --no-audit --no-fund || rollback
+
+            # 一定要從乾淨的 .next 開始 build。
+            #
+            # 之前是直接蓋著上一版的 .next 增量 build。快幾秒，但只要有一個
+            # 產物沒被重新產生，後面的階段就會去讀一個「上一版留下來的」或
+            # 「這一版根本沒生出來的」檔案，錯誤訊息會指向一個跟改動無關的路由。
+            # #218 的 ENOENT .nft.json 就是那種形狀的錯。
+            #
+            # 備份在上面已經做好了（.next.bak），失敗照樣還原得回去。
+            rm -rf .next
             npm run build || rollback
 
             pm2 restart anxing || pm2 start npm --name anxing -- start
