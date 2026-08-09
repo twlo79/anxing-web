@@ -311,9 +311,18 @@ active, auto_renew, watch, display_name, created_at`
 
 ### `orders` 訂單(全站交易中心)
 `id, order_key*, source, estate_id→estates, property_id→properties, property_raw, guest_name,
-checkin, checkout, nights, amount, deposit, deposit_received(_at), deposit_returned(_at),
-fx_revenue jsonb, fx_deposit jsonb, account, note, fee_type, paid, paid_at,
+checkin, checkout, nights, amount, paid_amount, deposit, deposit_received(_at), deposit_returned(_at),
+fx_revenue jsonb, fx_deposit jsonb, account, note, fee_type, item_name, paid, paid_at,
+account_code→account_codes, invoice_required, invoice_title, invoice_tax_id,
 contract_id, parent_order_id, move_group, imported_via, created_at`
+
+`paid_amount` 由 `order_payments` 加總而來(`migration_84`),**前端不要寫**。與 `amount` 比對得出未收款 / 部分收款 / 已收款。
+
+`account_code` 是**系統自動填的**(`migration_91`)—— 訂單表單上沒有這個欄位,規則見〈錢的流向 → 會計科目〉。
+
+`fee_type` 是**名目**不是會計科目(水費、電費、停車費……),`item_name` 是名目底下的細目
+(例如 `fee_type='設備費'` + `item_name='冰箱'`)。合成一個字串的話,報表上會出現「設備費－冰箱」
+「設備費－電視」兩個各自獨立的分類,永遠回答不了「設備費一共收多少」。
 
 `source` 值:
 
@@ -390,9 +399,44 @@ property_id→properties, property_raw, estate_name, overall_rating, note, doc_u
 ### `staff_properties` 人員 × 房源
 複合主鍵 (`staff_id`, `property_id`),雙向 CASCADE。目前前端未使用。
 
+### `order_payments` 訂單收款(`migration_84` / `85`)
+`id, order_id→orders(CASCADE), paid_on, amount, method, account, invoice_no, note, created_by, created_at`
+
+一張訂單可以收很多次,收幾次填幾次,直到收滿為止。`method`:`cash` 現金 / `crypto` 加密貨幣 /
+`credit_card` 信用卡 / `transfer` 匯款。
+
+`op_account_chk` 要求**只有匯款才能填收款帳戶** —— 現金收款卻掛著一個銀行帳號,對帳時分不出那是真的還是誤填。
+
+每一筆收款可以附憑證照片(`attachments.order_payment_id`,`migration_85`),證據跟著那一筆走而不是掛在訂單上 ——
+掛在訂單上的話,收了三次就有三張圖混在一起,對不出哪張是哪次。
+
+### `contract_recurring_charges` 契約固定加費(`migration_86`)
+`id, contract_id→contracts(CASCADE), fee_type, item_name, amount, active, created_at`
+
+管理費、停車費、設備費這類每期都發生的費用。`gen_contract_fee_orders()` 依契約期數逐期產生訂單,
+鍵 `CRC_{id}_{YYYYMM}`、`imported_via='contract_fee'`。**已收款的那一期不會被動到**(`paid = false` 才覆寫)。
+
 ### `account_codes` 會計科目主檔
-`code(PK), name, sort, active`
-預設 15 個科目(修繕維護、清潔費、備品消耗品…)。所有登入者可讀,只有 `super_admin` 可改。
+`code(PK), name, sort, active, kind`
+
+收支**共用同一份科目表**(`migration_90`)。目前 23 個科目,所有登入者可讀,只有 `super_admin` 可改
+—— 而且系統裡**沒有新增科目的畫面**,一律用 SQL 加。
+
+`kind` 決定方向,是 `migration_90` 新增的:
+
+| 值 | 意義 | 例 |
+|---|---|---|
+| `expense` | 只用於支出 | 保險費、薪資勞務、規費稅捐 |
+| `income` | 只用於收入 | 租金收入 |
+| `both` | 收支兩用 | 清潔費、管理費、水電瓦斯、修繕維護、網路第四台、停車費、設備費、其他 |
+
+同一個科目兩用是正常的會計做法 —— 清潔費跟房客收是收入、付清潔公司是支出,損益表上各站一邊,
+不必拆成兩個名字。畫面依情境只顯示該方向的選項,所以支出的下拉裡不會出現「租金收入」。
+
+**`kind` 使用者不填也看不到。** 值在 migration 裡寫死,前端只拿它過濾下拉。
+
+⚠️ **改科目一律只改 `name`,不要改 `code`。** 既有支出是靠 `code` 掛著的(`expenses.account_code` 有外鍵),
+改 code 會讓所有既有支出對不到科目。`migration_46`(差旅交通)、`migration_90`(房租支出 → 租金支出)都走這條路。
 
 ### `payment_accounts` 出款帳戶主檔(`migration_38`)
 `code(PK), name, method(cash|transfer|credit_card|crypto), card_last4, for_payment, for_receipt, active, sort`
@@ -404,11 +448,18 @@ property_id→properties, property_raw, estate_name, overall_rating, note, doc_u
 currency, fx_rate,
 payment_method, payee_bank_code, payee_account, payee_company, payee_tax_id,
 planned_transfer_on, payout_account, purchased_on,
-voucher_no, no_voucher,
+voucher_no, no_voucher, fee_mode, fee_amount,
 note, submitted_at, manager_approved_by/_at, admin_approved_by/_at,
 rejected_by/_at, reject_reason, expense_generated_at, created_at`
 
 `status`:`draft` → `pending` → `approved` / `rejected`。
+
+**匯款手續費**(`migration_83`):`fee_mode` = `internal` 內扣(廠商吸收,不另記帳)/ `extra` 不內扣(我方另付)。
+選 `extra` 要填 `fee_amount`,而且 `pr_fee_chk` 要求 **`payment_method` 必須是 `transfer`** —— 現金付款不會有匯費。
+
+出款日填了之後,`sync_pr_fee_expense()` 會另外產生一筆支出:科目固定**郵電費**、日期＝出款日、
+物業與房源同那張請款單。這支函式是冪等的,條件不再成立時會把那筆支出刪掉
+(靠 `expenses.fee_request_id` UNIQUE 認人,不會誤刪別的)。
 
 **兩票並行,沒有先後**:`manager` 一票、`super_admin` 一票,兩票到齊才進 `approved`。總額 < NT$3,000 送出即核可(兩票全免)。**開放自核** —— 主管送的單那一票由他自己投,不再要求第二人(`migration_32`)。
 
@@ -447,9 +498,23 @@ estate_id→estates, property_id→properties, note, sort`
 account_code→account_codes, purpose_type, estate_id→estates, property_id→properties,
 voucher_no, no_voucher, payment_method, pay_account,
 note, source_item_id→purchase_request_items(UNIQUE), request_id→purchase_requests,
+parent_expense_id→expenses(CASCADE), gross_amount, deferred, starred,
 created_by, created_at`
 
 兩種來源:請款連動產生(`source_item_id` 有值)、或直接手動新增(為 null)。
+
+**遞延認列的三個欄位**(`migration_88`,完整規則見〈錢的流向〉):
+
+| 欄位 | 誰有值 | 意義 |
+|---|---|---|
+| `parent_expense_id` | 只有子單 | 指回母單。母單為 null |
+| `gross_amount` | 只有遞延母單 | **實付總額**。`amount` 是「這一天認列多少」,不是「付了多少」 |
+| `deferred` | 只有母單 | 子單不標記 —— 子單靠 `parent_expense_id` 辨認 |
+
+`exp_deferral_chk` 列舉出三種合法身分(一般支出 / 遞延母單 / 子單),寫成寬鬆條件的話會出現
+「`deferred=true` 但 `gross_amount` 是 null」—— 那種列會讓等式守衛直接跳過不驗,母子金額對不上也沒人發現。
+
+`starred` 關注支出(`migration_89`):**遞延母子單會雙向連動**,打其中一個整組都亮。部分索引 `exp_starred_idx`。
 
 `request_id`(`migration_55`)記錄這筆支出來自哪張請款單。除了追溯來歷,憑證照片也靠它沿用 —— **照片不複製**,一張請款單常拆成好幾筆支出,複製會讓同一張發票在 storage 出現 N 份,某天有人刪掉其中一個,其他還在,對帳時分不出哪張才算數。憑證**號碼**則是真的複製一份,因為同一張發票本來就對應多個項目,對帳靠這個號碼把它們串回去。
 
@@ -473,6 +538,258 @@ bucket 私有代表看圖要用簽名網址(前端 `createSignedUrls`,1 小時�
 Web Push 的訂閱資料。請款單送審時由資料庫觸發器經 **`pg_net`** 打 `/api/push/notify`,通知有權核可的人(`migration_36`,換網域後 `migration_37`)。用 `pg_net` 而非 Supabase Dashboard 的 Webhook,是因為後者不在版控裡,換網域時會忘記改。
 
 > iOS 的 Web Push 只在**加到主畫面**之後才會運作(16.4+),用 Safari 直接開網站收不到通知。
+
+---
+
+## 錢的流向:人工做什麼、系統做什麼
+
+> 這一節是整份文件最該先讀的部分。系統裡幾乎每一個「數字自己變了」的疑問,答案都在這裡。
+>
+> **原則:認列與現金是兩件事,而且收入與支出的順序剛好相反。**
+
+### 一句話總覽
+
+| | 先發生 | 後發生 |
+|---|---|---|
+| **收入** | **訂單認列**(系統自動,建單當下) | **現金認列**(人工,收到錢才登記) |
+| **支出** | **現金認列**(人工,付了錢才產生) | **遞延認列**(人工,可選,事後拆到各月) |
+
+收入是「先算帳、後收錢」:訂單一建立,營收就按月拆好了,跟錢到了沒有完全無關。
+支出是「先付錢、後算帳」:錢出去了才有支出列,要分攤到別的月份是之後再做的事。
+
+兩邊順序相反不是設計失誤 —— 收入的義務在訂單成立時就發生,支出的事實在付款時才發生。
+
+---
+
+### 收入:訂單認列 → 現金認列
+
+```
+[系統] 契約觸發器 / 匯入 / 手動建單
+          ↓
+       orders 一筆
+          ↓
+[系統] orders_recognize 觸發器 → gen_recognitions()
+          ↓
+       revenue_recognitions 逐月拆好      ← ★ 營收在這一刻就成立了
+          ↓
+[人工] 訂單上按「收款」,填收款日/金額/方式/帳號,可附圖
+          ↓
+       order_payments 一筆(可多筆,收幾次填幾次)
+          ↓
+[系統] sync_order_paid() 加總 → orders.paid_amount
+          ↓
+       狀態自動變成 未收款 / 部分收款 / 已收款
+```
+
+**人工要做的**
+
+| 動作 | 在哪 | 說明 |
+|---|---|---|
+| 建立訂單 | 短租訂單頁 / 契約頁 | 契約的月租單不用建,觸發器會產生 |
+| 登記收款 | 訂單抽屜 →「收款」 | 收款日、台幣金額、**收款方式**、憑證照片 |
+| 選收款帳戶 | 同上 | **只有「匯款」才需要**;現金/加密貨幣/信用卡不填(`op_account_chk` 擋著) |
+| 勾「要開發票」 | 訂單表單 | 勾了之後在收款那裡填發票號碼(`migration_87`) |
+
+**系統自動做的**
+
+| 行為 | 觸發時機 | 規則 |
+|---|---|---|
+| 產生營收認列 | 訂單 INSERT/UPDATE/DELETE | 先刪光該訂單的舊認列再重生。跨月按天數拆,**尾期補餘額**(`migration_53`) |
+| 加總已收金額 | `order_payments` 增刪改 | `sync_order_paid()` 寫回 `orders.paid_amount` |
+| 訂單金額改了重算 | `orders.amount` 變動 | `trg_orders_resync_paid` 重新比對收款狀態 |
+| 一個月只留一列認列 | 隨時 | `uq_recognition_order_month` 唯一索引(`migration_82`)—— 結構上不可能重複算 |
+| 刪契約 → 營收一起消失 | 契約 DELETE | 外鍵 CASCADE(`migration_81`)。之前會留下 757 筆對不到契約的孤兒訂單,營收永遠算得出來但沒人知道從哪來 |
+
+> ⚠️ **收款不影響營收。** 一筆訂單全額收清或一毛沒收,`revenue_recognitions` 完全一樣。
+> 儀表板的營收讀的是認列表,不是收款 —— 這是刻意的,不是 bug。
+
+---
+
+### 支出:現金認列 → 遞延認列
+
+```
+[人工] 填請款單(多項目、幣別、預定出款日)
+          ↓  送出
+[系統] pr_apply_status() 狀態機:判斷免核門檻 / 等兩票
+          ↓
+[人工] manager 一票 + super_admin 一票(可駁回、可撤銷)
+          ↓
+       status = approved
+          ↓
+[人工] 實際付款後,填「出款日」                    ← ★ 紅線,填了就鎖住
+          ↓
+[系統] gen_expenses_from_pr() 逐項產生 expenses    ← ★ 現金認列成立
+          ↓
+[系統] 若勾了「手續費不內扣」→ 另生一筆郵電費支出
+          ↓
+[人工] (可選) 在支出上開「遞延認列」,填各期認列日與金額
+          ↓
+[系統] 拆成母單 + N 張子單,並強制 母單+子單 = 實付總額
+```
+
+**人工要做的**
+
+| 動作 | 在哪 | 說明 |
+|---|---|---|
+| 填請款單 | 請款單頁 | 可多項目,每項各有科目/用途/物業/憑證 |
+| 核可 | 請款單抽屜 | manager 與 super_admin 各一票,**並行沒有先後**;會計不能投票 |
+| 填預定出款日 | 請款單 | 申請時就能填(`migration_49`),只是排程用 |
+| 勾手續費處理 | 請款單 | **內扣**(廠商吸收)/ **不內扣**(我方另付)。不內扣要填金額,且**只有匯款才能選**(`pr_fee_chk`) |
+| 填出款日 | 請款單 | **這是不可逆的一步** —— 支出在這一刻產生,而且日期之後不能改 |
+| 設遞延認列 | 支出頁 → 檢視抽屜 | 填每一期的認列日與金額,**合計必須剛好等於實付總額**才能存 |
+| 打星關注 | 支出列表,檢視旁邊 | 大額的、有爭議的、要跟廠商對的 |
+
+**系統自動做的**
+
+| 行為 | 觸發時機 | 規則 |
+|---|---|---|
+| 重算請款單總額 | 項目增刪改 | `sync_pr_total()`,前端不要寫 `total_amount` |
+| 狀態機 | 請款單 UPDATE | 送出判免核門檻、兩票到齊翻 `approved`、駁回清票 |
+| 擋會計投票 | 請款單 UPDATE | RLS 管不到欄位層級,所以用觸發器擋 |
+| 產生支出 | 出款日**從無到有** | `on conflict (source_item_id) do nothing` —— **刪掉了不會補回來** |
+| 產生手續費支出 | 同上,且 `fee_mode='extra'` | 科目固定「郵電費」,日期＝出款日,物業與房源同那張請款單(`migration_83`) |
+| 推播通知 | 狀態變 `pending` | `pg_net` 打 `/api/push/notify` 通知有權核可的人 |
+
+> ⚠️ **出款日填了就不能改。** `migration_88` 特意把 `gen_expenses_from_pr()` 裡「只改日期就同步支出」那段拿掉了 ——
+> 留著的話某天會把母單的日期改掉、子單留在原地,母子單就散了。
+
+---
+
+### 遞延認列:母子單的規則(`migration_88`)
+
+**要解決的問題**:8/8 一次付了半年房租 10,000,不該讓 8 月的費用暴增然後之後幾個月都是 0。
+
+**存下去長什麼樣**
+
+```
+母單  8/8   amount 0        gross_amount 10,000   deferred=true
+子單  9/8   amount 5,000    parent_expense_id → 母單
+子單  10/8  amount 5,000    parent_expense_id → 母單
+```
+
+**為什麼母單的金額會變小 —— 這是整個機制最關鍵的一件事**
+
+系統裡**沒有支出認列表**。營收有 `revenue_recognitions`,支出沒有:儀表板、Excel、月報全部直接
+`sum(expenses.amount) group by spent_on`。
+
+所以母單若留著 10,000、又生出 5,000+5,000 的子單,報表會算成 20,000 —— **這筆房租變兩倍,而且不會報錯**。
+
+解法是讓 `amount` 的語意從「付了多少」收斂成「**這一天認列多少**」:
+
+```
+母單.amount       = 實付總額 − 所有子單合計
+母單.gross_amount = 實付總額(對發票、對銀行用)
+```
+
+`sum(amount)` 因此恆等於實付總額,**所有既有報表一行都不用改**。
+代價是母單的金額可能是 0,所以畫面上一定要把實付總額顯示出來,否則會計拿 10,000 的發票搜不到任何一列。
+
+**行為規則一覽**
+
+| 規則 | 誰負責 | 為什麼 |
+|---|---|---|
+| 母單 + 所有子單 = 實付總額 | **資料庫**(`trg_expense_deferral_sum`,`deferrable initially deferred`) | 前端也擋,但前端擋不住 API、匯入、下一個工程師。差一塊都不給存 |
+| 一筆支出只能是三種身分之一 | 資料庫(`exp_deferral_chk`) | 一般支出 / 遞延母單 / 子單。列舉而不是寫寬鬆條件,避免「標了 deferred 但沒 gross_amount」讓守衛靜靜跳過 |
+| **子單不可單獨編輯或刪除** | 前端 + 資料庫 | 要改一律回母單。子單沒有自己的付款事實,它的存在完全依附母單 |
+| 子單繼承母單的描述欄位 | 資料庫(`sync_expense_child`) | 科目、用途、物業、房源、憑證、付款方式、幣別、匯率、請款單。**日期與金額不繼承** —— 那正是子單存在的理由 |
+| 母單改描述欄位 → 子單跟著改 | 資料庫(`propagate_expense_parent`) | 只在描述欄位真的變動時才跑(WHEN 條件),不會無限遞迴 |
+| **母單金額不可改** | 前端(金額輸入框 disabled) | 改了等式就破。要改先取消遞延,重設一次 |
+| 母單刪 → 子單一起刪 | 資料庫(`on delete cascade`) | 母單刪了子單沒有意義 |
+| 改遞延明細 = 全刪重建 | 前端 | 逐筆比對要處理三種路徑,而等式在中途一定會短暫不成立。全刪重建只有一條路徑,而觸發器是 deferrable,交易結束才驗 |
+| `source_item_id` 不繼承 | 資料庫 | 那一欄是 UNIQUE(一個請款項目一筆支出),複製過去直接違反約束。子單靠 `parent_expense_id` 回溯請款單 |
+
+**兩個數字要分開看**
+
+| | 算法 | 意義 |
+|---|---|---|
+| **認列支出** | `sum(amount)` | 這段期間的**費用**是多少。跟改版前完全一樣 |
+| **實際支出** | 只算非子單,母單取 `gross_amount` | 這段期間**真的付出去**多少錢 |
+
+8/8 付 10,000 分兩期:8 月認列 5,000 / 實際 10,000,9 月認列 5,000 / 實際 0。
+只看認列會以為 8 月沒花錢,銀行對帳對不上;只看實際會讓 9 月的費用憑空消失。**沒有遞延時兩個數字完全相同**。
+
+兩個數字都在支出頁的統計卡與 Excel 匯出裡。Excel 的「實際支出」欄在子單那列**留空**,不印 0 —— 印 0 會讓人以為那天付了 0 元。
+
+---
+
+### 關注支出:母子單雙向連動(`migration_89`)
+
+星星在支出列表「檢視」的旁邊。打星之後可以篩選,也會出現在財務儀表板。
+
+**連動規則**
+
+```
+母單打星  →  所有子單跟著亮
+子單打星  →  母單跟著亮,母單再帶動其他兄弟
+取消同理
+```
+
+一筆錢拆成母單 + N 張子單,使用者的規則是**打其中任何一個,整組都要亮**。
+
+**為什麼寫在資料庫而不是前端**:寫在前端的話,只有「從支出頁點星星」那條路會同步。從儀表板、從匯入、從 API 改的都不會 —— 而不同步不會報錯,只會讓篩選出來的清單少幾張子單,看起來像資料不見了。
+
+**遞迴防護**(母單改 → 更新子單 → 子單觸發器又想更新母單 → 無限迴圈):
+
+1. 兩個觸發器都有 `WHEN` 條件 —— 值真的變了才跑
+2. UPDATE 的 WHERE 再比對一次 —— 值一樣就不寫,沒有 UPDATE 就沒有下一輪
+
+**新子單繼承母單的星**:遞延明細改了會全刪重建,不繼承的話那組單的星星每次都掉光,而且沒有任何跡象。
+
+---
+
+### 會計科目:名目 ≠ 科目(`migration_90` / `91`)
+
+**兩層,不要混在一起**:
+
+* **名目** = 收款畫面上選的細項(`orders.fee_type`):水費、電費、瓦斯費、停車費……
+* **會計科目** = 損益表上的分類(`account_codes`),本來就該比名目粗
+
+| | 誰填 |
+|---|---|
+| **支出的科目** | **人工選**(請款單與支出頁的下拉) |
+| **收入的科目** | **系統自動填,使用者完全不用選** —— 訂單表單上沒有這個欄位 |
+
+**收入的對應規則**(`order_account_code(source, fee_type)`,回填與觸發器共用同一份):
+
+| 來源 / 名目 | 計入科目 |
+|---|---|
+| 長租 / 辦公室 / 公司登記 / Airbnb / Agoda / 私下 / 搭檔 | 租金收入 |
+| 水費 / 電費 / 瓦斯費 | 水電瓦斯 |
+| 修繕費 | 修繕維護 |
+| 網路費 | 網路第四台 |
+| 管理費 / 清潔費 / 停車費 / 設備費 | 同名科目 |
+| 其他 / 沒填 / 舊值「取消費」 | 其他 |
+
+`account_codes.kind` 決定方向:`expense` 只用於支出 / `income` 只用於收入 / `both` 兩邊都用。
+清潔費是 `both` —— 跟房客收是收入、付清潔公司是支出,損益表上同一個科目各站一邊,不必拆成兩個名字。
+
+**兩道對稱的守衛**(資料庫層,因為前端擋不住 API 與匯入):
+
+* 收入科目掛到支出上 → 擋(`check_account_kind_expense`,`expenses` 與 `purchase_request_items`)
+* 支出專用科目計入收入 → 擋(`check_account_kind_income`,`orders`)
+
+---
+
+### 契約的固定加費(`migration_86`)
+
+管理費、停車費、設備費(冰箱/洗烘衣機/電視)這類每期都發生的費用,**設定一次,每一期自動長出來**。
+
+| | |
+|---|---|
+| **人工** | 契約抽屜設定加費項目與金額(有五個預設可選) |
+| **系統** | `gen_contract_fee_orders()` 依契約期數逐期產生訂單,鍵 `CRC_{id}_{YYYYMM}`,`imported_via='contract_fee'` |
+| **系統** | 跟租金一起收、一起認列營收 |
+
+**停止加費時**:已經產生且**已收款**的那一期不退,下一期才停(`paid = false` 才會被觸發器動到)。這是使用者定的規則 —— 錢已經收了,系統不該自己去改一筆收過的帳。
+
+---
+
+### 押金:一筆多幣別(`migration_87`)
+
+有時房客拿多種幣別,實務上是一起放保險箱、之後一起退,所以**押金不該按幣別拆成好幾筆**。
+
+一張訂單/契約只有**一列**押金,幣別明細存在 `deposits.lines` jsonb 裡,共用同一個收款日、收款方式與退款流程。
+`dep_order_once_idx` / `dep_contract_once_idx` 從結構上保證一個來源只會有一列。
 
 ---
 
@@ -502,7 +819,33 @@ purchase_requests ──[BEFORE UPDATE,依序三支]
 
 purchase_requests ──[AFTER UPDATE → pending]──► pg_net 打 /api/push/notify
                                                   └─ 通知有權核可的人(Web Push)
+
+purchase_requests ──[出款日填了 且 fee_mode='extra']──► sync_pr_fee_expense()   (migration_83)
+                                                  └─ 另生一筆「郵電費」支出,冪等,條件不成立時會刪掉
+
+order_payments ──[AFTER I/U/D]──► sync_order_paid()                             (migration_84)
+                                   └─ 加總寫回 orders.paid_amount
+orders ──[AFTER UPDATE OF amount]──► resync_order_paid_on_amount()
+                                   └─ 訂單金額改了,收款狀態重新比對
+
+orders ──[BEFORE I/U,依序兩支]                                                  (migration_91)
+   1. trg_orders_account     sync_order_account()          由 source + fee_type 自動填 account_code
+   2. trg_orders_kind_guard  check_account_kind_income()   擋:支出專用科目計入收入
+   （命名讓 1 排在 2 前面 —— 先填好值,才輪到守衛檢查）
+
+expenses ──[BEFORE I/U]──► sync_expense_child()                                 (migration_88/89)
+                            └─ 子單繼承母單的描述欄位與星號(日期與金額不繼承)
+expenses ──[AFTER I/U/D, CONSTRAINT, DEFERRABLE]──► check_expense_deferral()     (migration_88)
+                            └─ 母單 + 子單 = 實付總額,交易結束才驗
+expenses ──[AFTER UPDATE OF starred, 兩個方向]──► star_down_to_children()        (migration_89)
+                                                  star_up_to_parent()
+                            └─ 都有 WHEN 條件 + 值比對兩道遞迴防護
+
+contracts ──[AFTER I/U/D]──► gen_contract_fee_orders()                          (migration_86)
+                              └─ 固定加費逐期產生 CRC_{id}_{YYYYMM},已收款的那期不動
 ```
+
+> 這些觸發器的**業務規則**寫在〈錢的流向:人工做什麼、系統做什麼〉,這裡只列連動關係。
 
 ⚠️ `gen_expenses_from_pr()` **只在出款日「從無到有」時建立支出**(`on conflict (source_item_id) do nothing`)。連動產生的支出一旦被刪除,重填出款日也不會補回來 —— 這是刪除限制成 `super_admin` 才能做的原因之一。同理,改版前就結案的單不會回頭補憑證欄位,那些要人工補。
 
@@ -643,7 +986,13 @@ values ('<user_uuid>', '名字', 'housekeeper');  -- housekeeper | accountant | 
 |---|---|
 | 登入 / 角色選單 | ✅ |
 | 短租訂單與收款(含加費、移房、外幣、押金) | ✅ |
+| **短租分次收款**(多筆、收款方式、逐筆附圖、未收/部分收/已收) | ✅ |
 | 契約訂單與收款(自動月租單、展延、關注、**折讓**) | ✅ |
+| **契約固定加費**(管理費/停車費/設備費,每期自動產生) | ✅ |
+| **押金一筆多幣別**(共用同一個收退款流程) | ✅ |
+| **支出遞延認列**(母子單、認列支出 vs 實際支出) | ✅ |
+| **關注支出**(★ 母子連動、篩選、儀表板明細) | ✅ |
+| **會計科目收支統一**(支出人工選、收入自動填) | ✅ |
 | 營收報表(月度認列、房源篩選、xlsx 匯出) | ✅ |
 | 短租 xlsx 匯出(伺服器端分頁,匯出重取完整結果) | ✅ |
 | 請款填寫(多項目、幣別、兩票核可、駁回、撤銷) | ✅ |
@@ -737,6 +1086,17 @@ values ('<user_uuid>', '名字', 'housekeeper');  -- housekeeper | accountant | 
 | 79 | 回填租期外與已停用契約的月租單來源(78 的迴圈碰不到那些列) |
 | 80 | 清掉「鍵過期」的契約月租單;房號改動改為改名而非重複產生 |
 | 72 | **`data_audit` 編輯紀錄**:支出/請款/押金/訂單/契約的增刪改。刪除與新增存整列,修改只存變動欄位 |
+| 81 | **刪契約 → 營收一起消失**。外鍵改 CASCADE、清掉 757 筆孤兒訂單、加 `uq_contract_order_month`,並改寫 `gen_contract_orders` 為「先去重再改名」—— 換房源不再重複算 |
+| 82 | 一筆訂單一個月只能有一列營收認列(`uq_recognition_order_month`) |
+| 83 | 請款單的**匯款手續費**:內扣 / 不內扣,不內扣自動生一筆「郵電費」支出 |
+| 84 | **短租訂單分次收款**:`order_payments`、`orders.paid_amount`、未收/部分收/已收狀態 |
+| 85 | 收款方式(現金/加密貨幣/信用卡/匯款),**只有匯款才填收款帳戶**;每筆收款可附圖 |
+| 86 | **契約固定加費**:設定一次每期自動產生。停止時已收款的那期不退,下期才停 |
+| 87 | 短租**發票**欄位;**押金改成「一筆多幣別」**(明細存 `deposits.lines`,共用同一個收退款流程) |
+| 88 | **支出遞延認列**(母子單)。等式 `母單+子單=實付總額` 由 constraint trigger 強制;出款日不再連動改支出日期 |
+| 89 | **關注支出**(★)。母子單雙向連動,兩道遞迴防護;新子單繼承母單的星 |
+| 90 | 會計科目分**收入/支出方向**(`kind`);`rent` 正名「租金支出」;新增「租金收入」;兩張表加守衛擋收入科目掛到支出上 |
+| 91 | **收入自動計入會計科目**:`orders.account_code` + `order_account_code()` 對應規則 + 全量回填(帶認列指紋護欄)。使用者完全不用選 |
 
 ---
 
