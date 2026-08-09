@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { parseRows, staffLookup, splitAssignees, type HkStaff, type HkProperty } from '@/lib/hkParse';
+import { notifyImport } from '@/lib/push';
 
 /**
  * 房務排班匯入。
@@ -105,6 +106,17 @@ export async function POST(req: Request) {
 
   // ── 寫入 ────────────────────────────────────────────
   await supabase.from('hk_work_item').delete().eq('period', period);
+  /*
+   * 通知前要先數一次。
+   *
+   * 這支不是「新增」而是「整個期間刪掉重灌」—— 所以插入的筆數是該期間的**總數**,
+   * 不是新的。拿它當「新增 N 筆」會變成每次同步都通知一次同樣的數字。
+   *
+   * 先記下刪除前有幾筆,跟灌完的總數相減,才是真的多出來的。
+   */
+  const { count: beforeCount } = await supabase
+    .from('hk_event').select('*', { count: 'exact', head: true }).eq('period', period);
+
   await supabase.from('hk_event').delete().eq('period', period);
 
   const events = parsed.map((e) => ({
@@ -165,6 +177,14 @@ export async function POST(req: Request) {
     const { error } = await supabase.from('hk_day')
       .upsert(dayRows, { onConflict: 'work_date,staff_id', ignoreDuplicates: false });
     if (error) return NextResponse.json({ error: error.message }, { status: 500, headers: CORS });
+  }
+
+  // 真的多出來才通知。同步了但筆數沒變（只是內容更新）不叮 ——
+  // 排班每天同步，那種通知一天一則、內容永遠一樣，很快就會被整個關掉。
+  const added = events.length - (beforeCount ?? 0);
+  if (added > 0) {
+    await notifyImport('cleaning', '新增清潔記錄',
+      `${period} 新增 ${added} 筆排班記錄`, '/housekeeping');
   }
 
   return NextResponse.json({

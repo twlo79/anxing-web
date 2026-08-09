@@ -6,7 +6,6 @@ import { createClient } from '@/lib/supabase';
 import Receipts, { type ReceiptsHandle } from '@/components/Receipts';
 import RefundFields, { METHOD_LABEL as DEP_METHOD } from '@/components/RefundFields';
 import { shareDeposit } from '@/lib/share';
-import PushToggle from '../push-toggle';
 
 type Item = {
   id?: string; request_id?: string; item_name: string; amount: number;
@@ -1025,7 +1024,7 @@ export default function PurchasesPage() {
       {/* 手機上標題由頂列顯示,這裡只留桌機用 */}
       <h1 className="hidden md:block text-xl font-bold mb-4">請款填寫</h1>
 
-      <PushToggle />
+      {/* 通知開關搬到 /notifications 集中管理（migration_92）—— 四種通知不該散在各頁 */}
 
       {/* 手機:主要動作放最上面,一按就能送單 */}
       <div className="md:hidden flex gap-2 mb-3">

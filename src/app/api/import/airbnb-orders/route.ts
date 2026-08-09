@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
+import { notifyImport } from '@/lib/push';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -119,6 +120,18 @@ export async function POST(req: Request) {
         .eq('order_key', r.order_key);
       if (!error) voided++;
     }
+  }
+
+  /*
+   * 匯入完成後發一則聚合通知。
+   *
+   * **一則,不是每筆一則** —— 這裡一次可能進 200 筆,每筆一則的話手機會叮到沒人想看。
+   * 只有真的新增才發:更新既有訂單（改日期、改金額）不是「有新生意」,
+   * 每天同步都會有一堆更新,那種通知很快就會被當成雜訊而整個關掉。
+   */
+  if (inserted > 0) {
+    await notifyImport('orders', '新增訂單',
+      `爬蟲同步新增 ${inserted} 筆訂單`, '/shortterm');
   }
 
   return NextResponse.json({

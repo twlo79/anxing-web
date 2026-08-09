@@ -1,6 +1,5 @@
-import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
-import webpush from 'web-push';
+import { adminClient, filterByPref, initWebPush, pushConfigured, sendToUsers } from '@/lib/push';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';   // web-push 需要 Node 環境,不能跑在 edge
@@ -15,6 +14,11 @@ export const runtime = 'nodejs';   // web-push 需要 Node 環境,不能跑在 e
  *
  * 排除提交者是為了降噪：他剛按下送出，不需要系統再通知他一次。
  * 副作用是主管送自己的單時不會收到「該投票了」的提醒 —— 他在列表上看得到。
+ *
+ * 【migration_92 之後多了一層】
+ * 算出收件人之後，還要再過一次「這個人的審核通知有沒有開」。
+ * 送出與清死訂閱的邏輯搬到 lib/push —— 四種通知共用同一份，
+ * 各自複製的話「404/410 要刪掉」這種規則會有四個版本，而漏掉的那份不會報錯。
  */
 export async function POST(req: Request) {
   const key = process.env.PUSH_KEY;
@@ -22,18 +26,11 @@ export async function POST(req: Request) {
   if (req.headers.get('x-push-key') !== key)
     return NextResponse.json({ error: 'forbidden' }, { status: 403 });
 
-  if (!process.env.SUPABASE_SERVICE_KEY || !process.env.VAPID_PRIVATE_KEY || !process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY)
+  if (!pushConfigured())
     return NextResponse.json({ error: 'push not configured' }, { status: 500 });
 
-  webpush.setVapidDetails(
-    'mailto:service@oasisliving.tw',
-    process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
-    process.env.VAPID_PRIVATE_KEY,
-  );
-
-  const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
+  initWebPush();
+  const admin = adminClient();
 
   // Supabase webhook 的格式是 { type, table, record, old_record }
   const body = await req.json().catch(() => ({}));
@@ -75,28 +72,13 @@ export async function POST(req: Request) {
 
   if (userIds.length === 0) return NextResponse.json({ ok: true, skipped: 'no recipients' });
 
-  const { data: subs } = await admin.from('push_subscriptions').select('*').in('user_id', userIds);
-  if (!subs?.length) return NextResponse.json({ ok: true, skipped: 'no subscriptions' });
+  // 再過一次個人偏好（migration_92）。沒有偏好列的人退回預設「收」——
+  // 那是上線前的既有行為,不能因為少一列資料就讓人靜靜地收不到核可通知。
+  const wanted = await filterByPref(admin, userIds, 'approvals');
+  if (wanted.length === 0) return NextResponse.json({ ok: true, skipped: 'all opted out' });
 
-  const payload = JSON.stringify({ title, body: bodyText, url: '/purchases', tag: 'pr-' + rec.id });
-  let sent = 0;
-  const dead: string[] = [];
-
-  await Promise.all(subs.map(async (s) => {
-    try {
-      await webpush.sendNotification(
-        { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
-        payload,
-      );
-      sent++;
-    } catch (e: unknown) {
-      // 404 / 410 = 對方已解除安裝或關閉權限,這種訂閱永遠不會再成功,直接清掉
-      const code = (e as { statusCode?: number })?.statusCode;
-      if (code === 404 || code === 410) dead.push(s.endpoint);
-    }
-  }));
-
-  if (dead.length) await admin.from('push_subscriptions').delete().in('endpoint', dead);
-
-  return NextResponse.json({ ok: true, sent, removed: dead.length, recipients: userIds.length });
+  const r = await sendToUsers(admin, wanted, {
+    title, body: bodyText, url: '/purchases', tag: 'pr-' + rec.id,
+  });
+  return NextResponse.json({ ok: true, ...r });
 }

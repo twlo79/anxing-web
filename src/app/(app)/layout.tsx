@@ -26,6 +26,9 @@ const NAV = [
   { href: '/housekeeping', label: '房務管理', icon: '🛏️', roles: ['manager', 'super_admin'] },
   { href: '/reviews', label: '房源評價', icon: '⭐', roles: ['housekeeper', 'manager', 'super_admin'] },
   { href: '/cleaning', label: '清潔記錄', icon: '🧹', roles: ['housekeeper', 'manager', 'super_admin'] },
+  // 通知是每個人自己的偏好,所以全角色都看得到 ——
+  // 放在權限管理上面（那頁只有總經理進得去,擺一起會讓人以為這也是管理員專用）
+  { href: '/notifications', label: '通知設定', icon: '🔔', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/admin', label: '權限管理', icon: '⚙️', roles: ['super_admin'] },
 ];
 

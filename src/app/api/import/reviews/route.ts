@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
+import { notifyImport } from '@/lib/push';
 
 export const dynamic = 'force-dynamic';
 
@@ -207,6 +208,18 @@ export async function POST(req: Request) {
   // resolvedByOrder:這幾筆的 listingId 缺漏,是靠訂單反查補上的。
   // 數字持續偏高就表示抓取端沒帶 listingId,那才是根治的地方 ——
   // 訂單反查只是備援,不該變成主要來源。
+  /*
+   * 只有「真的新增」才通知。
+   *
+   * 這支是 upsert:每次同步都會把既有評價寫一次（翻譯補上、房東回覆更新…）,
+   * 所以 upserted 幾乎每天都是幾百筆,而 inserted 才是新評價。
+   * 用 upserted 發通知等於每天叮一次「有 300 則新評價」—— 那會直接被關掉。
+   */
+  if (inserted > 0) {
+    await notifyImport('reviews', '新的房客評價',
+      `爬蟲同步新增 ${inserted} 則評價`, '/reviews');
+  }
+
   return NextResponse.json({
     upserted, inserted, updated: upserted - inserted,
     unmatched, unresolved, resolvedByOrder: guessedByOrder.length, needTranslation,
