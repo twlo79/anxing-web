@@ -35,6 +35,15 @@ type WithName<T> = T & { name?: string };
 export default function ApproveTab({ me, onMsg }: TabProps) {
   const supabase = useMemo(() => createClient(), []);
   const [sub, setSub] = useState<Sub>('leave');
+  /**
+   * 簽核中 / 已結束。
+   *
+   * 【為什麼要有「已結束」】
+   * 「我上禮拜那張假到底過了沒」是主管會被問的問題，
+   * 而只留待辦清單的話，簽完就消失，主管自己也查不到。
+   * 已結束只撈最近 60 天 —— 再舊的沒有人在追。
+   */
+  const [done, setDone] = useState(false);
   const [types, setTypes] = useState<LeaveType[]>([]);
   const [leaves, setLeaves] = useState<WithName<LeaveReq>[]>([]);
   const [ots, setOts] = useState<WithName<OtReq>[]>([]);
@@ -43,12 +52,28 @@ export default function ApproveTab({ me, onMsg }: TabProps) {
   const isBoss = me.role === 'super_admin';
 
   const load = useCallback(async () => {
+    // 已結束只看最近 60 天。全部撈的話會愈來愈慢，而超過兩個月的沒有人在追。
+    const since = new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10);
+    // 兩種模式分開寫。想寫成一個泛型 helper 包起來的話 TypeScript 會在
+    // Supabase 的 query builder 型別上遞迴到爆（TS2589），而那個錯誤訊息
+    // 完全看不出來是這裡造成的。
+    const lrQ = done
+      ? supabase.from('leave_requests').select('*').neq('status', 'pending')
+          .gte('start_at', since).order('start_at', { ascending: false })
+      : supabase.from('leave_requests').select('*').eq('status', 'pending').order('start_at');
+    const otQ = done
+      ? supabase.from('overtime_requests').select('*').neq('status', 'pending')
+          .gte('work_date', since).order('work_date', { ascending: false })
+      : supabase.from('overtime_requests').select('*').eq('status', 'pending').order('work_date');
+    const fxQ = done
+      ? supabase.from('attendance_fixes').select('*').neq('status', 'pending')
+          .gte('work_date', since).order('work_date', { ascending: false })
+      : supabase.from('attendance_fixes').select('*').eq('status', 'pending').order('work_date');
+
     const [{ data: lt }, { data: pf }, { data: lr }, { data: ot }, { data: fx }] = await Promise.all([
       supabase.from('leave_types').select('code, name, has_quota, sort').order('sort'),
       supabase.from('profiles').select('id, name'),
-      supabase.from('leave_requests').select('*').eq('status', 'pending').order('start_at'),
-      supabase.from('overtime_requests').select('*').eq('status', 'pending').order('work_date'),
-      supabase.from('attendance_fixes').select('*').eq('status', 'pending').order('work_date'),
+      lrQ, otQ, fxQ,
     ]);
     const nameOf = new Map((pf ?? []).map((p) => [p.id as string, p.name as string]));
     const withName = <T extends { user_id: string }>(rows: unknown): WithName<T>[] =>
@@ -57,7 +82,7 @@ export default function ApproveTab({ me, onMsg }: TabProps) {
     setLeaves(withName<LeaveReq>(lr));
     setOts(withName<OtReq>(ot));
     setFixes(withName<FixReq>(fx));
-  }, [supabase]);
+  }, [supabase, done]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -90,6 +115,18 @@ export default function ApproveTab({ me, onMsg }: TabProps) {
 
   return (
     <div className="space-y-4">
+      <div className="flex items-center gap-1">
+        {([[false, '簽核中'], [true, '已結束']] as const).map(([v, lb]) => (
+          <button key={lb} onClick={() => setDone(v)}
+            className={`px-3 py-1 text-sm ${
+              done === v ? 'text-mor-slate font-semibold' : 'text-gray-400 hover:text-gray-600'}`}>
+            {lb}
+          </button>
+        ))}
+        <span className="text-xs text-gray-300">|</span>
+        <span className="text-xs text-gray-400">{done ? '最近 60 天' : '等你處理的'}</span>
+      </div>
+
       <div className="flex gap-1">
         {tabs.map(([k, label, n]) => (
           <button key={k} onClick={() => setSub(k)}
@@ -97,7 +134,7 @@ export default function ApproveTab({ me, onMsg }: TabProps) {
               sub === k ? 'bg-mor-slate text-white' : 'border border-mor-line hover:bg-mor-sand/60'}`}>
             {label}
             {/* 數字直接標在分頁上 —— 沒有數字就不用點進去 */}
-            {n > 0 && (
+            {!done && n > 0 && (
               <span className={`rounded-full px-1.5 text-[11px] ${
                 sub === k ? 'bg-white/25' : 'bg-amber-100 text-amber-700'}`}>{n}</span>
             )}
@@ -127,7 +164,7 @@ export default function ApproveTab({ me, onMsg }: TabProps) {
                     {v.text}
                   </span>
                 </div>
-                <div className="flex gap-2 mt-2">
+                {!done && <div className="flex gap-2 mt-2">
                   {mine ? (
                     <span className="text-xs text-gray-400 py-1.5">
                       你已經簽過了，等{isBoss ? '主管' : '總經理'}。
@@ -145,7 +182,7 @@ export default function ApproveTab({ me, onMsg }: TabProps) {
                   <button disabled={busy === r.id}
                     onClick={() => reject('leave_requests', r.id, 'reject_reason')}
                     className={`${BTN2} text-red-600 border-red-200`}>駁回</button>
-                </div>
+                </div>}
               </div>
             );
           })}
@@ -168,7 +205,7 @@ export default function ApproveTab({ me, onMsg }: TabProps) {
                     {v.text}
                   </span>
                 </div>
-                <div className="flex gap-2 mt-2">
+                {!done && <div className="flex gap-2 mt-2">
                   <button disabled={busy === r.id}
                     onClick={() => write('overtime_requests', r.id,
                       { status: 'approved', manager_by: me.id, manager_at: new Date().toISOString() },
@@ -177,7 +214,7 @@ export default function ApproveTab({ me, onMsg }: TabProps) {
                   <button disabled={busy === r.id}
                     onClick={() => reject('overtime_requests', r.id, 'reject_reason')}
                     className={`${BTN2} text-red-600 border-red-200`}>駁回</button>
-                </div>
+                </div>}
               </div>
             );
           })}
@@ -190,7 +227,7 @@ export default function ApproveTab({ me, onMsg }: TabProps) {
                 {r.fix_time.slice(0, 5)}
               </div>
               <div className="text-xs text-gray-500 mt-0.5">{r.reason}</div>
-              <div className="flex gap-2 mt-2">
+              {!done && <div className="flex gap-2 mt-2">
                 <button disabled={busy === r.id}
                   onClick={() => write('attendance_fixes', r.id,
                     { status: 'approved', reviewed_by: me.id, reviewed_at: new Date().toISOString() },
@@ -199,14 +236,16 @@ export default function ApproveTab({ me, onMsg }: TabProps) {
                 <button disabled={busy === r.id}
                   onClick={() => reject('attendance_fixes', r.id, 'review_note')}
                   className={`${BTN2} text-red-600 border-red-200`}>駁回</button>
-              </div>
+              </div>}
             </div>
           ))}
 
           {((sub === 'leave' && !leaves.length) || (sub === 'ot' && !ots.length)
             || (sub === 'fix' && !fixes.length)) && (
-            <div className="px-4 py-8 text-center text-sm text-gray-400">沒有待處理的{
-              sub === 'leave' ? '請假' : sub === 'ot' ? '加班' : '補登'}</div>
+            <div className="px-4 py-8 text-center text-sm text-gray-400">
+              {done ? '最近 60 天沒有已結束的' : '沒有待處理的'}
+              {sub === 'leave' ? '請假' : sub === 'ot' ? '加班' : '補登'}
+            </div>
           )}
         </div>
       </div>

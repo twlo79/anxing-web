@@ -38,6 +38,15 @@ export default function AttendancePage() {
   const [tab, setTab] = useState<TabKey>('punch');
   const [msg, setMsg] = useState<{ t: string; err?: boolean } | null>(null);
   const [pending, setPending] = useState(0);
+  /**
+   * 從打卡分頁按「補登」帶過來的日期。
+   *
+   * 【為什麼要跨分頁帶值】
+   * 看到「8/7 沒打下班卡」的當下就是他最想處理的時候。
+   * 讓他自己切到申請分頁、再切到補登、再從日曆選 8/7 —— 中間三步，
+   * 每一步都是一次放棄的機會，而放棄的成本是那天的工時永遠是錯的。
+   */
+  const [fix, setFix] = useState<{ date: string; kind: 'in' | 'out'; n: number } | null>(null);
 
   /**
    * 成功訊息四秒後消失，失敗的不會。
@@ -120,8 +129,15 @@ export default function AttendancePage() {
         </div>
       )}
 
-      {cur === 'punch' && <PunchTab {...props} />}
-      {cur === 'apply' && <ApplyTab {...props} />}
+      {cur === 'punch' && (
+        <PunchTab {...props} onFix={(date, kind) => {
+          // n 遞增：同一天按第二次也要讓申請分頁重新帶值
+          setFix({ date, kind, n: (fix?.n ?? 0) + 1 });
+          setTab('apply');
+          setMsg(null);
+        }} />
+      )}
+      {cur === 'apply' && <ApplyTab {...props} prefill={fix} />}
       {cur === 'approve' && isAdmin && <ApproveTab {...props} />}
       {cur === 'calendar' && <CalendarTab {...props} />}
       {cur === 'notice' && <NoticeTab {...props} />}

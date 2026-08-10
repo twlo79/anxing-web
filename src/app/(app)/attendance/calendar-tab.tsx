@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
-import { monthGrid, shiftMonth, twToday } from '@/lib/attendance-ui';
+import { monthGrid, shiftMonth, twToday, dayStatus, type ReportRow } from '@/lib/attendance-ui';
 import { CARD, type Holiday, type TabProps } from './types';
 
 /**
@@ -21,13 +21,22 @@ type LeaveDay = { d: string; name: string; type_name: string };
 
 const DOW = ['日', '一', '二', '三', '四', '五', '六'];
 
+const CELL_TONE: Record<string, string> = {
+  ok: 'bg-mor-greenlight text-mor-green border-mor-green/30',
+  bad: 'bg-red-50 text-red-600 border-red-200',
+  wait: 'bg-amber-50 text-amber-700 border-amber-200',
+  off: 'bg-gray-100 text-gray-500 border-gray-200',
+  none: '',
+};
+
 export default function CalendarTab({ me, isAdmin }: TabProps) {
   const supabase = useMemo(() => createClient(), []);
   const now = new Date();
   const [[y, m], setYm] = useState<[number, number]>([now.getFullYear(), now.getMonth() + 1]);
   const [holidays, setHolidays] = useState<Record<string, Holiday>>({});
   const [leaveDays, setLeaveDays] = useState<Record<string, LeaveDay[]>>({});
-  const [attDays, setAttDays] = useState<Set<string>>(new Set());
+  /** 我自己每一天的出勤狀態，key = YYYY-MM-DD */
+  const [mine, setMine] = useState<Record<string, ReportRow>>({});
   const [sel, setSel] = useState<string | null>(null);
 
   const grid = useMemo(() => monthGrid(y, m), [y, m]);
@@ -45,13 +54,13 @@ export default function CalendarTab({ me, isAdmin }: TabProps) {
         .lte('start_at', `${to}T23:59:59+08:00`).gte('end_at', `${from}T00:00:00+08:00`),
       supabase.from('leave_types').select('code, name'),
       supabase.from('profiles').select('id, name'),
-      supabase.from('attendance').select('work_date')
-        .eq('user_id', me.id).gte('work_date', from).lte('work_date', to)
-        .not('in_at', 'is', null),
+      // 用 attendance_report 而不是直接讀 attendance —— 它已經算好
+      // 每一天的狀態（含請假、例假日、遲到早退），格子裡要顯示的就是那些
+      supabase.rpc('attendance_report', { p_user: me.id, p_from: from, p_to: to }),
     ]);
 
     setHolidays(Object.fromEntries((hs ?? []).map((h) => [h.d as string, h as Holiday])));
-    setAttDays(new Set((att ?? []).map((a) => a.work_date as string)));
+    setMine(Object.fromEntries(((att ?? []) as ReportRow[]).map((r) => [r.work_date, r])));
 
     const tName = new Map((lt ?? []).map((t) => [t.code as string, t.name as string]));
     const pName = new Map((pf ?? []).map((p) => [p.id as string, p.name as string]));
@@ -98,9 +107,10 @@ export default function CalendarTab({ me, isAdmin }: TabProps) {
           </button>
         </div>
         <div className="hidden sm:flex items-center gap-3 text-[11px] text-gray-500">
-          <Legend cls="bg-red-50 border-red-200" label="國定假日" />
+          <Legend cls="bg-mor-greenlight border-mor-green/30" label="正常" />
+          <Legend cls="bg-red-50 border-red-200" label="要處理" />
           <Legend cls="bg-amber-50 border-amber-200" label="請假" />
-          <Legend cls="bg-mor-greenlight border-mor-green/30" label="有出勤" />
+          <Legend cls="bg-gray-100 border-gray-200" label="假日" />
         </div>
       </div>
 
@@ -114,11 +124,13 @@ export default function CalendarTab({ me, isAdmin }: TabProps) {
           {grid.map((c) => {
             const h = holidays[c.date];
             const lv = leaveDays[c.date] ?? [];
+            const rep = mine[c.date];
+            const st = rep ? dayStatus(rep, today) : null;
             const isHol = h?.kind === 'holiday';
             const isWeekend = c.dow === 0 || c.dow === 6;
             return (
               <button key={c.date} onClick={() => setSel(c.date === sel ? null : c.date)}
-                className={`min-h-[4.5rem] border-b border-r border-mor-line/60 p-1 text-left
+                className={`min-h-[5.5rem] border-b border-r border-mor-line/60 p-1 text-left
                   align-top hover:bg-mor-sand/40
                   ${!c.inMonth ? 'bg-gray-50/60' : ''}
                   ${sel === c.date ? 'ring-2 ring-inset ring-mor-slate' : ''}`}>
@@ -129,10 +141,27 @@ export default function CalendarTab({ me, isAdmin }: TabProps) {
                     ${c.date === today ? 'bg-mor-slate text-white rounded px-1' : ''}`}>
                     {c.day}
                   </span>
-                  {attDays.has(c.date) && (
-                    <span className="w-1.5 h-1.5 rounded-full bg-mor-green" title="有出勤" />
-                  )}
                 </div>
+
+                {/*
+                  【自己的打卡狀態直接畫在格子裡】
+                  月曆本來只有假日與請假 —— 那是「別人的事」。
+                  真正每天要看的是「我那天打卡正不正常」，
+                  而那件事原本要切到打卡分頁才看得到。
+                  狀態徽章 ＋ 上下班時間，一眼掃完一個月。
+                */}
+                {c.inMonth && st && st.tone !== 'none' && st.tone !== 'off' && (
+                  <div className={`mt-0.5 text-[10px] leading-tight rounded px-1 truncate border ${
+                    CELL_TONE[st.tone]}`}>
+                    {st.label}
+                  </div>
+                )}
+                {c.inMonth && rep && (rep.in_at || rep.out_at) && (
+                  <div className="mt-0.5 text-[10px] leading-tight text-gray-500 tabular-nums truncate">
+                    {rep.in_at ?? '—'} {rep.out_at ?? '—'}
+                  </div>
+                )}
+
                 {h && (
                   <div className={`mt-0.5 text-[10px] leading-tight truncate ${
                     h.kind === 'makeup' ? 'text-mor-slate' : 'text-red-500'}`}>
@@ -158,6 +187,24 @@ export default function CalendarTab({ me, isAdmin }: TabProps) {
       {sel && (
         <div className={`${CARD} p-4`}>
           <div className="text-sm font-medium mb-2">{sel}</div>
+          {/* 我那天的打卡 —— 格子裡只放得下時間，遲到幾分鐘要點進來看 */}
+          {mine[sel] && (() => {
+            const r = mine[sel];
+            const s = dayStatus(r, today);
+            return (
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm mb-1">
+                <span>上班 <b className="tabular-nums">{r.in_at ?? '—'}</b></span>
+                <span>下班 <b className="tabular-nums">{r.out_at ?? '—'}</b></span>
+                {r.work_hours > 0 && <span className="text-gray-500">工時 {r.work_hours} 小時</span>}
+                {r.ot_hours > 0 && <span className="text-mor-slate">加班 {r.ot_hours} 小時</span>}
+                {s.tone !== 'none' && (
+                  <span className={`rounded-full border px-2 py-0.5 text-[11px] ${CELL_TONE[s.tone]}`}>
+                    {s.label}
+                  </span>
+                )}
+              </div>
+            );
+          })()}
           {selInfo?.h && (
             <div className="text-sm text-red-600">
               {selInfo.h.kind === 'makeup' ? '補班日' : '國定假日'}：{selInfo.h.name}

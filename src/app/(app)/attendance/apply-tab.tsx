@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { remainText } from '@/lib/punch';
 import {
-  toTaipeiIso, hoursBetween, leaveVote, otVote, checkFixDate, twToday,
+  toTaipeiIso, hoursBetween, leaveVote, otVote, checkFixDate, twToday, shiftMonth,
 } from '@/lib/attendance-ui';
 import {
   BTN, BTN2, CARD, INPUT, TONE, fmtDT,
@@ -25,9 +25,15 @@ import {
 type Sub = 'leave' | 'ot' | 'fix';
 const SUB: Record<Sub, string> = { leave: '請假', ot: '加班', fix: '補登打卡' };
 
-export default function ApplyTab({ me, onMsg }: TabProps) {
+export default function ApplyTab({ me, onMsg, prefill }: TabProps & {
+  /** 從打卡分頁「補登」按鈕帶過來的那一天 */
+  prefill?: { date: string; kind: 'in' | 'out'; n: number } | null;
+}) {
   const supabase = useMemo(() => createClient(), []);
   const [sub, setSub] = useState<Sub>('leave');
+
+  // 帶著日期進來的話直接切到補登。n 會變，所以同一天按第二次也會重新觸發。
+  useEffect(() => { if (prefill) setSub('fix'); }, [prefill?.n]); // eslint-disable-line
   const [types, setTypes] = useState<LeaveType[]>([]);
   const [bals, setBals] = useState<Balance[]>([]);
   const [daily, setDaily] = useState(8);
@@ -63,6 +69,22 @@ export default function ApplyTab({ me, onMsg }: TabProps) {
   useEffect(() => { load(); }, [load]);
 
   const typeName = (code: string) => types.find((t) => t.code === code)?.name ?? code;
+
+  // 用字串前綴比月份就好 —— work_date 是 date，'2026-08' 開頭的就是八月，
+  // 不用把時區問題再帶進來一次
+  const otHours = useMemo(() => {
+    const t = twToday();
+    const [y, m] = t.split('-').map(Number);
+    const [ly, lm] = shiftMonth(y, m, -1);
+    const p = (n: number) => String(n).padStart(2, '0');
+    const sum = (f: (o: OtReq) => boolean) =>
+      Math.round(ots.filter(f).reduce((s, o) => s + Number(o.hours || 0), 0) * 100) / 100;
+    return {
+      thisMonth: sum((o) => o.status === 'approved' && o.work_date?.startsWith(`${y}-${p(m)}`)),
+      lastMonth: sum((o) => o.status === 'approved' && o.work_date?.startsWith(`${ly}-${p(lm)}`)),
+      pending: sum((o) => o.status === 'pending'),
+    };
+  }, [ots]);
 
   return (
     <div className="space-y-4">
@@ -114,8 +136,30 @@ export default function ApplyTab({ me, onMsg }: TabProps) {
       {sub === 'leave' && (
         <LeaveForm types={types} busy={busy} setBusy={setBusy} onMsg={onMsg} onDone={load} />
       )}
-      {sub === 'ot' && <OtForm busy={busy} setBusy={setBusy} onMsg={onMsg} onDone={load} />}
-      {sub === 'fix' && <FixForm busy={busy} setBusy={setBusy} onMsg={onMsg} onDone={load} />}
+      {sub === 'ot' && (
+        <>
+          {/* 加班時數要看得到累積 —— 不然「這個月加了多少」只能自己一張一張加 */}
+          <div className={`${CARD} px-4 py-3 flex flex-wrap gap-6 text-sm`}>
+            {([
+              ['本月已核可', otHours.thisMonth],
+              ['上月已核可', otHours.lastMonth],
+              ['送審中', otHours.pending],
+            ] as const).map(([lb, v]) => (
+              <div key={lb}>
+                <div className="text-xs text-gray-500">{lb}</div>
+                <div className={`text-lg font-semibold tabular-nums ${
+                  lb === '送審中' && v > 0 ? 'text-amber-600' : 'text-mor-ink'}`}>
+                  {v} <span className="text-xs font-normal text-gray-400">小時</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          <OtForm busy={busy} setBusy={setBusy} onMsg={onMsg} onDone={load} />
+        </>
+      )}
+      {sub === 'fix' && (
+        <FixForm busy={busy} setBusy={setBusy} onMsg={onMsg} onDone={load} prefill={prefill} />
+      )}
 
       {/* ── 我送過的 ───────────────────────────────── */}
       <div className={CARD}>
@@ -324,14 +368,21 @@ function OtForm({ busy, setBusy, onMsg, onDone }: {
   );
 }
 
-function FixForm({ busy, setBusy, onMsg, onDone }: {
+function FixForm({ busy, setBusy, onMsg, onDone, prefill }: {
   busy: boolean; setBusy: (b: boolean) => void; onMsg: TabProps['onMsg']; onDone: () => void;
+  prefill?: { date: string; kind: 'in' | 'out'; n: number } | null;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [date, setDate] = useState('');
   const [kind, setKind] = useState<'in' | 'out'>('out');
   const [time, setTime] = useState('');
   const [reason, setReason] = useState('');
+
+  // 日期與哪一張卡從打卡分頁帶過來 —— 時間與原因刻意留空，那是他要想的
+  useEffect(() => {
+    if (!prefill) return;
+    setDate(prefill.date); setKind(prefill.kind); setTime(''); setReason('');
+  }, [prefill?.n]); // eslint-disable-line
 
   async function submit() {
     const bad = checkFixDate(date);
@@ -372,6 +423,12 @@ function FixForm({ busy, setBusy, onMsg, onDone }: {
           <input type="time" value={time} onChange={(e) => setTime(e.target.value)} className={INPUT} />
         </label>
       </div>
+      {prefill && date === prefill.date && (
+        <div className="rounded-lg bg-mor-slate/5 border border-mor-slate/20 px-3 py-2 text-xs text-mor-slate">
+          從打卡紀錄帶過來的：<b>{prefill.date}</b> 缺{prefill.kind === 'in' ? '上班' : '下班'}卡。
+          填上那天實際的時間與原因就可以送出。
+        </div>
+      )}
       <input placeholder="原因（必填，例：忘記打下班）" value={reason}
         onChange={(e) => setReason(e.target.value)} className={INPUT} />
       <div className="flex items-center gap-3">

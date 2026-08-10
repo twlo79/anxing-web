@@ -135,6 +135,93 @@ export function shiftMonth(year: number, month1: number, delta: number): [number
 }
 
 /* ============================================================
+ * 每日打卡狀態
+ *
+ * 【為什麼要有這個，而不是只顯示兩個時間】
+ * 「09:57 / （空白）」看不出來是今天還在上班、還是那天忘了打下班。
+ * 兩者要做的事完全不同：一個什麼都不用做，一個要去補登。
+ *
+ * 【「沒打下班卡」要能一鍵補】
+ * 光是標紅字，員工看到也只會想「喔」然後關掉。
+ * 所以每一種需要處理的狀態都回一個 fixKind，畫面照著長出補登按鈕。
+ * ============================================================ */
+
+export type ReportRow = {
+  work_date: string;
+  item: string;              // 上班日 / 例假日 / 國定假日名 / 假別 / 未出勤
+  in_at: string | null;      // HH:MM
+  out_at: string | null;
+  work_hours: number;
+  leave_hours: number;
+  ot_hours: number;
+  late_min: number | null;
+  early_min: number | null;
+  note: string | null;
+};
+
+export type DayStatus = {
+  label: string;
+  /** ok = 正常 / bad = 要處理 / off = 不用上班 / wait = 進行中 / none = 還沒到 */
+  tone: 'ok' | 'bad' | 'off' | 'wait' | 'none';
+  /** 要補哪一張卡。null = 不用補 */
+  fixKind: 'in' | 'out' | null;
+};
+
+export function dayStatus(r: ReportRow, today: string = twToday()): DayStatus {
+  const isOff = r.item !== '上班日' && !r.in_at && !r.out_at && r.item !== '未出勤';
+  if (isOff) return { label: r.item, tone: 'off', fixKind: null };
+
+  // 今天而且還沒打下班 —— 這不是異常，是還在上班
+  if (r.work_date === today && r.in_at && !r.out_at) {
+    return { label: '上班中', tone: 'wait', fixKind: null };
+  }
+  if (r.work_date > today) return { label: '', tone: 'none', fixKind: null };
+
+  if (r.in_at && r.out_at) {
+    const late = (r.late_min ?? 0) > 0;
+    const early = (r.early_min ?? 0) > 0;
+    if (late && early) return { label: `遲到 ${r.late_min} 分・早退 ${r.early_min} 分`, tone: 'bad', fixKind: null };
+    if (late) return { label: `遲到 ${r.late_min} 分`, tone: 'bad', fixKind: null };
+    if (early) return { label: `早退 ${r.early_min} 分`, tone: 'bad', fixKind: null };
+    return { label: '正常', tone: 'ok', fixKind: null };
+  }
+  if (r.in_at && !r.out_at) return { label: '沒打下班卡', tone: 'bad', fixKind: 'out' };
+  if (!r.in_at && r.out_at) return { label: '沒打上班卡', tone: 'bad', fixKind: 'in' };
+
+  // 兩張都沒有。有請假時數的話是請假，不是曠職
+  if (r.leave_hours > 0) return { label: r.item, tone: 'off', fixKind: null };
+  return { label: '未出勤', tone: 'bad', fixKind: 'in' };
+}
+
+/** 一段期間內「需要處理」的天數 —— 放在分頁上當數字用 */
+export function countTodo(rows: ReportRow[], today: string = twToday()): number {
+  return rows.filter((r) => dayStatus(r, today).tone === 'bad').length;
+}
+
+/* ============================================================
+ * 快速區間（本月 / 上個月 / 近 30 天）
+ * ============================================================ */
+
+export type Range = { from: string; to: string };
+
+export function monthRange(year: number, month1: number): Range {
+  const p = (n: number) => String(n).padStart(2, '0');
+  const last = new Date(Date.UTC(year, month1, 0)).getUTCDate();
+  return { from: `${year}-${p(month1)}-01`, to: `${year}-${p(month1)}-${p(last)}` };
+}
+
+export function quickRange(kind: 'thisMonth' | 'lastMonth' | 'last30', today: string = twToday()): Range {
+  const [y, m] = today.split('-').map(Number);
+  if (kind === 'thisMonth') return monthRange(y, m);
+  if (kind === 'lastMonth') { const [ly, lm] = shiftMonth(y, m, -1); return monthRange(ly, lm); }
+  // 用 UTC 正午當基準做日期加減 —— 帶時區的午夜再 toISOString 會退回前一天，
+  // 算出來的區間就少一天，而少的那一天正好是最舊的那天，沒有人會發現。
+  const t = new Date(`${today}T12:00:00Z`);
+  const f = new Date(t.getTime() - 29 * 86400000);
+  return { from: f.toISOString().slice(0, 10), to: today };
+}
+
+/* ============================================================
  * 補登申請的日期限制
  * ============================================================ */
 

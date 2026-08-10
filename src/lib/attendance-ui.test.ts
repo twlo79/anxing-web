@@ -2,7 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   toTaipeiIso, hoursBetween, leaveVote, otVote, monthGrid, shiftMonth, checkFixDate,
+  dayStatus, countTodo, monthRange, quickRange, type ReportRow,
 } from './attendance-ui.ts';
+
+const row = (p: Partial<ReportRow>): ReportRow => ({
+  work_date: '2026-08-05', item: '上班日', in_at: null, out_at: null,
+  work_hours: 8, leave_hours: 0, ot_hours: 0, late_min: 0, early_min: 0, note: null, ...p,
+});
 
 // ── 時區 ───────────────────────────────────────────
 
@@ -103,4 +109,89 @@ test('超過兩個月擋下來,叫他找主管', () => {
 
 test('沒選日期要講話,不能默默送出', () => {
   assert.ok(checkFixDate('', '2026-08-10'));
+});
+
+// ── 每日打卡狀態 ───────────────────────────────────
+
+test('上下班都打完、沒遲到早退 → 正常', () => {
+  const s = dayStatus(row({ in_at: '09:57', out_at: '19:21' }), '2026-08-10');
+  assert.equal(s.label, '正常');
+  assert.equal(s.tone, 'ok');
+  assert.equal(s.fixKind, null);
+});
+
+test('★ 今天打了上班還沒下班 → 是「上班中」,不是異常', () => {
+  const s = dayStatus(row({ work_date: '2026-08-10', in_at: '09:49' }), '2026-08-10');
+  assert.equal(s.tone, 'wait', '把還在上班的人標成紅色異常,他會每天早上看到一次紅字');
+  assert.equal(s.fixKind, null);
+});
+
+test('★ 前一天打了上班沒下班 → 要處理,而且要能一鍵補下班卡', () => {
+  const s = dayStatus(row({ work_date: '2026-08-07', in_at: '10:00' }), '2026-08-10');
+  assert.equal(s.tone, 'bad');
+  assert.equal(s.fixKind, 'out', '只標紅字的話員工看到也只會想「喔」然後關掉');
+});
+
+test('只有下班卡 → 補上班卡', () => {
+  const s = dayStatus(row({ work_date: '2026-08-04', out_at: '21:21' }), '2026-08-10');
+  assert.equal(s.label, '沒打上班卡');
+  assert.equal(s.fixKind, 'in');
+});
+
+test('遲到與早退各自講出分鐘數', () => {
+  assert.match(dayStatus(row({ in_at: '10:25', out_at: '19:00', late_min: 25 }), '2026-08-10').label, /遲到 25 分/);
+  assert.match(dayStatus(row({ in_at: '09:00', out_at: '18:58', early_min: 62 }), '2026-08-10').label, /早退 62 分/);
+  const both = dayStatus(row({ in_at: '10:25', out_at: '17:00', late_min: 25, early_min: 60 }), '2026-08-10');
+  assert.match(both.label, /遲到.*早退/);
+});
+
+test('★ 例假日與國定假日不是異常', () => {
+  for (const item of ['例假日', '中秋節', '國慶日']) {
+    const s = dayStatus(row({ item }), '2026-08-10');
+    assert.equal(s.tone, 'off', `${item} 被標成異常的話,一個月會有十幾天紅的`);
+    assert.equal(s.label, item);
+  }
+});
+
+test('★ 請假當天沒打卡不是曠職', () => {
+  const s = dayStatus(row({ item: '事假', leave_hours: 8 }), '2026-08-10');
+  assert.equal(s.tone, 'off');
+  assert.equal(s.fixKind, null);
+});
+
+test('上班日兩張卡都沒有、也沒請假 → 未出勤,要補', () => {
+  const s = dayStatus(row({ item: '未出勤' }), '2026-08-10');
+  assert.equal(s.label, '未出勤');
+  assert.equal(s.tone, 'bad');
+});
+
+test('未來的日期不顯示狀態(還沒發生)', () => {
+  assert.equal(dayStatus(row({ work_date: '2026-08-20' }), '2026-08-10').tone, 'none');
+});
+
+test('待處理天數 = 紅色那幾天', () => {
+  const rows = [
+    row({ work_date: '2026-08-03', in_at: '09:57', out_at: '19:21' }),   // 正常
+    row({ work_date: '2026-08-04', out_at: '21:21' }),                    // 沒打上班
+    row({ work_date: '2026-08-06', item: '例假日' }),                      // 例假
+    row({ work_date: '2026-08-07', in_at: '10:00' }),                     // 沒打下班
+  ];
+  assert.equal(countTodo(rows, '2026-08-10'), 2);
+});
+
+// ── 快速區間 ───────────────────────────────────────
+
+test('本月 = 這個月的一號到月底', () => {
+  assert.deepEqual(quickRange('thisMonth', '2026-08-10'), { from: '2026-08-01', to: '2026-08-31' });
+});
+
+test('★ 上個月要跨年,而且月底天數要對', () => {
+  assert.deepEqual(quickRange('lastMonth', '2026-01-15'), { from: '2025-12-01', to: '2025-12-31' });
+  assert.deepEqual(monthRange(2026, 2), { from: '2026-02-01', to: '2026-02-28' });
+  assert.deepEqual(monthRange(2024, 2), { from: '2024-02-01', to: '2024-02-29' });
+  assert.deepEqual(monthRange(2026, 4), { from: '2026-04-01', to: '2026-04-30' });
+});
+
+test('近 30 天含今天', () => {
+  assert.deepEqual(quickRange('last30', '2026-08-10'), { from: '2026-07-12', to: '2026-08-10' });
 });
