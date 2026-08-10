@@ -149,7 +149,7 @@ export default function HkSettingsPage() {
 
       {/* ── 人員 ───────────────────────────────── */}
       {tab === 'staff' && (
-        <div className="rounded-xl border border-mor-line bg-white overflow-x-auto">
+        <div className="rounded-xl glass overflow-x-auto">
           <div className="px-4 py-2.5 border-b border-mor-line bg-mor-sand/40 flex items-center justify-between">
             <span className="text-sm font-medium">人員主檔</span>
             <button onClick={addStaff} className="text-xs text-mor-blue underline">+ 新增人員</button>
@@ -223,7 +223,7 @@ export default function HkSettingsPage() {
 
       {/* ── 房源 ───────────────────────────────── */}
       {tab === 'property' && (
-        <div className="rounded-xl border border-mor-line bg-white overflow-x-auto">
+        <div className="rounded-xl glass overflow-x-auto">
           <div className="px-4 py-2.5 border-b border-mor-line bg-mor-sand/40 flex flex-wrap items-center gap-2">
             <span className="text-sm font-medium mr-auto">房源主檔（{filteredProps.length}）</span>
             <input value={kw} onChange={(e) => setKw(e.target.value)} placeholder="搜尋代碼或別名" className={`${inp} w-40`} />
@@ -281,7 +281,7 @@ export default function HkSettingsPage() {
 
       {/* ── 工作類型 ───────────────────────────── */}
       {tab === 'wtype' && (
-        <div className="rounded-xl border border-mor-line bg-white overflow-x-auto">
+        <div className="rounded-xl glass overflow-x-auto">
           <div className="px-4 py-2.5 border-b border-mor-line bg-mor-sand/40 text-sm font-medium">工作類型</div>
           <div className="px-4 py-2 text-xs text-gray-400 border-b border-mor-line/40">
             兩個開關是分開的:<b>計間數</b>影響個人工作量,<b>計布巾</b>影響床單推算。
@@ -314,7 +314,7 @@ export default function HkSettingsPage() {
 
       {/* ── 異動紀錄 ───────────────────────────── */}
       {tab === 'audit' && (
-        <div className="rounded-xl border border-mor-line bg-white overflow-x-auto">
+        <div className="rounded-xl glass overflow-x-auto">
           <div className="px-4 py-2.5 border-b border-mor-line bg-mor-sand/40 text-sm font-medium">
             異動紀錄（最近 200 筆）
           </div>
@@ -374,7 +374,7 @@ export default function HkSettingsPage() {
 
       {/* ── 系統參數 ───────────────────────────── */}
       {tab === 'setting' && (
-        <div className="rounded-xl border border-mor-line bg-white divide-y divide-mor-line/40">
+        <div className="rounded-xl glass divide-y divide-mor-line/40">
           <div className="px-4 py-2.5 bg-mor-sand/40 text-sm font-medium">系統參數</div>
           {settings.map((s) => (
             <div key={s.key} className="px-4 py-3 flex flex-wrap items-start gap-3">

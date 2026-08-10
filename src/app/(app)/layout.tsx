@@ -98,7 +98,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <Link key={n.href} href={n.href}
             className={`group mx-2 flex items-center gap-3 px-3 py-2.5 md:py-2 rounded-[10px]
               text-[15px] font-medium transition-colors ${
-              on ? 'bg-mor-slate text-white shadow-sm' : 'text-gray-700 hover:bg-mor-sand/70'
+              on ? 'bg-gradient-to-r from-mor-slate to-mor-slatedark text-white shadow-[0_4px_12px_-4px_rgba(65,104,155,0.6)]'
+                 : 'text-gray-700 hover:bg-white/70'
             }`}>
             {/* 只給線條上色，不加底色方塊 —— 三個顏色已經夠分辨，
                 再加十四個色塊會把「簡約」做成「花俏」 */}
@@ -111,9 +112,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <div className="min-h-screen md:flex">
+    <div className="app-bg min-h-screen md:flex">
       {/* 手機頂列:桌機隱藏 */}
-      <header className="md:hidden sticky top-0 z-30 flex items-center gap-3 bg-white border-b border-mor-line px-4 py-3"
+      <header className="md:hidden sticky top-0 z-30 flex items-center gap-3 bg-white/75 backdrop-blur-xl border-b border-white/60 px-4 py-3"
         style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}>
         <button onClick={() => setNavOpen(true)} aria-label="開啟選單"
           className="w-10 h-10 -ml-2 flex items-center justify-center rounded-lg text-gray-600 active:bg-gray-100">
@@ -134,7 +135,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <div className="md:hidden fixed inset-0 z-50" onClick={() => setNavOpen(false)}>
           <div className="absolute inset-0 bg-black/40" />
           <aside onClick={(e) => e.stopPropagation()}
-            className="absolute left-0 top-0 h-full w-64 bg-white flex flex-col shadow-xl">
+            className="absolute left-0 top-0 h-full w-64 bg-white/90 backdrop-blur-xl flex flex-col shadow-xl">
             <div className="px-5 py-5 border-b border-mor-line/70" style={{ paddingTop: 'max(1.25rem, env(safe-area-inset-top))' }}>
               <div className="font-bold text-lg">安幸上工</div>
               {profile && (
@@ -152,7 +153,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       )}
 
       {/* 桌機側邊欄 */}
-      <aside className="hidden md:flex w-52 shrink-0 bg-white border-r border-mor-line flex-col">
+      <aside className="hidden md:flex w-52 shrink-0 flex-col bg-white/70 backdrop-blur-xl border-r border-white/60">
         <div className="px-5 py-5 border-b border-mor-line/70">
           <div className="font-bold text-lg">安幸上工</div>
           {profile && (

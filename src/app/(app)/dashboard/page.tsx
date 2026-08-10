@@ -417,7 +417,7 @@ export default function DashboardPage() {
     <div className="max-w-[1400px]">
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h1 className="text-xl font-bold">財務儀表板</h1>
+          <h1>財務儀表板</h1>
           <p className="text-xs text-gray-400 mt-0.5">
             營收採<b>訂單營收認列制</b> —— 跨月訂單已按天數拆到各月,與收款日期無關。
           </p>
@@ -544,7 +544,7 @@ export default function DashboardPage() {
         const cnt = (n: number) => `${nf(n)} 筆`;
 
         return (
-          <div className="rounded-xl border border-mor-line bg-white p-4 md:p-5 mb-4">
+          <div className="rounded-xl glass p-4 md:p-5 mb-4">
             <div className="flex flex-wrap items-baseline justify-between gap-2 mb-1">
               <h2 className="font-bold">期間比較</h2>
               <span className="text-xs text-gray-400">
@@ -794,19 +794,39 @@ export default function DashboardPage() {
 
 /* ══════════ 以下是這一頁自用的小元件 ══════════ */
 
+/**
+ * KPI 卡。
+ *
+ * 【tone 決定整張卡的顏色，不只是數字】
+ * 原本只有數字有顏色，卡片本身永遠是白底細框 —— 十張排在一起，
+ * 顏色被稀釋成十個小點，掃過去看不出哪一張需要注意。
+ * 改成連框線與底色一起淡淡地跟著 tone 走：
+ * 有顏色的那幾張自己會浮出來，中性的退到背景。
+ *
+ * 【標籤字距拉開、字級壓小】
+ * 標籤跟數字差不多大時，整張卡看起來就是兩行普通文字，沒有主從。
+ */
+const KPI_TONE = {
+  good: { text: '#3FAE7C', bg: '#3FAE7C0D', border: '#3FAE7C33' },
+  bad: { text: '#D0544C', bg: '#D0544C0D', border: '#D0544C33' },
+  warn: { text: '#E08A4C', bg: '#E08A4C0D', border: '#E08A4C33' },
+  none: { text: '#2E3840', bg: '#fff', border: '#E0DDD5' },
+} as const;
+
 function Kpi({ label, value, sub, tone, subTone, hint, bare }: {
   label: string; value: string; sub?: string;
   tone?: 'good' | 'bad' | 'warn'; subTone?: 'good' | 'bad'; hint?: string; bare?: boolean;
 }) {
-  const c = tone === 'good' ? 'text-mor-green' : tone === 'bad' ? 'text-red-600'
-    : tone === 'warn' ? 'text-amber-600' : 'text-mor-ink';
+  const t = KPI_TONE[tone ?? 'none'];
   return (
-    <div className={bare ? '' : 'bg-white rounded-xl border border-mor-line p-3.5'} title={hint}>
-      <div className="text-xs text-gray-500 flex items-center gap-1">
+    <div className={bare ? '' : 'rounded-xl border p-3.5 shadow-[0_1px_2px_rgba(46,56,64,0.05)]'}
+      style={bare ? undefined : { backgroundColor: t.bg, borderColor: t.border }} title={hint}>
+      <div className="text-[10px] tracking-[0.12em] text-gray-500 flex items-center gap-1">
         {label}{hint && <span className="text-gray-300">ⓘ</span>}
       </div>
-      <div className={`text-xl md:text-2xl font-bold tabular-nums mt-0.5 ${c}`}>{value}</div>
-      {sub && <div className={`text-xs mt-0.5 ${
+      <div className="text-xl md:text-2xl font-bold tabular-nums mt-1 leading-none"
+        style={{ color: t.text }}>{value}</div>
+      {sub && <div className={`text-xs mt-1 ${
         subTone === 'good' ? 'text-mor-green' : subTone === 'bad' ? 'text-red-500' : 'text-gray-400'}`}>{sub}</div>}
     </div>
   );
@@ -814,10 +834,15 @@ function Kpi({ label, value, sub, tone, subTone, hint, bare }: {
 
 function Panel({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
   return (
-    <div className="bg-white rounded-xl border border-mor-line p-4 mb-4">
-      <div className="mb-3">
-        <h2 className="text-sm font-semibold text-gray-700">{title}</h2>
-        {hint && <p className="text-xs text-gray-400 mt-0.5">{hint}</p>}
+    <div className="rounded-xl glass p-4 mb-4">
+      <div className="mb-3 flex items-start gap-2">
+        {/* 一小段藍色豎線。純文字標題在一整頁白卡裡會被當成內容的一部分，
+            加一個記號之後「這裡是一個新區塊」就不用靠留白去猜 */}
+        <span aria-hidden className="mt-[3px] w-[3px] h-4 rounded-full bg-mor-slate shrink-0" />
+        <div>
+          <h2 className="text-sm font-semibold text-gray-700 leading-tight">{title}</h2>
+          {hint && <p className="text-xs text-gray-400 mt-0.5">{hint}</p>}
+        </div>
       </div>
       {children}
     </div>

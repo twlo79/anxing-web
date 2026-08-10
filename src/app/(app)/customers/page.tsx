@@ -21,7 +21,7 @@ import { twToday } from '@/lib/attendance-ui';
  * 上面有開關可以切到全部。全部載入是幾千列，手機上會很慢。
  */
 
-const CARD = 'rounded-xl border border-mor-line bg-white shadow-[0_1px_2px_rgba(46,56,64,0.05)]';
+const CARD = 'rounded-xl glass';
 const INPUT = 'rounded-lg border border-mor-line px-3 py-2 text-sm w-full';
 
 type Customer = {
@@ -135,7 +135,7 @@ export default function CustomersPage() {
   return (
     <div className="max-w-[1100px]">
       <div className="flex items-center gap-3 mb-3">
-        <h1 className="hidden md:block text-xl font-bold">客戶管理</h1>
+        <h1 className="hidden md:block">客戶管理</h1>
         <div className="flex-1" />
         <button onClick={() => sync(true)} disabled={syncing}
           className="rounded-lg border border-mor-line px-3 py-1.5 text-xs hover:bg-mor-sand/60 disabled:opacity-40">

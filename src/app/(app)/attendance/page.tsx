@@ -99,21 +99,26 @@ export default function AttendancePage() {
 
   return (
     <div className="max-w-[980px]">
-      <h1 className="hidden md:block text-xl font-bold mb-3">出勤</h1>
+      <h1 className="hidden md:block mb-4">出勤</h1>
 
       {/*
         手機上六個分頁橫向捲動，不換行。
         換行的話標題列會變成兩排、把打卡按鈕推到摺線以下 ——
         打卡是這頁最主要的動作，不該需要先捲動才看得到。
       */}
-      <div className="flex gap-1 mb-4 border-b border-mor-line overflow-x-auto
+      {/*
+        分段控制（segmented control），不是底線分頁。
+        底線分頁在淺色底上只有一條 2px 的線在動，整排看起來是六段一樣的灰字；
+        選中的那格做成一張白卡＋淡影，「你現在在這裡」不用瞇著眼找。
+      */}
+      <div className="inline-flex gap-1 mb-4 p-1 rounded-xl bg-white/45 backdrop-blur border border-white/60 max-w-full overflow-x-auto
                       [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {canSee.map((k) => (
           <button key={k} onClick={() => { setTab(k); setMsg(null); }}
-            className={`px-3 sm:px-4 py-2 text-sm font-medium border-b-2 -mb-px whitespace-nowrap
-              shrink-0 flex items-center gap-1.5 ${
-              cur === k ? 'border-mor-slate text-mor-slate'
-                        : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            className={`px-3 sm:px-4 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap
+              shrink-0 flex items-center gap-1.5 transition-colors ${
+              cur === k ? 'bg-white text-mor-slate shadow-[0_2px_8px_-2px_rgba(46,56,64,0.25)]'
+                        : 'text-gray-500 hover:text-gray-700'}`}>
             {TAB_LABEL[k]}
             {k === 'approve' && pending > 0 && (
               <span className="rounded-full bg-amber-100 text-amber-700 px-1.5 text-[11px]">

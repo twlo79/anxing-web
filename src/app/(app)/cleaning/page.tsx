@@ -163,7 +163,7 @@ export default function CleaningPage() {
       {/* Dashboard */}
       <div className="mb-4 md:mb-6">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-          <h1 className="hidden md:block text-xl font-bold">清潔記錄</h1>
+          <h1 className="hidden md:block">清潔記錄</h1>
           <div className="flex items-center gap-2 text-sm w-full md:w-auto">
             <span className="text-xs text-gray-500 shrink-0">統計區間</span>
             <input type="date" value={statsFrom} onChange={(e) => setStatsFrom(e.target.value)} className="flex-1 md:flex-none h-12 md:h-auto min-w-0 rounded-lg border border-gray-300 px-2 md:py-1" />
@@ -197,7 +197,7 @@ export default function CleaningPage() {
       </div>
 
       {/* Filters —— 手機收在可展開區塊,預設收合 */}
-      <details className="md:hidden mb-3 rounded-xl border border-mor-line bg-white">
+      <details className="md:hidden mb-3 rounded-xl glass">
         <summary className="px-4 py-3 text-sm text-gray-600 cursor-pointer select-none">
           篩選{(estate || staff || staffType || dateFrom || dateTo || kw) ? '（已套用）' : ''}・共 {total.toLocaleString()} 筆
         </summary>
@@ -242,7 +242,7 @@ export default function CleaningPage() {
       </details>
 
       {/* Filters —— 桌機 */}
-      <div className="hidden md:flex bg-white rounded-xl border border-mor-line p-4 mb-4 flex-wrap items-end gap-3 text-sm">
+      <div className="hidden md:flex rounded-xl glass p-4 mb-4 flex-wrap items-end gap-3 text-sm">
         <div>
           <label className="block text-xs text-gray-500 mb-1">物業</label>
           <select value={estate} onChange={(e) => setEstate(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5 min-w-24">
@@ -294,10 +294,10 @@ export default function CleaningPage() {
 
       {/* 手機卡片版 */}
       <div className="md:hidden space-y-2">
-        {loading ? <div className="rounded-xl border border-mor-line bg-white py-10 text-center text-gray-400 text-sm">載入中…</div>
-        : rows.length === 0 ? <div className="rounded-xl border border-mor-line bg-white py-10 text-center text-gray-400 text-sm">沒有符合條件的紀錄</div>
+        {loading ? <div className="rounded-xl glass py-10 text-center text-gray-400 text-sm">載入中…</div>
+        : rows.length === 0 ? <div className="rounded-xl glass py-10 text-center text-gray-400 text-sm">沒有符合條件的紀錄</div>
         : rows.map((r) => (
-          <div key={r.id} className="rounded-xl border border-mor-line bg-white p-3">
+          <div key={r.id} className="rounded-xl glass p-3">
             <div className="flex items-start justify-between gap-2" onClick={() => setDetail(r)}>
               <div className="min-w-0">
                 <div className="font-medium">
@@ -333,7 +333,7 @@ export default function CleaningPage() {
       </div>
 
       {/* 桌機表格版 */}
-      <div className="hidden md:block bg-white rounded-xl border border-mor-line overflow-x-auto">
+      <div className="hidden md:block rounded-xl glass overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/50">

@@ -121,7 +121,7 @@ export default function NotificationsPage() {
 
   return (
     <div className="max-w-[720px]">
-      <h1 className="text-xl font-bold mb-1">通知設定</h1>
+      <h1 className="mb-1">通知設定</h1>
       <p className="text-xs text-gray-400 mb-4">
         設定跟著你的帳號走。打開之後這台裝置就會收到 ——
         換手機或電腦要在那台上再打開一次。
@@ -151,7 +151,7 @@ export default function NotificationsPage() {
         </div>
       )}
 
-      <div className="rounded-xl border border-mor-line bg-white divide-y divide-mor-line/60">
+      <div className="rounded-xl glass divide-y divide-mor-line/60">
         {!prefs ? (
           <div className="px-4 py-10 text-center text-sm text-gray-400">載入中…</div>
         ) : NOTIFY_KINDS.map((k) => (

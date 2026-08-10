@@ -335,7 +335,7 @@ export default function ExpensesPage() {
   return (
     <div>
       {msg && <div className="mb-3 rounded-lg bg-mor-greenlight text-mor-green px-4 py-2 text-sm">{msg}</div>}
-      <h1 className="text-xl font-bold mb-4">支出</h1>
+      <h1 className="mb-4">支出</h1>
 
       {/* 統計 */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
@@ -361,7 +361,7 @@ export default function ExpensesPage() {
           </div>
         </div>
 
-        <div className="rounded-xl border border-mor-line bg-white p-4">
+        <div className="rounded-xl glass p-4">
           <div className="text-sm font-medium mb-3">會計科目分項</div>
           <div className="space-y-1.5 max-h-44 overflow-auto pr-1">
             {byCode.length === 0 ? <div className="text-xs text-gray-400">無資料</div> : byCode.map(([c, v]) => (
@@ -376,7 +376,7 @@ export default function ExpensesPage() {
           </div>
         </div>
 
-        <div className="rounded-xl border border-mor-line bg-white p-4">
+        <div className="rounded-xl glass p-4">
           <div className="text-sm font-medium mb-3">物業分項</div>
           <div className="space-y-1.5 max-h-44 overflow-auto pr-1">
             {byPurpose.length === 0 ? <div className="text-xs text-gray-400">無資料</div> : byPurpose.map(([k, v]) => (
@@ -392,7 +392,7 @@ export default function ExpensesPage() {
         </div>
 
         {/* 帳戶分項:點一列可直接篩選成該帳戶 */}
-        <div className="rounded-xl border border-mor-line bg-white p-4">
+        <div className="rounded-xl glass p-4">
           <div className="text-sm font-medium mb-3">帳戶分項</div>
           <div className="space-y-1.5 max-h-44 overflow-auto pr-1">
             {byAccount.length === 0 ? <div className="text-xs text-gray-400">無資料</div> : byAccount.map(([k, v]) => (
@@ -462,7 +462,7 @@ export default function ExpensesPage() {
       </div>
 
       {/* 列表 */}
-      <div className="rounded-xl border border-mor-line bg-white overflow-x-auto">
+      <div className="rounded-xl glass overflow-x-auto">
         <table className="w-full min-w-[900px] text-sm">
           <thead>
             <tr className="border-b border-mor-line bg-mor-sand/40 text-left">

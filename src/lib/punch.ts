@@ -86,9 +86,20 @@ export type PunchUi = {
   hint: string;
 };
 
+/**
+ * hhmm(null) 回的是 '—' 而不是空字串（空白看起來像壞掉）。
+ * 那個字串是**真值** —— 直接丟進來的話 !!out_at 是 true，
+ * 系統會以為下班打過了，下班按鈕就消失。
+ *
+ * 這件事實際發生過：畫面顯示「上班 19:03 / 下班 —」，
+ * 按鈕卻是「今天已完成」，而且完全沒有錯誤訊息。
+ * 所以這裡把顯示用的佔位符當成「沒有值」。
+ */
+const has = (v: string | null | undefined) => !!v && v !== '—';
+
 export function punchUi(t: TodayState | null): PunchUi {
-  const hasIn = !!t?.in_at;
-  const hasOut = !!t?.out_at;
+  const hasIn = has(t?.in_at);
+  const hasOut = has(t?.out_at);
   // hint 只在「有下一步動作」時才有字。
   // 上下班時間就顯示在按鈕旁邊，再寫一次「已於 09:02 上班打卡」是重複；
   // 「按下去會取得你的位置」更是廢話 —— 按了就知道。

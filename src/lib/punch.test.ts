@@ -24,6 +24,18 @@ test('★ 上下班都打完 → 兩顆都不能按', () => {
   assert.match(u.hint, /補登申請/, '要告訴他怎麼修改');
 });
 
+test('★ hhmm 的佔位符 — 不算打過卡', () => {
+  // 實際發生過的 bug：畫面顯示「上班 19:03 / 下班 —」,
+  // 按鈕卻變成「今天已完成」,而且沒有任何錯誤訊息。
+  // 原因是 hhmm(null) 回 '—',那是真值。
+  const u = punchUi({ in_at: '19:03', out_at: '—' });
+  assert.equal(u.action, 'out', '下班還沒打,按鈕必須是「下班打卡」');
+});
+
+test('★ 兩張卡都是佔位符 → 還沒上班打卡', () => {
+  assert.equal(punchUi({ in_at: '—', out_at: '—' }).action, 'in');
+});
+
 test('只有下班卡（異常）→ 仍然顯示上班打卡', () => {
   // migration_98 擋住了這種情況,但舊資料或補登可能造成
   const u = punchUi({ out_at: '18:00' });

@@ -142,11 +142,11 @@ export default function ApplyTab({ me, onMsg, prefill }: TabProps & {
       </div>
 
       {/* ── 小分頁 ─────────────────────────────────── */}
-      <div className="flex gap-1">
+      <div className="inline-flex gap-1 p-1 rounded-xl bg-white/45 backdrop-blur border border-white/60">
         {(Object.keys(SUB) as Sub[]).map((k) => (
           <button key={k} onClick={() => setSub(k)}
-            className={`rounded-lg px-3 py-1.5 text-sm ${
-              sub === k ? 'bg-mor-slate text-white' : 'border border-mor-line hover:bg-mor-sand/60'}`}>
+            className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+              sub === k ? 'bg-white text-mor-slate shadow-[0_2px_8px_-2px_rgba(46,56,64,0.25)]' : 'text-gray-500 hover:text-gray-700'}`}>
             {SUB[k]}
           </button>
         ))}

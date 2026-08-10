@@ -127,16 +127,16 @@ export default function ApproveTab({ me, onMsg }: TabProps) {
         <span className="text-xs text-gray-400">{done ? '最近 60 天' : '等你處理的'}</span>
       </div>
 
-      <div className="flex gap-1">
+      <div className="inline-flex gap-1 p-1 rounded-xl bg-white/45 backdrop-blur border border-white/60">
         {tabs.map(([k, label, n]) => (
           <button key={k} onClick={() => setSub(k)}
-            className={`rounded-lg px-3 py-1.5 text-sm flex items-center gap-1.5 ${
-              sub === k ? 'bg-mor-slate text-white' : 'border border-mor-line hover:bg-mor-sand/60'}`}>
+            className={`rounded-lg px-3 py-1.5 text-sm font-medium flex items-center gap-1.5
+              transition-colors ${
+              sub === k ? 'bg-white text-mor-slate shadow-[0_2px_8px_-2px_rgba(46,56,64,0.25)]' : 'text-gray-500 hover:text-gray-700'}`}>
             {label}
             {/* 數字直接標在分頁上 —— 沒有數字就不用點進去 */}
             {!done && n > 0 && (
-              <span className={`rounded-full px-1.5 text-[11px] ${
-                sub === k ? 'bg-white/25' : 'bg-amber-100 text-amber-700'}`}>{n}</span>
+              <span className="rounded-full px-1.5 text-[11px] bg-amber-100 text-amber-700">{n}</span>
             )}
           </button>
         ))}

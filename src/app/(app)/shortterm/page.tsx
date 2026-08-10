@@ -450,7 +450,7 @@ export default function ShortTermPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h1 className="text-xl font-bold">短租訂單與收款 <span className="text-sm font-normal text-gray-400">Airbnb・Agoda・私下・一次性</span></h1>
+        <h1>短租訂單與收款 <span className="text-sm font-normal text-gray-400">Airbnb・Agoda・私下・一次性</span></h1>
         {msg && (msgErr
           ? <button onClick={() => setMsg('')} title="點一下關閉"
               className="text-sm text-left rounded-lg bg-red-50 text-red-700 border border-red-200 px-3 py-1.5 font-medium max-w-2xl">
@@ -498,7 +498,7 @@ export default function ShortTermPage() {
       */}
       <RecurringPanel canEdit={['accountant', 'manager', 'super_admin'].includes(role)} />
 
-      <div className="filter-bar bg-white rounded-xl border border-mor-line p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
+      <div className="filter-bar rounded-xl glass p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
         <div>
           <label className="block text-xs text-gray-500 mb-1">物業</label>
           <select value={estF} onChange={(e) => setEstF(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
@@ -542,7 +542,7 @@ export default function ShortTermPage() {
         </div>
       </div>
 
-      <div className="bg-white rounded-xl border border-mor-line overflow-x-auto">
+      <div className="rounded-xl glass overflow-x-auto">
         <table className="w-full min-w-[720px] text-sm">
           <thead>
             <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/50">

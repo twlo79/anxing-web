@@ -221,7 +221,7 @@ export default function ReviewsPage() {
       {/* ===== Dashboard ===== */}
       <div className="mb-6">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-          <h1 className="text-xl font-bold">評價</h1>
+          <h1>評價</h1>
           <div className="flex items-center gap-2 text-sm">
             <span className="text-xs text-gray-500">統計區間(退房日)</span>
             <input type="date" value={statsFrom} onChange={(e) => setStatsFrom(e.target.value)}
@@ -316,7 +316,7 @@ export default function ReviewsPage() {
       </div>
 
       {/* ===== 表格篩選 ===== */}
-      <div id="review-filters" className="filter-bar bg-white rounded-xl border border-mor-line p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
+      <div id="review-filters" className="filter-bar rounded-xl glass p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
         <div>
           <label className="block text-xs text-gray-500 mb-1">物業</label>
           <select value={estateId} onChange={(e) => setEstateId(e.target.value)}
@@ -377,7 +377,7 @@ export default function ReviewsPage() {
       </div>
 
       {/* ===== 表格 ===== */}
-      <div className="bg-white rounded-xl border border-mor-line overflow-x-auto">
+      <div className="rounded-xl glass overflow-x-auto">
         <table className="w-full min-w-[820px] text-sm">
           <thead>
             <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/50">

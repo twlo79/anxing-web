@@ -486,7 +486,7 @@ export default function RevenuesPage() {
   return (
     <div>
       <div className="mb-4">
-        <h1 className="text-xl font-bold">營收</h1>
+        <h1>營收</h1>
       </div>
 
       {/* Dashboard */}
@@ -527,7 +527,7 @@ export default function RevenuesPage() {
       </div>
 
       {/* Filters */}
-      <div className="filter-bar bg-white rounded-xl border border-mor-line p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
+      <div className="filter-bar rounded-xl glass p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
         <div>
           <label className="block text-xs text-gray-500 mb-1">物業</label>
           <select value={estateFilter} onChange={(e) => setEstateFilter(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5 min-w-24">
@@ -570,7 +570,7 @@ export default function RevenuesPage() {
       </div>
 
       {/* Table */}
-      <div className="bg-white rounded-xl border border-mor-line overflow-x-auto">
+      <div className="rounded-xl glass overflow-x-auto">
         <table className="w-full min-w-[900px] text-sm">
           <thead>
             <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/50">

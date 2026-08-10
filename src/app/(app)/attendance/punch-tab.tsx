@@ -5,7 +5,7 @@ import { getPosition, punchUi, hhmm, type GeoFail } from '@/lib/punch';
 import {
   twToday, dayStatus, monthSummary, monthRange, shiftMonth, type ReportRow,
 } from '@/lib/attendance-ui';
-import { CARD, type Estate, type TabProps } from './types';
+import { CARD, C_IN, C_OUT, C_NEUTRAL, type Estate, type TabProps } from './types';
 
 type Today = {
   in_at: string | null; out_at: string | null;
@@ -129,7 +129,12 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
     } finally { setBusy(false); }
   }
 
-  const ui = punchUi(today ? { in_at: hhmm(today.in_at), out_at: hhmm(today.out_at) } : null);
+  // null 要原樣傳下去。套 hhmm 之後 null 會變成 '—'，而那是真值 ——
+  // punchUi 會以為下班打過了，下班按鈕就消失（punch.ts 裡另有一道防護）。
+  const ui = punchUi(today ? {
+    in_at: today.in_at ? hhmm(today.in_at) : null,
+    out_at: today.out_at ? hhmm(today.out_at) : null,
+  } : null);
   // 有座標的物業才算「可以打卡」—— 沒設座標的不該讓人以為能打
   const ready = estates.filter((e) => e.active && e.gps_lat != null && e.gps_lng != null);
   const sum = monthSummary(rows, d, firstDay);
@@ -227,27 +232,28 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
         */}
         <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
           {([
-            ['出勤', sum.days, '天', '#3FAE7C'],
-            ['工時', sum.workHours, '小時', '#41689B'],
-            ['加班', sum.otHours, '小時', '#E08A4C'],
-            ['請假', sum.leaveHours, '小時', '#41689B'],
-            ['遲到早退', sum.lateDays + sum.earlyDays, '次', '#E08A4C'],
+            ['出勤', sum.days, '天', C_IN],
+            ['工時', sum.workHours, '小時', C_NEUTRAL],
+            ['加班', sum.otHours, '小時', C_OUT],
+            ['請假', sum.leaveHours, '小時', C_NEUTRAL],
+            ['遲到早退', sum.lateDays + sum.earlyDays, '次', C_OUT],
           ] as const).map(([lb, v, unit, c]) => {
             // 0 就是灰的。全部上色的話「這個月加班 0 小時」跟
             // 「加班 12 小時」一樣醒目，而只有後者需要被看見。
             const lit = v > 0;
             return (
-              <div key={lb} className="rounded-xl border border-mor-line bg-white px-3 py-2.5
-                                       relative overflow-hidden">
-                <span aria-hidden className="absolute left-0 top-0 bottom-0 w-1"
-                  style={{ backgroundColor: lit ? c : '#E0DDD5' }} />
-                <div className="pl-1.5">
-                  <div className="text-[11px] text-gray-500">{lb}</div>
-                  <div className="text-xl font-bold tabular-nums leading-tight"
-                    style={{ color: lit ? c : '#C9C6BE' }}>
-                    {v}
-                    <span className="text-[11px] font-normal text-gray-400 ml-0.5">{unit}</span>
-                  </div>
+              <div key={lb}
+                className="rounded-xl border px-3 py-3 text-center sm:text-left"
+                style={lit
+                  ? { borderColor: `${c}33`, backgroundColor: `${c}0D` }
+                  : { borderColor: '#E0DDD5', backgroundColor: '#fff' }}>
+                {/* 標籤字距拉開、字級壓小 —— 標籤跟數字同樣大小時，
+                    整張卡看起來就是兩行普通文字，沒有主從 */}
+                <div className="text-[10px] tracking-[0.12em] text-gray-500">{lb}</div>
+                <div className="mt-1 font-bold tabular-nums leading-none text-2xl"
+                  style={{ color: lit ? c : '#C9C6BE' }}>
+                  {v}
+                  <span className="text-[11px] font-normal text-gray-400 ml-1">{unit}</span>
                 </div>
               </div>
             );
@@ -277,13 +283,14 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
         {/* 桌機：表格 */}
         <table className="w-full text-sm hidden sm:table">
           <thead>
-            <tr className="text-left text-xs text-gray-500 border-b border-mor-line">
-              <th className="px-4 py-2">日期</th>
-              <th className="px-4 py-2">上班卡</th>
-              <th className="px-4 py-2">下班卡</th>
-              <th className="px-4 py-2">工時</th>
-              <th className="px-4 py-2">狀態</th>
-              <th className="px-4 py-2 text-right"> </th>
+            <tr className="text-left text-[11px] tracking-wider text-gray-500
+                           border-b border-mor-line bg-mor-sand/50">
+              <th className="px-4 py-2.5">日期</th>
+              <th className="px-4 py-2.5">上班卡</th>
+              <th className="px-4 py-2.5">下班卡</th>
+              <th className="px-4 py-2.5">工時</th>
+              <th className="px-4 py-2.5">狀態</th>
+              <th className="px-4 py-2.5 text-right"> </th>
             </tr>
           </thead>
           <tbody>
@@ -292,8 +299,8 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
               const dow = DOW[new Date(`${r.work_date}T00:00:00+08:00`).getDay()];
               return (
                 <tr key={r.work_date}
-                  className={`border-b border-mor-line/60 last:border-0 ${
-                    r.work_date === d ? 'bg-mor-slate/5' : ''}`}>
+                  className={`border-b border-mor-line/60 last:border-0 hover:bg-mor-sand/30 ${
+                    r.work_date === d ? 'bg-mor-slate/[0.06]' : ''}`}>
                   <td className="px-4 py-2 whitespace-nowrap tabular-nums">
                     {r.work_date.slice(5).replace('-', '/')}
                     <span className={`ml-1 text-xs ${

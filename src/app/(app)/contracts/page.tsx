@@ -469,7 +469,7 @@ export default function ContractsPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h1 className="text-xl font-bold">契約訂單與收款</h1>
+        <h1>契約訂單與收款</h1>
         {msg && <span className="text-sm text-mor-green font-medium">{msg}</span>}
       </div>
 
@@ -636,7 +636,7 @@ export default function ContractsPage() {
           onClear={() => { setEstateFilter(''); setCadFilter(''); setTypeFilter(''); setStatusFilter(''); setFromD(''); setToD(''); setKw(''); setKwIn(''); }} />
       </FilterBar>
 
-      <div className="bg-white rounded-xl border border-mor-line overflow-x-auto">
+      <div className="rounded-xl glass overflow-x-auto">
         <table className="w-full min-w-[640px] text-sm">
           <thead>
             <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/50">

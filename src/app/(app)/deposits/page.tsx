@@ -639,7 +639,7 @@ export default function DepositsPage() {
       )}
 
       {/* 篩選 */}
-      <div className="filter-bar bg-white rounded-xl border border-mor-line p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
+      <div className="filter-bar rounded-xl glass p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
         <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">日期區間(收/退款日)</span>
           <div className="flex items-center gap-1">
             <input type="date" value={fromD} onChange={(e) => setFromD(e.target.value)} className={inp} />
@@ -703,7 +703,7 @@ export default function DepositsPage() {
         : sorted.length === 0 ? <div className="text-center text-gray-400 py-10 px-6 text-sm">{emptyHint}</div>
         : sorted.map((r) => (
           <div key={r.id} onClick={() => setDetail(r)}
-            className="rounded-xl border border-mor-line bg-white p-4 active:bg-mor-sand/40">
+            className="rounded-xl glass p-4 active:bg-mor-sand/40">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <div className="font-medium truncate">{r.room ?? '—'}</div>
@@ -727,7 +727,7 @@ export default function DepositsPage() {
       </div>
 
       {/* 桌機表格 */}
-      <div className="hidden md:block rounded-xl border border-mor-line bg-white overflow-x-auto">
+      <div className="hidden md:block rounded-xl glass overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-mor-line bg-mor-sand/40 text-left">

@@ -2,6 +2,49 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================
+ * 字體
+ *
+ * 【為什麼不裝 Google Font】
+ * Apple 的介面之所以「看起來是 Apple」，很大一部分是 San Francisco。
+ * 那套字在 macOS / iOS / iPadOS 上本來就有，用 -apple-system 直接取用 ——
+ * 零下載、零字閃（FOUT）、而且永遠是系統當下的版本。
+ *
+ * 中文接在後面：iOS/macOS 用「PingFang TC」、Windows 用「Microsoft JhengHei」。
+ * **順序不能反** —— 中文字體通常也含西文字符（而且很醜），
+ * 排在前面的話英數字會被它接走，畫面上會變成「數字是細明體」那種怪樣子。
+ *
+ * Inter 刻意不用：它是現在每個 AI 生出來的介面都在用的字，
+ * 用了反而看起來像模板。
+ * ============================================================ */
+@layer base {
+  html {
+    font-family:
+      -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI Variable Text', 'Segoe UI',
+      'PingFang TC', 'Noto Sans TC', 'Microsoft JhengHei', 'Helvetica Neue', Arial, sans-serif;
+    /* Apple 的標題會微微收緊字距，內文不收。收太多中文會黏在一起。 */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /*
+   * 大標題。
+   * Apple 的頁面標題是「大、粗、字距收緊」—— 那是層級最主要的來源，
+   * 不是靠框線或底色。原本 text-xl(20px) 跟內文差太近，
+   * 整頁看起來像同一個層級的文字堆在一起。
+   */
+  h1 {
+    font-size: 1.6rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.25;
+  }
+  h2 { letter-spacing: -0.01em; }
+
+  /* 數字一律等寬。金額、時間、日期上下對齊時不會參差。 */
+  .tabular-nums, table { font-variant-numeric: tabular-nums; }
+}
+
 /*
  * 表單欄位的全站基準樣式。
  *
@@ -113,4 +156,104 @@
       justify-content: flex-end;
     }
   }
+}
+
+/* ============================================================
+ * 玻璃卡（.glass）
+ *
+ * 【為什麼底層要先有色塊，才做得出玻璃感】
+ * 「毛玻璃」是靠背後有東西被模糊掉才成立的。背景是一塊純色時，
+ * 半透明加模糊之後看起來跟純白卡片一模一樣 —— 只是白得比較髒。
+ *
+ * 所以 .app-bg 在頁面底層放三團極淡的色暈（綠／藍／橘，就是側邊欄那三個色），
+ * 卡片才有東西可以「透」。色暈的透明度壓到 8% 以下：
+ * 看得出來畫面不是死白，但不會干擾任何一個數字。
+ *
+ * 【backdrop-filter 的成本】
+ * 每一個 .glass 都是一層合成，數量一多手機會掉幀。
+ * 所以只給「卡片」用，不給表格的每一列用 —— 一頁三十列各自模糊背景
+ * 是最典型的把畫面弄到滾動卡頓的做法。
+ * ============================================================ */
+@layer components {
+  .app-bg {
+    position: relative;
+    isolation: isolate;
+  }
+  .app-bg::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      radial-gradient(42rem 30rem at 12% -8%, rgba(63, 174, 124, 0.10), transparent 60%),
+      radial-gradient(38rem 28rem at 88% 4%, rgba(78, 150, 209, 0.12), transparent 60%),
+      radial-gradient(34rem 26rem at 70% 92%, rgba(224, 138, 76, 0.08), transparent 62%);
+  }
+
+  .glass {
+    background-color: rgb(255 255 255 / 0.72);
+    backdrop-filter: blur(14px) saturate(1.4);
+    -webkit-backdrop-filter: blur(14px) saturate(1.4);
+    border: 1px solid rgb(255 255 255 / 0.65);
+    /* 兩層陰影：貼著邊的那層負責界線,散開的那層負責「浮起來」。
+       只用一層的話不是太硬就是太糊。 */
+    box-shadow:
+      0 1px 2px rgba(46, 56, 64, 0.05),
+      0 10px 30px -18px rgba(46, 56, 64, 0.35);
+  }
+
+  /* 不支援 backdrop-filter 的瀏覽器（少數舊 Android WebView）
+     退回不透明白底 —— 半透明沒有模糊會讓底下的文字透出來,那才是壞掉。 */
+  @supports not (backdrop-filter: blur(1px)) {
+    .glass { background-color: #fff; }
+  }
+}
+
+
+/* ============================================================
+ * 圓角與控制項（向 Apple 的介面看齊）
+ *
+ * 【圓角是有階層的，不是全部一樣】
+ * Apple 的做法：容器大、控制項小。卡片 16px、按鈕與輸入框 10px。
+ * 全部同一個半徑會讓畫面「平」—— 每個元素看起來都是同一種東西。
+ *
+ * 【控制項是膠囊或大圓角，不是方框】
+ * 這是「現代」與「2015 年後台」最明顯的分界線之一。
+ * ============================================================ */
+@layer components {
+  /* 卡片：比控制項大一階 */
+  .glass { border-radius: 16px; }
+
+  /* 輸入框與下拉：底色微透，聚焦時用光暈而不是粗框 —— 粗框會讓版面跳動 */
+  input:not([type='checkbox']):not([type='radio']),
+  select,
+  textarea {
+    border-radius: 10px;
+    background-color: rgb(255 255 255 / 0.85);
+    transition: box-shadow 0.15s ease, border-color 0.15s ease;
+  }
+  input:not([type='checkbox']):not([type='radio']):focus,
+  select:focus,
+  textarea:focus {
+    outline: none;
+    border-color: #41689B;
+    box-shadow: 0 0 0 3.5px rgb(65 104 155 / 0.16);
+  }
+
+  /*
+   * 勾選框。
+   * 瀏覽器預設的方框在 2026 年看起來就是「舊」。accent-color 一行就能
+   * 讓它變成品牌色的圓角勾選框，而且完全不用自己畫 —— 自己畫的版本
+   * 通常會弄丟鍵盤操作與朗讀軟體的支援。
+   */
+  input[type='checkbox'],
+  input[type='radio'] {
+    accent-color: #41689B;
+    width: 1rem;
+    height: 1rem;
+  }
+
+  /* 表格列的分隔線壓淡：Apple 的清單靠留白分隔，不靠線 */
+  table tbody tr { border-color: rgb(224 221 213 / 0.55); }
 }

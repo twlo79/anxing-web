@@ -333,7 +333,7 @@ export default function AdminPage() {
   return (
     <div className="max-w-4xl">
       <div className="flex items-center justify-between mb-4">
-        <h1 className="text-xl font-bold">權限管理</h1>
+        <h1>權限管理</h1>
         {msg && <span className="text-sm text-mor-green font-medium">{msg}</span>}
       </div>
 
@@ -350,7 +350,7 @@ export default function AdminPage() {
       {/* ===== 人員管理 ===== */}
       {tab === 'people' && (
       <section className="mb-8">
-        <div className="bg-white rounded-xl border border-mor-line overflow-hidden">
+        <div className="rounded-xl glass overflow-hidden">
           {/* 手機放不下這幾欄 —— 沒有這層捲軸容器，欄位會被壓到只剩幾個 px 而不是可以滑動 */}
           <div className="overflow-x-auto">
             <table className="w-full min-w-[760px] text-sm">
@@ -438,7 +438,7 @@ export default function AdminPage() {
       {/* ===== 物業與負責人 ===== */}
       {tab === 'estates' && (
       <section>
-        <div className="bg-white rounded-xl border border-mor-line overflow-hidden">
+        <div className="rounded-xl glass overflow-hidden">
           {/* 手機放不下這幾欄 —— 沒有這層捲軸容器，欄位會被壓到只剩幾個 px 而不是可以滑動 */}
           <div className="overflow-x-auto">
             <table className="w-full min-w-[760px] text-sm">
@@ -492,7 +492,7 @@ export default function AdminPage() {
       {tab === 'accounts' && (
       <section className="mt-8">
         <h2 className="text-sm font-semibold text-gray-700 mb-2">收付款帳號</h2>
-        <div className="bg-white rounded-xl border border-mor-line overflow-hidden">
+        <div className="rounded-xl glass overflow-hidden">
           {/* 手機放不下這幾欄 —— 沒有這層捲軸容器，欄位會被壓到只剩幾個 px 而不是可以滑動 */}
           <div className="overflow-x-auto">
             <table className="w-full min-w-[760px] text-sm">
@@ -570,7 +570,7 @@ export default function AdminPage() {
       */}
       {tab === 'payees' && (
       <section className="mb-8">
-        <div className="bg-white rounded-xl border border-mor-line overflow-hidden">
+        <div className="rounded-xl glass overflow-hidden">
           <div className="px-4 py-2.5 border-b border-mor-line bg-mor-sand/40 text-sm font-medium">
             常用收款對象（廠商帳號）
           </div>
@@ -647,7 +647,7 @@ export default function AdminPage() {
           </select>
           <span className="text-xs text-gray-400">共 {properties.filter((p) => p.estate_id === selEstate).length} 間</span>
         </div>
-        <div className="bg-white rounded-xl border border-mor-line overflow-hidden">
+        <div className="rounded-xl glass overflow-hidden">
           {/* 手機放不下這幾欄 —— 沒有這層捲軸容器，欄位會被壓到只剩幾個 px 而不是可以滑動 */}
           <div className="overflow-x-auto">
             <table className="w-full min-w-[520px] text-sm">
@@ -698,7 +698,7 @@ export default function AdminPage() {
           <span className="text-xs text-gray-400">最近 300 筆</span>
         </div>
 
-        <div className="bg-white rounded-xl border border-mor-line overflow-x-auto">
+        <div className="rounded-xl glass overflow-x-auto">
           {audits.length === 0 ? (
             <div className="px-4 py-12 text-center text-sm text-gray-400">
               目前沒有紀錄。這張表從 migration_72 之後才開始累積,在那之前的改動查不到。

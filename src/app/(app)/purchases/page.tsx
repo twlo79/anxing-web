@@ -1065,7 +1065,7 @@ export default function PurchasesPage() {
   }
 
   const card = (title: string, list: Req[], hint: string, onClick: () => void) => (
-    <button onClick={onClick} className="text-left rounded-xl border border-mor-line bg-white p-2.5 md:p-4 min-w-0 hover:bg-mor-sand/40 transition-colors">
+    <button onClick={onClick} className="text-left rounded-xl border border-mor-line bg-white/85 p-2.5 md:p-4 min-w-0 hover:bg-mor-sand/50 transition-colors">
       <div className="text-xs md:text-sm font-medium leading-tight">{title}</div>
       <div className="stat-num font-bold mt-1">{list.length}<span className="text-xs md:text-sm font-normal text-gray-400 ml-1">筆</span></div>
       <div className="text-[11px] md:text-xs text-gray-500 mt-0.5 md:mt-1">${fmt(sum(list))}</div>
@@ -1083,7 +1083,7 @@ export default function PurchasesPage() {
         </div>
       )}
       {/* 手機上標題由頂列顯示,這裡只留桌機用 */}
-      <h1 className="hidden md:block text-xl font-bold mb-4">請款填寫</h1>
+      <h1 className="hidden md:block mb-4">請款填寫</h1>
 
       {/* 通知開關搬到 /notifications 集中管理（migration_92）—— 四種通知不該散在各頁 */}
 
@@ -1094,7 +1094,7 @@ export default function PurchasesPage() {
           + 填寫請款
         </button>
         <a href={PURCHASE_FORM_URL} target="_blank" rel="noreferrer"
-          className="flex-1 h-12 rounded-xl border border-mor-line bg-white font-medium flex items-center justify-center active:bg-mor-sand/60">
+          className="flex-1 h-12 rounded-xl border border-mor-line bg-white/85 font-medium flex items-center justify-center active:bg-mor-sand/60">
           + 採購單
         </a>
       </div>
@@ -1137,7 +1137,7 @@ export default function PurchasesPage() {
       */}
       {canSeeAll && tab === 'approve' && (
         pendings.length === 0 ? (
-          <div className="rounded-xl border border-mor-line bg-white py-16 text-center">
+          <div className="rounded-xl glass py-16 text-center">
             <div className="text-gray-400 text-sm">目前沒有待處理的單</div>
             <div className="text-gray-300 text-xs mt-1">請款單與押金退款都審完也付完了</div>
           </div>
@@ -1210,7 +1210,7 @@ export default function PurchasesPage() {
             </div>
 
             {/* 桌機:表格。欄位跟手機卡片是同一組資訊,只是排法不同 */}
-            <div className="hidden md:block rounded-xl border border-mor-line bg-white overflow-x-auto">
+            <div className="hidden md:block rounded-xl glass overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-mor-line bg-mor-sand/40 text-left">
@@ -1292,7 +1292,7 @@ export default function PurchasesPage() {
 
           {/* 匯款排程:依預定付款日,獨立於上面的篩選 */}
           {scheduleRows.length > 0 && (
-            <div className="rounded-xl border border-mor-line bg-white mb-4 md:mb-5 overflow-hidden">
+            <div className="rounded-xl glass mb-4 md:mb-5 overflow-hidden">
               <div className="px-4 py-2.5 text-sm font-medium border-b border-mor-line bg-mor-sand/40 flex items-center justify-between">
                 <span>{month} 付款排程</span>
                 <span className="text-xs font-normal text-gray-500">
@@ -1335,7 +1335,7 @@ export default function PurchasesPage() {
       {(!canSeeAll || tab === 'pr') && (<>
 
       {/* 工具列 —— 手機只留狀態篩選,其餘收在 details 裡 */}
-      <details className="md:hidden mb-3 rounded-xl border border-mor-line bg-white">
+      <details className="md:hidden mb-3 rounded-xl glass">
         <summary className="px-4 py-3 text-sm text-gray-600 cursor-pointer select-none">
           篩選{(stF || reqF || estateF || methodF || kw) ? '（已套用）' : ''}・共 {sorted.length.toLocaleString()} 筆
         </summary>
@@ -1426,13 +1426,13 @@ export default function PurchasesPage() {
 
       {/* 列表 —— 手機卡片版 */}
       <div className="md:hidden space-y-2">
-        {loading ? <div className="rounded-xl border border-mor-line bg-white py-10 text-center text-gray-400 text-sm">載入中…</div>
-        : sorted.length === 0 ? <div className="rounded-xl border border-mor-line bg-white py-10 text-center text-gray-400 text-sm">無請款單</div>
+        {loading ? <div className="rounded-xl glass py-10 text-center text-gray-400 text-sm">載入中…</div>
+        : sorted.length === 0 ? <div className="rounded-xl glass py-10 text-center text-gray-400 text-sm">無請款單</div>
         : sorted.map((r) => {
           const { canVoteMgr, canVoteAdm } = perms(r);
           return (
             // 卡片本體可點開抽屜,底下只留核可與分享,其餘操作都在抽屜內
-            <div key={r.id} className="rounded-xl border border-mor-line bg-white p-3">
+            <div key={r.id} className="rounded-xl glass p-3">
               <div onClick={() => setDetail(r)}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
@@ -1483,7 +1483,7 @@ export default function PurchasesPage() {
       </div>
 
       {/* 列表 —— 桌機表格版 */}
-      <div className="hidden md:block rounded-xl border border-mor-line bg-white overflow-x-auto">
+      <div className="hidden md:block rounded-xl glass overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-mor-line bg-mor-sand/40 text-left">

@@ -449,7 +449,7 @@ export default function HousekeepingPage() {
         // 左排班、右布巾。寬螢幕並排,窄螢幕上下疊 ——
         // 改一格房源要能立刻看到布巾跟著動,分開兩頁會逼人來回切。
         <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1fr)_560px] gap-4 items-start">
-        <div className="rounded-xl border border-mor-line bg-white overflow-x-auto">
+        <div className="rounded-xl glass overflow-x-auto">
           <table className="w-full min-w-[480px] text-sm">
             <thead>
               <tr className="border-b border-mor-line bg-mor-sand/40 text-left">
@@ -610,7 +610,7 @@ export default function HousekeepingPage() {
             if (!list.length) return null;
             const sub = list.reduce((a, p) => a + countOf(p.code) * (p.beds ?? 0) + linenOf(p.code), 0);
             return (
-              <div key={g} className="rounded-xl border border-mor-line bg-white overflow-x-auto">
+              <div key={g} className="rounded-xl glass overflow-x-auto">
                 <div className="px-4 py-2.5 border-b border-mor-line bg-mor-sand/40 font-medium text-sm">{GROUP_LABEL[g]}</div>
                 <table className="w-full min-w-[640px] text-sm">
                   <thead>
@@ -692,7 +692,7 @@ export default function HousekeepingPage() {
             { title: '尚未建檔「幾床」', rows: exceptions.noBeds, hint: '這些房源有清掃紀錄但沒有床數,床單推算會少算。' },
             { title: '同月清掃 3 次以上', rows: exceptions.heavy.map(([c, n]) => `${c}　${n} 次`), hint: '可能是重複建立的事件,值得看一眼。' },
           ].map((sec) => (
-            <div key={sec.title} className="rounded-xl border border-mor-line bg-white">
+            <div key={sec.title} className="rounded-xl glass">
               <div className="px-4 py-2.5 border-b border-mor-line bg-mor-sand/40 flex items-center justify-between">
                 <span className="font-medium text-sm">{sec.title}</span>
                 <span className={`text-xs ${sec.rows.length ? 'text-amber-600' : 'text-gray-400'}`}>{sec.rows.length} 筆</span>

@@ -50,9 +50,10 @@ export type Announcement = {
 };
 
 /** 共用的小樣式 —— 每個分頁都在用，寫死在各檔案會慢慢長歪。 */
-// 極淡的陰影。白卡放在米色底上原本只靠一條框線分界,
-// 加一層 4% 的影子之後卡片才會「浮」起來 —— 再重就變成 2010 年的擬物風。
-export const CARD = 'rounded-xl border border-mor-line bg-white shadow-[0_1px_2px_rgba(46,56,64,0.05)]';
+// .glass 定義在 globals.css —— 半透明 ＋ 背景模糊 ＋ 兩層陰影。
+// 底層的 .app-bg 有三團極淡色暈,卡片才有東西可以「透」;
+// 背景是純色的話,半透明加模糊看起來跟白卡一模一樣,只是白得比較髒。
+export const CARD = 'rounded-xl glass';
 
 /** 側邊欄那三個顏色，內容區沿用同一組 —— 綠進、橘出、藍中性 */
 export const C_IN = '#3FAE7C';
