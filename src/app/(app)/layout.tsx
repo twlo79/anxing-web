@@ -26,6 +26,10 @@ const NAV = [
   { href: '/housekeeping', label: '房務管理', icon: '🛏️', roles: ['manager', 'super_admin'] },
   { href: '/reviews', label: '房源評價', icon: '⭐', roles: ['housekeeper', 'manager', 'super_admin'] },
   { href: '/cleaning', label: '清潔記錄', icon: '🧹', roles: ['housekeeper', 'manager', 'super_admin'] },
+  // 打卡是每天最少點兩次的功能,但擺在中間就好 ——
+  // 上班第一件事會直接開這頁,不需要靠位置提醒。裡面再分 打卡/行事曆/公告/管理 四個分頁,
+  // 管理那格對非主管完全不顯示(不是灰掉,灰掉的按鈕會讓人一直去點)。
+  { href: '/attendance', label: '出勤', icon: '🕐', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   // 通知是每個人自己的偏好,所以全角色都看得到 ——
   // 放在權限管理上面（那頁只有總經理進得去,擺一起會讓人以為這也是管理員專用）
   { href: '/notifications', label: '通知設定', icon: '🔔', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },

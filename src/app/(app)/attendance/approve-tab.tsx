@@ -1,0 +1,222 @@
+'use client';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createClient } from '@/lib/supabase';
+import { leaveVote, otVote } from '@/lib/attendance-ui';
+import {
+  BTN2, CARD, TONE, fmtDT, noRowsMsg,
+  type FixReq, type LeaveReq, type LeaveType, type OtReq, type TabProps,
+} from './types';
+
+/**
+ * 核可：請假 · 加班 · 補登。
+ *
+ * 【為什麼三種待辦擠在同一頁】
+ * 主管每天要看的是「有沒有事情等我」。分成三頁的話，
+ * 有兩頁是空的、一頁有三件事，而他得點三次才知道。
+ * 分頁上直接標數字，沒有數字就不用點進去。
+ *
+ * 【駁回一定要寫理由】
+ * 沒有理由的駁回會變成當面追問，而追問的答案不會留在系統裡。
+ * 下次同一個人送同樣的單，還是會被駁回，還是不知道為什麼。
+ */
+
+type Sub = 'leave' | 'ot' | 'fix';
+
+/**
+ * 姓名是另外撈的，不是用 PostgREST 的 join。
+ *
+ * `profiles!leave_requests_user_id_fkey(name)` 這種寫法要填對外鍵的**約束名稱**，
+ * 而約束名稱是資料庫自動產生的、這個 repo 裡看不到。猜錯的話 PostgREST 回 400，
+ * 而畫面上只會是一片空白的待辦清單 —— 主管會以為沒事要處理。
+ * 員工只有八個人，多一次查詢換一個不會猜錯的東西。
+ */
+type WithName<T> = T & { name?: string };
+
+export default function ApproveTab({ me, onMsg }: TabProps) {
+  const supabase = useMemo(() => createClient(), []);
+  const [sub, setSub] = useState<Sub>('leave');
+  const [types, setTypes] = useState<LeaveType[]>([]);
+  const [leaves, setLeaves] = useState<WithName<LeaveReq>[]>([]);
+  const [ots, setOts] = useState<WithName<OtReq>[]>([]);
+  const [fixes, setFixes] = useState<WithName<FixReq>[]>([]);
+  const [busy, setBusy] = useState('');
+  const isBoss = me.role === 'super_admin';
+
+  const load = useCallback(async () => {
+    const [{ data: lt }, { data: pf }, { data: lr }, { data: ot }, { data: fx }] = await Promise.all([
+      supabase.from('leave_types').select('code, name, has_quota, sort').order('sort'),
+      supabase.from('profiles').select('id, name'),
+      supabase.from('leave_requests').select('*').eq('status', 'pending').order('start_at'),
+      supabase.from('overtime_requests').select('*').eq('status', 'pending').order('work_date'),
+      supabase.from('attendance_fixes').select('*').eq('status', 'pending').order('work_date'),
+    ]);
+    const nameOf = new Map((pf ?? []).map((p) => [p.id as string, p.name as string]));
+    const withName = <T extends { user_id: string }>(rows: unknown): WithName<T>[] =>
+      ((rows ?? []) as T[]).map((r) => ({ ...r, name: nameOf.get(r.user_id) ?? '—' }));
+    setTypes((lt ?? []) as LeaveType[]);
+    setLeaves(withName<LeaveReq>(lr));
+    setOts(withName<OtReq>(ot));
+    setFixes(withName<FixReq>(fx));
+  }, [supabase]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const typeName = (c: string) => types.find((t) => t.code === c)?.name ?? c;
+
+  /** 共用的寫入：一定檢查影響列數，RLS 擋掉時不會回錯誤。 */
+  async function write(table: string, id: string, patch: Record<string, unknown>, okText: string) {
+    setBusy(id);
+    const { data, error } = await supabase.from(table).update(patch).eq('id', id).select('id');
+    setBusy('');
+    if (error) return onMsg('失敗：' + error.message, true);
+    if (!data?.length) return onMsg(noRowsMsg('這筆'), true);
+    onMsg(okText); load();
+  }
+
+  function reject(table: string, id: string, field: string) {
+    const why = window.prompt('駁回理由（會顯示給申請人看）');
+    if (why === null) return;               // 按取消
+    if (!why.trim()) {
+      return onMsg('駁回一定要寫理由。\n\n沒有理由的駁回會變成當面追問，而追問的答案不會留在系統裡。', true);
+    }
+    write(table, id, { status: 'rejected', [field]: why.trim() }, '已駁回');
+  }
+
+  const tabs: [Sub, string, number][] = [
+    ['leave', '請假', leaves.length],
+    ['ot', '加班', ots.length],
+    ['fix', '補登', fixes.length],
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-1">
+        {tabs.map(([k, label, n]) => (
+          <button key={k} onClick={() => setSub(k)}
+            className={`rounded-lg px-3 py-1.5 text-sm flex items-center gap-1.5 ${
+              sub === k ? 'bg-mor-slate text-white' : 'border border-mor-line hover:bg-mor-sand/60'}`}>
+            {label}
+            {/* 數字直接標在分頁上 —— 沒有數字就不用點進去 */}
+            {n > 0 && (
+              <span className={`rounded-full px-1.5 text-[11px] ${
+                sub === k ? 'bg-white/25' : 'bg-amber-100 text-amber-700'}`}>{n}</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      <div className={CARD}>
+        <div className="divide-y divide-mor-line/60">
+          {/* ── 請假：兩票 ─────────────────────────── */}
+          {sub === 'leave' && leaves.map((r) => {
+            const v = leaveVote(r);
+            // 我這一票投過了沒有 —— 投過的不該再顯示按鈕，按下去只是重複寫同一個值
+            const mine = isBoss ? r.admin_at : r.manager_at;
+            return (
+              <div key={r.id} className="px-4 py-3">
+                <div className="flex items-start gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium">
+                      {r.name}・{typeName(r.type_code)} {r.hours} 小時
+                    </div>
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      {fmtDT(r.start_at)} → {fmtDT(r.end_at)}{r.reason ? `・${r.reason}` : ''}
+                    </div>
+                  </div>
+                  <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] ${TONE[v.tone]}`}>
+                    {v.text}
+                  </span>
+                </div>
+                <div className="flex gap-2 mt-2">
+                  {mine ? (
+                    <span className="text-xs text-gray-400 py-1.5">
+                      你已經簽過了，等{isBoss ? '主管' : '總經理'}。
+                    </span>
+                  ) : (
+                    <button disabled={busy === r.id}
+                      onClick={() => write('leave_requests', r.id,
+                        isBoss ? { admin_by: me.id, admin_at: new Date().toISOString() }
+                               : { manager_by: me.id, manager_at: new Date().toISOString() },
+                        '已簽核')}
+                      className={`${BTN2} border-mor-slate text-mor-slate`}>
+                      {isBoss ? '總經理核可' : '主管核可'}
+                    </button>
+                  )}
+                  <button disabled={busy === r.id}
+                    onClick={() => reject('leave_requests', r.id, 'reject_reason')}
+                    className={`${BTN2} text-red-600 border-red-200`}>駁回</button>
+                </div>
+              </div>
+            );
+          })}
+
+          {/* ── 加班：一票 ─────────────────────────── */}
+          {sub === 'ot' && ots.map((r) => {
+            const v = otVote(r);
+            return (
+              <div key={r.id} className="px-4 py-3">
+                <div className="flex items-start gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium">
+                      {r.name}・加班 {r.hours} 小時
+                    </div>
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      {fmtDT(r.start_at)} → {fmtDT(r.end_at)}・{r.reason}
+                    </div>
+                  </div>
+                  <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] ${TONE[v.tone]}`}>
+                    {v.text}
+                  </span>
+                </div>
+                <div className="flex gap-2 mt-2">
+                  <button disabled={busy === r.id}
+                    onClick={() => write('overtime_requests', r.id,
+                      { status: 'approved', manager_by: me.id, manager_at: new Date().toISOString() },
+                      '已核可')}
+                    className={`${BTN2} border-mor-slate text-mor-slate`}>核可</button>
+                  <button disabled={busy === r.id}
+                    onClick={() => reject('overtime_requests', r.id, 'reject_reason')}
+                    className={`${BTN2} text-red-600 border-red-200`}>駁回</button>
+                </div>
+              </div>
+            );
+          })}
+
+          {/* ── 補登 ───────────────────────────────── */}
+          {sub === 'fix' && fixes.map((r) => (
+            <div key={r.id} className="px-4 py-3">
+              <div className="text-sm font-medium">
+                {r.name}・{r.work_date} 補{r.kind === 'in' ? '上班' : '下班'}{' '}
+                {r.fix_time.slice(0, 5)}
+              </div>
+              <div className="text-xs text-gray-500 mt-0.5">{r.reason}</div>
+              <div className="flex gap-2 mt-2">
+                <button disabled={busy === r.id}
+                  onClick={() => write('attendance_fixes', r.id,
+                    { status: 'approved', reviewed_by: me.id, reviewed_at: new Date().toISOString() },
+                    '已補上，出勤紀錄同步更新')}
+                  className={`${BTN2} border-mor-slate text-mor-slate`}>核可並寫入</button>
+                <button disabled={busy === r.id}
+                  onClick={() => reject('attendance_fixes', r.id, 'review_note')}
+                  className={`${BTN2} text-red-600 border-red-200`}>駁回</button>
+              </div>
+            </div>
+          ))}
+
+          {((sub === 'leave' && !leaves.length) || (sub === 'ot' && !ots.length)
+            || (sub === 'fix' && !fixes.length)) && (
+            <div className="px-4 py-8 text-center text-sm text-gray-400">沒有待處理的{
+              sub === 'leave' ? '請假' : sub === 'ot' ? '加班' : '補登'}</div>
+          )}
+        </div>
+      </div>
+
+      {sub === 'leave' && (
+        <div className="text-xs text-gray-400 leading-relaxed">
+          請假要<b>主管與總經理兩票</b>才會核可，核可的那一刻才扣時數。
+          你現在是{isBoss ? '總經理' : '主管'}，這裡投的是你那一票。
+        </div>
+      )}
+    </div>
+  );
+}
