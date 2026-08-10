@@ -21,16 +21,17 @@ const NAV = [
   { href: '/attendance', label: '出勤', icon: '🕐', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/shortterm', label: '訂單 | 收入', icon: '🏨', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/contracts', label: '契約 | 收入', icon: '📋', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
-  // 客戶資料原本散在訂單(guest_name)與契約(tenant_name)兩邊,
-  // 要查一位房客的電話得先猜他是長租還是短租。這一頁把兩邊彙整起來,
-  // 所以緊接在訂單與契約後面 —— 它是那兩頁的側面,不是獨立的模組。
-  { href: '/customers', label: '客戶管理', icon: '👤', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/revenues', label: '營收表', icon: '💰', roles: ['accountant', 'manager', 'super_admin'] },
   { href: '/purchases', label: '請款單控管', icon: '🧾', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/deposits', label: '押金管理', icon: '🔐', roles: ['accountant', 'manager', 'super_admin'] },
   { href: '/expenses', label: '支出明細', icon: '📒', roles: ['accountant', 'manager', 'super_admin'] },
   { href: '/dashboard', label: '財務儀錶板', icon: '📊', roles: ['accountant', 'manager', 'super_admin'] },
   { href: '/housekeeping', label: '房務管理', icon: '🛏️', roles: ['manager', 'super_admin'] },
+  // 客戶管理跟房務、評價、清潔是同一組:都是「人在現場會用到的」。
+  // 上面那半段是錢(訂單、契約、營收、請款、押金、支出、儀表板)。
+  // 客戶資料原本散在訂單 guest_name 與契約 tenant_name 兩邊,
+  // 要查一位房客的電話得先猜他是長租還是短租。
+  { href: '/customers', label: '客戶管理', icon: '👤', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/reviews', label: '房源評價', icon: '⭐', roles: ['housekeeper', 'manager', 'super_admin'] },
   { href: '/cleaning', label: '清潔記錄', icon: '🧹', roles: ['housekeeper', 'manager', 'super_admin'] },
   // 通知是每個人自己的偏好,所以全角色都看得到 ——
