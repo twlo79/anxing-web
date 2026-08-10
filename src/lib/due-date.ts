@@ -64,6 +64,58 @@ const iso = (y: number, m0: number, d: number) =>
   `${y}-${String(m0 + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 
 /**
+ * 契約日期的存檔前檢查。
+ *
+ * ============================================================
+ * 【為什麼需要這支 —— 一個查不出原因的「存不進去」】
+ *
+ * 使用者把租期迄打成 **2027/4/31**。四月沒有 31 號。
+ *
+ * `<input type="date">` 收到不存在的日期時，`value` 會變成**空字串** ——
+ * 畫面上那格還顯示著 31/04/2027，程式拿到的卻是 ''。
+ * 於是 end_date 送出 null，而資料庫那一欄是 NOT NULL，
+ * 存檔失敗、訊息是英文的 `null value in column "end_date"...`，
+ * 2.5 秒後消失，而且**完全沒提到 4 月沒有 31 號**。
+ *
+ * 使用者看到的是「按了儲存沒反應」。
+ *
+ * ============================================================
+ * 【所以空字串要當成「日期不存在」來報，不是「沒填」】
+ *
+ * 分不出這兩種情況 —— 使用者沒填、跟使用者填了不存在的日期，
+ * 到程式這裡都是 ''。但後者遠比前者常見（日期框本來就會擋住沒填的情況），
+ * 所以訊息要把「可能打了不存在的日期」講出來，並舉例。
+ */
+export type DateCheck = { ok: true } | { ok: false; error: string };
+
+const BAD_DATE_HINT = '（日期框在收到不存在的日期時會自動清空，例如 4/31、6/31、2/30）';
+
+export function checkContractDates(
+  startDate: string | null | undefined,
+  endDate: string | null | undefined,
+  firstPaymentDate?: string | null,
+): DateCheck {
+  const ok = (s: string | null | undefined) => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
+
+  if (!ok(startDate)) return { ok: false, error: `租期起沒有填成有效日期${BAD_DATE_HINT}` };
+  if (!ok(endDate)) return { ok: false, error: `租期迄沒有填成有效日期${BAD_DATE_HINT}` };
+  if (endDate! <= startDate!) {
+    return { ok: false, error: `租期迄（${endDate}）要晚於租期起（${startDate}）` };
+  }
+  // 首繳日可以早於租期起（預繳制），但不該離譜到隔了一年以上
+  if (firstPaymentDate) {
+    if (!ok(firstPaymentDate)) return { ok: false, error: `首繳日沒有填成有效日期${BAD_DATE_HINT}` };
+    const gap = (new Date(startDate!).getTime() - new Date(firstPaymentDate).getTime()) / 86400000;
+    // 366 天 = 真的超過一年（閏年也算得進去）。
+    // 原本寫 400,跟錯誤訊息「早了一年以上」對不起來 —— 一個 381 天的年份錯字會漏掉。
+    if (gap > 366) {
+      return { ok: false, error: `首繳日（${firstPaymentDate}）比租期起早了一年以上，請確認年份是否打錯` };
+    }
+  }
+  return { ok: true };
+}
+
+/**
  * 這份租約總共有幾個「月租期」。
  *
  * ============================================================

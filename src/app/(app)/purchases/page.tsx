@@ -61,6 +61,9 @@ type Dep = {
 };
 /** kind：expense=只用於支出 / income=只用於收入 / both=兩邊都用（migration_90） */
 type AccountCode = { code: string; name: string; kind?: string; active?: boolean };
+/** 常用收款對象（migration_96）。請款單不掛外鍵 —— 填完就脫鉤,見該 migration 的說明。 */
+type Payee = { id: string; label: string; bank_code: string | null; account: string;
+               company: string | null; tax_id: string | null };
 type Estate = { id: string; name: string };
 type PayAccount = { code: string; name: string; method: string };
 type Profile = { id: string; name: string; role: string };
@@ -86,6 +89,7 @@ export default function PurchasesPage() {
   const [me, setMe] = useState<{ id: string; role: string } | null>(null);
   const [rows, setRows] = useState<Req[]>([]);
   const [codes, setCodes] = useState<AccountCode[]>([]);
+  const [payees, setPayees] = useState<Payee[]>([]);
   const [estates, setEstates] = useState<Estate[]>([]);
   const [properties, setProperties] = useState<{ id: string; name: string; estate_id: string | null }[]>([]);
   const [payAccounts, setPayAccounts] = useState<PayAccount[]>([]);
@@ -153,6 +157,9 @@ export default function PurchasesPage() {
       setMe({ id: user.id, role: data?.role ?? 'housekeeper' });
     })();
     supabase.from('account_codes').select('code, name, kind, active').order('sort').then(({ data }) => setCodes(data ?? []));
+    supabase.from('payee_presets').select('id, label, bank_code, account, company, tax_id')
+      .eq('active', true).order('sort').order('label')
+      .then(({ data }) => setPayees((data ?? []) as Payee[]));
     supabase.from('estates').select('id, name').eq('active', true).order('sort').order('name').then(({ data }) => setEstates(data ?? []));
     // 停用的房源不出現在下拉,但既有項目仍要顯示得出名字,所以不篩 active
     supabase.from('properties').select('id, name, estate_id').order('name').then(({ data }) => setProperties(data ?? []));
@@ -564,10 +571,25 @@ export default function PurchasesPage() {
     if (edit.currency !== 'TWD' && !(fxRate > 0)) return flash('請填匯率');
     // 手續費只在匯款時成立。非匯款就算 fee_mode 還留著舊值也一律當成內扣。
     const feeApplies = edit.payment_method === 'transfer' && edit.fee_mode === 'extra';
-    // 草稿可以先不填金額（送單當下未必問得到銀行實收多少），送審就要填。
-    // 不內扣卻是 0 等於沒有手續費,那該勾內扣,否則之後不會產生任何支出。
+    /*
+     * 草稿可以先不填金額（送單當下未必問得到銀行實收多少），送審就要填。
+     * 不內扣卻是 0 等於沒有手續費，那該勾內扣 —— 否則出款後不會產生任何郵電費支出，
+     * 那筆錢就永遠沒有入帳。
+     *
+     * 【為什麼用 alert 不用 flash】
+     * flash 只顯示 2.5 秒，而且出現在畫面角落。使用者按了送出、畫面沒動、
+     * 訊息閃過去了 —— 看到的是「送不出去」而不知道原因
+     * （2026-08 PR-202608-050 就是這樣卡住的）。
+     * 擋阻一定要看得見，這跟契約日期那邊是同一條原則。
+     */
     if (submit && feeApplies && !(Number(edit.fee_amount) > 0)) {
-      return flash('選了「不內扣」就要填手續費金額,若無手續費請改選「內扣」');
+      alert('手續費選了「不內扣」，但金額是 0，所以送不出去。\n\n'
+        + '兩個選擇：\n'
+        + '　• 知道銀行扣多少 → 填進去（同行通常 15、跨行 30）\n'
+        + '　• 這筆沒有手續費或已內含 → 改選「內扣」\n\n'
+        + '不內扣代表「手續費我方另外付」，出款後會自動產生一筆郵電費支出；\n'
+        + '金額 0 的話那筆支出不會產生，等於這筆錢沒有入帳。');
+      return;
     }
     const needsPayout = edit.payment_method === 'transfer' || edit.payment_method === 'credit_card';
     // 送審中或已核可的單被改動,既有的票就不算數了 —— 有人投過票的話先問一聲。
@@ -1054,7 +1076,9 @@ export default function PurchasesPage() {
         <div className="flex flex-wrap gap-1 mb-4 border-b border-mor-line">
           {/* 徽章只算「未核可」—— 已核可的那一段不是催人投票用的 */}
           {([
-            ['approve', '待核可', pendWait.length],
+            // 「請款審核」而不是「待核可」—— 這個分頁裡有請款單也有押金退款，
+            // 而且它是「要你去審」的動作清單，名字要講出那是什麼事情
+            ['approve', '請款審核', pendWait.length],
             ['pr', '請款單', 0],
           ] as const).map(([k, label, n]) => (
             <button key={k} onClick={() => setTab(k)}
@@ -1927,6 +1951,39 @@ export default function PurchasesPage() {
                     </select></label>
                   {edit.payment_method === 'transfer' && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 [&_input]:h-12 md:[&_input]:h-auto [&_input]:bg-white">
+                      {/*
+                        常用帳號：選一次自動帶入下面四欄。
+                        重打四個欄位的代價是「錢匯到別的帳戶」，而且不會有任何跡象 ——
+                        要等對方說沒收到才知道，那時候錢已經出去了。
+
+                        帶入之後四欄仍然可以手改：這一次要匯到不同分行、或臨時換帳號
+                        都還是常見的，主檔只負責少打幾個字，不是強制。
+                      */}
+                      {!readOnly && payees.length > 0 && (
+                        <label className="flex flex-col gap-1 md:col-span-2">
+                          <span className="text-xs text-gray-500">常用帳號（選了自動帶入下面四欄）</span>
+                          <select value=""
+                            onChange={(e) => {
+                              const p = payees.find((x) => x.id === e.target.value);
+                              if (!p) return;
+                              setEdit({
+                                ...edit,
+                                payee_bank_code: p.bank_code ?? '',
+                                payee_account: p.account ?? '',
+                                payee_company: p.company ?? '',
+                                payee_tax_id: p.tax_id ?? '',
+                              });
+                            }}
+                            className="rounded-lg border border-mor-line px-2 py-1.5 h-12 md:h-auto bg-white">
+                            <option value="">— 選擇常用帳號 —</option>
+                            {payees.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.label}{p.account ? `・${p.account}` : ''}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
                       <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">銀行代碼</span>
                         <input disabled={readOnly} value={edit.payee_bank_code ?? ''} onChange={(e) => setEdit({ ...edit, payee_bank_code: e.target.value })}
                           className="rounded-lg border border-mor-line px-2 py-1.5 disabled:bg-gray-50" /></label>

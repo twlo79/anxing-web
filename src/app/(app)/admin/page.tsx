@@ -13,6 +13,12 @@ type Audit = {
   record_id: string | null; label: string | null; action: string; changes: any;
 };
 
+/** 常用收款對象（migration_96）。請款單不掛外鍵,填完就脫鉤。 */
+type Payee = {
+  id: string; label: string; bank_code: string | null; account: string;
+  company: string | null; tax_id: string | null; note: string | null;
+  sort: number; active: boolean;
+};
 type PayAccount = {
   id: string; method: string; code: string; name: string;
   for_income: boolean; for_payment: boolean; sort: number; active: boolean;
@@ -22,9 +28,23 @@ const METHOD_LABEL: Record<string, string> = { transfer: '匯款', credit_card: 
 
 const TAB_LABEL = {
   people: '權限管理', estates: '物業與負責人', accounts: '收付款帳號',
-  props: '房源管理', audit: '編輯紀錄',
+  payees: '常用帳號', props: '房源管理', audit: '編輯紀錄',
 } as const;
 type TabKey = keyof typeof TAB_LABEL;
+
+/**
+ * 會計看得到哪些分頁。
+ *
+ * 【為什麼不是整頁開放】
+ * 「權限管理」分頁可以改人員角色 —— 能改角色就能把自己改成總經理，
+ * 而請款單的兩票制正是 manager 一票 + super_admin 一票。
+ * 開放那一頁等於「會計隨時可以繞過自己不能投票的限制」，
+ * 而 data_audit 只會記下「改了」，不會阻止。
+ *
+ * 所以只開跟付款直接相關的兩張主檔：收付款帳號、常用帳號。
+ * 物業負責人、房源、編輯紀錄仍然只有總經理看得到。
+ */
+const ACCOUNTANT_TABS: TabKey[] = ['accounts', 'payees'];
 
 /** 編輯紀錄裡的表名要講人話 —— 沒人記得 purchase_request_items 是什麼 */
 const AUDIT_TABLE: Record<string, string> = {
@@ -81,7 +101,8 @@ export default function AdminPage() {
       if (!user) { router.push('/login'); return; }
       const { data } = await supabase.from('profiles').select('role').eq('id', user.id).single();
       setRole(data?.role ?? null);
-      if (data?.role !== 'super_admin') return;
+      // 會計也要載 —— 他看得到收付款帳號與常用帳號兩個分頁
+      if (data?.role !== 'super_admin' && data?.role !== 'accountant') return;
       load();
     });
   }, [supabase, router, load]);
@@ -215,6 +236,45 @@ export default function AdminPage() {
   const [newAcctCode, setNewAcctCode] = useState('');
   const [newAcctName, setNewAcctName] = useState('');
 
+  // ---- 常用收款對象（migration_96）----
+  const [payees, setPayees] = useState<Payee[]>([]);
+  const [np, setNp] = useState({ label: '', bank_code: '', account: '', company: '', tax_id: '' });
+
+  const loadPayees = useCallback(async () => {
+    const { data } = await supabase.from('payee_presets').select('*').order('sort').order('label');
+    setPayees((data ?? []) as Payee[]);
+  }, [supabase]);
+  useEffect(() => { if (tab === 'payees') loadPayees(); }, [tab, loadPayees]);
+
+  async function addPayee() {
+    const account = np.account.trim();
+    if (!account) return flash('請填帳號');
+    if (np.tax_id.trim() && !/^[0-9]{8}$/.test(np.tax_id.trim())) return flash('統編要 8 碼數字');
+    const { error } = await supabase.from('payee_presets').insert({
+      label: np.label.trim() || np.company.trim() || account,
+      bank_code: np.bank_code.trim() || null, account,
+      company: np.company.trim() || null, tax_id: np.tax_id.trim() || null, sort: 50,
+    });
+    // 23505 = 帳號重複。訊息要講出是哪一個欄位撞到,否則使用者會以為是別的問題
+    if (error) return flash(error.code === '23505'
+      ? `帳號 ${account} 已經建過了（可能是停用中的那筆,把它啟用即可）` : '新增失敗:' + error.message);
+    setNp({ label: '', bank_code: '', account: '', company: '', tax_id: '' });
+    flash('已新增'); loadPayees();
+  }
+  async function updPayee(id: string, patch: Partial<Payee>) {
+    const { error } = await supabase.from('payee_presets')
+      .update({ ...patch, updated_at: new Date().toISOString() }).eq('id', id);
+    if (error) return flash('更新失敗:' + error.message);
+    loadPayees();
+  }
+  async function delPayee(p: Payee) {
+    // 請款單不掛外鍵（見 migration_96）,所以刪掉不會動到既有單據 —— 但也因此刪了就找不回來
+    if (!confirm(`刪除常用帳號「${p.label}」?\n\n既有的請款單不受影響（那些單自己存著當初的帳號）。\n只是之後填新單時選不到它。\n\n不確定的話建議改用「停用」。`)) return;
+    const { error } = await supabase.from('payee_presets').delete().eq('id', p.id);
+    if (error) return flash('刪除失敗:' + error.message);
+    flash('已刪除'); loadPayees();
+  }
+
   async function addPayAccount() {
     const code = newAcctCode.trim();
     const name = newAcctName.trim() || code;
@@ -260,7 +320,15 @@ export default function AdminPage() {
   }
 
   if (role === null) return <div className="text-gray-400 py-20 text-center">載入中…</div>;
-  if (role !== 'super_admin') return <div className="text-gray-400 py-20 text-center">此頁僅限 Super Admin</div>;
+  const isAdmin = role === 'super_admin';
+  const canSee: TabKey[] = isAdmin
+    ? (Object.keys(TAB_LABEL) as TabKey[])
+    : role === 'accountant' ? ACCOUNTANT_TABS : [];
+  if (!canSee.length) {
+    return <div className="text-gray-400 py-20 text-center">此頁僅限總經理與會計</div>;
+  }
+  // 會計的預設分頁不能是 people（他看不到那一頁,會停在空白畫面）
+  if (!canSee.includes(tab)) { setTab(canSee[0]); return null; }
 
   return (
     <div className="max-w-4xl">
@@ -270,7 +338,7 @@ export default function AdminPage() {
       </div>
 
       <div className="flex flex-wrap gap-1 mb-5 border-b border-mor-line">
-        {(Object.keys(TAB_LABEL) as TabKey[]).map((k) => (
+        {canSee.map((k) => (
           <button key={k} onClick={() => setTab(k)}
             className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${
               tab === k ? 'border-mor-slate text-mor-slate' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
@@ -495,6 +563,90 @@ export default function AdminPage() {
       )}
 
       {/* ===== 房源管理 ===== */}
+      {/*
+        常用帳號（migration_96）。
+        每開一張匯款請款單都要重打銀行代碼／帳號／戶名／統編 ——
+        打錯的代價是錢匯到別的帳戶，而且不會有任何跡象，要等對方說沒收到才知道。
+      */}
+      {tab === 'payees' && (
+      <section className="mb-8">
+        <div className="bg-white rounded-xl border border-mor-line overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-mor-line bg-mor-sand/40 text-sm font-medium">
+            常用收款對象（廠商帳號）
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px] text-sm">
+              <thead>
+                <tr className="text-left text-xs text-gray-500 border-b border-mor-line">
+                  <th className="px-4 py-2.5">顯示名</th>
+                  <th className="px-4 py-2.5">銀行代碼</th>
+                  <th className="px-4 py-2.5">帳號</th>
+                  <th className="px-4 py-2.5">戶名</th>
+                  <th className="px-4 py-2.5">統編</th>
+                  <th className="px-4 py-2.5 w-20">排序</th>
+                  <th className="px-4 py-2.5 text-right">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {payees.map((p) => (
+                  <tr key={p.id} className={`border-b border-mor-line/60 last:border-0 ${p.active ? '' : 'opacity-50'}`}>
+                    {([['label', 22], ['bank_code', 10], ['account', 20], ['company', 22], ['tax_id', 10]] as const).map(([k, w]) => (
+                      <td key={k} className="px-4 py-2">
+                        <input defaultValue={(p[k] as string) ?? ''} style={{ width: `${w}ch` }}
+                          onBlur={(e) => { const v = e.target.value.trim();
+                            if (v !== ((p[k] as string) ?? '')) updPayee(p.id, { [k]: v || null } as Partial<Payee>); }}
+                          className="rounded border border-mor-line px-2 py-1 text-sm" />
+                      </td>
+                    ))}
+                    <td className="px-4 py-2">
+                      <input type="number" defaultValue={p.sort} className="w-16 rounded border border-mor-line px-2 py-1 text-sm"
+                        onBlur={(e) => { const v = Number(e.target.value) || 0;
+                          if (v !== p.sort) updPayee(p.id, { sort: v }); }} />
+                    </td>
+                    <td className="px-4 py-2 text-right whitespace-nowrap">
+                      <button onClick={() => updPayee(p.id, { active: !p.active })}
+                        className="text-xs text-mor-blue underline mr-3">{p.active ? '停用' : '啟用'}</button>
+                      <button onClick={() => delPayee(p)} className="text-xs text-red-500 underline">刪除</button>
+                    </td>
+                  </tr>
+                ))}
+                {!payees.length && (
+                  <tr><td colSpan={7} className="px-4 py-10 text-center text-sm text-gray-400">
+                    還沒有常用帳號。跑過 migration_96 之後，既有請款單裡用過的帳號會自動帶進來。
+                  </td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="px-4 py-3 border-t border-mor-line flex flex-wrap items-end gap-2">
+            {([['label', '顯示名'], ['bank_code', '銀行代碼'], ['account', '帳號 *'],
+               ['company', '戶名'], ['tax_id', '統編']] as const).map(([k, lb]) => (
+              <label key={k} className="flex flex-col gap-1">
+                <span className="text-xs text-gray-500">{lb}</span>
+                <input value={np[k]} onChange={(e) => setNp({ ...np, [k]: e.target.value })}
+                  className="rounded-lg border border-mor-line px-2 py-1.5 text-sm w-32" />
+              </label>
+            ))}
+            <button onClick={addPayee}
+              className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium hover:bg-mor-slatedark">
+              + 新增
+            </button>
+          </div>
+        </div>
+
+        <p className="text-xs text-gray-400 mt-2 leading-relaxed">
+          填請款單選「匯款」時，這裡的帳號會出現在「常用帳號」下拉，選一次自動帶入四個欄位，帶入後仍可手改。
+          <br />
+          <b>既有的請款單不會受影響</b> —— 那些單自己存著當初匯款的帳號。
+          這裡改了只影響之後新填的單，因為「那張單當初匯到哪裡」是既成事實，
+          主檔改了不該回頭改歷史。
+          <br />
+          不再往來的廠商請用「停用」而非刪除：停用只是不出現在下拉，資料還查得到。
+        </p>
+      </section>
+      )}
+
       {tab === 'props' && (
       <section className="mt-8">
         <h2 className="text-sm font-semibold text-gray-700 mb-2">房源管理</h2>

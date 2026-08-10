@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   dueDateOf, resolvePayDay, checkFirstDue, fmtDue, STEP_OF,
-  periodRange, fmtPeriodRange, rentMonthCount,
+  periodRange, fmtPeriodRange, rentMonthCount, checkContractDates,
 } from './due-date.ts';
 
 // 使用者給的情境：契約 2026/7/1 ~ 2027/6/30、13 號繳、預繳制
@@ -212,4 +212,44 @@ test('每一期的區間要剛好蓋滿整份租期,不多不少', () => {
 test('缺日期回 0 —— 呼叫端要顯示空白,不要自己猜', () => {
   assert.equal(rentMonthCount(null, '2026-09-23'), 0);
   assert.equal(rentMonthCount('2026-06-23', null), 0);
+});
+
+// ── 契約日期檢查：4/31 那種存不進去的情況 ───────────
+
+test('★ 租期迄打成不存在的日期（日期框清空）→ 要講出可能打錯,不是只說「沒填」', () => {
+  const r = checkContractDates('2026-05-01', '');
+  assert.equal(r.ok, false);
+  const e = (r as { error: string }).error;
+  assert.match(e, /租期迄/);
+  assert.match(e, /4\/31/, '要舉例,使用者才知道去檢查哪裡');
+});
+
+test('租期起沒填也要擋', () => {
+  assert.equal(checkContractDates('', '2027-04-30').ok, false);
+});
+
+test('租期迄早於或等於租期起 → 擋,並把兩個日期都印出來', () => {
+  const r = checkContractDates('2027-05-01', '2026-04-30');
+  assert.equal(r.ok, false);
+  assert.match((r as { error: string }).error, /2026-04-30/);
+  assert.match((r as { error: string }).error, /2027-05-01/);
+  assert.equal(checkContractDates('2026-05-01', '2026-05-01').ok, false, '同一天不是有效租期');
+});
+
+test('正常租期 → 過', () => {
+  assert.deepEqual(checkContractDates('2026-05-01', '2027-04-30'), { ok: true });
+});
+
+test('首繳日早於租期起是正常的（預繳制）', () => {
+  assert.deepEqual(checkContractDates('2026-05-01', '2027-04-30', '2026-04-15'), { ok: true });
+});
+
+test('★ 首繳日早了一年以上 → 多半是年份打錯', () => {
+  const r = checkContractDates('2026-05-01', '2027-04-30', '2025-04-15');
+  assert.equal(r.ok, false);
+  assert.match((r as { error: string }).error, /年份/);
+});
+
+test('首繳日空白不擋 —— 那是選填', () => {
+  assert.deepEqual(checkContractDates('2026-05-01', '2027-04-30', null), { ok: true });
 });

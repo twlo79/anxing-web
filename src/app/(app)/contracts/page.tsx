@@ -4,7 +4,7 @@ import { FilterBar, FilterSelect, FilterDateRange, FilterSearch, FilterClear, Fi
 import { createClient } from '@/lib/supabase';
 import { FEE_TYPES, feeLabel } from '@/lib/fee-types';
 import ContractFees from '@/components/ContractFees';
-import { dueDateOf, resolvePayDay, checkFirstDue, fmtDue, periodRange, fmtPeriodRange, rentMonthCount } from '@/lib/due-date';
+import { dueDateOf, resolvePayDay, checkFirstDue, fmtDue, periodRange, fmtPeriodRange, rentMonthCount, checkContractDates } from '@/lib/due-date';
 import { keyBase, onlyKeyOf } from '@/lib/ltKey';
 // 一期的應收與收齊判斷都走這支 —— 畫面、確認視窗、收款三處共用同一份算式
 import { periodTotal, type PeriodTotal } from '@/lib/period-total';
@@ -248,6 +248,17 @@ export default function ContractsPage() {
   }
   async function save() {
     if (!edit) return;
+    /*
+     * 日期先自己檢查，不要丟給資料庫擋。
+     *
+     * end_date 是 NOT NULL，所以打了不存在的日期（4/31）時，
+     * <input type="date"> 把 value 清成空字串 → 送出 null → 資料庫回一句
+     * 英文的 `null value in column "end_date"...`，而 flash 只顯示 2.5 秒。
+     * 使用者看到的是「按了儲存沒反應」，畫面上那格還顯示著 31/04/2027。
+     */
+    const dc = checkContractDates(edit.start_date, edit.end_date, edit.first_payment_date);
+    if (!dc.ok) { alert(dc.error); return; }
+
     const payload = {
       estate_id: edit.estate_id, room: edit.room, tenant_name: edit.tenant_name, phone: edit.phone,
       cadence: edit.cadence, type: edit.type, amount_per_period: edit.amount_per_period,
@@ -953,7 +964,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
     { chunk: any[]; label: string; paidAt: string; t: PeriodTotal } | null>(null);
   const [concDraft, setConcDraft] = useState<{ pi: number; date: string; amount: number; note: string; baseAmount: number; priorDisc: number } | null>(null);
   const [invMap, setInvMap] = useState<Record<string, any>>({});
-  const [invDraft, setInvDraft] = useState<{ id?: string; ym: string; date: string; no: string; note: string } | null>(null);
+  const [invDraft, setInvDraft] = useState<{ id?: string; ym: string; date: string; no: string; note: string; label?: string } | null>(null);
   const today = () => new Date().toISOString().slice(0, 10);
   const STEP = ({ monthly: 1, quarterly: 3, halfyear: 6, yearly: 12 } as any)[c.cadence] || 1;
   /*
@@ -1283,8 +1294,13 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
       ? await supabase.from('invoices').update(payload).eq('id', invDraft.id)
       : await supabase.from('invoices').insert(payload);
     if (error) {
+      /*
+       * 23505 = 唯一約束被擋。migration_94 之後那條約束是「發票號碼唯一」，
+       * 不再是「一個契約一個月一張」—— 訊息要跟著改，
+       * 否則使用者會去找那個月的發票，而問題其實是號碼打錯或重複輸入。
+       */
       alert(error.code === '23505'
-        ? `${fmtYm(invDraft.ym)} 已經有一張已開立的發票,請先重新整理確認。`
+        ? `發票號碼 ${no} 已經用過了。統一發票號碼不會重複 —— 請確認是不是打錯，或這張已經登錄過。`
         : '儲存失敗:' + error.message);
       return;
     }
@@ -1297,26 +1313,66 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
     setInvDraft(null); loadInvoices();
   }
 
-  // 發票以「月」為單位:月繳一期一個月,年繳一期 12 個月會展開成 12 列。
-  function invRow(mm: any) {
+  /**
+   * 發票：**一期一張**，不是一個月一張。
+   *
+   * 【改版前】
+   * 每個月一列 —— 年繳契約會展開成 12 列，而那 12 列全部是同一個號碼、
+   * 同一個日期，因為實務上那就是一張發票。使用者一期收一次錢、開一張發票，
+   * 畫面卻要他按 12 次確認。
+   *
+   * 【現在】
+   * 一期一列。同一期真的需要第二張（補開、折讓後重開）就按「+ 再開一張」——
+   * migration_94 把「一個月一張」的唯一約束換成「發票號碼唯一」，
+   * 那才是真的不變式（統一發票號碼全國唯一）。
+   *
+   * 【舊資料照樣看得到】
+   * 這一期底下會列出**所有** ym 落在這一期的發票。
+   * migration_94 之前那些一個月一張的紀錄不會消失 ——
+   * 藏起來的話帳面上有那張發票、畫面上查不到，對帳時沒有人說得出發生什麼事。
+   */
+  function invPeriodRows(chunk: any[], periodIndex: number, label: string) {
     if (!c.invoice_required) return null;
-    const o = existing[kb + mm.ym];
-    if (!o) return null;
-    const inv = invMap[mm.ym];
-    const canIssue = c.invoice_after_paid === false || !!o.paid;
+    const yms = chunk.map((m: any) => m.ym);
+    // 這一期已經開的發票（可能不只一張）
+    const list = yms.map((y: string) => invMap[y]).filter(Boolean);
+    // 有任何一個月的訂單收款了就算可開（收費後開的契約）
+    const os = chunk.map((m: any) => existing[kb + m.ym]).filter(Boolean);
+    if (!os.length) return null;
+    const canIssue = c.invoice_after_paid === false || os.some((o: any) => o.paid);
+    // 新開的掛在這一期第一個月 —— 那是這一期的代表月份
+    const headYm = yms[0];
+
     return (
-      <div key={'inv' + mm.ym} className="flex items-center justify-between text-xs py-0.5">
-        <span className="text-gray-500">發票 {mm.label}</span>
-        {inv ? (
-          <span className="flex items-center gap-2">
-            <span className="rounded bg-mor-greenlight text-mor-green px-1.5 py-0.5 font-medium">{inv.invoice_no}</span>
-            <span className="text-gray-400">{inv.invoice_date}</span>
-            <button onClick={() => setInvDraft({ id: inv.id, ym: mm.ym, date: inv.invoice_date, no: inv.invoice_no, note: inv.note ?? '' })} className="text-mor-blue underline">改</button>
-          </span>
-        ) : canIssue ? (
-          <button onClick={() => setInvDraft({ ym: mm.ym, date: today(), no: '', note: c.invoice_note ?? '' })} className="rounded-lg bg-mor-slate text-white px-2.5 py-1 font-medium hover:bg-mor-slatedark">開發票</button>
-        ) : (
-          <span className="rounded-lg bg-gray-100 text-gray-400 px-2.5 py-1" title="此契約設定為「收費後開」,需先確認入帳">尚未入帳</span>
+      <div key={'invp' + periodIndex} className="text-xs py-0.5">
+        {list.map((inv: any) => (
+          <div key={inv.id} className="flex items-center justify-between gap-2 py-0.5">
+            <span className="text-gray-500 shrink-0">發票 第 {periodIndex + 1} 期</span>
+            <span className="flex items-center gap-2 min-w-0">
+              <span className="rounded bg-mor-greenlight text-mor-green px-1.5 py-0.5 font-medium">{inv.invoice_no}</span>
+              <span className="text-gray-400 whitespace-nowrap">{inv.invoice_date}</span>
+              <button onClick={() => setInvDraft({ id: inv.id, ym: inv.ym, date: inv.invoice_date, no: inv.invoice_no, note: inv.note ?? '', label })}
+                className="text-mor-blue underline shrink-0">改</button>
+            </span>
+          </div>
+        ))}
+
+        {!list.length && (
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-gray-500">發票 第 {periodIndex + 1} 期</span>
+            {canIssue ? (
+              <button onClick={() => setInvDraft({ ym: headYm, date: today(), no: '', note: c.invoice_note ?? '', label })}
+                className="rounded-lg bg-mor-slate text-white px-2.5 py-1 font-medium hover:bg-mor-slatedark">開發票</button>
+            ) : (
+              <span className="rounded-lg bg-gray-100 text-gray-400 px-2.5 py-1" title="此契約設定為「收費後開」,需先確認入帳">尚未入帳</span>
+            )}
+          </div>
+        )}
+
+        {/* 已經有發票時才給「再開一張」—— 一張都還沒開的時候那顆按鈕叫「開發票」就好 */}
+        {!!list.length && canIssue && (
+          <button onClick={() => setInvDraft({ ym: headYm, date: today(), no: '', note: c.invoice_note ?? '', label })}
+            className="text-mor-blue underline">+ 再開一張</button>
         )}
       </div>
     );
@@ -1527,7 +1583,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
                   </div>
                   {c.invoice_required && (
                     <div className="mt-1.5 border-t border-amber-200/60 pt-1.5">
-                      {chunk.map((mm: any) => invRow(mm))}
+                      {invPeriodRows(chunk, i, `第 ${i + 1} 期 ${fmtPeriodRange(periodRange(c.start_date, c.cadence, i)) || first.label}`)}
                     </div>
                   )}
                 </div>
@@ -1592,7 +1648,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
                       : <button onClick={() => setPeriodPaid(chunk, true, `延展 第 ${j + 1} 期 ${mm.label}`)} disabled={!!busy} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">{busy === mm.ym ? '…' : '確認收款'}</button>)}
                   </div>
                   {c.invoice_required && (
-                    <div className="mt-1.5 border-t border-amber-200/60 pt-1.5">{invRow(mm)}</div>
+                    <div className="mt-1.5 border-t border-amber-200/60 pt-1.5">{invPeriodRows(chunk, j, `延展 第 ${j + 1} 期 ${mm.label}`)}</div>
                   )}
                 </div>
               );
@@ -1679,7 +1735,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
           <div className="absolute inset-0 bg-black/40" />
           <div onClick={(e) => e.stopPropagation()} className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm">
             <div className="border-b border-mor-line px-5 py-3 font-bold text-sm flex items-center justify-between">
-              {invDraft.id ? '修改發票記錄' : '登錄發票'} — {fmtYm(invDraft.ym)}
+              {invDraft.id ? '修改發票記錄' : '登錄發票'} — {invDraft.label ?? fmtYm(invDraft.ym)}
               <button onClick={() => setInvDraft(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
             </div>
             <div className="px-5 py-4 space-y-3 text-sm">

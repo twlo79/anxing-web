@@ -29,7 +29,9 @@ const NAV = [
   // 通知是每個人自己的偏好,所以全角色都看得到 ——
   // 放在權限管理上面（那頁只有總經理進得去,擺一起會讓人以為這也是管理員專用）
   { href: '/notifications', label: '通知設定', icon: '🔔', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
-  { href: '/admin', label: '權限管理', icon: '⚙️', roles: ['super_admin'] },
+  // 會計進得去，但只看得到「收付款帳號」與「常用帳號」兩個分頁
+  // —— 改人員角色那一頁仍然只有總經理，見 admin 頁的 ACCOUNTANT_TABS
+  { href: '/admin', label: '權限管理', icon: '⚙️', roles: ['accountant', 'super_admin'] },
 ];
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
