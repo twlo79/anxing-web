@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
-import NavIcon, { TINT, type IconName } from '@/components/NavIcon';
+import NavIcon, { PRIMARY, ICON_IDLE, type IconName } from '@/components/NavIcon';
 
 const ROLE_LABEL: Record<string, string> = {
   housekeeper: '一般', accountant: '會計', manager: '主管', super_admin: '總經理',
@@ -77,9 +77,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
    * 滿版的色塊會一路撞到側邊欄的右框線,看起來像被切掉一半。
    * 左右各留 8px、圓角 10px,色塊自己是一個完整的形狀。
    *
-   * 【一項一色的彩色圖示，文字維持深灰】
-   * 顏色見 NavIcon 的 TINT。文字不上色 —— 十四行彩色的字讀起來很吵,
-   * 而真正要讀的是字;顏色是用來「不讀字就找到目標」的。
+   * 【圖示全部同一個中性灰藍，只有選取的那一列是主色】
+   * 一項一色試過了：側邊欄好看，但那些顏色會滲進整個畫面 ——
+   * 分頁、統計卡、表格底色各自上色，一張押金清單看起來像調色盤。
+   * 顏色一少它才重新變成訊號。分辨靠字形,字形已經為此重畫過。
    *
    * 【為什麼用 inline style 而不是 Tailwind 的顏色類別】
    * Tailwind 是靜態掃檔案產生 CSS 的,`bg-[${tint}]` 這種動態拼出來的類別
@@ -90,36 +91,21 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     <nav className="flex-1 py-2 overflow-y-auto">
       {items.map((n) => {
         const on = pathname.startsWith(n.href);
-        const tint = TINT[n.icon];
         return (
           // 15px 而不是 14px。側邊欄是整天盯著的東西,而且中文在小字級下
           // 筆畫會糊在一起 —— 拉丁字母在 14px 還很清楚,中文不是。
           <Link key={n.href} href={n.href}
-            className={`group mx-2 flex items-center gap-2.5 pl-1.5 pr-3 py-1.5 rounded-[12px]
+            className={`group mx-2 flex items-center gap-3 px-3 py-2 rounded-[10px]
               text-[15px] font-medium transition-colors ${
               on ? 'text-white' : 'text-gray-700 hover:bg-white/70'
             }`}
             style={on ? {
-              // 選取的膠囊用「這一項自己的顏色」做漸層。
-              // 固定藍底的話，選到營收表時綠色圖示會被藍底吃掉，
-              // 而使用者剛剛就是靠那個綠色找到它的。
-              backgroundImage: `linear-gradient(100deg, ${tint}, ${tint}CC)`,
-              boxShadow: `0 6px 16px -6px ${tint}99`,
+              backgroundImage: `linear-gradient(100deg, ${PRIMARY}, #345380)`,
+              boxShadow: '0 6px 16px -8px rgba(65,104,155,0.7)',
             } : undefined}>
-            {/*
-              圖示裝在一個 14% 同色的圓角方塊裡。
-              光是把線條上色的話，2px 的細線在白底上還是很虛 ——
-              一整排看下來是十四個淡淡的形狀，得盯著看才分得出來。
-              有了色塊，每一列就有一個「認得出來的招牌」，
-              而那正是側邊欄真正在做的事：讓人不用讀字就找到目標。
-            */}
-            <span className="w-8 h-8 rounded-[9px] flex items-center justify-center shrink-0
-                             transition-colors"
-              style={on
-                ? { backgroundColor: 'rgba(255,255,255,0.22)', color: '#fff' }
-                : { backgroundColor: `${tint}24`, color: tint }}>
-              <NavIcon name={n.icon} />
-            </span>
+            {/* 不加底色方塊 —— 十四個色塊就是上一版「太花」的來源。
+                圖示比文字淡一階,選取時才轉白。 */}
+            <NavIcon name={n.icon} style={{ color: on ? '#fff' : ICON_IDLE }} />
             {n.label}
           </Link>
         );
@@ -169,7 +155,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       )}
 
       {/* 桌機側邊欄 */}
-      <aside className="hidden md:flex w-52 shrink-0 flex-col bg-white/55 backdrop-blur-2xl border-r border-white/70">
+      <aside className="hidden md:flex w-52 shrink-0 flex-col bg-white/85 backdrop-blur-xl border-r border-mor-line">
         <div className="px-5 py-5 border-b border-mor-line/70">
           <div className="font-bold text-lg">安幸上工</div>
           {profile && (

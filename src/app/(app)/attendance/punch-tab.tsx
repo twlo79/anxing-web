@@ -5,7 +5,7 @@ import { getPosition, punchUi, hhmm, type GeoFail } from '@/lib/punch';
 import {
   twToday, dayStatus, monthSummary, monthRange, shiftMonth, type ReportRow,
 } from '@/lib/attendance-ui';
-import { CARD, C_IN, C_OUT, C_NEUTRAL, type Estate, type TabProps } from './types';
+import { CARD, C_IN, C_NEUTRAL, C_WARN, type Estate, type TabProps } from './types';
 
 type Today = {
   in_at: string | null; out_at: string | null;
@@ -232,11 +232,13 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
         */}
         <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
           {([
+            // 只有兩個色：綠＝正常累積、藍＝中性。
+            // 「遲到早退」有數字才轉琥珀 —— 那是唯一需要被看見的異常。
             ['出勤', sum.days, '天', C_IN],
-            ['工時', sum.workHours, '小時', C_NEUTRAL],
-            ['加班', sum.otHours, '小時', C_OUT],
+            ['工時', sum.workHours, '小時', C_IN],
+            ['加班', sum.otHours, '小時', C_NEUTRAL],
             ['請假', sum.leaveHours, '小時', C_NEUTRAL],
-            ['遲到早退', sum.lateDays + sum.earlyDays, '次', C_OUT],
+            ['遲到早退', sum.lateDays + sum.earlyDays, '次', C_WARN],
           ] as const).map(([lb, v, unit, c]) => {
             // 0 就是灰的。全部上色的話「這個月加班 0 小時」跟
             // 「加班 12 小時」一樣醒目，而只有後者需要被看見。
