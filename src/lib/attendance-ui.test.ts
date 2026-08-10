@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   toTaipeiIso, hoursBetween, leaveVote, otVote, monthGrid, shiftMonth, checkFixDate,
-  dayStatus, countTodo, monthRange, quickRange, type ReportRow,
+  dayStatus, countTodo, monthSummary, monthRange, quickRange, type ReportRow,
 } from './attendance-ui.ts';
 
 const row = (p: Partial<ReportRow>): ReportRow => ({
@@ -167,6 +167,59 @@ test('上班日兩張卡都沒有、也沒請假 → 未出勤,要補', () => {
 
 test('未來的日期不顯示狀態(還沒發生)', () => {
   assert.equal(dayStatus(row({ work_date: '2026-08-20' }), '2026-08-10').tone, 'none');
+});
+
+test('★ 今天還沒打上班卡 → 「還沒打卡」,不是未出勤', () => {
+  const s = dayStatus(row({ work_date: '2026-08-10', item: '未出勤' }), '2026-08-10');
+  assert.equal(s.tone, 'wait', '今天還沒過完,不能說人家未出勤');
+  assert.equal(s.fixKind, null, '今天的卡直接打就好,不用補登');
+});
+
+test('★ 系統上線前的日子完全不評價', () => {
+  // 系統 8/10 上線。沒有這條的話近 30 天會有 21 天「未出勤」,
+  // 而那 21 天根本還沒有打卡這回事 —— 全紅的清單跟全綠的一樣沒有資訊量
+  const s = dayStatus(row({ work_date: '2026-07-15', item: '未出勤' }), '2026-08-10', '2026-08-10');
+  assert.equal(s.tone, 'none');
+  assert.equal(s.label, '');
+});
+
+test('上線後的未出勤還是要抓出來', () => {
+  const s = dayStatus(row({ work_date: '2026-08-12', item: '未出勤' }), '2026-08-20', '2026-08-10');
+  assert.equal(s.tone, 'bad');
+});
+
+test('★ 待處理天數會扣掉上線前的日子', () => {
+  const rows = [
+    row({ work_date: '2026-07-20', item: '未出勤' }),
+    row({ work_date: '2026-07-21', item: '未出勤' }),
+    row({ work_date: '2026-08-12', item: '未出勤' }),
+  ];
+  assert.equal(countTodo(rows, '2026-08-20'), 3, '不給 firstDay 就是全部都算');
+  assert.equal(countTodo(rows, '2026-08-20', '2026-08-10'), 1);
+});
+
+// ── 月統計 ─────────────────────────────────────────
+
+test('月統計把三十列加起來', () => {
+  const rows = [
+    row({ work_date: '2026-08-03', in_at: '09:57', out_at: '19:21', work_hours: 8, ot_hours: 2 }),
+    row({ work_date: '2026-08-04', in_at: '10:25', out_at: '19:00', work_hours: 8, late_min: 25 }),
+    row({ work_date: '2026-08-05', item: '事假', leave_hours: 8, work_hours: 0 }),
+    row({ work_date: '2026-08-08', item: '例假日', work_hours: 0 }),
+  ];
+  const s = monthSummary(rows, '2026-08-20', '2026-08-01');
+  assert.equal(s.days, 2, '有上班卡的天數');
+  assert.equal(s.workHours, 16);
+  assert.equal(s.otHours, 2);
+  assert.equal(s.leaveHours, 8);
+  assert.equal(s.lateDays, 1);
+  assert.equal(s.earlyDays, 0);
+});
+
+test('★ 例假日不會被算進工時', () => {
+  const s = monthSummary([row({ item: '例假日', work_hours: 0 })], '2026-08-20');
+  assert.equal(s.workHours, 0, '例假日算工時的話一個月會憑空多出十幾天');
+  assert.equal(s.days, 0);
 });
 
 test('待處理天數 = 紅色那幾天', () => {

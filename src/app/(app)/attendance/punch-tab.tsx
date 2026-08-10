@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { getPosition, punchUi, hhmm, type GeoFail } from '@/lib/punch';
 import {
-  twToday, dayStatus, countTodo, quickRange, type ReportRow,
+  twToday, dayStatus, monthSummary, monthRange, shiftMonth, type ReportRow,
 } from '@/lib/attendance-ui';
 import { CARD, type Estate, type TabProps } from './types';
 
@@ -18,8 +18,9 @@ const TONE_CLS: Record<string, string> = {
   bad: 'bg-red-50 text-red-600 border-red-200',
   off: 'bg-gray-100 text-gray-500 border-gray-200',
   wait: 'bg-amber-50 text-amber-700 border-amber-200',
-  none: 'bg-transparent text-transparent border-transparent',
+  none: 'hidden',
 };
+const DOW = ['日', '一', '二', '三', '四', '五', '六'];
 
 /**
  * 走動的時鐘。
@@ -58,31 +59,50 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
   onFix?: (workDate: string, kind: 'in' | 'out') => void;
 }) {
   const supabase = useMemo(() => createClient(), []);
+  const d = twToday();
   const [today, setToday] = useState<Today | null>(null);
   const [estates, setEstates] = useState<Estate[]>([]);
   const [rows, setRows] = useState<ReportRow[]>([]);
+  /**
+   * 這個人第一次打卡是哪一天。
+   *
+   * 【為什麼一定要撈這個】
+   * 系統 8/10 上線，8/10 之前的每一個工作日在報表上都是「未出勤」。
+   * 不擋的話第一次打開畫面就是「近 30 天有 21 天要處理」——
+   * 全紅的清單跟全綠的一樣沒有資訊量，而第一印象是「這系統壞了」。
+   */
+  const [firstDay, setFirstDay] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [onlyTodo, setOnlyTodo] = useState(false);
-  const d = twToday();
+
+  // 以整月為單位。歷史紀錄就是往前翻月份 —— 「近 30 天」永遠跨兩個月，
+  // 而薪資與請假額度都是按月結的，兩邊對不起來。
+  const now = new Date();
+  const [[y, m], setYm] = useState<[number, number]>([now.getFullYear(), now.getMonth() + 1]);
+  const isThisMonth = y === now.getFullYear() && m === now.getMonth() + 1;
 
   const load = useCallback(async () => {
-    const r30 = quickRange('last30');
-    const [{ data: a }, { data: es }, { data: rep }] = await Promise.all([
+    setLoading(true);
+    const rg = monthRange(y, m);
+    const [{ data: a }, { data: es }, { data: rep }, { data: first }] = await Promise.all([
       supabase.from('attendance')
         .select('in_at, out_at, late_min, early_min, status')
         .eq('user_id', me.id).eq('work_date', d).maybeSingle(),
       supabase.from('estates')
         .select('id, name, active, sort, gps_lat, gps_lng, gps_radius_m')
         .order('sort').order('name'),
-      supabase.rpc('attendance_report', { p_user: me.id, p_from: r30.from, p_to: r30.to }),
+      supabase.rpc('attendance_report', { p_user: me.id, p_from: rg.from, p_to: rg.to }),
+      supabase.from('attendance').select('work_date')
+        .eq('user_id', me.id).order('work_date').limit(1).maybeSingle(),
     ]);
     setToday((a as Today) ?? null);
     setEstates((es ?? []) as Estate[]);
     // 新的在上面 —— 要處理的都是最近幾天的
     setRows(((rep ?? []) as ReportRow[]).slice().reverse());
+    setFirstDay((first as { work_date: string } | null)?.work_date ?? d);
     setLoading(false);
-  }, [supabase, me.id, d]);
+  }, [supabase, me.id, d, y, m]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -112,16 +132,11 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
   const ui = punchUi(today ? { in_at: hhmm(today.in_at), out_at: hhmm(today.out_at) } : null);
   // 有座標的物業才算「可以打卡」—— 沒設座標的不該讓人以為能打
   const ready = estates.filter((e) => e.active && e.gps_lat != null && e.gps_lng != null);
-  const todo = countTodo(rows, d);
-  const shown = onlyTodo ? rows.filter((r) => dayStatus(r, d).tone === 'bad') : rows;
+  const sum = monthSummary(rows, d, firstDay);
+  const shown = onlyTodo ? rows.filter((r) => dayStatus(r, d, firstDay).tone === 'bad') : rows;
 
   return (
     <div className="space-y-4">
-      {/*
-        沒有任何物業設座標時先擋在前面。
-        讓人按下去才得到「沒有物業設定打卡位置」是最糟的順序 ——
-        他會以為是自己的問題，而那是主管還沒設定。
-      */}
       {!loading && !ready.length && (
         <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           <b>還不能打卡 —— 沒有任何物業設定打卡位置。</b>
@@ -133,10 +148,10 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
 
       {/* ── 打卡鐘 ─────────────────────────────────── */}
       <div className="rounded-2xl overflow-hidden bg-gradient-to-br from-mor-slate to-mor-slatedark
-                      px-5 py-6 md:flex md:items-center md:gap-8">
+                      px-4 py-5 sm:px-5 sm:py-6 md:flex md:items-center md:gap-8">
         <div className="text-center md:text-left md:flex-1">
           <Clock />
-          <div className="flex items-center justify-center md:justify-start gap-5 mt-4">
+          <div className="flex items-center justify-center md:justify-start gap-5 mt-3">
             {([['上班', today?.in_at, today?.late_min, '遲到'],
                ['下班', today?.out_at, today?.early_min, '早退']] as const).map(([lb, at, mins, warn]) => (
               <div key={lb} className="text-center md:text-left">
@@ -153,7 +168,7 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
         </div>
 
         {/* 手機上要好按 —— 打卡是站著單手操作的動作 */}
-        <div className="mt-5 md:mt-0 md:w-56">
+        <div className="mt-4 md:mt-0 md:w-56">
           {ui.action ? (
             <button onClick={() => doPunch(ui.action!)} disabled={busy || !ready.length}
               className="w-full h-16 rounded-xl bg-white text-mor-slate text-lg font-bold
@@ -170,92 +185,186 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
         </div>
       </div>
 
+      {/* ── 月份切換 ＋ 當月統計 ─────────────────────── */}
+      <div className={`${CARD} p-3 sm:p-4`}>
+        <div className="flex items-center gap-1 mb-3">
+          <button onClick={() => setYm(shiftMonth(y, m, -1))} aria-label="上個月"
+            className="rounded-lg border border-mor-line w-9 h-9 hover:bg-mor-sand/60">‹</button>
+          <div className="text-sm font-semibold flex-1 text-center tabular-nums">
+            {y} 年 {m} 月
+          </div>
+          <button onClick={() => setYm(shiftMonth(y, m, 1))} aria-label="下個月"
+            disabled={isThisMonth}
+            className="rounded-lg border border-mor-line w-9 h-9 hover:bg-mor-sand/60 disabled:opacity-30">›</button>
+          {!isThisMonth && (
+            <button onClick={() => setYm([now.getFullYear(), now.getMonth() + 1])}
+              className="ml-1 rounded-lg border border-mor-line px-3 h-9 text-xs hover:bg-mor-sand/60">
+              本月
+            </button>
+          )}
+        </div>
+
+        {/* 三十列數字沒有人會自己加 —— 月底想知道上了幾天、加了幾小時 */}
+        <div className="grid grid-cols-3 sm:grid-cols-5 gap-x-2 gap-y-3 text-center">
+          {([
+            ['出勤', sum.days, '天'],
+            ['工時', sum.workHours, '小時'],
+            ['加班', sum.otHours, '小時'],
+            ['請假', sum.leaveHours, '小時'],
+            ['遲到早退', sum.lateDays + sum.earlyDays, '次'],
+          ] as const).map(([lb, v, unit]) => (
+            <div key={lb}>
+              <div className="text-[11px] text-gray-500">{lb}</div>
+              <div className={`text-lg font-semibold tabular-nums ${
+                lb === '遲到早退' && v > 0 ? 'text-amber-600' : 'text-mor-ink'}`}>
+                {v}<span className="text-[11px] font-normal text-gray-400 ml-0.5">{unit}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
       {/* ── 要處理的 ───────────────────────────────── */}
-      {todo > 0 && (
+      {sum.todo > 0 && (
         <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          <b>近 30 天有 {todo} 天要處理</b>（忘了打卡、遲到或早退）。
+          <b>{y} 年 {m} 月有 {sum.todo} 天要處理</b>（忘了打卡、遲到或早退）。
           <div className="text-xs mt-1 leading-relaxed">
-            下面清單裡紅色那幾列右邊有「補登」——{' '}
-            <b>今天的打卡不會補到那一天去</b>，那一天要單獨補，否則兩天的工時都會錯。
+            紅色那幾列有「補登」按鈕。<b>今天的打卡不會補到那一天去</b> ——
+            那一天要單獨補，否則兩天的工時都會錯。
           </div>
         </div>
       )}
 
-      {/* ── 我的出勤紀錄 ───────────────────────────── */}
+      {/* ── 出勤明細 ───────────────────────────────── */}
       <div className={`${CARD} overflow-hidden`}>
         <div className="px-4 py-2.5 border-b border-mor-line bg-mor-sand/40
                         flex items-center gap-3 text-sm font-medium">
-          <span>我的出勤（近 30 天）</span>
+          <span>{m} 月出勤明細</span>
           <div className="flex-1" />
           <label className="flex items-center gap-1.5 text-xs font-normal text-gray-600">
             <input type="checkbox" checked={onlyTodo} onChange={(e) => setOnlyTodo(e.target.checked)} />
-            只看要處理的{todo > 0 && `（${todo}）`}
+            只看要處理的{sum.todo > 0 && `（${sum.todo}）`}
           </label>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[620px] text-sm">
-            <thead>
-              <tr className="text-left text-xs text-gray-500 border-b border-mor-line">
-                <th className="px-4 py-2">日期</th>
-                <th className="px-4 py-2">上班卡</th>
-                <th className="px-4 py-2">下班卡</th>
-                <th className="px-4 py-2">工時</th>
-                <th className="px-4 py-2">狀態</th>
-                <th className="px-4 py-2 text-right"> </th>
-              </tr>
-            </thead>
-            <tbody>
-              {shown.map((r) => {
-                const s = dayStatus(r, d);
-                const dow = ['日', '一', '二', '三', '四', '五', '六'][
-                  new Date(`${r.work_date}T00:00:00+08:00`).getDay()];
-                return (
-                  <tr key={r.work_date}
-                    className={`border-b border-mor-line/60 last:border-0 ${
-                      r.work_date === d ? 'bg-mor-slate/5' : ''}`}>
-                    <td className="px-4 py-2 whitespace-nowrap tabular-nums">
-                      {r.work_date.slice(5).replace('-', '/')}
-                      <span className={`ml-1 text-xs ${
-                        dow === '日' || dow === '六' ? 'text-red-400' : 'text-gray-400'}`}>({dow})</span>
-                    </td>
-                    <td className={`px-4 py-2 tabular-nums ${
-                      (r.late_min ?? 0) > 0 ? 'text-red-600' : ''}`}>
-                      {r.in_at ?? <span className="text-gray-300">—</span>}
-                    </td>
-                    <td className={`px-4 py-2 tabular-nums ${
-                      (r.early_min ?? 0) > 0 ? 'text-red-600' : ''}`}>
-                      {r.out_at ?? <span className="text-gray-300">—</span>}
-                    </td>
-                    <td className="px-4 py-2 tabular-nums text-gray-600">
-                      {r.work_hours > 0 ? r.work_hours : <span className="text-gray-300">—</span>}
-                      {r.ot_hours > 0 && <span className="text-mor-slate">＋{r.ot_hours}</span>}
-                    </td>
-                    <td className="px-4 py-2">
-                      {s.tone !== 'none' && (
-                        <span className={`rounded-full border px-2 py-0.5 text-[11px] whitespace-nowrap ${
-                          TONE_CLS[s.tone]}`}>{s.label}</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-2 text-right">
-                      {/* 光標紅字沒有用 —— 要讓他當場就能補 */}
-                      {s.fixKind && onFix && (
-                        <button onClick={() => onFix(r.work_date, s.fixKind!)}
-                          className="rounded-lg border border-mor-line px-3 py-1 text-xs hover:bg-mor-sand/60">
-                          補登{s.fixKind === 'in' ? '上班' : '下班'}
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-              {!shown.length && (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-400">
-                  {loading ? '載入中…' : onlyTodo ? '近 30 天沒有要處理的 👍' : '沒有資料'}
-                </td></tr>
-              )}
-            </tbody>
-          </table>
+        {/* 桌機：表格 */}
+        <table className="w-full text-sm hidden sm:table">
+          <thead>
+            <tr className="text-left text-xs text-gray-500 border-b border-mor-line">
+              <th className="px-4 py-2">日期</th>
+              <th className="px-4 py-2">上班卡</th>
+              <th className="px-4 py-2">下班卡</th>
+              <th className="px-4 py-2">工時</th>
+              <th className="px-4 py-2">狀態</th>
+              <th className="px-4 py-2 text-right"> </th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.map((r) => {
+              const s = dayStatus(r, d, firstDay);
+              const dow = DOW[new Date(`${r.work_date}T00:00:00+08:00`).getDay()];
+              return (
+                <tr key={r.work_date}
+                  className={`border-b border-mor-line/60 last:border-0 ${
+                    r.work_date === d ? 'bg-mor-slate/5' : ''}`}>
+                  <td className="px-4 py-2 whitespace-nowrap tabular-nums">
+                    {r.work_date.slice(5).replace('-', '/')}
+                    <span className={`ml-1 text-xs ${
+                      dow === '日' || dow === '六' ? 'text-red-400' : 'text-gray-400'}`}>({dow})</span>
+                  </td>
+                  <td className={`px-4 py-2 tabular-nums ${(r.late_min ?? 0) > 0 ? 'text-red-600' : ''}`}>
+                    {r.in_at ?? <span className="text-gray-300">—</span>}
+                  </td>
+                  <td className={`px-4 py-2 tabular-nums ${(r.early_min ?? 0) > 0 ? 'text-red-600' : ''}`}>
+                    {r.out_at ?? <span className="text-gray-300">—</span>}
+                  </td>
+                  <td className="px-4 py-2 tabular-nums text-gray-600">
+                    {r.work_hours > 0 ? r.work_hours : <span className="text-gray-300">—</span>}
+                    {r.ot_hours > 0 && <span className="text-mor-slate">＋{r.ot_hours}</span>}
+                  </td>
+                  <td className="px-4 py-2">
+                    <span className={`rounded-full border px-2 py-0.5 text-[11px] whitespace-nowrap ${
+                      TONE_CLS[s.tone]}`}>{s.label}</span>
+                  </td>
+                  <td className="px-4 py-2 text-right">
+                    {/* 光標紅字沒有用 —— 要讓他當場就能補 */}
+                    {s.fixKind && onFix && (
+                      <button onClick={() => onFix(r.work_date, s.fixKind!)}
+                        className="rounded-lg border border-mor-line px-3 py-1 text-xs hover:bg-mor-sand/60">
+                        補登{s.fixKind === 'in' ? '上班' : '下班'}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+            {!shown.length && (
+              <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-400">
+                {loading ? '載入中…' : onlyTodo ? '這個月沒有要處理的 👍' : '這個月沒有紀錄'}
+              </td></tr>
+            )}
+          </tbody>
+        </table>
+
+        {/*
+          手機：一天一列，不是橫向捲動的表格。
+          六欄的表格在 375px 寬的螢幕上只看得到兩欄，而要看狀態得往右滑 ——
+          沒有人會滑，他只會覺得這頁在手機上不能用。
+        */}
+        <div className="sm:hidden divide-y divide-mor-line/60">
+          {shown.map((r) => {
+            const s = dayStatus(r, d, firstDay);
+            const dt = new Date(`${r.work_date}T00:00:00+08:00`);
+            const dow = DOW[dt.getDay()];
+            const weekend = dt.getDay() === 0 || dt.getDay() === 6;
+            return (
+              <div key={r.work_date}
+                className={`px-4 py-2.5 flex items-center gap-3 ${
+                  r.work_date === d ? 'bg-mor-slate/5' : ''}`}>
+                <div className="w-11 shrink-0 text-center">
+                  <div className="text-base font-semibold tabular-nums leading-none">
+                    {Number(r.work_date.slice(8))}
+                  </div>
+                  <div className={`text-[10px] mt-0.5 ${weekend ? 'text-red-400' : 'text-gray-400'}`}>
+                    週{dow}
+                  </div>
+                </div>
+
+                <div className="flex-1 min-w-0">
+                  <div className="tabular-nums text-sm">
+                    <span className={(r.late_min ?? 0) > 0 ? 'text-red-600' : ''}>
+                      {r.in_at ?? '—'}
+                    </span>
+                    <span className="text-gray-300 mx-1">→</span>
+                    <span className={(r.early_min ?? 0) > 0 ? 'text-red-600' : ''}>
+                      {r.out_at ?? '—'}
+                    </span>
+                    {r.work_hours > 0 && (
+                      <span className="text-xs text-gray-400 ml-2">{r.work_hours} 小時</span>
+                    )}
+                    {r.ot_hours > 0 && (
+                      <span className="text-xs text-mor-slate ml-1">＋{r.ot_hours}</span>
+                    )}
+                  </div>
+                  <span className={`inline-block mt-1 rounded-full border px-2 py-0.5 text-[11px] ${
+                    TONE_CLS[s.tone]}`}>{s.label}</span>
+                </div>
+
+                {s.fixKind && onFix && (
+                  <button onClick={() => onFix(r.work_date, s.fixKind!)}
+                    className="shrink-0 rounded-lg border border-mor-line px-2.5 py-2 text-xs
+                               hover:bg-mor-sand/60 leading-tight">
+                    補登<br />{s.fixKind === 'in' ? '上班' : '下班'}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+          {!shown.length && (
+            <div className="px-4 py-8 text-center text-sm text-gray-400">
+              {loading ? '載入中…' : onlyTodo ? '這個月沒有要處理的 👍' : '這個月沒有紀錄'}
+            </div>
+          )}
         </div>
       </div>
 
@@ -264,6 +373,9 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
         在任何一個物業的範圍內都能打卡，紀錄會帶到是在哪一個物業打的。
         <br />
         <b>工時走制度，不看打卡待多久</b> —— 多待的算加班（要事前申請），早走的分鐘另外記。
+        {firstDay && firstDay > `${y}-${String(m).padStart(2, '0')}-01` && (
+          <><br />{firstDay} 之前還沒開始用打卡，那些日子不列入異常。</>
+        )}
       </div>
     </div>
   );

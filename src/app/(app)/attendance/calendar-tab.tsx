@@ -37,6 +37,8 @@ export default function CalendarTab({ me, isAdmin }: TabProps) {
   const [leaveDays, setLeaveDays] = useState<Record<string, LeaveDay[]>>({});
   /** 我自己每一天的出勤狀態，key = YYYY-MM-DD */
   const [mine, setMine] = useState<Record<string, ReportRow>>({});
+  /** 第一次打卡的日期。之前的日子不評價。 */
+  const [firstDay, setFirstDay] = useState<string | null>(null);
   const [sel, setSel] = useState<string | null>(null);
 
   const grid = useMemo(() => monthGrid(y, m), [y, m]);
@@ -47,7 +49,7 @@ export default function CalendarTab({ me, isAdmin }: TabProps) {
   const load = useCallback(async () => {
     // 範圍用整個 42 格，不是當月 —— 月初月底跨月的那幾格也要顯示，
     // 不然一號在畫面上會突然變成沒有任何資訊的空格。
-    const [{ data: hs }, { data: lr }, { data: lt }, { data: pf }, { data: att }] = await Promise.all([
+    const [{ data: hs }, { data: lr }, { data: lt }, { data: pf }, { data: att }, { data: first }] = await Promise.all([
       supabase.from('holidays').select('d, name, kind').gte('d', from).lte('d', to),
       supabase.from('leave_requests').select('user_id, type_code, start_at, end_at, status')
         .eq('status', 'approved')
@@ -57,7 +59,12 @@ export default function CalendarTab({ me, isAdmin }: TabProps) {
       // 用 attendance_report 而不是直接讀 attendance —— 它已經算好
       // 每一天的狀態（含請假、例假日、遲到早退），格子裡要顯示的就是那些
       supabase.rpc('attendance_report', { p_user: me.id, p_from: from, p_to: to }),
+      // 第一次打卡是哪天 —— 之前的日子在報表上都是「未出勤」，
+      // 不擋的話整個月曆會是一片紅，而那些日子根本還沒有打卡這回事
+      supabase.from('attendance').select('work_date')
+        .eq('user_id', me.id).order('work_date').limit(1).maybeSingle(),
     ]);
+    setFirstDay((first as { work_date: string } | null)?.work_date ?? today);
 
     setHolidays(Object.fromEntries((hs ?? []).map((h) => [h.d as string, h as Holiday])));
     setMine(Object.fromEntries(((att ?? []) as ReportRow[]).map((r) => [r.work_date, r])));
@@ -86,7 +93,7 @@ export default function CalendarTab({ me, isAdmin }: TabProps) {
       }
     }
     setLeaveDays(map);
-  }, [supabase, from, to, isAdmin, me.id]);
+  }, [supabase, from, to, isAdmin, me.id, today]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -125,7 +132,7 @@ export default function CalendarTab({ me, isAdmin }: TabProps) {
             const h = holidays[c.date];
             const lv = leaveDays[c.date] ?? [];
             const rep = mine[c.date];
-            const st = rep ? dayStatus(rep, today) : null;
+            const st = rep ? dayStatus(rep, today, firstDay) : null;
             const isHol = h?.kind === 'holiday';
             const isWeekend = c.dow === 0 || c.dow === 6;
             return (
@@ -190,7 +197,7 @@ export default function CalendarTab({ me, isAdmin }: TabProps) {
           {/* 我那天的打卡 —— 格子裡只放得下時間，遲到幾分鐘要點進來看 */}
           {mine[sel] && (() => {
             const r = mine[sel];
-            const s = dayStatus(r, today);
+            const s = dayStatus(r, today, firstDay);
             return (
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm mb-1">
                 <span>上班 <b className="tabular-nums">{r.in_at ?? '—'}</b></span>

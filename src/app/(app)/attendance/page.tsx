@@ -101,11 +101,17 @@ export default function AttendancePage() {
     <div className="max-w-[980px]">
       <h1 className="hidden md:block text-xl font-bold mb-3">出勤</h1>
 
-      <div className="flex flex-wrap gap-1 mb-4 border-b border-mor-line">
+      {/*
+        手機上六個分頁橫向捲動，不換行。
+        換行的話標題列會變成兩排、把打卡按鈕推到摺線以下 ——
+        打卡是這頁最主要的動作，不該需要先捲動才看得到。
+      */}
+      <div className="flex gap-1 mb-4 border-b border-mor-line overflow-x-auto
+                      [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {canSee.map((k) => (
           <button key={k} onClick={() => { setTab(k); setMsg(null); }}
-            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px whitespace-nowrap
-              flex items-center gap-1.5 ${
+            className={`px-3 sm:px-4 py-2 text-sm font-medium border-b-2 -mb-px whitespace-nowrap
+              shrink-0 flex items-center gap-1.5 ${
               cur === k ? 'border-mor-slate text-mor-slate'
                         : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
             {TAB_LABEL[k]}

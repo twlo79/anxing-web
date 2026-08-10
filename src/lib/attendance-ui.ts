@@ -167,13 +167,33 @@ export type DayStatus = {
   fixKind: 'in' | 'out' | null;
 };
 
-export function dayStatus(r: ReportRow, today: string = twToday()): DayStatus {
+/**
+ * @param firstDay 這個人「開始有打卡義務」的第一天（通常是他第一次打卡那天）。
+ *
+ * 【為什麼一定要有這個參數】
+ * 系統是 2026-08-10 上線的。沒有這個參數的話，8/10 之前的每一個工作日
+ * 都會被算成「未出勤」—— 打開畫面看到「近 30 天有 21 天要處理」，
+ * 而那 21 天根本還沒有打卡這回事。
+ *
+ * 一個全部都是紅字的清單跟一個全部都是綠字的清單一樣沒有資訊量，
+ * 而且第一印象就是「這個系統壞了」。
+ */
+export function dayStatus(
+  r: ReportRow, today: string = twToday(), firstDay?: string | null,
+): DayStatus {
+  // 還沒開始用這套系統的日子：不評價
+  if (firstDay && r.work_date < firstDay) return { label: '', tone: 'none', fixKind: null };
+
   const isOff = r.item !== '上班日' && !r.in_at && !r.out_at && r.item !== '未出勤';
   if (isOff) return { label: r.item, tone: 'off', fixKind: null };
 
   // 今天而且還沒打下班 —— 這不是異常，是還在上班
   if (r.work_date === today && r.in_at && !r.out_at) {
     return { label: '上班中', tone: 'wait', fixKind: null };
+  }
+  // 今天還沒打上班卡 —— 今天還沒過完，不能說人家未出勤
+  if (r.work_date === today && !r.in_at && !r.out_at) {
+    return { label: '還沒打卡', tone: 'wait', fixKind: null };
   }
   if (r.work_date > today) return { label: '', tone: 'none', fixKind: null };
 
@@ -194,8 +214,42 @@ export function dayStatus(r: ReportRow, today: string = twToday()): DayStatus {
 }
 
 /** 一段期間內「需要處理」的天數 —— 放在分頁上當數字用 */
-export function countTodo(rows: ReportRow[], today: string = twToday()): number {
-  return rows.filter((r) => dayStatus(r, today).tone === 'bad').length;
+export function countTodo(
+  rows: ReportRow[], today: string = twToday(), firstDay?: string | null,
+): number {
+  return rows.filter((r) => dayStatus(r, today, firstDay).tone === 'bad').length;
+}
+
+/**
+ * 一個月的統計。
+ *
+ * 【為什麼要有】
+ * 三十列數字沒有人會自己加。月底想知道「這個月上了幾天、加了幾小時」
+ * 只能匯出 Excel —— 而那是主管才有的按鈕。
+ */
+export type MonthSummary = {
+  days: number;        // 有出勤的天數
+  workHours: number;
+  otHours: number;
+  leaveHours: number;
+  lateDays: number;
+  earlyDays: number;
+  todo: number;
+};
+
+export function monthSummary(
+  rows: ReportRow[], today: string = twToday(), firstDay?: string | null,
+): MonthSummary {
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  return {
+    days: rows.filter((r) => r.in_at).length,
+    workHours: r2(rows.reduce((s, r) => s + Number(r.work_hours || 0), 0)),
+    otHours: r2(rows.reduce((s, r) => s + Number(r.ot_hours || 0), 0)),
+    leaveHours: r2(rows.reduce((s, r) => s + Number(r.leave_hours || 0), 0)),
+    lateDays: rows.filter((r) => (r.late_min ?? 0) > 0).length,
+    earlyDays: rows.filter((r) => (r.early_min ?? 0) > 0).length,
+    todo: countTodo(rows, today, firstDay),
+  };
 }
 
 /* ============================================================

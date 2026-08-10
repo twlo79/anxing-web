@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
+import NavIcon, { type IconName } from '@/components/NavIcon';
 
 const ROLE_LABEL: Record<string, string> = {
   housekeeper: '一般', accountant: '會計', manager: '主管', super_admin: '總經理',
@@ -15,31 +16,31 @@ const ROLE_LABEL: Record<string, string> = {
  * 名稱刻意短。原本叫「短租訂單與收款」「契約訂單與收款」,
  * 兩個十個字的項目擺在一起,實際要分辨的只有前兩個字。
  */
-const NAV = [
+const NAV: { href: string; label: string; icon: IconName; roles: string[] }[] = [
   // 出勤排第一：全公司每天最少點兩次,而且是「上班第一件事」。
   // 它原本排在清潔記錄後面 —— 每天要用的東西不該讓人往下找。
-  { href: '/attendance', label: '出勤', icon: '🕐', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
-  { href: '/shortterm', label: '訂單 | 收入', icon: '🏨', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
-  { href: '/contracts', label: '契約 | 收入', icon: '📋', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
-  { href: '/revenues', label: '營收表', icon: '💰', roles: ['accountant', 'manager', 'super_admin'] },
-  { href: '/purchases', label: '請款單控管', icon: '🧾', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
-  { href: '/deposits', label: '押金管理', icon: '🔐', roles: ['accountant', 'manager', 'super_admin'] },
-  { href: '/expenses', label: '支出明細', icon: '📒', roles: ['accountant', 'manager', 'super_admin'] },
-  { href: '/dashboard', label: '財務儀錶板', icon: '📊', roles: ['accountant', 'manager', 'super_admin'] },
-  { href: '/housekeeping', label: '房務管理', icon: '🛏️', roles: ['manager', 'super_admin'] },
+  { href: '/attendance', label: '出勤', icon: 'clock', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/shortterm', label: '訂單 | 收入', icon: 'bed', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/contracts', label: '契約 | 收入', icon: 'contract', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/revenues', label: '營收表', icon: 'coins', roles: ['accountant', 'manager', 'super_admin'] },
+  { href: '/purchases', label: '請款單控管', icon: 'receipt', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/deposits', label: '押金管理', icon: 'lock', roles: ['accountant', 'manager', 'super_admin'] },
+  { href: '/expenses', label: '支出明細', icon: 'book', roles: ['accountant', 'manager', 'super_admin'] },
+  { href: '/dashboard', label: '財務儀錶板', icon: 'chart', roles: ['accountant', 'manager', 'super_admin'] },
+  { href: '/housekeeping', label: '房務管理', icon: 'broom', roles: ['manager', 'super_admin'] },
   // 客戶管理跟房務、評價、清潔是同一組:都是「人在現場會用到的」。
   // 上面那半段是錢(訂單、契約、營收、請款、押金、支出、儀表板)。
   // 客戶資料原本散在訂單 guest_name 與契約 tenant_name 兩邊,
   // 要查一位房客的電話得先猜他是長租還是短租。
-  { href: '/customers', label: '客戶管理', icon: '👤', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
-  { href: '/reviews', label: '房源評價', icon: '⭐', roles: ['housekeeper', 'manager', 'super_admin'] },
-  { href: '/cleaning', label: '清潔記錄', icon: '🧹', roles: ['housekeeper', 'manager', 'super_admin'] },
+  { href: '/customers', label: '客戶管理', icon: 'user', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/reviews', label: '房源評價', icon: 'star', roles: ['housekeeper', 'manager', 'super_admin'] },
+  { href: '/cleaning', label: '清潔記錄', icon: 'sparkle', roles: ['housekeeper', 'manager', 'super_admin'] },
   // 通知是每個人自己的偏好,所以全角色都看得到 ——
   // 放在權限管理上面（那頁只有總經理進得去,擺一起會讓人以為這也是管理員專用）
-  { href: '/notifications', label: '通知設定', icon: '🔔', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/notifications', label: '通知設定', icon: 'bell', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   // 會計進得去，但只看得到「收付款帳號」與「常用帳號」兩個分頁
   // —— 改人員角色那一頁仍然只有總經理，見 admin 頁的 ACCOUNTANT_TABS
-  { href: '/admin', label: '權限管理', icon: '⚙️', roles: ['accountant', 'super_admin'] },
+  { href: '/admin', label: '權限管理', icon: 'settings', roles: ['accountant', 'super_admin'] },
 ];
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
@@ -69,29 +70,51 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const items = NAV.filter((n) => !profile || n.roles.includes(profile.role));
   const current = items.find((n) => pathname.startsWith(n.href));
 
+  /*
+   * 選單。
+   *
+   * 【選取狀態是圓角膠囊，不是整條滿版】
+   * 滿版的色塊會一路撞到側邊欄的右框線,看起來像被切掉一半。
+   * 左右各留 8px、圓角 10px,色塊自己是一個完整的形狀。
+   *
+   * 【圖示的顏色比文字淡一階】
+   * 未選取時圖示 text-gray-400、文字 text-gray-700 ——
+   * 同一個灰的話一整排線條圖示會跟文字爭注意力,
+   * 而真正要讀的是字。選取時兩者一起變白。
+   */
   const navList = (
-    <nav className="flex-1 py-3 overflow-y-auto">
-      {items.map((n) => (
-        // 15px 而不是 14px。側邊欄是整天盯著的東西,而且中文在小字級下
-        // 筆畫會糊在一起 —— 拉丁字母在 14px 還很清楚,中文不是。
-        <Link key={n.href} href={n.href}
-          className={`flex items-center gap-3 px-5 py-3 md:py-2.5 text-[15px] font-medium ${
-            pathname.startsWith(n.href) ? 'bg-mor-slate text-white' : 'text-gray-700 hover:bg-gray-100'
-          }`}>
-          <span className="text-base leading-none">{n.icon}</span>{n.label}
-        </Link>
-      ))}
+    <nav className="flex-1 py-2 overflow-y-auto">
+      {items.map((n) => {
+        const on = pathname.startsWith(n.href);
+        return (
+          // 15px 而不是 14px。側邊欄是整天盯著的東西,而且中文在小字級下
+          // 筆畫會糊在一起 —— 拉丁字母在 14px 還很清楚,中文不是。
+          <Link key={n.href} href={n.href}
+            className={`group mx-2 flex items-center gap-3 px-3 py-2.5 md:py-2 rounded-[10px]
+              text-[15px] font-medium transition-colors ${
+              on ? 'bg-mor-slate text-white shadow-sm' : 'text-gray-700 hover:bg-mor-sand/70'
+            }`}>
+            <NavIcon name={n.icon}
+              className={on ? 'text-white' : 'text-gray-400 group-hover:text-mor-slate'} />
+            {n.label}
+          </Link>
+        );
+      })}
     </nav>
   );
 
   return (
     <div className="min-h-screen md:flex">
       {/* 手機頂列:桌機隱藏 */}
-      <header className="md:hidden sticky top-0 z-30 flex items-center gap-3 bg-white border-b border-gray-200 px-4 py-3"
+      <header className="md:hidden sticky top-0 z-30 flex items-center gap-3 bg-white border-b border-mor-line px-4 py-3"
         style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}>
         <button onClick={() => setNavOpen(true)} aria-label="開啟選單"
-          className="w-10 h-10 -ml-2 flex items-center justify-center rounded-lg text-xl text-gray-600 active:bg-gray-100">
-          ☰
+          className="w-10 h-10 -ml-2 flex items-center justify-center rounded-lg text-gray-600 active:bg-gray-100">
+          {/* 漢堡也畫成 SVG —— ☰ 是文字符號，粗細與行高在各家字型下都不一樣 */}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75}
+            strokeLinecap="round" className="w-6 h-6">
+            <path d="M4 7h16" /><path d="M4 12h16" /><path d="M4 17h16" />
+          </svg>
         </button>
         <div className="min-w-0">
           <div className="font-bold leading-tight truncate">{current?.label ?? '安幸上工'}</div>
@@ -105,7 +128,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <div className="absolute inset-0 bg-black/40" />
           <aside onClick={(e) => e.stopPropagation()}
             className="absolute left-0 top-0 h-full w-64 bg-white flex flex-col shadow-xl">
-            <div className="px-5 py-5 border-b border-gray-100" style={{ paddingTop: 'max(1.25rem, env(safe-area-inset-top))' }}>
+            <div className="px-5 py-5 border-b border-mor-line/70" style={{ paddingTop: 'max(1.25rem, env(safe-area-inset-top))' }}>
               <div className="font-bold text-lg">安幸上工</div>
               {profile && (
                 <div className="mt-1 text-xs text-gray-500">
@@ -114,7 +137,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               )}
             </div>
             {navList}
-            <button onClick={logout} className="m-4 rounded-lg border border-gray-300 py-2.5 text-sm text-gray-600 active:bg-gray-100">
+            <button onClick={logout} className="m-3 rounded-[10px] border border-mor-line py-2.5 text-sm text-gray-500 active:bg-mor-sand/70">
               登出
             </button>
           </aside>
@@ -122,8 +145,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       )}
 
       {/* 桌機側邊欄 */}
-      <aside className="hidden md:flex w-52 shrink-0 bg-white border-r border-gray-200 flex-col">
-        <div className="px-5 py-5 border-b border-gray-100">
+      <aside className="hidden md:flex w-52 shrink-0 bg-white border-r border-mor-line flex-col">
+        <div className="px-5 py-5 border-b border-mor-line/70">
           <div className="font-bold text-lg">安幸上工</div>
           {profile && (
             <div className="mt-1 text-xs text-gray-500">
@@ -132,7 +155,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           )}
         </div>
         {navList}
-        <button onClick={logout} className="m-4 rounded-lg border border-gray-300 py-2 text-sm text-gray-600 hover:bg-gray-100">
+        <button onClick={logout} className="m-3 rounded-[10px] border border-mor-line py-2 text-sm text-gray-500 hover:bg-mor-sand/70 hover:text-gray-700 transition-colors">
           登出
         </button>
       </aside>
