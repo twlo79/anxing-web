@@ -50,7 +50,14 @@ export type Announcement = {
 };
 
 /** 共用的小樣式 —— 每個分頁都在用，寫死在各檔案會慢慢長歪。 */
-export const CARD = 'rounded-xl border border-mor-line bg-white';
+// 極淡的陰影。白卡放在米色底上原本只靠一條框線分界,
+// 加一層 4% 的影子之後卡片才會「浮」起來 —— 再重就變成 2010 年的擬物風。
+export const CARD = 'rounded-xl border border-mor-line bg-white shadow-[0_1px_2px_rgba(46,56,64,0.05)]';
+
+/** 側邊欄那三個顏色，內容區沿用同一組 —— 綠進、橘出、藍中性 */
+export const C_IN = '#3FAE7C';
+export const C_OUT = '#E08A4C';
+export const C_NEUTRAL = '#41689B';
 export const INPUT = 'rounded-lg border border-mor-line px-3 py-2 text-sm w-full';
 export const BTN = 'rounded-lg px-4 py-2 text-sm font-medium bg-mor-slate text-white '
   + 'hover:bg-mor-slatedark disabled:opacity-40';

@@ -70,10 +70,43 @@ const PATHS: Record<IconName, string[]> = {
              'M19.4 14.5a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5v.2a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1h.2a2 2 0 1 1 0 4H21a1.6 1.6 0 0 0-1.5 1Z'],
 };
 
-export default function NavIcon({ name, className = '' }: { name: IconName; className?: string }) {
+/**
+ * ============================================================
+ * 【三個顏色，代表錢的方向】
+ *
+ * 十四個項目給十四個顏色會變成彩虹 —— 熱鬧，但顏色不帶任何資訊，
+ * 而且十四個色相要等距又不打架，實務上調不出來。
+ *
+ * 三個就夠，而且分法本身就是這套系統最重要的一條線：
+ *
+ *   綠 #3FAE7C   錢進來   訂單、契約、營收、押金
+ *   橘 #E08A4C   錢出去   請款、支出
+ *   藍 #41689B   其他     出勤、房務、客戶、評價、清潔、儀錶板、設定
+ *
+ * 用的是既有調色盤裡的色（mor-green / mor-slate ＋ 一個暖色），
+ * 不是另外挑的 —— 側邊欄跟內容區才會像同一個產品。
+ *
+ * 儀錶板放藍：它同時看收與支，偏哪一邊都不對。
+ * 押金放綠：錢確實是進來的，雖然它不是收入（那件事由科目管，不是顏色）。
+ * ============================================================
+ */
+const IN = '#3FAE7C';    // 錢進來
+const OUT = '#E08A4C';   // 錢出去
+const NEUTRAL = '#41689B'; // 其他
+
+export const TINT: Record<IconName, string> = {
+  bed: IN, contract: IN, coins: IN, lock: IN,
+  receipt: OUT, book: OUT,
+  clock: NEUTRAL, chart: NEUTRAL, broom: NEUTRAL, user: NEUTRAL,
+  star: NEUTRAL, sparkle: NEUTRAL, bell: NEUTRAL, settings: NEUTRAL,
+};
+
+export default function NavIcon(
+  { name, className = '', style }: { name: IconName; className?: string; style?: React.CSSProperties },
+) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75}
-      strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+      strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={style}
       // 18px：跟 15px 的中文並排時，比文字略大一點點才不會顯得縮水
       className={`w-[18px] h-[18px] shrink-0 ${className}`}>
       {PATHS[name].map((d, i) => <path key={i} d={d} />)}

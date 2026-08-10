@@ -89,17 +89,12 @@ export type PunchUi = {
 export function punchUi(t: TodayState | null): PunchUi {
   const hasIn = !!t?.in_at;
   const hasOut = !!t?.out_at;
-  if (!hasIn) {
-    return { action: 'in', label: '上班打卡', hint: '按下去會取得你的位置' };
-  }
-  if (!hasOut) {
-    return { action: 'out', label: '下班打卡', hint: `已於 ${t!.in_at} 上班打卡` };
-  }
-  return {
-    action: null,
-    label: '今天已完成',
-    hint: `${t!.in_at} 上班・${t!.out_at} 下班。要修改請用補登申請。`,
-  };
+  // hint 只在「有下一步動作」時才有字。
+  // 上下班時間就顯示在按鈕旁邊，再寫一次「已於 09:02 上班打卡」是重複；
+  // 「按下去會取得你的位置」更是廢話 —— 按了就知道。
+  if (!hasIn) return { action: 'in', label: '上班打卡', hint: '' };
+  if (!hasOut) return { action: 'out', label: '下班打卡', hint: '' };
+  return { action: null, label: '今天已完成', hint: '要修改請用補登申請' };
 }
 
 /** HH:MM。null 顯示成 — 而不是空白，空白看起來像壞掉。 */

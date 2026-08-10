@@ -10,10 +10,12 @@ test('還沒打卡 → 顯示「上班打卡」', () => {
   assert.equal(u.label, '上班打卡');
 });
 
-test('打了上班沒打下班 → 顯示「下班打卡」,並講出幾點上班的', () => {
+test('打了上班沒打下班 → 顯示「下班打卡」', () => {
   const u = punchUi({ in_at: '09:02' });
   assert.equal(u.action, 'out');
-  assert.match(u.hint, /09:02/);
+  assert.equal(u.label, '下班打卡');
+  // hint 刻意留空：上下班時間就顯示在按鈕旁邊,再講一次是重複
+  assert.equal(u.hint, '');
 });
 
 test('★ 上下班都打完 → 兩顆都不能按', () => {

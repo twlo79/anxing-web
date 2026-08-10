@@ -232,12 +232,6 @@ export default function CalendarTab({ me, isAdmin }: TabProps) {
           )}
         </div>
       )}
-
-      <div className="text-xs text-gray-400 leading-relaxed">
-        國定假日與補班日<b>由人事行政總處的公告逐年匯入</b>，不是程式算的 ——
-        農曆假日每年日期不同，補假規則也改過。目前已匯入 2026 年。
-        {!isAdmin && <><br />你只看得到自己的請假；主管看得到當天全員的請假名單。</>}
-      </div>
     </div>
   );
 }

@@ -6,7 +6,7 @@ import {
   toTaipeiIso, hoursBetween, leaveVote, otVote, checkFixDate, twToday, shiftMonth,
 } from '@/lib/attendance-ui';
 import {
-  BTN, BTN2, CARD, INPUT, TONE, fmtDT,
+  BTN, BTN2, CARD, INPUT, TONE, fmtDT, C_IN, C_OUT,
   type Balance, type FixReq, type LeaveReq, type LeaveType, type OtReq, type TabProps,
 } from './types';
 
@@ -90,23 +90,43 @@ export default function ApplyTab({ me, onMsg, prefill }: TabProps & {
     <div className="space-y-4">
       {/* ── 我還剩多少假 ───────────────────────────── */}
       <div className={`${CARD} p-4`}>
-        <div className="text-sm font-medium mb-2">{year} 年我的假</div>
-        <div className="flex flex-wrap gap-3">
+        <div className="text-sm font-medium mb-2.5">{year} 年我的假</div>
+        {/*
+          【剩餘假用進度條，不只給數字】
+          「52 小時」要自己除以 8 才知道是六天半，而且看不出來用掉多少。
+          一條占比的橫條讓人一眼知道「今年的假還剩多少」——
+          那是這張卡唯一要回答的問題。
+        */}
+        <div className="grid sm:grid-cols-3 gap-2">
           {types.map((t) => {
             const b = bals.find((x) => x.type_code === t.code);
+            const quota = Number(b?.quota_hours ?? 0);
+            const used = Number(b?.used_hours ?? 0);
             // 沒有額度上限的假別（事假）不顯示數字 —— 顯示 0 會讓人以為請不了
-            const remain = !t.has_quota ? null
-              : Math.max(0, Number(b?.quota_hours ?? 0) - Number(b?.used_hours ?? 0));
+            const remain = !t.has_quota ? null : Math.max(0, quota - used);
             const noQuota = t.has_quota && !b;
+            // 剩不到兩成轉橘：快用完是需要提前知道的事
+            const ratio = quota > 0 ? Math.min(1, Math.max(0, remain! / quota)) : 0;
+            const c = noQuota ? C_OUT : ratio > 0.2 || !t.has_quota ? C_IN : C_OUT;
             return (
-              <div key={t.code} className="rounded-lg border border-mor-line px-3 py-2 min-w-[9rem]">
-                <div className="text-xs text-gray-500">{t.name}</div>
-                <div className={`text-sm font-semibold ${noQuota ? 'text-amber-600' : 'text-mor-ink'}`}>
+              <div key={t.code} className="rounded-xl border border-mor-line px-3 py-2.5">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-xs text-gray-500">{t.name}</span>
+                  <span className="flex-1" />
+                  {b && t.has_quota && (
+                    <span className="text-[11px] text-gray-400 tabular-nums">
+                      {quota} 中用了 {used}
+                    </span>
+                  )}
+                </div>
+                <div className="text-sm font-semibold mt-0.5"
+                  style={{ color: noQuota ? C_OUT : '#2E3840' }}>
                   {noQuota ? '今年未設額度' : remainText(remain, daily)}
                 </div>
-                {b && t.has_quota && (
-                  <div className="text-[11px] text-gray-400">
-                    額度 {b.quota_hours} · 已用 {b.used_hours}
+                {t.has_quota && !noQuota && (
+                  <div className="mt-1.5 h-1.5 rounded-full bg-mor-line/70 overflow-hidden">
+                    <div className="h-full rounded-full transition-[width]"
+                      style={{ width: `${ratio * 100}%`, backgroundColor: c }} />
                   </div>
                 )}
               </div>
@@ -115,9 +135,8 @@ export default function ApplyTab({ me, onMsg, prefill }: TabProps & {
           {!types.length && <div className="text-sm text-gray-400">尚未設定假別</div>}
         </div>
         {types.some((t) => t.has_quota && !bals.find((b) => b.type_code === t.code)) && (
-          <div className="text-xs text-amber-700 mt-2 leading-relaxed">
-            有假別今年還沒有額度，那種假現在請不了。請主管到「管理 → 假別額度」設定，
-            或確認你的到職日已經填寫。
+          <div className="text-xs text-amber-700 mt-2">
+            有假別今年還沒有額度，請主管到「管理 → 假別額度」設定。
           </div>
         )}
       </div>
@@ -360,10 +379,6 @@ function OtForm({ busy, setBusy, onMsg, onDone }: {
         <button onClick={submit} disabled={busy} className={BTN}>送出加班</button>
         <span className="text-xs text-gray-400">主管一位核可即可。</span>
       </div>
-      <div className="text-xs text-gray-400 leading-relaxed border-t border-mor-line pt-2">
-        <b>加班時數以核可的申請為準，不是打卡待多久。</b>
-        申請 2 小時、實際待 3 小時，算 2 小時；沒申請就留下來，出勤表上不會有加班。
-      </div>
     </div>
   );
 }
@@ -434,10 +449,6 @@ function FixForm({ busy, setBusy, onMsg, onDone, prefill }: {
       <div className="flex items-center gap-3">
         <button onClick={submit} disabled={busy} className={BTN}>送出補登</button>
         <span className="text-xs text-gray-400">主管核可後才會寫進出勤紀錄。</span>
-      </div>
-      <div className="text-xs text-gray-400 leading-relaxed border-t border-mor-line pt-2">
-        <b>昨天忘了打下班，要補的是昨天那一筆。</b>
-        今天的打卡永遠算今天 —— 拿今天的卡去頂昨天的話，兩天的工時都會錯。
       </div>
     </div>
   );

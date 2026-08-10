@@ -250,12 +250,6 @@ export default function ApproveTab({ me, onMsg }: TabProps) {
         </div>
       </div>
 
-      {sub === 'leave' && (
-        <div className="text-xs text-gray-400 leading-relaxed">
-          請假要<b>主管與總經理兩票</b>才會核可，核可的那一刻才扣時數。
-          你現在是{isBoss ? '總經理' : '主管'}，這裡投的是你那一票。
-        </div>
-      )}
     </div>
   );
 }

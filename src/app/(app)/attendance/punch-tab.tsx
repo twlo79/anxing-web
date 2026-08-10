@@ -147,9 +147,19 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
       )}
 
       {/* ── 打卡鐘 ─────────────────────────────────── */}
-      <div className="rounded-2xl overflow-hidden bg-gradient-to-br from-mor-slate to-mor-slatedark
-                      px-4 py-5 sm:px-5 sm:py-6 md:flex md:items-center md:gap-8">
-        <div className="text-center md:text-left md:flex-1">
+      <div className="relative rounded-2xl overflow-hidden bg-gradient-to-br from-mor-slate to-mor-slatedark
+                      shadow-sm px-4 py-5 sm:px-5 sm:py-6 md:flex md:items-center md:gap-8">
+        {/*
+          兩顆模糊的白色圓形。
+          純色塊在大面積時看起來很平，加一點光暈之後才像一張「卡片」而不是一個 div。
+          pointer-events-none —— 它們蓋在按鈕上方，不擋掉點擊。
+        */}
+        <div aria-hidden className="pointer-events-none absolute -top-16 -right-10 w-56 h-56
+                                    rounded-full bg-white/10 blur-2xl" />
+        <div aria-hidden className="pointer-events-none absolute -bottom-20 left-10 w-40 h-40
+                                    rounded-full bg-white/5 blur-2xl" />
+
+        <div className="relative text-center md:text-left md:flex-1">
           <Clock />
           <div className="flex items-center justify-center md:justify-start gap-5 mt-3">
             {([['上班', today?.in_at, today?.late_min, '遲到'],
@@ -168,7 +178,7 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
         </div>
 
         {/* 手機上要好按 —— 打卡是站著單手操作的動作 */}
-        <div className="mt-4 md:mt-0 md:w-56">
+        <div className="relative mt-4 md:mt-0 md:w-56">
           {ui.action ? (
             <button onClick={() => doPunch(ui.action!)} disabled={busy || !ready.length}
               className="w-full h-16 rounded-xl bg-white text-mor-slate text-lg font-bold
@@ -181,57 +191,74 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
               ✓ {ui.label}
             </div>
           )}
-          <div className="text-[11px] text-white/60 mt-2 text-center leading-relaxed">{ui.hint}</div>
+          {ui.hint && (
+            <div className="text-[11px] text-white/60 mt-2 text-center">{ui.hint}</div>
+          )}
         </div>
       </div>
 
       {/* ── 月份切換 ＋ 當月統計 ─────────────────────── */}
-      <div className={`${CARD} p-3 sm:p-4`}>
-        <div className="flex items-center gap-1 mb-3">
+      <div>
+        <div className="flex items-center gap-1 mb-2">
           <button onClick={() => setYm(shiftMonth(y, m, -1))} aria-label="上個月"
-            className="rounded-lg border border-mor-line w-9 h-9 hover:bg-mor-sand/60">‹</button>
+            className="rounded-lg border border-mor-line bg-white w-9 h-9 hover:bg-mor-sand/60">‹</button>
           <div className="text-sm font-semibold flex-1 text-center tabular-nums">
             {y} 年 {m} 月
           </div>
           <button onClick={() => setYm(shiftMonth(y, m, 1))} aria-label="下個月"
             disabled={isThisMonth}
-            className="rounded-lg border border-mor-line w-9 h-9 hover:bg-mor-sand/60 disabled:opacity-30">›</button>
+            className="rounded-lg border border-mor-line bg-white w-9 h-9 hover:bg-mor-sand/60 disabled:opacity-30">›</button>
           {!isThisMonth && (
             <button onClick={() => setYm([now.getFullYear(), now.getMonth() + 1])}
-              className="ml-1 rounded-lg border border-mor-line px-3 h-9 text-xs hover:bg-mor-sand/60">
+              className="ml-1 rounded-lg border border-mor-line bg-white px-3 h-9 text-xs hover:bg-mor-sand/60">
               本月
             </button>
           )}
         </div>
 
-        {/* 三十列數字沒有人會自己加 —— 月底想知道上了幾天、加了幾小時 */}
-        <div className="grid grid-cols-3 sm:grid-cols-5 gap-x-2 gap-y-3 text-center">
+        {/*
+          三十列數字沒有人會自己加 —— 月底想知道上了幾天、加了幾小時。
+
+          【每一格是一張小卡，不是表格裡的一欄】
+          扁平的一排文字要靠對齊來分辨界線，而手機上一換行就分不出
+          哪個標題配哪個數字。各自一張卡就沒有這個問題。
+
+          顏色沿用側邊欄那三個：綠＝正常累積、橘＝要注意、藍＝中性。
+        */}
+        <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
           {([
-            ['出勤', sum.days, '天'],
-            ['工時', sum.workHours, '小時'],
-            ['加班', sum.otHours, '小時'],
-            ['請假', sum.leaveHours, '小時'],
-            ['遲到早退', sum.lateDays + sum.earlyDays, '次'],
-          ] as const).map(([lb, v, unit]) => (
-            <div key={lb}>
-              <div className="text-[11px] text-gray-500">{lb}</div>
-              <div className={`text-lg font-semibold tabular-nums ${
-                lb === '遲到早退' && v > 0 ? 'text-amber-600' : 'text-mor-ink'}`}>
-                {v}<span className="text-[11px] font-normal text-gray-400 ml-0.5">{unit}</span>
+            ['出勤', sum.days, '天', '#3FAE7C'],
+            ['工時', sum.workHours, '小時', '#41689B'],
+            ['加班', sum.otHours, '小時', '#E08A4C'],
+            ['請假', sum.leaveHours, '小時', '#41689B'],
+            ['遲到早退', sum.lateDays + sum.earlyDays, '次', '#E08A4C'],
+          ] as const).map(([lb, v, unit, c]) => {
+            // 0 就是灰的。全部上色的話「這個月加班 0 小時」跟
+            // 「加班 12 小時」一樣醒目，而只有後者需要被看見。
+            const lit = v > 0;
+            return (
+              <div key={lb} className="rounded-xl border border-mor-line bg-white px-3 py-2.5
+                                       relative overflow-hidden">
+                <span aria-hidden className="absolute left-0 top-0 bottom-0 w-1"
+                  style={{ backgroundColor: lit ? c : '#E0DDD5' }} />
+                <div className="pl-1.5">
+                  <div className="text-[11px] text-gray-500">{lb}</div>
+                  <div className="text-xl font-bold tabular-nums leading-tight"
+                    style={{ color: lit ? c : '#C9C6BE' }}>
+                    {v}
+                    <span className="text-[11px] font-normal text-gray-400 ml-0.5">{unit}</span>
+                  </div>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
       {/* ── 要處理的 ───────────────────────────────── */}
       {sum.todo > 0 && (
         <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          <b>{y} 年 {m} 月有 {sum.todo} 天要處理</b>（忘了打卡、遲到或早退）。
-          <div className="text-xs mt-1 leading-relaxed">
-            紅色那幾列有「補登」按鈕。<b>今天的打卡不會補到那一天去</b> ——
-            那一天要單獨補，否則兩天的工時都會錯。
-          </div>
+          <b>{m} 月有 {sum.todo} 天要處理</b> —— 紅色那幾列右邊可以補登。
         </div>
       )}
 
@@ -368,14 +395,8 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
         </div>
       </div>
 
-      <div className="text-xs text-gray-400 leading-relaxed">
-        打卡需要定位權限。可打卡的物業：{ready.map((e) => e.name).join('、') || '（尚未設定）'}。
-        在任何一個物業的範圍內都能打卡，紀錄會帶到是在哪一個物業打的。
-        <br />
-        <b>工時走制度，不看打卡待多久</b> —— 多待的算加班（要事前申請），早走的分鐘另外記。
-        {firstDay && firstDay > `${y}-${String(m).padStart(2, '0')}-01` && (
-          <><br />{firstDay} 之前還沒開始用打卡，那些日子不列入異常。</>
-        )}
+      <div className="text-xs text-gray-400">
+        可打卡：{ready.map((e) => e.name).join('、') || '尚未設定'}
       </div>
     </div>
   );

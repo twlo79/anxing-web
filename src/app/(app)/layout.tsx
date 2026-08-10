@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
-import NavIcon, { type IconName } from '@/components/NavIcon';
+import NavIcon, { TINT, type IconName } from '@/components/NavIcon';
 
 const ROLE_LABEL: Record<string, string> = {
   housekeeper: '一般', accountant: '會計', manager: '主管', super_admin: '總經理',
@@ -77,15 +77,21 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
    * 滿版的色塊會一路撞到側邊欄的右框線,看起來像被切掉一半。
    * 左右各留 8px、圓角 10px,色塊自己是一個完整的形狀。
    *
-   * 【圖示的顏色比文字淡一階】
-   * 未選取時圖示 text-gray-400、文字 text-gray-700 ——
-   * 同一個灰的話一整排線條圖示會跟文字爭注意力,
-   * 而真正要讀的是字。選取時兩者一起變白。
+   * 【圖示有顏色，文字沒有】
+   * 三個顏色（見 NavIcon 的 TINT）：綠 = 錢進來、橘 = 錢出去、藍 = 其他。
+   * 文字全部維持深灰 —— 十四行彩色的字讀起來很吵,而真正要讀的是字,
+   * 顏色只是幫你快速找到「那一組在哪裡」。
+   *
+   * 【為什麼用 inline style 而不是 Tailwind 的顏色類別】
+   * Tailwind 是靜態掃檔案產生 CSS 的,`bg-[${tint}]` 這種動態拼出來的類別
+   * **不會被產生** —— 開發時看起來正常（因為別的地方剛好用過那個色），
+   * 上線後就變透明。顏色來自資料時一律用 inline style。
    */
   const navList = (
     <nav className="flex-1 py-2 overflow-y-auto">
       {items.map((n) => {
         const on = pathname.startsWith(n.href);
+        const tint = TINT[n.icon];
         return (
           // 15px 而不是 14px。側邊欄是整天盯著的東西,而且中文在小字級下
           // 筆畫會糊在一起 —— 拉丁字母在 14px 還很清楚,中文不是。
@@ -94,8 +100,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               text-[15px] font-medium transition-colors ${
               on ? 'bg-mor-slate text-white shadow-sm' : 'text-gray-700 hover:bg-mor-sand/70'
             }`}>
-            <NavIcon name={n.icon}
-              className={on ? 'text-white' : 'text-gray-400 group-hover:text-mor-slate'} />
+            {/* 只給線條上色，不加底色方塊 —— 三個顏色已經夠分辨，
+                再加十四個色塊會把「簡約」做成「花俏」 */}
+            <NavIcon name={n.icon} style={{ color: on ? '#fff' : tint }} />
             {n.label}
           </Link>
         );

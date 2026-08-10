@@ -21,7 +21,7 @@ import { twToday } from '@/lib/attendance-ui';
  * 上面有開關可以切到全部。全部載入是幾千列，手機上會很慢。
  */
 
-const CARD = 'rounded-xl border border-mor-line bg-white';
+const CARD = 'rounded-xl border border-mor-line bg-white shadow-[0_1px_2px_rgba(46,56,64,0.05)]';
 const INPUT = 'rounded-lg border border-mor-line px-3 py-2 text-sm w-full';
 
 type Customer = {
@@ -179,8 +179,7 @@ export default function CustomersPage() {
 
       {staleCount > 0 && !onlyStaying && (
         <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800 leading-relaxed">
-          這個物業有 <b>{staleCount} 位</b>客戶對不到訂單或契約了 —— 多半是訂單那邊改了客戶名。
-          他們的備註還在（列上會標「來源已不存在」），確認過沒用了再自己清掉。
+          有 <b>{staleCount} 位</b>客戶對不到訂單或契約（多半是訂單那邊改了客戶名）。
         </div>
       )}
 
@@ -236,18 +235,6 @@ export default function CustomersPage() {
             {onlyStaying ? '這個物業目前沒有在住的客戶' : '沒有資料'}
           </div>
         )}
-      </div>
-
-      <div className="text-xs text-gray-400 mt-3 leading-relaxed space-y-1">
-        <p>
-          <b>客戶名、房源、住宿起訖是從訂單與契約帶過來的</b>，在這裡改不了 ——
-          要改請到那張訂單或契約上改，這裡會跟著更新。
-        </p>
-        <p>
-          <b>電話、Email、備註是填在這裡的</b>，同步永遠不會覆蓋。
-          長租客的電話第一次會自動從契約帶進來，之後改過就以你改的為準。
-        </p>
-        <p>所有人都看得到、也都可以編輯。</p>
       </div>
     </div>
   );
@@ -361,9 +348,7 @@ function EditBox({ c, onSave }: { c: Customer; onSave: (p: Partial<Customer>) =>
 
       {c.stale && (
         <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800 leading-relaxed">
-          <b>這位客戶已經對不到任何訂單或契約。</b>
-          最常見的原因是訂單那邊把客戶名改了（例如修正錯字）—— 那樣會多出一列新的，
-          而備註留在這一列。確認過之後把備註搬過去，這一列就可以不用管了。
+          <b>對不到任何訂單或契約。</b>多半是訂單那邊改了客戶名，備註留在這一列。
         </div>
       )}
     </div>

@@ -171,21 +171,6 @@ function GpsSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
           </table>
         </div>
       </div>
-
-      <div className="text-xs text-gray-400 mt-2 leading-relaxed space-y-1.5">
-        <p>
-          <b>站在物業樓下按「用我現在的位置」是最準的做法。</b>
-          手打經緯度很容易錯 —— 小數點差一位就是十幾公尺，經緯度也很容易填反
-          （台北的緯度是 25 開頭、經度是 121 開頭）。填反的話所有人都打不了卡，
-          而錯誤訊息只會說「距離 8000 公尺」。
-        </p>
-        <p>
-          <b>半徑預設 500 公尺。</b>手機 GPS 在市區誤差 10~50 公尺、室內更差 ——
-          設太小會讓人站在門口卻打不了卡，而那種失敗員工只會覺得系統壞了，
-          然後改用別的方式回報出勤。
-        </p>
-        <p>緯度或經度留空 = 這個物業不能打卡，也不會出現在員工的可打卡清單裡。</p>
-      </div>
     </section>
   );
 }
@@ -278,11 +263,6 @@ function HoursSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
               </label>
             ))}
           </div>
-          <div className="text-xs text-gray-400 mt-2 leading-relaxed">
-            <b>可提前／延後打卡</b>是打卡的時間窗：預設上班前 120 分鐘到下班後 120 分鐘。
-            窗外按打卡會被擋下並說明原因，不會默默失敗。
-            設太窄的話早到的人打不了卡，而他會直接放棄。
-          </div>
         </div>
       )}
 
@@ -338,11 +318,6 @@ function HoursSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
             </tbody>
           </table>
         </div>
-      </div>
-
-      <div className="text-xs text-gray-400 leading-relaxed">
-        <b>到職日決定特休天數</b>（滿 6 個月 6 天、滿 1 年 10 天，之後依勞基法）。
-        沒有填到職日的人算不出特休額度，請假時會看到「今年還沒有配額」。
       </div>
     </section>
   );
@@ -445,18 +420,6 @@ function QuotaSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
             </tbody>
           </table>
         </div>
-      </div>
-
-      <div className="text-xs text-gray-400 leading-relaxed space-y-1.5">
-        <p>
-          <b>單位是小時。</b>八小時 = 一天。半天假、兩小時假是常態，
-          用天當單位就得處理 0.25 天這種東西。
-        </p>
-        <p>
-          <b>已用時數不能手改</b> —— 它是由核可的假單重算出來的。
-          數字看起來不對的話，去看那個人的假單，不要改這裡。
-        </p>
-        <p>事假沒有額度上限（一年 14 日的法定上限不在系統裡管），所以不出現在這張表。</p>
       </div>
     </section>
   );
@@ -608,18 +571,6 @@ function ReportSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
         <button onClick={exportXlsx} disabled={busy} className={BTN}>
           {busy ? '產生中…' : `下載出勤表（${sel.size} 人）`}
         </button>
-      </div>
-
-      <div className="text-xs text-gray-400 leading-relaxed space-y-1.5">
-        <p><b>一個人一張分頁。</b>出勤表是拿去對薪資的，對的時候是一個人一個人對。</p>
-        <p>
-          <b>工作時數 = 每日工時 − 當日已核可的請假時數</b>，下限 0。
-          不看打卡待多久 —— 打卡是「有到」的證明，工時走制度。
-        </p>
-        <p>
-          <b>加班時數 = 已核可的申請時數。</b>沒申請就留下來，表上不會有加班；
-          申請 2 小時實際待 3 小時，算 2 小時。
-        </p>
       </div>
     </section>
   );
