@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
-import NavIcon, { PRIMARY, ICON_IDLE, type IconName } from '@/components/NavIcon';
+
 
 const ROLE_LABEL: Record<string, string> = {
   housekeeper: '一般', accountant: '會計', manager: '主管', super_admin: '總經理',
@@ -16,31 +16,45 @@ const ROLE_LABEL: Record<string, string> = {
  * 名稱刻意短。原本叫「短租訂單與收款」「契約訂單與收款」,
  * 兩個十個字的項目擺在一起,實際要分辨的只有前兩個字。
  */
-const NAV: { href: string; label: string; icon: IconName; roles: string[] }[] = [
+/*
+ * 【圖示回到 emoji】（使用者決定）
+ *
+ * 線條圖示的問題是十四個灰色線框在小尺寸下彼此太像 —— 帳簿、收據、契約
+ * 都是「有線的方框」，得盯著看才分得出來。emoji 的輪廓與顏色天生就有差異，
+ * 那正是「一眼認出」需要的東西。
+ *
+ * 代價是各系統長得不一樣（Windows / iOS / Android 各一套），
+ * 而且 emoji 永遠是彩色的、不會跟著選取狀態變 ——
+ * 所以下面的選取樣式改成淺色底，emoji 在上面還讀得到。
+ *
+ * 未選取時用 CSS 把彩度壓到 55%：整排看起來收斂，
+ * 選到的那一項恢復滿彩度 —— 對比就從那裡來，不需要再加別的顏色。
+ */
+const NAV: { href: string; label: string; icon: string; roles: string[] }[] = [
   // 出勤排第一：全公司每天最少點兩次,而且是「上班第一件事」。
   // 它原本排在清潔記錄後面 —— 每天要用的東西不該讓人往下找。
-  { href: '/attendance', label: '出勤', icon: 'clock', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
-  { href: '/shortterm', label: '訂單 | 收入', icon: 'bed', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
-  { href: '/contracts', label: '契約 | 收入', icon: 'contract', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
-  { href: '/revenues', label: '營收表', icon: 'coins', roles: ['accountant', 'manager', 'super_admin'] },
-  { href: '/purchases', label: '請款單控管', icon: 'receipt', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
-  { href: '/deposits', label: '押金管理', icon: 'lock', roles: ['accountant', 'manager', 'super_admin'] },
-  { href: '/expenses', label: '支出明細', icon: 'book', roles: ['accountant', 'manager', 'super_admin'] },
-  { href: '/dashboard', label: '財務儀錶板', icon: 'chart', roles: ['accountant', 'manager', 'super_admin'] },
-  { href: '/housekeeping', label: '房務管理', icon: 'broom', roles: ['manager', 'super_admin'] },
+  { href: '/attendance', label: '出勤', icon: '🕐', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/shortterm', label: '訂單 | 收入', icon: '🛏️', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/contracts', label: '契約 | 收入', icon: '📋', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/revenues', label: '營收表', icon: '💰', roles: ['accountant', 'manager', 'super_admin'] },
+  { href: '/purchases', label: '請款單控管', icon: '🧾', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/deposits', label: '押金管理', icon: '🔐', roles: ['accountant', 'manager', 'super_admin'] },
+  { href: '/expenses', label: '支出明細', icon: '📒', roles: ['accountant', 'manager', 'super_admin'] },
+  { href: '/dashboard', label: '財務儀錶板', icon: '📊', roles: ['accountant', 'manager', 'super_admin'] },
+  { href: '/housekeeping', label: '房務管理', icon: '🧺', roles: ['manager', 'super_admin'] },
   // 客戶管理跟房務、評價、清潔是同一組:都是「人在現場會用到的」。
   // 上面那半段是錢(訂單、契約、營收、請款、押金、支出、儀表板)。
   // 客戶資料原本散在訂單 guest_name 與契約 tenant_name 兩邊,
   // 要查一位房客的電話得先猜他是長租還是短租。
-  { href: '/customers', label: '客戶管理', icon: 'user', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
-  { href: '/reviews', label: '房源評價', icon: 'star', roles: ['housekeeper', 'manager', 'super_admin'] },
-  { href: '/cleaning', label: '清潔記錄', icon: 'sparkle', roles: ['housekeeper', 'manager', 'super_admin'] },
+  { href: '/customers', label: '客戶管理', icon: '👤', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/reviews', label: '房源評價', icon: '⭐', roles: ['housekeeper', 'manager', 'super_admin'] },
+  { href: '/cleaning', label: '清潔記錄', icon: '🧹', roles: ['housekeeper', 'manager', 'super_admin'] },
   // 通知是每個人自己的偏好,所以全角色都看得到 ——
   // 放在權限管理上面（那頁只有總經理進得去,擺一起會讓人以為這也是管理員專用）
-  { href: '/notifications', label: '通知設定', icon: 'bell', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/notifications', label: '通知設定', icon: '🔔', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   // 會計進得去，但只看得到「收付款帳號」與「常用帳號」兩個分頁
   // —— 改人員角色那一頁仍然只有總經理，見 admin 頁的 ACCOUNTANT_TABS
-  { href: '/admin', label: '權限管理', icon: 'settings', roles: ['accountant', 'super_admin'] },
+  { href: '/admin', label: '權限管理', icon: '⚙️', roles: ['accountant', 'super_admin'] },
 ];
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
@@ -77,15 +91,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
    * 滿版的色塊會一路撞到側邊欄的右框線,看起來像被切掉一半。
    * 左右各留 8px、圓角 10px,色塊自己是一個完整的形狀。
    *
-   * 【圖示全部同一個中性灰藍，只有選取的那一列是主色】
-   * 一項一色試過了：側邊欄好看，但那些顏色會滲進整個畫面 ——
-   * 分頁、統計卡、表格底色各自上色，一張押金清單看起來像調色盤。
-   * 顏色一少它才重新變成訊號。分辨靠字形,字形已經為此重畫過。
-   *
-   * 【為什麼用 inline style 而不是 Tailwind 的顏色類別】
-   * Tailwind 是靜態掃檔案產生 CSS 的,`bg-[${tint}]` 這種動態拼出來的類別
-   * **不會被產生** —— 開發時看起來正常（因為別的地方剛好用過那個色），
-   * 上線後就變透明。顏色來自資料時一律用 inline style。
+   * 【選取狀態用淺底 ＋ 左側細棒，不是深色滿版】
+   * emoji 永遠是彩色的,深藍底會把它吃掉 —— 那正是最早改用線條圖示的原因。
+   * 改成 12% 的主色淺底之後 emoji 讀得到,而淺底跟 hover 的白底很像,
+   * 所以左邊再加一條 3px 的主色細棒當「硬」記號。
    */
   const navList = (
     <nav className="flex-1 py-2 overflow-y-auto">
@@ -95,17 +104,23 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           // 15px 而不是 14px。側邊欄是整天盯著的東西,而且中文在小字級下
           // 筆畫會糊在一起 —— 拉丁字母在 14px 還很清楚,中文不是。
           <Link key={n.href} href={n.href}
-            className={`group mx-2 flex items-center gap-3 px-3 py-2 rounded-[10px]
-              text-[15px] font-medium transition-colors ${
-              on ? 'text-white' : 'text-gray-700 hover:bg-white/70'
-            }`}
-            style={on ? {
-              backgroundImage: `linear-gradient(100deg, ${PRIMARY}, #345380)`,
-              boxShadow: '0 6px 16px -8px rgba(65,104,155,0.7)',
-            } : undefined}>
-            {/* 不加底色方塊 —— 十四個色塊就是上一版「太花」的來源。
-                圖示比文字淡一階,選取時才轉白。 */}
-            <NavIcon name={n.icon} style={{ color: on ? '#fff' : ICON_IDLE }} />
+            className={`group relative mx-2 flex items-center gap-2.5 pl-3.5 pr-3 py-2
+              rounded-[10px] text-[15px] transition-colors ${
+              on ? 'bg-mor-slate/[0.12] text-mor-slate font-semibold'
+                 : 'text-gray-700 font-medium hover:bg-white/75'
+            }`}>
+            {/* 左側一條主色細棒 —— 淺色底的選取狀態需要一個「硬」的記號,
+                不然跟 hover 的淡底分不出來 */}
+            {on && (
+              <span aria-hidden
+                className="absolute left-1 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-full bg-mor-slate" />
+            )}
+            {/* 未選取壓彩度到 55%,選到的恢復滿彩 —— 對比從這裡來,
+                不需要再替十四個項目各配一個顏色 */}
+            <span className="text-[17px] leading-none w-6 text-center shrink-0 transition-[filter]"
+              style={{ filter: on ? 'none' : 'saturate(0.55)' }}>
+              {n.icon}
+            </span>
             {n.label}
           </Link>
         );
