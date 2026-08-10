@@ -16,8 +16,15 @@ const ROLE_LABEL: Record<string, string> = {
  * 兩個十個字的項目擺在一起,實際要分辨的只有前兩個字。
  */
 const NAV = [
+  // 出勤排第一：全公司每天最少點兩次,而且是「上班第一件事」。
+  // 它原本排在清潔記錄後面 —— 每天要用的東西不該讓人往下找。
+  { href: '/attendance', label: '出勤', icon: '🕐', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/shortterm', label: '訂單 | 收入', icon: '🏨', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/contracts', label: '契約 | 收入', icon: '📋', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  // 客戶資料原本散在訂單(guest_name)與契約(tenant_name)兩邊,
+  // 要查一位房客的電話得先猜他是長租還是短租。這一頁把兩邊彙整起來,
+  // 所以緊接在訂單與契約後面 —— 它是那兩頁的側面,不是獨立的模組。
+  { href: '/customers', label: '客戶管理', icon: '👤', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/revenues', label: '營收表', icon: '💰', roles: ['accountant', 'manager', 'super_admin'] },
   { href: '/purchases', label: '請款單控管', icon: '🧾', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/deposits', label: '押金管理', icon: '🔐', roles: ['accountant', 'manager', 'super_admin'] },
@@ -26,10 +33,6 @@ const NAV = [
   { href: '/housekeeping', label: '房務管理', icon: '🛏️', roles: ['manager', 'super_admin'] },
   { href: '/reviews', label: '房源評價', icon: '⭐', roles: ['housekeeper', 'manager', 'super_admin'] },
   { href: '/cleaning', label: '清潔記錄', icon: '🧹', roles: ['housekeeper', 'manager', 'super_admin'] },
-  // 打卡是每天最少點兩次的功能,但擺在中間就好 ——
-  // 上班第一件事會直接開這頁,不需要靠位置提醒。裡面再分 打卡/行事曆/公告/管理 四個分頁,
-  // 管理那格對非主管完全不顯示(不是灰掉,灰掉的按鈕會讓人一直去點)。
-  { href: '/attendance', label: '出勤', icon: '🕐', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   // 通知是每個人自己的偏好,所以全角色都看得到 ——
   // 放在權限管理上面（那頁只有總經理進得去,擺一起會讓人以為這也是管理員專用）
   { href: '/notifications', label: '通知設定', icon: '🔔', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
