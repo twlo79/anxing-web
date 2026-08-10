@@ -639,7 +639,7 @@ export default function ContractsPage() {
       <div className="rounded-xl glass overflow-x-auto">
         <table className="w-full min-w-[640px] text-sm">
           <thead>
-            <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/50">
+            <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-white/45">
               <SortTh label="房源" sortKey="room" type="room" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <SortTh label="租戶" sortKey="tenant_name" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <SortTh label="租金 / 繳別" sortKey="amount" type="number" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="text-right" align="right" />
@@ -763,7 +763,7 @@ export default function ContractsPage() {
                     className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-blue text-mor-blue text-sm font-medium hover:bg-mor-bluelight flex items-center justify-center">押金</a>
                   {c.active && (
                     <button onClick={() => { endLease(c); setDetail(null); }}
-                      className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-slate text-mor-slate text-sm font-medium hover:bg-mor-sand/40">結束租約</button>
+                      className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-slate text-mor-slate text-sm font-medium hover:bg-white/45">結束租約</button>
                   )}
                 </div>
                 <div className="mt-2 text-center">
@@ -1676,7 +1676,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
 
             <div className="px-5 py-4">
               {/* 總額放最上面 —— 使用者最想確認的是「這次要收多少」,不該讀完明細才看到 */}
-              <div className="rounded-xl bg-mor-sand/50 px-4 py-3 mb-3 text-center">
+              <div className="rounded-xl bg-white/45 px-4 py-3 mb-3 text-center">
                 <div className="text-xs text-gray-500">應收合計</div>
                 <div className="text-2xl font-bold text-mor-slate tabular-nums">
                   ${fmt(payAsk.t.net)}

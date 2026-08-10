@@ -1065,7 +1065,7 @@ export default function PurchasesPage() {
   }
 
   const card = (title: string, list: Req[], hint: string, onClick: () => void) => (
-    <button onClick={onClick} className="text-left rounded-xl border border-mor-line bg-white/85 p-2.5 md:p-4 min-w-0 hover:bg-mor-sand/50 transition-colors">
+    <button onClick={onClick} className="text-left rounded-xl border border-mor-line bg-white/85 p-2.5 md:p-4 min-w-0 hover:bg-white/45 transition-colors">
       <div className="text-xs md:text-sm font-medium leading-tight">{title}</div>
       <div className="stat-num font-bold mt-1">{list.length}<span className="text-xs md:text-sm font-normal text-gray-400 ml-1">筆</span></div>
       <div className="text-[11px] md:text-xs text-gray-500 mt-0.5 md:mt-1">${fmt(sum(list))}</div>
@@ -1213,7 +1213,7 @@ export default function PurchasesPage() {
             <div className="hidden md:block rounded-xl glass overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-mor-line bg-mor-sand/40 text-left">
+                  <tr className="border-b border-mor-line bg-white/45 text-left">
                     <th className="px-3 py-2.5">類型</th>
                     <th className="px-3 py-2.5">對象</th>
                     <th className="px-3 py-2.5">內容</th>
@@ -1293,7 +1293,7 @@ export default function PurchasesPage() {
           {/* 匯款排程:依預定付款日,獨立於上面的篩選 */}
           {scheduleRows.length > 0 && (
             <div className="rounded-xl glass mb-4 md:mb-5 overflow-hidden">
-              <div className="px-4 py-2.5 text-sm font-medium border-b border-mor-line bg-mor-sand/40 flex items-center justify-between">
+              <div className="px-4 py-2.5 text-sm font-medium border-b border-mor-line bg-white/45 flex items-center justify-between">
                 <span>{month} 付款排程</span>
                 <span className="text-xs font-normal text-gray-500">
                   依預定付款日・尚未支付・共 NT$ {fmt(scheduleRows.reduce((a, s) => a + s.amt, 0))}
@@ -1486,7 +1486,7 @@ export default function PurchasesPage() {
       <div className="hidden md:block rounded-xl glass overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-mor-line bg-mor-sand/40 text-left">
+            <tr className="border-b border-mor-line bg-white/45 text-left">
               <SortTh label="建立日" sortKey="created_at" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <th className="px-3 py-2.5">申請人</th>
               <th className="px-3 py-2.5">項目</th>

@@ -467,7 +467,7 @@ export default function ShortTermPage() {
           <div className="text-xs opacity-60 mt-1">{total.toLocaleString()} 筆・押金非營收</div>
         </div>
         <div className="rounded-xl bg-white border border-mor-line overflow-hidden">
-          <div className="px-4 py-2.5 text-sm font-semibold border-b border-mor-line bg-mor-sand/40">依來源</div>
+          <div className="px-4 py-2.5 text-sm font-semibold border-b border-mor-line bg-white/45">依來源</div>
           <div>
             {SRC.filter((sc) => bySource[sc]).map((sc) => (
               <div key={sc} onClick={() => setSrc(src === sc ? '' : sc)} className={`px-4 py-2 flex items-center justify-between text-sm border-b border-mor-line/50 last:border-0 cursor-pointer hover:bg-mor-bluelight/40 ${src === sc ? 'bg-mor-bluelight/60' : ''}`}>
@@ -478,7 +478,7 @@ export default function ShortTermPage() {
           </div>
         </div>
         <div className="rounded-xl bg-white border border-mor-line overflow-hidden">
-          <div className="px-4 py-2.5 text-sm font-semibold border-b border-mor-line bg-mor-sand/40">依物業</div>
+          <div className="px-4 py-2.5 text-sm font-semibold border-b border-mor-line bg-white/45">依物業</div>
           <div className="max-h-44 overflow-y-auto">
             {byEstate.map(([e, v]) => { const id = estates.find((x) => x.name === e)?.id || ''; return (
               <div key={e} onClick={() => setEstF(estF === id ? '' : id)} className={`px-4 py-1.5 flex items-center justify-between text-sm border-b border-mor-line/50 last:border-0 cursor-pointer hover:bg-mor-bluelight/40 ${estF && estF === id ? 'bg-mor-bluelight/60' : ''}`}>
@@ -545,7 +545,7 @@ export default function ShortTermPage() {
       <div className="rounded-xl glass overflow-x-auto">
         <table className="w-full min-w-[720px] text-sm">
           <thead>
-            <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/50">
+            <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-white/45">
               <SortTh label="來源" sortKey="source" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <SortTh label="房源" sortKey="property_raw" type="room" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <SortTh label="房客" sortKey="guest_name" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />

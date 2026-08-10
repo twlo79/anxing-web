@@ -38,22 +38,21 @@ export type IconName =
 const PATHS: Record<IconName, string[]> = {
   // 出勤：時鐘
   clock: ['M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z', 'M12 7v5l3 2'],
-  // 訂單｜收入：床（短租）
-  bed: ['M3 18v-8h13a4 4 0 0 1 4 4v4', 'M3 18v2', 'M21 18v2', 'M3 14h18', 'M7 10V7h5v3'],
+  // 訂單｜收入：床。枕頭與床墊分開畫 —— 只有一條橫線的話跟「支出」的帳簿一樣
+  bed: ['M3 8v11', 'M3 12h18a2 2 0 0 1 2 2v5', 'M21 19v-3', 'M6.5 12V9.5h4.5V12'],
   // 契約｜收入：有折角的文件
   contract: ['M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z',
              'M14 3v5h5', 'M9 13h6', 'M9 17h4'],
-  // 營收表：硬幣
-  coins: ['M9 14a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z',
-          'M14.9 6.2A5 5 0 1 1 15 19.8', 'M9 20h6'],
+  // 營收表：錢幣加金額符號。兩個圓圈疊在一起在小尺寸下會糊成一團
+  coins: ['M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z', 'M12 7v10', 'M14.5 9.5h-4a1.75 1.75 0 0 0 0 3.5h3a1.75 1.75 0 0 1 0 3.5h-4'],
   // 請款單控管：收據
   receipt: ['M6 3h12v18l-2-1.4-2 1.4-2-1.4-2 1.4-2-1.4L6 21V3Z', 'M9.5 8h5', 'M9.5 12h5'],
   // 押金管理：鎖
   lock: ['M5 11h14v10H5V11Z', 'M8 11V7a4 4 0 0 1 8 0v4', 'M12 15v2'],
-  // 支出明細：帳簿
-  book: ['M5 4h13a1 1 0 0 1 1 1v15H6a1 1 0 0 1-1-1V4Z', 'M5 17h14', 'M9 8h6', 'M9 12h6'],
-  // 財務儀錶板：長條圖
-  chart: ['M4 20h16', 'M7 20v-6', 'M12 20V8', 'M17 20v-9'],
+  // 支出明細：帳簿。左邊留一條書背 —— 沒有書背就只是一個有線的方框
+  book: ['M4 4.5A1.5 1.5 0 0 1 5.5 3H19v18H5.5A1.5 1.5 0 0 1 4 19.5v-15Z', 'M8 3v18', 'M11.5 8h4', 'M11.5 12h4'],
+  // 財務儀錶板：長條圖 ＋ 一條趨勢線。純長條跟很多圖示撞形
+  chart: ['M4 20h16', 'M7 20v-5', 'M12 20v-9', 'M17 20v-3', 'M6 9l4.5-4L14 8l4-4.5'],
   // 房務管理：掃把
   broom: ['M14 5l5 5', 'M13.5 6.5 7 13l4 4 6.5-6.5', 'M7 13l-3 6 6-3', 'M4 19l2.5.5'],
   // 客戶管理：人
@@ -72,43 +71,45 @@ const PATHS: Record<IconName, string[]> = {
 
 /**
  * ============================================================
- * 【三個顏色，代表錢的方向】
+ * 【一項一色，而且要夠亮】
  *
- * 十四個項目給十四個顏色會變成彩虹 —— 熱鬧，但顏色不帶任何資訊，
- * 而且十四個色相要等距又不打架，實務上調不出來。
+ * 上一版只用三個低彩度的顏色（綠進、橘出、藍中性）。分類是對的，
+ * 但十四行裡有八行是同一個藍 —— 顏色分不出項目，只分得出「類」，
+ * 而人在側邊欄找的是「那一項」。
  *
- * 三個就夠，而且分法本身就是這套系統最重要的一條線：
+ * 這一版每一項自己的顏色，取自 Apple 的系統色盤：
+ * 那組色刻意調過，彩度高但不刺眼，而且互相不打架 ——
+ * 自己挑十四個高彩度的色幾乎一定會有兩個看起來一樣。
  *
- *   綠 #3FAE7C   錢進來   訂單、契約、營收、押金
- *   橘 #E08A4C   錢出去   請款、支出
- *   藍 #41689B   其他     出勤、房務、客戶、評價、清潔、儀錶板、設定
- *
- * 用的是既有調色盤裡的色（mor-green / mor-slate ＋ 一個暖色），
- * 不是另外挑的 —— 側邊欄跟內容區才會像同一個產品。
- *
- * 儀錶板放藍：它同時看收與支，偏哪一邊都不對。
- * 押金放綠：錢確實是進來的，雖然它不是收入（那件事由科目管，不是顏色）。
+ * 相鄰的兩項色相一定拉開（藍→琥珀→靛→綠→紅…），
+ * 因為分辨的成本主要發生在鄰居之間。
  * ============================================================
  */
-const IN = '#3FAE7C';    // 錢進來
-const OUT = '#E08A4C';   // 錢出去
-const NEUTRAL = '#41689B'; // 其他
-
 export const TINT: Record<IconName, string> = {
-  bed: IN, contract: IN, coins: IN, lock: IN,
-  receipt: OUT, book: OUT,
-  clock: NEUTRAL, chart: NEUTRAL, broom: NEUTRAL, user: NEUTRAL,
-  star: NEUTRAL, sparkle: NEUTRAL, bell: NEUTRAL, settings: NEUTRAL,
+  clock: '#0A84FF',      // 出勤     藍
+  bed: '#FF9F0A',        // 訂單     琥珀
+  contract: '#5E5CE6',   // 契約     靛
+  coins: '#30D158',      // 營收     綠
+  receipt: '#FF453A',    // 請款     紅
+  lock: '#BF5AF2',       // 押金     紫
+  book: '#FF6B35',       // 支出     橙
+  chart: '#64D2FF',      // 儀錶板   淺藍
+  broom: '#AC8E68',      // 房務     棕
+  user: '#FF375F',       // 客戶     桃紅
+  star: '#FFD60A',       // 評價     黃
+  sparkle: '#00C7BE',    // 清潔     薄荷
+  bell: '#A78BFA',       // 通知     淡紫
+  settings: '#8E8E93',   // 權限     灰（設定類刻意不搶）
 };
 
 export default function NavIcon(
   { name, className = '', style }: { name: IconName; className?: string; style?: React.CSSProperties },
 ) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75}
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}
       strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={style}
-      // 18px：跟 15px 的中文並排時，比文字略大一點點才不會顯得縮水
-      className={`w-[18px] h-[18px] shrink-0 ${className}`}>
+      // 20px / stroke 2：18px 的細線在彩色底上會顯得虛，而且細節會糊掉
+      className={`w-5 h-5 shrink-0 ${className}`}>
       {PATHS[name].map((d, i) => <path key={i} d={d} />)}
     </svg>
   );

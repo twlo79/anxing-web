@@ -703,7 +703,7 @@ export default function DepositsPage() {
         : sorted.length === 0 ? <div className="text-center text-gray-400 py-10 px-6 text-sm">{emptyHint}</div>
         : sorted.map((r) => (
           <div key={r.id} onClick={() => setDetail(r)}
-            className="rounded-xl glass p-4 active:bg-mor-sand/40">
+            className="rounded-xl glass p-4 active:bg-white/45">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <div className="font-medium truncate">{r.room ?? '—'}</div>
@@ -730,7 +730,7 @@ export default function DepositsPage() {
       <div className="hidden md:block rounded-xl glass overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-mor-line bg-mor-sand/40 text-left">
+            <tr className="border-b border-mor-line bg-white/45 text-left">
               <th className="px-3 py-2.5">物業</th>
               <SortTh label="房源" sortKey="room" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <SortTh label="姓名" sortKey="guest_name" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />

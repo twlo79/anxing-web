@@ -179,6 +179,15 @@
     position: relative;
     isolation: isolate;
   }
+  /*
+   * 【第一版失敗的原因：色暈只開 10%】
+   * 在 #F1F0EC 這種近白的底色上，10% 的色暈肉眼看不出來，
+   * 於是「半透明卡片」透出來的還是白色 —— 看起來就是一張白卡。
+   *
+   * 玻璃要成立，背後一定要有看得見的顏色。這一版把濃度拉到 3~4 倍，
+   * 而且色塊之間刻意留出交界 —— 卡片跨過交界時，透出來的顏色會變，
+   * 那個變化就是「這層是透明的」唯一的證據。
+   */
   .app-bg::before {
     content: '';
     position: fixed;
@@ -186,16 +195,22 @@
     z-index: -1;
     pointer-events: none;
     background:
-      radial-gradient(42rem 30rem at 12% -8%, rgba(63, 174, 124, 0.10), transparent 60%),
-      radial-gradient(38rem 28rem at 88% 4%, rgba(78, 150, 209, 0.12), transparent 60%),
-      radial-gradient(34rem 26rem at 70% 92%, rgba(224, 138, 76, 0.08), transparent 62%);
+      radial-gradient(46rem 34rem at 6% -10%, rgba(52, 199, 89, 0.30), transparent 58%),
+      radial-gradient(42rem 32rem at 92% -4%, rgba(10, 132, 255, 0.32), transparent 58%),
+      radial-gradient(40rem 30rem at 78% 88%, rgba(255, 159, 10, 0.26), transparent 60%),
+      radial-gradient(36rem 28rem at 18% 100%, rgba(191, 90, 242, 0.22), transparent 60%);
   }
 
   .glass {
-    background-color: rgb(255 255 255 / 0.72);
-    backdrop-filter: blur(14px) saturate(1.4);
-    -webkit-backdrop-filter: blur(14px) saturate(1.4);
-    border: 1px solid rgb(255 255 255 / 0.65);
+    /* 62% 而不是 72%：多讓 10% 的底色透上來。
+       低於 55% 的話表格裡的灰色小字會開始糊掉，那就過頭了。 */
+    background-color: rgb(255 255 255 / 0.62);
+    /* saturate 提高：模糊會把顏色洗淡，補回來才有「透過玻璃看」的感覺 */
+    backdrop-filter: blur(20px) saturate(1.8);
+    -webkit-backdrop-filter: blur(20px) saturate(1.8);
+    /* 上緣亮、下緣淡 —— 真實的玻璃邊緣會反光，一圈同樣亮度看起來是描邊 */
+    border: 1px solid rgb(255 255 255 / 0.75);
+    border-bottom-color: rgb(255 255 255 / 0.35);
     /* 兩層陰影：貼著邊的那層負責界線,散開的那層負責「浮起來」。
        只用一層的話不是太硬就是太糊。 */
     box-shadow:

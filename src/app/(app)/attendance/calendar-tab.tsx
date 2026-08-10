@@ -138,7 +138,7 @@ export default function CalendarTab({ me, isAdmin }: TabProps) {
             return (
               <button key={c.date} onClick={() => setSel(c.date === sel ? null : c.date)}
                 className={`min-h-[5.5rem] border-b border-r border-mor-line/60 p-1 text-left
-                  align-top hover:bg-mor-sand/40
+                  align-top hover:bg-white/45
                   ${!c.inMonth ? 'bg-gray-50/60' : ''}
                   ${sel === c.date ? 'ring-2 ring-inset ring-mor-slate' : ''}`}>
                 <div className="flex items-center gap-1">

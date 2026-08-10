@@ -355,7 +355,7 @@ export default function AdminPage() {
           <div className="overflow-x-auto">
             <table className="w-full min-w-[760px] text-sm">
               <thead>
-                <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/40">
+                <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-white/45">
                   <th className="px-4 py-2.5">姓名</th>
                   <th className="px-4 py-2.5">職位</th>
                   <th className="px-4 py-2.5">權限</th>
@@ -443,7 +443,7 @@ export default function AdminPage() {
           <div className="overflow-x-auto">
             <table className="w-full min-w-[760px] text-sm">
               <thead>
-                <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/40">
+                <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-white/45">
                   <th className="px-4 py-2.5">物業</th>
                   <th className="px-4 py-2.5">負責管家</th>
                   <th className="px-4 py-2.5 w-20">排序</th>
@@ -497,7 +497,7 @@ export default function AdminPage() {
           <div className="overflow-x-auto">
             <table className="w-full min-w-[760px] text-sm">
               <thead>
-                <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/40">
+                <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-white/45">
                   <th className="px-4 py-2.5">方式</th>
                   <th className="px-4 py-2.5">代號</th>
                   <th className="px-4 py-2.5">顯示名稱</th>
@@ -571,7 +571,7 @@ export default function AdminPage() {
       {tab === 'payees' && (
       <section className="mb-8">
         <div className="rounded-xl glass overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-mor-line bg-mor-sand/40 text-sm font-medium">
+          <div className="px-4 py-2.5 border-b border-mor-line bg-white/45 text-sm font-medium">
             常用收款對象（廠商帳號）
           </div>
           <div className="overflow-x-auto">
@@ -652,7 +652,7 @@ export default function AdminPage() {
           <div className="overflow-x-auto">
             <table className="w-full min-w-[520px] text-sm">
               <thead>
-                <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/40">
+                <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-white/45">
                   <th className="px-4 py-2.5">房源名稱(點擊可改名)</th>
                   <th className="px-4 py-2.5 text-right">操作</th>
                 </tr>
@@ -709,7 +709,7 @@ export default function AdminPage() {
             <div>
               <table className="w-full min-w-[760px] text-sm">
                 <thead>
-                  <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/40">
+                  <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-white/45">
                     <th className="px-4 py-2.5 whitespace-nowrap">時間</th>
                     <th className="px-4 py-2.5">操作人</th>
                     <th className="px-4 py-2.5">資料</th>

@@ -268,7 +268,7 @@ function HoursSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
 
       {/* 個人 */}
       <div className={`${CARD} overflow-hidden`}>
-        <div className="px-4 py-2.5 border-b border-mor-line bg-mor-sand/40 text-sm font-medium">
+        <div className="px-4 py-2.5 border-b border-mor-line bg-white/45 text-sm font-medium">
           個人設定（留空 = 沿用上面的公司預設）
         </div>
         <div className="overflow-x-auto">

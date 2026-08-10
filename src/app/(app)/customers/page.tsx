@@ -187,7 +187,7 @@ export default function CustomersPage() {
       <div className={`${CARD} overflow-hidden hidden md:block`}>
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/40">
+            <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-white/45">
               <th className="px-4 py-2.5">客戶名</th>
               <th className="px-4 py-2.5">房源</th>
               <th className="px-4 py-2.5">住宿起訖</th>
@@ -256,8 +256,8 @@ function RowPair({ c, today, open, onToggle, onSave }: {
   return (
     <>
       <tr onClick={onToggle}
-        className={`border-b border-mor-line/60 cursor-pointer hover:bg-mor-sand/40 ${
-          open ? 'bg-mor-sand/40' : ''}`}>
+        className={`border-b border-mor-line/60 cursor-pointer hover:bg-white/45 ${
+          open ? 'bg-white/45' : ''}`}>
         <td className="px-4 py-2.5">
           <div className="flex items-center gap-1.5">
             {/* 在住的標一個綠點 —— 一整頁歷史客戶裡要一眼認出現在還在的 */}

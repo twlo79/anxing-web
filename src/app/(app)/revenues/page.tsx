@@ -497,7 +497,7 @@ export default function RevenuesPage() {
           <div className="text-xs opacity-75 mt-2">{fromM} ~ {toM}・{filtered.length} 筆認列</div>
         </div>
         <div className="rounded-xl bg-white border border-mor-line overflow-hidden">
-          <div className="px-4 py-2.5 text-sm font-semibold border-b border-mor-line bg-mor-sand/40">依來源</div>
+          <div className="px-4 py-2.5 text-sm font-semibold border-b border-mor-line bg-white/45">依來源</div>
           <div>
             {bySource.map(([s, v]) => (
               <div key={s} onClick={() => setSourceFilter(sourceFilter === s ? '' : s)}
@@ -509,7 +509,7 @@ export default function RevenuesPage() {
           </div>
         </div>
         <div className="rounded-xl bg-white border border-mor-line overflow-hidden">
-          <div className="px-4 py-2.5 text-sm font-semibold border-b border-mor-line bg-mor-sand/40">依物業</div>
+          <div className="px-4 py-2.5 text-sm font-semibold border-b border-mor-line bg-white/45">依物業</div>
           <div>
             {byEstate.map(([e, v]) => {
               const max = byEstate[0]?.[1] || 1;
@@ -573,7 +573,7 @@ export default function RevenuesPage() {
       <div className="rounded-xl glass overflow-x-auto">
         <table className="w-full min-w-[900px] text-sm">
           <thead>
-            <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/50">
+            <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-white/45">
               <SortTh label="來源" sortKey="source" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <SortTh label="物業" sortKey="estate_name" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <SortTh label="房源" sortKey="property_raw" type="room" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />

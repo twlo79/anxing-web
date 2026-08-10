@@ -270,7 +270,7 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
 
       {/* ── 出勤明細 ───────────────────────────────── */}
       <div className={`${CARD} overflow-hidden`}>
-        <div className="px-4 py-2.5 border-b border-mor-line bg-mor-sand/40
+        <div className="px-4 py-2.5 border-b border-mor-line bg-white/45
                         flex items-center gap-3 text-sm font-medium">
           <span>{m} 月出勤明細</span>
           <div className="flex-1" />
@@ -284,7 +284,7 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
         <table className="w-full text-sm hidden sm:table">
           <thead>
             <tr className="text-left text-[11px] tracking-wider text-gray-500
-                           border-b border-mor-line bg-mor-sand/50">
+                           border-b border-mor-line bg-white/45">
               <th className="px-4 py-2.5">日期</th>
               <th className="px-4 py-2.5">上班卡</th>
               <th className="px-4 py-2.5">下班卡</th>

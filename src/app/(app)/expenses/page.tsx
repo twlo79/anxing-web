@@ -397,7 +397,7 @@ export default function ExpensesPage() {
           <div className="space-y-1.5 max-h-44 overflow-auto pr-1">
             {byAccount.length === 0 ? <div className="text-xs text-gray-400">無資料</div> : byAccount.map(([k, v]) => (
               <button key={k} onClick={() => setAcctF(acctF === k ? '' : k)}
-                className={`w-full flex items-center gap-2 text-xs rounded px-1 py-0.5 ${acctF === k ? 'bg-mor-bluelight' : 'hover:bg-mor-sand/50'}`}>
+                className={`w-full flex items-center gap-2 text-xs rounded px-1 py-0.5 ${acctF === k ? 'bg-mor-bluelight' : 'hover:bg-white/45'}`}>
                 <div className="w-20 shrink-0 truncate text-left">{k === '__cash' ? '現金/未指定' : acctName[k] ?? k}</div>
                 <div className="flex-1 h-2 rounded bg-mor-sand/60 overflow-hidden">
                   <div className="h-full bg-mor-slate" style={{ width: `${Math.max(2, (v / maxAccount) * 100)}%` }} />
@@ -465,7 +465,7 @@ export default function ExpensesPage() {
       <div className="rounded-xl glass overflow-x-auto">
         <table className="w-full min-w-[900px] text-sm">
           <thead>
-            <tr className="border-b border-mor-line bg-mor-sand/40 text-left">
+            <tr className="border-b border-mor-line bg-white/45 text-left">
               <SortTh label="支出日" sortKey="spent_on" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="whitespace-nowrap" />
               <SortTh label="項目" sortKey="item_name" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <SortTh label="金額" sortKey="amount" type="number" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="text-right" align="right" />

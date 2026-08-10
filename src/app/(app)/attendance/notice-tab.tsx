@@ -123,7 +123,7 @@ export default function NoticeTab({ me, isAdmin, onMsg }: TabProps) {
             return (
               <div key={a.id} className={!a.active ? 'opacity-50' : ''}>
                 <button onClick={() => openOne(a)}
-                  className="w-full px-4 py-3 text-left hover:bg-mor-sand/40">
+                  className="w-full px-4 py-3 text-left hover:bg-white/45">
                   <div className="flex items-center gap-2">
                     {a.pinned && <span className="text-xs text-mor-slate shrink-0">📌</span>}
                     {/* 未讀用圓點，不用「NEW」字樣 —— 中文介面裡英文標籤很跳 */}

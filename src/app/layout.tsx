@@ -30,7 +30,7 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="zh-Hant">
-      <body className="bg-mor-bg text-mor-ink antialiased">
+      <body className="bg-[#EAE7E0] text-mor-ink antialiased">
         {children}
         <SwRegister />
       </body>

@@ -182,7 +182,7 @@ export default function ApplyTab({ me, onMsg, prefill }: TabProps & {
 
       {/* ── 我送過的 ───────────────────────────────── */}
       <div className={CARD}>
-        <div className="px-4 py-2.5 border-b border-mor-line bg-mor-sand/40 text-sm font-medium">
+        <div className="px-4 py-2.5 border-b border-mor-line bg-white/45 text-sm font-medium">
           我的{SUB[sub]}紀錄
         </div>
         <div className="divide-y divide-mor-line/60">

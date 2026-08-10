@@ -179,7 +179,7 @@ export default function CleaningPage() {
             <div className="text-xs opacity-75 mt-2">共 {visibleStats.length} 位・{(statsFrom || statsTo) ? `${statsFrom || minDate || '起始'} ~ ${statsTo || '今'}` : (minDate ? `${minDate} ~ 今` : '全部期間')}</div>
           </div>
           <div className="lg:col-span-2 rounded-xl bg-white border border-mor-line overflow-hidden">
-            <div className="px-4 py-2.5 text-sm font-semibold border-b border-mor-line bg-mor-sand/40">依填寫人統計</div>
+            <div className="px-4 py-2.5 text-sm font-semibold border-b border-mor-line bg-white/45">依填寫人統計</div>
             <div className="max-h-56 overflow-y-auto">
               {visibleStats.map((m) => {
                 const max = Math.max(...visibleStats.map((x) => Number(x.total))) || 1;
@@ -336,7 +336,7 @@ export default function CleaningPage() {
       <div className="hidden md:block rounded-xl glass overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/50">
+            <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-white/45">
               <th className="px-3 py-2.5 whitespace-nowrap">記錄日</th>
               <th className="px-3 py-2.5">物業</th>
               <th className="px-3 py-2.5">房源</th>

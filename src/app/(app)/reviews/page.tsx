@@ -263,7 +263,7 @@ export default function ReviewsPage() {
 
           {/* 物業評分 */}
           <div className="rounded-xl bg-white border border-mor-line flex flex-col overflow-hidden">
-            <div className="px-4 py-2.5 text-sm font-semibold border-b border-mor-line bg-mor-sand/40">物業評分</div>
+            <div className="px-4 py-2.5 text-sm font-semibold border-b border-mor-line bg-white/45">物業評分</div>
             <div className="flex-1">
               {[...stats].filter((x) => Number(x.review_count) > 0).sort((a, b) => Number(a.sort) - Number(b.sort)).map((x, _, arr) => {
                 const max = Math.max(...arr.map((y) => Number(y.review_count))) || 1;
@@ -286,7 +286,7 @@ export default function ReviewsPage() {
 
           {/* 管家評分 */}
           <div className="rounded-xl bg-white border border-mor-line flex flex-col overflow-hidden">
-            <div className="px-4 py-2.5 flex items-center justify-between border-b border-mor-line bg-mor-sand/40">
+            <div className="px-4 py-2.5 flex items-center justify-between border-b border-mor-line bg-white/45">
               <span className="text-sm font-semibold">管家評分</span>
               <button onClick={exportMgrCsv}
                 className="rounded-lg border border-mor-line bg-white px-2.5 py-0.5 text-xs text-mor-slate hover:bg-mor-bluelight">
@@ -380,7 +380,7 @@ export default function ReviewsPage() {
       <div className="rounded-xl glass overflow-x-auto">
         <table className="w-full min-w-[820px] text-sm">
           <thead>
-            <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-mor-sand/50">
+            <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-white/45">
               <th className="px-3 py-2.5 whitespace-nowrap">入住日</th>
               <th className="px-3 py-2.5 whitespace-nowrap">退房日</th>
               <th className="px-3 py-2.5">物業</th>
