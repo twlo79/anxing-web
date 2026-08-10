@@ -95,7 +95,7 @@ export default function PurchasesPage() {
   const [payAccounts, setPayAccounts] = useState<PayAccount[]>([]);
   const [people, setPeople] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
-  const [msg, setMsg] = useState('');
+  const [msg, setMsg] = useState<{ t: string; err?: boolean } | null>(null);
   const [saving, setSaving] = useState(false);
 
   const [edit, setEdit] = useState<Req | null>(null);
@@ -147,7 +147,23 @@ export default function PurchasesPage() {
   // 新單還沒有 id，憑證要等母單建立後才傳得上去 —— 存檔時呼叫 flush()
   const receiptsRef = useRef<ReceiptsHandle>(null);
 
-  function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 3000); }
+  /*
+   * 兩種訊息，處理方式完全不同。
+   *
+   * 【2026-08 的教訓】
+   * 原本只有一種 flash：綠底、渲染在**頁面最上方**、3 秒消失。
+   * 但「送出審核」按鈕在**抽屜裡** —— 按下去被擋，訊息出現在抽屜後面的
+   * 頁面頂端，使用者完全看不到，而且就算看到了，綠色也像是成功。
+   * PR-202608-050 卡了很久沒人知道原因，就是這樣。
+   *
+   *   flash    成功回饋 —— 綠色，3 秒自動消失
+   *   flashErr 擋下動作 —— 紅色，**不自動消失**，而且抽屜裡也會顯示一份
+   *
+   * 擋阻訊息不該自動消失：使用者可能正在看別的地方，回頭時訊息已經不見了，
+   * 剩下的只有「按了沒反應」。
+   */
+  function flash(t: string) { setMsg({ t }); setTimeout(() => setMsg(null), 3000); }
+  function flashErr(t: string) { setMsg({ t, err: true }); }
 
   useEffect(() => {
     (async () => {
@@ -561,14 +577,14 @@ export default function PurchasesPage() {
   async function save(submit: boolean) {
     if (!edit || !me) return;
     const clean = items.filter((i) => i.item_name.trim() || Number(i.amount_original) > 0);
-    if (!clean.length) return flash('至少要有一個請款項目');
+    if (!clean.length) return flashErr('至少要有一個請款項目');
     for (const i of clean) {
-      if (!i.item_name.trim()) return flash('每個項目都要填名稱');
-      if (!(Number(i.amount_original) > 0)) return flash(`「${i.item_name}」請填金額`);
-      if (i.purpose_type === 'estate' && !i.estate_id) return flash(`「${i.item_name}」請選擇用途`);
+      if (!i.item_name.trim()) return flashErr('每個項目都要填名稱');
+      if (!(Number(i.amount_original) > 0)) return flashErr(`「${i.item_name}」請填金額`);
+      if (i.purpose_type === 'estate' && !i.estate_id) return flashErr(`「${i.item_name}」請選擇用途`);
     }
-    if (edit.payment_method === 'transfer' && !edit.payee_account) return flash('匯款需填廠商收款帳號');
-    if (edit.currency !== 'TWD' && !(fxRate > 0)) return flash('請填匯率');
+    if (edit.payment_method === 'transfer' && !edit.payee_account) return flashErr('匯款需填廠商收款帳號');
+    if (edit.currency !== 'TWD' && !(fxRate > 0)) return flashErr('請填匯率');
     // 手續費只在匯款時成立。非匯款就算 fee_mode 還留著舊值也一律當成內扣。
     const feeApplies = edit.payment_method === 'transfer' && edit.fee_mode === 'extra';
     /*
@@ -583,6 +599,15 @@ export default function PurchasesPage() {
      * 擋阻一定要看得見，這跟契約日期那邊是同一條原則。
      */
     if (submit && feeApplies && !(Number(edit.fee_amount) > 0)) {
+      /*
+       * 這條**同時**用 alert 與抽屜紅字。
+       *
+       * 其他驗證（沒填名稱、沒選用途）看一眼欄位就知道哪裡錯，紅字就夠。
+       * 這條不一樣：「不內扣填 0」在畫面上看起來是**填好的**，
+       * 使用者不會覺得那裡有問題 —— 規則本身要解釋一次才懂。
+       */
+      flashErr('手續費選了「不內扣」但金額是 0。\n'
+        + '知道銀行扣多少就填進去（同行約 15、跨行約 30）；沒有手續費請改選「內扣」。');
       alert('手續費選了「不內扣」，但金額是 0，所以送不出去。\n\n'
         + '兩個選擇：\n'
         + '　• 知道銀行扣多少 → 填進去（同行通常 15、跨行 30）\n'
@@ -697,7 +722,7 @@ export default function PurchasesPage() {
     const patch: any = {};
     if (isManager) { patch.manager_approved_by = me.id; patch.manager_approved_at = new Date().toISOString(); }
     else if (isAdmin) { patch.admin_approved_by = me.id; patch.admin_approved_at = new Date().toISOString(); }
-    else return flash('你的角色不能核可');
+    else return flashErr('你的角色不能核可');
     const { error } = await supabase.from('purchase_requests').update(patch).eq('id', r.id);
     if (error) return flash('核可失敗:' + error.message);
     flash('已核可'); load();
@@ -705,7 +730,7 @@ export default function PurchasesPage() {
 
   async function doReject() {
     if (!rejecting || !me) return;
-    if (!rejectReason.trim()) return flash('請填駁回原因');
+    if (!rejectReason.trim()) return flashErr('請填駁回原因');
     const { error } = await supabase.from('purchase_requests')
       .update({ status: 'rejected', rejected_by: me.id, reject_reason: rejectReason.trim() })
       .eq('id', rejecting.id);
@@ -724,7 +749,7 @@ export default function PurchasesPage() {
     const patch: any = {};
     if (isManager) { patch.manager_approved_by = me.id; patch.manager_approved_at = new Date().toISOString(); }
     else if (isAdmin) { patch.admin_approved_by = me.id; patch.admin_approved_at = new Date().toISOString(); }
-    else return flash('你的角色不能核可');
+    else return flashErr('你的角色不能核可');
     const { error } = await supabase.from('deposits').update(patch).eq('id', d.id);
     if (error) return flash('核可失敗:' + error.message);
     flash('已核可押金退款'); load();
@@ -732,7 +757,7 @@ export default function PurchasesPage() {
 
   async function depDoReject() {
     if (!depRejecting || !me) return;
-    if (!depReason.trim()) return flash('請填駁回原因');
+    if (!depReason.trim()) return flashErr('請填駁回原因');
     const { error } = await supabase.from('deposits')
       .update({ refund_status: 'rejected', rejected_by: me.id, reject_reason: depReason.trim() })
       .eq('id', depRejecting.id);
@@ -752,10 +777,10 @@ export default function PurchasesPage() {
   async function depSaveResubmit() {
     if (!depDetail || !me) return;
     const d = depDetail;
-    if (!d.payee_account?.trim()) return flash('請填房客收款帳號');
-    if (!d.payee_name?.trim()) return flash('請填戶名');
-    if (!d.planned_refund_on) return flash('請填預計匯款日');
-    if (!d.returned_method) return flash('請選安幸付款方式');
+    if (!d.payee_account?.trim()) return flashErr('請填房客收款帳號');
+    if (!d.payee_name?.trim()) return flashErr('請填戶名');
+    if (!d.planned_refund_on) return flashErr('請填預計匯款日');
+    if (!d.returned_method) return flashErr('請選安幸付款方式');
     const hadVotes = !!d.manager_approved_at || !!d.admin_approved_at;
     if (hadVotes && !confirm(
       d.refund_status === 'approved'
@@ -794,13 +819,13 @@ export default function PurchasesPage() {
   async function doSetDate() {
     if (!dating) return;
     // 前端按鈕已經藏起來,這裡再擋一次 —— 按鈕藏起來擋不住重新整理後的舊畫面
-    if (dating.purchased_on) return flash('出款日已經填過,不能再改。要調整請撤銷整張單,或到支出頁修改。');
-    if (!dateVal) return flash('請選擇日期');
+    if (dating.purchased_on) return flashErr('出款日已經填過,不能再改。要調整請撤銷整張單,或到支出頁修改。');
+    if (!dateVal) return flashErr('請選擇日期');
     // 匯款/信用卡一定要記錄從哪個帳戶付出去。
     // 這個檢查放在「匯出」而不是「排匯款」—— 排匯款可以跳過,匯出不行,
     // 把必填綁在可跳過的步驟上,等於沒綁。
     const needAcct = dating.payment_method === 'transfer' || dating.payment_method === 'credit_card';
-    if (needAcct && !dateAcct) return flash('請選擇安幸付款帳號');
+    if (needAcct && !dateAcct) return flashErr('請選擇安幸付款帳號');
     const patch: Record<string, unknown> = { purchased_on: dateVal };
     if (needAcct) patch.payout_account = dateAcct;
     const { error } = await supabase.from('purchase_requests').update(patch).eq('id', dating.id);
@@ -813,8 +838,8 @@ export default function PurchasesPage() {
   // 排匯款:只寫計畫欄位,不碰 purchased_on —— 錢還沒出去,不該產生支出
   async function savePlan() {
     if (!planning) return;
-    if (!planDate) return flash('請選擇預定匯款日');
-    if (!planAcct) return flash('請選擇安幸付款帳號');
+    if (!planDate) return flashErr('請選擇預定匯款日');
+    if (!planAcct) return flashErr('請選擇安幸付款帳號');
     const { error } = await supabase.from('purchase_requests')
       .update({ planned_transfer_on: planDate, payout_account: planAcct }).eq('id', planning.id);
     if (error) return flash('儲存失敗:' + error.message);
@@ -825,7 +850,7 @@ export default function PurchasesPage() {
   // 連動刪除會讓請款單與支出兩邊對不上,而且 gen_expenses_from_pr() 只在
   // 採購日「從無到有」時建立,刪掉救不回來。這條同時寫在 RLS 裡,不只靠前端藏按鈕。
   async function cancel(r: Req) {
-    if (r.expense_generated_at) return flash('已產生支出,不能撤銷。請到支出頁處理。');
+    if (r.expense_generated_at) return flashErr('已產生支出,不能撤銷。請到支出頁處理。');
     if (!confirm(`確定撤銷請款單 ${r.req_no}?撤銷後資料不會保留。`)) return;
     const { error } = await supabase.from('purchase_requests').delete().eq('id', r.id);
     if (error) return flash('撤銷失敗:' + error.message);
@@ -834,7 +859,7 @@ export default function PurchasesPage() {
 
   function exportXlsx() {
     // 押金也算 —— 有可能請款單被篩到空的,但還有押金退款要匯出去
-    if (!sorted.length && !deps.length) return flash('沒有符合條件的資料');
+    if (!sorted.length && !deps.length) return flashErr('沒有符合條件的資料');
     const BR = { style: 'thin', color: { rgb: 'C9C6BE' } };
     const BORD = { top: BR, bottom: BR, left: BR, right: BR };
     const stHead = { font: { bold: true, sz: 11 }, fill: { fgColor: { rgb: 'E7E4DC' } }, border: BORD, alignment: { horizontal: 'center' } };
@@ -1050,7 +1075,13 @@ export default function PurchasesPage() {
 
   return (
     <div>
-      {msg && <div className="mb-3 rounded-lg bg-mor-greenlight text-mor-green px-4 py-2 text-sm">{msg}</div>}
+      {msg && (
+        <div className={`mb-3 rounded-lg px-4 py-2 text-sm flex items-start gap-2 ${
+          msg.err ? 'bg-red-50 border border-red-200 text-red-700' : 'bg-mor-greenlight text-mor-green'}`}>
+          <span className="flex-1 whitespace-pre-line">{msg.t}</span>
+          {msg.err && <button onClick={() => setMsg(null)} className="text-red-400 hover:text-red-600 shrink-0">✕</button>}
+        </div>
+      )}
       {/* 手機上標題由頂列顯示,這裡只留桌機用 */}
       <h1 className="hidden md:block text-xl font-bold mb-4">請款填寫</h1>
 
@@ -2113,6 +2144,17 @@ export default function PurchasesPage() {
                   <Receipts ref={receiptsRef} kind="pr" parentId={edit.id || null} canEdit={!readOnly} label="憑證圖片" />
                 </div>
               </div>
+              {/*
+                擋阻訊息**在抽屜裡也顯示一份**，就在按鈕正上方。
+                只渲染在頁面頂端的話，抽屜蓋住了它，使用者看到的是「按了沒反應」。
+              */}
+              {msg?.err && (
+                <div className="sticky bottom-0 md:static bg-red-50 border-t border-red-200 px-4 md:px-6 py-3 text-sm text-red-700 flex items-start gap-2">
+                  <span className="shrink-0">⚠</span>
+                  <span className="flex-1 whitespace-pre-line">{msg.t}</span>
+                  <button onClick={() => setMsg(null)} className="text-red-400 hover:text-red-600 shrink-0">✕</button>
+                </div>
+              )}
               {/* 手機:按鈕列吸在畫面底部,捲到哪都按得到 */}
               <div className="sticky bottom-0 md:static bg-white border-t border-mor-line px-4 md:px-6 py-3 md:py-4 flex gap-2 md:justify-end"
                 style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
