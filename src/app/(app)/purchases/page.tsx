@@ -1959,10 +1959,16 @@ export default function PurchasesPage() {
                         帶入之後四欄仍然可以手改：這一次要匯到不同分行、或臨時換帳號
                         都還是常見的，主檔只負責少打幾個字，不是強制。
                       */}
-                      {!readOnly && payees.length > 0 && (
+                      {/*
+                        **一直顯示，即使主檔是空的。**
+                        原本寫成「有資料才顯示」—— 但主檔是空的時候，
+                        使用者根本看不到這個功能存在，也就永遠不會去建第一筆。
+                        空的時候顯示成停用狀態並指出去哪裡建。
+                      */}
+                      {!readOnly && (
                         <label className="flex flex-col gap-1 md:col-span-2">
                           <span className="text-xs text-gray-500">常用帳號（選了自動帶入下面四欄）</span>
-                          <select value=""
+                          <select value="" disabled={!payees.length}
                             onChange={(e) => {
                               const p = payees.find((x) => x.id === e.target.value);
                               if (!p) return;
@@ -1974,14 +1980,21 @@ export default function PurchasesPage() {
                                 payee_tax_id: p.tax_id ?? '',
                               });
                             }}
-                            className="rounded-lg border border-mor-line px-2 py-1.5 h-12 md:h-auto bg-white">
-                            <option value="">— 選擇常用帳號 —</option>
+                            className="rounded-lg border border-mor-line px-2 py-1.5 h-12 md:h-auto bg-white disabled:bg-gray-50 disabled:text-gray-400">
+                            <option value="">
+                              {payees.length ? '— 選擇常用帳號 —' : '— 尚未建立常用帳號 —'}
+                            </option>
                             {payees.map((p) => (
                               <option key={p.id} value={p.id}>
                                 {p.label}{p.account ? `・${p.account}` : ''}
                               </option>
                             ))}
                           </select>
+                          {!payees.length && (
+                            <span className="text-[11px] text-gray-400">
+                              到「權限管理 → 常用帳號」新增，之後填匯款單就能一鍵帶入四個欄位。
+                            </span>
+                          )}
                         </label>
                       )}
                       <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">銀行代碼</span>

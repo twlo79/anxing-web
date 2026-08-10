@@ -612,7 +612,7 @@ export default function AdminPage() {
                 ))}
                 {!payees.length && (
                   <tr><td colSpan={7} className="px-4 py-10 text-center text-sm text-gray-400">
-                    還沒有常用帳號。跑過 migration_96 之後，既有請款單裡用過的帳號會自動帶進來。
+                    還沒有常用帳號。用下面那排欄位新增第一筆。
                   </td></tr>
                 )}
               </tbody>
