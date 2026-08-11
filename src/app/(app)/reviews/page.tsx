@@ -1,6 +1,10 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
+import * as XLSX from 'xlsx-js-style';
+import {
+  summarySheet, detailSheet, safeSheetName, xlsxFilename, type DetailRow,
+} from '@/lib/manager-xlsx';
 import { fetchAll } from '@/lib/fetch-all';
 
 type Estate = { id: string; name: string; manager: string | null; sort: number };
@@ -72,6 +76,7 @@ export default function ReviewsPage() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Review | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [exportingMgr, setExportingMgr] = useState(false);
   // 表格篩選
   const [estateId, setEstateId] = useState('');
   const [propertyId, setPropertyId] = useState('');
@@ -184,26 +189,79 @@ export default function ReviewsPage() {
     setExporting(false);
   }
 
-  function exportMgrCsv() {
-    const pct = (n: number, t: number) => (t ? Math.round((n / t) * 100) : 0);
-    const lines = ['管家,5星,4星,3星,2星,1星'];
-    for (const m of mgrStats) {
-      const t = Number(m.total);
-      lines.push([
-        m.manager,
-        `${m.s5} (${pct(Number(m.s5), t)}%)`,
-        `${m.s4} (${pct(Number(m.s4), t)}%)`,
-        `${m.s3} (${pct(Number(m.s3), t)}%)`,
-        `${m.s2} (${pct(Number(m.s2), t)}%)`,
-        `${m.s1} (${pct(Number(m.s1), t)}%)`,
-      ].map(csvEsc).join(','));
-    }
-    const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `管家評分_${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+  /**
+   * 管家評價 Excel。
+   *
+   * 【為什麼是 Excel 不是 CSV】
+   * CSV 只有一張表。要「總表 ＋ 每位管家的明細」就得下載五個檔案，
+   * 或者把所有人混在一張表裡再自己篩 —— 兩個都不是人會做的事。
+   *
+   * 第一頁總表，之後一位管家一頁，內容是那段期間他名下的每一則評價。
+   *
+   * 【明細一定要用 fetchAll】
+   * 目前光是四位管家就超過 1,000 則。Supabase 預設只回 1,000 列
+   * **而且不報錯** —— 直接查的話報表會靜靜地少掉一截，
+   * 而少掉的是最舊的那些，沒有人看得出來。
+   */
+  async function exportMgrXlsx() {
+    setExportingMgr(true);
+    try {
+      const sorted = [...mgrStats].sort((a, b) => mgrOrder(a.manager) - mgrOrder(b.manager));
+
+      // 明細用「統計區間」，不是下面清單的篩選 —— 上面那張表算的是統計區間，
+      // 兩者取不同範圍的話總表跟明細對不起來，而那種不一致最難查。
+      const { rows: all, error } = await fetchAll<Review>((f, t) => {
+        let q = supabase.from('reviews')
+          .select('property_id, guest_name, overall_rating, comment, comment_original, comment_language, checkout_date')
+          .order('checkout_date', { ascending: false, nullsFirst: false });
+        if (statsFrom) q = q.gte('checkout_date', statsFrom);
+        if (statsTo) q = q.lte('checkout_date', statsTo);
+        return q.range(f, t) as any;
+      });
+      if (error) { alert('讀取評價明細失敗：' + error); return; }
+
+      // 管家 = 房源所屬物業的負責人。跟 manager_stats 同一條規則，
+      // 不同的話總表的筆數會跟明細的列數對不起來。
+      const byMgr = new Map<string, DetailRow[]>();
+      for (const r of all) {
+        const p = r.property_id ? propById[r.property_id] : null;
+        const e = p?.estate_id ? estateById[p.estate_id] : null;
+        const mgr = e?.manager || '未指派';
+        (byMgr.get(mgr) ?? byMgr.set(mgr, []).get(mgr)!).push({
+          manager: mgr,
+          // 房客姓名。管家是分頁名,不用再開一欄
+          guest: r.guest_name ?? '',
+          estate: e?.name ?? '',
+          // 房源對不到時退回爬蟲原始的房源名稱 —— 留空的話那一列看起來像壞掉
+          property: p?.name ?? r.listing_name_raw ?? '',
+          rating: Number(r.overall_rating) || 0,
+          comment: displayComment(r) ?? '',
+          checkout: r.checkout_date,
+        });
+      }
+
+      const wb = XLSX.utils.book_new();
+      const used = new Set<string>();
+
+      const ws0 = XLSX.utils.aoa_to_sheet(summarySheet(sorted, statsFrom, statsTo));
+      ws0['!cols'] = [{ wch: 10 }, { wch: 10 },
+        ...Array.from({ length: 10 }, () => ({ wch: 9 })), { wch: 11 }];
+      ws0['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 12 } }];
+      ws0['!freeze'] = { xSplit: 0, ySplit: 3 };
+      XLSX.utils.book_append_sheet(wb, ws0, safeSheetName('總表', used));
+
+      for (const m of sorted) {
+        const ws = XLSX.utils.aoa_to_sheet(
+          detailSheet(m.manager, byMgr.get(m.manager) ?? [], statsFrom, statsTo));
+        // 留言那欄放寬並開啟自動換行 —— 不然一則長評會把整列撐到看不完
+        ws['!cols'] = [{ wch: 16 }, { wch: 10 }, { wch: 12 }, { wch: 7 }, { wch: 80 }];
+        ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }];
+        ws['!freeze'] = { xSplit: 0, ySplit: 3 };
+        XLSX.utils.book_append_sheet(wb, ws, safeSheetName(m.manager, used));
+      }
+
+      XLSX.writeFile(wb, xlsxFilename(statsFrom, statsTo));
+    } finally { setExportingMgr(false); }
   }
 
   function drillTo(estate: string) {
@@ -288,9 +346,9 @@ export default function ReviewsPage() {
           <div className="rounded-xl bg-white border border-mor-line flex flex-col overflow-hidden">
             <div className="px-4 py-2.5 flex items-center justify-between border-b border-mor-line bg-white/45">
               <span className="text-sm font-semibold">管家評分</span>
-              <button onClick={exportMgrCsv}
-                className="rounded-lg border border-mor-line bg-white px-2.5 py-0.5 text-xs text-mor-slate hover:bg-mor-bluelight">
-                ⬇ CSV
+              <button onClick={exportMgrXlsx} disabled={exportingMgr}
+                className="rounded-lg border border-mor-line bg-white px-2.5 py-0.5 text-xs text-mor-slate hover:bg-mor-bluelight disabled:opacity-40">
+                {exportingMgr ? '產生中…' : '⬇ Excel'}
               </button>
             </div>
             <div className="flex-1">
