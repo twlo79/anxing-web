@@ -43,6 +43,9 @@ export type FeeType = (typeof FEE_TYPES)[number];
 export const CONTRACT_FEE_PRESETS: { label: string; fee_type: string; item_name: string | null }[] = [
   { label: '管理費',        fee_type: '管理費', item_name: null },
   { label: '停車費',        fee_type: '停車費', item_name: null },
+  // 網路費本來就在 FEE_TYPES 裡（營收科目對到 internet，見 migration_91），
+  // 只是沒放進固定加費的預設清單 —— 加在這裡就好，不用動資料庫。
+  { label: '網路費',        fee_type: '網路費', item_name: null },
   { label: '設備費－冰箱',   fee_type: '設備費', item_name: '冰箱' },
   { label: '設備費－洗烘衣機', fee_type: '設備費', item_name: '洗烘衣機' },
   { label: '設備費－電視',   fee_type: '設備費', item_name: '電視' },
