@@ -2,6 +2,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { CONTRACT_FEE_PRESETS, feeLabel } from '@/lib/fee-types';
+import { leaseMonths, feeMonthly, leasePeriods, periodOf, ymShow } from '@/lib/lease';
+
+// 讓既有的 import 路徑不用改：這兩個是純函式，定義在 lib/lease（那裡測得到）
+export { leaseMonths, feeMonthly };
 
 /**
  * 契約的固定加費設定。**放在編輯契約的視窗裡**，跟租金填在一起。
@@ -37,16 +41,12 @@ export const toMonthInput = (ym: string | null) =>
 const fromMonthInput = (v: string) => (/^\d{4}-\d{2}$/.test(v) ? v.replace('-', '') : '');
 const ymOf = (d: string | null | undefined) => (d ? `${d.slice(0, 4)}${d.slice(5, 7)}` : '');
 
-/** 目前實際會收的每期總額（暫停與已結束的不算） */
-export function feeMonthly(rows: Rc[]): number {
-  return rows.filter((r) => r.active).reduce((a, r) => a + (Number(r.amount) || 0), 0);
-}
 
 export default function ContractFees({
   contract, canEdit, onChanged, onPending,
 }: {
   /** id 為空字串 = 新增契約中，還沒有 contract_id 可以掛 */
-  contract: { id: string; start_date: string | null; end_date: string | null };
+  contract: { id: string; start_date: string | null; end_date: string | null; cadence: string };
   canEdit: boolean;
   /** 設定變動後通知母層重載期別 —— 費用單是觸發器產生的，畫面要重查才看得到 */
   onChanged?: () => void;
@@ -102,8 +102,11 @@ export default function ContractFees({
       id: '', contract_id: contract.id,
       fee_type: p.fee_type, item_name: p.item_name,
       amount: 0,
-      // 預設從租期第一個月起 —— 大部分情況就是整段租期都要收
-      start_ym: ymOf(contract.start_date) || ymOf(new Date().toISOString()),
+      // 預設租期第一個月 —— 大部分情況就是整段租期都要收。
+      // 取 leaseMonths 的第一項而不是 start_date 的月份:兩者理應相同,
+      // 但取同一個來源就不可能出現「預設值不在選項裡」。
+      start_ym: leasePeriods(contract.start_date, contract.end_date, contract.cadence)[0]?.ym
+        || ymOf(contract.start_date) || ymOf(new Date().toISOString()),
       end_ym: null, active: true, note: null,
     };
   }
@@ -224,6 +227,14 @@ export default function ContractFees({
       (p) => p.fee_type === r.fee_type && (p.item_name ?? null) === (r.item_name || null));
 
   const live = feeMonthly(rows);
+  /*
+   * 期別跟著契約的繳別 —— 年繳約一年一期，不是十二個月。
+   * 「管理費 3,000」就是這一期加 3,000；要收 36,000 就填 36,000。
+   * （migration_106 之前是每月一張,年繳契約因此多收了 11 個月。）
+   */
+  const periods = useMemo(
+    () => leasePeriods(contract.start_date, contract.end_date, contract.cadence),
+    [contract.start_date, contract.end_date, contract.cadence]);
 
   return (
     <div className="space-y-2">
@@ -296,15 +307,31 @@ export default function ContractFees({
             </label>
             <label className="flex flex-col gap-1">
               <span className="text-[11px] text-gray-500">開始期別</span>
-              <input type="month" value={toMonthInput(draft.start_ym)}
-                onChange={(e) => setDraft({ ...draft, start_ym: fromMonthInput(e.target.value) })}
-                className="h-11 md:h-8 rounded-lg border border-mor-line px-2 text-sm bg-white" />
+              <select value={periodOf(periods, draft.start_ym)?.ym ?? draft.start_ym}
+                onChange={(e) => setDraft({ ...draft, start_ym: e.target.value })}
+                className="h-11 md:h-8 rounded-lg border border-mor-line px-2 text-sm bg-white">
+                {/* 舊資料的期別可能落在租期外(租期後來改過) —— 留一個選項,
+                    否則一打開編輯就被下拉改成第一期,而且不會有提示 */}
+                {!periodOf(periods, draft.start_ym) && (
+                  <option value={draft.start_ym}>{ymShow(draft.start_ym)}（不在租期內）</option>
+                )}
+                {periods.map((p) => <option key={p.ym} value={p.ym}>{p.label}</option>)}
+              </select>
             </label>
             <label className="flex flex-col gap-1">
-              <span className="text-[11px] text-gray-500">結束期別<span className="text-gray-400">（不填＝到租期結束）</span></span>
-              <input type="month" value={toMonthInput(draft.end_ym)}
-                onChange={(e) => setDraft({ ...draft, end_ym: fromMonthInput(e.target.value) || null })}
-                className="h-11 md:h-8 rounded-lg border border-mor-line px-2 text-sm bg-white" />
+              <span className="text-[11px] text-gray-500">結束期別<span className="text-gray-400">（不選＝到租期結束）</span></span>
+              <select value={draft.end_ym ? (periodOf(periods, draft.end_ym)?.ym ?? draft.end_ym) : ''}
+                onChange={(e) => setDraft({ ...draft, end_ym: e.target.value || null })}
+                className="h-11 md:h-8 rounded-lg border border-mor-line px-2 text-sm bg-white">
+                <option value="">到租期結束</option>
+                {draft.end_ym && !periodOf(periods, draft.end_ym) && (
+                  <option value={draft.end_ym}>{ymShow(draft.end_ym)}（不在租期內）</option>
+                )}
+                {/* 只列開始期別之後的期 —— 選得到更早的期就等於留了一個
+                    必定被擋下來的選項,而擋下來的訊息使用者要按了才看得到 */}
+                {periods.filter((p) => !draft.start_ym || p.ym >= draft.start_ym)
+                  .map((p) => <option key={p.ym} value={p.ym}>{p.label}</option>)}
+              </select>
             </label>
           </div>
           <div className="flex gap-2">
@@ -318,7 +345,14 @@ export default function ContractFees({
         </div>
       )}
 
-      {canEdit && !draft && (
+      {/* 沒有租期就算不出期別。先講,不然按了新增只會看到一個空的下拉。 */}
+      {canEdit && !draft && !periods.length && (
+        <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          先填「租期起」與「租期迄」，才能設定固定加費的期別。
+        </div>
+      )}
+
+      {canEdit && !draft && !!periods.length && (
         <button type="button" onClick={() => setDraft(blank())}
           className="w-full h-10 rounded-lg border border-dashed border-mor-line text-xs text-mor-blue hover:bg-mor-sand/30">
           + 新增固定加費

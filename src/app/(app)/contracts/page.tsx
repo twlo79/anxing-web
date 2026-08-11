@@ -3,7 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FilterBar, FilterSelect, FilterDateRange, FilterSearch, FilterClear, FilterCount } from '@/lib/filters';
 import { createClient } from '@/lib/supabase';
 import { FEE_TYPES, feeLabel } from '@/lib/fee-types';
-import ContractFees, { feeMonthly, toMonthInput, type Rc } from '@/components/ContractFees';
+import ContractFees, { type Rc } from '@/components/ContractFees';
+import { feeMonthly, leasePeriods, periodOf } from '@/lib/lease';
 import { dueDateOf, resolvePayDay, checkFirstDue, fmtDue, periodRange, fmtPeriodRange, rentMonthCount, checkContractDates } from '@/lib/due-date';
 import { keyBase, onlyKeyOf } from '@/lib/ltKey';
 // 一期的應收與收齊判斷都走這支 —— 畫面、確認視窗、收款三處共用同一份算式
@@ -862,7 +863,7 @@ export default function ContractsPage() {
               */}
               <div className="col-span-2 border-t border-mor-line pt-3 mt-1">
                 <ContractFees
-                  contract={{ id: edit.id ?? '', start_date: edit.start_date ?? null, end_date: edit.end_date ?? null }}
+                  contract={{ id: edit.id ?? '', start_date: edit.start_date ?? null, end_date: edit.end_date ?? null, cadence: edit.cadence }}
                   canEdit
                   onChanged={load}
                   onPending={setPendingFees} />
@@ -1009,6 +1010,8 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
   const [feeRows, setFeeRows] = useState<any[]>([]);
   /** 這張契約的固定加費設定。收租視窗只讀,要改請到編輯契約。 */
   const [rcRows, setRcRows] = useState<Rc[]>([]);
+  const rcPeriods = useMemo(
+    () => leasePeriods(c.start_date, c.end_date, c.cadence), [c.start_date, c.end_date, c.cadence]);
   const [feeDraft, setFeeDraft] = useState<{ pi: number; date: string; type: string; amount: number } | null>(null);
   /*
    * 收款確認視窗。自己畫而不是用 confirm() —— 見 setPeriodPaid 的註解：
@@ -1508,6 +1511,11 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
               <span className="text-xs font-semibold text-gray-500">每期應收明細</span>
               <span className="text-xs text-gray-400">到「編輯契約」修改</span>
             </div>
+            {/*
+              加費與租金都是「一期一筆」（migration_106）。
+              「管理費 3,000」就是這一期加 3,000 —— 年繳約要收 36,000
+              就直接填 36,000，系統不會替你乘上月數。
+            */}
             <div className="space-y-1 text-sm">
               <div className="flex items-baseline justify-between">
                 <span>房租（{CAD_LABEL[c.cadence]}）</span>
@@ -1520,7 +1528,9 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
                     {feeLabel(r.fee_type, r.item_name)}
                     {!r.active && <span className="ml-1.5 no-underline text-[11px] text-amber-600">暫停中</span>}
                     {r.end_ym && r.active && (
-                      <span className="ml-1.5 text-[11px] text-gray-400">收到 {toMonthInput(r.end_ym)} 為止</span>
+                      <span className="ml-1.5 text-[11px] text-gray-400">
+                        收到{periodOf(rcPeriods, r.end_ym)?.label ?? r.end_ym}為止
+                      </span>
                     )}
                   </span>
                   <span className="tabular-nums">${fmt(r.amount)}</span>
