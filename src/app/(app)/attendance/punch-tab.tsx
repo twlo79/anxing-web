@@ -166,17 +166,26 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
 
         <div className="relative text-center md:text-left md:flex-1">
           <Clock />
-          <div className="flex items-center justify-center md:justify-start gap-5 mt-3">
+          {/*
+            【為什麼兩欄要固定寬高】
+            「遲到 135 分」只會出現在上班那一欄。用條件渲染的話：
+              · 上班欄比下班欄高一行 → 兩欄的基線對不齊
+              · 整張卡在打卡的瞬間變高 → 底下的東西整個往下跳
+            所以兩欄都固定寬度、警告那一行永遠佔位（沒有就放空字串），
+            版面在打卡前後長得一模一樣。
+          */}
+          <div className="flex items-start justify-center md:justify-start gap-4 mt-3">
             {([['上班', today?.in_at, today?.late_min, '遲到'],
                ['下班', today?.out_at, today?.early_min, '早退']] as const).map(([lb, at, mins, warn]) => (
-              <div key={lb} className="text-center md:text-left">
-                <div className="text-[11px] text-white/60">{lb}</div>
-                <div className={`text-lg font-semibold tabular-nums ${at ? 'text-white' : 'text-white/30'}`}>
+              <div key={lb} className="w-[6.5rem] shrink-0 text-center md:text-left">
+                <div className="text-[11px] text-white/60 leading-none">{lb}</div>
+                <div className={`text-lg font-semibold tabular-nums leading-tight mt-1 ${
+                  at ? 'text-white' : 'text-white/30'}`}>
                   {hhmm(at)}
                 </div>
-                {!!mins && mins > 0 && (
-                  <div className="text-[11px] text-amber-200">{warn} {mins} 分</div>
-                )}
+                <div className="text-[11px] text-amber-200 leading-none h-3 mt-1 truncate">
+                  {!!mins && mins > 0 ? `${warn} ${mins} 分` : ' '}
+                </div>
               </div>
             ))}
           </div>
