@@ -574,7 +574,7 @@ export default function ContractsPage() {
                 {arrears.length} 間・共 {arrears.reduce((s, g) => s + g.periods, 0)} 期(不含本月未收)
               </span>
             </div>
-            <div className="text-sm font-bold text-red-700">${fmt(arrearsTotal)}</div>
+            <div className="text-sm font-semibold text-red-700 tabular-nums">${fmt(arrearsTotal)}</div>
           </div>
           <div className="max-h-52 overflow-y-auto">
             {arrears.map((g) => {
@@ -583,15 +583,20 @@ export default function ContractsPage() {
                 <div key={g.room}
                   onClick={() => c && setCollect(c)}
                   className="px-4 py-1.5 flex items-center justify-between text-sm border-b border-red-100 last:border-0 cursor-pointer hover:bg-red-100/40">
+                  {/*
+                    每一欄都要固定寬度，不能讓內容自己決定。
+                    「2F-1」跟「南京10-3」寬度差一倍,靠 gap 排出來的話
+                    租戶名、期數、日期全部各自歪一點,整片看起來就是散的。
+                  */}
                   <div className="flex items-center gap-2 min-w-0">
-                    <span className="font-medium shrink-0">{g.label}</span>
+                    <span className="font-medium shrink-0 w-20 truncate">{g.label}</span>
                     <span className="text-gray-600 truncate">{g.tenant ?? ''}</span>
                     {c && !c.active && <span className="shrink-0 rounded bg-gray-200 text-gray-500 px-1.5 py-0.5 text-[11px]">已結束</span>}
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
-                    <span className="text-xs text-red-600">欠 {g.periods} 期</span>
-                    <span className="text-xs text-gray-500">{g.span}</span>
-                    <span className="font-semibold min-w-[6rem] shrink-0 whitespace-nowrap text-right">${fmt(g.amount)}</span>
+                    <span className="text-xs text-red-600 w-14 text-right tabular-nums">欠 {g.periods} 期</span>
+                    <span className="text-xs text-gray-500 w-28 text-right tabular-nums">{g.span}</span>
+                    <span className="font-semibold w-24 whitespace-nowrap text-right tabular-nums">${fmt(g.amount)}</span>
                   </div>
                 </div>
               );
@@ -607,7 +612,7 @@ export default function ContractsPage() {
               待開發票
               <span className="ml-2 text-xs font-normal text-amber-600">
                 {invPending.length} 張
-                {invPending.some((p) => p.status === 'overdue') && <span className="text-red-600 font-medium">・{invPending.filter((p) => p.status === 'overdue').length} 張逾期</span>}
+                {invPending.some((p) => p.status === 'overdue') && <span className="text-red-600">・{invPending.filter((p) => p.status === 'overdue').length} 張逾期</span>}
               </span>
             </div>
             <div className="text-xs text-amber-600">近 {INVOICE_LOOKBACK + 1} 個月</div>
@@ -618,17 +623,24 @@ export default function ContractsPage() {
                 onClick={() => setCollect(p.c)}
                 className="px-4 py-1.5 flex items-center justify-between text-sm border-b border-amber-100 last:border-0 cursor-pointer hover:bg-amber-100/40">
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${p.status === 'overdue' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>{p.c.invoice_day ? `${p.c.invoice_day} 日` : '—'}</span>
-                  <span className="font-medium shrink-0">{p.c.display_name || p.c.room}</span>
+                  {/* 徽章固定寬度 —— 「5 日」「15 日」「—」寬度不同的話，
+                      後面的房號整排會歪，而房號正是這份清單第一個要掃的東西 */}
+                  <span className={`shrink-0 w-12 text-center rounded px-1 py-0.5 text-[11px] font-medium tabular-nums ${
+                    p.status === 'overdue' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>{p.c.invoice_day ? `${p.c.invoice_day} 日` : '—'}</span>
+                  <span className="font-medium shrink-0 w-16 truncate">{p.c.display_name || p.c.room}</span>
                   <span className="text-gray-600 truncate">{p.c.invoice_title || p.c.tenant_name || ''}</span>
                   {p.c.invoice_after_paid === false && <span className="shrink-0 rounded bg-mor-bluelight text-mor-blue px-1.5 py-0.5 text-[11px]">先開</span>}
                   {p.c.invoice_note && <span className="shrink-0 text-[11px] text-gray-400 truncate">{p.c.invoice_note}</span>}
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
-                  <span className="text-xs text-gray-500">{fmtYm(p.ym)}</span>
-                  {p.status === 'waiting' && <span className="text-xs text-gray-400">尚未入帳</span>}
-                  {p.status === 'overdue' && <span className="text-xs text-red-600 font-medium">逾期</span>}
-                  <span className="font-semibold min-w-[6rem] shrink-0 whitespace-nowrap text-right">${fmt(p.amount)}</span>
+                  <span className="text-xs text-gray-500 w-16 text-right tabular-nums">{fmtYm(p.ym)}</span>
+                  {/* 兩種狀態同一個字重、同一個寬度 —— 只有顏色不同。
+                      一個粗一個細會讓人以為那是兩種層級的東西。 */}
+                  <span className={`text-xs w-14 text-right ${
+                    p.status === 'overdue' ? 'text-red-600' : 'text-gray-400'}`}>
+                    {p.status === 'overdue' ? '逾期' : p.status === 'waiting' ? '尚未入帳' : ''}
+                  </span>
+                  <span className="font-semibold w-24 whitespace-nowrap text-right tabular-nums">${fmt(p.amount)}</span>
                 </div>
               </div>
             ))}

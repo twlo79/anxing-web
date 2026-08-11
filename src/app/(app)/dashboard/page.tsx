@@ -529,15 +529,25 @@ export default function DashboardPage() {
             </span>
           );
         };
+        /*
+          【數字欄一律 tabular-nums】
+          預設字型的數字是比例寬度（1 比 8 窄），所以 NT$74,436,080 跟
+          NT$6,030,320 上下排在一起時千分位不會對齊，整欄看起來是歪的。
+          tabular-nums 讓每個數字等寬,對齊就自己出現了。
+
+          【本期用 semibold，跟下面「依來源」同一個字重】
+          原本主要那四列是 font-bold、依來源那幾列是 font-medium ——
+          同一欄兩種粗細，看起來像有兩種層級，但它們是同一種東西。
+        */
         const row = (name: string, cur: number, p: number, y: number, f: (n: number) => string, goodUp = true) => (
           <tr className="border-b border-mor-line/60 last:border-0">
             <td className="px-3 py-2.5 font-medium whitespace-nowrap">{name}</td>
-            <td className="px-3 py-2.5 text-right font-bold whitespace-nowrap">{f(cur)}</td>
-            <td className="px-3 py-2.5 text-right text-gray-500 whitespace-nowrap">{f(p)}</td>
-            <td className="px-3 py-2.5 text-right whitespace-nowrap">{delta(cur, p, goodUp)}</td>
+            <td className="px-3 py-2.5 text-right font-semibold whitespace-nowrap tabular-nums">{f(cur)}</td>
+            <td className="px-3 py-2.5 text-right text-gray-500 whitespace-nowrap tabular-nums">{f(p)}</td>
+            <td className="px-3 py-2.5 text-right whitespace-nowrap tabular-nums">{delta(cur, p, goodUp)}</td>
             {!sameYoY && <>
-              <td className="px-3 py-2.5 text-right text-gray-500 whitespace-nowrap">{f(y)}</td>
-              <td className="px-3 py-2.5 text-right whitespace-nowrap">{delta(cur, y, goodUp)}</td>
+              <td className="px-3 py-2.5 text-right text-gray-500 whitespace-nowrap tabular-nums">{f(y)}</td>
+              <td className="px-3 py-2.5 text-right whitespace-nowrap tabular-nums">{delta(cur, y, goodUp)}</td>
             </>}
           </tr>
         );
@@ -590,12 +600,12 @@ export default function DashboardPage() {
                   {revBySource.map(([k, v]) => (
                     <tr key={k} className="border-b border-mor-line/60 last:border-0">
                       <td className="px-3 py-2 pl-6 text-gray-600 whitespace-nowrap">{srcLabel(k)}</td>
-                      <td className="px-3 py-2 text-right font-medium whitespace-nowrap">{money(v)}</td>
-                      <td className="px-3 py-2 text-right text-gray-500 whitespace-nowrap">{money(cmp.prev.bySource[k] ?? 0)}</td>
-                      <td className="px-3 py-2 text-right whitespace-nowrap">{delta(v, cmp.prev.bySource[k] ?? 0)}</td>
+                      <td className="px-3 py-2 text-right font-semibold whitespace-nowrap tabular-nums">{money(v)}</td>
+                      <td className="px-3 py-2 text-right text-gray-500 whitespace-nowrap tabular-nums">{money(cmp.prev.bySource[k] ?? 0)}</td>
+                      <td className="px-3 py-2 text-right whitespace-nowrap tabular-nums">{delta(v, cmp.prev.bySource[k] ?? 0)}</td>
                       {!sameYoY && <>
-                        <td className="px-3 py-2 text-right text-gray-500 whitespace-nowrap">{money(cmp.yoy.bySource[k] ?? 0)}</td>
-                        <td className="px-3 py-2 text-right whitespace-nowrap">{delta(v, cmp.yoy.bySource[k] ?? 0)}</td>
+                        <td className="px-3 py-2 text-right text-gray-500 whitespace-nowrap tabular-nums">{money(cmp.yoy.bySource[k] ?? 0)}</td>
+                        <td className="px-3 py-2 text-right whitespace-nowrap tabular-nums">{delta(v, cmp.yoy.bySource[k] ?? 0)}</td>
                       </>}
                     </tr>
                   ))}
