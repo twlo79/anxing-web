@@ -11,6 +11,7 @@ import MoneyLines from '@/components/MoneyLines';
 import { toLines, fromLines, totalTwd, validateLines, type Line } from '@/lib/money-lines';
 import { payStatus, remaining, isExempt, STATUS_LABEL, STATUS_CLASS, STATUS_FILTER } from '@/lib/order-payment';
 import { softDelete } from '@/lib/trash';
+import { feeFilterOptions, feeFilterPredicate, ONEOFF_SOURCES, FEE_F_ALL } from '@/lib/order-filter';
 
 type Order = {
   id: string; order_key: string; source: string; estate_id: string | null; property_id?: string | null; property_raw: string | null;
@@ -73,6 +74,7 @@ export default function ShortTermPage() {
   const [move, setMove] = useState<MoveState | null>(null);
   const [estF, setEstF] = useState('');
   const [fromD, setFromD] = useState('');
+  const [feeF, setFeeF] = useState(FEE_F_ALL);
   const [toD, setToD] = useState('');
   const [sort, setSort] = useState<SortState>({ key: 'checkin', dir: 'desc' });
   const [collect, setCollect] = useState<Order | null>(null);
@@ -142,23 +144,21 @@ export default function ShortTermPage() {
     () => Array.from(new Set(rows.map((r: any) => r.item_name).filter(Boolean))).sort() as string[],
     [rows]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    // 伺服器端排序。本頁是伺服器端分頁,若改成前端排序只會排到當前頁的 100 筆。
-    // nullsFirst: false —— 空值一律殿後,與另外兩頁的前端排序行為一致。
-    const sortCol = SORT_DB_COL[sort?.key ?? 'checkin'] ?? 'checkin';
-    let q = supabase.from('orders').select('*, properties(name)', { count: 'exact' }).in('source', SRC)
-      .order(sortCol, { ascending: sort?.dir === 'asc', nullsFirst: false });
+  /*
+   * 【三個地方要用同一組篩選】
+   * 畫面清單、上方合計、匯出 Excel —— 原本各寫一份。
+   * 合計那份漏了「收款狀態」，所以篩「未收款」時上方數字仍然是全部的總額，
+   * 而且沒有任何跡象顯示它們不一致 —— 使用者只會相信其中一個。
+   * 合成一份之後，之後加篩選條件只要改這裡。
+   */
+  const applyFilters = useCallback((q: any) => {
     if (src) q = q.eq('source', src);
     if (estF) q = q.eq('estate_id', estF);
     if (toD) q = q.lte('checkin', toD);
     if (fromD) q = q.gte('checkout', fromD);
     if (kw) q = q.or(`guest_name.ilike.%${kw}%,property_raw.ilike.%${kw}%,note.ilike.%${kw}%`);
     /*
-     * 收款狀態篩選走伺服器端 —— 本頁是伺服器端分頁,
-     * 在前端過濾只會篩到當前這 50 筆,分頁數字還會是錯的。
-     *
-     * 三種狀態都用 paid + paid_amount 兩個實體欄位表達,對應 payStatus():
+     * 收款狀態。三種狀態都用 paid + paid_amount 兩個實體欄位表達,對應 payStatus():
      *   未收款  paid=false 且 paid_amount<=0
      *   部分    paid=false 且 paid_amount>0
      *   已收款  paid=true
@@ -170,21 +170,38 @@ export default function ShortTermPage() {
       else if (payF === 'partial') q = q.eq('paid', false).gt('paid_amount', 0);
       else if (payF === 'unpaid') q = q.eq('paid', false).lte('paid_amount', 0);
     }
+    // 費用類別。房租不是靠「fee_type 是空的」判斷,而是照資料庫
+    // order_account_code() 的規則看來源 —— 兩邊用同一條規則,
+    // 篩出來的筆數才會跟營收報表對得上。
+    const fp = feeFilterPredicate(feeF);
+    const oneoffList = `(${ONEOFF_SOURCES.join(',')})`;
+    if (fp.kind === 'rent') q = q.not('source', 'in', oneoffList);
+    else if (fp.kind === 'oneoffAll') q = q.in('source', ONEOFF_SOURCES);
+    else if (fp.kind === 'feeType') q = q.in('source', ONEOFF_SOURCES).eq('fee_type', fp.feeType);
+    return q;
+  }, [src, estF, fromD, toD, kw, payF, feeF]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    // 伺服器端排序。本頁是伺服器端分頁,若改成前端排序只會排到當前頁的 100 筆。
+    // nullsFirst: false —— 空值一律殿後,與另外兩頁的前端排序行為一致。
+    const sortCol = SORT_DB_COL[sort?.key ?? 'checkin'] ?? 'checkin';
+    // 篩選走伺服器端 —— 本頁是伺服器端分頁,在前端過濾只會篩到當前這 50 筆,
+    // 分頁數字還會是錯的。
+    const q = applyFilters(
+      supabase.from('orders').select('*, properties(name)', { count: 'exact' }).in('source', SRC)
+        .order(sortCol, { ascending: sort?.dir === 'asc', nullsFirst: false }));
     const { data, count } = await q.range(page * PAGE, page * PAGE + PAGE - 1);
     setRows((data as any) ?? []); setTotal(count ?? 0); setLoading(false);
-  }, [supabase, src, kw, estF, fromD, toD, sort, page, payF]);
+  }, [supabase, applyFilters, sort, page]);
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { setPage(0); }, [src, kw, estF, fromD, toD, sort, payF]);
+  useEffect(() => { setPage(0); }, [src, kw, estF, fromD, toD, sort, payF, feeF]);
 
   const loadAgg = useCallback(async () => {
     let all: any[] = []; let from = 0;
     while (true) {
-      let q = supabase.from('orders').select('source, estate_id, amount, deposit, fx_deposit').in('source', SRC);
-      if (src) q = q.eq('source', src);
-      if (estF) q = q.eq('estate_id', estF);
-      if (toD) q = q.lte('checkin', toD);
-      if (fromD) q = q.gte('checkout', fromD);
-      if (kw) q = q.or(`guest_name.ilike.%${kw}%,property_raw.ilike.%${kw}%,note.ilike.%${kw}%`);
+      const q = applyFilters(
+        supabase.from('orders').select('source, estate_id, amount, deposit, fx_deposit').in('source', SRC));
       const { data } = await q.range(from, from + 999);
       const chunk = (data as any[]) ?? [];
       all = all.concat(chunk);
@@ -192,7 +209,7 @@ export default function ShortTermPage() {
       from += 1000;
     }
     setAgg(all);
-  }, [supabase, src, kw, estF, fromD, toD]);
+  }, [supabase, applyFilters]);
   useEffect(() => { loadAgg(); }, [loadAgg]);
   /**
    * 提示訊息。
@@ -228,21 +245,11 @@ export default function ShortTermPage() {
       let all: Order[] = [];
       let from = 0;
       while (true) {
-        let q = supabase.from('orders').select('*, properties(name)').in('source', SRC)
-          .order(sortCol, { ascending: sort?.dir === 'asc', nullsFirst: false });
-        if (src) q = q.eq('source', src);
-        if (estF) q = q.eq('estate_id', estF);
-        if (toD) q = q.lte('checkin', toD);
-        if (fromD) q = q.gte('checkout', fromD);
-        if (kw) q = q.or(`guest_name.ilike.%${kw}%,property_raw.ilike.%${kw}%,note.ilike.%${kw}%`);
-        // 收款狀態篩選必須跟 load() 一模一樣,否則匯出的內容跟畫面對不上,
-        // 而那種不一致沒有任何跡象 —— 使用者會以為 Excel 才是對的。
-        if (payF) {
-          q = q.not('source', 'in', '(airbnb,agoda,airbnb_cancelled)');
-          if (payF === 'paid') q = q.eq('paid', true);
-          else if (payF === 'partial') q = q.eq('paid', false).gt('paid_amount', 0);
-          else if (payF === 'unpaid') q = q.eq('paid', false).lte('paid_amount', 0);
-        }
+        // 用同一支 applyFilters —— 匯出跟畫面對不上的話沒有任何跡象,
+        // 使用者會以為 Excel 才是對的。
+        const q = applyFilters(
+          supabase.from('orders').select('*, properties(name)').in('source', SRC)
+            .order(sortCol, { ascending: sort?.dir === 'asc', nullsFirst: false }));
         const { data, error } = await q.range(from, from + 999);
         if (error) { flash('匯出失敗:' + error.message); return; }
         const chunk = (data as any[]) ?? [];
@@ -525,6 +532,13 @@ export default function ShortTermPage() {
           </select>
         </div>
         <div>
+          {/* 房租 vs 一次性費用。個別科目縮排在下面,一眼看得出是它的細項 */}
+          <label className="block text-xs text-gray-500 mb-1">費用類別</label>
+          <select value={feeF} onChange={(e) => setFeeF(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
+            {feeFilterOptions(FEE_TYPES).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </div>
+        <div>
           <label className="block text-xs text-gray-500 mb-1">訂單日期(期間內有交集)</label>
           <div className="flex items-center gap-1">
             <input type="date" value={fromD} onChange={(e) => setFromD(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5" />
@@ -539,7 +553,7 @@ export default function ShortTermPage() {
             <button onClick={() => setKw(kwIn.trim())} className="rounded-lg bg-mor-slate text-white px-3 hover:bg-mor-slatedark">搜尋</button>
           </div>
         </div>
-        {(src || kw || estF || fromD || toD) && <button onClick={() => { setSrc(''); setKw(''); setKwIn(''); setEstF(''); setFromD(''); setToD(''); }} className="text-gray-500 underline pb-1.5">清除</button>}
+        {(src || kw || estF || fromD || toD || feeF || payF) && <button onClick={() => { setSrc(''); setKw(''); setKwIn(''); setEstF(''); setFromD(''); setToD(''); setFeeF(FEE_F_ALL); setPayF(''); }} className="text-gray-500 underline pb-1.5">清除</button>}
         <div className="ml-auto flex items-end gap-3">
           <div className="text-xs text-gray-400 pb-1.5">共 {total.toLocaleString()} 筆</div>
           <button onClick={exportXlsx} disabled={exporting || !total} className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 disabled:opacity-40">{exporting ? '匯出中…' : '⬇ 下載 Excel'}</button>
