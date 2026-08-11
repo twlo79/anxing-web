@@ -46,6 +46,11 @@ export const CONTRACT_FEE_PRESETS: { label: string; fee_type: string; item_name:
   // 網路費本來就在 FEE_TYPES 裡（營收科目對到 internet，見 migration_91），
   // 只是沒放進固定加費的預設清單 —— 加在這裡就好，不用動資料庫。
   { label: '網路費',        fee_type: '網路費', item_name: null },
+  { label: '水費',          fee_type: '水費',   item_name: null },
+  // 垃圾代收歸在清潔費底下（使用者指定）—— 科目看清潔費，
+  // 要單獨知道垃圾代收收了多少就看項目。另立科目要改資料庫的科目對應表，
+  // 為一個小金額的細目不值得。
+  { label: '垃圾代收',      fee_type: '清潔費', item_name: '垃圾代收' },
   { label: '設備費－冰箱',   fee_type: '設備費', item_name: '冰箱' },
   { label: '設備費－洗烘衣機', fee_type: '設備費', item_name: '洗烘衣機' },
   { label: '設備費－電視',   fee_type: '設備費', item_name: '電視' },

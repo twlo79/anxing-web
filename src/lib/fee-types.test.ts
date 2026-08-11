@@ -45,9 +45,24 @@ test('feeLabel:管理費帶了項目時不能誤判成無項目的那個預設',
 });
 
 test('feeLabel:對不上預設就自己組,不要變成空白', () => {
-  assert.equal(feeLabel('水費', null), '水費');
+  // 電費沒有做成預設,走的是自己組那條路
+  assert.equal(feeLabel('電費', null), '電費');
   assert.equal(feeLabel('設備費', '烤箱'), '設備費－烤箱');
   assert.equal(feeLabel(null, null), '其他');
+});
+
+test('★ 垃圾代收的科目是清潔費,不是自成一格', () => {
+  // 另立科目的話,資料庫的 order_account_code 沒有對應規則,
+  // 會靜靜地掉進「其他」—— 報表上看起來正常,分類卻是錯的
+  const t = CONTRACT_FEE_PRESETS.find((p) => p.label === '垃圾代收');
+  assert.equal(t?.fee_type, '清潔費');
+  assert.equal(t?.item_name, '垃圾代收');
+  assert.equal(feeLabel('清潔費', '垃圾代收'), '垃圾代收');
+});
+
+test('水費是預設項目,而且沒有細目', () => {
+  assert.equal(CONTRACT_FEE_PRESETS.find((p) => p.label === '水費')?.item_name, null);
+  assert.equal(feeLabel('水費', null), '水費');
 });
 
 test('feeLabel:空字串的項目視同沒有項目', () => {
