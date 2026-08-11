@@ -17,6 +17,7 @@ import {
 } from '@/lib/contract-lifecycle';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import * as XLSX from 'xlsx-js-style';
+import { softDelete } from '@/lib/trash';
 
 type Contract = {
   id: string; estate_id: string | null; room: string | null; tenant_name: string | null;
@@ -344,9 +345,9 @@ export default function ContractsPage() {
       if (typed === null) return;
       if (typed.trim() !== name) return flash('名稱不符,已取消刪除');
     }
-    const { error } = await supabase.from('contracts').delete().eq('id', c.id);
-    if (error) return flash('刪除失敗:' + error.message);
-    flash(im.total.n ? `已刪除契約與 ${im.total.n} 筆訂單` : '已刪除'); load();
+    const r = await softDelete(supabase, 'contracts', c.id);
+    if (!r.ok) return flash(r.message);
+    flash(im.total.n ? `已移到回收桶（契約與 ${im.total.n} 筆訂單）` : r.message); load();
   }
 
   /**
@@ -417,6 +418,9 @@ export default function ContractsPage() {
     const eb = keyBase(edit);
     const { data: all } = await supabase.from('orders').select('id, order_key').eq('imported_via', 'extend').like('order_key', `${eb}%`);
     const toDel = onlyKeyOf(all as any[], eb).filter((o: any) => o.order_key.slice(eb.length) >= b.startYm).map((o: any) => o.id);
+    // 硬刪除,不進回收桶 —— 收租單是 gen_contract_orders 依契約迄日重算出來的,
+    // 真正的動作是下面那行「把契約迄日往前挪」。這些單放進回收桶只會累積成雜訊,
+    // 而且單獨復原一張也沒有意義（下次重算又會被清掉）。
     if (toDel.length) { const { error } = await supabase.from('orders').delete().in('id', toDel); if (error) return flash('刪除失敗:' + error.message); }
     const y = +b.startYm.slice(0, 4), m = +b.startYm.slice(4, 6);
     const pe = new Date(y, m - 1, 0);
@@ -1339,7 +1343,11 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
     if (error) { alert('失敗:' + error.message); return; }
     setConcDraft(null); loadFees();
   }
-  async function delFee(id: string) { await supabase.from('orders').delete().eq('id', id); loadFees(); }
+  async function delFee(id: string) {
+    const r = await softDelete(supabase, 'orders', id, '契約加費刪除');
+    if (!r.ok) { alert(r.message); return; }
+    loadFees();
+  }
 
   const loadInvoices = useCallback(async () => {
     if (!c.invoice_required) { setInvMap({}); return; }
@@ -1381,9 +1389,9 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
     setInvDraft(null); loadInvoices();
   }
   async function delInvoice(id: string) {
-    if (!confirm('刪除這筆發票紀錄?(不會影響已在平台開立的發票)')) return;
-    const { error } = await supabase.from('invoices').delete().eq('id', id);
-    if (error) { alert('刪除失敗:' + error.message); return; }
+    if (!confirm('刪除這筆發票紀錄?(不會影響已在平台開立的發票)\n\n會移到回收桶,可以復原。')) return;
+    const r = await softDelete(supabase, 'invoices', id);
+    if (!r.ok) { alert(r.message); return; }
     setInvDraft(null); loadInvoices();
   }
 

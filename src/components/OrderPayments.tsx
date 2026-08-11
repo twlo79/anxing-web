@@ -7,6 +7,7 @@ import {
   type PaymentRow,
 } from '@/lib/order-payment';
 import { METHOD_LABEL, METHOD_OPTS, needsAccount, normalizeMethod, methodText } from '@/lib/pay-method';
+import { softDelete } from '@/lib/trash';
 
 /**
  * 短租訂單的收款視窗。
@@ -152,12 +153,14 @@ export default function OrderPayments({
   async function del(r: PaymentRow) {
     if (!confirm(
       `刪除這筆收款?\n\n${r.paid_on}　$${fmt(r.amount)}\n\n`
-      + `這筆的收款證明照片會一起刪除，合計與收款狀態會重算。`
+      + `這筆的收款證明照片會一起刪除，合計與收款狀態會重算。\n\n`
+      + `會移到回收桶，可以復原。`
     )) return;
     setBusy(true);
-    const { error } = await supabase.from('order_payments').delete().eq('id', r.id);
+    const res = await softDelete(supabase, 'order_payments', r.id);
     setBusy(false);
-    if (error) return flash('刪除失敗:' + error.message);
+    if (!res.ok) return flash(res.message);
+    flash(res.message);
     if (openId === r.id) setOpenId(null);
     await load();
     onChanged();
@@ -201,13 +204,13 @@ export default function OrderPayments({
 
   async function delInv() {
     if (!inv) return;
-    if (!confirm(`刪除發票紀錄 ${inv.invoice_no}?\n\n（不會影響已在平台開立的發票）`)) return;
+    if (!confirm(`刪除發票紀錄 ${inv.invoice_no}?\n\n（不會影響已在平台開立的發票）\n\n會移到回收桶，可以復原。`)) return;
     setBusy(true);
-    const { error } = await supabase.from('invoices').delete().eq('id', inv.id);
+    const res = await softDelete(supabase, 'invoices', inv.id);
     setBusy(false);
-    if (error) return flash('刪除失敗:' + error.message);
+    if (!res.ok) return flash(res.message);
     setInv(null); setInvNo('');
-    flash('已刪除發票紀錄');
+    flash('已移到回收桶');
     await load();
   }
 

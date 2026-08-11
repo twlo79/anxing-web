@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase';
 import Receipts, { type ReceiptsHandle } from '@/components/Receipts';
 import DeferralPanel from '@/components/DeferralPanel';
 import { deferralLabel, childLabel, recognizedTotal, paidTotal, paidCell } from '@/lib/deferral';
+import { softDelete } from '@/lib/trash';
 
 type Expense = {
   id: string; spent_on: string; item_name: string; amount: number;
@@ -278,10 +279,9 @@ export default function ExpensesPage() {
 
   async function del(e: Expense) {
     const extra = e.source_item_id ? '\n\n這筆支出來自請款單。刪除後不會回寫請款單,若之後重填採購日也不會重新產生。' : '';
-    if (!confirm(`確定刪除「${e.item_name}」($${fmt(e.amount)})?${extra}`)) return;
-    const { error } = await supabase.from('expenses').delete().eq('id', e.id);
-    if (error) return flash('刪除失敗:' + error.message);
-    flash('已刪除'); load();
+    if (!confirm(`確定刪除「${e.item_name}」($${fmt(e.amount)})?${extra}\n\n會移到回收桶,可以復原。`)) return;
+    const r = await softDelete(supabase, 'expenses', e.id);
+    flash(r.message); if (r.ok) load();
   }
 
   function exportXlsx() {

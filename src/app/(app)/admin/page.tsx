@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
+import { softDelete } from '@/lib/trash';
 
 type Staff = { id: string; name: string; aliases: string[]; staff_type: string; active: boolean; sort: number; role?: string; email?: string | null; auth_uid?: string | null };
 type Estate = { id: string; name: string; manager: string | null; sort: number; active: boolean };
@@ -225,10 +226,9 @@ export default function AdminPage() {
     flash('已更新'); load();
   }
   async function deleteEstate(id: string, name: string) {
-    if (!confirm(`確定刪除物業「${name}」?此物業下的房源會失去物業歸屬(評價/清潔紀錄仍保留)。`)) return;
-    const { error } = await supabase.from('estates').delete().eq('id', id);
-    if (error) return flash('刪除失敗(可能仍有房源綁定):' + error.message);
-    flash('已刪除'); load();
+    if (!confirm(`確定刪除物業「${name}」?此物業下的房源會失去物業歸屬(評價/清潔紀錄仍保留)。\n\n會移到回收桶,可以復原。`)) return;
+    const r = await softDelete(supabase, 'estates', id);
+    flash(r.message); if (r.ok) load();
   }
 
   // ---- 收付款帳號 ----
@@ -268,11 +268,10 @@ export default function AdminPage() {
     loadPayees();
   }
   async function delPayee(p: Payee) {
-    // 請款單不掛外鍵（見 migration_96）,所以刪掉不會動到既有單據 —— 但也因此刪了就找不回來
-    if (!confirm(`刪除常用帳號「${p.label}」?\n\n既有的請款單不受影響（那些單自己存著當初的帳號）。\n只是之後填新單時選不到它。\n\n不確定的話建議改用「停用」。`)) return;
-    const { error } = await supabase.from('payee_presets').delete().eq('id', p.id);
-    if (error) return flash('刪除失敗:' + error.message);
-    flash('已刪除'); loadPayees();
+    // 請款單不掛外鍵（見 migration_96）,所以刪掉不會動到既有單據
+    if (!confirm(`刪除常用帳號「${p.label}」?\n\n既有的請款單不受影響（那些單自己存著當初的帳號）。\n只是之後填新單時選不到它。\n\n會移到回收桶,可以復原。`)) return;
+    const r = await softDelete(supabase, 'payee_presets', p.id);
+    flash(r.message); if (r.ok) loadPayees();
   }
 
   async function addPayAccount() {
@@ -293,10 +292,9 @@ export default function AdminPage() {
     flash('已更新'); load();
   }
   async function deletePayAccount(a: PayAccount) {
-    if (!confirm(`確定刪除帳號「${a.code}」?已經記在訂單或支出上的資料不會跟著改,那些紀錄會找不到對應帳號。建議改用「停用」。`)) return;
-    const { error } = await supabase.from('payment_accounts').delete().eq('id', a.id);
-    if (error) return flash('刪除失敗:' + error.message);
-    flash('已刪除'); load();
+    if (!confirm(`確定刪除帳號「${a.code}」?已經記在訂單或支出上的資料不會跟著改,那些紀錄會找不到對應帳號。建議改用「停用」。\n\n會移到回收桶,可以復原。`)) return;
+    const r = await softDelete(supabase, 'payment_accounts', a.id);
+    flash(r.message); if (r.ok) load();
   }
 
   // ---- 房源 ----
@@ -313,10 +311,9 @@ export default function AdminPage() {
     flash('已更新'); load();
   }
   async function deleteProperty(id: string, name: string) {
-    if (!confirm(`確定刪除房源「${name}」?(訂單/評價/清潔的房源文字仍保留)`)) return;
-    const { error } = await supabase.from('properties').delete().eq('id', id);
-    if (error) return flash('刪除失敗(可能仍有紀錄綁定):' + error.message);
-    flash('已刪除'); load();
+    if (!confirm(`確定刪除房源「${name}」?(訂單/評價/清潔的房源文字仍保留)\n\n會移到回收桶,可以復原。`)) return;
+    const r = await softDelete(supabase, 'properties', id);
+    flash(r.message); if (r.ok) load();
   }
 
   if (role === null) return <div className="text-gray-400 py-20 text-center">載入中…</div>;

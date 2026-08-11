@@ -7,6 +7,7 @@ import { fetchAll } from '@/lib/fetch-all';
 import Receipts, { type ReceiptsHandle } from '@/components/Receipts';
 import RefundFields, { METHOD_LABEL as DEP_METHOD } from '@/components/RefundFields';
 import { shareDeposit } from '@/lib/share';
+import { softDelete } from '@/lib/trash';
 
 type Item = {
   id?: string; request_id?: string; item_name: string; amount: number;
@@ -678,6 +679,8 @@ export default function PurchasesPage() {
       } else {
         const { error } = await supabase.from('purchase_requests').update(header).eq('id', reqId);
         if (error) { flash('儲存失敗:' + error.message); return; }
+        // 硬刪除,不進回收桶 —— 這是「項目重存」（全刪再全寫）,每次存檔都會跑。
+        // 撤銷整張請款單才是使用者的刪除動作,那條走 soft_delete。
         await supabase.from('purchase_request_items').delete().eq('request_id', reqId);
       }
       // amount 一律存台幣,amount_original 存使用者輸入的原幣別金額。
@@ -846,15 +849,16 @@ export default function PurchasesPage() {
     setPlanning(null); flash('已排定匯款'); load();
   }
 
-  // 撤銷 = 硬刪除。已產生支出的單一律擋下 —— 支出是錢真的花掉的紀錄,
-  // 連動刪除會讓請款單與支出兩邊對不上,而且 gen_expenses_from_pr() 只在
-  // 採購日「從無到有」時建立,刪掉救不回來。這條同時寫在 RLS 裡,不只靠前端藏按鈕。
+  // 撤銷 = 移到回收桶（連同底下的請款項目）。已產生支出的單一律擋下 ——
+  // 支出是錢真的花掉的紀錄,連動刪除會讓請款單與支出兩邊對不上,而且
+  // gen_expenses_from_pr() 只在採購日「從無到有」時建立,復原也不會重新產生。
+  // 這條同時寫在 RLS 裡,不只靠前端藏按鈕。
   async function cancel(r: Req) {
     if (r.expense_generated_at) return flashErr('已產生支出,不能撤銷。請到支出頁處理。');
-    if (!confirm(`確定撤銷請款單 ${r.req_no}?撤銷後資料不會保留。`)) return;
-    const { error } = await supabase.from('purchase_requests').delete().eq('id', r.id);
-    if (error) return flash('撤銷失敗:' + error.message);
-    flash('已撤銷'); load();
+    if (!confirm(`確定撤銷請款單 ${r.req_no}?\n\n會移到回收桶,可以復原。`)) return;
+    const res = await softDelete(supabase, 'purchase_requests', r.id, '撤銷請款單');
+    if (!res.ok) return flash(res.message.replace('刪除', '撤銷'));
+    flash('已撤銷,可到刪除紀錄復原'); load();
   }
 
   function exportXlsx() {

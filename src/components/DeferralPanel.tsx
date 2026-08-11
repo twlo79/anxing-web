@@ -117,6 +117,7 @@ export default function DeferralPanel({
     setBusy(true);
     // 先刪舊子單。母單此刻的 amount 還是舊值,等式暫時不成立 ——
     // 沒關係,觸發器延到交易結束才驗。
+    // 硬刪除,不進回收桶 —— 子單是母單金額拆出來的,每改一次遞延就整組重算。
     const del = await supabase.from('expenses').delete().eq('parent_expense_id', expense.id);
     if (del.error) { setBusy(false); return flash('清除舊明細失敗:' + del.error.message); }
 
@@ -142,6 +143,8 @@ export default function DeferralPanel({
       `取消遞延認列?\n\n所有子單會被刪除,這筆 $${fmt(gross)} 會全部認列在 ${paidOn}。`
     )) return;
     setBusy(true);
+    // 硬刪除,不進回收桶 —— 取消遞延就是把拆分收回母單,子單不該能單獨復原
+    // （復原一張子單會讓母子金額對不上,觸發器會擋,但那時人已經一頭霧水）。
     await supabase.from('expenses').delete().eq('parent_expense_id', expense.id);
     const { error } = await supabase.from('expenses')
       .update({ deferred: false, gross_amount: null, amount: gross }).eq('id', expense.id);

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import * as XLSX from 'xlsx-js-style';
 import { createClient } from '@/lib/supabase';
 import { parseRows, cleanCounts, filterItems, splitAssignees, staffLookup, type HkStaff, type HkProperty } from '@/lib/hkParse';
+import { softDelete, restoreTrash } from '@/lib/trash';
 
 /**
  * 房務排班統計。
@@ -63,7 +64,7 @@ export default function HousekeepingPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [raw, setRaw] = useState('');
   const [busy, setBusy] = useState(false);
-  const [undo, setUndo] = useState<{ it: Wi; until: number } | null>(null);
+  const [undo, setUndo] = useState<{ it: Wi; trashId?: string; until: number } | null>(null);
   /** 正在新增房源格的儲存格 */
   const [adding, setAdding] = useState<{ date: string; staffId: string; code: string; type: string } | null>(null);
   /** 就地編輯某個房源格 */
@@ -185,6 +186,8 @@ export default function HousekeepingPage() {
     setBusy(true);
     try {
       // 全刪重建。解析規則會改,增量更新會讓新舊規則的結果混在同一個月裡。
+      // 硬刪除,不進回收桶 —— 這是「整期重匯前先清空」,一次幾百格。
+      // 進回收桶的話,真正誤刪的那一格會被埋在幾百筆機制紀錄裡面。
       await supabase.from('hk_work_item').delete().eq('period', per);
       await supabase.from('hk_event').delete().eq('period', per);
 
@@ -275,20 +278,23 @@ export default function HousekeepingPage() {
 
   async function delItem(it: Wi) {
     setItems((xs) => xs.filter((x) => x.id !== it.id));
-    const { error } = await supabase.from('hk_work_item').delete().eq('id', it.id);
-    if (error) { flash('刪除失敗:' + error.message); loadPeriod(); return; }
+    const r = await softDelete(supabase, 'hk_work_item', it.id, '房務排班刪除');
+    if (!r.ok) { flash(r.message); loadPeriod(); return; }
     // 5 秒內可復原。刪一格不該跳確認彈窗 —— 一天要刪十幾格的話會很煩,
     // 但誤刪又不能沒救,所以用 undo 而不是 confirm。
-    setUndo({ it, until: Date.now() + 5000 });
+    // 過了 5 秒也還救得回來,只是要去回收桶找。
+    setUndo({ it, trashId: r.trashId, until: Date.now() + 5000 });
     setTimeout(() => setUndo((u) => (u && u.it.id === it.id ? null : u)), 5000);
   }
 
   async function doUndo() {
     if (!undo) return;
-    const { id, ...rest } = undo.it as any;
-    const { data, error } = await supabase.from('hk_work_item').insert(rest).select('*').single();
-    if (error) return flash('復原失敗:' + error.message);
-    setItems((xs) => [...xs, data as Wi]);
+    // 走回收桶復原而不是重新 insert —— 這樣 id 跟原本一樣,
+    // 排班表上其他地方引用到這格的話不會突然指到一筆不存在的資料。
+    if (!undo.trashId) return flash('復原失敗:找不到回收紀錄,請到刪除紀錄頁處理。');
+    const r = await restoreTrash(supabase, undo.trashId);
+    if (!r.ok) return flash(r.message);
+    setItems((xs) => [...xs, undo.it]);
     setUndo(null);
   }
 

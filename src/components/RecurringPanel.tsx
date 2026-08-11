@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase';
 import { fetchAll } from '@/lib/fetch-all';
 import { FEE_TYPES } from '@/lib/fee-types';
 import { ymShow } from '@/lib/period';
+import { softDelete } from '@/lib/trash';
 
 /**
  * 定期收費面板。**嵌在短租訂單頁裡,不佔側邊選單一格。**
@@ -150,11 +151,11 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
     if (!confirm(
       `刪除定期收費「${r.item_name}」?\n\n`
       + `已經產生但還沒收款的月份會一併刪除。\n`
-      + `已收款的月份會留著 —— 那是真的收過的錢,不該因為設定被刪就消失。`
+      + `已收款的月份會留著 —— 那是真的收過的錢,不該因為設定被刪就消失。\n\n`
+      + `會移到回收桶,可以復原。`
     )) return;
-    const { error } = await supabase.from('recurring_charges').delete().eq('id', r.id);
-    if (error) return flash('刪除失敗:' + error.message);
-    flash('已刪除'); load();
+    const res = await softDelete(supabase, 'recurring_charges', r.id);
+    flash(res.message); if (res.ok) load();
   }
 
   /** 補產到本月。冪等 —— 重複按只會補缺的月份,已填的金額不會被蓋掉。 */

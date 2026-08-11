@@ -10,6 +10,7 @@ import OrderPayments from '@/components/OrderPayments';
 import MoneyLines from '@/components/MoneyLines';
 import { toLines, fromLines, totalTwd, validateLines, type Line } from '@/lib/money-lines';
 import { payStatus, remaining, isExempt, STATUS_LABEL, STATUS_CLASS, STATUS_FILTER } from '@/lib/order-payment';
+import { softDelete } from '@/lib/trash';
 
 type Order = {
   id: string; order_key: string; source: string; estate_id: string | null; property_id?: string | null; property_raw: string | null;
@@ -329,6 +330,8 @@ export default function ShortTermPage() {
     const keepIds = fees.filter((f) => f.id).map((f) => f.id);
     const { data: curFees } = await supabase.from('orders').select('id').eq('parent_order_id', orderId).eq('source', 'oneoff');
     const delIds = (curFees ?? []).filter((c: any) => !keepIds.includes(c.id)).map((c: any) => c.id);
+    // 硬刪除,不進回收桶 —— 這是「使用者在編輯畫面把某列加費刪掉後存檔」的同步,
+    // 屬於這次編輯的一部分。整張訂單的刪除才走 soft_delete。
     if (delIds.length) await supabase.from('orders').delete().in('id', delIds);
     for (const f of fees) {
       if (!f.date || !f.amount) continue;
@@ -353,11 +356,11 @@ export default function ShortTermPage() {
     const msgText = `刪除訂單「${o.guest_name ?? ''} ${o.property_raw ?? ''}」?\n\n`
       + `金額 $${fmt(o.amount)}\n`
       + (n ? `⚠ 已有 ${n} 筆收款紀錄（$${fmt(got)}）會一併刪除。\n` : '')
-      + `這筆的營收認列也會跟著消失，無法復原。`;
+      + `這筆的營收認列會跟著消失，這段期間的營收會變少。\n\n`
+      + `會移到回收桶 —— 復原之後營收也會跟著回來。`;
     if (!confirm(msgText)) return;
-    const { error } = await supabase.from('orders').delete().eq('id', o.id);
-    if (error) return flash('刪除失敗:' + error.message);
-    flash('已刪除'); load();
+    const r = await softDelete(supabase, 'orders', o.id);
+    flash(r.message); if (r.ok) load();
   }
   async function openMove(o: Order) {
     const grp = o.move_group || o.id;
@@ -429,6 +432,8 @@ export default function ShortTermPage() {
     if (isMulti) patch.note = `移房 ${chain}`;
     const { error: e1 } = await supabase.from('orders').update(patch).eq('id', grp);
     if (e1) return flash('移房失敗:' + e1.message);
+    // 硬刪除,不進回收桶 —— 移房是「把舊分段拆掉重組」,下面馬上重建。
+    // 中途的分段沒有單獨存在的意義,復原一段反而會讓住宿期間重疊。
     await supabase.from('orders').delete().eq('move_group', grp).neq('id', grp);
     for (let i = 1; i < segs.length; i++) {
       const s = segs[i];

@@ -11,6 +11,7 @@ import {
   lineText, type DepLine,
 } from '@/lib/deposit-lines';
 import { shareDeposit } from '@/lib/share';
+import { softDelete } from '@/lib/trash';
 
 /**
  * 押金管理。
@@ -397,10 +398,10 @@ export default function DepositsPage() {
   }
 
   async function del(d: Dep) {
-    if (!confirm(`刪除這筆押金紀錄（${d.room ?? ''} ${d.guest_name ?? ''}）?`)) return;
-    const { error } = await supabase.from('deposits').delete().eq('id', d.id);
-    if (error) return flash('刪除失敗:' + error.message);
-    setEdit(null); setDetail(null); flash('已刪除'); load();
+    if (!confirm(`刪除這筆押金紀錄（${d.room ?? ''} ${d.guest_name ?? ''}）?\n\n會移到回收桶,可以復原。`)) return;
+    const r = await softDelete(supabase, 'deposits', d.id);
+    flash(r.message);
+    if (r.ok) { setEdit(null); setDetail(null); load(); }
   }
 
   /**

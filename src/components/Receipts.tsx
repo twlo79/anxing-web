@@ -1,6 +1,7 @@
 'use client';
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase';
+import { softDelete } from '@/lib/trash';
 
 /**
  * 憑證附件（發票、收據、單據照片）。
@@ -220,14 +221,19 @@ const Receipts = forwardRef<ReceiptsHandle, {
   }
 
   async function remove(a: Att) {
-    if (!confirm(`刪除憑證「${a.file_name ?? ''}」?`)) return;
+    if (!confirm(`刪除憑證「${a.file_name ?? ''}」?\n\n會移到回收桶，可以復原。`)) return;
     setBusy(true);
-    // 先刪資料列再刪檔案。反過來的話，檔案刪成功而資料列刪失敗，
-    // 畫面上會留下一張永遠載不出來的破圖。
-    const { error } = await supabase.from('attachments').delete().eq('id', a.id);
-    if (error) { setErr('刪除失敗:' + error.message); setBusy(false); return; }
-    await supabase.storage.from(BUCKET).remove([a.path]);
-    setBusy(false); load();
+    /*
+     * 【檔案留在 storage 裡不刪】
+     * 資料列進了回收桶就可能被復原,而復原只會把 attachments 那一列救回來 ——
+     * 檔案要是已經砍掉,救回來的就是一張永遠載不出來的破圖,
+     * 比沒救回來更糟（畫面上看起來好了,點下去才發現沒了）。
+     * 真正要清掉檔案是在回收桶按「永久刪除」的時候,不是這裡。
+     */
+    const res = await softDelete(supabase, 'attachments', a.id);
+    setBusy(false);
+    if (!res.ok) { setErr(res.message); return; }
+    load();
   }
 
   const total = rows.length + staged.length + inherited.length;
