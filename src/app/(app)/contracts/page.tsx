@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FilterBar, FilterSelect, FilterDateRange, FilterSearch, FilterClear, FilterCount } from '@/lib/filters';
 import { createClient } from '@/lib/supabase';
 import { FEE_TYPES, feeLabel } from '@/lib/fee-types';
-import ContractFees from '@/components/ContractFees';
+import ContractFees, { feeMonthly, toMonthInput, type Rc } from '@/components/ContractFees';
 import { dueDateOf, resolvePayDay, checkFirstDue, fmtDue, periodRange, fmtPeriodRange, rentMonthCount, checkContractDates } from '@/lib/due-date';
 import { keyBase, onlyKeyOf } from '@/lib/ltKey';
 // 一期的應收與收齊判斷都走這支 —— 畫面、確認視窗、收款三處共用同一份算式
@@ -246,6 +246,9 @@ export default function ContractsPage() {
     if (error) return flash('更新失敗:' + error.message);
     setRows((rs) => rs.map((r) => r.id === c.id ? { ...r, paid: !c.paid } : r));
   }
+  /** 新增契約時 ContractFees 暫存的設定 —— 契約 insert 成功後才補寫 */
+  const [pendingFees, setPendingFees] = useState<Rc[]>([]);
+
   async function save() {
     if (!edit) return;
     /*
@@ -277,10 +280,36 @@ export default function ContractsPage() {
       // 只留有填金額的，空白列不寫進去
       concessions: (((edit.concessions as any[]) ?? []).filter((cn: any) => Number(cn?.amount) > 0)),
     };
-    const { error } = edit.id
-      ? await supabase.from('contracts').update(payload).eq('id', edit.id)
-      : await supabase.from('contracts').insert(payload);
-    if (error) return flash('儲存失敗:' + error.message);
+    let newId = edit.id as string | null;
+    if (edit.id) {
+      const { error } = await supabase.from('contracts').update(payload).eq('id', edit.id);
+      if (error) return flash('儲存失敗:' + error.message);
+    } else {
+      // 要拿回 id 才能把暫存的固定加費掛上去
+      const { data, error } = await supabase.from('contracts').insert(payload).select('id').single();
+      if (error) return flash('儲存失敗:' + error.message);
+      newId = data?.id ?? null;
+    }
+
+    /*
+     * 新增契約時填的固定加費在這裡才寫入 —— 契約還沒有 id，先前掛不上去。
+     *
+     * 契約已經建好了，所以加費失敗**不能默默吞掉**：
+     * 使用者會看到契約在清單裡、卻沒有管理費，而且不知道哪一步掉了。
+     */
+    if (!edit.id && newId && pendingFees.length) {
+      const { error: fe } = await supabase.from('contract_recurring_charges').insert(
+        pendingFees.map((f) => ({
+          contract_id: newId, fee_type: f.fee_type, item_name: f.item_name,
+          amount: Math.round(Number(f.amount) || 0), start_ym: f.start_ym,
+          end_ym: f.end_ym || null, active: f.active, note: f.note || null,
+        })));
+      if (fe) {
+        alert('契約已建立，但固定加費沒有寫進去：' + fe.message
+          + '\n\n請重新開啟這張契約補設定。');
+      }
+    }
+    setPendingFees([]);
     flash('已儲存'); setEdit(null); load();
     // 改租期會讓月租單重產。等觸發器跑完再檢查有沒有「租期外但已收款」的殘留。
     if (edit.id) { setTimeout(() => { warnStray({ ...(edit as Contract) }); }, 500); }
@@ -827,6 +856,29 @@ export default function ContractsPage() {
               <label className="flex flex-col gap-1 col-span-2">備註<input value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
 
               {/*
+                固定加費就放在租金旁邊 —— 「月租 165,000、管理費 3,000」
+                是同一件事的兩個數字。原本要先存契約、再開收租視窗、
+                再展開一個摺疊面板才填得到，於是很多契約的加費根本沒建起來。
+              */}
+              <div className="col-span-2 border-t border-mor-line pt-3 mt-1">
+                <ContractFees
+                  contract={{ id: edit.id ?? '', start_date: edit.start_date ?? null, end_date: edit.end_date ?? null }}
+                  canEdit
+                  onChanged={load}
+                  onPending={setPendingFees} />
+                {/*
+                  這一句必須留著。加費是直接寫資料庫的（它會連帶重算各期費用單），
+                  下面的「取消」救不回來 —— 不講的話使用者會以為按取消就全部沒事。
+                  新增契約時才是暫存的,所以只在編輯模式顯示。
+                */}
+                {edit.id && (
+                  <div className="text-[11px] text-gray-400 mt-1.5">
+                    固定加費按下「加入／暫停／刪除」就立即生效，不受下方「取消」影響。
+                  </div>
+                )}
+              </div>
+
+              {/*
                 折讓約定:純文字備查,記錄雙方談好的條件,可以有多筆。
                 這裡不影響任何金額 —— 實際發生的折讓要到收租視窗按「− 折讓」,
                 那才會產生負數的一次性收入並減少該月營收。
@@ -955,6 +1007,8 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
   const [feeRows, setFeeRows] = useState<any[]>([]);
+  /** 這張契約的固定加費設定。收租視窗只讀,要改請到編輯契約。 */
+  const [rcRows, setRcRows] = useState<Rc[]>([]);
   const [feeDraft, setFeeDraft] = useState<{ pi: number; date: string; type: string; amount: number } | null>(null);
   /*
    * 收款確認視窗。自己畫而不是用 confirm() —— 見 setPeriodPaid 的註解：
@@ -1226,6 +1280,11 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
       .select('id, checkin, amount, fee_type, item_name, note, imported_via, paid, order_key')
       .eq('contract_id', c.id).eq('source', 'oneoff').order('checkin');
     setFeeRows(data ?? []);
+
+    // 固定加費的「設定」（不是產生出來的費用單）—— 上方明細用
+    const { data: rc } = await supabase.from('contract_recurring_charges')
+      .select('*').eq('contract_id', c.id).order('fee_type').order('item_name');
+    setRcRows((rc ?? []) as Rc[]);
   }, [supabase, c.id]);
   useEffect(() => { loadFees(); }, [loadFees]);
   async function saveFee() {
@@ -1436,10 +1495,46 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
             </div>
           )}
           {/*
-            固定加費放在期別清單「上面」—— 它是設定,先看設定再看結果。
-            放下面的話使用者會先在某一期看到一筆莫名其妙的管理費,再往下捲才知道為什麼。
+            【收租視窗只顯示明細，不能改設定】
+            這裡是「收錢」的地方。設定固定加費要到編輯契約 ——
+            兩個入口都能改的話，改完哪一邊生效、哪一邊是舊的，沒有人說得準。
+
+            明細放在期別清單上面：先看「每期應收 = 房租 ＋ 哪些加費」，
+            再往下看每一期。順序反過來的話，使用者會先在某一期看到一筆
+            莫名其妙的管理費，再往上找才知道為什麼。
           */}
-          <ContractFees contract={c} canEdit onChanged={() => { loadExisting(false); loadFees(); }} />
+          <div className="mb-4 rounded-xl border border-mor-line px-4 py-3">
+            <div className="flex items-baseline justify-between gap-2 mb-1.5">
+              <span className="text-xs font-semibold text-gray-500">每期應收明細</span>
+              <span className="text-xs text-gray-400">到「編輯契約」修改</span>
+            </div>
+            <div className="space-y-1 text-sm">
+              <div className="flex items-baseline justify-between">
+                <span>房租（{CAD_LABEL[c.cadence]}）</span>
+                <span className="tabular-nums">${fmt(c.amount_per_period)}</span>
+              </div>
+              {rcRows.map((r) => (
+                <div key={r.id}
+                  className={`flex items-baseline justify-between ${r.active ? '' : 'text-gray-400 line-through decoration-gray-300'}`}>
+                  <span>
+                    {feeLabel(r.fee_type, r.item_name)}
+                    {!r.active && <span className="ml-1.5 no-underline text-[11px] text-amber-600">暫停中</span>}
+                    {r.end_ym && r.active && (
+                      <span className="ml-1.5 text-[11px] text-gray-400">收到 {toMonthInput(r.end_ym)} 為止</span>
+                    )}
+                  </span>
+                  <span className="tabular-nums">${fmt(r.amount)}</span>
+                </div>
+              ))}
+              {!rcRows.length && <div className="text-xs text-gray-400">沒有固定加費</div>}
+              <div className="flex items-baseline justify-between border-t border-mor-line pt-1.5 mt-1.5 font-semibold">
+                <span>合計</span>
+                <span className="tabular-nums">
+                  ${fmt(Number(c.amount_per_period || 0) + feeMonthly(rcRows))}
+                </span>
+              </div>
+            </div>
+          </div>
 
           <div className="text-xs font-semibold text-gray-500 mb-2">收款({CAD_LABEL[c.cadence]},每期確認)</div>
           {!c.start_date || !c.end_date ? <div className="text-center text-orange-600 py-8 text-sm">此契約缺租期,請先編輯補上起訖日</div>
