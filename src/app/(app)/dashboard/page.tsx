@@ -48,7 +48,7 @@ type Ord = {
   amount: number; paid: boolean;
 };
 type Rev5 = { checkout_date: string | null; property_id: string | null; overall_rating: number };
-type Estate = { id: string; name: string };
+type Estate = { id: string; name: string; active: boolean };
 type Property = { id: string; name: string; estate_id: string | null };
 type Code = { code: string; name: string };
 type Pending = { total_amount: number; planned_transfer_on: string | null };
@@ -68,7 +68,12 @@ type CmpRaw = {
   exp: { estate_id: string | null; property_id: string | null; amount: number }[];
   ord: { estate_id: string | null; property_id: string | null }[];
 };
-type Cmp = { rev: number; exp: number; ordN: number; bySource: Record<string, number> };
+type Cmp = {
+  rev: number; exp: number; ordN: number;
+  bySource: Record<string, number>;
+  /** 依物業的營收。key 與 estKey() 一致（estate_id 或 '(未指定物業)'）。 */
+  byEstate: Record<string, number>;
+};
 
 // 來源標籤改用 @/lib/revenue-report 的 SOURCE_LABEL ——
 // 這裡原本自己寫一份,漏了 office 與 company,畫面上就直接吐英文鍵出來。
@@ -152,6 +157,16 @@ export default function DashboardPage() {
   const estateOfProp = useMemo(
     () => Object.fromEntries(properties.map((p) => [p.id, p.estate_id])), [properties]);
 
+  /**
+   * 這一列屬於哪個物業。
+   * estate_id 可能是空的（訂單沒歸物業或匯入時漏帶），那時用 property_id 回推 ——
+   * 直接排除的話物業視角的營收會憑空少一塊，而且沒有人會發現。
+   *
+   * **本期與比較期一定要用同一支**，不然兩邊會對到不同的物業。
+   */
+  const estKey = useCallback((estate_id: string | null, property_id: string | null) =>
+    estate_id ?? (property_id ? estateOfProp[property_id] : null) ?? '(未指定物業)', [estateOfProp]);
+
   const matchScope = useCallback((estate_id: string | null, property_id: string | null) => {
     if (propF) return property_id === propF;
     if (estF) return (estate_id ?? (property_id ? estateOfProp[property_id] : null)) === estF;
@@ -186,7 +201,7 @@ export default function DashboardPage() {
         .select('checkout_date, property_id, overall_rating')
         .gte('checkout_date', fromD).lte('checkout_date', toD).range(f, t)),
       fetchAll<Estate>((f, t) => supabase.from('estates')
-        .select('id, name').order('sort').order('name').range(f, t)),
+        .select('id, name, active').order('sort').order('name').range(f, t)),
       /*
        * 房源也要分頁。它看起來是小主檔，但 estateOfProp 靠它把
        * 「沒有 estate_id 的認列」回推到物業 —— 少撈幾間房，
@@ -270,17 +285,25 @@ export default function DashboardPage() {
     const roll = (c: CmpRaw): Cmp => {
       const rr = c.rev.filter((x) => matchScope(x.estate_id, x.property_id));
       const bySource: Record<string, number> = {};
-      rr.forEach((x) => { bySource[x.source] = (bySource[x.source] ?? 0) + Number(x.month_amount || 0); });
+      const byEstate: Record<string, number> = {};
+      rr.forEach((x) => {
+        const amt = Number(x.month_amount || 0);
+        bySource[x.source] = (bySource[x.source] ?? 0) + amt;
+        // 用同一支 estKey —— 認列的 estate_id 有機會是空的，
+        // 那時要用 property_id 回推。兩邊用不同規則的話本期跟上一期會對到不同的物業。
+        byEstate[estKey(x.estate_id, x.property_id)] = (byEstate[estKey(x.estate_id, x.property_id)] ?? 0) + amt;
+      });
       return {
         rev: rr.reduce((a, x) => a + Number(x.month_amount || 0), 0),
         exp: c.exp.filter((x) => matchScope(x.estate_id, x.property_id))
           .reduce((a, x) => a + Number(x.amount || 0), 0),
         ordN: c.ord.filter((x) => matchScope(x.estate_id, x.property_id)).length,
         bySource,
+        byEstate,
       };
     };
     return { prev: roll(cmpRaw.prev), yoy: roll(cmpRaw.yoy) };
-  }, [cmpRaw, matchScope]);
+  }, [cmpRaw, matchScope, estKey]);
 
   const fRevs = useMemo(() => revs.filter((r) => matchScope(r.estate_id, r.property_id)), [revs, matchScope]);
   const fExps = useMemo(() => exps.filter((e) => matchScope(e.estate_id, e.property_id)), [exps, matchScope]);
@@ -358,11 +381,39 @@ export default function DashboardPage() {
 
   const revBySource = useMemo(
     () => groupSum(fRevs, (r) => r.source, (r) => Number(r.month_amount || 0)), [fRevs]);
-  const estKey = useCallback((estate_id: string | null, property_id: string | null) =>
-    estate_id ?? (property_id ? estateOfProp[property_id] : null) ?? '(未指定物業)', [estateOfProp]);
-
   const revByEstate = useMemo(
     () => groupSum(fRevs, (r) => estKey(r.estate_id, r.property_id), (r) => Number(r.month_amount || 0)), [fRevs, estKey]);
+
+  /**
+   * 期間比較用的「依物業」。
+   *
+   * 【只列營運中的物業】（使用者指定）
+   * 已停用的物業合約結束之後今年歸零、去年有數字，比出來永遠是 −100% ——
+   * 那不是經營上的訊息，只是一個已經結束的事實，而它每一期都會佔掉一整列。
+   *
+   * 【本期是 0 但比較期有數字的也要列】
+   * 只看本期有數字的話，「這一期完全沒收到錢」的物業會直接從表上消失 ——
+   * 而那正是最需要被看到的一列。
+   */
+  const revByEstateCmp = useMemo(() => {
+    if (!cmp) return [] as { key: string; name: string; cur: number; prev: number; yoy: number }[];
+    const live = new Set(estates.filter((e) => e.active).map((e) => e.id));
+    const cur = Object.fromEntries(revByEstate);
+    const keys = new Set<string>([
+      ...Object.keys(cur), ...Object.keys(cmp.prev.byEstate), ...Object.keys(cmp.yoy.byEstate),
+    ]);
+    return [...keys]
+      .filter((k) => live.has(k))
+      .map((k) => ({
+        key: k,
+        name: estates.find((e) => e.id === k)?.name ?? k,
+        cur: cur[k] ?? 0,
+        prev: cmp.prev.byEstate[k] ?? 0,
+        yoy: cmp.yoy.byEstate[k] ?? 0,
+      }))
+      // 本期金額大的排前面 —— 佔比大的物業動一點,對總數的影響就比小的動很多還大
+      .sort((a, b) => b.cur - a.cur);
+  }, [cmp, revByEstate, estates]);
   const ordBySource = useMemo(() => {
     const m: Record<string, number> = {};
     fOrds.forEach((o) => { m[o.source] = (m[o.source] ?? 0) + 1; });
@@ -553,6 +604,20 @@ export default function DashboardPage() {
         );
         const cnt = (n: number) => `${nf(n)} 筆`;
 
+        /** 明細列（依來源／依物業共用）—— 兩邊長得不一樣的話會被當成兩種東西 */
+        const sub = (key: string, name: string, cur: number, prev: number, yoy: number) => (
+          <tr key={key} className="border-b border-mor-line/60 last:border-0">
+            <td className="px-3 py-2 pl-6 text-gray-600 whitespace-nowrap">{name}</td>
+            <td className="px-3 py-2 text-right font-semibold whitespace-nowrap tabular-nums">{money(cur)}</td>
+            <td className="px-3 py-2 text-right text-gray-500 whitespace-nowrap tabular-nums">{money(prev)}</td>
+            <td className="px-3 py-2 text-right whitespace-nowrap tabular-nums">{delta(cur, prev)}</td>
+            {!sameYoY && <>
+              <td className="px-3 py-2 text-right text-gray-500 whitespace-nowrap tabular-nums">{money(yoy)}</td>
+              <td className="px-3 py-2 text-right whitespace-nowrap tabular-nums">{delta(cur, yoy)}</td>
+            </>}
+          </tr>
+        );
+
         return (
           <div className="rounded-xl glass p-4 md:p-5 mb-4">
             <div className="flex flex-wrap items-baseline justify-between gap-2 mb-1">
@@ -597,18 +662,23 @@ export default function DashboardPage() {
                   {row('訂單數', fOrds.length, cmp.prev.ordN, cmp.yoy.ordN, cnt)}
                   <tr><td colSpan={sameYoY ? 4 : 6} className="px-3 pt-3 pb-1 text-xs font-semibold text-gray-500">依來源</td></tr>
                   {/* 總營收成長時,要看得出是哪一塊在撐 —— 可能長租在漲而短租在退 */}
-                  {revBySource.map(([k, v]) => (
-                    <tr key={k} className="border-b border-mor-line/60 last:border-0">
-                      <td className="px-3 py-2 pl-6 text-gray-600 whitespace-nowrap">{srcLabel(k)}</td>
-                      <td className="px-3 py-2 text-right font-semibold whitespace-nowrap tabular-nums">{money(v)}</td>
-                      <td className="px-3 py-2 text-right text-gray-500 whitespace-nowrap tabular-nums">{money(cmp.prev.bySource[k] ?? 0)}</td>
-                      <td className="px-3 py-2 text-right whitespace-nowrap tabular-nums">{delta(v, cmp.prev.bySource[k] ?? 0)}</td>
-                      {!sameYoY && <>
-                        <td className="px-3 py-2 text-right text-gray-500 whitespace-nowrap tabular-nums">{money(cmp.yoy.bySource[k] ?? 0)}</td>
-                        <td className="px-3 py-2 text-right whitespace-nowrap tabular-nums">{delta(v, cmp.yoy.bySource[k] ?? 0)}</td>
-                      </>}
-                    </tr>
-                  ))}
+                  {revBySource.map(([k, v]) => sub(k, srcLabel(k), v, cmp.prev.bySource[k] ?? 0, cmp.yoy.bySource[k] ?? 0))}
+
+                  {/*
+                    【依物業】
+                    「總營收掉了 15%」不能行動,「開封掉了 40% 而其他持平」可以。
+                    來源看的是通路,物業看的是哪一棟出事 —— 兩個都要有。
+
+                    **已停用的物業不列**（使用者指定）：合約結束之後今年歸零、
+                    去年有數字，比出來永遠是 -100%,而那不是經營上的訊息,
+                    只是一個已經結束的事實。它會佔掉一整列、而且每一期都佔。
+                  */}
+                  {!!revByEstateCmp.length && (
+                    <tr><td colSpan={sameYoY ? 4 : 6} className="px-3 pt-3 pb-1 text-xs font-semibold text-gray-500">
+                      依物業<span className="ml-1.5 font-normal text-gray-400">只列營運中的物業</span>
+                    </td></tr>
+                  )}
+                  {revByEstateCmp.map(({ key, name, cur, prev, yoy }) => sub(key, name, cur, prev, yoy))}
                 </tbody>
               </table>
             </div>

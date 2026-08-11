@@ -163,3 +163,91 @@ export function xlsxFilename(from: string, to: string): string {
     : `${(from || '起始').replace(/-/g, '')}-${(to || '今日').replace(/-/g, '')}`;
   return `管家評價_${p}.xlsx`;
 }
+
+/* ============================================================
+ * 樣式
+ *
+ * 【為什麼樣式的計算也放在這裡】
+ * xlsx-js-style 的樣式是掛在每一個儲存格物件的 `s` 上，而 worksheet
+ * 本身只是一個普通的 JS 物件（key 是 'A1'、'B3' 這種位址）。
+ * 也就是說「哪一格套哪個樣式」是純邏輯，測得到 —— 而那正是會出錯的地方：
+ * 少算一列、表頭套到資料列、合計列漏掉框線。
+ *
+ * 【自己算 A1 位址，不用 XLSX.utils.encode_cell】
+ * 只是為了讓這個檔案不相依 xlsx 套件（node --test 載不動它）。
+ * 演算法很短，而且有測試釘住 A / Z / AA 的邊界。
+ * ============================================================ */
+
+/** 0 → 'A'、25 → 'Z'、26 → 'AA' */
+export function colName(i: number): string {
+  let s = '';
+  for (let n = i; n >= 0; n = Math.floor(n / 26) - 1) {
+    s = String.fromCharCode(65 + (n % 26)) + s;
+  }
+  return s;
+}
+
+/** (0,0) → 'A1' */
+export const cellRef = (r: number, c: number) => `${colName(c)}${r + 1}`;
+
+const LINE = 'D5DBE3';
+const border = {
+  top: { style: 'thin', color: { rgb: LINE } },
+  bottom: { style: 'thin', color: { rgb: LINE } },
+  left: { style: 'thin', color: { rgb: LINE } },
+  right: { style: 'thin', color: { rgb: LINE } },
+};
+
+export const STYLE = {
+  /** 第一列的標題：大、粗、不要框線（它是抬頭不是表格的一部分） */
+  title: {
+    font: { bold: true, sz: 13, color: { rgb: '2E3840' } },
+    alignment: { vertical: 'center' },
+  },
+  /** 表頭：粗體 ＋ 淡藍底 ＋ 框線。底色是主色的很淡版本，列印出來也還看得見。 */
+  header: {
+    font: { bold: true, sz: 11, color: { rgb: '2E3840' } },
+    fill: { patternType: 'solid', fgColor: { rgb: 'DCE5F0' } },
+    border,
+    alignment: { vertical: 'center', horizontal: 'center', wrapText: true },
+  },
+  cell: { border, alignment: { vertical: 'center' } },
+  /** 合計列：粗體 ＋ 更淡的底，跟資料列分得開 */
+  total: {
+    font: { bold: true },
+    fill: { patternType: 'solid', fgColor: { rgb: 'F0F3F7' } },
+    border,
+  },
+} as const;
+
+/**
+ * 把樣式套到 worksheet 上。
+ *
+ * @param ws        aoa_to_sheet 產生的物件
+ * @param headerRow 表頭在第幾列（0 起算）
+ * @param lastRow   最後一列（含）
+ * @param cols      共幾欄
+ * @param totalRow  合計列的列號；沒有就給 -1
+ *
+ * 【為什麼要對「空格」也建立儲存格】
+ * aoa_to_sheet 不會替空字串以外的空格建物件，而沒有物件就套不上框線 ——
+ * 表格右邊會缺一角，看起來像沒畫完。所以缺的補一個空字串格。
+ */
+export function styleSheet(
+  ws: Record<string, unknown>,
+  { headerRow, lastRow, cols, totalRow = -1 }: {
+    headerRow: number; lastRow: number; cols: number; totalRow?: number;
+  },
+): void {
+  const t = ws[cellRef(0, 0)] as { s?: unknown } | undefined;
+  if (t) t.s = STYLE.title;
+
+  for (let r = headerRow; r <= lastRow; r++) {
+    for (let c = 0; c < cols; c++) {
+      const ref = cellRef(r, c);
+      let cell = ws[ref] as { t?: string; v?: unknown; s?: unknown } | undefined;
+      if (!cell) { cell = { t: 's', v: '' }; ws[ref] = cell; }
+      cell.s = r === headerRow ? STYLE.header : r === totalRow ? STYLE.total : STYLE.cell;
+    }
+  }
+}

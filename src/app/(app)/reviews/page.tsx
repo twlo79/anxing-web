@@ -3,7 +3,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import * as XLSX from 'xlsx-js-style';
 import {
-  summarySheet, detailSheet, safeSheetName, xlsxFilename, type DetailRow,
+  summarySheet, detailSheet, safeSheetName, xlsxFilename, styleSheet, cellRef,
+  SUMMARY_HEADER, DETAIL_HEADER, type DetailRow,
 } from '@/lib/manager-xlsx';
 import { fetchAll } from '@/lib/fetch-all';
 
@@ -243,20 +244,42 @@ export default function ReviewsPage() {
       const wb = XLSX.utils.book_new();
       const used = new Set<string>();
 
-      const ws0 = XLSX.utils.aoa_to_sheet(summarySheet(sorted, statsFrom, statsTo));
+      // ── 總表 ──────────────────────────────────
+      const sumRows = summarySheet(sorted, statsFrom, statsTo);
+      const ws0 = XLSX.utils.aoa_to_sheet(sumRows);
       ws0['!cols'] = [{ wch: 10 }, { wch: 10 },
         ...Array.from({ length: 10 }, () => ({ wch: 9 })), { wch: 11 }];
       ws0['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 12 } }];
       ws0['!freeze'] = { xSplit: 0, ySplit: 3 };
+      ws0['!rows'] = [{ hpt: 22 }, { hpt: 6 }, { hpt: 24 }];   // 標題高一點、表頭高一點
+      /*
+        平均評價固定兩位小數。
+        4.80 存進去是數字 4.8、5.00 是 5，Excel 預設照數值本身顯示，
+        於是同一欄出現「4.8 / 5 / 5 / 4.92」—— 小數點沒對齊，也看不出是評分。
+        數值要維持數字型別（才排得了序、算得了平均），所以改的是**顯示格式**。
+      */
+      const hasTotal = sorted.length > 1;
+      const sumLast = sumRows.length - 1;
+      for (let r = 3; r <= sumLast; r++) {
+        const c = ws0[cellRef(r, 1)];
+        if (c && c.t === 'n') c.z = '0.00';
+      }
+      styleSheet(ws0, {
+        headerRow: 2, lastRow: sumLast, cols: SUMMARY_HEADER.length,
+        totalRow: hasTotal ? sumLast : -1,
+      });
       XLSX.utils.book_append_sheet(wb, ws0, safeSheetName('總表', used));
 
+      // ── 每位管家一頁 ──────────────────────────
       for (const m of sorted) {
-        const ws = XLSX.utils.aoa_to_sheet(
-          detailSheet(m.manager, byMgr.get(m.manager) ?? [], statsFrom, statsTo));
-        // 留言那欄放寬並開啟自動換行 —— 不然一則長評會把整列撐到看不完
+        const rows = detailSheet(m.manager, byMgr.get(m.manager) ?? [], statsFrom, statsTo);
+        const ws = XLSX.utils.aoa_to_sheet(rows);
+        // 留言那欄放寬 —— 不然一則長評會把整列撐到看不完
         ws['!cols'] = [{ wch: 16 }, { wch: 10 }, { wch: 12 }, { wch: 7 }, { wch: 80 }];
         ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }];
         ws['!freeze'] = { xSplit: 0, ySplit: 3 };
+        ws['!rows'] = [{ hpt: 22 }, { hpt: 6 }, { hpt: 24 }];
+        styleSheet(ws, { headerRow: 2, lastRow: rows.length - 1, cols: DETAIL_HEADER.length });
         XLSX.utils.book_append_sheet(wb, ws, safeSheetName(m.manager, used));
       }
 

@@ -159,3 +159,56 @@ test('★ 檔名帶「資料期間」而不是匯出日', () => {
   assert.equal(xlsxFilename('2026-01-01', '2026-06-30'), '管家評價_20260101-20260630.xlsx');
   assert.equal(xlsxFilename('', ''), '管家評價_全部.xlsx');
 });
+
+// ── 樣式 ───────────────────────────────────────────
+
+import { colName, cellRef, styleSheet, STYLE } from './manager-xlsx.ts';
+
+test('欄名的邊界：A / Z / AA / AZ', () => {
+  assert.equal(colName(0), 'A');
+  assert.equal(colName(25), 'Z');
+  assert.equal(colName(26), 'AA');
+  assert.equal(colName(51), 'AZ');
+  assert.equal(cellRef(0, 0), 'A1');
+  assert.equal(cellRef(2, 12), 'M3');
+});
+
+test('表頭套 header、資料列套 cell、合計列套 total', () => {
+  const ws: Record<string, any> = {
+    A1: { t: 's', v: '標題' },
+    A3: { t: 's', v: '名稱' }, B3: { t: 's', v: '平均' },
+    A4: { t: 's', v: '唐' }, B4: { t: 'n', v: 4.86 },
+    A5: { t: 's', v: '合計' }, B5: { t: 'n', v: 4.9 },
+  };
+  styleSheet(ws, { headerRow: 2, lastRow: 4, cols: 2, totalRow: 4 });
+  assert.equal(ws.A1.s, STYLE.title);
+  assert.equal(ws.A3.s, STYLE.header);
+  assert.equal(ws.B3.s, STYLE.header);
+  assert.equal(ws.A4.s, STYLE.cell);
+  assert.equal(ws.A5.s, STYLE.total);
+});
+
+test('★ 空格也要建出來，否則框線會缺一角', () => {
+  // aoa_to_sheet 不替空格建物件,沒有物件就套不上框線 ——
+  // 表格右邊會缺角,看起來像沒畫完
+  const ws: Record<string, any> = { A3: { t: 's', v: '名稱' } };
+  styleSheet(ws, { headerRow: 2, lastRow: 3, cols: 3 });
+  assert.ok(ws.C3, '表頭最右邊那格是空的,也要有框線');
+  assert.equal(ws.C3.v, '');
+  assert.equal(ws.C3.s, STYLE.header);
+  assert.equal(ws.A4.s, STYLE.cell);
+});
+
+test('沒有合計列時不會有任何一格套到 total', () => {
+  const ws: Record<string, any> = {};
+  styleSheet(ws, { headerRow: 2, lastRow: 5, cols: 2, totalRow: -1 });
+  for (let r = 2; r <= 5; r++) {
+    for (let c = 0; c < 2; c++) assert.notEqual(ws[cellRef(r, c)].s, STYLE.total);
+  }
+});
+
+test('表頭是粗體、有底色、有框線', () => {
+  assert.equal(STYLE.header.font.bold, true);
+  assert.ok(STYLE.header.fill.fgColor.rgb);
+  assert.ok(STYLE.header.border.bottom.style);
+});
