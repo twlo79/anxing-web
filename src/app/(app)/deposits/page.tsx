@@ -12,6 +12,7 @@ import {
 } from '@/lib/deposit-lines';
 import { shareDeposit } from '@/lib/share';
 import { softDelete } from '@/lib/trash';
+import TrashLink from '@/components/TrashLink';
 
 /**
  * 押金管理。
@@ -693,6 +694,7 @@ export default function DepositsPage() {
         <div className="ml-auto flex gap-2">
           <button onClick={() => setEdit(blankManual())}
             className="rounded-lg border border-mor-slate text-mor-slate px-3 py-1.5 font-medium hover:bg-mor-sand/60">+ 手動新增</button>
+          <TrashLink table="deposits" label="押金" />
           <button onClick={exportXlsx} disabled={!sorted.length}
             className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark disabled:opacity-40">⬇ 下載 Excel</button>
         </div>

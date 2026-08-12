@@ -18,6 +18,7 @@ import {
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import * as XLSX from 'xlsx-js-style';
 import { softDelete } from '@/lib/trash';
+import TrashLink from '@/components/TrashLink';
 
 type Contract = {
   id: string; estate_id: string | null; room: string | null; tenant_name: string | null;
@@ -662,6 +663,7 @@ export default function ContractsPage() {
             className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 disabled:opacity-40">⬇ 下載 Excel</button>
           <button onClick={() => openEdit(blank())}
             className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 新增契約</button>
+          <TrashLink table="contracts" label="契約" />
         </>}>
         <FilterSelect label="物業" value={estateFilter} onChange={setEstateFilter}
           options={estates.map((e) => ({ value: e.name, label: e.name }))} />

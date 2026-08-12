@@ -49,12 +49,11 @@ const NAV: { href: string; label: string; icon: string; roles: string[] }[] = [
   { href: '/customers', label: '客戶管理', icon: '👤', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/reviews', label: '房源評價', icon: '⭐', roles: ['housekeeper', 'manager', 'super_admin'] },
   { href: '/cleaning', label: '清潔記錄', icon: '🧹', roles: ['housekeeper', 'manager', 'super_admin'] },
-  // 通知是每個人自己的偏好,所以全角色都看得到 ——
-  // 放在權限管理上面（那頁只有總經理進得去,擺一起會讓人以為這也是管理員專用）
-  { href: '/notifications', label: '通知設定', icon: '🔔', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
-  // 刪除紀錄：每個人都看得到（自己刪的一定看得到，會計以上看得到全部）——
-  // 藏起來的話，誤刪的人第一時間找不到救回來的地方，而那正是最需要它的時候。
-  { href: '/trash', label: '刪除紀錄', icon: '🗑️', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  // 設定 = 通知偏好 ＋ 刪除紀錄。兩個都是「偶爾才進來一次」的東西，
+  // 各佔一格會把每天要用的功能往下推。全角色都看得到：
+  // 通知是每個人自己的偏好；刪除紀錄藏起來的話，誤刪的人第一時間
+  // 找不到救回來的地方 —— 而那正是最需要它的時候。
+  { href: '/settings', label: '設定', icon: '🎛️', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   // 會計進得去，但只看得到「收付款帳號」與「常用帳號」兩個分頁
   // —— 改人員角色那一頁仍然只有總經理，見 admin 頁的 ACCOUNTANT_TABS
   { href: '/admin', label: '權限管理', icon: '⚙️', roles: ['accountant', 'super_admin'] },

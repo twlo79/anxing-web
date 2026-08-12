@@ -40,7 +40,7 @@ const ICON: Record<NotifyKind, string> = {
 
 type Prefs = Record<NotifyKind, boolean>;
 
-export default function NotificationsPage() {
+export default function NotifyTab() {
   const supabase = useMemo(() => createClient(), []);
   const { state, ensureSubscribed, unsubscribe } = usePush();
   const [prefs, setPrefs] = useState<Prefs | null>(null);
@@ -121,7 +121,6 @@ export default function NotificationsPage() {
 
   return (
     <div className="max-w-[720px]">
-      <h1 className="mb-1">通知設定</h1>
       <p className="text-xs text-gray-400 mb-4">
         設定跟著你的帳號走。打開之後這台裝置就會收到 ——
         換手機或電腦要在那台上再打開一次。

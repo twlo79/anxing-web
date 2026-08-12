@@ -7,6 +7,7 @@ import Receipts, { type ReceiptsHandle } from '@/components/Receipts';
 import DeferralPanel from '@/components/DeferralPanel';
 import { deferralLabel, childLabel, recognizedTotal, paidTotal, paidCell } from '@/lib/deferral';
 import { softDelete } from '@/lib/trash';
+import TrashLink from '@/components/TrashLink';
 
 type Expense = {
   id: string; spent_on: string; item_name: string; amount: number;
@@ -458,6 +459,7 @@ export default function ExpensesPage() {
             className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 disabled:opacity-40">⬇ 下載 Excel</button>
           <button onClick={() => setEdit(blank())}
             className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 填寫支出</button>
+          <TrashLink table="expenses" label="支出" />
         </div>
       </div>
 

@@ -8,6 +8,7 @@ import Receipts, { type ReceiptsHandle } from '@/components/Receipts';
 import RefundFields, { METHOD_LABEL as DEP_METHOD } from '@/components/RefundFields';
 import { shareDeposit } from '@/lib/share';
 import { softDelete } from '@/lib/trash';
+import TrashLink from '@/components/TrashLink';
 
 type Item = {
   id?: string; request_id?: string; item_name: string; amount: number;
@@ -1425,6 +1426,7 @@ export default function PurchasesPage() {
           <a href={PURCHASE_FORM_URL} target="_blank" rel="noreferrer"
             className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60">+ 採購單</a>
           <button onClick={openNew} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 填寫請款</button>
+          <TrashLink table="purchase_requests" label="請款單" />
         </div>
       </div>
 

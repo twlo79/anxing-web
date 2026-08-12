@@ -12,6 +12,7 @@ import { toLines, fromLines, totalTwd, validateLines, type Line } from '@/lib/mo
 import { payStatus, remaining, isExempt, STATUS_LABEL, STATUS_CLASS, STATUS_FILTER } from '@/lib/order-payment';
 import { softDelete } from '@/lib/trash';
 import { feeFilterOptions, feeFilterPredicate, ONEOFF_SOURCES, FEE_F_ALL } from '@/lib/order-filter';
+import TrashLink from '@/components/TrashLink';
 
 type Order = {
   id: string; order_key: string; source: string; estate_id: string | null; property_id?: string | null; property_raw: string | null;
@@ -558,6 +559,7 @@ export default function ShortTermPage() {
           <div className="text-xs text-gray-400 pb-1.5">共 {total.toLocaleString()} 筆</div>
           <button onClick={exportXlsx} disabled={exporting || !total} className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 disabled:opacity-40">{exporting ? '匯出中…' : '⬇ 下載 Excel'}</button>
           <button onClick={() => openEdit(blank())} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 新增訂單</button>
+          <TrashLink table="orders" label="訂單" />
         </div>
       </div>
 

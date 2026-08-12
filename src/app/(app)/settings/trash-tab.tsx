@@ -37,13 +37,18 @@ const FILTER_LABEL: Record<Filter, string> = {
 
 const fmtAt = (s: string) => s.slice(0, 16).replace('T', ' ');
 
-export default function TrashPage() {
+/**
+ * @param initialTable 從網址帶進來的表格篩選。
+ *   各列表頁的 🗑️ 入口會帶自己的表格 —— 從訂單頁點進來就只看訂單的刪除紀錄。
+ *   不帶的話會落在「全部」，而全部裡面訂單只佔一小段,等於還要再篩一次。
+ */
+export default function TrashTab({ initialTable = '' }: { initialTable?: string }) {
   const supabase = useMemo(() => createClient(), []);
   const [rows, setRows] = useState<Trash[]>([]);
   const [names, setNames] = useState<Map<string, string>>(new Map());
   const [role, setRole] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>('open');
-  const [table, setTable] = useState('');
+  const [table, setTable] = useState(initialTable);
   const [q, setQ] = useState('');
   const [open, setOpen] = useState<string | null>(null);
   const [busy, setBusy] = useState('');
@@ -137,7 +142,6 @@ export default function TrashPage() {
 
   return (
     <div className="max-w-[1100px]">
-      <h1 className="hidden md:block mb-1">刪除紀錄</h1>
       <p className="text-xs text-gray-400 mb-3">
         刪掉的東西會先放在這裡。<b>已刪除的不會算進營收與支出</b>，復原之後才會重新計入。
       </p>
