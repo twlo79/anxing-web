@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { notifyImport } from '@/lib/push';
 import { decide, summarize, type Incoming, type Existing, type PropRef } from '@/lib/airbnb-sync';
+import { orderLine, importBody, importTitle } from '@/lib/notify-text';
 
 /**
  * Airbnb 訂單匯入。
@@ -107,10 +108,20 @@ export async function POST(req: Request) {
    * 更新既有訂單（改日期、改金額）每天都有一堆，每筆一則的話
    * 手機會叮到沒人想看 —— 那種通知很快就會被整個關掉，
    * 連真正重要的那則也一起失效。
+   *
+   * 內文列出每一筆的金額／房源／房客／期間（金額在最前面）——
+   * 「新增 3 筆訂單」那種通知沒有一個字能幫你決定要不要點進去。
    */
   if (inserted > 0) {
-    await notifyImport('orders', '新增訂單',
-      `爬蟲同步新增 ${inserted} 筆訂單`, '/shortterm');
+    const lines = toInsert.map((r) => orderLine({
+      amount: Number(r.amount) || 0,
+      property: r.property_raw == null ? null : String(r.property_raw),
+      guest: r.guest_name == null ? null : String(r.guest_name),
+      checkin: r.checkin == null ? null : String(r.checkin),
+      checkout: r.checkout == null ? null : String(r.checkout),
+    }));
+    await notifyImport('orders', importTitle(inserted, '筆', '訂單'),
+      importBody(lines), '/shortterm');
   }
 
   /*

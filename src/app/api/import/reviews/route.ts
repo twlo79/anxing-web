@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { notifyImport } from '@/lib/push';
+import { reviewLine, importBody, importTitle } from '@/lib/notify-text';
 // Supabase 一次只回 1000 列且不報錯 —— 「哪些已存在」查不全會覆蓋既有翻譯
 import { fetchIn } from '@/lib/fetch-all';
 
@@ -89,9 +90,12 @@ export async function POST(req: Request) {
   const items: any[] = body.reviews ?? [];
   if (!items.length) return NextResponse.json({ upserted: 0 }, { headers: CORS });
 
-  const { data: props, error: pe } = await supabase.from('properties').select('id, airbnb_listing_id');
+  const { data: props, error: pe } = await supabase.from('properties').select('id, name, airbnb_listing_id');
   if (pe) return NextResponse.json({ error: pe.message }, { status: 500, headers: CORS });
   const propByListing = Object.fromEntries((props ?? []).filter((p) => p.airbnb_listing_id).map((p) => [p.airbnb_listing_id, p.id]));
+  // 通知要顯示房源名稱。用我們自己的名字，不用 Airbnb 的標題 ——
+  // 「開封 2F/3F/4F」在 Airbnb 是同一個標題，看了也分不出是哪一間
+  const nameById = Object.fromEntries((props ?? []).map((p) => [p.id, p.name]));
 
   // 先解析住宿日期 —— 下面要用「房客 + 退房日」去訂單裡查房源
   const parsed = items.map((m) => {
@@ -213,7 +217,8 @@ export async function POST(req: Request) {
     (chunk, f, t) => supabase.from('reviews')
       .select('airbnb_review_id').in('airbnb_review_id', chunk).range(f, t));
   const existingSet = new Set(existing.map((e) => e.airbnb_review_id));
-  const inserted = ids.filter((id) => !existingSet.has(id)).length;
+  const newRecords = records.filter((r) => !existingSet.has(r.airbnb_review_id));
+  const inserted = newRecords.length;
 
   let upserted = 0;
   for (let i = 0; i < records.length; i += 500) {
@@ -244,8 +249,17 @@ export async function POST(req: Request) {
    * 用 upserted 發通知等於每天叮一次「有 300 則新評價」—— 那會直接被關掉。
    */
   if (inserted > 0) {
-    await notifyImport('reviews', '新的房客評價',
-      `爬蟲同步新增 ${inserted} 則評價`, '/reviews');
+    /*
+     * 星等放最前面 —— 5 星不用處理，3 星要。
+     * 星等就是「這則通知要不要點開」的答案，它必須被保證看得到。
+     */
+    const lines = newRecords.map((r) => reviewLine({
+      rating: r.overall_rating,
+      property: (r.property_id ? nameById[r.property_id] : null) ?? r.listing_name_raw,
+      guest: r.guest_name,
+    }));
+    await notifyImport('reviews', importTitle(inserted, '則', '評價'),
+      importBody(lines), '/reviews');
   }
 
   return NextResponse.json({
