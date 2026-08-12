@@ -13,6 +13,7 @@ import { payStatus, remaining, isExempt, STATUS_LABEL, STATUS_CLASS, STATUS_FILT
 import { softDelete } from '@/lib/trash';
 import { feeFilterOptions, feeFilterPredicate, ONEOFF_SOURCES, FEE_F_ALL } from '@/lib/order-filter';
 import TrashLink from '@/components/TrashLink';
+import { checkDates, checkPrice, lookbackFrom, type PastOrder } from '@/lib/order-check';
 
 type Order = {
   id: string; order_key: string; source: string; estate_id: string | null; property_id?: string | null; property_raw: string | null;
@@ -132,6 +133,41 @@ export default function ShortTermPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formSeq, supabase]);
   const addFee = () => setFees((fs) => [...fs, { date: edit?.checkout || edit?.checkin || '', type: '清潔費', amount: 0, note: '' }]);
+
+  /*
+   * 同房源、過去一年的訂單 —— 拿來算每晚均價。
+   *
+   * 【為什麼在開視窗時就抓，不是按存檔才抓】
+   * 提醒要在他還在看金額的時候出現。存檔那一刻才跳，他已經在想下一件事了，
+   * 而且會覺得系統在刁難他 —— 同一句話，時機不同就從「幫忙」變成「阻礙」。
+   */
+  const [past, setPast] = useState<PastOrder[]>([]);
+  useEffect(() => {
+    const room = edit?.property_raw?.trim();
+    if (!edit || edit.source === 'oneoff' || !room) { setPast([]); return; }
+    let alive = true;
+    supabase.from('orders')
+      .select('checkin, nights, amount')
+      .eq('property_raw', room)
+      .not('source', 'in', '(oneoff,airbnb_cancelled)')
+      .gte('checkin', lookbackFrom())
+      .neq('id', edit.id || '00000000-0000-0000-0000-000000000000')  // 編輯時不要拿自己比自己
+      .limit(500)
+      .then(({ data }) => { if (alive) setPast((data ?? []) as PastOrder[]); });
+    return () => { alive = false; };
+  }, [supabase, edit?.property_raw, edit?.source, edit?.id]);
+
+  /** 這筆的每晚單價 vs 同房源均價。只提醒，不擋。 */
+  const priceWarn = useMemo(() => {
+    if (!edit || edit.source === 'oneoff') return null;
+    const nights = edit.checkin && edit.checkout
+      ? Math.round((new Date(edit.checkout).getTime() - new Date(edit.checkin).getTime()) / 86400000)
+      : 0;
+    // 用換算後的台幣總額 —— 只看 TWD 那一列的話，外幣訂單會被當成 0 元，
+    // 而 0 元不會觸發提醒，等於外幣訂單完全沒有被檢查
+    const r = checkPrice(totalTwd(revLines), nights, past);
+    return r.low ? r : null;
+  }, [edit?.source, edit?.checkin, edit?.checkout, revLines, past]);
   const updFee = (i: number, patch: Partial<Fee>) => setFees((fs) => fs.map((f, idx) => idx === i ? { ...f, ...patch } : f));
   const delFee = (i: number) => setFees((fs) => fs.filter((_, idx) => idx !== i));
   const [properties, setProperties] = useState<{ id: string; name: string; estate_id: string | null }[]>([]);
@@ -305,6 +341,9 @@ export default function ShortTermPage() {
 
   async function save() {
     if (!edit) return;
+    // 日期是「一定錯」的那一類,所以擋下來。金額偏低是「可能錯」,只提醒。
+    const dateErr = checkDates(edit.source, edit.checkin, edit.checkout);
+    if (dateErr) return flash(dateErr);
     const co = edit.source === 'oneoff' ? (edit.checkout || edit.checkin) : edit.checkout;
     const nights = (edit.checkin && co) ? Math.max(0, Math.round((new Date(co).getTime() - new Date(edit.checkin).getTime()) / 86400000)) : 0;
     // 幣別清單 → 資料庫格式。台幣回 amount / deposit,其餘回 fx_*,格式與改版前一致。
@@ -792,7 +831,17 @@ export default function ShortTermPage() {
               </label>
               <label className="flex flex-col gap-1">客戶<input value={edit.guest_name ?? ''} onChange={(e) => setEdit({ ...edit, guest_name: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1">{edit.source === 'oneoff' ? '日期(認列月份)' : '起日'}<input type="date" value={edit.checkin} onChange={(e) => setEdit({ ...edit, checkin: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
-              {edit.source !== 'oneoff' && <label className="flex flex-col gap-1">迄日<input type="date" value={edit.checkout} onChange={(e) => setEdit({ ...edit, checkout: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>}
+              {edit.source !== 'oneoff' && <label className="flex flex-col gap-1">迄日<input type="date" value={edit.checkout} onChange={(e) => setEdit({ ...edit, checkout: e.target.value })} className={`rounded-lg border px-2 py-1.5 ${
+                edit.checkin && edit.checkout && edit.checkout <= edit.checkin
+                  ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} /></label>}
+              {/* 日期填反在存檔前就講 —— 存檔才說的話他要重新想一次剛剛填了什麼 */}
+              {edit.source !== 'oneoff' && edit.checkin && edit.checkout && edit.checkout <= edit.checkin && (
+                <div className="col-span-2 -mt-1 text-xs text-red-600">
+                  {edit.checkout < edit.checkin
+                    ? '迄日早於起日,請確認是不是填反了'
+                    : '迄日與起日相同（0 晚）。一次性收入請把「來源」改成一次性收入'}
+                </div>
+              )}
               {/*
                 一次性收入不會有外幣,給一個單純的金額欄就好 ——
                 多一個「+ 新增幣別」只是讓最常用的路徑多一個看不懂的東西。
@@ -840,6 +889,19 @@ export default function ShortTermPage() {
               {edit.source !== 'oneoff' && (
                 <MoneyLines mode="revenue" label="訂單金額" lines={revLines} onChange={setRevLines}
                   hint="外幣換匯後併入營收。台幣是清單裡的一列,不必另外找欄位。" />
+              )}
+
+              {/*
+                價格提醒。**不擋存檔** —— 談得比較低是真實會發生的事，
+                擋下來的話他只能放棄輸入，系統就變成阻礙。
+                門檻訂在 5 成，基本上只抓「少打一個 0」那種數量級的錯。
+              */}
+              {priceWarn && (
+                <div className="col-span-2 rounded-lg border border-amber-300 bg-amber-50
+                                px-3 py-2.5 text-xs text-amber-800 flex gap-2">
+                  <span className="shrink-0">⚠</span>
+                  <div className="leading-relaxed">{priceWarn.message}</div>
+                </div>
               )}
 
               {/*
