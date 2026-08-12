@@ -5,7 +5,7 @@ import PunchTab from './punch-tab';
 import ApplyTab from './apply-tab';
 import ApproveTab from './approve-tab';
 import CalendarTab from './calendar-tab';
-import NoticeTab from './notice-tab';
+import HkCalendarTab from './hk-calendar-tab';
 import AdminTab from './admin-tab';
 import type { Role, TabProps } from './types';
 
@@ -24,12 +24,18 @@ import type { Role, TabProps } from './types';
  * 打卡每天兩次、申請每月幾次、核可主管每週看、行事曆與公告偶爾、管理設定完就不動。
  */
 
+/*
+ * 【公告併進出勤日曆】（使用者指定）
+ * 兩個都是「今天要知道什麼」。公告單獨一個分頁的話沒有人會主動點,
+ * 而沒有人看的公告等於沒發。
+ */
 const TAB_LABEL = {
   punch: '打卡', apply: '申請', approve: '核可',
-  calendar: '行事曆', notice: '公告', admin: '管理',
+  calendar: '出勤日曆', hk: '房務行事曆', admin: '管理',
 } as const;
 type TabKey = keyof typeof TAB_LABEL;
-const STAFF_TABS: TabKey[] = ['punch', 'apply', 'calendar', 'notice'];
+// 房務行事曆全員可見（migration_110 的唯讀政策）—— 排班是要互相配合的資訊
+const STAFF_TABS: TabKey[] = ['punch', 'apply', 'calendar', 'hk'];
 const ALL_TABS = Object.keys(TAB_LABEL) as TabKey[];
 
 export default function AttendancePage() {
@@ -151,7 +157,7 @@ export default function AttendancePage() {
       {cur === 'apply' && <ApplyTab {...props} prefill={fix} />}
       {cur === 'approve' && isAdmin && <ApproveTab {...props} />}
       {cur === 'calendar' && <CalendarTab {...props} />}
-      {cur === 'notice' && <NoticeTab {...props} />}
+      {cur === 'hk' && <HkCalendarTab {...props} />}
       {cur === 'admin' && isAdmin && <AdminTab {...props} />}
     </div>
   );

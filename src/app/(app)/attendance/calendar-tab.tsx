@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { monthGrid, shiftMonth, twToday, dayStatus, type ReportRow } from '@/lib/attendance-ui';
 import { CARD, type Holiday, type TabProps } from './types';
+import NoticeTab from './notice-tab';
 
 /**
  * 行事曆：國定假日 ＋ 我的請假 ＋（主管）當天誰請假。
@@ -29,7 +30,17 @@ const CELL_TONE: Record<string, string> = {
   none: '',
 };
 
-export default function CalendarTab({ me, isAdmin }: TabProps) {
+/**
+ * 出勤日曆 = 公告 ＋ 月曆。
+ *
+ * 【為什麼把公告併進來】
+ * 兩個都是「今天要知道什麼」：這個月哪天放假、誰請假、公司有沒有交代事情。
+ * 分成兩個分頁的話，公告那頁沒有人會主動點 —— 而沒有人看的公告等於沒發。
+ *
+ * 公告放在**上方**（使用者指定）：它是會變的、需要被讀到的；
+ * 月曆是查詢用的，人會自己往下找。
+ */
+export default function CalendarTab({ me, isAdmin, onMsg }: TabProps) {
   const supabase = useMemo(() => createClient(), []);
   const now = new Date();
   const [[y, m], setYm] = useState<[number, number]>([now.getFullYear(), now.getMonth() + 1]);
@@ -100,7 +111,9 @@ export default function CalendarTab({ me, isAdmin }: TabProps) {
   const selInfo = sel ? { h: holidays[sel], lv: leaveDays[sel] ?? [] } : null;
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-5">
+      <NoticeTab me={me} isAdmin={isAdmin} onMsg={onMsg} />
+
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1">
           <button onClick={() => { setYm(shiftMonth(y, m, -1)); setSel(null); }}
