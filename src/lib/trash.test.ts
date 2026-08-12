@@ -136,3 +136,45 @@ test('★ 重複復原被擋時要回失敗', async () => {
   assert.equal(r.ok, false);
   assert.match(r.message, /已經復原/);
 });
+
+// ── 類型下拉 ───────────────────────────────────────
+
+import { typeOptions, DELETABLE_TABLES } from './trash.ts';
+
+const R = (...t: string[]) => t.map((table_name) => ({ table_name }));
+
+test('★ 沒有紀錄的類型也要列出來,標 0', () => {
+  // 只列「有紀錄的」的話,選單裡只會有一個「訂單」——
+  // 看到的人會以為這個系統只記得住訂單的刪除
+  const o = typeOptions(R('orders', 'orders'));
+  assert.equal(o.length, DELETABLE_TABLES.length);
+  assert.equal(o.find((x) => x.value === 'orders')?.count, 2);
+  assert.equal(o.find((x) => x.value === 'deposits')?.count, 0);
+});
+
+test('順序照 DELETABLE_TABLES,不是照筆數或字母', () => {
+  // 照筆數排的話,選單的位置每天都在變 —— 使用者記不住「支出在第四個」
+  const o = typeOptions(R('deposits', 'deposits', 'deposits'));
+  assert.deepEqual(o.slice(0, 2).map((x) => x.value), ['orders', 'contracts']);
+});
+
+test('★ 清單裡沒有的類型也要出現,不能默默消失', () => {
+  // 通常代表 DELETABLE_TABLES 漏了一張表。至少要看得見,
+  // 否則那些紀錄在選單裡永遠選不到
+  const o = typeOptions(R('reviews'));
+  const hit = o.find((x) => x.value === 'reviews');
+  assert.ok(hit, '資料裡有 reviews,選項就該有 reviews');
+  assert.equal(hit?.count, 1);
+});
+
+test('用中文名當標籤', () => {
+  const o = typeOptions([]);
+  assert.equal(o.find((x) => x.value === 'purchase_requests')?.label, '請款單');
+});
+
+test('★ 每個可刪除的表都要有中文名', () => {
+  // 沒有的話選單上會冒出一個英文表名
+  for (const t of DELETABLE_TABLES) {
+    assert.ok(TABLE_LABEL[t], `${t} 沒有中文名`);
+  }
+});

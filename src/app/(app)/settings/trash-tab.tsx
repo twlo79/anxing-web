@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { fetchAll } from '@/lib/fetch-all';
-import { TABLE_LABEL, trashAge, fieldRows } from '@/lib/trash';
+import { TABLE_LABEL, trashAge, fieldRows, typeOptions } from '@/lib/trash';
 
 /**
  * 刪除紀錄（回收桶）。
@@ -122,20 +122,24 @@ export default function TrashTab({ initialTable = '' }: { initialTable?: string 
     load();
   }
 
-  const tables = useMemo(
-    () => [...new Set(rows.map((r) => r.table_name))].sort(), [rows]);
+  // 先只套「狀態」。類型的筆數要跟畫面一致 —— 拿全部資料去算的話，
+  // 切到「已復原」會看到「訂單 (8)」卻只列出 1 筆。
+  const byState = useMemo(() => rows.filter((r) => {
+    const state = r.purged_at ? 'purged' : r.restored_at ? 'restored' : 'open';
+    return filter === 'all' || state === filter;
+  }), [rows, filter]);
+
+  const types = useMemo(() => typeOptions(byState), [byState]);
 
   const shown = useMemo(() => {
     const kw = q.trim().toLowerCase();
-    return rows.filter((r) => {
-      const state = r.purged_at ? 'purged' : r.restored_at ? 'restored' : 'open';
-      if (filter !== 'all' && state !== filter) return false;
+    return byState.filter((r) => {
       if (table && r.table_name !== table) return false;
       if (!kw) return true;
       return [r.label, TABLE_LABEL[r.table_name], r.reason, names.get(r.deleted_by ?? '')]
         .some((v) => (v ?? '').toLowerCase().includes(kw));
     });
-  }, [rows, filter, table, q, names]);
+  }, [byState, table, q, names]);
 
   const openCount = rows.filter((r) => !r.restored_at && !r.purged_at).length;
   const isBoss = role === 'super_admin';
@@ -164,8 +168,12 @@ export default function TrashTab({ initialTable = '' }: { initialTable?: string 
         </div>
         <select value={table} onChange={(e) => setTable(e.target.value)}
           className="rounded-lg border border-mor-line px-3 py-2 text-sm">
-          <option value="">全部類型</option>
-          {tables.map((t) => <option key={t} value={t}>{TABLE_LABEL[t] ?? t}</option>)}
+          {/* 0 筆的類型也列出來 —— 這份清單本身就在回答
+              「哪些東西刪掉救得回來」，那是第一次打開這頁最想知道的事 */}
+          <option value="">全部類型（{byState.length}）</option>
+          {types.map((t) => (
+            <option key={t.value} value={t.value}>{t.label}（{t.count}）</option>
+          ))}
         </select>
         <input placeholder="搜尋內容、原因、刪除的人…" value={q} onChange={(e) => setQ(e.target.value)}
           className="rounded-lg border border-mor-line px-3 py-2 text-sm w-56" />

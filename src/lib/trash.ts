@@ -35,6 +35,60 @@ export const TABLE_LABEL: Record<string, string> = {
 };
 
 /**
+ * 使用者按得到「刪除」的表，也就是回收桶裡可能出現的類型。
+ *
+ * **順序就是選單順序** —— 照使用頻率排，不是照字母。
+ * 訂單與契約排最前面，設定類的沉底。
+ *
+ * 資料庫那邊的對應是 trash_deletable_tables()（migration_107）。
+ * **兩邊要一致**：這裡多列了資料庫不准刪的表，使用者會看到一個永遠 0 筆的選項；
+ * 少列了的話，那個類型的刪除紀錄在選單裡選不到（但搜尋得到，所以不會完全消失）。
+ */
+export const DELETABLE_TABLES = [
+  'orders', 'contracts', 'contract_recurring_charges',
+  'expenses', 'purchase_requests', 'deposits',
+  'invoices', 'order_payments', 'recurring_charges',
+  'attachments',
+  'estates', 'properties', 'payment_accounts', 'payee_presets',
+  'hk_work_item',
+];
+
+export type TypeOption = { value: string; label: string; count: number };
+
+/**
+ * 類型下拉的選項。
+ *
+ * 【為什麼 0 筆的類型也要列出來】
+ * 原本只列「真的有紀錄的類型」，結果選單裡只有一個「訂單」——
+ * 看到的人會以為這個系統只記得住訂單的刪除。
+ *
+ * 全部列出來並標上筆數，選單本身就回答了「哪些東西刪掉救得回來」，
+ * 而那是使用者第一次打開這一頁真正想知道的事。
+ *
+ * @param rows 已經套過「狀態」篩選的資料 —— 數字要跟畫面上看到的一致。
+ *             拿全部資料去算的話，切到「已復原」會看到「訂單 (8)」卻只列出 1 筆。
+ */
+export function typeOptions(
+  rows: { table_name: string }[],
+  label: Record<string, string> = TABLE_LABEL,
+  all: string[] = DELETABLE_TABLES,
+): TypeOption[] {
+  const count = new Map<string, number>();
+  for (const r of rows) count.set(r.table_name, (count.get(r.table_name) ?? 0) + 1);
+
+  const out: TypeOption[] = all.map((t) => ({
+    value: t, label: label[t] ?? t, count: count.get(t) ?? 0,
+  }));
+
+  // 資料裡有、清單裡沒有的類型也要出現 —— 通常代表清單漏了一張表，
+  // 而漏掉的症狀是「那些紀錄在選單裡選不到」。列出來至少看得見。
+  for (const [t, n] of count) {
+    if (!all.includes(t)) out.push({ value: t, label: label[t] ?? t, count: n });
+  }
+  return out;
+}
+
+/**
  * 這筆放多久了。
  *
  * 【為什麼只標註不自動刪】（使用者指定）
