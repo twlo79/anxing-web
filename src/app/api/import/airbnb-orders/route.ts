@@ -1,6 +1,19 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { notifyImport } from '@/lib/push';
+import { decide, summarize, type Incoming, type Existing, type PropRef } from '@/lib/airbnb-sync';
+
+/**
+ * Airbnb 訂單匯入。
+ *
+ * 決策邏輯全部在 `@/lib/airbnb-sync`（純函式、有測試）——
+ * 這裡只負責讀資料庫、照決策寫回去、回報結果。
+ *
+ * 【2026-08 改版：爬蟲不再蓋掉人工修正】
+ * 之前每次同步都覆寫房源與姓名，所以手動改過的房源隔天就被改回去，
+ * 而且完全無聲。現在房源與姓名「只在空的時候填」，不一致改成回報。
+ * 詳細的分級與理由寫在 lib/airbnb-sync.ts 的檔頭。
+ */
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -12,13 +25,6 @@ const CORS = {
 };
 export async function OPTIONS() { return new NextResponse(null, { status: 204, headers: CORS }); }
 
-const num = (v: any) => {
-  if (typeof v === 'number') return v;
-  const n = parseFloat(String(v ?? '').replace(/[^0-9.-]/g, ''));
-  return isNaN(n) ? 0 : n;
-};
-
-// 傳入每筆: { code, listingId, guest, start, end, nights, statusKey, earnings, cohost }
 export async function POST(req: Request) {
   if (!process.env.IMPORT_KEY || req.headers.get('x-import-key') !== process.env.IMPORT_KEY)
     return NextResponse.json({ error: 'unauthorized' }, { status: 401, headers: CORS });
@@ -26,117 +32,111 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'no service key' }, { status: 500, headers: CORS });
   const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY);
 
-  const items: any[] = (await req.json()).reservations ?? [];
+  const items: Incoming[] = (await req.json()).reservations ?? [];
   if (!items.length) return NextResponse.json({ upserted: 0 }, { headers: CORS });
 
-  // listing_id -> property
-  const { data: props } = await supabase.from('properties').select('id, name, estate_id, airbnb_listing_id');
-  const byListing: Record<string, any> = {};
-  (props ?? []).forEach((p) => { if (p.airbnb_listing_id) byListing[String(p.airbnb_listing_id)] = p; });
-
-  const unmatched: Record<string, number> = {};
-  const skipped: string[] = [];
-  const cancelledZero: string[] = []; // 取消且完全無收入 → 既有列需作廢
-  const cat = { airbnb: 0, oneoff: 0 };
-  const records: any[] = [];
-
-  for (const m of items) {
-    const cancelled = /cancel/i.test(String(m.statusKey || ''));
-    const earn = num(m.earnings);
-    const cohost = Math.abs(num(m.cohost));
-    // 收入以 earnings 為主,為 0 時改看搭檔收款(整筆被 co-host 拆走的情況)
-    const revenue = earn > 0 ? earn : cohost;
-    const viaCohost = earn <= 0 && cohost > 0;
-    let source: string | null = null, amount = 0, fee_type: string | null = null, note: string | null = null;
-    if (cancelled) {
-      // 取消但有收費 → 一次性費用。取消手續費同樣可能整筆走搭檔收款,故一併看 cohost
-      if (revenue > 0) {
-        source = 'oneoff'; amount = revenue; fee_type = '取消費';
-        note = viaCohost ? 'Airbnb 取消收入(搭檔收款)' : 'Airbnb 取消收入';
-      } else {
-        // 不能只是略過:先前若已匯入為正常訂單,舊金額會留著繼續被算進營收
-        cancelledZero.push(String(m.code));
-        continue;
-      }
-    } else {
-      if (revenue > 0) {
-        source = 'airbnb'; amount = revenue;
-        if (viaCohost) note = '搭檔收款(Co-host payout)';
-      } else { skipped.push(m.code); continue; }
-    }
-    const prop = m.listingId ? byListing[String(m.listingId)] : null;
-    if (!prop) { unmatched[String(m.listingId)] = (unmatched[String(m.listingId)] || 0) + 1; continue; }
-    records.push({
-      order_key: String(m.code), source, estate_id: prop.estate_id, property_id: prop.id, property_raw: prop.name,
-      guest_name: m.guest || '(unknown)', checkin: m.start, checkout: m.end, nights: m.nights ?? null,
-      amount, fee_type, note, imported_via: 'auto',
-    });
-    (cat as any)[source]++;
+  /*
+   * listing_id → 房源。
+   *
+   * **排除停用的房源**：對照表指著「舊-A15」這種已停用的列，
+   * 是訂單一直掛錯房源的根本原因。停用代表那間房不再營運，
+   * 新訂單不該掛上去。
+   *
+   * 兩間房搶同一個 listing 時取「啟用中的那間」——
+   * 排序讓 active 的排後面，後寫入的會贏。
+   */
+  const { data: props } = await supabase
+    .from('properties').select('id, name, estate_id, airbnb_listing_id, active')
+    .order('active', { ascending: true });
+  const byListing: Record<string, PropRef> = {};
+  const staleOnly: Record<string, string> = {};   // listing → 只對到停用房源
+  for (const p of props ?? []) {
+    if (!p.airbnb_listing_id) continue;
+    const key = String(p.airbnb_listing_id);
+    if (p.active) byListing[key] = { id: p.id, name: p.name, estate_id: p.estate_id };
+    else if (!staleOnly[key]) staleOnly[key] = p.name;
   }
 
-  // 去重: 以 order_key(=confirmation_code) 比對既有。既有→只更新金額/來源/日期等,保留人工欄位(paid/deposit/account/押金/外幣/移房)
-  const codes = records.map((r) => r.order_key);
-  const existRows: any[] = [];
+  // 既有訂單：一次抓齊決策需要的欄位
+  const codes = items.map((m) => String(m.code)).filter(Boolean);
+  const existRows: Existing[] = [];
   for (let i = 0; i < codes.length; i += 400) {
-    const { data } = await supabase.from('orders').select('order_key').in('order_key', codes.slice(i, i + 400));
-    existRows.push(...(data ?? []));
+    const { data } = await supabase.from('orders')
+      .select('order_key, source, property_id, property_raw, guest_name, checkin, checkout, amount, paid')
+      .in('order_key', codes.slice(i, i + 400));
+    existRows.push(...((data ?? []) as Existing[]));
   }
-  const existing = new Set(existRows.map((e) => e.order_key));
+  const byCode = new Map(existRows.map((e) => [e.order_key, e]));
 
-  let inserted = 0, updated = 0;
-  const toInsert = records.filter((r) => !existing.has(r.order_key));
-  const toUpdate = records.filter((r) => existing.has(r.order_key));
+  // ── 決策 ────────────────────────────────────────
+  const results = items.map((m) =>
+    decide(m, byCode.get(String(m.code)) ?? null,
+      m.listingId ? byListing[String(m.listingId)] ?? null : null));
+  const s = summarize(results);
+
+  // ── 寫回去 ──────────────────────────────────────
+  const toInsert = results
+    .map((r) => r.decision).filter((d) => d.kind === 'insert')
+    .map((d) => (d as Extract<typeof d, { kind: 'insert' }>).row);
+
+  let inserted = 0;
   for (let i = 0; i < toInsert.length; i += 200) {
-    const { error } = await supabase.from('orders').insert(toInsert.slice(i, i + 200));
+    const chunk = toInsert.slice(i, i + 200);
+    const { error } = await supabase.from('orders').insert(chunk);
     if (error) return NextResponse.json({ error: error.message, inserted }, { status: 500, headers: CORS });
-    inserted += Math.min(200, toInsert.length - i);
-  }
-  for (const r of toUpdate) {
-    const { error } = await supabase.from('orders')
-      .update({ source: r.source, estate_id: r.estate_id, property_id: r.property_id, property_raw: r.property_raw,
-                guest_name: r.guest_name, checkin: r.checkin, checkout: r.checkout, nights: r.nights, amount: r.amount, fee_type: r.fee_type })
-      .eq('order_key', r.order_key);
-    if (!error) updated++;
+    inserted += chunk.length;
   }
 
-  // 取消且無收入:作廢既有訂單。
-  // 只動 paid=false 的列 —— 已收款的訂單一律不自動歸零,列進 needsAttention 交人工判斷,
-  // 否則會把實際已入帳的錢從營收裡憑空抹掉。
-  let voided = 0;
-  const needsAttention: string[] = [];
-  if (cancelledZero.length) {
-    const rows: any[] = [];
-    for (let i = 0; i < cancelledZero.length; i += 400) {
-      const { data } = await supabase.from('orders')
-        .select('order_key, paid, source')
-        .in('order_key', cancelledZero.slice(i, i + 400));
-      rows.push(...(data ?? []));
-    }
-    for (const r of rows) {
-      if (r.source === 'airbnb_cancelled') continue; // 已作廢過,不重複處理
-      if (r.paid) { needsAttention.push(r.order_key); continue; }
+  let updated = 0, voided = 0;
+  for (const { decision } of results) {
+    if (decision.kind === 'update') {
+      const { error } = await supabase.from('orders')
+        .update(decision.patch).eq('order_key', decision.code);
+      if (!error) updated++;
+    } else if (decision.kind === 'void') {
       const { error } = await supabase.from('orders')
         .update({ source: 'airbnb_cancelled', amount: 0, fee_type: null, note: 'Airbnb 已取消,無收入' })
-        .eq('order_key', r.order_key);
+        .eq('order_key', decision.code);
       if (!error) voided++;
     }
   }
 
   /*
-   * 匯入完成後發一則聚合通知。
+   * 只有真的新增才發通知。
    *
-   * **一則,不是每筆一則** —— 這裡一次可能進 200 筆,每筆一則的話手機會叮到沒人想看。
-   * 只有真的新增才發:更新既有訂單（改日期、改金額）不是「有新生意」,
-   * 每天同步都會有一堆更新,那種通知很快就會被當成雜訊而整個關掉。
+   * 更新既有訂單（改日期、改金額）每天都有一堆，每筆一則的話
+   * 手機會叮到沒人想看 —— 那種通知很快就會被整個關掉，
+   * 連真正重要的那則也一起失效。
    */
   if (inserted > 0) {
     await notifyImport('orders', '新增訂單',
       `爬蟲同步新增 ${inserted} 筆訂單`, '/shortterm');
   }
 
+  /*
+   * 房源不一致的清單就是「對照表該怎麼搬」的作業。
+   * 附上 listing 目前只對到哪個停用房源 —— 那通常就是元兇。
+   */
+  const propDiffs = s.diffs.filter((d) => d.field === '房源').map((d) => ({
+    ...d, 停用對照: d.listingId ? staleOnly[d.listingId] ?? null : null,
+  }));
+
   return NextResponse.json({
-    received: items.length, inserted, updated, byCategory: cat,
-    dedupedExisting: updated, unmatched, skippedNoRevenue: skipped.length,
-    voided, cancelledNoRevenue: cancelledZero.length, needsAttention,
+    received: items.length,
+    inserted, updated, voided,
+    skipped: s.skipped,
+    unmatched: s.unmatched,
+    /** listing 只對到停用的房源 —— 這些要到 /admin 把 listing_id 搬到現行房源 */
+    staleListings: Object.entries(s.unmatched)
+      .filter(([lid]) => staleOnly[lid])
+      .map(([lid, n]) => ({ listingId: lid, 停用房源: staleOnly[lid], 筆數: n })),
+    /** 已收款卻顯示取消 —— 不自動歸零，要人工判斷 */
+    needsAttention: s.attention,
+    /** 爬蟲想改但被擋下來的（房源、姓名），以及已經改掉的日期 */
+    差異: {
+      房源: propDiffs,
+      房客姓名: s.diffs.filter((d) => d.field === '房客姓名'),
+      住宿起訖已更新: s.diffs.filter((d) => d.field === '住宿起訖'),
+    },
   }, { headers: CORS });
 }
