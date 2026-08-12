@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { getPosition, punchUi, hhmm, type GeoFail } from '@/lib/punch';
+import { dayPhase, taipeiHour, workedText } from '@/lib/day-phase';
 import {
   twToday, dayStatus, monthSummary, monthRange, shiftMonth, type ReportRow,
 } from '@/lib/attendance-ui';
@@ -30,22 +31,37 @@ const DOW = ['日', '一', '二', '三', '四', '五', '六'];
  * 停住的時間讓人不確定畫面是不是活的，然後他會重新整理一次再按。
  * 秒數在跳是「這台機器在運作」最便宜的證據。
  */
-function Clock() {
+/**
+ * 每秒跳一次的現在時間。
+ *
+ * 掛載後才設 —— SSR 算出來的時間跟瀏覽器一定對不上，
+ * React 會丟 hydration 警告，而且使用者會看到時間閃一下。
+ */
+function useNow() {
   const [now, setNow] = useState<Date | null>(null);
   useEffect(() => {
-    setNow(new Date());                                   // 掛載後才設，避免 SSR 與瀏覽器對不上
+    setNow(new Date());
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
+  return now;
+}
+
+function Clock({ now }: { now: Date | null }) {
   const f = (d: Date) => d.toLocaleTimeString('zh-TW', {
     hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Taipei',
   });
   return (
     <>
-      <div className="text-4xl md:text-5xl font-bold tabular-nums tracking-tight text-white">
-        {now ? f(now) : '--:--:--'}
+      {/* 秒數用小一號並降透明度 —— 它一直在動，跟時分同樣大會一直搶注意力，
+          而看時間的人要的是「幾點幾分」 */}
+      <div className="text-5xl md:text-6xl font-bold tabular-nums tracking-tight text-white leading-none">
+        {now ? f(now).slice(0, 5) : '--:--'}
+        <span className="text-2xl md:text-3xl font-semibold text-white/50 ml-1">
+          {now ? f(now).slice(5) : ':--'}
+        </span>
       </div>
-      <div className="text-xs text-white/70 mt-1">
+      <div className="text-xs text-white/70 mt-2">
         {now ? now.toLocaleDateString('zh-TW', {
           year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short', timeZone: 'Asia/Taipei',
         }) : ''}
@@ -78,9 +94,11 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
 
   // 以整月為單位。歷史紀錄就是往前翻月份 —— 「近 30 天」永遠跨兩個月，
   // 而薪資與請假額度都是按月結的，兩邊對不起來。
-  const now = new Date();
-  const [[y, m], setYm] = useState<[number, number]>([now.getFullYear(), now.getMonth() + 1]);
-  const isThisMonth = y === now.getFullYear() && m === now.getMonth() + 1;
+  // 這個只用來決定「預設顯示哪個月」,不需要每秒跳 —— 跟下面每秒更新的
+  // useNow() 分開,免得整張月曆每秒重算一次
+  const today0 = new Date();
+  const [[y, m], setYm] = useState<[number, number]>([today0.getFullYear(), today0.getMonth() + 1]);
+  const isThisMonth = y === today0.getFullYear() && m === today0.getMonth() + 1;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -137,6 +155,14 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
   } : null);
   // 有座標的物業才算「可以打卡」—— 沒設座標的不該讓人以為能打
   const ready = estates.filter((e) => e.active && e.gps_lat != null && e.gps_lng != null);
+  const now = useNow();
+  // 時段決定卡片的漸層與問候語。now 還沒好（第一次算繪）時先當下午，
+  // 免得閃一下深色再變淺色。
+  const phase = dayPhase(now ? taipeiHour(now) : 13);
+  // 打完上班、還沒打下班時才顯示「已工作多久」
+  const worked = today?.in_at && !today?.out_at
+    ? workedText(hhmm(today.in_at), now ?? new Date()) : '';
+
   const sum = monthSummary(rows, d, firstDay);
   const shown = onlyTodo ? rows.filter((r) => dayStatus(r, d, firstDay).tone === 'bad') : rows;
 
@@ -152,20 +178,36 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
       )}
 
       {/* ── 打卡鐘 ─────────────────────────────────── */}
-      <div className="relative rounded-2xl overflow-hidden bg-gradient-to-br from-mor-slate to-mor-slatedark
-                      shadow-sm px-4 py-5 sm:px-5 sm:py-6 md:flex md:items-center md:gap-8">
+      {/*
+        【時段配色】
+        顏色如果只是裝飾，它就只是裝飾。跟著時段換之後這張卡多帶了一個
+        真的資訊：一眼看得出現在是早上還是晚上 —— 而打卡的人正是在確認
+        「現在幾點、我算不算遲到」。
+      */}
+      <div className={`relative rounded-3xl overflow-hidden shadow-lg shadow-black/5
+                       px-5 py-6 sm:px-7 sm:py-7 md:flex md:items-center md:gap-8
+                       transition-[background-image] duration-1000 ${phase.gradient}`}>
         {/*
           兩顆模糊的白色圓形。
           純色塊在大面積時看起來很平，加一點光暈之後才像一張「卡片」而不是一個 div。
           pointer-events-none —— 它們蓋在按鈕上方，不擋掉點擊。
         */}
-        <div aria-hidden className="pointer-events-none absolute -top-16 -right-10 w-56 h-56
-                                    rounded-full bg-white/10 blur-2xl" />
-        <div aria-hidden className="pointer-events-none absolute -bottom-20 left-10 w-40 h-40
-                                    rounded-full bg-white/5 blur-2xl" />
+        <div aria-hidden className="pointer-events-none absolute -top-20 -right-12 w-64 h-64
+                                    rounded-full bg-white/20 blur-3xl" />
+        <div aria-hidden className="pointer-events-none absolute -bottom-24 left-4 w-48 h-48
+                                    rounded-full bg-white/10 blur-3xl" />
+        {/* 右下角一個大圖示壓在光暈裡 —— 那是「這是什麼時段」的第二個訊號 */}
+        <div aria-hidden className="pointer-events-none absolute -right-4 -bottom-6
+                                    text-[7rem] leading-none opacity-15 select-none">
+          {phase.icon}
+        </div>
 
         <div className="relative text-center md:text-left md:flex-1">
-          <Clock />
+          {/* 問候語帶名字 —— 這張卡是「他的」，不是一個公用面板 */}
+          <div className="text-sm font-medium text-white/85 mb-2">
+            {phase.icon} {phase.greeting}{me.name ? `，${me.name}` : ''}
+          </div>
+          <Clock now={now} />
           {/*
             【為什麼兩欄要固定寬高】
             「遲到 135 分」只會出現在上班那一欄。用條件渲染的話：
@@ -174,13 +216,22 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
             所以兩欄都固定寬度、警告那一行永遠佔位（沒有就放空字串），
             版面在打卡前後長得一模一樣。
           */}
-          <div className="flex items-start justify-center md:justify-start gap-4 mt-3">
+          {/* 已工作多久。只在「打了上班、還沒打下班」時出現 ——
+              那正是這個數字唯一有意義的時候。固定高度,不然打卡瞬間版面會跳 */}
+          <div className="h-4 mt-2 text-[13px] font-medium text-white/85 tabular-nums">
+            {worked || ' '}
+          </div>
+
+          <div className="flex items-start justify-center md:justify-start gap-3 mt-3">
             {([['上班', today?.in_at, today?.late_min, '遲到'],
                ['下班', today?.out_at, today?.early_min, '早退']] as const).map(([lb, at, mins, warn]) => (
-              <div key={lb} className="w-[6.5rem] shrink-0 text-center md:text-left">
-                <div className="text-[11px] text-white/60 leading-none">{lb}</div>
+              // 做成小膠囊而不是裸文字 —— 卡片變亮之後,半透明的白字
+              // 在漸層上會糊掉,有底色才讀得清楚
+              <div key={lb} className="w-[7rem] shrink-0 rounded-xl bg-black/15 backdrop-blur-sm
+                                       px-3 py-2 text-center md:text-left">
+                <div className="text-[11px] text-white/70 leading-none">{lb}</div>
                 <div className={`text-lg font-semibold tabular-nums leading-tight mt-1 ${
-                  at ? 'text-white' : 'text-white/30'}`}>
+                  at ? 'text-white' : 'text-white/35'}`}>
                   {hhmm(at)}
                 </div>
                 <div className="text-[11px] text-amber-200 leading-none h-3 mt-1 truncate">
@@ -192,21 +243,37 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
         </div>
 
         {/* 手機上要好按 —— 打卡是站著單手操作的動作 */}
-        <div className="relative mt-4 md:mt-0 md:w-56">
+        {/*
+          維持整條寬、高 64px —— 打卡是站著單手操作的動作。
+          膠囊 ＋ 右邊一個圓形箭頭：圓形是「可以按」最直覺的形狀，
+          但只有圓形沒有字的話沒人知道按下去會發生什麼,所以兩個都要。
+        */}
+        <div className="relative mt-5 md:mt-0 md:w-60">
           {ui.action ? (
             <button onClick={() => doPunch(ui.action!)} disabled={busy || !ready.length}
-              className="w-full h-16 rounded-xl bg-white text-mor-slate text-lg font-bold
-                         hover:bg-white/90 active:scale-[0.99] transition disabled:opacity-40">
-              {busy ? '定位中…' : ui.label}
+              className="group w-full h-16 rounded-full bg-white text-mor-slate
+                         pl-6 pr-2 flex items-center justify-between gap-3
+                         shadow-lg shadow-black/10
+                         hover:shadow-xl active:scale-[0.98] transition
+                         disabled:opacity-40 disabled:active:scale-100">
+              <span className="text-lg font-bold">{busy ? '定位中…' : ui.label}</span>
+              <span aria-hidden
+                className={`w-12 h-12 shrink-0 rounded-full flex items-center justify-center
+                            text-white text-xl transition-transform
+                            group-hover:translate-x-0.5 ${phase.gradient}`}>
+                {busy ? '⏳' : '→'}
+              </span>
             </button>
           ) : (
-            <div className="w-full h-16 rounded-xl bg-white/15 text-white
-                            flex items-center justify-center text-base font-semibold">
-              ✓ {ui.label}
+            <div className="w-full h-16 rounded-full bg-white/20 backdrop-blur-sm text-white
+                            border border-white/25
+                            flex items-center justify-center gap-2 text-base font-semibold">
+              <span className="w-7 h-7 rounded-full bg-white/25 flex items-center justify-center text-sm">✓</span>
+              {ui.label}
             </div>
           )}
           {ui.hint && (
-            <div className="text-[11px] text-white/60 mt-2 text-center">{ui.hint}</div>
+            <div className="text-[11px] text-white/70 mt-2 text-center">{ui.hint}</div>
           )}
         </div>
       </div>
@@ -223,7 +290,7 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
             disabled={isThisMonth}
             className="rounded-lg border border-mor-line bg-white w-9 h-9 hover:bg-mor-sand/60 disabled:opacity-30">›</button>
           {!isThisMonth && (
-            <button onClick={() => setYm([now.getFullYear(), now.getMonth() + 1])}
+            <button onClick={() => setYm([today0.getFullYear(), today0.getMonth() + 1])}
               className="ml-1 rounded-lg border border-mor-line bg-white px-3 h-9 text-xs hover:bg-mor-sand/60">
               本月
             </button>
