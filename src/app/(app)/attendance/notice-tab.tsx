@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { BTN, BTN2, CARD, INPUT, noRowsMsg, type Announcement, type TabProps } from './types';
+import { noticeContentChanged } from '@/lib/notice';
 
 /**
  * 公告。
@@ -22,6 +23,9 @@ export default function NoticeTab({ me, isAdmin, onMsg }: TabProps) {
   const [open, setOpen] = useState<string | null>(null);
   const [unread, setUnread] = useState<Record<string, string[]>>({});
   const [editing, setEditing] = useState<Partial<Announcement> | null>(null);
+  /** 編輯前的原文。用來判斷內容是不是真的變了 —— 沒有這份就只能每次都問。 */
+  const [orig, setOrig] = useState<{ title: string; body: string } | null>(null);
+  const [renotify, setRenotify] = useState(false);
 
   const load = useCallback(async () => {
     const [{ data: an }, { data: rd }, { data: pf }] = await Promise.all([
@@ -56,6 +60,23 @@ export default function NoticeTab({ me, isAdmin, onMsg }: TabProps) {
     }
   }
 
+  /**
+   * 開始編輯。記下原文，並依「內容有沒有變」預設重新通知的勾選狀態。
+   * a = null 代表發布新公告。
+   */
+  function startEdit(a: Announcement | null) {
+    setEditing(a ?? { pinned: false, active: true });
+    setOrig(a ? { title: a.title, body: a.body } : null);
+    setRenotify(false);
+  }
+
+  // 內容真的變了才顯示「重新通知」—— 改置頂、改上下架不該問這個問題
+  const changed = noticeContentChanged(orig, {
+    title: editing?.title ?? '', body: editing?.body ?? '',
+  });
+  // 內容一變就自動勾起來；使用者可以取消（改錯字就不用驚動全公司）
+  useEffect(() => { setRenotify(changed); }, [changed]);
+
   async function save() {
     if (!editing) return;
     if (!editing.title?.trim() || !editing.body?.trim()) {
@@ -71,8 +92,25 @@ export default function NoticeTab({ me, isAdmin, onMsg }: TabProps) {
     const { data, error } = await q.select('id');
     if (error) return onMsg('存不進去：' + error.message, true);
     if (!data?.length) return onMsg(noRowsMsg('公告'), true);
-    onMsg(editing.id ? '已更新' : '已發布');
-    setEditing(null); load();
+
+    /*
+     * 重新通知 = 清掉已讀，大家的畫面會再出現未讀圓點。
+     *
+     * 走 RPC 而不是直接 delete：announcement_reads 沒有 DELETE 政策，
+     * 被 RLS 擋掉的 delete 不會報錯、只影響 0 列 ——
+     * 畫面會說「已重新通知」而實際上沒有人被通知到。
+     */
+    let extra = '';
+    if (editing.id && renotify) {
+      const { data: rr, error: re } = await supabase.rpc(
+        'reset_announcement_reads', { p_ann: editing.id });
+      const res = rr as { ok?: boolean; message?: string } | null;
+      if (re) extra = '（但重新通知失敗：' + re.message + '）';
+      else if (!res?.ok) extra = '（但重新通知失敗：' + (res?.message ?? '未知原因') + '）';
+      else extra = '，' + res.message;
+    }
+    onMsg((editing.id ? '已更新' : '已發布') + extra, extra.startsWith('（但'));
+    setEditing(null); setOrig(null); load();
   }
 
   const visible = list.filter((a) => a.active || isAdmin);
@@ -80,7 +118,7 @@ export default function NoticeTab({ me, isAdmin, onMsg }: TabProps) {
   return (
     <div className="space-y-3">
       {isAdmin && !editing && (
-        <button onClick={() => setEditing({ pinned: false, active: true })} className={BTN}>
+        <button onClick={() => startEdit(null)} className={BTN}>
           發布公告
         </button>
       )}
@@ -105,12 +143,23 @@ export default function NoticeTab({ me, isAdmin, onMsg }: TabProps) {
                 顯示中
               </label>
             )}
+            {/* 只有內容真的變了才出現。改置頂、改上下架不需要問這個問題 */}
+            {editing.id && changed && (
+              <label className="flex items-center gap-1.5">
+                <input type="checkbox" checked={renotify}
+                  onChange={(e) => setRenotify(e.target.checked)} />
+                重新通知（清掉已讀）
+              </label>
+            )}
             <div className="flex-1" />
-            <button onClick={() => setEditing(null)} className={BTN2}>取消</button>
+            <button onClick={() => { setEditing(null); setOrig(null); }} className={BTN2}>取消</button>
             <button onClick={save} className={BTN}>{editing.id ? '儲存' : '發布'}</button>
           </div>
-          <div className="text-xs text-gray-400">
-            不要的公告請取消「顯示中」，不要刪除 —— 公告是講過的話，刪掉之後爭議就沒有證據。
+          <div className="text-xs text-gray-400 space-y-1">
+            <div>不要的公告請取消「顯示中」，不要刪除 —— 公告是講過的話，刪掉之後爭議就沒有證據。</div>
+            {editing.id && changed && (
+              <div>改了開會時間這種要讓大家重看的，就勾「重新通知」；只是修錯字的話取消勾選。</div>
+            )}
           </div>
         </div>
       )}
@@ -147,7 +196,7 @@ export default function NoticeTab({ me, isAdmin, onMsg }: TabProps) {
                     </div>
                     {isAdmin && (
                       <div className="mt-3 flex flex-wrap items-center gap-2">
-                        <button onClick={() => setEditing(a)} className={BTN2}>編輯</button>
+                        <button onClick={() => startEdit(a)} className={BTN2}>編輯</button>
                         {/* 未讀名單而不是已讀人數 —— 人數只能說「有人沒讀」，
                             名單才能讓你去敲那個人 */}
                         <span className="text-xs text-gray-500">
