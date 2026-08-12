@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { getPosition, punchUi, hhmm, type GeoFail } from '@/lib/punch';
-import { dayPhase, taipeiHour, workedText } from '@/lib/day-phase';
+import { dayPhase, taipeiHour, workedText, type CardInk } from '@/lib/day-phase';
 import {
   twToday, dayStatus, monthSummary, monthRange, shiftMonth, type ReportRow,
 } from '@/lib/attendance-ui';
@@ -47,7 +47,7 @@ function useNow() {
   return now;
 }
 
-function Clock({ now }: { now: Date | null }) {
+function Clock({ now, ink }: { now: Date | null; ink: CardInk }) {
   const f = (d: Date) => d.toLocaleTimeString('zh-TW', {
     hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Taipei',
   });
@@ -55,13 +55,13 @@ function Clock({ now }: { now: Date | null }) {
     <>
       {/* 秒數用小一號並降透明度 —— 它一直在動，跟時分同樣大會一直搶注意力，
           而看時間的人要的是「幾點幾分」 */}
-      <div className="text-5xl md:text-6xl font-bold tabular-nums tracking-tight text-white leading-none">
+      <div className={`text-5xl md:text-6xl font-bold tabular-nums tracking-tight leading-none ${ink.strong}`}>
         {now ? f(now).slice(0, 5) : '--:--'}
-        <span className="text-2xl md:text-3xl font-semibold text-white/50 ml-1">
+        <span className={`text-2xl md:text-3xl font-semibold ml-1 ${ink.faint}`}>
           {now ? f(now).slice(5) : ':--'}
         </span>
       </div>
-      <div className="text-xs text-white/70 mt-2">
+      <div className={`text-xs mt-2 ${ink.dim}`}>
         {now ? now.toLocaleDateString('zh-TW', {
           year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short', timeZone: 'Asia/Taipei',
         }) : ''}
@@ -159,6 +159,7 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
   // 時段決定卡片的漸層與問候語。now 還沒好（第一次算繪）時先當下午，
   // 免得閃一下深色再變淺色。
   const phase = dayPhase(now ? taipeiHour(now) : 13);
+  const ink = phase.ink;   // 淺色底配墨色字、深色底配白字
   // 打完上班、還沒打下班時才顯示「已工作多久」
   const worked = today?.in_at && !today?.out_at
     ? workedText(hhmm(today.in_at), now ?? new Date()) : '';
@@ -184,30 +185,43 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
         真的資訊：一眼看得出現在是早上還是晚上 —— 而打卡的人正是在確認
         「現在幾點、我算不算遲到」。
       */}
-      <div className={`relative rounded-3xl overflow-hidden shadow-lg shadow-black/5
+      {/*
+        陰影往下而不是四周散開（shadow-black/20 ＋ 位移），加上一圈
+        內縮的白色細邊 —— 深色卡片沒有邊界的話，邊緣會跟背景糊在一起，
+        看起來像一塊色塊而不是一張浮起來的卡。
+      */}
+      <div className={`relative rounded-3xl overflow-hidden
+                       shadow-[0_12px_32px_-12px_rgba(46,56,64,0.28)]
+                       ${ink.edge}
                        px-5 py-6 sm:px-7 sm:py-7 md:flex md:items-center md:gap-8
                        transition-[background-image] duration-1000 ${phase.gradient}`}>
         {/*
           兩顆模糊的白色圓形。
           純色塊在大面積時看起來很平，加一點光暈之後才像一張「卡片」而不是一個 div。
+
+          底色降飽和之後這兩顆要跟著調淡（20%→10%）—— 原本的亮度是拿來
+          對抗螢光紫的，放在暮色紫上就變成兩塊看得出形狀的白斑。
+          光暈要讓人感覺得到、但看不出來。
+
           pointer-events-none —— 它們蓋在按鈕上方，不擋掉點擊。
         */}
-        <div aria-hidden className="pointer-events-none absolute -top-20 -right-12 w-64 h-64
-                                    rounded-full bg-white/20 blur-3xl" />
-        <div aria-hidden className="pointer-events-none absolute -bottom-24 left-4 w-48 h-48
-                                    rounded-full bg-white/10 blur-3xl" />
-        {/* 右下角一個大圖示壓在光暈裡 —— 那是「這是什麼時段」的第二個訊號 */}
-        <div aria-hidden className="pointer-events-none absolute -right-4 -bottom-6
-                                    text-[7rem] leading-none opacity-15 select-none">
+        <div aria-hidden className={`pointer-events-none absolute -top-20 -right-12 w-64 h-64
+                                    rounded-full blur-3xl ${ink.glow1}`} />
+        <div aria-hidden className={`pointer-events-none absolute -bottom-24 left-4 w-48 h-48
+                                    rounded-full blur-3xl ${ink.glow2}`} />
+        {/* 右下角一個大圖示壓在光暈裡 —— 那是「這是什麼時段」的第二個訊號。
+            淡到只剩輪廓：它是氣氛，不是要被讀的東西 */}
+        <div aria-hidden className={`pointer-events-none absolute -right-4 -bottom-6
+                                    text-[7rem] leading-none select-none ${ink.iconDim}`}>
           {phase.icon}
         </div>
 
         <div className="relative text-center md:text-left md:flex-1">
           {/* 問候語帶名字 —— 這張卡是「他的」，不是一個公用面板 */}
-          <div className="text-sm font-medium text-white/85 mb-2">
+          <div className={`text-sm font-medium mb-2 ${ink.soft}`}>
             {phase.icon} {phase.greeting}{me.name ? `，${me.name}` : ''}
           </div>
-          <Clock now={now} />
+          <Clock now={now} ink={ink} />
           {/*
             【為什麼兩欄要固定寬高】
             「遲到 135 分」只會出現在上班那一欄。用條件渲染的話：
@@ -218,7 +232,7 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
           */}
           {/* 已工作多久。只在「打了上班、還沒打下班」時出現 ——
               那正是這個數字唯一有意義的時候。固定高度,不然打卡瞬間版面會跳 */}
-          <div className="h-4 mt-2 text-[13px] font-medium text-white/85 tabular-nums">
+          <div className={`h-4 mt-2 text-[13px] font-medium tabular-nums ${ink.soft}`}>
             {worked || ' '}
           </div>
 
@@ -227,14 +241,14 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
                ['下班', today?.out_at, today?.early_min, '早退']] as const).map(([lb, at, mins, warn]) => (
               // 做成小膠囊而不是裸文字 —— 卡片變亮之後,半透明的白字
               // 在漸層上會糊掉,有底色才讀得清楚
-              <div key={lb} className="w-[7rem] shrink-0 rounded-xl bg-black/15 backdrop-blur-sm
-                                       px-3 py-2 text-center md:text-left">
-                <div className="text-[11px] text-white/70 leading-none">{lb}</div>
+              <div key={lb} className={`w-[7rem] shrink-0 rounded-xl px-3 py-2
+                                       backdrop-blur-sm text-center md:text-left ${ink.pill}`}>
+                <div className={`text-[11px] leading-none ${ink.dim}`}>{lb}</div>
                 <div className={`text-lg font-semibold tabular-nums leading-tight mt-1 ${
-                  at ? 'text-white' : 'text-white/35'}`}>
+                  at ? ink.strong : ink.faint}`}>
                   {hhmm(at)}
                 </div>
-                <div className="text-[11px] text-amber-200 leading-none h-3 mt-1 truncate">
+                <div className={`text-[11px] leading-none h-3 mt-1 truncate ${ink.warn}`}>
                   {!!mins && mins > 0 ? `${warn} ${mins} 分` : ' '}
                 </div>
               </div>
@@ -251,29 +265,29 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
         <div className="relative mt-5 md:mt-0 md:w-60">
           {ui.action ? (
             <button onClick={() => doPunch(ui.action!)} disabled={busy || !ready.length}
-              className="group w-full h-16 rounded-full bg-white text-mor-slate
+              className={`group w-full h-16 rounded-full ${ink.btn}
                          pl-6 pr-2 flex items-center justify-between gap-3
                          shadow-lg shadow-black/10
                          hover:shadow-xl active:scale-[0.98] transition
-                         disabled:opacity-40 disabled:active:scale-100">
+                         disabled:opacity-40 disabled:active:scale-100`}>
               <span className="text-lg font-bold">{busy ? '定位中…' : ui.label}</span>
               <span aria-hidden
                 className={`w-12 h-12 shrink-0 rounded-full flex items-center justify-center
-                            text-white text-xl transition-transform
-                            group-hover:translate-x-0.5 ${phase.gradient}`}>
+                            text-xl transition-transform group-hover:translate-x-0.5
+                            ${ink.arrow} ${phase.gradient}`}>
                 {busy ? '⏳' : '→'}
               </span>
             </button>
           ) : (
-            <div className="w-full h-16 rounded-full bg-white/20 backdrop-blur-sm text-white
-                            border border-white/25
-                            flex items-center justify-center gap-2 text-base font-semibold">
-              <span className="w-7 h-7 rounded-full bg-white/25 flex items-center justify-center text-sm">✓</span>
+            <div className={`w-full h-16 rounded-full backdrop-blur-sm border
+                            flex items-center justify-center gap-2 text-base font-semibold
+                            ${ink.done}`}>
+              <span className={`w-7 h-7 rounded-full flex items-center justify-center text-sm ${ink.pill}`}>✓</span>
               {ui.label}
             </div>
           )}
           {ui.hint && (
-            <div className="text-[11px] text-white/70 mt-2 text-center">{ui.hint}</div>
+            <div className={`text-[11px] mt-2 text-center ${ink.dim}`}>{ui.hint}</div>
           )}
         </div>
       </div>
