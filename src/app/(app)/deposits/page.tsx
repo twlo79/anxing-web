@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AddButton, ExportButton, ActionBar } from '@/components/Actions';
 import Req from '@/components/Req';
 import MoneyInput from '@/components/MoneyInput';
 import { missingFields, missingMessage } from '@/lib/required';
@@ -705,13 +706,11 @@ export default function DepositsPage() {
             <button onClick={clearFilters}
               className="rounded-lg border border-gray-300 px-3 py-1.5">清除</button>
           </div></label>
-        <div className="ml-auto flex gap-2">
-          <button onClick={() => setEdit(blankManual())}
-            className="rounded-lg border border-mor-slate text-mor-slate px-3 py-1.5 font-medium hover:bg-mor-sand/60">+ 手動新增</button>
+        <ActionBar>
+          <AddButton onClick={() => setEdit(blankManual())}>手動新增</AddButton>
+          <ExportButton onClick={exportXlsx} disabled={!sorted.length} />
           <TrashLink table="deposits" label="押金" />
-          <button onClick={exportXlsx} disabled={!sorted.length}
-            className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark disabled:opacity-40">⬇ 下載 Excel</button>
-        </div>
+        </ActionBar>
       </div>
 
       {/* 手機卡片 */}

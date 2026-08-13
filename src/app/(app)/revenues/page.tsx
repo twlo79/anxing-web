@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AddButton, ExportButton, ActionBar } from '@/components/Actions';
 import { AuditButton, AuditBadges, AuditSummary } from '@/components/Audit';
 import { auditOrders, type AuditOrder } from '@/lib/audit-orders';
 import FilterToggle from '@/components/FilterToggle';
@@ -624,7 +625,7 @@ export default function RevenuesPage() {
           <AuditButton on={audit}
             onToggle={() => { setAudit((v) => !v); setOnlyBad(false); }} />
           <div className="text-xs text-gray-400 pb-1.5">共 {filtered.length} 筆・${fmt(total)}</div>
-          <button onClick={exportXlsx} disabled={!filtered.length} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark disabled:opacity-40">⬇ 下載 Excel</button>
+          <ExportButton onClick={exportXlsx} disabled={!filtered.length} />
         </div>
       </div>
 

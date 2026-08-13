@@ -398,7 +398,7 @@ export default function HousekeepingPage() {
           <button onClick={() => setImportOpen(true)}
             className="rounded-lg border border-mor-slate text-mor-slate px-3 py-1.5 text-sm font-medium hover:bg-mor-sand/60">⬆ 匯入排班</button>
           <button onClick={exportXlsx} disabled={!items.length}
-            className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium hover:bg-mor-slatedark disabled:opacity-40">⬇ 下載 Excel</button>
+            className="rounded-lg border border-mor-line bg-white px-4 py-1.5 text-sm font-medium hover:bg-mor-sand/60 disabled:opacity-40">⬇ 下載 Excel</button>
         </div>
       </div>
 

@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AddButton, ExportButton, ActionBar } from '@/components/Actions';
 import Req from '@/components/Req';
 import MoneyInput from '@/components/MoneyInput';
 import { missingFields, missingMessage } from '@/lib/required';
@@ -487,10 +488,8 @@ export default function ExpensesPage() {
             className="text-gray-500 underline pb-1.5">清除</button>}
         <div className="ml-auto flex items-end gap-2">
           <div className="text-xs text-gray-400 pb-1.5">共 {rows.length.toLocaleString()} 筆</div>
-          <button onClick={exportXlsx} disabled={!rows.length}
-            className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 disabled:opacity-40">⬇ 下載 Excel</button>
-          <button onClick={() => setEdit(blank())}
-            className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 填寫支出</button>
+          <AddButton onClick={() => setEdit(blank())}>填寫支出</AddButton>
+          <ExportButton onClick={exportXlsx} disabled={!rows.length} />
           <TrashLink table="expenses" label="支出" />
         </div>
       </div>

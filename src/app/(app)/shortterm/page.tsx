@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AddButton, ExportButton, ActionBar } from '@/components/Actions';
 import { AuditButton, AuditBadges, AuditSummary } from '@/components/Audit';
 import { auditOrders, type AuditOrder } from '@/lib/audit-orders';
 import Req from '@/components/Req';
@@ -712,8 +713,8 @@ export default function ShortTermPage() {
         <div className="ml-auto flex items-end gap-3">
           <AuditButton on={audit} onToggle={toggleAudit} busy={auditBusy} />
           <div className="text-xs text-gray-400 pb-1.5">共 {total.toLocaleString()} 筆</div>
-          <button onClick={exportXlsx} disabled={exporting || !total} className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 disabled:opacity-40">{exporting ? '匯出中…' : '⬇ 下載 Excel'}</button>
-          <button onClick={() => openEdit(blank())} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 新增訂單</button>
+          <AddButton onClick={() => openEdit(blank())}>新增訂單</AddButton>
+          <ExportButton onClick={exportXlsx} disabled={!total} busy={exporting} />
           <TrashLink table="orders" label="訂單" />
         </div>
       </div>

@@ -1,5 +1,6 @@
 'use client';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AddButton, ExportButton, ActionBar } from '@/components/Actions';
 import Req, { ReqMark } from '@/components/Req';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
@@ -1381,7 +1382,7 @@ export default function PurchasesPage() {
               <button onClick={() => { setStF(''); setReqF(''); setEstateF(''); setMethodF(''); setKw(''); setKwIn(''); }}
                 className="flex-1 h-12 rounded-lg border border-mor-line text-gray-600">清除篩選</button>}
             <button onClick={exportXlsx} disabled={!sorted.length && !deps.length}
-              className="flex-1 h-12 rounded-lg border border-mor-line disabled:opacity-40">⬇ Excel</button>
+              className="flex-1 h-12 rounded-lg border border-mor-line disabled:opacity-40">⬇ 下載 Excel</button>
           </div>
         </div>
       </details>
@@ -1422,11 +1423,11 @@ export default function PurchasesPage() {
           <button onClick={() => { setStF(''); setReqF(''); setEstateF(''); setMethodF(''); setKw(''); setKwIn(''); }} className="text-gray-500 underline pb-1.5">清除</button>}
         <div className="ml-auto flex items-end gap-2">
           <div className="text-xs text-gray-400 pb-1.5">共 {sorted.length.toLocaleString()} 筆</div>
-          <button onClick={exportXlsx} disabled={!rows.length && !deps.length}
-            className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 disabled:opacity-40">⬇ 下載 Excel</button>
+          <AddButton onClick={openNew}>填寫請款</AddButton>
+          {/* 採購單是外部表單,不是本站的新增 —— 用次要樣式,不跟「填寫請款」搶 */}
           <a href={PURCHASE_FORM_URL} target="_blank" rel="noreferrer"
-            className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60">+ 採購單</a>
-          <button onClick={openNew} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 填寫請款</button>
+            className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 whitespace-nowrap">+ 採購單</a>
+          <ExportButton onClick={exportXlsx} disabled={!rows.length && !deps.length} />
           <TrashLink table="purchase_requests" label="請款單" />
         </div>
       </div>

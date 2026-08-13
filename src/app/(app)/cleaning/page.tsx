@@ -236,7 +236,7 @@ export default function CleaningPage() {
                 className="flex-1 h-12 rounded-lg border border-mor-line text-gray-600">清除篩選</button>
             )}
             <button onClick={exportCsv} disabled={exporting || total === 0}
-              className="flex-1 h-12 rounded-lg border border-mor-line disabled:opacity-40">{exporting ? '匯出中…' : '⬇ CSV'}</button>
+              className="flex-1 h-12 rounded-lg border border-mor-line disabled:opacity-40">{exporting ? '匯出中…' : '⬇ 下載 CSV'}</button>
           </div>
         </div>
       </details>
@@ -288,7 +288,7 @@ export default function CleaningPage() {
             className="rounded-lg border border-mor-line bg-white px-3 py-1.5 font-medium hover:bg-mor-sand/60">📋 管家檢查表</a>
           <a href={FORM_ROOMSERVICE} target="_blank" rel="noreferrer"
             className="rounded-lg border border-mor-line bg-white px-3 py-1.5 font-medium hover:bg-mor-sand/60">🧹 房務清潔表</a>
-          <button onClick={exportCsv} disabled={exporting || total === 0} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark disabled:opacity-40">{exporting ? '匯出中…' : '⬇ 下載 CSV'}</button>
+          <button onClick={exportCsv} disabled={exporting || total === 0} className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 disabled:opacity-40">{exporting ? '匯出中…' : '⬇ 下載 CSV'}</button>
         </div>
       </div>
 

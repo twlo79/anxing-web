@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AddButton, ExportButton, ActionBar } from '@/components/Actions';
 import Req from '@/components/Req';
 import MoneyInput from '@/components/MoneyInput';
 import { checkContractRequired } from '@/lib/order-check';
@@ -692,10 +693,8 @@ export default function ContractsPage() {
         active={!!(estateFilter || cadFilter || typeFilter || statusFilter || fromD || toD || kw)}
         right={<>
           <FilterCount n={filtered.length} />
-          <button onClick={exportXlsx} disabled={!filtered.length}
-            className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 disabled:opacity-40">⬇ 下載 Excel</button>
-          <button onClick={() => openEdit(blank())}
-            className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 新增契約</button>
+          <AddButton onClick={() => openEdit(blank())}>新增契約</AddButton>
+          <ExportButton onClick={exportXlsx} disabled={!filtered.length} />
           <TrashLink table="contracts" label="契約" />
         </>}>
         <FilterSelect label="物業" value={estateFilter} onChange={setEstateFilter}
