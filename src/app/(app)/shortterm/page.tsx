@@ -8,7 +8,7 @@ import FilterToggle from '@/components/FilterToggle';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, type SortState } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
-import { FEE_TYPES } from '@/lib/fee-types';
+import { FEE_TYPES, ONEOFF_FEE_TYPES } from '@/lib/fee-types';
 import { ONEOFF_LABEL } from '@/lib/revenue-report';
 import RecurringPanel from '@/components/RecurringPanel';
 import OrderPayments from '@/components/OrderPayments';
@@ -669,7 +669,7 @@ export default function ShortTermPage() {
           {/* 房租 vs 一次性費用。個別科目縮排在下面,一眼看得出是它的細項 */}
           <label className="block text-xs text-gray-500 mb-1">費用類別</label>
           <select value={feeF} onChange={(e) => setFeeF(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
-            {feeFilterOptions(FEE_TYPES).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            {feeFilterOptions(ONEOFF_FEE_TYPES).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </div>
         <div>
@@ -1007,7 +1007,8 @@ export default function ShortTermPage() {
                   <select value={edit.fee_type ?? ''} onChange={(e) => setEdit({ ...edit, fee_type: e.target.value || null })}
                     className="rounded-lg border border-gray-300 px-2 py-1.5">
                     <option value="">—</option>
-                    {FEE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                    {/* 這裡才有保證金 —— 加費與定期收費用的是不含它的那份 */}
+                    {ONEOFF_FEE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                   </select>
                 </label>
               )}

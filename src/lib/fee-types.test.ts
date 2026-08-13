@@ -1,6 +1,42 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { FEE_TYPES, FEE_DEFAULT, CONTRACT_FEE_PRESETS, feeLabel } from './fee-types.ts';
+import {
+  FEE_TYPES, ONEOFF_FEE_TYPES, ONEOFF_ONLY_FEE_TYPES,
+  FEE_DEFAULT, CONTRACT_FEE_PRESETS, feeLabel,
+} from './fee-types.ts';
+
+test('★★ 保證金只出現在一次性收入,不在共用清單裡', () => {
+  // 共用清單是「會重複發生的費用」:加費、契約固定加費、定期收費。
+  // 保證金是一次性事件（違約沒收、履約保證金轉列收入）——
+  // 讓它出現在「每月自動產生」的選單上,那個選項存在本身就是在邀請人填錯
+  assert.ok(!FEE_TYPES.includes('保證金' as never), '加費與定期收費不該選得到');
+  assert.ok(ONEOFF_FEE_TYPES.includes('保證金' as never), '一次性收入要選得到');
+});
+
+test('★ 一次性收入的清單包含共用的全部科目', () => {
+  // 少一個的話,那個科目在一次性收入就填不了 —— 而它們本來都填得了
+  for (const t of FEE_TYPES) {
+    assert.ok(ONEOFF_FEE_TYPES.includes(t as never), `${t} 不見了`);
+  }
+});
+
+test('★ 兩份清單的「其他」都在最後', () => {
+  assert.equal(FEE_TYPES[FEE_TYPES.length - 1], '其他');
+  assert.equal(ONEOFF_FEE_TYPES[ONEOFF_FEE_TYPES.length - 1], '其他');
+});
+
+test('保證金沒有重複出現', () => {
+  assert.equal(ONEOFF_FEE_TYPES.filter((t) => t === '保證金').length, 1);
+  assert.equal(ONEOFF_ONLY_FEE_TYPES.length, 1);
+});
+
+test('★ 只有一次性收入才有的科目,不能出現在契約固定加費的預設裡', () => {
+  // 契約固定加費是每期自動產生的,選了保證金會變成「每個月沒收一次保證金」
+  for (const p of CONTRACT_FEE_PRESETS) {
+    assert.ok(!ONEOFF_ONLY_FEE_TYPES.includes(p.fee_type as never),
+      `${p.label} 用了只屬於一次性收入的科目`);
+  }
+});
 
 test('新科目已加入,且「其他」永遠在最後', () => {
   assert.ok(FEE_TYPES.includes('停車費' as never));
