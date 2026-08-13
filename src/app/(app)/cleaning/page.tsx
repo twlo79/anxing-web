@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import * as XLSX from 'xlsx-js-style';
 import { createClient } from '@/lib/supabase';
 
 type Estate = { id: string; name: string; sort: number };
@@ -90,18 +91,22 @@ export default function CleaningPage() {
       all.push(...b);
       if (b.length < 1000) break;
     }
+    /*
+     * 【為什麼從 CSV 改成 Excel】
+     * 按鈕寫「下載 Excel」而檔案是 .csv 的話，使用者雙擊打開會是記事本，
+     * 或是 Excel 把中文吃成亂碼 —— 名字對不上檔案是最沒必要的困惑。
+     * 全站的匯出統一成 .xlsx，格式與其他頁一致。
+     */
     const header = ['記錄日', '物業', '房源', '填寫人', '身分', '備註', '表單'];
-    const lines = [header.join(',')];
-    for (const r of all) lines.push([
-      r.record_date, r.estate_name, r.property_raw, r.staff_name, TYPE_LABEL[r.staff_type || 'other'],
-      r.note ?? '', r.doc_url ?? '',
-    ].map(csvEsc).join(','));
-    const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `清潔紀錄_${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    const aoa = [header, ...all.map((r) => [
+      r.record_date, r.estate_name, r.property_raw, r.staff_name,
+      TYPE_LABEL[r.staff_type || 'other'], r.note ?? '', r.doc_url ?? '',
+    ])];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{ wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 8 }, { wch: 40 }, { wch: 30 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '清潔紀錄');
+    XLSX.writeFile(wb, `清潔紀錄_${new Date().toISOString().slice(0, 10)}.xlsx`);
     setExporting(false);
   }
 
@@ -236,7 +241,7 @@ export default function CleaningPage() {
                 className="flex-1 h-12 rounded-lg border border-mor-line text-gray-600">清除篩選</button>
             )}
             <button onClick={exportCsv} disabled={exporting || total === 0}
-              className="flex-1 h-12 rounded-lg border border-mor-line disabled:opacity-40">{exporting ? '匯出中…' : '⬇ 下載 CSV'}</button>
+              className="flex-1 h-12 rounded-lg border border-mor-line disabled:opacity-40">{exporting ? '匯出中…' : '⬇ 下載 Excel'}</button>
           </div>
         </div>
       </details>
@@ -288,7 +293,7 @@ export default function CleaningPage() {
             className="rounded-lg border border-mor-line bg-white px-3 py-1.5 font-medium hover:bg-mor-sand/60">📋 管家檢查表</a>
           <a href={FORM_ROOMSERVICE} target="_blank" rel="noreferrer"
             className="rounded-lg border border-mor-line bg-white px-3 py-1.5 font-medium hover:bg-mor-sand/60">🧹 房務清潔表</a>
-          <button onClick={exportCsv} disabled={exporting || total === 0} className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 disabled:opacity-40">{exporting ? '匯出中…' : '⬇ 下載 CSV'}</button>
+          <button onClick={exportCsv} disabled={exporting || total === 0} className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 disabled:opacity-40">{exporting ? '匯出中…' : '⬇ 下載 Excel'}</button>
         </div>
       </div>
 

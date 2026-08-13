@@ -707,7 +707,7 @@ export default function DepositsPage() {
               className="rounded-lg border border-gray-300 px-3 py-1.5">清除</button>
           </div></label>
         <ActionBar>
-          <AddButton onClick={() => setEdit(blankManual())}>手動新增</AddButton>
+          <AddButton onClick={() => setEdit(blankManual())}>新增押金</AddButton>
           <ExportButton onClick={exportXlsx} disabled={!sorted.length} />
           <TrashLink table="deposits" label="押金" />
         </ActionBar>

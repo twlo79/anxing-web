@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ReqMark } from '@/components/Req';
 import { createClient } from '@/lib/supabase';
 import { BTN, BTN2, CARD, INPUT, noRowsMsg, type Announcement, type TabProps } from './types';
 import { noticeContentChanged } from '@/lib/notice';
@@ -125,11 +126,23 @@ export default function NoticeTab({ me, isAdmin, onMsg }: TabProps) {
 
       {editing && (
         <div className={`${CARD} p-4 space-y-3`}>
-          <input placeholder="標題" value={editing.title ?? ''}
-            onChange={(e) => setEditing({ ...editing, title: e.target.value })} className={INPUT} />
-          <textarea placeholder="內容" rows={6} value={editing.body ?? ''}
-            onChange={(e) => setEditing({ ...editing, body: e.target.value })}
-            className={`${INPUT} leading-relaxed`} />
+          {/*
+            標題與內容都是必填（save 那邊本來就擋「標題與內容都要填」）——
+            但畫面上一直看不出來,使用者是按了送出才知道。
+            提示字在 placeholder 裡塞不進元件,所以星號貼在框線左上角。
+          */}
+          <div className="relative">
+            <ReqMark />
+            <input placeholder="標題" value={editing.title ?? ''}
+              onChange={(e) => setEditing({ ...editing, title: e.target.value })}
+              className={`${INPUT} w-full`} />
+          </div>
+          <div className="relative">
+            <ReqMark />
+            <textarea placeholder="內容" rows={6} value={editing.body ?? ''}
+              onChange={(e) => setEditing({ ...editing, body: e.target.value })}
+              className={`${INPUT} w-full leading-relaxed`} />
+          </div>
           <div className="flex flex-wrap items-center gap-4 text-sm">
             <label className="flex items-center gap-1.5">
               <input type="checkbox" checked={!!editing.pinned}

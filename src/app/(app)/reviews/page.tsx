@@ -170,24 +170,34 @@ export default function ReviewsPage() {
       all.push(...batch);
       if (batch.length < 1000) break;
     }
+    /*
+     * 【為什麼從 CSV 改成 Excel】
+     * 按鈕寫「下載 Excel」而檔案是 .csv 的話，使用者雙擊打開會是記事本，
+     * 或是 Excel 把中文吃成亂碼。評價的留言常常很長又帶換行，
+     * 那正是 CSV 最容易壞掉的地方 —— 一個沒跳好的換行就會把整份表格切歪。
+     */
     const header = ['入住日','退房日','物業','房源','旅客','負責人','總評','留言','原文','語言','入住','清潔','準確','溝通','位置','性價比','私下回饋','房東回覆','review_id'];
-    const lines = [header.join(',')];
+    const aoa: (string | number | null)[][] = [header];
     for (const r of all) {
       const p = r.property_id ? propById[r.property_id] : null;
       const e = p?.estate_id ? estateById[p.estate_id] : null;
-      lines.push([
+      aoa.push([
         r.checkin_date, r.checkout_date, e?.name ?? '', p?.name ?? '', r.guest_name, e?.manager ?? '',
         r.overall_rating, displayComment(r), r.comment_original, r.comment_language,
         r.rating_checkin, r.rating_cleanliness, r.rating_accuracy, r.rating_communication, r.rating_location, r.rating_value,
         r.detail_comments?.private_feedback ?? '', r.host_reply ?? '', r.airbnb_review_id,
-      ].map(csvEsc).join(','));
+      ]);
     }
-    const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `評價匯出_${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [
+      { wch: 11 }, { wch: 11 }, { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 10 }, { wch: 6 },
+      { wch: 50 }, { wch: 50 }, { wch: 6 },
+      { wch: 6 }, { wch: 6 }, { wch: 6 }, { wch: 6 }, { wch: 6 }, { wch: 8 },
+      { wch: 40 }, { wch: 40 }, { wch: 14 },
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '評價');
+    XLSX.writeFile(wb, `評價匯出_${new Date().toISOString().slice(0, 10)}.xlsx`);
     setExporting(false);
   }
 
@@ -454,7 +464,7 @@ export default function ReviewsPage() {
           <div className="text-xs text-gray-400 pb-1.5">共 {total.toLocaleString()} 筆</div>
           <button onClick={exportCsv} disabled={exporting || total === 0}
             className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark disabled:opacity-40">
-            {exporting ? '匯出中…' : '⬇ 下載 CSV'}
+            {exporting ? '匯出中…' : '⬇ 下載 Excel'}
           </button>
         </div>
       </div>

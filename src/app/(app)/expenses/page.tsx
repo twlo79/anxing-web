@@ -488,7 +488,7 @@ export default function ExpensesPage() {
             className="text-gray-500 underline pb-1.5">清除</button>}
         <div className="ml-auto flex items-end gap-2">
           <div className="text-xs text-gray-400 pb-1.5">共 {rows.length.toLocaleString()} 筆</div>
-          <AddButton onClick={() => setEdit(blank())}>填寫支出</AddButton>
+          <AddButton onClick={() => setEdit(blank())}>新增支出</AddButton>
           <ExportButton onClick={exportXlsx} disabled={!rows.length} />
           <TrashLink table="expenses" label="支出" />
         </div>

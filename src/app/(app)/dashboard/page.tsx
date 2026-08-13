@@ -32,6 +32,15 @@ import {
 type Rev = {
   ym: string; source: string; estate_id: string | null; property_id: string | null;
   month_amount: number; fee_type: string | null;
+  /**
+   * 這一列屬於哪一張訂單。
+   *
+   * 【為什麼算筆數一定要用它】
+   * 一列 = 一個月的認列，一筆跨三個月的訂單就有三列。
+   * 直接數列數的話「訂單數」會被長租撐大好幾倍，
+   * 而那個數字看起來完全正常 —— 沒有人會發現它算的是月份不是訂單。
+   */
+  order_id: string | null;
 };
 type Exp = {
   id: string;
@@ -189,7 +198,7 @@ export default function DashboardPage() {
      */
     const [rv, ex, od, r5, es, pr, cd, pd] = await Promise.all([
       fetchAll<Rev>((f, t) => supabase.from('revenue_recognitions')
-        .select('ym, source, estate_id, property_id, month_amount, fee_type')
+        .select('ym, source, estate_id, property_id, month_amount, fee_type, order_id')
         .gte('ym', ymOf(fromD)).lte('ym', ymOf(toD)).range(f, t)),
       fetchAll<Exp>((f, t) => supabase.from('expenses')
         .select('id, spent_on, amount, account_code, estate_id, property_id, purpose_type, item_name, starred, deferred, gross_amount, parent_expense_id')
@@ -378,6 +387,27 @@ export default function DashboardPage() {
     rows.forEach((r) => { const k = key(r); m[k] = (m[k] ?? 0) + val(r); });
     return Object.entries(m).sort((a, b) => b[1] - a[1]);
   };
+
+  /**
+   * 每一組有幾張訂單。
+   *
+   * **一定要用 order_id 去重**：一列 = 一個月的認列，
+   * 一筆跨三個月的長租就有三列。數列數的話那個數字會被長租撐大好幾倍，
+   * 而它看起來完全正常 —— 沒有人會發現算的是月份不是訂單。
+   *
+   * order_id 是空的（舊資料）就退回用那一列自己當一筆，寧可多算也不要少算。
+   */
+  const groupCount = (rows: Rev[], key: (r: Rev) => string): Record<string, number> => {
+    const seen: Record<string, Set<string>> = {};
+    rows.forEach((r, i) => {
+      const k = key(r);
+      (seen[k] ??= new Set()).add(r.order_id ?? `__row${i}`);
+    });
+    return Object.fromEntries(Object.entries(seen).map(([k, v]) => [k, v.size]));
+  };
+  const cntBySource = useMemo(() => groupCount(fRevs, (r) => r.source), [fRevs]);
+  const cntByEstate = useMemo(
+    () => groupCount(fRevs, (r) => estKey(r.estate_id, r.property_id)), [fRevs, estKey]);
 
   const revBySource = useMemo(
     () => groupSum(fRevs, (r) => r.source, (r) => Number(r.month_amount || 0)), [fRevs]);
@@ -605,10 +635,21 @@ export default function DashboardPage() {
         const cnt = (n: number) => `${nf(n)} 筆`;
 
         /** 明細列（依來源／依物業共用）—— 兩邊長得不一樣的話會被當成兩種東西 */
-        const sub = (key: string, name: string, cur: number, prev: number, yoy: number) => (
+        const sub = (key: string, name: string, cur: number, prev: number, yoy: number, n?: number) => (
           <tr key={key} className="border-b border-mor-line/60 last:border-0">
             <td className="px-3 py-2 pl-6 text-gray-600 whitespace-nowrap">{name}</td>
-            <td className="px-3 py-2 text-right font-semibold whitespace-nowrap tabular-nums">{money(cur)}</td>
+            {/*
+              金額後面接筆數。
+              「長租 4,802 萬」一個人回答不了「這是幾張約撐起來的」——
+              一張大單跟四十張小單的意義完全不同,而只看金額分不出來。
+              筆數用灰色小字,不跟金額搶。
+            */}
+            <td className="px-3 py-2 text-right whitespace-nowrap tabular-nums">
+              <span className="font-semibold">{money(cur)}</span>
+              {n !== undefined && (
+                <span className="text-gray-400 font-normal ml-1.5 text-xs">｜{nf(n)} 筆</span>
+              )}
+            </td>
             <td className="px-3 py-2 text-right text-gray-500 whitespace-nowrap tabular-nums">{money(prev)}</td>
             <td className="px-3 py-2 text-right whitespace-nowrap tabular-nums">{delta(cur, prev)}</td>
             {!sameYoY && <>
@@ -662,7 +703,7 @@ export default function DashboardPage() {
                   {row('訂單數', fOrds.length, cmp.prev.ordN, cmp.yoy.ordN, cnt)}
                   <tr><td colSpan={sameYoY ? 4 : 6} className="px-3 pt-3 pb-1 text-xs font-semibold text-gray-500">依來源</td></tr>
                   {/* 總營收成長時,要看得出是哪一塊在撐 —— 可能長租在漲而短租在退 */}
-                  {revBySource.map(([k, v]) => sub(k, srcLabel(k), v, cmp.prev.bySource[k] ?? 0, cmp.yoy.bySource[k] ?? 0))}
+                  {revBySource.map(([k, v]) => sub(k, srcLabel(k), v, cmp.prev.bySource[k] ?? 0, cmp.yoy.bySource[k] ?? 0, cntBySource[k] ?? 0))}
 
                   {/*
                     【依物業】
@@ -678,7 +719,7 @@ export default function DashboardPage() {
                       依物業<span className="ml-1.5 font-normal text-gray-400">只列營運中的物業</span>
                     </td></tr>
                   )}
-                  {revByEstateCmp.map(({ key, name, cur, prev, yoy }) => sub(key, name, cur, prev, yoy))}
+                  {revByEstateCmp.map(({ key, name, cur, prev, yoy }) => sub(key, name, cur, prev, yoy, cntByEstate[key] ?? 0))}
                 </tbody>
               </table>
             </div>
