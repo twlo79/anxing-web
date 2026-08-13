@@ -83,11 +83,14 @@ const AUDIT_SKIP = new Set(['updated_at', 'created_at', 'id']);
  */
 const SYNC_TIERS: { level: string; tone: string; fields: string; why: string }[] = [
   { level: '一律更新', tone: 'bg-mor-bluelight text-mor-slate',
-    fields: '取消狀態、住宿起訖',
-    why: '這兩個只有 Airbnb 知道,而且不跟著改會直接算錯:取消的單會繼續算進營收,日期錯了營收會攤在錯的月份。' },
+    fields: '取消（金額歸零）、訂單狀態、住宿起訖',
+    why: '這三個不管有沒有人工改過都照做。原則是「會讓營收變小的自動套用」—— 少算有人會發現,多算不會:一筆已取消的訂單躺在營收裡看起來完全正常。住宿起訖兩個方向都更新,理由是行事曆:縮住不更新會推掉真訂單,延住不更新會重複出租。' },
   { level: '只在空的時候填', tone: 'bg-amber-50 text-amber-800',
     fields: '金額、房源、房客姓名',
-    why: '這三個我們會手動修正,爬蟲不該贏。不一致會列進下面的清單 —— 只是不覆蓋的話,對照表永遠是錯的。' },
+    why: '這三個我們會手動修正,爬蟲不該贏。不一致列進下面的清單 —— 只是不覆蓋的話,對照表永遠是錯的。' },
+  { level: '人改過就完全不填', tone: 'bg-red-50 text-red-600',
+    fields: '上面那三個,只要這筆被人工編輯過',
+    why: '連空的都不填 —— 那個空可能就是他刻意清掉的。系統從編輯紀錄判斷,而且是回溯的:2026-08 之前改的一樣算數。' },
   { level: '完全不碰', tone: 'bg-mor-greenlight text-mor-green',
     fields: '收款、押金、帳號、備註、發票、移房',
     why: '這些是人的判斷與金流紀錄,爬蟲沒有任何依據可以動它們。' },

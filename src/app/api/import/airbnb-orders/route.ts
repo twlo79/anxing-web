@@ -33,7 +33,19 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'no service key' }, { status: 500, headers: CORS });
   const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY);
 
-  const items: Incoming[] = (await req.json()).reservations ?? [];
+  const body = await req.json();
+  const items: Incoming[] = body.reservations ?? [];
+  /*
+   * 試算模式：算出「會做什麼」，但一個字都不寫。
+   *
+   * 【為什麼需要】
+   * 補對帳要掃全部歷史訂單，而那批裡面有很多是當初刻意沒匯入的
+   * （很久以前的取消單之類）。正常模式會把它們通通新增進來 ——
+   * 為了查金額而多出幾百筆訂單，那個代價比原本的問題還大。
+   *
+   * 試算模式讓「先看看」跟「真的做」變成兩件事。
+   */
+  const dryRun = body.dryRun === true;
   if (!items.length) return NextResponse.json({ upserted: 0 }, { headers: CORS });
 
   /*
@@ -60,14 +72,40 @@ export async function POST(req: Request) {
 
   // 既有訂單：一次抓齊決策需要的欄位
   const codes = items.map((m) => String(m.code)).filter(Boolean);
-  const existRows: Existing[] = [];
+  const existRows: (Existing & { id: string })[] = [];
   for (let i = 0; i < codes.length; i += 400) {
     const { data } = await supabase.from('orders')
-      .select('order_key, source, property_id, property_raw, guest_name, checkin, checkout, amount, paid')
+      .select('id, order_key, source, property_id, property_raw, guest_name, checkin, checkout, amount, paid')
       .in('order_key', codes.slice(i, i + 400));
-    existRows.push(...((data ?? []) as Existing[]));
+    existRows.push(...((data ?? []) as (Existing & { id: string })[]));
   }
-  const byCode = new Map(existRows.map((e) => [e.order_key, e]));
+
+  /*
+   * 哪些訂單被人工改過。
+   *
+   * 【為什麼查 data_audit，而不是在 orders 加一個欄位】
+   * 那張表已經是這件事的真相 —— 「誰在什麼時候改了什麼」本來就記在那裡。
+   * 另開一個欄位等於同一件事有兩個來源，而兩個來源遲早會不一致
+   * （補資料、批次修正、直接下 SQL…都會漏掉其中一個）。
+   *
+   * 而且查 data_audit 是**回溯的**：2026-08 之前的人工修改一樣算數，
+   * 不需要先跑一支 migration 去回填。
+   *
+   * user_id is not null 就代表是人 —— 服務金鑰與排程寫入時 auth.uid() 是 null。
+   */
+  const editedIds = new Set<string>();
+  const allIds = existRows.map((e) => e.id);
+  for (let i = 0; i < allIds.length; i += 400) {
+    const { data } = await supabase.from('data_audit')
+      .select('record_id')
+      .eq('table_name', 'orders').eq('action', 'update')
+      .not('user_id', 'is', null)
+      .in('record_id', allIds.slice(i, i + 400));
+    for (const r of data ?? []) if (r.record_id) editedIds.add(String(r.record_id));
+  }
+
+  const byCode = new Map(existRows.map((e) =>
+    [e.order_key, { ...e, manually_edited: editedIds.has(e.id) }]));
 
   // ── 決策 ────────────────────────────────────────
   const results = items.map((m) =>
@@ -81,15 +119,24 @@ export async function POST(req: Request) {
     .map((d) => (d as Extract<typeof d, { kind: 'insert' }>).row);
 
   let inserted = 0;
-  for (let i = 0; i < toInsert.length; i += 200) {
-    const chunk = toInsert.slice(i, i + 200);
-    const { error } = await supabase.from('orders').insert(chunk);
-    if (error) return NextResponse.json({ error: error.message, inserted }, { status: 500, headers: CORS });
-    inserted += chunk.length;
+  if (dryRun) {
+    inserted = toInsert.length;      // 「會新增幾筆」，但不寫
+  } else {
+    for (let i = 0; i < toInsert.length; i += 200) {
+      const chunk = toInsert.slice(i, i + 200);
+      const { error } = await supabase.from('orders').insert(chunk);
+      if (error) return NextResponse.json({ error: error.message, inserted }, { status: 500, headers: CORS });
+      inserted += chunk.length;
+    }
   }
 
   let updated = 0, voided = 0;
   for (const { decision } of results) {
+    if (dryRun) {
+      if (decision.kind === 'update') updated++;
+      else if (decision.kind === 'void') voided++;
+      continue;
+    }
     if (decision.kind === 'update') {
       const { error } = await supabase.from('orders')
         .update(decision.patch).eq('order_key', decision.code);
@@ -112,7 +159,7 @@ export async function POST(req: Request) {
    * 內文列出每一筆的金額／房源／房客／期間（金額在最前面）——
    * 「新增 3 筆訂單」那種通知沒有一個字能幫你決定要不要點進去。
    */
-  if (inserted > 0) {
+  if (inserted > 0 && !dryRun) {
     const lines = toInsert.map((r) => orderLine({
       amount: Number(r.amount) || 0,
       property: r.property_raw == null ? null : String(r.property_raw),
@@ -141,11 +188,13 @@ export async function POST(req: Request) {
    *
    * 寫失敗不影響匯入本身 —— 資料已經進去了，回報不該讓排程以為要重跑。
    */
-  const { error: logErr } = await supabase.rpc('record_sync_run', {
+  // 試算不寫流水帳,也不動待辦清單 —— 否則「先看看」會把正式那份蓋掉
+  const { error: logErr } = dryRun ? { error: null } : await supabase.rpc('record_sync_run', {
     p_kind: 'orders',
     p_counts: {
       received: items.length, inserted, updated, voided, skipped: s.skipped,
       detail: {
+        人工編輯過: existRows.filter((e) => editedIds.has(e.id)).length,
         金額不一致: s.diffs.filter((d) => d.field === '金額').length,
         房源不一致: propDiffs.length,
         房客姓名不同: s.diffs.filter((d) => d.field === '房客姓名').length,
@@ -159,6 +208,7 @@ export async function POST(req: Request) {
   if (logErr) console.error('[sync] 同步紀錄寫入失敗（匯入本身不受影響）:', logErr.message);
 
   return NextResponse.json({
+    dryRun,
     received: items.length,
     inserted, updated, voided,
     skipped: s.skipped,
@@ -170,6 +220,8 @@ export async function POST(req: Request) {
     /** 已收款卻顯示取消 —— 不自動歸零，要人工判斷 */
     needsAttention: s.attention,
     /** 爬蟲想改但被擋下來的（房源、姓名），以及已經改掉的日期 */
+    /** 人工編輯過、因此完全沒被碰的訂單數 */
+    人工編輯過: existRows.filter((e) => editedIds.has(e.id)).length,
     差異: {
       金額: s.diffs.filter((d) => d.field === '金額'),
       房源: propDiffs,

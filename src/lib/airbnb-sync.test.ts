@@ -80,6 +80,85 @@ test('★ Erin 那筆的實際數字', () => {
   if (decision.kind === 'insert') assert.equal(decision.row.amount, 175799.56);
 });
 
+/* ── 人碰過的不動，但有三個例外 ──────────────── */
+
+const edited = (o: Partial<Existing> = {}) => ex({ manually_edited: true, ...o });
+
+test('★ 人工改過的金額不會被動,只列進差異', () => {
+  const { decision, diffs } = decide(inc({ earnings: 99999 }), edited(), PROP_A15);
+  if (decision.kind === 'update') assert.equal(decision.patch.amount, undefined);
+  assert.ok(diffs.find((d) => d.field === '金額'));
+});
+
+test('★ 人工改過的房源與姓名也不會被動', () => {
+  const { decision, diffs } = decide(
+    inc({ guest: '別人' }), edited({ guest_name: '我填的' }), PROP_OLD);
+  if (decision.kind === 'update') {
+    assert.equal(decision.patch.property_id, undefined);
+    assert.equal(decision.patch.guest_name, undefined);
+  }
+  assert.ok(diffs.find((d) => d.field === '房源'));
+  assert.ok(diffs.find((d) => d.field === '房客姓名'));
+});
+
+test('★ 人改過但欄位是空的,也不自動填', () => {
+  // 那個空可能就是他刻意清掉的。「幫他補回去」跟「把他改的蓋掉」
+  // 對使用者來說是同一件事
+  const { decision } = decide(
+    inc(), edited({ amount: null, property_id: null, guest_name: '' }), PROP_A15);
+  if (decision.kind === 'update') {
+    assert.equal(decision.patch.amount, undefined);
+    assert.equal(decision.patch.property_id, undefined);
+    assert.equal(decision.patch.guest_name, undefined);
+  }
+});
+
+test('★★ 例外一：取消照樣作廢,不管人有沒有改過', () => {
+  // 最貴的失效方式是「某人改過一筆,之後房客取消,那筆永遠留在營收裡」。
+  // 會讓營收變小的自動套用 —— 少算有人會發現,多算不會
+  const { decision } = decide(
+    inc({ statusKey: 'canceled_by_guest', earnings: 0, cohost: 0 }), edited(), PROP_A15);
+  assert.equal(decision.kind, 'void');
+});
+
+test('★★ 例外二：住宿起訖照樣更新,縮住與延住都是', () => {
+  // 理由跟營收無關,是行事曆:縮住不更新,系統以為房間還有人,會推掉真訂單;
+  // 延住不更新,行事曆說房間是空的而實際有人住 —— 那會重複出租
+  for (const [end, nights] of [['2026-07-03', 2], ['2026-07-20', 19]] as const) {
+    const { decision } = decide(inc({ end, nights }), edited(), PROP_A15);
+    assert.equal(decision.kind, 'update', `${end} 應該要更新`);
+    if (decision.kind === 'update') {
+      assert.equal(decision.patch.checkout, end);
+      assert.equal(decision.patch.nights, nights);
+    }
+  }
+});
+
+test('★★ 例外三：訂單狀態照樣更新', () => {
+  const { decision } = decide(
+    inc({ statusKey: 'canceled', earnings: 3000 }), edited({ source: 'airbnb' }), PROP_A15);
+  if (decision.kind === 'update') assert.equal(decision.patch.source, 'oneoff');
+});
+
+test('人工改過的已收款取消單仍然交人工', () => {
+  const { decision } = decide(
+    inc({ statusKey: 'canceled', earnings: 0, cohost: 0 }),
+    edited({ paid: true }), PROP_A15);
+  assert.equal(decision.kind, 'attention');
+});
+
+test('人改過但什麼都沒變 → 不送 update', () => {
+  const { decision, diffs } = decide(inc(), edited(), PROP_A15);
+  assert.equal(decision.kind, 'skip');
+  assert.deepEqual(diffs, []);
+});
+
+test('沒有 manually_edited 旗標時照原本的規則走', () => {
+  // 欄位是選填的。漏傳時不能整個系統變成「什麼都不填」
+  const { decision } = decide(inc({ earnings: 25000 }), ex({ amount: null }), PROP_A15);
+  if (decision.kind === 'update') assert.equal(decision.patch.amount, 25000);
+});
+
 /* ── 這一次改版的重點：不再重複建立 ──────────── */
 
 test('★ 房客改名不會變成第二筆訂單', () => {
