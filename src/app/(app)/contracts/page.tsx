@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Req from '@/components/Req';
 import MoneyInput from '@/components/MoneyInput';
 import { checkContractRequired } from '@/lib/order-check';
 import Toast from '@/components/Toast';
@@ -60,21 +61,6 @@ const SORT_COLS: SortCols<any> = {
   deposit: { type: 'number', get: (c) => c.deposit },
   start_date: { type: 'date', get: (c) => c.start_date },
 };
-
-/**
- * 必填星號。
- *
- * 星號一開始就有（「這格待會要填」的預告），紅框只在按過儲存之後才出現
- * （「你漏了」的判決）—— 空白表單一打開就整片紅，那不是提示是指責。
- */
-function Req() {
-  return (
-    <>
-      <span aria-hidden className="text-red-500 ml-0.5">*</span>
-      <span className="sr-only">必填</span>
-    </>
-  );
-}
 
 export default function ContractsPage() {
   const supabase = useMemo(() => createClient(), []);

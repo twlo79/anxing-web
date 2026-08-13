@@ -1,5 +1,8 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Req from '@/components/Req';
+import MoneyInput from '@/components/MoneyInput';
+import { missingFields, missingMessage } from '@/lib/required';
 import { createClient } from '@/lib/supabase';
 import { fetchAll } from '@/lib/fetch-all';
 import { FEE_TYPES } from '@/lib/fee-types';
@@ -129,10 +132,26 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
     };
   }
 
+  /** 按過儲存了沒 —— 紅框只在他表達「我填完了」之後才出現 */
+  const [tried, setTried] = useState(false);
+  /*
+   * 缺哪些必填。
+   *
+   * 金額不在裡面 —— 這張表單的「預設金額」本來就可以是 0：
+   * 水費、電費那種每月變動的項目，就是先產生出來再逐月填。
+   * 那不是漏填，是這個功能的用法。
+   */
+  const missing = edit ? missingFields([
+    { label: '物業', value: edit.estate_id },
+    { label: '項目', value: edit.item_name },
+    { label: '起始月', value: edit.start_ym },
+  ]) : [];
+  const err = (f: string) => tried && missing.includes(f);
+
   async function save() {
     if (!edit) return;
-    if (!edit.estate_id) return flash('請選物業');
-    if (!edit.item_name.trim()) return flash('請填項目名稱');
+    setTried(true);
+    if (missing.length) return flash(missingMessage(missing));
     setBusy('save');
     const payload = {
       estate_id: edit.estate_id, property_id: edit.property_id, property_raw: edit.property_raw,
@@ -144,7 +163,7 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
       : await supabase.from('recurring_charges').insert(payload);
     setBusy('');
     if (error) return flash('儲存失敗:' + error.message);
-    setEdit(null); flash('已儲存,月份已產生'); load();
+    setEdit(null); setTried(false); flash('已儲存,月份已產生'); load();
   }
 
   async function del(r: Rc) {
@@ -267,9 +286,9 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
                                         o.paid ? 'border-mor-greenlight bg-mor-greenlight/30'
                                           : Number(o.amount) ? 'border-mor-line bg-white' : 'border-amber-300 bg-amber-50/60'}`}>
                                         <div className="text-[11px] text-gray-500">{ymShow(ymOfKey(o.order_key))}</div>
-                                        <input type="number" value={Number(o.amount) || ''} placeholder="0"
+                                        <MoneyInput value={Number(o.amount) || 0} placeholder="0"
                                           disabled={!canEdit || o.paid}
-                                          onChange={(e) => setAmount(o, parseFloat(e.target.value) || 0)}
+                                          onChange={(n) => setAmount(o, n)}
                                           className="w-20 rounded border border-gray-300 px-1 py-0.5 text-sm text-right disabled:bg-gray-100 disabled:text-gray-500" />
                                       </div>
                                     ))}
@@ -299,10 +318,10 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
               <button onClick={() => setEdit(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
             </div>
             <div className="px-6 py-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-              <label className="flex flex-col gap-1">物業
+              <label className="flex flex-col gap-1">物業<Req />
                 <select value={edit.estate_id}
                   onChange={(e) => setEdit({ ...edit, estate_id: e.target.value, property_id: null, property_raw: null })}
-                  className="rounded-lg border border-gray-300 px-2 py-1.5">
+                  className={`rounded-lg border px-2 py-1.5 ${err('物業') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}>
                   {estates.map((es) => <option key={es.id} value={es.id}>{es.name}</option>)}
                 </select></label>
               {/* 留白 = 整棟。垃圾代收、公區清潔本來就不屬於某一間房。 */}
@@ -323,23 +342,23 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
                   {FEE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                 </select></label>
               {/* 自由輸入但提示用過的 —— 「洗衣機」跟「洗衣機費」會變成報表上兩列 */}
-              <label className="flex flex-col gap-1">項目
+              <label className="flex flex-col gap-1">項目<Req />
                 <input list="rc-items" value={edit.item_name} placeholder="例:洗衣機"
                   onChange={(e) => setEdit({ ...edit, item_name: e.target.value })}
-                  className="rounded-lg border border-gray-300 px-2 py-1.5" />
+                  className={`rounded-lg border px-2 py-1.5 ${err('項目') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} />
                 <datalist id="rc-items">{usedItems.map((i) => <option key={i} value={i} />)}</datalist>
               </label>
               <label className="flex flex-col gap-1">預設金額
-                <input type="number" value={edit.amount || ''} placeholder="0"
-                  onChange={(e) => setEdit({ ...edit, amount: parseFloat(e.target.value) || 0 })}
-                  className="rounded-lg border border-gray-300 px-2 py-1.5" />
+                <MoneyInput value={edit.amount || 0}
+                  onChange={(n) => setEdit({ ...edit, amount: n })}
+                  className="rounded-lg border border-gray-300 px-2 py-1.5 text-right" />
                 <span className="text-xs text-gray-400">每月產生時帶的金額,之後可逐月改。變動的填 0 就好。</span>
               </label>
               <div className="grid grid-cols-2 gap-3">
-                <label className="flex flex-col gap-1">起始月
+                <label className="flex flex-col gap-1">起始月<Req />
                   <input type="month" value={edit.start_ym ? `${edit.start_ym.slice(0, 4)}-${edit.start_ym.slice(4)}` : ''}
                     onChange={(e) => setEdit({ ...edit, start_ym: e.target.value.replace('-', '') })}
-                    className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+                    className={`rounded-lg border px-2 py-1.5 ${err('起始月') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} /></label>
                 <label className="flex flex-col gap-1">結束月<span className="text-xs text-gray-400">(空=無限期)</span>
                   <input type="month" value={edit.end_ym ? `${edit.end_ym.slice(0, 4)}-${edit.end_ym.slice(4)}` : ''}
                     onChange={(e) => setEdit({ ...edit, end_ym: e.target.value ? e.target.value.replace('-', '') : null })}

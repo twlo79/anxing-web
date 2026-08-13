@@ -1,5 +1,8 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Req from '@/components/Req';
+import MoneyInput from '@/components/MoneyInput';
+import { missingFields, missingMessage } from '@/lib/required';
 import Toast from '@/components/Toast';
 import FilterToggle from '@/components/FilterToggle';
 import * as XLSX from 'xlsx-js-style';
@@ -295,6 +298,16 @@ export default function DepositsPage() {
    * 不清的話,「改收款帳號」就能在核可後把錢導到別的地方,兩票等於白審。
    * 跟請款單同一個道理。錢真的匯出去之後(returned_on)才不能再改。
    */
+  /** 按過「送出退款申請」了沒 —— 紅框只在他表達「我填完了」之後才出現 */
+  const [triedRefund, setTriedRefund] = useState(false);
+  /** 退款申請缺哪些欄位。訊息與紅框用同一份答案 */
+  const refundMissing = edit ? missingFields([
+    { label: '戶名', value: edit.payee_name },
+    { label: '房客收款帳號', value: edit.payee_account },
+    { label: '預計匯款日', value: edit.planned_refund_on },
+    { label: '安幸付款方式', value: edit.returned_method },
+  ]) : [];
+
   async function submitRefund() {
     if (!edit) return;
     const wasSubmitted = edit.refund_status === 'pending' || edit.refund_status === 'approved';
@@ -304,16 +317,14 @@ export default function DepositsPage() {
         ? '這筆退款已經核可通過。更新資訊會清掉核可票、退回重新送審,確定嗎?'
         : '這筆退款已經有人核可。更新資訊會清掉既有核可票並重新送審,確定嗎?'
     )) return;
-    if (!edit.payee_account?.trim()) return flash('請填房客收款帳號');
-    if (!edit.payee_name?.trim()) return flash('請填戶名');
-    if (!edit.planned_refund_on) return flash('請填預計匯款日');
-    if (!edit.returned_method) return flash('請選安幸付款方式');
+    setTriedRefund(true);
+    if (refundMissing.length) return flash(missingMessage(refundMissing));
     setSaving(true);
     const { error } = await supabase.from('deposits').update({
       refund_status: 'pending',
       payee_bank_code: edit.payee_bank_code?.trim() || null,
-      payee_name: edit.payee_name.trim(),
-      payee_account: edit.payee_account.trim(),
+      payee_name: (edit.payee_name ?? '').trim(),
+      payee_account: (edit.payee_account ?? '').trim(),
       planned_refund_on: edit.planned_refund_on,
       returned_method: edit.returned_method,
       returned_account: edit.returned_method !== 'cash' ? (edit.returned_account || null) : null,
@@ -325,7 +336,7 @@ export default function DepositsPage() {
     }).eq('id', edit.id);
     setSaving(false);
     if (error) return flash('送審失敗:' + error.message);
-    setEdit(null); flash(wasSubmitted ? '已更新並重新送審' : '已送出退款審核'); load();
+    setEdit(null); setTriedRefund(false); flash(wasSubmitted ? '已更新並重新送審' : '已送出退款審核'); load();
   }
 
   /** 投票。兩票到齊由觸發器翻成 approved,前端不自己算狀態。 */
@@ -397,14 +408,14 @@ export default function DepositsPage() {
       : await supabase.from('deposits').insert(payload);
     setSaving(false);
     if (error) return flash('儲存失敗:' + error.message);
-    setEdit(null); flash('已儲存'); load();
+    setEdit(null); setTriedRefund(false); flash('已儲存'); load();
   }
 
   async function del(d: Dep) {
     if (!confirm(`刪除這筆押金紀錄（${d.room ?? ''} ${d.guest_name ?? ''}）?\n\n會移到回收桶,可以復原。`)) return;
     const r = await softDelete(supabase, 'deposits', d.id);
     flash(r.message);
-    if (r.ok) { setEdit(null); setDetail(null); load(); }
+    if (r.ok) { setEdit(null); setTriedRefund(false); setDetail(null); load(); }
   }
 
   /**
@@ -959,9 +970,9 @@ export default function DepositsPage() {
                         className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5">
                         {['TWD', 'USD', 'JPY', 'CNY', 'EUR'].map((c) => <option key={c} value={c}>{c}</option>)}
                       </select></label>
-                    <label className="flex flex-col gap-1 flex-1 min-w-0"><span className="text-xs text-gray-500">押金金額 *</span>
-                      <input type="number" min="0" value={edit.amount || ''}
-                        onChange={(e) => setEdit({ ...edit, amount: e.target.value === '' ? 0 : Number(e.target.value) })}
+                    <label className="flex flex-col gap-1 flex-1 min-w-0"><span className="text-xs text-gray-500">押金金額<Req /></span>
+                      <MoneyInput value={edit.amount || 0}
+                        onChange={(n) => setEdit({ ...edit, amount: n })}
                         className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 text-right" /></label>
                   </div>
                 </div>
@@ -1071,6 +1082,7 @@ export default function DepositsPage() {
 
                     {/* 欄位跟請款頁的押金抽屜共用同一支元件,不會各自演化 */}
                     <RefundFields v={edit} payAccounts={payAccounts} currency={edit.currency}
+                      missing={triedRefund ? refundMissing : []}
                       onChange={(patch) => setEdit({ ...edit, ...patch })} />
 
                     <p className="text-xs text-gray-400 mt-2">

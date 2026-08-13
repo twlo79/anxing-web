@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Req from '@/components/Req';
 import Toast from '@/components/Toast';
 import FilterToggle from '@/components/FilterToggle';
 import * as XLSX from 'xlsx-js-style';
@@ -62,25 +63,6 @@ const SORT_DB_COL: Record<string, string> = {
   source: 'source', property_raw: 'property_raw', guest_name: 'guest_name',
   checkin: 'checkin', amount: 'amount', deposit: 'deposit', account: 'account',
 };
-
-/**
- * 必填星號。
- *
- * 【為什麼星號一開始就要有，紅框卻不要】
- * 星號是「這格待會要填」的預告；紅框是「你漏了」的判決。
- * 空白表單一打開就整片紅，那不是提示是指責 —— 他還沒做錯任何事。
- *
- * aria-hidden ＋ 旁邊的隱藏文字：讀螢幕的人聽到的是「必填」，
- * 不是「星號」—— 後者他得自己知道那代表什麼。
- */
-function Req() {
-  return (
-    <>
-      <span aria-hidden className="text-red-500 ml-0.5">*</span>
-      <span className="sr-only">必填</span>
-    </>
-  );
-}
 
 export default function ShortTermPage() {
   const supabase = useMemo(() => createClient(), []);
@@ -1043,7 +1025,7 @@ export default function ShortTermPage() {
                       <div key={i} className="flex flex-wrap items-center gap-2 bg-mor-sand/30 rounded-lg px-2 py-2">
                         <input type="date" value={f.date} onChange={(e) => updFee(i, { date: e.target.value })} className="rounded border border-gray-300 px-2 py-1 text-xs" />
                         <select value={f.type} onChange={(e) => updFee(i, { type: e.target.value })} className="rounded border border-gray-300 px-2 py-1 text-xs">{FEE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}</select>
-                        <input type="number" value={f.amount || ''} onChange={(e) => updFee(i, { amount: parseFloat(e.target.value) || 0 })} placeholder="費用" className="rounded border border-gray-300 px-2 py-1 text-xs w-24" />
+                        <MoneyInput value={f.amount || 0} onChange={(n) => updFee(i, { amount: n })} placeholder="費用" className="rounded border border-gray-300 px-2 py-1 text-xs w-24 text-right" />
                         <input value={f.note} onChange={(e) => updFee(i, { note: e.target.value })} placeholder="備註" className="rounded border border-gray-300 px-2 py-1 text-xs flex-1 min-w-[6rem]" />
                         <button type="button" onClick={() => delFee(i)} className="text-xs text-red-500 underline">刪除</button>
                       </div>

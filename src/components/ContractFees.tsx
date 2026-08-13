@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import MoneyInput from '@/components/MoneyInput';
 import { createClient } from '@/lib/supabase';
 import { CONTRACT_FEE_PRESETS, feeLabel } from '@/lib/fee-types';
 import { leaseMonths, feeMonthly, leasePeriods, periodOf, ymShow } from '@/lib/lease';
@@ -303,8 +304,8 @@ export default function ContractFees({
             </label>
             <label className="flex flex-col gap-1">
               <span className="text-[11px] text-gray-500">每期金額</span>
-              <input type="number" inputMode="numeric" value={draft.amount || ''} placeholder="0"
-                onChange={(e) => setDraft({ ...draft, amount: parseFloat(e.target.value) || 0 })}
+              <MoneyInput value={draft.amount || 0} placeholder="0"
+                onChange={(n) => setDraft({ ...draft, amount: n })}
                 className="h-11 md:h-8 rounded-lg border border-mor-line px-2 text-sm text-right bg-white" />
             </label>
             <label className="flex flex-col gap-1">

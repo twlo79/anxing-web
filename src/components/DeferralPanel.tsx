@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import MoneyInput from '@/components/MoneyInput';
 import { createClient } from '@/lib/supabase';
 import {
   checkDeferral, linesTotal, parentAmount, childLines,
@@ -181,8 +182,8 @@ export default function DeferralPanel({
             <div key={i} className="flex flex-wrap items-center gap-2">
               <input type="date" value={l.on} disabled={!canEdit}
                 onChange={(e) => upd(i, { on: e.target.value })} className={`${CTRL} flex-1 min-w-[9rem]`} />
-              <input type="number" inputMode="numeric" value={l.amount || ''} placeholder="0" disabled={!canEdit}
-                onChange={(e) => upd(i, { amount: parseFloat(e.target.value) || 0 })}
+              <MoneyInput value={l.amount || 0} placeholder="0" disabled={!canEdit}
+                onChange={(n) => upd(i, { amount: n })}
                 className={`${CTRL} w-28 text-right`} />
               {l.on === paidOn && <span className="text-[11px] text-gray-400">併入本筆</span>}
               {canEdit && lines.length > 1 && (

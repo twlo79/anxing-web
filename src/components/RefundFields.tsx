@@ -39,17 +39,29 @@ export type RefundPayAccount = { code: string; name: string; method: string };
 // 注意:`export { X } from '…'` 只轉發,不會讓 X 出現在本檔的作用域。
 // 這個元件自己下面也要用,所以 import 與 export 兩行都要有。
 import { METHOD_LABEL, METHOD_OPTS } from '@/lib/pay-method';
+import Req from '@/components/Req';
 export { METHOD_LABEL, METHOD_OPTS };
 
 const CTRL = 'h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5';
 
-export default function RefundFields({ v, onChange, payAccounts, currency }: {
+export default function RefundFields({ v, onChange, payAccounts, currency, missing = [] }: {
   v: RefundDraft;
   /** 只送變動的欄位,由呼叫端自己決定怎麼合併進 state */
   onChange: (patch: Partial<RefundDraft>) => void;
   payAccounts: RefundPayAccount[];
   currency?: string;
+  /**
+   * 按過送出之後還缺的欄位名稱。空陣列 = 還沒按過或已填齊。
+   *
+   * 由呼叫端傳進來而不是自己算 —— 這組欄位在押金頁與請款頁都用得到，
+   * 而「什麼時候開始顯示紅框」是各頁的流程決定的（有的頁按送出、
+   * 有的頁按核可），元件自己猜會猜錯。
+   */
+  missing?: string[];
 }) {
+  const err = (f: string) => missing.includes(f);
+  const cls = (f: string) =>
+    `${CTRL} ${err(f) ? 'border-red-400 bg-red-50' : ''}`;
   return (
     <>
       <div className="text-xs text-gray-400 mb-1.5">房客收款帳號</div>
@@ -58,24 +70,24 @@ export default function RefundFields({ v, onChange, payAccounts, currency }: {
           <input value={v.payee_bank_code ?? ''}
             onChange={(e) => onChange({ payee_bank_code: e.target.value })}
             placeholder="例:806" className={CTRL} /></label>
-        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">戶名 *</span>
+        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">戶名<Req /></span>
           <input value={v.payee_name ?? ''}
-            onChange={(e) => onChange({ payee_name: e.target.value })} className={CTRL} /></label>
-        <label className="flex flex-col gap-1 md:col-span-2"><span className="text-xs text-gray-500">帳號 *</span>
+            onChange={(e) => onChange({ payee_name: e.target.value })} className={cls('戶名')} /></label>
+        <label className="flex flex-col gap-1 md:col-span-2"><span className="text-xs text-gray-500">帳號<Req /></span>
           <input value={v.payee_account ?? ''}
-            onChange={(e) => onChange({ payee_account: e.target.value })} className={CTRL} /></label>
+            onChange={(e) => onChange({ payee_account: e.target.value })} className={cls('房客收款帳號')} /></label>
       </div>
 
       <div className="text-xs text-gray-400 mt-3 mb-1.5">安幸付款</div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">預計匯款日 *</span>
+        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">預計匯款日<Req /></span>
           <input type="date" value={v.planned_refund_on ?? ''}
-            onChange={(e) => onChange({ planned_refund_on: e.target.value || null })} className={CTRL} /></label>
-        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">安幸付款方式 *</span>
+            onChange={(e) => onChange({ planned_refund_on: e.target.value || null })} className={cls('預計匯款日')} /></label>
+        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">安幸付款方式<Req /></span>
           {/* 換方式就把帳號清掉 —— 留著上一個方式的帳號會匯錯地方 */}
           <select value={v.returned_method ?? ''}
             onChange={(e) => onChange({ returned_method: e.target.value || null, returned_account: null })}
-            className={CTRL}>
+            className={cls('安幸付款方式')}>
             <option value="">請選擇</option>
             {METHOD_OPTS.map((m) => <option key={m} value={m}>{METHOD_LABEL[m]}</option>)}
           </select></label>

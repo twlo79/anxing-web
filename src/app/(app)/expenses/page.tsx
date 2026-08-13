@@ -1,5 +1,8 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Req, { reqCls } from '@/components/Req';
+import MoneyInput from '@/components/MoneyInput';
+import { missingFields, missingMessage } from '@/lib/required';
 import Toast from '@/components/Toast';
 import FilterToggle from '@/components/FilterToggle';
 import * as XLSX from 'xlsx-js-style';
@@ -217,14 +220,40 @@ export default function ExpensesPage() {
     if (group) load();   // 母子連動由觸發器做,要重載才看得到整組
   }
 
+  /** 按過儲存了沒 —— 紅框只在他表達「我填完了」之後才出現 */
+  const [tried, setTried] = useState(false);
+  /** 缺哪些必填。訊息、紅框、星號用同一份答案 */
+  const missing = useMemo(() => edit ? missingFields([
+    { label: '支出日期', value: edit.spent_on },
+    /*
+     * 遞延母單的金額欄位是鎖住的（它的 amount 是「這一天認列多少」，
+     * 可能就是 0）。對一個改不了的欄位喊必填，使用者會卡在一個
+     * 他無論如何都通不過的檢查上。
+     */
+    { label: '金額', value: edit.amount_original, kind: 'money', when: !edit.deferred },
+    { label: '匯率', value: edit.fx_rate, kind: 'money',
+      when: (edit.currency ?? 'TWD') !== 'TWD' },
+    { label: '支出項目', value: edit.item_name },
+    { label: '用途物業', value: edit.estate_id, when: edit.purpose_type === 'estate' },
+  ]) : [], [edit]);
+  const err = (f: string) => tried && missing.includes(f);
+
   async function save() {
     if (!edit) return;
-    if (!edit.spent_on) return flash('請填支出日期');
-    if (!edit.item_name.trim()) return flash('請填支出項目');
-    if (edit.purpose_type === 'estate' && !edit.estate_id) return flash('請選擇用途物業');
+    setTried(true);
+    /*
+     * 必填一次講完。
+     *
+     * 原本是四行 `if (!x) return flash(…)` —— 缺三個欄位就要按三次儲存
+     * 才知道總共缺什麼，而且訊息說「請填支出項目」，十幾個欄位裡
+     * 哪一格是它還是要自己找。
+     *
+     * 順帶補上「金額」：標籤上一直寫著 `*`，但 save() 其實沒有檢查 ——
+     * 標了星號卻不擋，那個星號就再也不代表什麼了。
+     */
+    if (missing.length) return flash(missingMessage(missing));
     const cur = edit.currency || 'TWD';
     const rate = cur === 'TWD' ? 1 : (Number(edit.fx_rate) || 0);
-    if (cur !== 'TWD' && !(rate > 0)) return flash('請填匯率');
     setSaving(true);
     const orig = Number(edit.amount_original) || 0;
     /*
@@ -273,7 +302,7 @@ export default function ExpensesPage() {
     const fe = await receiptsRef.current?.flush(data.id);
     setSaving(false);
     if (fe) return flash('憑證' + fe);
-    setEdit(null); flash('已儲存'); load();
+    setEdit(null); setTried(false); flash('已儲存'); load();
   }
 
   // 來自請款單的支出只有 super_admin 能刪(RLS 也擋一次)。
@@ -573,19 +602,18 @@ export default function ExpensesPage() {
                 </div>
               )}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">支出日期 *</span>
+                <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">支出日期<Req /></span>
                   <input type="date" value={edit.spent_on ?? ''} onChange={(e) => setEdit({ ...edit, spent_on: e.target.value })}
-                    className="rounded-lg border border-mor-line px-2 py-1.5" /></label>
+                    className={`rounded-lg border px-2 py-1.5 ${err('支出日期') ? 'border-red-400 bg-red-50' : 'border-mor-line'}`} /></label>
                 <label className="flex flex-col gap-1">
-                  <span className="text-xs text-gray-500">金額 *</span>
+                  <span className="text-xs text-gray-500">金額<Req /></span>
                   <div className="relative">
                     <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">
                       {(edit.currency ?? 'TWD') === 'TWD' ? 'NT$' : edit.currency}
                     </span>
-                    {/* 空字串而非 0 —— 否則打字會接在 0 後面變成 0500 */}
-                    <input type="number" inputMode="decimal" min="0" disabled={!!edit.deferred}
-                      value={edit.amount_original === 0 || edit.amount_original == null ? '' : edit.amount_original}
-                      onChange={(e) => setEdit({ ...edit, amount_original: e.target.value === '' ? 0 : Number(e.target.value) })}
+                    <MoneyInput value={Number(edit.amount_original) || 0} disabled={!!edit.deferred}
+                      invalid={err('金額')}
+                      onChange={(n) => setEdit({ ...edit, amount_original: n })}
                       className="w-full rounded-lg border border-mor-line pl-9 pr-2 py-1.5 text-right disabled:bg-gray-100 disabled:text-gray-400" />
                   </div>
                   {edit.deferred && (
@@ -607,11 +635,11 @@ export default function ExpensesPage() {
                   </select></label>
                 {(edit.currency ?? 'TWD') !== 'TWD' && (
                   <label className="flex flex-col gap-1">
-                    <span className="text-xs text-gray-500">匯率 * (1 {edit.currency} = ? NTD)</span>
+                    <span className="text-xs text-gray-500">匯率<Req /> (1 {edit.currency} = ? NTD)</span>
                     <input type="number" inputMode="decimal" step="0.0001" min="0"
                       value={edit.fx_rate ? edit.fx_rate : ''} placeholder="例 31.5"
                       onChange={(e) => setEdit({ ...edit, fx_rate: e.target.value === '' ? 0 : Number(e.target.value) })}
-                      className="rounded-lg border border-mor-line px-2 py-1.5 text-right" /></label>
+                      className={`rounded-lg border px-2 py-1.5 text-right ${err('匯率') ? 'border-red-400 bg-red-50' : 'border-mor-line'}`} /></label>
                 )}
               </div>
               {(edit.currency ?? 'TWD') !== 'TWD' && (
@@ -624,9 +652,9 @@ export default function ExpensesPage() {
                   </span>
                 </div>
               )}
-              <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">支出項目 *</span>
+              <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">支出項目<Req /></span>
                 <input value={edit.item_name ?? ''} onChange={(e) => setEdit({ ...edit, item_name: e.target.value })}
-                  className="rounded-lg border border-mor-line px-2 py-1.5" placeholder="例:14B5 冷氣濾網更換" /></label>
+                  className={`rounded-lg border px-2 py-1.5 ${err('支出項目') ? 'border-red-400 bg-red-50' : 'border-mor-line'}`} placeholder="例:14B5 冷氣濾網更換" /></label>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">會計科目</span>
                   <select value={edit.account_code ?? ''} onChange={(e) => setEdit({ ...edit, account_code: e.target.value || null })}
@@ -704,7 +732,7 @@ export default function ExpensesPage() {
                 子單掛不上去。母單金額不可改也是在這裡強制的（見 DeferralPanel）。
               */}
               {edit.id && (
-                <DeferralPanel expense={edit} canEdit onChanged={() => { setEdit(null); load(); }} />
+                <DeferralPanel expense={edit} canEdit onChanged={() => { setEdit(null); setTried(false); load(); }} />
               )}
               <Receipts ref={receiptsRef} kind="exp" parentId={edit.id || null} label="憑證圖片"
                 inheritFromRequestId={edit.request_id ?? null} />
