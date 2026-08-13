@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Toast from '@/components/Toast';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
 import { softDelete } from '@/lib/trash';
@@ -441,7 +442,7 @@ export default function AdminPage() {
     <div className="max-w-4xl">
       <div className="flex items-center justify-between mb-4">
         <h1>權限管理</h1>
-        {msg && <span className="text-sm text-mor-green font-medium">{msg}</span>}
+        <Toast msg={msg} />
       </div>
 
       <div className="flex flex-wrap gap-1 mb-5 border-b border-mor-line">

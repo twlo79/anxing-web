@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Toast from '@/components/Toast';
 import FilterToggle from '@/components/FilterToggle';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
@@ -336,7 +337,7 @@ export default function ExpensesPage() {
 
   return (
     <div>
-      {msg && <div className="mb-3 rounded-lg bg-mor-greenlight text-mor-green px-4 py-2 text-sm">{msg}</div>}
+      <Toast msg={msg} />
       <h1 className="mb-4">支出</h1>
 
       {/* 統計 */}

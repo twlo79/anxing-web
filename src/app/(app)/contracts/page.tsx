@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Toast from '@/components/Toast';
 import { FilterBar, FilterSelect, FilterDateRange, FilterSearch, FilterClear, FilterCount } from '@/lib/filters';
 import { createClient } from '@/lib/supabase';
 import { FEE_TYPES, feeLabel } from '@/lib/fee-types';
@@ -505,7 +506,7 @@ export default function ContractsPage() {
     <div>
       <div className="flex items-center justify-between mb-4">
         <h1>契約訂單與收款</h1>
-        {msg && <span className="text-sm text-mor-green font-medium">{msg}</span>}
+        <Toast msg={msg} />
       </div>
 
       {/*

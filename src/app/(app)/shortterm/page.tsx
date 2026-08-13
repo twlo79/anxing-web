@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Toast from '@/components/Toast';
 import FilterToggle from '@/components/FilterToggle';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, type SortState } from '@/lib/sortable';
@@ -14,7 +15,8 @@ import { payStatus, remaining, isExempt, STATUS_LABEL, STATUS_CLASS, STATUS_FILT
 import { softDelete } from '@/lib/trash';
 import { feeFilterOptions, feeFilterPredicate, ONEOFF_SOURCES, FEE_F_ALL } from '@/lib/order-filter';
 import TrashLink from '@/components/TrashLink';
-import { checkDates, checkPrice, lookbackFrom, type PastOrder } from '@/lib/order-check';
+import { checkDates, checkPrice, checkRequired, lookbackFrom, type PastOrder } from '@/lib/order-check';
+import MoneyInput from '@/components/MoneyInput';
 
 type Order = {
   id: string; order_key: string; source: string; estate_id: string | null; property_id?: string | null; property_raw: string | null;
@@ -60,6 +62,25 @@ const SORT_DB_COL: Record<string, string> = {
   source: 'source', property_raw: 'property_raw', guest_name: 'guest_name',
   checkin: 'checkin', amount: 'amount', deposit: 'deposit', account: 'account',
 };
+
+/**
+ * 必填星號。
+ *
+ * 【為什麼星號一開始就要有，紅框卻不要】
+ * 星號是「這格待會要填」的預告；紅框是「你漏了」的判決。
+ * 空白表單一打開就整片紅，那不是提示是指責 —— 他還沒做錯任何事。
+ *
+ * aria-hidden ＋ 旁邊的隱藏文字：讀螢幕的人聽到的是「必填」，
+ * 不是「星號」—— 後者他得自己知道那代表什麼。
+ */
+function Req() {
+  return (
+    <>
+      <span aria-hidden className="text-red-500 ml-0.5">*</span>
+      <span className="sr-only">必填</span>
+    </>
+  );
+}
 
 export default function ShortTermPage() {
   const supabase = useMemo(() => createClient(), []);
@@ -342,6 +363,17 @@ export default function ShortTermPage() {
 
   async function save() {
     if (!edit) return;
+    setTried(true);
+    /*
+     * 必填少一個就擋。
+     *
+     * 2026-08-13 的教訓：房客沒填也存得進去，然後用姓名怎麼搜都搜不到 ——
+     * 使用者的結論是「存不進去」，實際上是「存進去了但找不到」。
+     * 那種缺漏不會報錯，只會在幾天後以「系統壞了」的形式回來。
+     *
+     * 一次把缺的全部講完 —— 一次講一個的話他要按四次儲存才知道總共缺什麼。
+     */
+    if (missing.length) return flash(`無法儲存,還沒填：${missing.join('、')}`);
     // 日期是「一定錯」的那一類,所以擋下來。金額偏低是「可能錯」,只提醒。
     const dateErr = checkDates(edit.source, edit.checkin, edit.checkout);
     if (dateErr) return flash(dateErr);
@@ -387,7 +419,7 @@ export default function ShortTermPage() {
       if (f.id) await supabase.from('orders').update(row).eq('id', f.id);
       else await supabase.from('orders').insert({ ...row, order_key: `FEE_${String(orderId).slice(0, 8)}_${Date.now()}${Math.floor(Math.random() * 1000)}`, imported_via: 'manual' });
     }
-    flash('已儲存'); setEdit(null); setFees([]); load();
+    flash('已儲存'); setEdit(null); setFees([]); setTried(false); load();
   }
   /**
    * 刪除訂單。
@@ -493,7 +525,26 @@ export default function ShortTermPage() {
   const addStay = () => move && setMove({ ...move, stays: [...move.stays, { room: '', estateId: move.stays[move.stays.length - 1]?.estateId ?? null, propertyId: null, from: '' }] });
   const updStay = (i: number, patch: Partial<Stay>) => move && setMove({ ...move, stays: move.stays.map((s, idx) => idx === i ? { ...s, ...patch } : s) });
   const delStay = (i: number) => move && setMove({ ...move, stays: move.stays.filter((_, idx) => idx !== i) });
+  /*
+   * 按過儲存了沒。
+   *
+   * 【為什麼紅框不是一開始就出現】
+   * 空白表單一打開就整片紅，那不是提示是指責 —— 他還沒做錯任何事。
+   * 紅框要在他表達「我填完了」之後才出現，那時候「還缺這些」才是資訊。
+   *
+   * 星號則是一開始就有：那是「這格待會要填」的預告，不是錯誤。
+   */
+  const [tried, setTried] = useState(false);
+
   function blank(): Order { return { id: '', order_key: '', source: 'private', estate_id: null, property_id: null, property_raw: '', guest_name: '', checkin: '', checkout: '', nights: 0, amount: 0, deposit: 0, account: null, note: '', fx_revenue: [], fx_deposit: [], invoice_required: false, invoice_title: '', invoice_tax_id: '' }; }
+
+  /** 目前缺哪些必填欄位。存檔要擋，畫面要畫紅框，用同一份答案。 */
+  const missing = useMemo(() => edit ? checkRequired({
+    source: edit.source, estate_id: edit.estate_id, guest_name: edit.guest_name,
+    checkin: edit.checkin, checkout: edit.checkout, amount: totalTwd(revLines),
+  }) : [], [edit?.source, edit?.estate_id, edit?.guest_name, edit?.checkin, edit?.checkout, revLines]);
+  /** 這一格要不要畫紅框 */
+  const err = (f: string) => tried && missing.includes(f);
 
   const totRevenue = useMemo(() => agg.reduce((a, o) => a + Number(o.amount || 0), 0), [agg]);
   const bySource = useMemo(() => { const m: Record<string, number> = {}; for (const o of agg) m[o.source] = (m[o.source] || 0) + Number(o.amount || 0); return m; }, [agg]);
@@ -504,12 +555,9 @@ export default function ShortTermPage() {
     <div>
       <div className="flex items-center justify-between mb-4">
         <h1>短租訂單與收款 <span className="text-sm font-normal text-gray-400">Airbnb・Agoda・私下・一次性</span></h1>
-        {msg && (msgErr
-          ? <button onClick={() => setMsg('')} title="點一下關閉"
-              className="text-sm text-left rounded-lg bg-red-50 text-red-700 border border-red-200 px-3 py-1.5 font-medium max-w-2xl">
-              {msg}
-            </button>
-          : <span className="text-sm text-mor-green font-medium">{msg}</span>)}
+        {/* 訊息改成浮在最上層 —— 原本畫在這裡，會被 z-50 的編輯視窗蓋掉，
+            存檔失敗時使用者看到的是「按了沒反應」 */}
+        <Toast msg={msg} error={msgErr} onClose={() => setMsg('')} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-4 items-stretch">
@@ -792,8 +840,10 @@ export default function ShortTermPage() {
           <div onClick={(e) => e.stopPropagation()} className="relative bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[85vh] overflow-y-auto">
             <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 font-bold flex items-center justify-between">{edit.id ? '編輯訂單' : '新增訂單(私下/一次性)'}<button onClick={() => setEdit(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button></div>
             <div className="px-6 py-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-              <label className="flex flex-col gap-1">來源<select value={edit.source} onChange={(e) => setEdit({ ...edit, source: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5">{Array.from(new Set([...(edit.id ? [edit.source] : []), ...MANUAL_SRC])).map((s) => <option key={s} value={s}>{SRC_LABEL[s] ?? s}</option>)}</select></label>
-              <label className="flex flex-col gap-1">物業<select value={edit.estate_id ?? ''} onChange={(e) => setEdit({ ...edit, estate_id: e.target.value || null, property_raw: null, property_id: null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option>{estates.map((es) => <option key={es.id} value={es.id}>{es.name}{es.active ? '' : '(停用)'}</option>)}</select></label>
+              <label className="flex flex-col gap-1">來源<Req />
+                <select value={edit.source} onChange={(e) => setEdit({ ...edit, source: e.target.value })} className={`rounded-lg border px-2 py-1.5 ${err('來源') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}>{Array.from(new Set([...(edit.id ? [edit.source] : []), ...MANUAL_SRC])).map((s) => <option key={s} value={s}>{SRC_LABEL[s] ?? s}</option>)}</select></label>
+              <label className="flex flex-col gap-1">物業<Req />
+                <select value={edit.estate_id ?? ''} onChange={(e) => setEdit({ ...edit, estate_id: e.target.value || null, property_raw: null, property_id: null })} className={`rounded-lg border px-2 py-1.5 ${err('物業') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}><option value="">—</option>{estates.map((es) => <option key={es.id} value={es.id}>{es.name}{es.active ? '' : '(停用)'}</option>)}</select></label>
               {/*
                 房源非必填。
 
@@ -831,10 +881,28 @@ export default function ShortTermPage() {
                     ))}
                 </select>
               </label>
-              <label className="flex flex-col gap-1">客戶<input value={edit.guest_name ?? ''} onChange={(e) => setEdit({ ...edit, guest_name: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
-              <label className="flex flex-col gap-1">{edit.source === 'oneoff' ? '日期(認列月份)' : '起日'}<input type="date" value={edit.checkin} onChange={(e) => setEdit({ ...edit, checkin: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
-              {edit.source !== 'oneoff' && <label className="flex flex-col gap-1">迄日<input type="date" value={edit.checkout} onChange={(e) => setEdit({ ...edit, checkout: e.target.value })} className={`rounded-lg border px-2 py-1.5 ${
-                edit.checkin && edit.checkout && edit.checkout <= edit.checkin
+              {/*
+                【為什麼從「客戶」改叫「房客」】
+                表格欄位叫房客、篩選叫「關鍵字(房客/房源)」、Excel 表頭也叫房客 ——
+                只有這個輸入框叫客戶。同一個欄位四個地方三個名字。
+
+                2026-08-13 真的出事：一筆訂單存進去了，房客卻是空的，
+                然後用姓名怎麼搜都搜不到。名字不一致的欄位很容易被當成
+                「別的東西」而整格跳過，而空著又不會有任何錯誤。
+              */}
+              <label className="flex flex-col gap-1">房客<Req />
+                <input value={edit.guest_name ?? ''} placeholder="姓名"
+                  onChange={(e) => setEdit({ ...edit, guest_name: e.target.value })}
+                  className={`rounded-lg border px-2 py-1.5 ${
+                    err('房客') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} />
+              </label>
+              <label className="flex flex-col gap-1">{edit.source === 'oneoff' ? '日期(認列月份)' : '起日'}<Req />
+                <input type="date" value={edit.checkin} onChange={(e) => setEdit({ ...edit, checkin: e.target.value })}
+                  className={`rounded-lg border px-2 py-1.5 ${
+                    err('起日') || err('日期') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} /></label>
+              {edit.source !== 'oneoff' && <label className="flex flex-col gap-1">迄日<Req />
+                <input type="date" value={edit.checkout} onChange={(e) => setEdit({ ...edit, checkout: e.target.value })} className={`rounded-lg border px-2 py-1.5 ${
+                (edit.checkin && edit.checkout && edit.checkout <= edit.checkin) || err('迄日')
                   ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} /></label>}
               {/* 日期填反在存檔前就講 —— 存檔才說的話他要重新想一次剛剛填了什麼 */}
               {edit.source !== 'oneoff' && edit.checkin && edit.checkout && edit.checkout <= edit.checkin && (
@@ -850,11 +918,10 @@ export default function ShortTermPage() {
                 它一樣寫進 revLines 的台幣列,所以存檔那段不用分兩套。
               */}
               {edit.source === 'oneoff' && (
-                <label className="flex flex-col gap-1">金額
-                  <input type="number" inputMode="numeric" placeholder="0"
-                    value={revLines[0]?.amt || ''}
-                    onChange={(e) => setRevLines([{ cur: 'TWD', amt: parseFloat(e.target.value) || 0, rate: 1 }])}
-                    className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+                <label className="flex flex-col gap-1">金額<Req />
+                  <MoneyInput value={revLines[0]?.amt ?? 0} invalid={err('金額')}
+                    onChange={(n) => setRevLines([{ cur: 'TWD', amt: n, rate: 1 }])}
+                    className="rounded-lg border border-gray-300 px-2 py-1.5 text-right" /></label>
               )}
               {/*
                 一次性收入的會計科目。清單跟契約加費、短租加費共用(@/lib/fee-types)。
@@ -889,7 +956,8 @@ export default function ShortTermPage() {
               )}
 
               {edit.source !== 'oneoff' && (
-                <MoneyLines mode="revenue" label="訂單金額" lines={revLines} onChange={setRevLines}
+                <MoneyLines mode="revenue" label="訂單金額 *" lines={revLines} onChange={setRevLines}
+                  invalid={err('金額')}
                   hint="外幣換匯後併入營收。台幣是清單裡的一列,不必另外找欄位。" />
               )}
 

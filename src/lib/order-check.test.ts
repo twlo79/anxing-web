@@ -1,9 +1,60 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  checkDates, checkPrice, lookbackFrom,
+  checkDates, checkPrice, checkRequired, lookbackFrom,
   LOW_PRICE_RATIO, MIN_SAMPLE, type PastOrder,
 } from './order-check.ts';
+
+/* ── 必填 ────────────────────────────────────── */
+
+const full = {
+  source: 'private', estate_id: 'e-1', guest_name: '游宗堉',
+  checkin: '2024-10-01', checkout: '2024-10-31', amount: 24500,
+};
+
+test('全部填齊沒有缺漏', () => {
+  assert.deepEqual(checkRequired(full), []);
+});
+
+test('★ 房客沒填要擋下來', () => {
+  // 2026-08-13 真的發生過:同一筆存了三次都沒填房客,
+  // 然後用姓名怎麼搜都搜不到 —— 使用者的結論是「存不進去」
+  assert.deepEqual(checkRequired({ ...full, guest_name: '' }), ['房客']);
+  assert.deepEqual(checkRequired({ ...full, guest_name: '   ' }), ['房客'], '只有空白也算沒填');
+  assert.deepEqual(checkRequired({ ...full, guest_name: null }), ['房客']);
+});
+
+test('物業沒填要擋 —— 報表按物業分組,沒有的話那筆落在「—」', () => {
+  assert.deepEqual(checkRequired({ ...full, estate_id: null }), ['物業']);
+});
+
+test('金額是 0 或負數都算沒填', () => {
+  assert.deepEqual(checkRequired({ ...full, amount: 0 }), ['金額']);
+  assert.deepEqual(checkRequired({ ...full, amount: -1 }), ['金額']);
+});
+
+test('★ 一次性收入不要求迄日 —— 畫面上根本沒有那一欄', () => {
+  // 要求他填一個看不到的欄位,他只會卡住
+  assert.deepEqual(
+    checkRequired({ ...full, source: 'oneoff', checkout: '' }), []);
+  assert.deepEqual(
+    checkRequired({ ...full, source: 'oneoff', checkin: '' }), ['日期']);
+});
+
+test('★ 房源不是必填', () => {
+  // 整棟出租、公司戶確實可能沒有指定房號。
+  // 把它列進必填的話,那些訂單就沒辦法建了
+  assert.deepEqual(checkRequired(full), []);
+});
+
+test('缺很多欄位時全部列出來,不是只講第一個', () => {
+  // 一次講一個的話,使用者要按四次儲存才知道總共缺什麼
+  const miss = checkRequired({
+    source: 'private', estate_id: null, guest_name: '',
+    checkin: '', checkout: '', amount: 0,
+  });
+  assert.deepEqual(miss, ['物業', '房客', '起日', '迄日', '金額']);
+});
 
 /* ── 日期 ────────────────────────────────────── */
 

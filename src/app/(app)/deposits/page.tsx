@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Toast from '@/components/Toast';
 import FilterToggle from '@/components/FilterToggle';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
@@ -543,7 +544,7 @@ export default function DepositsPage() {
 
   return (
     <div>
-      {msg && <div className="mb-3 rounded-lg bg-mor-greenlight text-mor-green px-3 py-2 text-sm">{msg}</div>}
+      <Toast msg={msg} />
 
       {/*
         聚焦提示。**一定要有** —— 沒有這一列的話,使用者看到的是一個

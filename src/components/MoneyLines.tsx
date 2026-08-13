@@ -4,6 +4,7 @@ import {
   blankLine, isTwd, lineTwd, totalTwd, TWD,
   CURRENCIES, isKnownCurrency, currencyLabel, type Line,
 } from '@/lib/money-lines';
+import MoneyInput from '@/components/MoneyInput';
 
 /**
  * 多幣別金額輸入：一列一種幣別，台幣只是其中一列。
@@ -30,7 +31,7 @@ const CTRL = 'h-11 md:h-8 bg-white rounded-lg border border-mor-line px-2 text-s
 const OTHER = '__other__';
 
 export default function MoneyLines({
-  lines, onChange, mode, label, hint, disabled = false, action,
+  lines, onChange, mode, label, hint, disabled = false, action, invalid,
 }: {
   lines: Line[];
   onChange: (next: Line[]) => void;
@@ -38,6 +39,8 @@ export default function MoneyLines({
   label: string;
   hint?: string;
   disabled?: boolean;
+  /** 必填但總額是 0 —— 台幣那一列畫紅框 */
+  invalid?: boolean;
   /** 標題右邊的額外連結（例如「到押金管理」）。 */
   action?: React.ReactNode;
 }) {
@@ -116,9 +119,12 @@ export default function MoneyLines({
                 </select>
               )}
 
-              <input type="number" inputMode="numeric" value={l.amt || ''} disabled={disabled}
-                onChange={(e) => upd(i, { amt: parseFloat(e.target.value) || 0 })}
-                placeholder="0" className={`${CTRL} flex-1 min-w-[6rem] text-right`} />
+              {/* 千分位。196000 跟 19600 在沒有分隔的一串數字裡
+                  要一位一位數才看得出差別 —— 而那正是「少打一個 0」的來源 */}
+              <MoneyInput value={l.amt} disabled={disabled}
+                onChange={(n) => upd(i, { amt: n })}
+                invalid={i === 0 && invalid}
+                className={`${CTRL} flex-1 min-w-[6rem] text-right`} />
 
               {withRate && (
                 <div className="flex items-center gap-2 shrink-0">
