@@ -146,6 +146,7 @@ export async function POST(req: Request) {
     p_counts: {
       received: items.length, inserted, updated, voided, skipped: s.skipped,
       detail: {
+        金額不一致: s.diffs.filter((d) => d.field === '金額').length,
         房源不一致: propDiffs.length,
         房客姓名不同: s.diffs.filter((d) => d.field === '房客姓名').length,
         住宿起訖已更新: s.diffs.filter((d) => d.field === '住宿起訖').length,
@@ -170,6 +171,7 @@ export async function POST(req: Request) {
     needsAttention: s.attention,
     /** 爬蟲想改但被擋下來的（房源、姓名），以及已經改掉的日期 */
     差異: {
+      金額: s.diffs.filter((d) => d.field === '金額'),
       房源: propDiffs,
       房客姓名: s.diffs.filter((d) => d.field === '房客姓名'),
       住宿起訖已更新: s.diffs.filter((d) => d.field === '住宿起訖'),

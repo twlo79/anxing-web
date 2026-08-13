@@ -76,10 +76,34 @@ test('★ 房源對照改了也不會變成第二筆', () => {
 
 /* ── A 級：一律更新 ──────────────────────────── */
 
-test('金額變了就更新', () => {
-  const { decision } = decide(inc({ earnings: 25000 }), ex({ amount: 20000 }), PROP_A15);
-  assert.equal(decision.kind, 'update');
-  if (decision.kind === 'update') assert.equal(decision.patch.amount, 25000);
+test('★ 金額有值就不覆蓋,改列進差異', () => {
+  // 2026-08-12 真的發生過:有人把一筆從 95,231.63 改成 124,346,
+  // 隔天 06:06 同步改回去,中午另一個人又改成 158,720 ——
+  // 兩個人都以為是自己沒存到。金額是營收,它自己會動比晚一天更新危險
+  const { decision, diffs } = decide(inc({ earnings: 25000 }), ex({ amount: 20000 }), PROP_A15);
+  if (decision.kind === 'update') assert.equal(decision.patch.amount, undefined);
+  const d = diffs.find((x) => x.field === '金額');
+  assert.ok(d, '不覆蓋但一定要講出來,否則調整就永遠進不來');
+  assert.equal(d!.from, '20000');
+  assert.equal(d!.to, '25000');
+});
+
+test('金額是空的或 0 才填進去', () => {
+  // 那不是「改掉人工填的值」,那是把一筆殘缺的資料補完整
+  for (const amt of [null, 0]) {
+    const { decision } = decide(inc({ earnings: 25000 }), ex({ amount: amt }), PROP_A15);
+    assert.equal(decision.kind, 'update');
+    if (decision.kind === 'update') assert.equal(decision.patch.amount, 25000);
+  }
+});
+
+test('★ 取消歸零不受金額保護影響', () => {
+  // 取消不是「更新金額」,是作廢整筆訂單 —— 那條路不經過金額那道防護。
+  // 擋掉的話已取消的訂單會一直被算進營收,而那是最貴的錯
+  const { decision } = decide(
+    inc({ statusKey: 'canceled_by_guest', earnings: 0, cohost: 0 }),
+    ex({ amount: 99999 }), PROP_A15);
+  assert.equal(decision.kind, 'void');
 });
 
 test('★ 住宿起訖一律更新,而且要列出來', () => {
@@ -204,7 +228,7 @@ test('房源不一致但其他都沒變 → 只回報,不更新', () => {
 test('summarize 把各種結果分類', () => {
   const s = summarize([
     decide(inc({ code: 'A' }), null, PROP_A15),
-    decide(inc({ code: 'B', earnings: 25000 }), ex({ order_key: 'B' }), PROP_A15),
+    decide(inc({ code: 'B', end: '2026-07-10', nights: 9 }), ex({ order_key: 'B' }), PROP_A15),
     decide(inc({ code: 'C', statusKey: 'canceled', earnings: 0, cohost: 0 }), ex({ order_key: 'C' }), PROP_A15),
     decide(inc({ code: 'D' }), null, null),
     decide(inc({ code: 'E' }), ex({ order_key: 'E' }), PROP_OLD),

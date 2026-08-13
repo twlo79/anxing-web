@@ -259,7 +259,21 @@ create or replace function public.record_sync_run(
 ) returns jsonb
 language plpgsql security definer set search_path = public as $fn$
 declare
-  v_now  timestamptz := now();
+  /*
+   * 【一定要用 clock_timestamp()，不能用 now()】
+   *
+   * now() 回的是**交易開始的時間**，在同一個交易裡永遠是同一個值。
+   * 所以同一個交易裡呼叫兩次的話，第二次寫進去的 last_seen 會等於
+   * 第一次的，而「刪掉 last_seen < v_now 的」就一列都刪不掉 ——
+   * 待辦清單會只增不減，而且完全不報錯。
+   *
+   * 正式跑的時候兩次同步各自是一個交易，用 now() 剛好會過；
+   * 這個 bug 只有在同一個交易裡連續呼叫時才會現形 ——
+   * 也就是說，沒有下面那段驗證就永遠不會有人發現。
+   *
+   * clock_timestamp() 回的是真正的當下，交易裡也會往前走。
+   */
+  v_now  timestamptz := clock_timestamp();
   v_run  bigint;
   v_kept int;
   v_gone int;
@@ -389,8 +403,9 @@ begin
 
   -- 5. 編輯紀錄：自動新增現在記得到嗎
   --    SQL Editor 裡 auth.uid() 是 null,正好就是爬蟲的情境
-  insert into orders (order_key, source, guest_name, amount, checkin, checkout, imported_via)
-  values ('__AUDIT_TEST__', 'airbnb', '__測試__', 1, current_date, current_date + 1, 'auto')
+  -- nights 是 not null（第一次寫這段時漏了，整支被回滾）
+  insert into orders (order_key, source, guest_name, amount, nights, checkin, checkout, imported_via)
+  values ('__AUDIT_TEST__', 'airbnb', '__測試__', 1, 1, current_date, current_date + 1, 'auto')
   returning id into v_id;
   insert into _chk113 values (5, '★ 爬蟲新增的訂單會進編輯紀錄',
     case when exists (select 1 from data_audit
@@ -400,8 +415,9 @@ begin
   -- 契約產的月租單仍然不記（一次 24 筆會佔滿整頁）
   delete from data_audit where record_id = v_id;
   delete from orders where id = v_id;
-  insert into orders (order_key, source, guest_name, amount, checkin, checkout, imported_via)
-  values ('__AUDIT_TEST2__', 'contract', '__測試__', 1, current_date, current_date + 1, 'contract')
+  -- nights 是 not null（第一次寫這段時漏了，整支被回滾）
+  insert into orders (order_key, source, guest_name, amount, nights, checkin, checkout, imported_via)
+  values ('__AUDIT_TEST2__', 'contract', '__測試__', 1, 1, current_date, current_date + 1, 'contract')
   returning id into v_id;
   insert into _chk113 values (5, '契約自動產的月租單仍然不記',
     case when not exists (select 1 from data_audit where record_id = v_id)

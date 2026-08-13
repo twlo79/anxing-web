@@ -83,11 +83,11 @@ const AUDIT_SKIP = new Set(['updated_at', 'created_at', 'id']);
  */
 const SYNC_TIERS: { level: string; tone: string; fields: string; why: string }[] = [
   { level: '一律更新', tone: 'bg-mor-bluelight text-mor-slate',
-    fields: '金額、住宿起訖、取消狀態',
-    why: 'Airbnb 是這些的唯一真相。不跟著改的話營收會攤在錯的月份,取消的單會繼續算進營收。' },
+    fields: '取消狀態、住宿起訖',
+    why: '這兩個只有 Airbnb 知道,而且不跟著改會直接算錯:取消的單會繼續算進營收,日期錯了營收會攤在錯的月份。' },
   { level: '只在空的時候填', tone: 'bg-amber-50 text-amber-800',
-    fields: '房源、房客姓名',
-    why: '這兩個我們會手動修正,爬蟲不該贏。但不一致會列進下面的清單 —— 只是不覆蓋的話,對照表永遠是錯的。' },
+    fields: '金額、房源、房客姓名',
+    why: '這三個我們會手動修正,爬蟲不該贏。不一致會列進下面的清單 —— 只是不覆蓋的話,對照表永遠是錯的。' },
   { level: '完全不碰', tone: 'bg-mor-greenlight text-mor-green',
     fields: '收款、押金、帳號、備註、發票、移房',
     why: '這些是人的判斷與金流紀錄,爬蟲沒有任何依據可以動它們。' },
@@ -95,6 +95,7 @@ const SYNC_TIERS: { level: string; tone: string; fields: string; why: string }[]
 
 /** 每一種差異該做什麼。沒有建議的清單只是一份焦慮清單。 */
 const ISSUE_ADVICE: Record<string, string> = {
+  金額: 'Airbnb 上的金額跟系統裡的不一樣。系統不會自己改 —— 金額是營收,它靜靜變動的代價遠大於晚一天更新。確認過再手動改。',
   房源: '到「房源管理」把這個 listing_id 搬到正確的房源。搬完隔天這一列自己會消失。',
   對不到房源: '這個 listing 在系統裡沒有對應的啟用房源,訂單根本沒進來。到「房源管理」補上對照。',
   房源名稱查不到: '通常是多間房源在 Airbnb 用了同一個標題（開封 2F/3F/4F 就是）。要靠訂單反查,或手動指定。',
@@ -102,6 +103,27 @@ const ISSUE_ADVICE: Record<string, string> = {
   住宿起訖: '日期已經跟著更新了。這裡列出來是因為它會改變營收攤提的月份,值得看一眼。',
   待人工判斷: 'Airbnb 顯示已取消且無收入,但系統裡標記為已收款。錢真的進來過就不能自動歸零 —— 要你判斷。',
 };
+
+/**
+ * timestamptz 轉台北時間。
+ *
+ * 【為什麼不能直接切字串】
+ * 原本寫的是 `at.slice(0, 16).replace('T', ' ')` —— 那切出來的是 **UTC**。
+ * 早上 11:43 改的資料，畫面上顯示 03:43。
+ *
+ * 這個錯誤特別惡劣：時間看起來完全正常（格式對、順序對、也在遞增），
+ * 只是整排晚了八小時。追「這筆是誰在什麼時候改的」時會得到完全錯誤的結論 ——
+ * 我們就是這樣一度以為凌晨三點有人在改訂單。
+ */
+function twTime(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return String(iso).slice(0, 16).replace('T', ' ');
+  return new Intl.DateTimeFormat('zh-TW', {
+    timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(d).replace(/\//g, '-');
+}
 
 const TYPE_LABEL: Record<string, string> = { housekeeper: '管家', roomservice: '房務', manager: '經理', accountant: '會計', gm: '總經理', other: '其他' };
 const TYPE_OPTS = ['housekeeper', 'roomservice', 'manager', 'accountant', 'gm', 'other'];
@@ -892,7 +914,7 @@ export default function AdminPage() {
                   {runs.map((r) => (
                     <tr key={r.id} className="border-b border-mor-line/50 last:border-0 align-top">
                       <td className="px-4 py-2 whitespace-nowrap text-xs text-gray-500">
-                        {r.at?.slice(0, 16).replace('T', ' ')}
+                        {twTime(r.at)}
                       </td>
                       <td className="px-4 py-2 whitespace-nowrap">{r.kind === 'orders' ? '訂單' : r.kind === 'reviews' ? '評價' : r.kind}</td>
                       <td className="px-4 py-2 text-right tabular-nums text-gray-500">{r.received}</td>
@@ -963,7 +985,7 @@ export default function AdminPage() {
                   {audits.map((a) => (
                     <tr key={a.id} className="border-b border-mor-line/50 last:border-0 align-top">
                       <td className="px-4 py-2 whitespace-nowrap text-xs text-gray-500">
-                        {a.at?.slice(0, 16).replace('T', ' ')}
+                        {twTime(a.at)}
                       </td>
                       <td className="px-4 py-2 whitespace-nowrap">
                         {a.user_id
