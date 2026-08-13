@@ -113,15 +113,45 @@ const num = (v: unknown) => {
 const txt = (v: unknown) => (v == null ? '' : String(v).trim());
 
 /**
- * 收入怎麼算：以 earnings 為主，為 0 時看搭檔收款
- * （整筆被 co-host 拆走的情況）。
+ * 收入怎麼算：**「你賺得」＋「搭檔收款」**。
+ *
+ * ============================================================
+ * 【為什麼要加起來】
+ *
+ * Airbnb 列表上的 Total Payout 是**扣掉搭檔收款之後**的淨額。
+ * 以 Erin Tran（HMPTCBX2H9）為例：
+ *
+ *   28 晚房費          207,118.00
+ *   清潔費               3,000.00
+ *   月租折扣            -2,071.18
+ *   平台服務費 15.5%   -32,247.26
+ *   搭檔收款           -70,319.83   ← 這一筆被扣掉了
+ *   ─────────────────────────────
+ *   Total (TWD)        105,479.73   ← 列表上顯示的就是這個
+ *
+ * 搭檔收款那筆錢還是這間房產生的營收，只是分給了 co-host。
+ * 用淨額當營收的話，每一筆有搭檔的訂單都會少算一大截 ——
+ * 而且少算的比例每筆不同，看報表完全看不出哪裡不對。
+ *
+ * 這正是人工修正一直在做的事：David 手動把 95,231.63 改成 158,720，
+ * 差額 63,488 就是那筆訂單當時的搭檔收款。他每改一筆，
+ * 就是在手算這個加法。
+ *
+ *
+ * ============================================================
+ * 【所以爬蟲每一筆都要抓明細】
+ *
+ * 搭檔收款只出現在 StayHostingDetailsQuery 的明細裡，列表 API 沒有。
+ * 原本只在 earnings 為 0 時才去抓明細（那是「整筆被 co-host 拆走」
+ * 的極端情況）—— 但部分拆走的訂單同樣被少算，而那種看起來很正常。
+ *
+ * 代價是每一筆都要多打一次 API。值得：算錯的營收沒有人看得出來。
  */
 export function revenueOf(m: Incoming): { revenue: number; viaCohost: boolean } {
   const earn = num(m.earnings);
+  // 明細裡搭檔收款是負數（那是被扣掉的），取絕對值加回來
   const cohost = Math.abs(num(m.cohost));
-  return earn > 0
-    ? { revenue: earn, viaCohost: false }
-    : { revenue: cohost, viaCohost: cohost > 0 };
+  return { revenue: earn + cohost, viaCohost: cohost > 0 };
 }
 
 export const isCancelled = (m: Incoming) => /cancel/i.test(txt(m.statusKey));
@@ -166,8 +196,8 @@ export function decide(
   const source = cancelled ? 'oneoff' : 'airbnb';
   const fee_type = cancelled ? '取消費' : null;
   const note = cancelled
-    ? (viaCohost ? 'Airbnb 取消收入(搭檔收款)' : 'Airbnb 取消收入')
-    : (viaCohost ? '搭檔收款(Co-host payout)' : null);
+    ? (viaCohost ? 'Airbnb 取消收入(含搭檔收款)' : 'Airbnb 取消收入')
+    : (viaCohost ? '含搭檔收款(Co-host payout)' : null);
 
   // ── 新增 ────────────────────────────────────────
   if (!exist) {

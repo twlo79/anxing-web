@@ -43,15 +43,41 @@ test('沒有收入的新訂單先不進來', () => {
   assert.equal(decision.kind, 'skip');
 });
 
-test('earnings 為 0 時改看搭檔收款', () => {
-  assert.deepEqual(revenueOf(inc({ earnings: 0, cohost: -8000 })),
-    { revenue: 8000, viaCohost: true });
+test('★ 營收是「你賺得」＋「搭檔收款」', () => {
+  // Airbnb 列表上的 Total Payout 是扣掉搭檔收款之後的淨額。
+  // 直接拿來當營收的話,每一筆有搭檔的訂單都少算一大截,
+  // 而且少算的比例每筆不同 —— 報表上完全看不出哪裡不對
+  assert.deepEqual(revenueOf(inc({ earnings: 105479.73, cohost: -70319.83 })),
+    { revenue: 175799.56, viaCohost: true });
+});
+
+test('沒有搭檔收款時就是 earnings 本身', () => {
+  assert.deepEqual(revenueOf(inc({ earnings: 20000, cohost: 0 })),
+    { revenue: 20000, viaCohost: false });
+});
+
+test('搭檔收款是正數或負數都要加回來', () => {
+  // 明細裡是負數（被扣掉的）,但抓取端有可能已經取過絕對值
+  assert.equal(revenueOf(inc({ earnings: 1000, cohost: -500 })).revenue, 1500);
+  assert.equal(revenueOf(inc({ earnings: 1000, cohost: 500 })).revenue, 1500);
+});
+
+test('整筆被搭檔拆走（earnings 為 0）也算得出來', () => {
   const { decision } = decide(inc({ earnings: 0, cohost: 8000 }), null, PROP_A15);
   assert.equal(decision.kind, 'insert');
   if (decision.kind === 'insert') {
     assert.equal(decision.row.amount, 8000);
     assert.match(String(decision.row.note), /搭檔/);
   }
+});
+
+test('★ Erin 那筆的實際數字', () => {
+  // 2026-08-13 的真實案例。David 手動把 95,231.63 改成 158,720,
+  // 差額 63,488 就是那筆當時的搭檔收款 —— 他每改一筆就是在手算這個加法
+  const { decision } = decide(
+    inc({ code: 'HMPTCBX2H9', earnings: '$105,479.73', cohost: '-$70,319.83' }),
+    null, PROP_A15);
+  if (decision.kind === 'insert') assert.equal(decision.row.amount, 175799.56);
 });
 
 /* ── 這一次改版的重點：不再重複建立 ──────────── */
