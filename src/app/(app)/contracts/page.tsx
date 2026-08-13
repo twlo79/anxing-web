@@ -1,5 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import MoneyInput from '@/components/MoneyInput';
+import { checkContractRequired } from '@/lib/order-check';
 import Toast from '@/components/Toast';
 import { FilterBar, FilterSelect, FilterDateRange, FilterSearch, FilterClear, FilterCount } from '@/lib/filters';
 import { createClient } from '@/lib/supabase';
@@ -58,6 +60,21 @@ const SORT_COLS: SortCols<any> = {
   deposit: { type: 'number', get: (c) => c.deposit },
   start_date: { type: 'date', get: (c) => c.start_date },
 };
+
+/**
+ * 必填星號。
+ *
+ * 星號一開始就有（「這格待會要填」的預告），紅框只在按過儲存之後才出現
+ * （「你漏了」的判決）—— 空白表單一打開就整片紅，那不是提示是指責。
+ */
+function Req() {
+  return (
+    <>
+      <span aria-hidden className="text-red-500 ml-0.5">*</span>
+      <span className="sr-only">必填</span>
+    </>
+  );
+}
 
 export default function ContractsPage() {
   const supabase = useMemo(() => createClient(), []);
@@ -255,6 +272,21 @@ export default function ContractsPage() {
 
   async function save() {
     if (!edit) return;
+    setTried(true);
+    /*
+     * 必填少一個就擋，而且一次把缺的全部講完。
+     *
+     * 一次講一個的話他要按六次儲存才知道總共缺什麼；
+     * 而不擋的話那份契約會在收租清單上變成一個沒有房號、沒有租戶的
+     * 空白列 —— 看得到但認不出是誰，也不知道該跟誰收錢。
+     */
+    const miss = checkContractRequired({
+      estate_id: edit.estate_id, room: edit.room, tenant_name: edit.tenant_name,
+      cadence: edit.cadence, type: edit.type,
+      amount_per_period: edit.amount_per_period,
+      start_date: edit.start_date, end_date: edit.end_date,
+    });
+    if (miss.length) return flash(`無法儲存,還沒填：${miss.join('、')}`);
     /*
      * 日期先自己檢查，不要丟給資料庫擋。
      *
@@ -314,7 +346,7 @@ export default function ContractsPage() {
       }
     }
     setPendingFees([]);
-    flash('已儲存'); setEdit(null); load();
+    flash('已儲存'); setEdit(null); setTried(false); load();
     // 改租期會讓月租單重產。等觸發器跑完再檢查有沒有「租期外但已收款」的殘留。
     if (edit.id) { setTimeout(() => { warnStray({ ...(edit as Contract) }); }, 500); }
   }
@@ -496,6 +528,19 @@ export default function ContractsPage() {
     const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
     XLSX.writeFile(wb, `契約${tag ? '_' + tag : ''}_${stamp}.xlsx`);
   }
+
+  /** 按過儲存了沒 —— 紅框只在他表達「我填完了」之後才出現 */
+  const [tried, setTried] = useState(false);
+
+  /** 目前缺哪些必填欄位。存檔要擋、畫面要畫紅框，用同一份答案。 */
+  const missing = edit ? checkContractRequired({
+    estate_id: edit.estate_id, room: edit.room, tenant_name: edit.tenant_name,
+    cadence: edit.cadence, type: edit.type,
+    amount_per_period: edit.amount_per_period,
+    start_date: edit.start_date, end_date: edit.end_date,
+  }) : [];
+  /** 這一格要不要畫紅框 */
+  const err = (f: string) => tried && missing.includes(f);
 
   function blank(): Contract {
     return { id: '', estate_id: estates.find((e) => e.name === '正隆')?.id ?? null, room: '', tenant_name: '', phone: '', cadence: 'monthly', type: 'longterm', monthly_rent: 0, amount_per_period: 0, deposit: 0, start_date: '', end_date: '', pay_day: null, first_payment_date: '', paid: false, account: null, note: '', active: true, watch: false, display_name: '',
@@ -838,29 +883,39 @@ export default function ContractsPage() {
               <button onClick={() => setEdit(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
             </div>
             <div className="px-6 py-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-              <label className="flex flex-col gap-1">物業<select value={edit.estate_id ?? ''} onChange={(e) => setEdit({ ...edit, estate_id: e.target.value || null, room: '' })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option>{estates.map((es) => <option key={es.id} value={es.id}>{es.name}</option>)}</select></label>
-              <label className="flex flex-col gap-1">房源<select value={edit.room ?? ''} onChange={(e) => setEdit({ ...edit, room: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option>{properties.filter((x) => x.estate_id === edit.estate_id).map((x) => <option key={x.id} value={x.name}>{x.name}</option>)}</select></label>
-              <label className="flex flex-col gap-1">租戶<input value={edit.tenant_name ?? ''} onChange={(e) => setEdit({ ...edit, tenant_name: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+              <label className="flex flex-col gap-1">物業<Req />
+                <select value={edit.estate_id ?? ''} onChange={(e) => setEdit({ ...edit, estate_id: e.target.value || null, room: '' })} className={`rounded-lg border px-2 py-1.5 ${err('物業') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}><option value="">—</option>{estates.map((es) => <option key={es.id} value={es.id}>{es.name}</option>)}</select></label>
+              <label className="flex flex-col gap-1">房源<Req />
+                <select value={edit.room ?? ''} onChange={(e) => setEdit({ ...edit, room: e.target.value })} className={`rounded-lg border px-2 py-1.5 ${err('房源') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}><option value="">—</option>{properties.filter((x) => x.estate_id === edit.estate_id).map((x) => <option key={x.id} value={x.name}>{x.name}</option>)}</select></label>
+              <label className="flex flex-col gap-1">租戶<Req />
+                <input value={edit.tenant_name ?? ''} onChange={(e) => setEdit({ ...edit, tenant_name: e.target.value })} className={`rounded-lg border px-2 py-1.5 ${err('租戶') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} /></label>
               <label className="flex flex-col gap-1">電話<input value={edit.phone ?? ''} onChange={(e) => setEdit({ ...edit, phone: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
-              <label className="flex flex-col gap-1">繳別<select value={edit.cadence} onChange={(e) => setEdit({ ...edit, cadence: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="monthly">月繳</option><option value="quarterly">季繳</option><option value="halfyear">半年繳</option><option value="yearly">年繳</option></select></label>
-              <label className="flex flex-col gap-1">類別<select value={edit.type ?? 'longterm'} onChange={(e) => setEdit({ ...edit, type: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="longterm">長租</option><option value="company">公司登記</option><option value="office">辦公室</option></select></label>
-              <label className="flex flex-col gap-1">每期租金({CAD_LABEL[edit.cadence]})<input type="number" inputMode="numeric" placeholder="0" value={edit.amount_per_period || ''} onChange={(e) => setEdit({ ...edit, amount_per_period: e.target.value ? parseFloat(e.target.value) : 0 })} className="rounded-lg border border-gray-300 px-2 py-1.5" /><span className="text-xs text-gray-500 mt-0.5">對應月租金:${fmt(Math.round((edit.amount_per_period || 0) / (STEP_OF[edit.cadence] || 1)))}</span></label>
+              <label className="flex flex-col gap-1">繳別<Req />
+                <select value={edit.cadence} onChange={(e) => setEdit({ ...edit, cadence: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="monthly">月繳</option><option value="quarterly">季繳</option><option value="halfyear">半年繳</option><option value="yearly">年繳</option></select></label>
+              <label className="flex flex-col gap-1">類別<Req />
+                <select value={edit.type ?? 'longterm'} onChange={(e) => setEdit({ ...edit, type: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="longterm">長租</option><option value="company">公司登記</option><option value="office">辦公室</option></select></label>
+              <label className="flex flex-col gap-1">每期租金({CAD_LABEL[edit.cadence]})<Req />
+                <MoneyInput value={edit.amount_per_period ?? 0} invalid={err('每期租金')}
+                  onChange={(n) => setEdit({ ...edit, amount_per_period: n })}
+                  className="rounded-lg border border-gray-300 px-2 py-1.5 text-right" />
+                <span className="text-xs text-gray-500 mt-0.5">對應月租金:${fmt(Math.round((edit.amount_per_period || 0) / (STEP_OF[edit.cadence] || 1)))}</span></label>
               {/*
                 契約押金只收台幣 —— 長租不會有外幣押金,多一個幣別清單只是讓最常用的
                 路徑多兩個看不懂的控制項。短租那邊才需要（外籍旅客）。
               */}
               <label className="flex flex-col gap-1">押金(台幣)
-                <input type="number" inputMode="numeric" placeholder="0"
-                  value={edit.deposit || ''}
-                  onChange={(e) => setEdit({ ...edit, deposit: e.target.value ? parseFloat(e.target.value) : 0 })}
-                  className="rounded-lg border border-gray-300 px-2 py-1.5" />
+                <MoneyInput value={edit.deposit ?? 0}
+                  onChange={(n) => setEdit({ ...edit, deposit: n })}
+                  className="rounded-lg border border-gray-300 px-2 py-1.5 text-right" />
                 {edit.id && (
                   <a href={`/deposits?contract=${edit.id}`} target="_blank" rel="noreferrer"
                     className="text-xs text-mor-blue underline hover:text-mor-slate mt-0.5">收退狀態 →</a>
                 )}
               </label>
-              <label className="flex flex-col gap-1">租期起<input type="date" value={edit.start_date ?? ''} onChange={(e) => setEdit({ ...edit, start_date: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
-              <label className="flex flex-col gap-1">租期迄<input type="date" value={edit.end_date ?? ''} onChange={(e) => setEdit({ ...edit, end_date: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+              <label className="flex flex-col gap-1">租期起<Req />
+                <input type="date" value={edit.start_date ?? ''} onChange={(e) => setEdit({ ...edit, start_date: e.target.value })} className={`rounded-lg border px-2 py-1.5 ${err('租期起') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} /></label>
+              <label className="flex flex-col gap-1">租期迄<Req />
+                <input type="date" value={edit.end_date ?? ''} onChange={(e) => setEdit({ ...edit, end_date: e.target.value })} className={`rounded-lg border px-2 py-1.5 ${err('租期迄') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} /></label>
               <label className="flex flex-col gap-1">首繳日<input type="date" value={edit.first_payment_date ?? ''} onChange={(e) => setEdit({ ...edit, first_payment_date: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <div className="col-span-2 -mt-1 text-xs text-gray-500 flex items-center gap-1 flex-wrap">
                 <span>租金對應:</span>
@@ -912,8 +967,8 @@ export default function ContractsPage() {
                       <input type="date" value={cn.date ?? ''}
                         onChange={(e) => { const a = [...((edit.concessions as any[]) ?? [])]; a[idx] = { ...a[idx], date: e.target.value }; setEdit({ ...edit, concessions: a } as any); }}
                         className="rounded border border-gray-300 px-1.5 py-1 text-xs" />
-                      <input type="number" min="0" placeholder="金額" value={cn.amount || ''}
-                        onChange={(e) => { const a = [...((edit.concessions as any[]) ?? [])]; a[idx] = { ...a[idx], amount: Number(e.target.value) }; setEdit({ ...edit, concessions: a } as any); }}
+                      <MoneyInput value={Number(cn.amount) || 0} placeholder="金額"
+                        onChange={(n) => { const a = [...((edit.concessions as any[]) ?? [])]; a[idx] = { ...a[idx], amount: n }; setEdit({ ...edit, concessions: a } as any); }}
                         className="w-24 rounded border border-gray-300 px-1.5 py-1 text-xs text-right" />
                       <input placeholder="說明" value={cn.note ?? ''}
                         onChange={(e) => { const a = [...((edit.concessions as any[]) ?? [])]; a[idx] = { ...a[idx], note: e.target.value }; setEdit({ ...edit, concessions: a } as any); }}
@@ -967,10 +1022,14 @@ export default function ContractsPage() {
                     <label className="flex flex-col gap-0.5 text-xs text-gray-500">追加月數
                       <input type="number" min={1} value={ext.months} onChange={(e) => { const m = e.target.value; const mn = parseInt(m) || 0; const mo = parseFloat(ext.monthly) || 0; setExt({ months: m, monthly: ext.monthly, total: mo && mn ? String(mo * mn) : ext.total }); }} className="w-24 rounded-lg border border-gray-300 px-2 py-1.5" /></label>
                     <label className="flex flex-col gap-0.5 text-xs text-gray-500">月租金
-                      <input type="number" value={ext.monthly || ''} placeholder="0" onChange={(e) => { const v = e.target.value; const mn = parseInt(ext.months) || 0; const mo = parseFloat(v) || 0; setExt({ months: ext.months, monthly: v, total: mn ? String(mo * mn) : '' }); }} className="w-28 rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+                      <MoneyInput value={parseFloat(ext.monthly) || 0} placeholder="0"
+                        onChange={(mo) => { const mn = parseInt(ext.months) || 0; setExt({ months: ext.months, monthly: mo ? String(mo) : '', total: mn && mo ? String(mo * mn) : '' }); }}
+                        className="w-28 rounded-lg border border-gray-300 px-2 py-1.5 text-right" /></label>
                     <span className="pb-2 text-gray-400">或</span>
                     <label className="flex flex-col gap-0.5 text-xs text-gray-500">總共租金
-                      <input type="number" value={ext.total || ''} placeholder="0" onChange={(e) => { const v = e.target.value; const mn = parseInt(ext.months) || 0; const tt = parseFloat(v) || 0; setExt({ months: ext.months, total: v, monthly: mn ? String(Math.round(tt / mn)) : '' }); }} className="w-32 rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+                      <MoneyInput value={parseFloat(ext.total) || 0} placeholder="0"
+                        onChange={(tt) => { const mn = parseInt(ext.months) || 0; setExt({ months: ext.months, total: tt ? String(tt) : '', monthly: mn && tt ? String(Math.round(tt / mn)) : '' }); }}
+                        className="w-32 rounded-lg border border-gray-300 px-2 py-1.5 text-right" /></label>
                     <button type="button" onClick={doExtend} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark">展延</button>
                   </div>
                   <div className="text-[11px] text-gray-400 mt-1">目前租期迄 {edit.end_date || '—'}・月租金與總共租金擇一輸入,另一個自動換算(月租金 × 月數 = 總共租金)。展延後租期迄自動延後。</div>
@@ -1683,7 +1742,9 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
                     {feeDraft?.pi === i ? (
                       <div className="flex flex-wrap items-center gap-1 mt-1">
                         <select value={feeDraft.type} onChange={(e) => setFeeDraft({ ...feeDraft, type: e.target.value })} className="rounded border border-gray-300 px-1.5 py-0.5 text-xs">{FEE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}</select>
-                        <input type="number" placeholder="金額" value={feeDraft.amount || ''} onChange={(e) => setFeeDraft({ ...feeDraft, amount: parseFloat(e.target.value) || 0 })} className="rounded border border-gray-300 px-1.5 py-0.5 text-xs w-20" />
+                        <MoneyInput value={feeDraft.amount || 0} placeholder="金額"
+                          onChange={(n) => setFeeDraft({ ...feeDraft, amount: n })}
+                          className="rounded border border-gray-300 px-1.5 py-0.5 text-xs w-20 text-right" />
                         <input type="date" value={feeDraft.date} onChange={(e) => setFeeDraft({ ...feeDraft, date: e.target.value })} className="rounded border border-gray-300 px-1.5 py-0.5 text-xs" />
                         <button onClick={saveFee} className="rounded bg-mor-slate text-white px-2 py-0.5 text-xs">儲存</button>
                         <button onClick={() => setFeeDraft(null)} className="text-gray-400 underline text-xs">取消</button>
@@ -1691,8 +1752,8 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
                     ) : concDraft?.pi === i ? (
                       <div className="flex flex-wrap items-center gap-1.5 mt-1">
                         <span className="text-xs text-gray-500">折讓</span>
-                        <input type="number" min="0" placeholder="金額" value={concDraft.amount || ''}
-                          onChange={(e) => setConcDraft({ ...concDraft, amount: Number(e.target.value) })}
+                        <MoneyInput value={concDraft.amount || 0} placeholder="金額"
+                          onChange={(n) => setConcDraft({ ...concDraft, amount: n })}
                           className="w-24 rounded border border-gray-300 px-1.5 py-0.5 text-xs text-right" />
                         <input type="date" value={concDraft.date}
                           onChange={(e) => setConcDraft({ ...concDraft, date: e.target.value })}

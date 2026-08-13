@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  checkDates, checkPrice, checkRequired, lookbackFrom,
+  checkDates, checkPrice, checkRequired, checkContractRequired, lookbackFrom,
   LOW_PRICE_RATIO, MIN_SAMPLE, type PastOrder,
 } from './order-check.ts';
 
@@ -54,6 +54,48 @@ test('缺很多欄位時全部列出來,不是只講第一個', () => {
     checkin: '', checkout: '', amount: 0,
   });
   assert.deepEqual(miss, ['物業', '房客', '起日', '迄日', '金額']);
+});
+
+/* ── 契約必填 ────────────────────────────────── */
+
+const con = {
+  estate_id: 'e-1', room: 'A13', tenant_name: '游宗堉',
+  cadence: 'monthly', type: 'longterm',
+  amount_per_period: 24500, start_date: '2024-10-01', end_date: '2025-09-30',
+};
+
+test('契約填齊沒有缺漏', () => {
+  assert.deepEqual(checkContractRequired(con), []);
+});
+
+test('★ 契約的房源是必填 —— 跟訂單不一樣', () => {
+  // 訂單可以「整棟出租」不指定房號,契約不行:
+  // 一份租約一定綁一個具體的單位,沒有房號的契約在收租清單上是一個看不見的項目
+  assert.deepEqual(checkContractRequired({ ...con, room: '' }), ['房源']);
+  assert.deepEqual(checkContractRequired({ ...con, room: null }), ['房源']);
+});
+
+test('租戶只有空白也算沒填', () => {
+  assert.deepEqual(checkContractRequired({ ...con, tenant_name: '  ' }), ['租戶']);
+});
+
+test('每期租金是 0 算沒填', () => {
+  assert.deepEqual(checkContractRequired({ ...con, amount_per_period: 0 }), ['每期租金']);
+  assert.deepEqual(checkContractRequired({ ...con, amount_per_period: null }), ['每期租金']);
+});
+
+test('★ 首繳日與押金不是必填', () => {
+  // 首繳日空著時系統會從租期起推算,那不是漏填;
+  // 押金為 0 的租約真的存在（公司登記、短期辦公室）
+  assert.deepEqual(checkContractRequired(con), []);
+});
+
+test('缺很多欄位時全部列出來', () => {
+  const miss = checkContractRequired({
+    estate_id: null, room: '', tenant_name: '', cadence: 'monthly',
+    type: 'longterm', amount_per_period: 0, start_date: '', end_date: '',
+  });
+  assert.deepEqual(miss, ['物業', '房源', '租戶', '每期租金', '租期起', '租期迄']);
 });
 
 /* ── 日期 ────────────────────────────────────── */

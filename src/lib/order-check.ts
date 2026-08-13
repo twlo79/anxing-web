@@ -56,6 +56,40 @@ export function checkRequired(o: {
   return miss;
 }
 
+/**
+ * 契約一定要填的欄位（使用者指定）。
+ *
+ * 跟訂單的差別是**房源也必填** —— 契約一定綁一個具體的單位，
+ * 沒有「整棟出租」這件事（那會是另一種合約）。
+ *
+ * 沒有列進來的：電話、押金、首繳日、收款帳號、顯示名稱。
+ * 首繳日空著時系統會從租期起推算，不是漏填。
+ *
+ * @returns 缺少的欄位名稱；全部填齊回空陣列
+ */
+export function checkContractRequired(c: {
+  estate_id: string | null;
+  room: string | null;
+  tenant_name: string | null;
+  cadence: string;
+  type: string | null;
+  /** 每期租金 */
+  amount_per_period: number | null;
+  start_date: string | null;
+  end_date: string | null;
+}): string[] {
+  const miss: string[] = [];
+  if (!c.estate_id) miss.push('物業');
+  if (!(c.room ?? '').trim()) miss.push('房源');
+  if (!(c.tenant_name ?? '').trim()) miss.push('租戶');
+  if (!c.cadence) miss.push('繳別');
+  if (!c.type) miss.push('類別');
+  if (!((c.amount_per_period ?? 0) > 0)) miss.push('每期租金');
+  if (!c.start_date) miss.push('租期起');
+  if (!c.end_date) miss.push('租期迄');
+  return miss;
+}
+
 /* ============================================================
  * 日期
  * ============================================================ */
