@@ -1,6 +1,6 @@
 'use client';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Req from '@/components/Req';
+import Req, { ReqMark } from '@/components/Req';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
@@ -1879,10 +1879,15 @@ export default function PurchasesPage() {
                     {items.map((it, idx) => (
                       <div key={idx} className="rounded-lg border border-mor-line p-3 space-y-2">
                         <div className="flex gap-2">
-                          <input disabled={readOnly} value={it.item_name} placeholder="項目名稱 *"
-                            onChange={(e) => setItems(items.map((x, i) => i === idx ? { ...x, item_name: e.target.value } : x))}
-                            className="flex-1 min-w-0 h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50" />
+                          {/* 提示字在 placeholder 裡,塞不進紅星元件 —— 改成貼在框線左上角 */}
+                          <div className="relative flex-1 min-w-0">
+                            {!readOnly && <ReqMark />}
+                            <input disabled={readOnly} value={it.item_name} placeholder="項目名稱"
+                              onChange={(e) => setItems(items.map((x, i) => i === idx ? { ...x, item_name: e.target.value } : x))}
+                              className="w-full h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50" />
+                          </div>
                           <div className="relative w-28 md:w-32 shrink-0">
+                            {!readOnly && <ReqMark />}
                             <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">
                               {edit.currency === 'TWD' ? 'NT$' : edit.currency}
                             </span>
@@ -1890,7 +1895,7 @@ export default function PurchasesPage() {
                                 打字時新數字會接在 0 後面變成 0500。空字串才能被直接取代。 */}
                             <input disabled={readOnly} type="number" inputMode="decimal" min="0"
                               value={it.amount_original === 0 || it.amount_original == null ? '' : it.amount_original}
-                              placeholder="金額 *"
+                              placeholder="金額"
                               onChange={(e) => setItems(items.map((x, i) => i === idx ? { ...x, amount_original: e.target.value === '' ? 0 : Number(e.target.value) } : x))}
                               className="w-full h-12 md:h-auto bg-white rounded-lg border border-mor-line pl-9 pr-2 md:py-1.5 text-right disabled:bg-gray-50" />
                           </div>
@@ -1905,6 +1910,8 @@ export default function PurchasesPage() {
                             <option value="">會計科目</option>
                             {expenseCodes.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
                           </select>
+                          <div className="relative w-full md:w-auto md:flex-1">
+                          {!readOnly && <ReqMark />}
                           <select disabled={readOnly}
                             value={it.purpose_type === 'office' ? 'office' : (it.estate_id ?? '')}
                             onChange={(e) => {
@@ -1916,11 +1923,12 @@ export default function PurchasesPage() {
                                     : { ...x, purpose_type: 'estate', estate_id: v || null, property_id: null })
                                 : x));
                             }}
-                            className="w-full md:w-auto md:flex-1 h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50">
-                            <option value="">用途 *</option>
+                            className="w-full h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50">
+                            <option value="">用途</option>
                             <option value="office">安幸辦公室</option>
                             {estates.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
                           </select>
+                          </div>
                           {/* 房源選填。跟支出頁同一套:選了物業才出現 ——
                               沒有物業就篩不出房源清單。 */}
                           {it.purpose_type === 'estate' && it.estate_id && (
