@@ -1,5 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AuditButton, AuditBadges, AuditSummary } from '@/components/Audit';
+import { auditOrders, type AuditOrder } from '@/lib/audit-orders';
 import Req from '@/components/Req';
 import Toast from '@/components/Toast';
 import FilterToggle from '@/components/FilterToggle';
@@ -279,6 +281,66 @@ export default function ShortTermPage() {
   // 直接拿 rows 匯出只會得到 50 筆,所以這裡要重新向伺服器要完整結果,
   // 篩選與排序條件必須與 load() 完全一致,否則匯出內容會對不上畫面。
   const [exporting, setExporting] = useState(false);
+
+  /*
+   * ============================================================
+   * 【防呆模式】
+   *
+   * 按下去才檢查、按回去標記全部消失。
+   *
+   * 【為什麼要另外抓一次資料】
+   * 這一頁是伺服器端分頁，畫面上的 rows 只有當前這 50 筆。
+   * 拿它來檢查的話，「重複訂單」與「房源過載」永遠抓不到
+   * 跨頁的那一對 —— 而那正是最常見的情況。
+   *
+   * 所以按下去時用同一組篩選把**全部**撈回來（跟匯出 Excel 同一條路），
+   * 檢查完只留結果。關掉就丟掉，不佔記憶體。
+   */
+  const [audit, setAudit] = useState(false);
+  const [auditBusy, setAuditBusy] = useState(false);
+  /*
+   * 撈的是完整的訂單列（跟匯出 Excel 同一個 select）。
+   *
+   * 【為什麼不只撈檢查用的那幾欄】
+   * 「只看有問題的」要把跨頁的問題列直接畫出來。只撈檢查用的欄位的話，
+   * 畫得出標籤但畫不出金額與收款狀態 —— 而那份清單正是拿來一列一列
+   * 對帳的東西，少了金額等於沒用。
+   */
+  const [auditRows, setAuditRows] = useState<Order[] | null>(null);
+  /** 只看有問題的那幾列 */
+  const [onlyBad, setOnlyBad] = useState(false);
+
+  async function toggleAudit() {
+    if (audit) { setAudit(false); setAuditRows(null); setOnlyBad(false); return; }
+    setAuditBusy(true);
+    try {
+      let all: any[] = [];
+      let from = 0;
+      while (true) {
+        const q = applyFilters(
+          supabase.from('orders').select('*, properties(name)').in('source', SRC)
+            .order('checkin', { ascending: false, nullsFirst: false }));
+        const { data, error } = await q.range(from, from + 999);
+        if (error) { flash('檢查失敗:' + error.message); return; }
+        const chunk = (data as any[]) ?? [];
+        all = all.concat(chunk);
+        if (chunk.length < 1000) break;
+        from += 1000;
+      }
+      setAuditRows(all as Order[]);
+      setAudit(true);
+    } finally { setAuditBusy(false); }
+  }
+
+  const auditResult = useMemo(() => auditRows ? auditOrders(
+    auditRows as unknown as AuditOrder[],
+    { from: fromD || undefined, to: toD || undefined },
+    {
+      knownRooms: new Set(properties.map((p) => p.name)),
+      today: new Date().toISOString().slice(0, 10),
+    },
+  ) : null, [auditRows, fromD, toD, properties]);
+
   async function exportXlsx() {
     setExporting(true);
     try {
@@ -626,13 +688,30 @@ export default function ShortTermPage() {
           </div>
         </div>
         {(src || kw || estF || fromD || toD || feeF || payF) && <button onClick={() => { setSrc(''); setKw(''); setKwIn(''); setEstF(''); setFromD(''); setToD(''); setFeeF(FEE_F_ALL); setPayF(''); }} className="text-gray-500 underline pb-1.5">清除</button>}
+        {/*
+          「只看房費」＝ 費用類別選「房租」的捷徑。
+          那個下拉有十幾個選項,而「排除一次性費用」是最常用的一種看法 ——
+          常用的東西不該藏在下拉的第二個選項裡。
+        */}
+        <label className="flex items-center gap-1.5 pb-1.5 text-sm whitespace-nowrap cursor-pointer select-none">
+          <input type="checkbox" checked={feeF === 'rent'}
+            onChange={(e) => setFeeF(e.target.checked ? 'rent' : FEE_F_ALL)}
+            className="w-4 h-4 accent-mor-slate" />
+          只看房費
+        </label>
         <div className="ml-auto flex items-end gap-3">
           <div className="text-xs text-gray-400 pb-1.5">共 {total.toLocaleString()} 筆</div>
+          <AuditButton on={audit} onToggle={toggleAudit} busy={auditBusy} />
           <button onClick={exportXlsx} disabled={exporting || !total} className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 disabled:opacity-40">{exporting ? '匯出中…' : '⬇ 下載 Excel'}</button>
           <button onClick={() => openEdit(blank())} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 新增訂單</button>
           <TrashLink table="orders" label="訂單" />
         </div>
       </div>
+
+      {audit && auditResult && (
+        <AuditSummary result={auditResult} onlyBad={onlyBad}
+          onToggleOnly={() => setOnlyBad((v) => !v)} />
+      )}
 
       <div className="rounded-xl glass overflow-x-auto">
         <table className="w-full min-w-[720px] text-sm">
@@ -650,7 +729,14 @@ export default function ShortTermPage() {
           <tbody>
             {loading ? <tr><td colSpan={7} className="px-4 py-10 text-center text-gray-400">載入中…</td></tr>
             : rows.length === 0 ? <tr><td colSpan={7} className="px-4 py-10 text-center text-gray-400">無訂單</td></tr>
-            : rows.map((o) => (
+            /*
+              「只看有問題的」要從**全部**裡面挑，不是從當前這 50 筆。
+              從當前頁挑的話，翻到第三頁會看到一片空白 ——
+              而問題其實在第七頁,使用者只會以為沒事。
+            */
+            : (audit && onlyBad && auditResult && auditRows
+                ? auditRows.filter((o) => auditResult.byId[o.id])
+                : rows).map((o) => (
               // 整列可點,開啟右側詳細抽屜。
               // 刪除與移房移進抽屜:1,900 多筆的列表上,刪除只差 8px 就在編輯旁邊,
               // 點錯就是一張真實訂單消失。要先開抽屜看到完整內容才刪得掉,那本身就是一道確認。
@@ -661,7 +747,12 @@ export default function ShortTermPage() {
                   <div>{o.property_raw ?? o.properties?.name ?? '—'}</div>
                   <div className="text-[11px] text-gray-400">{o.estate_id ? estateName[o.estate_id] ?? '' : ''}</div>
                 </td>
-                <td className="px-3 py-2 whitespace-nowrap">{o.guest_name ?? '—'}</td>
+                <td className="px-3 py-2 whitespace-nowrap">
+                  {o.guest_name ?? '—'}
+                  {audit && auditResult && (
+                    <div className="mt-0.5"><AuditBadges entry={auditResult.byId[o.id]} /></div>
+                  )}
+                </td>
                 <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-500">{o.checkin}~{o.checkout}</td>
                 <td className="px-3 py-2 text-right font-medium">${fmt(o.amount)}</td>
                 <td className="px-3 py-2 whitespace-nowrap">

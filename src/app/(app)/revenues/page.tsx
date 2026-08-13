@@ -1,5 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AuditButton, AuditBadges, AuditSummary } from '@/components/Audit';
+import { auditOrders, type AuditOrder } from '@/lib/audit-orders';
 import FilterToggle from '@/components/FilterToggle';
 import { createClient } from '@/lib/supabase';
 import { fetchAll } from '@/lib/fetch-all';
@@ -11,7 +13,18 @@ import {
 } from '@/lib/revenue-report';
 
 type Row = {
-  order_id: string; source: string; estate_id: string | null; estate_name: string | null;
+  /** 這一列的 id（認列列，不是訂單）—— 一筆訂單跨三個月就有三列 */
+  order_id: string;
+  /**
+   * 真正的訂單 id。
+   *
+   * 【為什麼要另外帶】
+   * 防呆檢查是以「訂單」為單位的。用認列列去檢查的話，
+   * 一筆跨三個月的訂單會變成三列相同房源、相同起訖的資料 ——
+   * 期間重疊的檢查會抓到它跟自己重疊，每一筆長租都會被標紅。
+   */
+  oid: string | null;
+  source: string; estate_id: string | null; estate_name: string | null;
   property_raw: string | null; guest_name: string | null; checkin: string; checkout: string;
   period_start: string | null; period_end: string | null; fee_type?: string | null;
   /** 一次性收入的項目(洗衣機/垃圾代收費…)。會計科目底下再細一層。 */
@@ -98,13 +111,21 @@ export default function RevenuesPage() {
     const { rows: data } = await fetchAll<any>((f, t) =>
       supabase.from('revenue_recognitions').select('*').eq('ym', ym).range(f, t));
     return (data ?? []).map((r) => ({
-      order_id: r.id, source: r.source, estate_id: r.estate_id, estate_name: r.estate_name,
+      order_id: r.id, oid: r.order_id ?? null, source: r.source, estate_id: r.estate_id, estate_name: r.estate_name,
       property_raw: r.property_raw, guest_name: r.guest_name, checkin: r.checkin, checkout: r.checkout,
       period_start: r.period_start ?? pstart, period_end: r.period_end ?? pend, fee_type: r.fee_type ?? null, item_name: r.item_name ?? null,
       total_amount: Number(r.total_amount ?? 0), total_nights: r.total_nights ?? 0,
       month_nights: r.month_nights ?? 0, month_amount: Number(r.month_amount),
     })).filter((r) => r.month_amount !== 0);
   }, [supabase]);
+
+  /*
+   * 防呆模式。按下去才檢查，按回去標記全部消失。
+   *
+   * 這一頁的資料本來就全部在前端（不是伺服器分頁），所以不用再抓一次。
+   */
+  const [audit, setAudit] = useState(false);
+  const [onlyBad, setOnlyBad] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -137,6 +158,38 @@ export default function RevenuesPage() {
   useEffect(() => { setRoomFilter(''); }, [estateFilter]);
   const rowPages = Math.max(1, Math.ceil(sorted.length / ROWS));
   const pageRows = sorted.slice(rowPage * ROWS, rowPage * ROWS + ROWS);
+
+  /*
+   * 防呆檢查。
+   *
+   * 【一定要先按訂單去重】
+   * 這一頁一列 = 一個月的認列，一筆跨三個月的訂單就有三列。
+   * 直接拿去檢查的話，那三列同房源、同起訖 —— 期間重疊會抓到它跟自己重疊，
+   * 每一筆長租都會被標紅，而那會讓整個功能變成噪音。
+   *
+   * 金額用 total_amount（整筆訂單的金額）而不是 month_amount，
+   * 房價才比得對 —— 拿一個月的攤提去比整筆的均價，長租一定被判過低。
+   */
+  const auditResult = useMemo(() => {
+    if (!audit) return null;
+    const seen = new Set<string>();
+    const uniq: AuditOrder[] = [];
+    for (const r of filtered) {
+      const key = r.oid ?? r.order_id;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      uniq.push({
+        id: key, source: r.source, property_raw: r.property_raw,
+        estate_id: r.estate_id, guest_name: r.guest_name,
+        checkin: r.checkin || null, checkout: r.checkout || null,
+        nights: r.total_nights, amount: r.total_amount,
+      });
+    }
+    return auditOrders(uniq, {}, { today: new Date().toISOString().slice(0, 10) });
+  }, [audit, filtered]);
+
+  /** 這一列（認列列）對應的訂單有沒有問題 */
+  const entryOf = (r: Row) => auditResult?.byId[r.oid ?? r.order_id];
   const bySource = useMemo(() => {
     const m: Record<string, number> = {};
     for (const r of filtered) m[r.source] = (m[r.source] || 0) + Number(r.month_amount);
@@ -542,6 +595,10 @@ export default function RevenuesPage() {
             <option value="">全部</option>{roomOptions.map((r) => <option key={r} value={r}>{r}</option>)}
           </select>
         </div>
+        <div className="flex items-end pb-0.5">
+          <AuditButton on={audit}
+            onToggle={() => { setAudit((v) => !v); setOnlyBad(false); }} />
+        </div>
         <div>
           <label className="block text-xs text-gray-500 mb-1">來源</label>
           <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
@@ -572,6 +629,11 @@ export default function RevenuesPage() {
       </div>
 
       {/* Table */}
+      {audit && auditResult && (
+        <AuditSummary result={auditResult} onlyBad={onlyBad}
+          onToggleOnly={() => setOnlyBad((v) => !v)} />
+      )}
+
       <div className="rounded-xl glass overflow-x-auto">
         <table className="w-full min-w-[900px] text-sm">
           <thead>
@@ -590,7 +652,9 @@ export default function RevenuesPage() {
           <tbody>
             {loading ? <tr><td colSpan={9} className="px-4 py-10 text-center text-gray-400">載入中…</td></tr>
             : filtered.length === 0 ? <tr><td colSpan={9} className="px-4 py-10 text-center text-gray-400">此期間無認列營收</td></tr>
-            : pageRows.map((r) => (
+            : (audit && onlyBad && auditResult
+                ? sorted.filter((r) => entryOf(r))
+                : pageRows).map((r) => (
               <tr key={r.order_id} className="border-b border-mor-line/60 hover:bg-mor-bluelight/30">
                 <td className="px-3 py-2 whitespace-nowrap"><span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${SOURCE_COLOR[r.source]}`}>{r.source === 'oneoff' ? `${ONEOFF_LABEL}・${oneoffLabel(r)}` : (SOURCE_LABEL[r.source] ?? r.source)}</span></td>
                 <td className="px-3 py-2 whitespace-nowrap">{r.estate_name ?? '—'}</td>
@@ -606,7 +670,10 @@ export default function RevenuesPage() {
                   「這間房這個月有這筆收入」,然後拿去跟房源營收對帳,對不起來。
                 */}
                 <td className="px-3 py-2 whitespace-nowrap">{isOffice(r) || isCompany(r) ? '—' : (r.property_raw ?? '—')}</td>
-                <td className="px-3 py-2 whitespace-nowrap">{r.guest_name ?? '—'}</td>
+                <td className="px-3 py-2 whitespace-nowrap">
+                  {r.guest_name ?? '—'}
+                  {audit && <div className="mt-0.5"><AuditBadges entry={entryOf(r)} /></div>}
+                </td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-500 text-xs">{orderRange(r)}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-500 text-xs">{recogRange(r)}</td>
                 <td className="px-3 py-2 text-right text-gray-500">${fmt(r.total_amount)}</td>
