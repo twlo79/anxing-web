@@ -92,6 +92,24 @@ test('★ 房源不在現有清單裡要標出來', () => {
   assert.match(r.byId['x'].notes.join(), /不在現有房源清單/);
 });
 
+test('★★ 已作廢的取消單完全不檢查', () => {
+  // 爬蟲作廢 Airbnb 取消單時就是把金額設成 0 —— 那是正確狀態不是漏填。
+  // 不跳過的話三百多筆取消單會全部被標成「資料缺失」,
+  // 而標記大量出現在正常資料上,真正該看的那幾筆就被淹掉了
+  const r = auditOrders([o({
+    id: 'x', source: 'airbnb_cancelled', amount: 0,
+    guest_name: 'Lulu Tan,', checkin: '2026-07-27', checkout: '2026-07-31',
+  })]);
+  assert.deepEqual(issues(r, 'x'), []);
+});
+
+test('一次性收入的金額 0 仍然要標 —— 那是真的漏填', () => {
+  // 取消單的 0 是作廢,一次性收入的 0 是「收了一筆零元的費用」——
+  // 兩者長得一樣但意思相反
+  const r = auditOrders([o({ id: 'x', source: 'oneoff', amount: 0 })]);
+  assert.ok(issues(r, 'x').includes('資料缺失'));
+});
+
 /* ── 重複 ────────────────────────────────────── */
 
 test('★ 同房源同起訖同金額 = 重複,姓名不同也一樣', () => {

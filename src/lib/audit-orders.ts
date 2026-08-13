@@ -53,6 +53,21 @@ export const AUDIT_MIN_SAMPLE = 3;
 /** 一次性收入的來源 —— 這些沒有住宿天數，不參與佔用與均價 */
 const ONEOFF = new Set(['oneoff', 'airbnb_cancelled']);
 
+/**
+ * 已作廢的訂單。
+ *
+ * 【為什麼整筆跳過所有檢查】
+ * 爬蟲把 Airbnb 取消單作廢時，就是把金額設成 0、來源改成 airbnb_cancelled。
+ * 那個 0 是**正確的狀態**，不是漏填。
+ *
+ * 不跳過的話，三百多筆取消單會全部被標成「資料缺失」——
+ * 而標記一旦大量出現在正常資料上，真正該看的那幾筆就被淹掉了。
+ * 那時候這個功能就等於沒有。
+ *
+ * 作廢的單不進營收、不佔房間、也沒有任何要修的地方，所以完全不看。
+ */
+const isVoided = (o: AuditOrder) => String(o.source ?? '') === 'airbnb_cancelled';
+
 const DAY = 86400000;
 const t = (d: string) => new Date(`${d}T00:00:00Z`).getTime();
 /** 兩個日期相差幾天 */
@@ -140,6 +155,8 @@ export function auditOrders(
 
   /* ── 1. 逐筆：日期與缺漏 ────────────────────── */
   for (const o of orders) {
+    // 作廢的單金額本來就是 0，那是正確狀態不是漏填
+    if (isVoided(o)) continue;
     const oneoff = ONEOFF.has(String(o.source ?? ''));
 
     if (o.checkin && o.checkout && !oneoff) {
