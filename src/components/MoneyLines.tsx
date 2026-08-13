@@ -5,6 +5,7 @@ import {
   CURRENCIES, isKnownCurrency, currencyLabel, type Line,
 } from '@/lib/money-lines';
 import MoneyInput from '@/components/MoneyInput';
+import Req from '@/components/Req';
 
 /**
  * 多幣別金額輸入：一列一種幣別，台幣只是其中一列。
@@ -31,7 +32,7 @@ const CTRL = 'h-11 md:h-8 bg-white rounded-lg border border-mor-line px-2 text-s
 const OTHER = '__other__';
 
 export default function MoneyLines({
-  lines, onChange, mode, label, hint, disabled = false, action, invalid,
+  lines, onChange, mode, label, hint, disabled = false, action, invalid, required,
 }: {
   lines: Line[];
   onChange: (next: Line[]) => void;
@@ -41,6 +42,9 @@ export default function MoneyLines({
   disabled?: boolean;
   /** 必填但總額是 0 —— 台幣那一列畫紅框 */
   invalid?: boolean;
+  /** 標題後面加紅色星號。用元件而不是在 label 字串裡打 `*` ——
+      那個星號會是灰的,跟其他必填欄位對不起來 */
+  required?: boolean;
   /** 標題右邊的額外連結（例如「到押金管理」）。 */
   action?: React.ReactNode;
 }) {
@@ -68,7 +72,7 @@ export default function MoneyLines({
   return (
     <div className="col-span-2 rounded-lg border border-mor-line p-3">
       <div className="flex items-center justify-between gap-2 mb-2">
-        <span className="text-xs text-gray-500">{label}</span>
+        <span className="text-xs text-gray-500 flex items-center">{label}{required && <Req />}</span>
         <span className="flex items-center gap-3">
           {action}
           {!disabled && (

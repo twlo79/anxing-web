@@ -16,7 +16,7 @@ import MoneyLines from '@/components/MoneyLines';
 import { toLines, fromLines, totalTwd, validateLines, type Line } from '@/lib/money-lines';
 import { payStatus, remaining, isExempt, STATUS_LABEL, STATUS_CLASS, STATUS_FILTER } from '@/lib/order-payment';
 import { softDelete } from '@/lib/trash';
-import { feeFilterOptions, feeFilterPredicate, ONEOFF_SOURCES, FEE_F_ALL } from '@/lib/order-filter';
+import { feeFilterOptions, feeFilterPredicate, ONEOFF_SOURCES, FEE_F_ALL, FEE_F_RENT } from '@/lib/order-filter';
 import TrashLink from '@/components/TrashLink';
 import { checkDates, checkPrice, checkRequired, lookbackFrom, type PastOrder } from '@/lib/order-check';
 import MoneyInput from '@/components/MoneyInput';
@@ -692,10 +692,17 @@ export default function ShortTermPage() {
           「只看房費」＝ 費用類別選「房租」的捷徑。
           那個下拉有十幾個選項,而「排除一次性費用」是最常用的一種看法 ——
           常用的東西不該藏在下拉的第二個選項裡。
+
+          【值一定要用 FEE_F_RENT，不是 'rent'】
+          「房租」不是一個 fee_type,它是「來源不是一次性收入」的意思
+          （規則在 lib/order-filter,跟資料庫的 order_account_code 同一份）。
+          寫成 'rent' 會被當成「fee_type 等於 rent 的一次性收入」——
+          而那種東西不存在,所以篩出來永遠是零筆,
+          畫面上看起來就像「勾了之後資料全不見了」。
         */}
         <label className="flex items-center gap-1.5 pb-1.5 text-sm whitespace-nowrap cursor-pointer select-none">
-          <input type="checkbox" checked={feeF === 'rent'}
-            onChange={(e) => setFeeF(e.target.checked ? 'rent' : FEE_F_ALL)}
+          <input type="checkbox" checked={feeF === FEE_F_RENT}
+            onChange={(e) => setFeeF(e.target.checked ? FEE_F_RENT : FEE_F_ALL)}
             className="w-4 h-4 accent-mor-slate" />
           只看房費
         </label>
@@ -913,9 +920,9 @@ export default function ShortTermPage() {
           <div onClick={(e) => e.stopPropagation()} className="relative bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[85vh] overflow-y-auto">
             <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 font-bold flex items-center justify-between">{edit.id ? '編輯訂單' : '新增訂單(私下/一次性)'}<button onClick={() => setEdit(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button></div>
             <div className="px-6 py-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-              <label className="flex flex-col gap-1">來源<Req />
+              <label className="flex flex-col gap-1"><span className="flex items-center">來源<Req /></span>
                 <select value={edit.source} onChange={(e) => setEdit({ ...edit, source: e.target.value })} className={`rounded-lg border px-2 py-1.5 ${err('來源') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}>{Array.from(new Set([...(edit.id ? [edit.source] : []), ...MANUAL_SRC])).map((s) => <option key={s} value={s}>{SRC_LABEL[s] ?? s}</option>)}</select></label>
-              <label className="flex flex-col gap-1">物業<Req />
+              <label className="flex flex-col gap-1"><span className="flex items-center">物業<Req /></span>
                 <select value={edit.estate_id ?? ''} onChange={(e) => setEdit({ ...edit, estate_id: e.target.value || null, property_raw: null, property_id: null })} className={`rounded-lg border px-2 py-1.5 ${err('物業') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}><option value="">—</option>{estates.map((es) => <option key={es.id} value={es.id}>{es.name}{es.active ? '' : '(停用)'}</option>)}</select></label>
               {/*
                 房源非必填。
@@ -963,17 +970,17 @@ export default function ShortTermPage() {
                 然後用姓名怎麼搜都搜不到。名字不一致的欄位很容易被當成
                 「別的東西」而整格跳過，而空著又不會有任何錯誤。
               */}
-              <label className="flex flex-col gap-1">房客<Req />
+              <label className="flex flex-col gap-1"><span className="flex items-center">房客<Req /></span>
                 <input value={edit.guest_name ?? ''} placeholder="姓名"
                   onChange={(e) => setEdit({ ...edit, guest_name: e.target.value })}
                   className={`rounded-lg border px-2 py-1.5 ${
                     err('房客') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} />
               </label>
-              <label className="flex flex-col gap-1">{edit.source === 'oneoff' ? '日期(認列月份)' : '起日'}<Req />
+              <label className="flex flex-col gap-1"><span className="flex items-center">{edit.source === 'oneoff' ? '日期(認列月份)' : '起日'}<Req /></span>
                 <input type="date" value={edit.checkin} onChange={(e) => setEdit({ ...edit, checkin: e.target.value })}
                   className={`rounded-lg border px-2 py-1.5 ${
                     err('起日') || err('日期') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} /></label>
-              {edit.source !== 'oneoff' && <label className="flex flex-col gap-1">迄日<Req />
+              {edit.source !== 'oneoff' && <label className="flex flex-col gap-1"><span className="flex items-center">迄日<Req /></span>
                 <input type="date" value={edit.checkout} onChange={(e) => setEdit({ ...edit, checkout: e.target.value })} className={`rounded-lg border px-2 py-1.5 ${
                 (edit.checkin && edit.checkout && edit.checkout <= edit.checkin) || err('迄日')
                   ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} /></label>}
@@ -991,7 +998,7 @@ export default function ShortTermPage() {
                 它一樣寫進 revLines 的台幣列,所以存檔那段不用分兩套。
               */}
               {edit.source === 'oneoff' && (
-                <label className="flex flex-col gap-1">金額<Req />
+                <label className="flex flex-col gap-1"><span className="flex items-center">金額<Req /></span>
                   <MoneyInput value={revLines[0]?.amt ?? 0} invalid={err('金額')}
                     onChange={(n) => setRevLines([{ cur: 'TWD', amt: n, rate: 1 }])}
                     className="rounded-lg border border-gray-300 px-2 py-1.5 text-right" /></label>
@@ -1030,7 +1037,7 @@ export default function ShortTermPage() {
               )}
 
               {edit.source !== 'oneoff' && (
-                <MoneyLines mode="revenue" label="訂單金額 *" lines={revLines} onChange={setRevLines}
+                <MoneyLines mode="revenue" label="訂單金額" required lines={revLines} onChange={setRevLines}
                   invalid={err('金額')}
                   hint="外幣換匯後併入營收。台幣是清單裡的一列,不必另外找欄位。" />
               )}

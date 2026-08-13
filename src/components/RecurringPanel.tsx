@@ -318,7 +318,7 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
               <button onClick={() => setEdit(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
             </div>
             <div className="px-6 py-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-              <label className="flex flex-col gap-1">物業<Req />
+              <label className="flex flex-col gap-1"><span className="flex items-center">物業<Req /></span>
                 <select value={edit.estate_id}
                   onChange={(e) => setEdit({ ...edit, estate_id: e.target.value, property_id: null, property_raw: null })}
                   className={`rounded-lg border px-2 py-1.5 ${err('物業') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}>
@@ -342,7 +342,7 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
                   {FEE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                 </select></label>
               {/* 自由輸入但提示用過的 —— 「洗衣機」跟「洗衣機費」會變成報表上兩列 */}
-              <label className="flex flex-col gap-1">項目<Req />
+              <label className="flex flex-col gap-1"><span className="flex items-center">項目<Req /></span>
                 <input list="rc-items" value={edit.item_name} placeholder="例:洗衣機"
                   onChange={(e) => setEdit({ ...edit, item_name: e.target.value })}
                   className={`rounded-lg border px-2 py-1.5 ${err('項目') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} />
@@ -355,7 +355,7 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
                 <span className="text-xs text-gray-400">每月產生時帶的金額,之後可逐月改。變動的填 0 就好。</span>
               </label>
               <div className="grid grid-cols-2 gap-3">
-                <label className="flex flex-col gap-1">起始月<Req />
+                <label className="flex flex-col gap-1"><span className="flex items-center">起始月<Req /></span>
                   <input type="month" value={edit.start_ym ? `${edit.start_ym.slice(0, 4)}-${edit.start_ym.slice(4)}` : ''}
                     onChange={(e) => setEdit({ ...edit, start_ym: e.target.value.replace('-', '') })}
                     className={`rounded-lg border px-2 py-1.5 ${err('起始月') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} /></label>

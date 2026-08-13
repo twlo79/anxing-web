@@ -869,18 +869,18 @@ export default function ContractsPage() {
               <button onClick={() => setEdit(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
             </div>
             <div className="px-6 py-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-              <label className="flex flex-col gap-1">物業<Req />
+              <label className="flex flex-col gap-1"><span className="flex items-center">物業<Req /></span>
                 <select value={edit.estate_id ?? ''} onChange={(e) => setEdit({ ...edit, estate_id: e.target.value || null, room: '' })} className={`rounded-lg border px-2 py-1.5 ${err('物業') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}><option value="">—</option>{estates.map((es) => <option key={es.id} value={es.id}>{es.name}</option>)}</select></label>
-              <label className="flex flex-col gap-1">房源<Req />
+              <label className="flex flex-col gap-1"><span className="flex items-center">房源<Req /></span>
                 <select value={edit.room ?? ''} onChange={(e) => setEdit({ ...edit, room: e.target.value })} className={`rounded-lg border px-2 py-1.5 ${err('房源') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}><option value="">—</option>{properties.filter((x) => x.estate_id === edit.estate_id).map((x) => <option key={x.id} value={x.name}>{x.name}</option>)}</select></label>
-              <label className="flex flex-col gap-1">租戶<Req />
+              <label className="flex flex-col gap-1"><span className="flex items-center">租戶<Req /></span>
                 <input value={edit.tenant_name ?? ''} onChange={(e) => setEdit({ ...edit, tenant_name: e.target.value })} className={`rounded-lg border px-2 py-1.5 ${err('租戶') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} /></label>
               <label className="flex flex-col gap-1">電話<input value={edit.phone ?? ''} onChange={(e) => setEdit({ ...edit, phone: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
-              <label className="flex flex-col gap-1">繳別<Req />
+              <label className="flex flex-col gap-1"><span className="flex items-center">繳別<Req /></span>
                 <select value={edit.cadence} onChange={(e) => setEdit({ ...edit, cadence: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="monthly">月繳</option><option value="quarterly">季繳</option><option value="halfyear">半年繳</option><option value="yearly">年繳</option></select></label>
-              <label className="flex flex-col gap-1">類別<Req />
+              <label className="flex flex-col gap-1"><span className="flex items-center">類別<Req /></span>
                 <select value={edit.type ?? 'longterm'} onChange={(e) => setEdit({ ...edit, type: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="longterm">長租</option><option value="company">公司登記</option><option value="office">辦公室</option></select></label>
-              <label className="flex flex-col gap-1">每期租金({CAD_LABEL[edit.cadence]})<Req />
+              <label className="flex flex-col gap-1"><span className="flex items-center">每期租金({CAD_LABEL[edit.cadence]})<Req /></span>
                 <MoneyInput value={edit.amount_per_period ?? 0} invalid={err('每期租金')}
                   onChange={(n) => setEdit({ ...edit, amount_per_period: n })}
                   className="rounded-lg border border-gray-300 px-2 py-1.5 text-right" />
@@ -898,9 +898,9 @@ export default function ContractsPage() {
                     className="text-xs text-mor-blue underline hover:text-mor-slate mt-0.5">收退狀態 →</a>
                 )}
               </label>
-              <label className="flex flex-col gap-1">租期起<Req />
+              <label className="flex flex-col gap-1"><span className="flex items-center">租期起<Req /></span>
                 <input type="date" value={edit.start_date ?? ''} onChange={(e) => setEdit({ ...edit, start_date: e.target.value })} className={`rounded-lg border px-2 py-1.5 ${err('租期起') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} /></label>
-              <label className="flex flex-col gap-1">租期迄<Req />
+              <label className="flex flex-col gap-1"><span className="flex items-center">租期迄<Req /></span>
                 <input type="date" value={edit.end_date ?? ''} onChange={(e) => setEdit({ ...edit, end_date: e.target.value })} className={`rounded-lg border px-2 py-1.5 ${err('租期迄') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} /></label>
               <label className="flex flex-col gap-1">首繳日<input type="date" value={edit.first_payment_date ?? ''} onChange={(e) => setEdit({ ...edit, first_payment_date: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <div className="col-span-2 -mt-1 text-xs text-gray-500 flex items-center gap-1 flex-wrap">

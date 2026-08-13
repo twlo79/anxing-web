@@ -1,5 +1,6 @@
 'use client';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Req from '@/components/Req';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
@@ -2037,7 +2038,7 @@ export default function PurchasesPage() {
                       <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">銀行代碼</span>
                         <input disabled={readOnly} value={edit.payee_bank_code ?? ''} onChange={(e) => setEdit({ ...edit, payee_bank_code: e.target.value })}
                           className="rounded-lg border border-mor-line px-2 py-1.5 disabled:bg-gray-50" /></label>
-                      <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">廠商收款帳號 *</span>
+                      <label className="flex flex-col gap-1"><span className="text-xs text-gray-500 flex items-center">廠商收款帳號<Req /></span>
                         <input disabled={readOnly} value={edit.payee_account ?? ''} onChange={(e) => setEdit({ ...edit, payee_account: e.target.value })}
                           className="rounded-lg border border-mor-line px-2 py-1.5 disabled:bg-gray-50" /></label>
                       <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">公司名／戶名</span>
@@ -2217,7 +2218,7 @@ export default function PurchasesPage() {
               {/* 匯款與信用卡必須記錄從哪個帳戶付出去,現金沒有帳戶所以不問 */}
               {(dating.payment_method === 'transfer' || dating.payment_method === 'credit_card') && (
                 <>
-                  <label className="block text-xs text-gray-500 pt-1">{acctWord(dating.payment_method)}(我方) *</label>
+                  <label className="block text-xs text-gray-500 pt-1">{acctWord(dating.payment_method)}(我方)<Req /></label>
                   <select value={dateAcct} onChange={(e) => setDateAcct(e.target.value)}
                     className="w-full rounded-lg border border-mor-line px-2 py-1.5">
                     <option value="">請選擇</option>

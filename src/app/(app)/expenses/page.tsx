@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Req, { reqCls } from '@/components/Req';
+import Req from '@/components/Req';
 import MoneyInput from '@/components/MoneyInput';
 import { missingFields, missingMessage } from '@/lib/required';
 import Toast from '@/components/Toast';
@@ -679,7 +679,7 @@ export default function ExpensesPage() {
                   </div>
                 </div>
               </div>
-              <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">用途 *</span>
+              <label className="flex flex-col gap-1"><span className="text-xs text-gray-500 flex items-center">用途<Req /></span>
                 <select
                   value={edit.purpose_type === 'office' ? 'office' : (edit.estate_id ?? '')}
                   onChange={(e) => {
