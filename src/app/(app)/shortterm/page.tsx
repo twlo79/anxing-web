@@ -82,7 +82,18 @@ export default function ShortTermPage() {
   const [move, setMove] = useState<MoveState | null>(null);
   const [estF, setEstF] = useState('');
   const [fromD, setFromD] = useState('');
-  const [feeF, setFeeF] = useState(FEE_F_ALL);
+  /*
+   * 費用類別預設「房租」（使用者決定）。
+   *
+   * 【這會改變首屏看到的數字，要知道】
+   * 上方的「當期營收」與「共 N 筆」用的是同一組篩選，所以預設之後
+   * 那兩個數字**不含一次性收入**（水電、清潔、垃圾代收…）。
+   *
+   * 那是刻意的：這一頁最常被問的問題是「這段期間房租收了多少」，
+   * 而混進雜費之後那個數字回答不了任何問題 —— 它既不是房租也不是總收入。
+   * 要看全部就把下拉切回「全部」。
+   */
+  const [feeF, setFeeF] = useState(FEE_F_RENT);
   const [toD, setToD] = useState('');
   const [sort, setSort] = useState<SortState>({ key: 'checkin', dir: 'desc' });
   const [collect, setCollect] = useState<Order | null>(null);
@@ -687,28 +698,20 @@ export default function ShortTermPage() {
             <button onClick={() => setKw(kwIn.trim())} className="rounded-lg bg-mor-slate text-white px-3 hover:bg-mor-slatedark">搜尋</button>
           </div>
         </div>
-        {(src || kw || estF || fromD || toD || feeF || payF) && <button onClick={() => { setSrc(''); setKw(''); setKwIn(''); setEstF(''); setFromD(''); setToD(''); setFeeF(FEE_F_ALL); setPayF(''); }} className="text-gray-500 underline pb-1.5">清除</button>}
         {/*
-          「只看房費」＝ 費用類別選「房租」的捷徑。
-          那個下拉有十幾個選項,而「排除一次性費用」是最常用的一種看法 ——
-          常用的東西不該藏在下拉的第二個選項裡。
-
-          【值一定要用 FEE_F_RENT，不是 'rent'】
-          「房租」不是一個 fee_type,它是「來源不是一次性收入」的意思
-          （規則在 lib/order-filter,跟資料庫的 order_account_code 同一份）。
-          寫成 'rent' 會被當成「fee_type 等於 rent 的一次性收入」——
-          而那種東西不存在,所以篩出來永遠是零筆,
-          畫面上看起來就像「勾了之後資料全不見了」。
+          「清除」回到**預設值**,不是回到「全部」——
+          費用類別的預設是房租,清成「全部」的話會變成一個他從來沒選過的狀態,
+          而且那顆按鈕會永遠掛在那裡（預設值本身就是有值的）。
         */}
-        <label className="flex items-center gap-1.5 pb-1.5 text-sm whitespace-nowrap cursor-pointer select-none">
-          <input type="checkbox" checked={feeF === FEE_F_RENT}
-            onChange={(e) => setFeeF(e.target.checked ? FEE_F_RENT : FEE_F_ALL)}
-            className="w-4 h-4 accent-mor-slate" />
-          只看房費
-        </label>
+        {(src || kw || estF || fromD || toD || payF || feeF !== FEE_F_RENT) && (
+          <button onClick={() => { setSrc(''); setKw(''); setKwIn(''); setEstF(''); setFromD(''); setToD(''); setFeeF(FEE_F_RENT); setPayF(''); }}
+            className="text-gray-500 underline pb-1.5">清除</button>
+        )}
+        {/* 防呆放在動作鈕那一組的最左邊 —— 它跟下載、新增不同類:
+            那些是日常操作,這個是「我現在要挑毛病」 */}
         <div className="ml-auto flex items-end gap-3">
-          <div className="text-xs text-gray-400 pb-1.5">共 {total.toLocaleString()} 筆</div>
           <AuditButton on={audit} onToggle={toggleAudit} busy={auditBusy} />
+          <div className="text-xs text-gray-400 pb-1.5">共 {total.toLocaleString()} 筆</div>
           <button onClick={exportXlsx} disabled={exporting || !total} className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 disabled:opacity-40">{exporting ? '匯出中…' : '⬇ 下載 Excel'}</button>
           <button onClick={() => openEdit(blank())} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 新增訂單</button>
           <TrashLink table="orders" label="訂單" />

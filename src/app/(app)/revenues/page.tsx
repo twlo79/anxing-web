@@ -595,10 +595,6 @@ export default function RevenuesPage() {
             <option value="">全部</option>{roomOptions.map((r) => <option key={r} value={r}>{r}</option>)}
           </select>
         </div>
-        <div className="flex items-end pb-0.5">
-          <AuditButton on={audit}
-            onToggle={() => { setAudit((v) => !v); setOnlyBad(false); }} />
-        </div>
         <div>
           <label className="block text-xs text-gray-500 mb-1">來源</label>
           <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
@@ -622,7 +618,11 @@ export default function RevenuesPage() {
           </div>
         </div>
         {(estateFilter || roomFilter || sourceFilter || kw) && <button onClick={() => { setEstateFilter(''); setRoomFilter(''); setSourceFilter(''); setKw(''); setKwInput(''); }} className="text-gray-500 underline pb-1.5">清除</button>}
+        {/* 防呆放在動作那一組的最左邊,跟訂單頁同一個位置 ——
+            同一個功能在兩頁要在同一個地方,不然每換一頁就要重新找 */}
         <div className="ml-auto flex items-end gap-3">
+          <AuditButton on={audit}
+            onToggle={() => { setAudit((v) => !v); setOnlyBad(false); }} />
           <div className="text-xs text-gray-400 pb-1.5">共 {filtered.length} 筆・${fmt(total)}</div>
           <button onClick={exportXlsx} disabled={!filtered.length} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark disabled:opacity-40">⬇ 下載 Excel</button>
         </div>

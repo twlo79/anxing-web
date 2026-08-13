@@ -6,19 +6,40 @@ import { ISSUE_CLS, type AuditIssue, type AuditResult } from '@/lib/audit-orders
  * 不然使用者得學兩套。
  */
 
-/** 開關。按下去才檢查，按回去標記全部消失。 */
+/**
+ * 開關。按下去才檢查，按回去標記全部消失。
+ *
+ * 【為什麼是開關而不是按鈕】
+ * 按鈕表示「做一件事」，開關表示「處於某個狀態」——
+ * 而防呆是後者：打開之後整個列表的意義都變了（多出標記、可以只看有問題的）。
+ * 用按鈕的話，使用者按完不知道自己現在在不在那個狀態裡。
+ *
+ * 【為什麼是紅色】
+ * 這是全站唯一一個「進入檢查模式」的入口，跟旁邊的下載、新增不同類 ——
+ * 那些是日常操作，這個是「我現在要挑毛病」。顏色是那個區別最快的訊號。
+ */
 export function AuditButton({ on, onToggle, busy }: {
   on: boolean; onToggle: () => void; busy?: boolean;
 }) {
   return (
     <button type="button" onClick={onToggle} disabled={busy}
-      aria-pressed={on}
+      role="switch" aria-checked={on}
       title="檢查資料有沒有重複、重疊、缺漏、房價異常"
-      className={`rounded-lg px-3 py-1.5 font-medium whitespace-nowrap transition-colors ${
-        on ? 'bg-mor-slate text-white hover:bg-mor-slatedark'
-           : 'border border-mor-line bg-white hover:bg-mor-sand/60'
-      } disabled:opacity-50`}>
-      {busy ? '檢查中…' : on ? '👀 防呆（開）' : '👀 防呆'}
+      className={`flex items-center gap-2 rounded-lg px-3 py-1.5 font-medium whitespace-nowrap
+                  transition-colors disabled:opacity-50 ${
+        on ? 'bg-red-50 text-red-700 border border-red-200'
+           : 'border border-mor-line bg-white text-gray-600 hover:bg-mor-sand/60'
+      }`}>
+      <span>👀 防呆</span>
+      {/* 滑軌 ＋ 圓鈕。開了是紅的,關了是灰的 —— 顏色與位置兩個訊號,
+          只靠其中一個的話,色弱或縮圖時會分不出狀態 */}
+      <span aria-hidden
+        className={`relative w-9 h-5 rounded-full shrink-0 transition-colors ${
+          busy ? 'bg-gray-300' : on ? 'bg-red-500' : 'bg-gray-300'}`}>
+        <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
+          on ? 'left-[1.125rem]' : 'left-0.5'}`} />
+      </span>
+      {busy && <span className="text-xs text-gray-500">檢查中…</span>}
     </button>
   );
 }
