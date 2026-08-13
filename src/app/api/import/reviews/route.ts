@@ -262,6 +262,39 @@ export async function POST(req: Request) {
       importBody(lines), '/reviews');
   }
 
+  /*
+   * 同步紀錄。跟訂單那支同一個機制：差異清單整批換成這一輪的結果，
+   * 修好對照表之後那一列隔天自己消失。
+   *
+   * 評價這邊的「差異」只有一種：對不到房源。用 listing_id 當鍵 ——
+   * 同一個 listing 通常一次對不到好幾則，而要修的只有對照表那一個地方。
+   */
+  const issues = [
+    ...Object.entries(unmatched).map(([listingId, n]) => ({
+      code: listingId, field: '對不到房源', listingId,
+      to: `${n} 則評價沒有房源`,
+    })),
+    // 有 listing_id 但三層都解析不出來的,列名稱 —— 那通常是共用標題
+    ...unresolved.map((name) => ({
+      code: name, field: '房源名稱查不到',
+      to: '三層備援都對不到,可能是多間房源共用同一個 Airbnb 標題',
+    })),
+  ];
+  const { error: logErr } = await supabase.rpc('record_sync_run', {
+    p_kind: 'reviews',
+    p_counts: {
+      received: items.length, inserted, updated: upserted - inserted,
+      detail: {
+        對不到房源: Object.keys(unmatched).length,
+        房源名稱查不到: unresolved.length,
+        靠訂單反查補上: guessedByOrder.length,
+        待翻譯: needTranslation.length,
+      },
+    },
+    p_issues: issues,
+  });
+  if (logErr) console.error('[sync] 同步紀錄寫入失敗（匯入本身不受影響）:', logErr.message);
+
   return NextResponse.json({
     upserted, inserted, updated: upserted - inserted,
     unmatched, unresolved, resolvedByOrder: guessedByOrder.length, needTranslation,

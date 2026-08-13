@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  decide, summarize, revenueOf, isCancelled,
+  decide, summarize, toIssues, revenueOf, isCancelled,
   type Incoming, type Existing, type PropRef,
 } from './airbnb-sync.ts';
 
@@ -214,6 +214,57 @@ test('summarize 把各種結果分類', () => {
   assert.equal(s.voided, 1);
   assert.equal(s.unmatched['1178627391586613020'], 1);
   assert.equal(s.diffs.filter((d) => d.field === '房源').length, 1);
+});
+
+/* ── 待辦清單 ────────────────────────────────── */
+
+test('房源與姓名差異都會變成一條待辦', () => {
+  const s = summarize([
+    decide(inc({ code: 'A' }), ex({ order_key: 'A', property_id: 'p-a15', property_raw: 'A15' }), PROP_OLD),
+    decide(inc({ code: 'B', guest: 'Michael Hu' }), ex({ order_key: 'B', guest_name: '麥可' }), PROP_A15),
+  ]);
+  const issues = toIssues(s);
+  assert.equal(issues.filter((i) => i.field === '房源').length, 1);
+  assert.equal(issues.filter((i) => i.field === '房客姓名').length, 1);
+});
+
+test('★ 房源不一致要附上 listing_id 與那個停用房源', () => {
+  // 這條待辦要人去 /admin 修對照表。沒有 listing_id 的話他得自己回頭查,
+  // 而「目前對到哪個停用房源」通常就是元兇
+  const s = summarize([
+    decide(inc(), ex({ property_id: 'p-a15', property_raw: 'A15' }), PROP_OLD),
+  ]);
+  const i = toIssues(s, { '1178627391586613020': '舊-A15' })[0];
+  assert.equal(i.listingId, '1178627391586613020');
+  assert.equal(i.extra?.['停用對照'], '舊-A15');
+});
+
+test('★ 對不到房源用 listing_id 當 code,不是訂單編號', () => {
+  // 同一個 listing 一次對不到 5 筆訂單,那是同一件事、同一個地方要修。
+  // 用訂單編號當鍵會變成 5 條待辦,而修好只需要動一個地方
+  const s = summarize([
+    decide(inc({ code: 'A' }), null, null),
+    decide(inc({ code: 'B' }), null, null),
+    decide(inc({ code: 'C' }), null, null),
+  ]);
+  const un = toIssues(s).filter((i) => i.field === '對不到房源');
+  assert.equal(un.length, 1, '三筆訂單同一個 listing,只該有一條待辦');
+  assert.equal(un[0].code, '1178627391586613020');
+  assert.match(String(un[0].to), /3 筆/);
+});
+
+test('★ 已收款卻取消的要列進待辦,不能只是回傳一次就算了', () => {
+  // 那筆要人去判斷錢到底收了沒。只在當天的回報講一次的話,
+  // 沒看到就永遠不會再看到 —— 而它會一直錯下去
+  const s = summarize([
+    decide(inc({ statusKey: 'canceled', earnings: 0, cohost: 0 }), ex({ paid: true }), PROP_A15),
+  ]);
+  assert.equal(toIssues(s).filter((i) => i.field === '待人工判斷').length, 1);
+});
+
+test('沒有任何差異時清單是空的', () => {
+  const s = summarize([decide(inc(), ex(), PROP_A15)]);
+  assert.deepEqual(toIssues(s), []);
 });
 
 test('★ 同一個 listing 對不到多次要累計,不是各報各的', () => {

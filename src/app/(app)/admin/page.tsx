@@ -14,6 +14,23 @@ type Audit = {
   record_id: string | null; label: string | null; action: string; changes: any;
 };
 
+/** 每次爬蟲同步的數字（migration_113）。看趨勢用 —— 「今天怎麼新增了 80 筆」 */
+type SyncRun = {
+  id: number; at: string; kind: string;
+  received: number; inserted: number; updated: number; voided: number; skipped: number;
+  detail: Record<string, number> | null;
+};
+/**
+ * 還沒解決的差異（migration_113）。
+ * 這張表每次同步整批換掉 —— 修好對照表之後那一列隔天自己消失。
+ */
+type SyncIssue = {
+  kind: string; code: string; field: string;
+  first_seen: string; last_seen: string;
+  from_val: string | null; to_val: string | null; listing_id: string | null;
+  extra: Record<string, unknown> | null;
+};
+
 /** 常用收款對象（migration_96）。請款單不掛外鍵,填完就脫鉤。 */
 type Payee = {
   id: string; label: string; bank_code: string | null; account: string;
@@ -29,7 +46,8 @@ const METHOD_LABEL: Record<string, string> = { transfer: '匯款', credit_card: 
 
 const TAB_LABEL = {
   people: '權限管理', estates: '物業與負責人', accounts: '收付款帳號',
-  payees: '常用帳號', props: '房源管理', audit: '編輯紀錄',
+  payees: '常用帳號', props: '房源管理',
+  sync: '同步建議', audit: '編輯紀錄',
 } as const;
 type TabKey = keyof typeof TAB_LABEL;
 
@@ -50,11 +68,40 @@ const ACCOUNTANT_TABS: TabKey[] = ['accounts', 'payees'];
 /** 編輯紀錄裡的表名要講人話 —— 沒人記得 purchase_request_items 是什麼 */
 const AUDIT_TABLE: Record<string, string> = {
   expenses: '支出', purchase_requests: '請款單', purchase_request_items: '請款項目',
-  deposits: '押金', orders: '訂單', contracts: '契約',
+  deposits: '押金', orders: '訂單', contracts: '契約', reviews: '評價',
 };
 const AUDIT_ACTION: Record<string, string> = { insert: '新增', update: '修改', delete: '刪除' };
 /** 這些欄位改了沒有意義,列表上省略,免得蓋掉真正重要的變動 */
 const AUDIT_SKIP = new Set(['updated_at', 'created_at', 'id']);
+
+/**
+ * 爬蟲對每個欄位的處理方式（跟 lib/airbnb-sync.ts 的實作對應）。
+ *
+ * 【為什麼要把規則寫在畫面上】
+ * 「我改的房源會不會被蓋掉」這個問題,不寫出來就只能靠問人 ——
+ * 而問到的答案取決於對方記不記得。寫在旁邊,改資料的人自己看得到。
+ */
+const SYNC_TIERS: { level: string; tone: string; fields: string; why: string }[] = [
+  { level: '一律更新', tone: 'bg-mor-bluelight text-mor-slate',
+    fields: '金額、住宿起訖、取消狀態',
+    why: 'Airbnb 是這些的唯一真相。不跟著改的話營收會攤在錯的月份,取消的單會繼續算進營收。' },
+  { level: '只在空的時候填', tone: 'bg-amber-50 text-amber-800',
+    fields: '房源、房客姓名',
+    why: '這兩個我們會手動修正,爬蟲不該贏。但不一致會列進下面的清單 —— 只是不覆蓋的話,對照表永遠是錯的。' },
+  { level: '完全不碰', tone: 'bg-mor-greenlight text-mor-green',
+    fields: '收款、押金、帳號、備註、發票、移房',
+    why: '這些是人的判斷與金流紀錄,爬蟲沒有任何依據可以動它們。' },
+];
+
+/** 每一種差異該做什麼。沒有建議的清單只是一份焦慮清單。 */
+const ISSUE_ADVICE: Record<string, string> = {
+  房源: '到「房源管理」把這個 listing_id 搬到正確的房源。搬完隔天這一列自己會消失。',
+  對不到房源: '這個 listing 在系統裡沒有對應的啟用房源,訂單根本沒進來。到「房源管理」補上對照。',
+  房源名稱查不到: '通常是多間房源在 Airbnb 用了同一個標題（開封 2F/3F/4F 就是）。要靠訂單反查,或手動指定。',
+  房客姓名: 'Airbnb 顯示名跟我們登記的正式姓名不同。多半不用處理 —— 除非你發現是對到錯的人。',
+  住宿起訖: '日期已經跟著更新了。這裡列出來是因為它會改變營收攤提的月份,值得看一眼。',
+  待人工判斷: 'Airbnb 顯示已取消且無收入,但系統裡標記為已收款。錢真的進來過就不能自動歸零 —— 要你判斷。',
+};
 
 const TYPE_LABEL: Record<string, string> = { housekeeper: '管家', roomservice: '房務', manager: '經理', accountant: '會計', gm: '總經理', other: '其他' };
 const TYPE_OPTS = ['housekeeper', 'roomservice', 'manager', 'accountant', 'gm', 'other'];
@@ -81,6 +128,17 @@ export default function AdminPage() {
   const [tab, setTab] = useState<TabKey>('people');
   const [audits, setAudits] = useState<Audit[]>([]);
   const [auditTable, setAuditTable] = useState('');
+  /**
+   * 人工 / 自動。
+   *
+   * 【為什麼預設只看人工】
+   * 這張表是拿來回答「誰改了什麼」的 —— 那個問題問的是人。
+   * 爬蟲新增的雖然不多,但每天都有,混在一起會讓人每次都要先過濾一次眼睛。
+   * 要查「這筆訂單哪來的」才切到全部。
+   */
+  const [auditWho, setAuditWho] = useState<'' | 'human' | 'auto'>('human');
+  const [runs, setRuns] = useState<SyncRun[]>([]);
+  const [issues, setIssues] = useState<SyncIssue[]>([]);
   const [acct, setAcct] = useState<{ staffId: string; name: string; mode: 'create' | 'password'; email: string; password: string; role: string } | null>(null);
 
   const load = useCallback(async () => {
@@ -116,11 +174,38 @@ export default function AdminPage() {
   const loadAudit = useCallback(async () => {
     let q = supabase.from('data_audit').select('*').order('at', { ascending: false }).limit(300);
     if (auditTable) q = q.eq('table_name', auditTable);
+    // user_id 是 null 就代表不是人在操作（service key、排程、觸發器）
+    if (auditWho === 'human') q = q.not('user_id', 'is', null);
+    if (auditWho === 'auto') q = q.is('user_id', null);
     const { data, error } = await q;
     if (error) return flash('編輯紀錄載入失敗:' + error.message);
     setAudits((data ?? []) as Audit[]);
-  }, [supabase, auditTable]);
+  }, [supabase, auditTable, auditWho]);
   useEffect(() => { if (tab === 'audit') loadAudit(); }, [tab, loadAudit]);
+
+  // ---- 同步建議 ----
+  const loadSync = useCallback(async () => {
+    const [{ data: r }, { data: i, error }] = await Promise.all([
+      supabase.from('sync_runs').select('*').order('at', { ascending: false }).limit(12),
+      supabase.from('sync_issues').select('*').order('first_seen', { ascending: true }),
+    ]);
+    if (error) return flash('同步紀錄載入失敗:' + error.message);
+    setRuns((r ?? []) as SyncRun[]);
+    setIssues((i ?? []) as SyncIssue[]);
+  }, [supabase]);
+  useEffect(() => { if (tab === 'sync') loadSync(); }, [tab, loadSync]);
+
+  /*
+   * 差異按種類分組。
+   *
+   * 不分組的話一百列長得一模一樣,而「房源不一致」跟「姓名不同」
+   * 要做的事完全不同 —— 前者要去改對照表,後者通常不用理。
+   */
+  const issueGroups = useMemo(() => {
+    const g: Record<string, SyncIssue[]> = {};
+    for (const it of issues) (g[it.field] ??= []).push(it);
+    return g;
+  }, [issues]);
 
   // profiles.id 對回姓名。編輯紀錄只存 user_id,不存名字 ——
   // 存名字的話改名之後歷史紀錄會對不上人。
@@ -682,6 +767,158 @@ export default function AdminPage() {
       </section>
       )}
 
+      {/* ===== 同步建議 ===== */}
+      {/*
+        【為什麼差異要獨立一個分頁,不併進編輯紀錄】
+        編輯紀錄是流水帳:每一列都是「當時發生了什麼」,永遠留著。
+        而差異是待辦:同一個房源不一致在對照表修好之前每天都會再出現一次,
+        當成流水帳存的話一週後同一個問題有七列,看不出哪一列還算數。
+
+        所以這裡的清單是「現在還沒解決的」—— 修好之後隔天自己消失。
+        清單空了就代表真的沒事了,那是流水帳給不了的保證。
+      */}
+      {tab === 'sync' && (
+      <section className="space-y-5">
+        {/* ── 分級規則 ─────────────────────────── */}
+        <div>
+          <h2 className="text-sm font-semibold text-gray-700 mb-2">爬蟲會動哪些欄位</h2>
+          <div className="rounded-xl glass overflow-hidden">
+            {SYNC_TIERS.map((t) => (
+              <div key={t.level} className="border-b border-mor-line/50 last:border-0 px-4 py-3 sm:flex sm:gap-4">
+                <div className="sm:w-36 shrink-0 mb-1 sm:mb-0">
+                  <span className={`inline-block rounded px-2 py-0.5 text-[11px] whitespace-nowrap ${t.tone}`}>
+                    {t.level}
+                  </span>
+                </div>
+                <div className="min-w-0">
+                  <div className="text-sm font-medium">{t.fields}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">{t.why}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-gray-400 mt-2">
+            比對的鑰匙是 <b>Airbnb 確認碼</b>,不是姓名或日期 —— 那些會變,一變就會產生重複訂單。
+            2026-07 就發生過:同一筆因為房客改名變成兩列,當月營收多算 33,053。
+          </p>
+        </div>
+
+        {/* ── 待處理 ───────────────────────────── */}
+        <div>
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            <h2 className="text-sm font-semibold text-gray-700">還沒處理的差異</h2>
+            <span className="text-xs text-gray-400">共 {issues.length} 筆</span>
+            <div className="flex-1" />
+            <button onClick={loadSync}
+              className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50">重新整理</button>
+          </div>
+
+          {issues.length === 0 ? (
+            <div className="rounded-xl glass px-4 py-10 text-center text-sm text-gray-400">
+              沒有待處理的差異。<br />
+              <span className="text-xs">這份清單每次同步會整批換掉 —— 空的就代表爬蟲跟系統對得起來。</span>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {Object.entries(issueGroups).map(([field, list]) => (
+                <div key={field} className="rounded-xl glass overflow-hidden">
+                  <div className="px-4 py-2.5 border-b border-mor-line bg-white/45">
+                    <div className="text-sm font-medium">{field} <span className="text-gray-400 font-normal">· {list.length} 筆</span></div>
+                    {ISSUE_ADVICE[field] && (
+                      <div className="text-xs text-gray-500 mt-0.5">{ISSUE_ADVICE[field]}</div>
+                    )}
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[620px] text-sm">
+                      <thead>
+                        <tr className="text-left text-xs text-gray-500 border-b border-mor-line/60">
+                          <th className="px-4 py-2">編號</th>
+                          <th className="px-4 py-2">現在是</th>
+                          <th className="px-4 py-2">爬蟲認為</th>
+                          <th className="px-4 py-2 whitespace-nowrap">listing_id</th>
+                          <th className="px-4 py-2 whitespace-nowrap">第一次出現</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {list.map((it) => (
+                          <tr key={it.kind + it.code + it.field} className="border-b border-mor-line/40 last:border-0">
+                            <td className="px-4 py-2 font-mono text-xs whitespace-nowrap">{it.code}</td>
+                            <td className="px-4 py-2 text-gray-500">{it.from_val ?? '—'}</td>
+                            <td className="px-4 py-2 font-medium">
+                              {it.to_val ?? '—'}
+                              {/* 這個 listing 目前只對到某個停用房源 —— 那通常就是元兇 */}
+                              {typeof it.extra?.['停用對照'] === 'string' && (
+                                <span className="ml-1 rounded bg-amber-50 px-1.5 py-0.5 text-[11px] text-amber-800 whitespace-nowrap">
+                                  停用:{String(it.extra['停用對照'])}
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-4 py-2 font-mono text-[11px] text-gray-400 whitespace-nowrap">{it.listing_id ?? '—'}</td>
+                            {/* 放多久了。同一個問題掛了兩週的話,那不是「還沒處理」,是被忽略了 */}
+                            <td className="px-4 py-2 text-xs text-gray-400 whitespace-nowrap">{it.first_seen?.slice(0, 10)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* ── 流水帳 ───────────────────────────── */}
+        <div>
+          <h2 className="text-sm font-semibold text-gray-700 mb-2">最近幾次同步</h2>
+          <div className="rounded-xl glass overflow-x-auto">
+            {runs.length === 0 ? (
+              <div className="px-4 py-10 text-center text-sm text-gray-400">
+                還沒有同步紀錄。這張表從 migration_113 之後才開始累積。
+              </div>
+            ) : (
+              <table className="w-full min-w-[560px] text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-white/45">
+                    <th className="px-4 py-2.5 whitespace-nowrap">時間</th>
+                    <th className="px-4 py-2.5">來源</th>
+                    <th className="px-4 py-2.5 text-right">抓到</th>
+                    <th className="px-4 py-2.5 text-right">新增</th>
+                    <th className="px-4 py-2.5 text-right">更新</th>
+                    <th className="px-4 py-2.5 text-right">作廢</th>
+                    <th className="px-4 py-2.5">差異</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {runs.map((r) => (
+                    <tr key={r.id} className="border-b border-mor-line/50 last:border-0 align-top">
+                      <td className="px-4 py-2 whitespace-nowrap text-xs text-gray-500">
+                        {r.at?.slice(0, 16).replace('T', ' ')}
+                      </td>
+                      <td className="px-4 py-2 whitespace-nowrap">{r.kind === 'orders' ? '訂單' : r.kind === 'reviews' ? '評價' : r.kind}</td>
+                      <td className="px-4 py-2 text-right tabular-nums text-gray-500">{r.received}</td>
+                      {/* 新增為 0 是常態,亮起來的才值得看一眼 */}
+                      <td className={`px-4 py-2 text-right tabular-nums ${r.inserted ? 'font-medium text-mor-green' : 'text-gray-300'}`}>{r.inserted}</td>
+                      <td className={`px-4 py-2 text-right tabular-nums ${r.updated ? '' : 'text-gray-300'}`}>{r.updated}</td>
+                      <td className={`px-4 py-2 text-right tabular-nums ${r.voided ? 'text-red-600' : 'text-gray-300'}`}>{r.voided}</td>
+                      <td className="px-4 py-2 text-xs text-gray-500">
+                        {Object.entries(r.detail ?? {}).filter(([, v]) => v > 0)
+                          .map(([k, v]) => `${k} ${v}`).join('、') || '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+          <p className="text-xs text-gray-400 mt-2">
+            訂單每天 06:06、評價每天 06:37 各跑一次。
+            「抓到」是 Airbnb 回了幾筆,大部分都沒有變化 —— <b>新增與作廢那兩欄才是真的動到資料</b>。
+            某天新增突然變成兩位數的話值得查一下,那通常代表對照表剛被修好、一批卡住的訂單一次進來。
+          </p>
+        </div>
+      </section>
+      )}
+
       {/* ===== 編輯紀錄 ===== */}
       {tab === 'audit' && (
       <section>
@@ -690,6 +927,13 @@ export default function AdminPage() {
             className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm">
             <option value="">全部資料</option>
             {Object.entries(AUDIT_TABLE).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+          {/* 預設只看人工 —— 這張表回答的是「誰改了什麼」,那個問題問的是人 */}
+          <select value={auditWho} onChange={(e) => setAuditWho(e.target.value as '' | 'human' | 'auto')}
+            className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm">
+            <option value="human">只看人工操作</option>
+            <option value="auto">只看爬蟲／系統</option>
+            <option value="">全部</option>
           </select>
           <button onClick={loadAudit} className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50">重新整理</button>
           <span className="text-xs text-gray-400">最近 300 筆</span>
@@ -724,7 +968,7 @@ export default function AdminPage() {
                       <td className="px-4 py-2 whitespace-nowrap">
                         {a.user_id
                           ? (nameOfUser[a.user_id] ?? <span className="text-xs text-gray-400">已刪除的帳號</span>)
-                          : <span className="text-xs text-gray-400">系統／排程</span>}
+                          : <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-500">爬蟲／系統</span>}
                       </td>
                       <td className="px-4 py-2 text-xs text-gray-500 whitespace-nowrap">
                         {AUDIT_TABLE[a.table_name] ?? a.table_name}
@@ -760,9 +1004,10 @@ export default function AdminPage() {
           )}
         </div>
         <p className="text-xs text-gray-400 mt-2">
-          記錄支出、請款單、押金、訂單與契約的異動。<b>刪除與新增存整列</b>（刪掉的資料還原得回來），<b>修改只存變動的欄位</b>。
-          自動匯入（Airbnb 每日同步）的新增與修改不記 —— 那不是使用者的行為,全記下來只會把真正要看的淹掉;
-          但<b>刪除一律記</b>,不管是誰做的。契約重產月租單造成的連帶刪除也跳過,那是系統在算不是人在決定。
+          記錄支出、請款單、押金、訂單、契約與評價的異動。<b>刪除與新增存整列</b>（刪掉的資料還原得回來）,<b>修改只存變動的欄位</b>。
+          爬蟲<b>新增</b>的訂單與評價也記（每天個位數,用上面的篩選分開看）;
+          爬蟲<b>修改</b>的不記 —— 那是每天幾百筆的來源,改了什麼在「同步建議」分頁看。
+          <b>刪除一律記</b>,不管是誰做的;只有契約重產月租單的連帶增刪跳過,那是系統在算不是人在決定。
         </p>
       </section>
       )}

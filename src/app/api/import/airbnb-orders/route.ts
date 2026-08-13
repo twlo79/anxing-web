@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { notifyImport } from '@/lib/push';
-import { decide, summarize, type Incoming, type Existing, type PropRef } from '@/lib/airbnb-sync';
+import { decide, summarize, toIssues, type Incoming, type Existing, type PropRef } from '@/lib/airbnb-sync';
 import { orderLine, importBody, importTitle } from '@/lib/notify-text';
 
 /**
@@ -131,6 +131,31 @@ export async function POST(req: Request) {
   const propDiffs = s.diffs.filter((d) => d.field === '房源').map((d) => ({
     ...d, 停用對照: d.listingId ? staleOnly[d.listingId] ?? null : null,
   }));
+
+  /*
+   * 把這一輪的結果留在資料庫，畫面上才看得到爬蟲做了什麼。
+   *
+   * record_sync_run 會把差異清單**整批換成這一輪的結果** ——
+   * 沒再出現的自動刪掉，所以對照表修好之後那一列隔天就不見了。
+   * 清單空了就代表真的沒事，這是流水帳給不了的保證。
+   *
+   * 寫失敗不影響匯入本身 —— 資料已經進去了，回報不該讓排程以為要重跑。
+   */
+  const { error: logErr } = await supabase.rpc('record_sync_run', {
+    p_kind: 'orders',
+    p_counts: {
+      received: items.length, inserted, updated, voided, skipped: s.skipped,
+      detail: {
+        房源不一致: propDiffs.length,
+        房客姓名不同: s.diffs.filter((d) => d.field === '房客姓名').length,
+        住宿起訖已更新: s.diffs.filter((d) => d.field === '住宿起訖').length,
+        待人工判斷: s.attention.length,
+        對不到房源: Object.keys(s.unmatched).length,
+      },
+    },
+    p_issues: toIssues(s, staleOnly),
+  });
+  if (logErr) console.error('[sync] 同步紀錄寫入失敗（匯入本身不受影響）:', logErr.message);
 
   return NextResponse.json({
     received: items.length,

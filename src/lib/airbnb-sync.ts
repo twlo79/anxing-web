@@ -250,6 +250,58 @@ export type Summary = {
   diffs: Diff[];
 };
 
+/**
+ * 一筆「還沒解決的差異」，要寫進 sync_issues。
+ *
+ * 【為什麼跟 Diff 分開】
+ * Diff 是「這一筆比對出什麼」，Issue 是「畫面上要顯示什麼、怎麼修」——
+ * 後者多了對不到房源與待人工判斷這兩種（它們不是欄位差異，
+ * 但同樣是一條要人去處理的事）。
+ */
+export type Issue = {
+  code: string;
+  field: string;
+  from?: string;
+  to?: string;
+  listingId?: string;
+  extra?: Record<string, unknown>;
+};
+
+/**
+ * 把統計轉成待辦清單。
+ *
+ * 【為什麼「對不到房源」用 listing_id 當 code】
+ * 同一個 listing 通常一次對不到好幾筆訂單。用訂單編號當鍵的話，
+ * 同一件事會變成十列 —— 而要修的只有一個地方（對照表裡那個 listing）。
+ *
+ * @param staleOnly listing_id → 它目前只對到的那個「停用房源」名稱。
+ *                  那通常就是元兇，附在清單上省得他自己去查。
+ */
+export function toIssues(s: Summary, staleOnly: Record<string, string> = {}): Issue[] {
+  const out: Issue[] = s.diffs.map((d) => ({
+    code: d.code,
+    field: d.field,
+    from: d.from,
+    to: d.to,
+    listingId: d.listingId,
+    extra: d.listingId && staleOnly[d.listingId]
+      ? { 停用對照: staleOnly[d.listingId] } : {},
+  }));
+
+  for (const a of s.attention) {
+    out.push({ code: a.code, field: '待人工判斷', to: a.reason });
+  }
+
+  for (const [listingId, n] of Object.entries(s.unmatched)) {
+    out.push({
+      code: listingId, field: '對不到房源', listingId,
+      to: `${n} 筆訂單沒有進來`,
+      extra: staleOnly[listingId] ? { 停用對照: staleOnly[listingId] } : {},
+    });
+  }
+  return out;
+}
+
 /** 把一批決策整理成統計 —— 給回傳用 */
 export function summarize(results: { decision: Decision; diffs: Diff[] }[]): Summary {
   const s: Summary = {
