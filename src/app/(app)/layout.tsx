@@ -65,27 +65,40 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<{ name: string; role: string } | null>(null);
   const [navOpen, setNavOpen] = useState(false);
   /*
-   * 桌機側邊欄收起來只剩圖示。
+   * ============================================================
+   * 【桌機側邊欄：預設收起，滑過去暫時展開，按住才固定】
    *
-   * 【為什麼預設是展開的】
-   * 收起來的側邊欄只剩十四個 emoji,而 emoji 沒有共同的視覺語言 ——
-   * 🧺 是房務、🧹 是清潔、📒 是支出、🧾 是請款,光看圖示分不出來。
-   * 所以這是「我已經記熟了,把空間還給我」的選項,不是預設值。
+   * 三個狀態、兩個變數：
+   *   pinned  = false  收起（預設）—— 只剩圖示，內容區多 96px
+   *   hover            滑鼠移上去暫時展開，移開就收回去
+   *   pinned  = true   按了 ‹ 之後固定展開，滑鼠移開也不收
    *
-   * 【為什麼要記住】
-   * 不記的話每次重整都彈回展開。使用者會收第二次、第三次,
-   * 然後不再收 —— 一個每次都要重按的設定等於沒有這個設定。
+   * 【為什麼滑過去要展開】
+   * 收起來只剩十四個 emoji，而 emoji 沒有共同的視覺語言 ——
+   * 🧺 房務、🧹 清潔、📒 支出、🧾 請款，光看圖示分不出來。
+   * 純收起等於逼人背圖示；滑過去就看得到名稱，那個成本就消失了。
+   *
+   * 【為什麼暫時展開要用蓋的，不能把內容推開】
+   * 推開的話，滑鼠只是路過側邊欄，整頁的文字就往右跳一格。
+   * 那種「我沒做什麼但畫面動了」是最讓人不安的互動。
+   * 所以 hover 展開時側邊欄浮在內容上面，底下的版面一動也不動。
+   *
+   * 【為什麼 pinned 要記住】
+   * 不記的話每次重整都彈回收起。使用者會按第二次、第三次，
+   * 然後不再按 —— 一個每次都要重設的偏好等於沒有這個偏好。
    */
-  const [collapsed, setCollapsed] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const [hover, setHover] = useState(false);
+  const expanded = pinned || hover;
 
   // 掛載後才讀 —— 伺服器算不出 localStorage,直接用會 hydration 不一致
   useEffect(() => {
-    try { setCollapsed(localStorage.getItem('navCollapsed') === '1'); } catch {}
+    try { setPinned(localStorage.getItem('navPinned') === '1'); } catch {}
   }, []);
-  function toggleCollapsed() {
-    setCollapsed((c) => {
-      const next = !c;
-      try { localStorage.setItem('navCollapsed', next ? '1' : '0'); } catch {}
+  function togglePinned() {
+    setPinned((v) => {
+      const next = !v;
+      try { localStorage.setItem('navPinned', next ? '1' : '0'); } catch {}
       return next;
     });
   }
@@ -212,51 +225,63 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </div>
       )}
 
-      {/* 桌機側邊欄 */}
-      <aside className={`hidden md:flex shrink-0 flex-col bg-white/85 backdrop-blur-xl
-                         border-r border-mor-line transition-[width] duration-200
-                         ${collapsed ? 'w-14' : 'w-52'}`}>
-        {collapsed ? (
-          <div className="h-[73px] flex items-center justify-center border-b border-mor-line/70">
-            {/* 收起來時只剩一個字。名字與職稱在這個寬度下一定會被截斷,
-                而截斷的名字比沒有名字更難讀 */}
-            <span className="font-bold text-lg" title="安幸上工">安</span>
-          </div>
-        ) : (
-          <div className="px-5 py-5 border-b border-mor-line/70">
-            <div className="font-bold text-lg">安幸上工</div>
-            {profile && (
-              <div className="mt-1 text-xs text-gray-500">
-                {profile.name}・{ROLE_LABEL[profile.role] ?? profile.role}
-              </div>
-            )}
-          </div>
-        )}
-        {navList(collapsed)}
+      {/*
+        桌機側邊欄。
+        外面這層只負責「佔位」—— 真正的側邊欄是 fixed 的，
+        hover 展開時才不會把內容推開。
+      */}
+      <div className={`hidden md:block shrink-0 transition-[width] duration-200
+                       ${pinned ? 'w-52' : 'w-14'}`} />
+      <aside
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
+        className={`hidden md:flex fixed inset-y-0 left-0 z-40 flex-col
+                    bg-white/95 backdrop-blur-xl border-r border-mor-line
+                    transition-[width] duration-200
+                    ${expanded ? 'w-52' : 'w-14'}
+                    ${!pinned && hover ? 'shadow-2xl shadow-black/10' : ''}`}>
 
-        {/*
-          收合鈕放在登出上面、選單下面。
-          放頂端的話會跟「安幸上工」搶那一格,而那一格是識別這是哪個系統的地方。
-        */}
-        <button onClick={toggleCollapsed}
-          title={collapsed ? '展開選單' : '收合選單'}
-          aria-label={collapsed ? '展開選單' : '收合選單'}
-          className={`mx-2 mb-1 h-9 flex items-center gap-2 rounded-[10px]
-                      text-gray-400 hover:text-gray-600 hover:bg-white/75 transition-colors
-                      ${collapsed ? 'justify-center' : 'px-3'}`}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75}
-            strokeLinecap="round" strokeLinejoin="round"
-            className={`w-4 h-4 shrink-0 transition-transform ${collapsed ? 'rotate-180' : ''}`}>
-            <path d="M15 6l-6 6 6 6" />
-          </svg>
-          {!collapsed && <span className="text-xs">收合選單</span>}
-        </button>
+        {/* 標題列 ＋ 收合鈕。鈕放這裡而不是最下面 —— 那是視線第一個
+            到的地方，也是「這條東西可以動」最直覺的位置 */}
+        <div className={`h-[73px] shrink-0 border-b border-mor-line/70 flex items-center
+                         ${expanded ? 'px-5 gap-2' : 'justify-center'}`}>
+          {expanded ? (
+            <>
+              <div className="min-w-0 flex-1">
+                <div className="font-bold text-lg leading-tight truncate">安幸上工</div>
+                {profile && (
+                  <div className="text-xs text-gray-500 truncate">
+                    {profile.name}・{ROLE_LABEL[profile.role] ?? profile.role}
+                  </div>
+                )}
+              </div>
+              <button onClick={togglePinned}
+                title={pinned ? '取消固定（改成滑過才展開）' : '固定展開'}
+                aria-label={pinned ? '取消固定' : '固定展開'}
+                aria-pressed={pinned}
+                className={`shrink-0 w-7 h-7 -mr-1.5 flex items-center justify-center rounded-lg
+                            transition-colors ${pinned
+                              ? 'text-mor-slate bg-mor-slate/[0.12]'
+                              : 'text-gray-400 hover:text-gray-600 hover:bg-mor-sand/70'}`}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}
+                  strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+                  <path d="M15 6l-6 6 6 6" />
+                </svg>
+              </button>
+            </>
+          ) : (
+            // 收起來時只剩一個字。名字與職稱在 56px 下一定會被截斷，
+            // 而截斷的名字比沒有名字更難讀
+            <span className="font-bold text-lg" title="安幸上工">安</span>
+          )}
+        </div>
+
+        {navList(!expanded)}
 
         <button onClick={logout} title="登出"
-          className={`m-2 mt-0 rounded-[10px] border border-mor-line py-2 text-sm text-gray-500
-                      hover:bg-mor-sand/70 hover:text-gray-700 transition-colors
-                      ${collapsed ? 'px-0' : ''}`}>
-          {collapsed ? '⏻' : '登出'}
+          className={`m-2 rounded-[10px] border border-mor-line py-2 text-sm text-gray-500
+                      hover:bg-mor-sand/70 hover:text-gray-700 transition-colors`}>
+          {expanded ? '登出' : '⏻'}
         </button>
       </aside>
 
