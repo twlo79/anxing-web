@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import FilterToggle from '@/components/FilterToggle';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, type SortState } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
@@ -550,7 +551,8 @@ export default function ShortTermPage() {
       */}
       <RecurringPanel canEdit={['accountant', 'manager', 'super_admin'].includes(role)} />
 
-      <div className="filter-bar rounded-xl glass p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
+      <FilterToggle active={!!(src || kw || estF || fromD || toD || payF)} />
+      <div className="filter-bar collapsible-filters rounded-xl glass p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
         <div>
           <label className="block text-xs text-gray-500 mb-1">物業</label>
           <select value={estF} onChange={(e) => setEstF(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">

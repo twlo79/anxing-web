@@ -64,6 +64,31 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [profile, setProfile] = useState<{ name: string; role: string } | null>(null);
   const [navOpen, setNavOpen] = useState(false);
+  /*
+   * 桌機側邊欄收起來只剩圖示。
+   *
+   * 【為什麼預設是展開的】
+   * 收起來的側邊欄只剩十四個 emoji,而 emoji 沒有共同的視覺語言 ——
+   * 🧺 是房務、🧹 是清潔、📒 是支出、🧾 是請款,光看圖示分不出來。
+   * 所以這是「我已經記熟了,把空間還給我」的選項,不是預設值。
+   *
+   * 【為什麼要記住】
+   * 不記的話每次重整都彈回展開。使用者會收第二次、第三次,
+   * 然後不再收 —— 一個每次都要重按的設定等於沒有這個設定。
+   */
+  const [collapsed, setCollapsed] = useState(false);
+
+  // 掛載後才讀 —— 伺服器算不出 localStorage,直接用會 hydration 不一致
+  useEffect(() => {
+    try { setCollapsed(localStorage.getItem('navCollapsed') === '1'); } catch {}
+  }, []);
+  function toggleCollapsed() {
+    setCollapsed((c) => {
+      const next = !c;
+      try { localStorage.setItem('navCollapsed', next ? '1' : '0'); } catch {}
+      return next;
+    });
+  }
 
   useEffect(() => {
     const supabase = createClient();
@@ -98,10 +123,26 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
    * 改成 12% 的主色淺底之後 emoji 讀得到,而淺底跟 hover 的白底很像,
    * 所以左邊再加一條 3px 的主色細棒當「硬」記號。
    */
-  const navList = (
+  const navList = (mini = false) => (
     <nav className="flex-1 py-2 overflow-y-auto">
       {items.map((n) => {
         const on = pathname.startsWith(n.href);
+        if (mini) {
+          return (
+            // title 是收起來時唯一的文字線索 —— 沒有它,分不出 🧺 跟 🧹
+            <Link key={n.href} href={n.href} title={n.label} aria-label={n.label}
+              className={`relative mx-2 my-0.5 flex items-center justify-center h-10
+                rounded-[10px] transition-colors ${
+                on ? 'bg-mor-slate/[0.12]' : 'hover:bg-white/75'}`}>
+              {on && (
+                <span aria-hidden
+                  className="absolute left-0.5 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-full bg-mor-slate" />
+              )}
+              <span className="text-[19px] leading-none"
+                style={{ filter: on ? 'none' : 'saturate(0.55)' }}>{n.icon}</span>
+            </Link>
+          );
+        }
         return (
           // 15px 而不是 14px。側邊欄是整天盯著的東西,而且中文在小字級下
           // 筆畫會糊在一起 —— 拉丁字母在 14px 還很清楚,中文不是。
@@ -163,7 +204,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 </div>
               )}
             </div>
-            {navList}
+            {navList()}
             <button onClick={logout} className="m-3 rounded-[10px] border border-mor-line py-2.5 text-sm text-gray-500 active:bg-mor-sand/70">
               登出
             </button>
@@ -172,18 +213,50 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       )}
 
       {/* 桌機側邊欄 */}
-      <aside className="hidden md:flex w-52 shrink-0 flex-col bg-white/85 backdrop-blur-xl border-r border-mor-line">
-        <div className="px-5 py-5 border-b border-mor-line/70">
-          <div className="font-bold text-lg">安幸上工</div>
-          {profile && (
-            <div className="mt-1 text-xs text-gray-500">
-              {profile.name}・{ROLE_LABEL[profile.role] ?? profile.role}
-            </div>
-          )}
-        </div>
-        {navList}
-        <button onClick={logout} className="m-3 rounded-[10px] border border-mor-line py-2 text-sm text-gray-500 hover:bg-mor-sand/70 hover:text-gray-700 transition-colors">
-          登出
+      <aside className={`hidden md:flex shrink-0 flex-col bg-white/85 backdrop-blur-xl
+                         border-r border-mor-line transition-[width] duration-200
+                         ${collapsed ? 'w-14' : 'w-52'}`}>
+        {collapsed ? (
+          <div className="h-[73px] flex items-center justify-center border-b border-mor-line/70">
+            {/* 收起來時只剩一個字。名字與職稱在這個寬度下一定會被截斷,
+                而截斷的名字比沒有名字更難讀 */}
+            <span className="font-bold text-lg" title="安幸上工">安</span>
+          </div>
+        ) : (
+          <div className="px-5 py-5 border-b border-mor-line/70">
+            <div className="font-bold text-lg">安幸上工</div>
+            {profile && (
+              <div className="mt-1 text-xs text-gray-500">
+                {profile.name}・{ROLE_LABEL[profile.role] ?? profile.role}
+              </div>
+            )}
+          </div>
+        )}
+        {navList(collapsed)}
+
+        {/*
+          收合鈕放在登出上面、選單下面。
+          放頂端的話會跟「安幸上工」搶那一格,而那一格是識別這是哪個系統的地方。
+        */}
+        <button onClick={toggleCollapsed}
+          title={collapsed ? '展開選單' : '收合選單'}
+          aria-label={collapsed ? '展開選單' : '收合選單'}
+          className={`mx-2 mb-1 h-9 flex items-center gap-2 rounded-[10px]
+                      text-gray-400 hover:text-gray-600 hover:bg-white/75 transition-colors
+                      ${collapsed ? 'justify-center' : 'px-3'}`}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75}
+            strokeLinecap="round" strokeLinejoin="round"
+            className={`w-4 h-4 shrink-0 transition-transform ${collapsed ? 'rotate-180' : ''}`}>
+            <path d="M15 6l-6 6 6 6" />
+          </svg>
+          {!collapsed && <span className="text-xs">收合選單</span>}
+        </button>
+
+        <button onClick={logout} title="登出"
+          className={`m-2 mt-0 rounded-[10px] border border-mor-line py-2 text-sm text-gray-500
+                      hover:bg-mor-sand/70 hover:text-gray-700 transition-colors
+                      ${collapsed ? 'px-0' : ''}`}>
+          {collapsed ? '⏻' : '登出'}
         </button>
       </aside>
 

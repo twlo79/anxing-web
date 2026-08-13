@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import FilterToggle from '@/components/FilterToggle';
 import { createClient } from '@/lib/supabase';
 import * as XLSX from 'xlsx-js-style';
 import {
@@ -397,7 +398,8 @@ export default function ReviewsPage() {
       </div>
 
       {/* ===== 表格篩選 ===== */}
-      <div id="review-filters" className="filter-bar rounded-xl glass p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
+      <FilterToggle />
+      <div id="review-filters" className="filter-bar collapsible-filters rounded-xl glass p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
         <div>
           <label className="block text-xs text-gray-500 mb-1">物業</label>
           <select value={estateId} onChange={(e) => setEstateId(e.target.value)}

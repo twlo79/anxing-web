@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import FilterToggle from '@/components/FilterToggle';
 import { createClient } from '@/lib/supabase';
 import { fetchAll } from '@/lib/fetch-all';
 import * as XLSX from 'xlsx-js-style';
@@ -527,7 +528,8 @@ export default function RevenuesPage() {
       </div>
 
       {/* Filters */}
-      <div className="filter-bar rounded-xl glass p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
+      <FilterToggle active={!!(estateFilter || roomFilter || sourceFilter || kw)} />
+      <div className="filter-bar collapsible-filters rounded-xl glass p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
         <div>
           <label className="block text-xs text-gray-500 mb-1">物業</label>
           <select value={estateFilter} onChange={(e) => setEstateFilter(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5 min-w-24">

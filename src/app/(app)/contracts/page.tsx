@@ -657,6 +657,7 @@ export default function ContractsPage() {
           原本這裡有三顆清除鈕（日期一顆、關鍵字一顆、全部清除一顆），
           同一個動作三個位置。現在只有一顆，底線文字，在搜尋右邊。 */}
       <FilterBar
+        active={!!(estateFilter || cadFilter || typeFilter || statusFilter || fromD || toD || kw)}
         right={<>
           <FilterCount n={filtered.length} />
           <button onClick={exportXlsx} disabled={!filtered.length}

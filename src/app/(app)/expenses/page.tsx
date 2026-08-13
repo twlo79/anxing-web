@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import FilterToggle from '@/components/FilterToggle';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
@@ -411,7 +412,8 @@ export default function ExpensesPage() {
       </div>
 
       {/* 工具列 */}
-      <div className="filter-bar flex flex-wrap items-end gap-2 mb-3 text-sm">
+      <FilterToggle />
+      <div className="filter-bar collapsible-filters flex flex-wrap items-end gap-2 mb-3 text-sm">
         <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">支出日(起)</span>
           <input type="date" value={fromD} onChange={(e) => setFromD(e.target.value)} className="rounded-lg border border-mor-line px-2 py-1.5" /></label>
         <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">支出日(迄)</span>

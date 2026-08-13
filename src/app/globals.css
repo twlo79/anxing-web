@@ -155,6 +155,35 @@
       flex-wrap: wrap;
       justify-content: flex-end;
     }
+
+    /*
+     * 【收起來的篩選列】
+     *
+     * 直向排列之後,訂單頁的六個篩選欄位疊起來超過一個螢幕高 ——
+     * 每次進頁面都要先滑過整片下拉才看得到第一筆資料。
+     * 而那些下拉九成的時間都停在「全部」。
+     *
+     * 所以預設收起,由 <FilterToggle> 掛在 <html> 上的 .filters-open 打開。
+     *
+     * 【為什麼是 .collapsible-filters 而不是 .filter-bar】
+     * .filter-bar 有被借去做非篩選的用途（契約頁的「展延租期」表單借它
+     * 的直向排列）。用 .filter-bar 當開關的話,那張表單會在手機上消失,
+     * 而且沒有任何按鈕打得開它。
+     *
+     * 【為什麼保留 .ml-auto】
+     * 那一組是「共 N 筆／下載 Excel／+ 新增／回收桶」——
+     * 新增是這個頁面最常按的按鈕,不該跟著篩選一起被收走。
+     */
+    html:not(.filters-open) .collapsible-filters > *:not(.ml-auto) {
+      display: none;
+    }
+    html:not(.filters-open) .collapsible-filters {
+      padding: 0.625rem 0.75rem;
+    }
+    /* 沒有動作鈕那一組的話,收起來就是一片空白的框 —— 整塊藏掉 */
+    html:not(.filters-open) .collapsible-filters:not(:has(> .ml-auto)) {
+      display: none;
+    }
   }
 }
 

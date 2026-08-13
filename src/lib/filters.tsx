@@ -1,5 +1,6 @@
 'use client';
 import { ReactNode } from 'react';
+import FilterToggle from '@/components/FilterToggle';
 
 /**
  * 篩選列的共用元件。**版型以短租訂單頁為準**，全站一致。
@@ -25,13 +26,22 @@ import { ReactNode } from 'react';
 
 const CTRL = 'rounded-lg border border-gray-300 px-2 py-1.5';
 
-export function FilterBar({ children, right }: { children: ReactNode; right?: ReactNode }) {
+/**
+ * @param active 目前有沒有套用任何條件。手機收起篩選時，
+ *               這是「為什麼只有 3 筆」唯一的線索 —— 傳進來按鈕才會亮。
+ */
+export function FilterBar({ children, right, active }: {
+  children: ReactNode; right?: ReactNode; active?: boolean;
+}) {
   return (
-    <div className="filter-bar bg-white rounded-xl border border-mor-line p-4 mb-4
-                    flex flex-wrap items-end gap-3 text-sm">
-      {children}
-      {right && <div className="ml-auto flex items-end gap-3">{right}</div>}
-    </div>
+    <>
+      <FilterToggle active={active} />
+      <div className="filter-bar collapsible-filters bg-white rounded-xl border border-mor-line p-4 mb-4
+                      flex flex-wrap items-end gap-3 text-sm">
+        {children}
+        {right && <div className="ml-auto flex items-end gap-3">{right}</div>}
+      </div>
+    </>
   );
 }
 
