@@ -1,5 +1,8 @@
 'use client';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  checkTenure, handoverPatch, tenureLabel, managerIdOn, type Tenure,
+} from '@/lib/estate-manager';
 import Toast from '@/components/Toast';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
@@ -31,6 +34,12 @@ type SyncIssue = {
   from_val: string | null; to_val: string | null; listing_id: string | null;
   extra: Record<string, unknown> | null;
 };
+
+/**
+ * 管家任期（migration_115）。一段 = 一位管家管一個物業的一段時間。
+ * end_date 為 null 代表至今。
+ */
+type MgrTenure = Tenure & { staff_name?: string };
 
 /** 常用收款對象（migration_96）。請款單不掛外鍵,填完就脫鉤。 */
 type Payee = {
@@ -152,6 +161,12 @@ export default function AdminPage() {
   const [newPropName, setNewPropName] = useState('');
   const [msg, setMsg] = useState('');
   const [tab, setTab] = useState<TabKey>('people');
+  const [tenures, setTenures] = useState<MgrTenure[]>([]);
+  /** 展開哪一個物業的任期 */
+  const [openTen, setOpenTen] = useState<string | null>(null);
+  const [tenDraft, setTenDraft] = useState<{ staff_id: string; start_date: string }>(
+    { staff_id: '', start_date: '' });
+
   const [audits, setAudits] = useState<Audit[]>([]);
   const [auditTable, setAuditTable] = useState('');
   /**
@@ -173,11 +188,16 @@ export default function AdminPage() {
     const { data: es } = await supabase.from('estates').select('*').order('sort').order('name');
     const { data: pr } = await supabase.from('properties').select('id, name, estate_id').order('name');
     const { data: pa } = await supabase.from('payment_accounts').select('*').order('sort').order('code');
+    // 任期表很小（一個物業幾段）,一次載完在前端算就好
+    const { data: tn } = await supabase.from('estate_managers')
+      .select('id, estate_id, staff_id, start_date, end_date')
+      .order('start_date', { ascending: false });
     setStaff(st ?? []);
     setProfiles(pf ?? []);
     setEstates(es ?? []);
     setProperties(pr ?? []);
     setPayAccounts(pa ?? []);
+    setTenures((tn ?? []) as MgrTenure[]);
     setSelEstate((cur) => cur || es?.[0]?.id || '');
   }, [supabase]);
 
@@ -241,6 +261,67 @@ export default function AdminPage() {
     profiles.forEach((pf) => { if (!m[pf.id] && pf.name) m[pf.id] = pf.name; });
     return m;
   }, [staff, profiles]);
+
+  /* ── 管家任期 ────────────────────────────────
+   *
+   * 【為什麼不是直接在「負責管家」那格換人】
+   * 那樣改的是「現在是誰」,而過去所有評價的歸屬會跟著一起變 ——
+   * 新接手的人一上任就背著前任的分數,離開的人的貢獻憑空消失。
+   *
+   * 改成一段一段的任期之後,歷史就固定了:評價拿退房日回查那天是誰在管。
+   */
+  const tenuresOf = (estateId: string) =>
+    tenures.filter((t) => t.estate_id === estateId)
+      .sort((a, b) => b.start_date.localeCompare(a.start_date));
+  const staffName = (id: string) => staff.find((s) => s.id === id)?.name ?? '(已刪除)';
+  /** 現在誰在管 —— 用今天回查,跟評價用的是同一支函式 */
+  const currentMgr = (estateId: string) => {
+    const id = managerIdOn(tenures, estateId, new Date().toISOString().slice(0, 10));
+    return id ? staffName(id) : null;
+  };
+
+  /** 接手：自動把前一段結束在接手日的前一天,再開新的一段 */
+  async function handover(estateId: string) {
+    const draft = { ...tenDraft, end_date: null };
+    const patch = handoverPatch(tenures, estateId, draft.start_date);
+    /*
+     * 檢查時要把「即將被結束的那一段」換成結束後的樣子 ——
+     * 用原本的（至今）去比,一定會判定重疊,而那正是我們正要解決的事。
+     */
+    const others = tenuresOf(estateId).map((t) =>
+      patch && t.id === patch.id ? { ...t, end_date: patch.end_date } : t);
+    const err = checkTenure(draft, others);
+    if (err) return flash(err);
+
+    if (patch) {
+      const { error } = await supabase.from('estate_managers')
+        .update({ end_date: patch.end_date }).eq('id', patch.id);
+      if (error) return flash('無法儲存,前一段任期收尾失敗:' + error.message);
+    }
+    const { error } = await supabase.from('estate_managers')
+      .insert({ estate_id: estateId, staff_id: draft.staff_id, start_date: draft.start_date });
+    if (error) return flash('無法儲存:' + error.message);
+    setTenDraft({ staff_id: '', start_date: '' });
+    flash('已登記接手'); load();
+  }
+
+  async function endTenure(t: MgrTenure) {
+    const d = prompt(`「${staffName(t.staff_id)}」管到哪一天為止？（YYYY-MM-DD）`, '');
+    if (!d) return;
+    if (d < t.start_date) return flash(`無法儲存,迄日（${d}）早於起日（${t.start_date}）`);
+    const { error } = await supabase.from('estate_managers')
+      .update({ end_date: d }).eq('id', t.id);
+    if (error) return flash('無法儲存:' + error.message);
+    flash('已結束任期'); load();
+  }
+
+  async function delTenure(t: MgrTenure) {
+    if (!confirm(`刪掉「${staffName(t.staff_id)}」${tenureLabel(t)} 這一段?\n\n`
+      + `這段期間的評價會變成「未指派」。`)) return;
+    const { error } = await supabase.from('estate_managers').delete().eq('id', t.id);
+    if (error) return flash('刪除失敗:' + error.message);
+    flash('已刪除'); load();
+  }
 
   // ---- 人員 ----
   const activeHousekeepers = useMemo(() => staff.filter((s) => s.active && s.staff_type === 'housekeeper'), [staff]);
@@ -561,14 +642,24 @@ export default function AdminPage() {
               </thead>
               <tbody>
                 {estates.map((e) => (
-                  <tr key={e.id} className={`border-b border-mor-line/60 last:border-0 ${e.active ? '' : 'opacity-50'}`}>
+                  <Fragment key={e.id}>
+                  <tr className={`border-b border-mor-line/60 last:border-0 ${e.active ? '' : 'opacity-50'}`}>
                     <td className="px-4 py-2 font-medium">{e.name}</td>
+                    {/*
+                      【為什麼這裡不再是一個下拉】
+                      下拉改的是「現在是誰」,而過去所有評價的歸屬會跟著一起變。
+                      現在改成任期:接手就開新的一段,歷史固定不動。
+                    */}
                     <td className="px-4 py-2">
-                      <select value={e.manager ?? ''} disabled={!e.active} onChange={(ev) => updateEstate(e.id, { manager: ev.target.value || null })}
-                        className="rounded-lg border border-gray-300 px-2 py-1 text-sm min-w-24 disabled:bg-gray-100">
-                        <option value="">未指派</option>
-                        {activeHousekeepers.map((h) => <option key={h.id} value={h.name}>{h.name}</option>)}
-                      </select>
+                      <div className="flex items-center gap-2">
+                        <span className={currentMgr(e.id) ? 'font-medium' : 'text-gray-400'}>
+                          {currentMgr(e.id) ?? '未指派'}
+                        </span>
+                        <button onClick={() => { setOpenTen(openTen === e.id ? null : e.id); setTenDraft({ staff_id: '', start_date: '' }); }}
+                          className="text-xs text-mor-slate underline hover:text-mor-blue whitespace-nowrap">
+                          任期 {tenuresOf(e.id).length ? `(${tenuresOf(e.id).length})` : ''}
+                        </button>
+                      </div>
                     </td>
                     <td className="px-4 py-2">
                       <input type="number" defaultValue={e.sort} onBlur={(ev) => { const v = parseInt(ev.target.value); if (v !== e.sort) updateEstate(e.id, { sort: v }); }}
@@ -582,6 +673,73 @@ export default function AdminPage() {
                       <button onClick={() => deleteEstate(e.id, e.name)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
                     </td>
                   </tr>
+
+                  {openTen === e.id && (
+                    <tr className="bg-mor-sand/20">
+                      <td colSpan={5} className="px-4 py-3">
+                        <div className="text-xs font-semibold text-gray-600 mb-2">
+                          {e.name}・歷任管家
+                          <span className="ml-2 font-normal text-gray-400">
+                            評價依「退房日」回查這裡決定歸屬 —— 換人不會動到歷史成績
+                          </span>
+                        </div>
+
+                        {tenuresOf(e.id).length === 0 ? (
+                          <div className="text-xs text-gray-400 mb-3">
+                            還沒有登記任期。登記之前的評價會落在「未指派」。
+                          </div>
+                        ) : (
+                          <div className="space-y-1 mb-3">
+                            {tenuresOf(e.id).map((t) => (
+                              <div key={t.id} className="flex flex-wrap items-center gap-3 text-sm">
+                                <span className="font-medium w-20">{staffName(t.staff_id)}</span>
+                                <span className="text-gray-500 tabular-nums">{tenureLabel(t)}</span>
+                                {t.end_date == null && (
+                                  <span className="rounded bg-mor-greenlight text-mor-green px-1.5 py-0.5 text-[11px]">現任</span>
+                                )}
+                                <span className="flex-1" />
+                                {t.end_date == null && (
+                                  <button onClick={() => endTenure(t)}
+                                    className="text-xs text-mor-slate underline hover:text-mor-blue">結束任期</button>
+                                )}
+                                <button onClick={() => delTenure(t)}
+                                  className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/*
+                          接手:選人 ＋ 接手日。前一段的迄日由系統自動補成前一天 ——
+                          讓使用者自己算的話,填成同一天就重疊、填成兩天前就有一天沒人管,
+                          兩種都不會被發現。
+                        */}
+                        <div className="flex flex-wrap items-end gap-2 border-t border-mor-line pt-3">
+                          <label className="flex flex-col gap-1 text-xs text-gray-500">接手的管家
+                            <select value={tenDraft.staff_id}
+                              onChange={(ev) => setTenDraft({ ...tenDraft, staff_id: ev.target.value })}
+                              className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm min-w-28">
+                              <option value="">請選擇</option>
+                              {activeHousekeepers.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
+                            </select>
+                          </label>
+                          <label className="flex flex-col gap-1 text-xs text-gray-500">從哪一天開始
+                            <input type="date" value={tenDraft.start_date}
+                              onChange={(ev) => setTenDraft({ ...tenDraft, start_date: ev.target.value })}
+                              className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm" />
+                          </label>
+                          <button onClick={() => handover(e.id)}
+                            className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium hover:bg-mor-slatedark">
+                            登記接手
+                          </button>
+                          <span className="text-xs text-gray-400 pb-1.5">
+                            現任的任期會自動結束在前一天
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
@@ -592,7 +750,13 @@ export default function AdminPage() {
             <button onClick={addEstate} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 新增物業</button>
           </div>
         </div>
-        <p className="text-xs text-gray-400 mt-2">停用物業:不顯示在評價/清潔的評分與篩選、也不需指派(紀錄仍保留)。負責管家換人後,該物業所有評價(含過去)歸現任。排序越小越前。</p>
+        <p className="text-xs text-gray-400 mt-2">
+          停用物業:不顯示在評價/清潔的評分與篩選、也不需指派(紀錄仍保留)。排序越小越前。
+          <br />
+          <b>管家改成用任期記錄</b>（migration_115）：評價依「退房日」回查那天是誰在管,
+          所以換管家<b>不會</b>影響過去的成績。登記任期之前的評價會落在「未指派」——
+          那個數字本身就是「還有這麼多評價沒有歸屬」的提醒。
+        </p>
       </section>
       )}
 

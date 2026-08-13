@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { managerIdOn, type Tenure } from '@/lib/estate-manager';
 import FilterToggle from '@/components/FilterToggle';
 import { createClient } from '@/lib/supabase';
 import * as XLSX from 'xlsx-js-style';
@@ -71,6 +72,19 @@ function csvEsc(v: unknown) {
 export default function ReviewsPage() {
   const supabase = useMemo(() => createClient(), []);
   const [estates, setEstates] = useState<Estate[]>([]);
+  const [tenures, setTenures] = useState<Tenure[]>([]);
+  const [staffNames, setStaffNames] = useState<Record<string, string>>({});
+  /**
+   * 這一則評價該算誰的 —— 用**退房日**回查任期。
+   *
+   * 查不到就是「未指派」（登記任期之前的評價）。刻意不退回現任 ——
+   * 那等於把歷史又算到他頭上,而那正是這整件事要解決的問題。
+   */
+  const mgrOf = (r: { property_id: string | null; checkout_date: string | null }) => {
+    const p = r.property_id ? propById[r.property_id] : null;
+    const id = managerIdOn(tenures, p?.estate_id ?? null, r.checkout_date);
+    return id ? (staffNames[id] ?? '') : '';
+  };
   const [properties, setProperties] = useState<Property[]>([]);
   const [rows, setRows] = useState<Review[]>([]);
   const [total, setTotal] = useState(0);
@@ -104,6 +118,21 @@ export default function ReviewsPage() {
 
   useEffect(() => {
     supabase.from('estates').select('id, name, manager, sort').eq('active', true).order('sort').then(({ data }) => setEstates(data ?? []));
+    /*
+     * 管家任期（migration_115）。
+     *
+     * 【為什麼不再讀 estates.manager】
+     * 那一欄沒有時間 —— 換管家之後,過去所有評價的歸屬會跟著一起變:
+     * 新接手的人一上任就背著前任的分數,離開的人的貢獻憑空消失。
+     *
+     * 改成依**退房日**回查任期,歷史就固定了。
+     * 表很小（一個物業幾段）,一次載完在前端算。
+     */
+    supabase.from('estate_managers')
+      .select('id, estate_id, staff_id, start_date, end_date')
+      .then(({ data }) => setTenures((data ?? []) as Tenure[]));
+    supabase.from('staff').select('id, name')
+      .then(({ data }) => setStaffNames(Object.fromEntries((data ?? []).map((x: any) => [x.id, x.name]))));
     supabase.from('properties').select('id, name, active, estate_id').order('active', { ascending: false }).order('name')
       .then(({ data }) => setProperties(data ?? []));
   }, [supabase]);
@@ -182,7 +211,7 @@ export default function ReviewsPage() {
       const p = r.property_id ? propById[r.property_id] : null;
       const e = p?.estate_id ? estateById[p.estate_id] : null;
       aoa.push([
-        r.checkin_date, r.checkout_date, e?.name ?? '', p?.name ?? '', r.guest_name, e?.manager ?? '',
+        r.checkin_date, r.checkout_date, e?.name ?? '', p?.name ?? '', r.guest_name, mgrOf(r),
         r.overall_rating, displayComment(r), r.comment_original, r.comment_language,
         r.rating_checkin, r.rating_cleanliness, r.rating_accuracy, r.rating_communication, r.rating_location, r.rating_value,
         r.detail_comments?.private_feedback ?? '', r.host_reply ?? '', r.airbnb_review_id,
@@ -238,7 +267,9 @@ export default function ReviewsPage() {
       for (const r of all) {
         const p = r.property_id ? propById[r.property_id] : null;
         const e = p?.estate_id ? estateById[p.estate_id] : null;
-        const mgr = e?.manager || '未指派';
+        // 依退房日回查任期 —— 跟 manager_stats（SQL 端）同一條規則,
+        // 兩邊不一致的話「總表 12 則、明細 9 列」而沒有人查得出差在哪
+        const mgr = mgrOf(r) || '未指派';
         (byMgr.get(mgr) ?? byMgr.set(mgr, []).get(mgr)!).push({
           manager: mgr,
           // 房客姓名。管家是分頁名,不用再開一欄
@@ -504,7 +535,7 @@ export default function ReviewsPage() {
                     <span className="inline-block rounded-md bg-mor-sand px-2 py-0.5 text-xs font-medium">{p?.name ?? '未對應'}</span>
                   </td>
                   <td className="px-3 py-2.5 whitespace-nowrap">{r.guest_name}</td>
-                  <td className="px-3 py-2.5 whitespace-nowrap text-gray-600">{e?.manager ?? '—'}</td>
+                  <td className="px-3 py-2.5 whitespace-nowrap text-gray-600">{mgrOf(r) || '—'}</td>
                   <td className="px-3 py-2.5 whitespace-nowrap">
                     {hasNegative(r) && <span className="mr-1 inline-block w-2 h-2 rounded-full bg-red-500" title="需關注" />}
                     <Stars n={r.overall_rating} />
@@ -545,14 +576,21 @@ export default function ReviewsPage() {
       {selected && (
         <Drawer review={selected} onClose={() => setSelected(null)}
           property={selected.property_id ? propById[selected.property_id] : null}
-          estate={selected.property_id && propById[selected.property_id]?.estate_id ? estateById[propById[selected.property_id].estate_id!] : null} />
+          estate={selected.property_id && propById[selected.property_id]?.estate_id ? estateById[propById[selected.property_id].estate_id!] : null}
+          manager={mgrOf(selected)} />
       )}
     </div>
   );
 }
 
-function Drawer({ review: r, onClose, property, estate }: {
+function Drawer({ review: r, onClose, property, estate, manager }: {
   review: Review; onClose: () => void; property: Property | null; estate: Estate | null;
+  /**
+   * 這一則該算誰的 —— 由外面依**退房日**查任期算好再傳進來。
+   * 不在這裡讀 estate.manager：那一欄沒有時間,顯示的會是「現在是誰」
+   * 而不是「那次入住是誰在管」。
+   */
+  manager: string;
 }) {
   const cats: [string, number | null][] = [
     ['CHECKIN', r.rating_checkin], ['CLEANLINESS', r.rating_cleanliness], ['ACCURACY', r.rating_accuracy],
@@ -573,7 +611,7 @@ function Drawer({ review: r, onClose, property, estate }: {
             <div className="text-xs text-gray-500 mt-0.5">
               {estate?.name ?? '—'}・{property?.name ?? '未對應'}・{r.checkin_date} ~ {r.checkout_date}
               {r.nights ? `・${r.nights} 晚` : ''}
-              {estate?.manager ? `・負責人 ${estate.manager}` : ''}
+              {manager ? `・負責人 ${manager}` : ''}
             </div>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
