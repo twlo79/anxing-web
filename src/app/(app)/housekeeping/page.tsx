@@ -118,7 +118,7 @@ export default function HousekeepingPage() {
       */}
       {/* canEdit 還沒載到之前 tab 不可能是 stats，載到之後若被降權也會退回行事曆 */}
       {tab === 'stats' && canEdit
-        ? <StatsTab />
+        ? <StatsTab onGoCalendar={() => setTab('calendar')} />
         : <CalendarTab onMsg={(t, err) => setMsg({ t, err })} canEdit={canEdit} />}
     </div>
   );

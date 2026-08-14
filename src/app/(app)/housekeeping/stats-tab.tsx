@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import * as XLSX from 'xlsx-js-style';
 import { createClient } from '@/lib/supabase';
-import { parseRows, cleanCounts, filterItems, splitAssignees, staffLookup, type HkStaff, type HkProperty } from '@/lib/hkParse';
+import { cleanCounts, filterItems, type HkStaff, type HkProperty } from '@/lib/hkParse';
 import { softDelete, restoreTrash } from '@/lib/trash';
 
 /**
@@ -46,7 +46,16 @@ const daysIn = (period: string) => {
 const dateStr = (period: string, d: number) =>
   `${period.slice(0, 4)}-${period.slice(4, 6)}-${String(d).padStart(2, '0')}`;
 
-export default function StatsTab() {
+/**
+ * 匯入搬到「行事曆」分頁了（2026-08-14 使用者指定：「排班統計不匯入資料了」）。
+ *
+ * 匯入改變的是行事曆上的格子 —— 在統計頁按下去，畫面上只有數字跳動，
+ * 看不出「誰被排到哪一天」有沒有進去。放在它會產生效果的那一頁，
+ * 按完當場就看得見。
+ *
+ * 這一頁的空狀態因此改成把人送去行事曆，而不是留一個死路。
+ */
+export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void }) {
   const supabase = createClient();
   const [period, setPeriod] = useState(ymOf(new Date()));
   // 排班與布巾放在同一頁 —— 改一格房源要能立刻看到布巾跟著動,分頁會讓人來回切
@@ -61,9 +70,6 @@ export default function StatsTab() {
   const [settings, setSettings] = useState<Record<string, string | null>>({});
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState('');
-  const [importOpen, setImportOpen] = useState(false);
-  const [raw, setRaw] = useState('');
-  const [busy, setBusy] = useState(false);
   const [undo, setUndo] = useState<{ it: Wi; trashId?: string; until: number } | null>(null);
   /** 正在新增房源格的儲存格 */
   const [adding, setAdding] = useState<{ date: string; staffId: string; code: string; type: string } | null>(null);
@@ -160,73 +166,6 @@ export default function StatsTab() {
     }
     return out;
   }, [items, staff]);
-
-  // ── 匯入 ───────────────────────────────────────────
-  const preview = useMemo(() => {
-    if (!raw.trim() || !staff.length) return null;
-    const rows = raw.trim().split('\n').map((l) => {
-      const parts = l.split(/[,\t]/).map((x) => x.trim());
-      return { date: parts[0], title: parts[1] ?? '', assignees: parts.slice(2).join(',') };
-    }).filter((r) => /^\d{4}-\d{2}-\d{2}$/.test(r.date));
-    const parsed = parseRows(rows, staff, props, { includeGift });
-    const unknownNames = new Set<string>();
-    for (const r of rows) {
-      for (const n of splitAssignees(r.assignees)) {
-        if (!staffLookup(staff).has(n)) unknownNames.add(n);
-      }
-    }
-    return { rows, parsed, unknownNames: Array.from(unknownNames) };
-  }, [raw, staff, props, includeGift]);
-
-  async function doImport() {
-    if (!preview) return;
-    const { parsed } = preview;
-    const per = parsed[0]?.date.slice(0, 7).replace('-', '') ?? period;
-    if (!confirm(`匯入 ${parsed.length} 筆到 ${per}?\n\n同月份的既有資料會先清空再重建。`)) return;
-    setBusy(true);
-    try {
-      // 全刪重建。解析規則會改,增量更新會讓新舊規則的結果混在同一個月裡。
-      // 硬刪除,不進回收桶 —— 這是「整期重匯前先清空」,一次幾百格。
-      // 進回收桶的話,真正誤刪的那一格會被埋在幾百筆機制紀錄裡面。
-      await supabase.from('hk_work_item').delete().eq('period', per);
-      await supabase.from('hk_event').delete().eq('period', per);
-
-      const byName = staffLookup(staff);
-      for (const e of parsed) {
-        // 入住準備組完全不匯入
-        const known = e.assigneeNames.map((n) => byName.get(n)).filter(Boolean) as HkStaff[];
-        if (e.excluded === 'not_counted' && !known.some((s) => s.count_mode !== 'none')) continue;
-
-        const { data: ev, error } = await supabase.from('hk_event').insert({
-          period: per, event_date: e.date, title: e.title,
-          assignees: e.assigneeNames, parsed_code: e.propertyCode,
-          work_type: e.workType, excluded: e.excluded,
-        }).select('id').single();
-        if (error) { flash('匯入失敗:' + error.message); return; }
-
-        // 休假寫進 hk_day,不產生工作項
-        if (e.excluded === 'leave') {
-          const s = staff.find((x) => x.code === e.leaveStaffCode);
-          if (s) {
-            const status = e.title.includes('颱風') ? '颱風假' : '休';
-            await supabase.from('hk_day').upsert({
-              period: per, work_date: e.date, staff_id: s.id, status,
-            }, { onConflict: 'work_date,staff_id' });
-          }
-          continue;
-        }
-        if (e.excluded) continue;
-
-        const rows = known.filter((s) => s.count_mode !== 'none').map((s) => ({
-          event_id: ev.id, period: per, work_date: e.date,
-          property_code: e.propertyCode, work_type: e.workType, staff_id: s.id,
-        }));
-        if (rows.length) await supabase.from('hk_work_item').insert(rows);
-      }
-      setPeriod(per); setImportOpen(false); setRaw('');
-      flash('匯入完成'); loadPeriod();
-    } finally { setBusy(false); }
-  }
 
   // ── 編輯 ───────────────────────────────────────────
   /**
@@ -395,8 +334,6 @@ export default function StatsTab() {
         <div className="ml-auto flex gap-2">
           <Link href="/housekeeping/settings"
             className="rounded-lg border border-mor-line px-3 py-1.5 text-sm text-gray-600 hover:bg-mor-sand/60">⚙ 設定</Link>
-          <button onClick={() => setImportOpen(true)}
-            className="rounded-lg border border-mor-slate text-mor-slate px-3 py-1.5 text-sm font-medium hover:bg-mor-sand/60">⬆ 匯入排班</button>
           <button onClick={exportXlsx} disabled={!items.length}
             className="rounded-lg border border-mor-line bg-white px-4 py-1.5 text-sm font-medium hover:bg-mor-sand/60 disabled:opacity-40">⬇ 下載 Excel</button>
         </div>
@@ -443,12 +380,12 @@ export default function StatsTab() {
         <div className="rounded-xl border border-dashed border-mor-line bg-white px-6 py-16 text-center">
           <div className="text-gray-500 text-sm">{period.slice(0, 4)} 年 {Number(period.slice(4, 6))} 月還沒有排班資料</div>
           <div className="text-xs text-gray-400 mt-2 max-w-md mx-auto leading-relaxed">
-            按右上角「匯入排班」貼上排班紀錄。系統會解析出每個人負責哪些房源,
-            再由房源的清掃次數乘上幾床,推算床單用量。
+            排班資料改從「房務行事曆」分頁匯入 —— 匯進去之後,
+            這一頁的統計會跟著長出來。
           </div>
-          <button onClick={() => setImportOpen(true)}
+          <button onClick={onGoCalendar}
             className="mt-4 rounded-lg bg-mor-slate text-white px-5 py-2 text-sm font-medium hover:bg-mor-slatedark">
-            匯入排班
+            去行事曆匯入
           </button>
         </div>
       ) : tab === 'sheet' ? (
@@ -726,71 +663,6 @@ export default function StatsTab() {
         </div>
       )}
 
-      {/* 匯入 */}
-      {importOpen && (
-        <div className="fixed inset-0 bg-black/30 flex items-stretch md:items-start justify-center overflow-auto md:py-10 z-50"
-          onClick={() => setImportOpen(false)}>
-          <div className="bg-white w-full md:w-[860px] md:max-w-[95vw] md:rounded-xl shadow-xl min-h-full md:min-h-0"
-            onClick={(e) => e.stopPropagation()}>
-            <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 font-bold flex items-center justify-between z-10">
-              匯入排班
-              <button onClick={() => setImportOpen(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
-            </div>
-            <div className="p-6 space-y-3 text-sm">
-              <div className="text-xs text-gray-500">
-                每行一筆,格式 <code className="bg-gray-100 px-1">日期,事項,負責人</code>。
-                多位負責人用 <code className="bg-gray-100 px-1">+</code> 分隔。可直接從 Excel 複製貼上。
-              </div>
-              <textarea value={raw} onChange={(e) => setRaw(e.target.value)}
-                placeholder={'2026-07-01,17B5-細清（不用鋪床）,SHAO-YING HSIEH + Ayu\n2026-07-02,贈-4B1*2,SHAO-YING HSIEH + Ayu'}
-                className="w-full h-48 rounded-lg border border-mor-line px-2 py-2 font-mono text-xs" />
-
-              {preview && (
-                <div className="rounded-lg border border-mor-line divide-y divide-mor-line/40 text-xs">
-                  <div className="px-3 py-2 flex flex-wrap gap-4">
-                    <span>共 <b>{preview.parsed.length}</b> 筆</span>
-                    <span className="text-mor-green">採計 {preview.parsed.filter((p) => !p.excluded).length}</span>
-                    <span className="text-amber-600">休假 {preview.parsed.filter((p) => p.excluded === 'leave').length}</span>
-                    <span className="text-gray-400">不計 {preview.parsed.filter((p) => p.excluded === 'not_counted').length}</span>
-                    <span className="text-red-600">未指派 {preview.parsed.filter((p) => p.excluded === 'no_assignee').length}</span>
-                  </div>
-                  {preview.parsed.some((p) => !p.excluded && p.unknownToken) && (
-                    <div className="px-3 py-2 text-red-600">
-                      未識別房源:{Array.from(new Set(preview.parsed.filter((p) => !p.excluded && p.unknownToken).map((p) => p.unknownToken))).join('、')}
-                      <div className="text-gray-400 mt-0.5">仍會匯入,但不會計入打掃次數。建議先到設定補建房源或別名。</div>
-                    </div>
-                  )}
-                  {preview.unknownNames.length > 0 && (
-                    <div className="px-3 py-2 text-red-600">
-                      未知人員:{preview.unknownNames.join('、')}
-                      <div className="text-gray-400 mt-0.5">不在人員主檔內,這些人的工作項會被略過。</div>
-                    </div>
-                  )}
-                  <div className="px-3 py-2 max-h-40 overflow-auto">
-                    {preview.parsed.slice(0, 12).map((p, i) => (
-                      <div key={i} className="flex gap-2 py-0.5">
-                        <span className="text-gray-400 w-20 shrink-0">{p.date.slice(5)}</span>
-                        <span className="flex-1 min-w-0 truncate">{p.title}</span>
-                        <span className={`w-24 shrink-0 text-right ${p.excluded ? 'text-gray-400' : 'text-mor-blue'}`}>
-                          {p.excluded === 'leave' ? '休假' : p.excluded === 'no_assignee' ? '未指派'
-                            : p.excluded ? '不計' : (p.propertyCode ?? '無房源')}
-                        </span>
-                      </div>
-                    ))}
-                    {preview.parsed.length > 12 && <div className="text-gray-400 pt-1">…另有 {preview.parsed.length - 12} 筆</div>}
-                  </div>
-                </div>
-              )}
-            </div>
-            <div className="border-t border-mor-line px-6 py-4 flex justify-end gap-2">
-              <button onClick={() => setImportOpen(false)} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>
-              <button onClick={doImport} disabled={!preview || busy}
-                className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium hover:bg-mor-slatedark disabled:opacity-40">
-                {busy ? '匯入中…' : '確認匯入'}</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

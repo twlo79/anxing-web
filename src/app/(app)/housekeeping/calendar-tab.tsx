@@ -5,6 +5,7 @@ import { monthGrid, shiftMonth, twToday } from '@/lib/attendance-ui';
 import {
   byDate, dayCounts, isAuto, linenSets, sortTasks, taskLabel, type TaskView,
 } from '@/lib/hk-task';
+import ImportPanel from './import-panel';
 
 /**
  * 房務行事曆：每天哪些房源要清、誰負責。
@@ -79,6 +80,12 @@ export default function CalendarTab({
   const [sel, setSel] = useState<string | null>(twToday());
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
+  /*
+   * 匯入 TimeTree 排班。放在行事曆這一頁而不是排班統計 ——
+   * 匯入改變的是這個畫面，按完格子就從灰色變成各人的顏色，
+   * 那個變化本身就是「成功了」的證據。
+   */
+  const [importing, setImporting] = useState(false);
   const [draft, setDraft] = useState({ property_id: '', work_type: '公區清潔', staff_id: '' });
 
   const grid = useMemo(() => monthGrid(y, m), [y, m]);
@@ -180,6 +187,9 @@ export default function CalendarTab({
 
   return (
     <div className="space-y-3">
+      {importing && (
+        <ImportPanel onClose={() => setImporting(false)} onDone={load} onMsg={onMsg} />
+      )}
       <div className="flex items-center gap-2">
         <button onClick={() => setYm(shiftMonth(y, m, -1))}
           className="rounded-lg border border-mor-line w-9 h-9 hover:bg-mor-sand/60">‹</button>
@@ -188,6 +198,12 @@ export default function CalendarTab({
           className="rounded-lg border border-mor-line w-9 h-9 hover:bg-mor-sand/60">›</button>
         <button onClick={() => { setYm([now.getFullYear(), now.getMonth() + 1]); setSel(today); }}
           className="rounded-lg border border-mor-line px-3 h-9 text-sm hover:bg-mor-sand/60">今天</button>
+        {canEdit && (
+          <button onClick={() => setImporting(true)}
+            className="rounded-lg border border-mor-slate text-mor-slate px-3 h-9 text-sm font-medium hover:bg-mor-sand/60">
+            ⬆ 匯入 TimeTree
+          </button>
+        )}
         {/* 空白的月曆跟還沒載完的月曆長得一模一樣,那個要分得出來 */}
         {loading && <span className="text-xs text-gray-400">載入中…</span>}
       </div>

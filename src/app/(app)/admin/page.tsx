@@ -33,6 +33,11 @@ type Property = {
    * null = 還沒建檔 —— 那間房算不出要帶幾組布巾。
    */
   beds?: number | null;
+  /**
+   * 打掃點數（難度係數，migration_123）。
+   * 報酬點數 ＝ 打掃量 × 這個值。null = 還沒設,那間房算不出報酬。
+   */
+  clean_points?: number | null;
   active?: boolean | null;
 };
 type Profile = { id: string; name: string | null; role: string; active: boolean };
@@ -262,7 +267,7 @@ export default function AdminPage() {
     const { data: pf } = await supabase.from('profiles').select('id, name, role, active');
     const { data: es } = await supabase.from('estates').select('*').order('sort').order('name');
     const { data: pr } = await supabase.from('properties')
-      .select('id, name, estate_id, airbnb_listing_id, parent_property_id, beds, active').order('name');
+      .select('id, name, estate_id, airbnb_listing_id, parent_property_id, beds, clean_points, active').order('name');
     const { data: pa } = await supabase.from('payment_accounts').select('*').order('sort').order('code');
     // 任期表很小（一個物業幾段）,一次載完在前端算就好
     const { data: tn } = await supabase.from('estate_managers')
@@ -1100,6 +1105,7 @@ export default function AdminPage() {
                   <th className="px-4 py-2.5">Airbnb listing_id</th>
                   <th className="px-4 py-2.5 whitespace-nowrap">屬於哪個房源</th>
                   <th className="px-4 py-2.5 whitespace-nowrap">床數</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">打掃點數</th>
                   <th className="px-4 py-2.5 text-right">操作</th>
                 </tr>
               </thead>
@@ -1175,13 +1181,36 @@ export default function AdminPage() {
                         className={`rounded-lg border px-2 py-1 w-16 text-center ${
                           p.beds == null ? 'border-amber-300 bg-amber-50/50' : 'border-gray-300'}`} />
                     </td>
+                    {/*
+                      打掃點數 ＝ 難度係數。報酬點數 ＝ 打掃量 × 這個值。
+
+                      難度是房子的性質不是人的 —— 開封4F 四層樓爬上爬下，
+                      誰去掃都一樣。掛在人身上的話每換一個負責人就要重設一次，
+                      而漏設那次不會報錯，只會讓那個月的報酬少一截。
+                    */}
+                    <td className="px-4 py-2 whitespace-nowrap">
+                      <input defaultValue={p.clean_points ?? ''} placeholder="未設"
+                        inputMode="decimal"
+                        onBlur={(ev) => {
+                          const v = ev.target.value.trim();
+                          const cur = p.clean_points == null ? '' : String(p.clean_points);
+                          if (v === cur) return;
+                          if (v && !/^\d+(\.\d)?$/.test(v)) {
+                            ev.target.value = cur;
+                            return flash('打掃點數只能是數字（可帶一位小數）');
+                          }
+                          updateProperty(p.id, { clean_points: v === '' ? null : Number(v) });
+                        }}
+                        className={`rounded-lg border px-2 py-1 w-16 text-center ${
+                          p.clean_points == null ? 'border-amber-300 bg-amber-50/50' : 'border-gray-300'}`} />
+                    </td>
                     <td className="px-4 py-2 text-right">
                       <button onClick={() => deleteProperty(p.id, p.name)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
                     </td>
                   </tr>
                 ))}
                 {properties.filter((p) => p.estate_id === selEstate).length === 0 && (
-                  <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-400">此物業尚無房源</td></tr>
+                  <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-400">此物業尚無房源</td></tr>
                 )}
               </tbody>
             </table>
@@ -1203,7 +1232,8 @@ export default function AdminPage() {
           const here = properties.filter((p) => p.estate_id === selEstate);
           const noListing = here.filter((p) => !p.airbnb_listing_id);
           const noBeds = here.filter((p) => p.beds == null);
-          if (!noListing.length && !noBeds.length) return null;
+          const noPoints = here.filter((p) => p.clean_points == null);
+          if (!noListing.length && !noBeds.length && !noPoints.length) return null;
           return (
             <div className="text-xs text-amber-700 mt-1 space-y-1">
               {noListing.length > 0 && (
@@ -1219,6 +1249,13 @@ export default function AdminPage() {
                   <b>{noBeds.length} 間沒填床數</b>：{noBeds.map((p) => p.name).join('、')}。
                   房務的布巾組數 ＝ 床數 × 打掃次數 —— 沒填的話那間房算不出要帶幾組,
                   而算不出來就是**靜默地少帶**,到現場才發現。公區填 0。
+                </p>
+              )}
+              {noPoints.length > 0 && (
+                <p>
+                  <b>{noPoints.length} 間沒設打掃點數</b>：{noPoints.map((p) => p.name).join('、')}。
+                  報酬點數 ＝ 打掃量 × 打掃點數 —— 沒設的話那幾間**算不出報酬**
+                  （不是算成 0,是列進「算不出來」讓人看見）。
                 </p>
               )}
             </div>
