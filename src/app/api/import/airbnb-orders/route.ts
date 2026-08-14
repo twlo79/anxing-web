@@ -208,10 +208,18 @@ export async function POST(req: Request) {
     /** ── 階段一：爬取 ── */
     received: raw.length,
     duplicates,
-    快照已寫入: saved,
+    // 試算時一個字都沒寫,所以講「會寫入」而不是「已寫入」——
+    // 兩者用同一個字的話,試算跑完會以為資料已經進去了
+    [dryRun ? '快照會寫入' : '快照已寫入']: saved,
     Airbnb這次改了: changed,
     在Airbnb找不到: missing,
-    /** ── 階段二：對帳（skipReconcile 時是 null）── */
+    /**
+     * ── 階段二：對帳 ──
+     *
+     * 試算與 skipReconcile 時是 null。
+     * 要預覽「ERP 會被改成什麼」請打 /api/sync/reconcile 帶 dryRun:true ——
+     * 那支讀的是已經存下來的快照，算得出完整的 inserted/updated/voided。
+     */
     對帳: rec && {
       對了幾筆: rec.scanned,
       inserted: rec.inserted, updated: rec.updated, voided: rec.voided,
