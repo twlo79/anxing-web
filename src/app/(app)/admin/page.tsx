@@ -19,6 +19,15 @@ type Property = {
    * 是那筆錢在報表上完全不存在。所以這一欄要看得到、改得到。
    */
   airbnb_listing_id: string | null;
+  /**
+   * 包含這個房源的上層房源。
+   *
+   *     開封2-1 → 開封2F → 開封整棟
+   *
+   * 這三個在系統裡是三個獨立房源，所以一般的「期間重疊」
+   * 看不出它們是同一塊空間。設了才抓得到那種撞房。
+   */
+  parent_property_id?: string | null;
   active?: boolean | null;
 };
 type Profile = { id: string; name: string | null; role: string; active: boolean };
@@ -247,7 +256,7 @@ export default function AdminPage() {
     const { data: pf } = await supabase.from('profiles').select('id, name, role, active');
     const { data: es } = await supabase.from('estates').select('*').order('sort').order('name');
     const { data: pr } = await supabase.from('properties')
-      .select('id, name, estate_id, airbnb_listing_id, active').order('name');
+      .select('id, name, estate_id, airbnb_listing_id, parent_property_id, active').order('name');
     const { data: pa } = await supabase.from('payment_accounts').select('*').order('sort').order('code');
     // 任期表很小（一個物業幾段）,一次載完在前端算就好
     const { data: tn } = await supabase.from('estate_managers')
@@ -1072,6 +1081,7 @@ export default function AdminPage() {
                 <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-white/45">
                   <th className="px-4 py-2.5">房源名稱(點擊可改名)</th>
                   <th className="px-4 py-2.5">Airbnb listing_id</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">屬於哪個房源</th>
                   <th className="px-4 py-2.5 text-right">操作</th>
                 </tr>
               </thead>
@@ -1107,13 +1117,35 @@ export default function AdminPage() {
                         className={`rounded-lg border px-2 py-1 w-52 font-mono text-xs ${
                           p.airbnb_listing_id ? 'border-gray-300' : 'border-amber-300 bg-amber-50/50'}`} />
                     </td>
+                    {/*
+                      包含這個房源的上層。開封2-1 → 開封2F → 開封整棟。
+
+                      設了之後防呆才抓得到「同一塊空間被賣了兩次」——
+                      那些是不同的房源名稱，一般的期間重疊看不出它們的關係。
+
+                      【為什麼是一棵樹，不是「整棟」一個勾】
+                      「整棟 vs 同物業其他」對 JPR 剛好成立，對開封整個垮掉：
+                      開封店面、1F-1 不在整棟裡卻會被誤標，而開封2F 與 2-1
+                      是真的撞房卻抓不到（2F 不是「整棟」，它是中間那一層）。
+                    */}
+                    <td className="px-4 py-2 whitespace-nowrap">
+                      <select value={p.parent_property_id ?? ''}
+                        onChange={(ev) => updateProperty(p.id, { parent_property_id: ev.target.value || null })}
+                        className={`rounded-lg border px-2 py-1 text-xs w-36 ${
+                          p.parent_property_id ? 'border-gray-300' : 'border-mor-line text-gray-400'}`}>
+                        <option value="">（沒有上層）</option>
+                        {properties
+                          .filter((x) => x.estate_id === p.estate_id && x.id !== p.id)
+                          .map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                      </select>
+                    </td>
                     <td className="px-4 py-2 text-right">
                       <button onClick={() => deleteProperty(p.id, p.name)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
                     </td>
                   </tr>
                 ))}
                 {properties.filter((p) => p.estate_id === selEstate).length === 0 && (
-                  <tr><td colSpan={3} className="px-4 py-6 text-center text-gray-400">此物業尚無房源</td></tr>
+                  <tr><td colSpan={4} className="px-4 py-6 text-center text-gray-400">此物業尚無房源</td></tr>
                 )}
               </tbody>
             </table>
@@ -1143,6 +1175,14 @@ export default function AdminPage() {
             </p>
           );
         })()}
+        <p className="text-xs text-gray-400 mt-1">
+          <b>屬於哪個房源</b>：同一塊空間有好幾種賣法時，把小的指到大的。
+          <span className="font-mono mx-1">開封2-1 → 開封2F → 開封整棟</span>
+          設了之後訂單頁的「👀防呆」才抓得到「整棟被訂走的期間,樓層還有訂單」——
+          那是真的撞房,而系統原本看不出那兩個房源是同一塊空間。
+          <b className="ml-1">最上層的那個（開封整棟）自己留空。</b>
+          不在任何整棟裡的（開封店面、開封1F-1）也留空。
+        </p>
       </section>
       )}
 

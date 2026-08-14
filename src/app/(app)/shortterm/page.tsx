@@ -188,8 +188,34 @@ export default function ShortTermPage() {
   }, [edit?.source, edit?.checkin, edit?.checkout, revLines, past]);
   const updFee = (i: number, patch: Partial<Fee>) => setFees((fs) => fs.map((f, idx) => idx === i ? { ...f, ...patch } : f));
   const delFee = (i: number) => setFees((fs) => fs.filter((_, idx) => idx !== i));
-  const [properties, setProperties] = useState<{ id: string; name: string; estate_id: string | null }[]>([]);
-  useEffect(() => { supabase.from('properties').select('id, name, estate_id').order('name').then(({ data }) => setProperties(data ?? [])); }, [supabase]);
+  const [properties, setProperties] = useState<{ id: string; name: string; estate_id: string | null;
+    parent_property_id?: string | null }[]>([]);
+  useEffect(() => { supabase.from('properties').select('id, name, estate_id, parent_property_id').order('name')
+    .then(({ data }) => setProperties(data ?? [])); }, [supabase]);
+
+  /**
+   * 房源名 → 它所有上層房源的名稱（開封2-1 → ['開封2F','開封整棟']）。
+   *
+   * 防呆用它抓「同一塊空間被賣了兩次」—— 那些是不同的房源名稱，
+   * 一般的期間重疊看不出它們是同一塊空間。
+   */
+  const roomAncestors = useMemo(() => {
+    const byId = new Map(properties.map((p) => [p.id, p]));
+    const out: Record<string, string[]> = {};
+    for (const p of properties) {
+      const names: string[] = [];
+      let cur = p.parent_property_id;
+      // 上限 20 層是保險絲：資料成環時不要卡死畫面（資料庫也擋，這是第二道）
+      for (let i = 0; cur && i < 20; i++) {
+        const up = byId.get(cur);
+        if (!up) break;
+        names.push(up.name);
+        cur = up.parent_property_id;
+      }
+      if (names.length) out[p.name] = names;
+    }
+    return out;
+  }, [properties]);
   /**
    * 用過的項目名稱,給 datalist 提示。
    * 只從目前載入的列取 —— 不另外查一次資料庫。提示不完整不會出錯,
@@ -349,9 +375,10 @@ export default function ShortTermPage() {
     { from: fromD || undefined, to: toD || undefined },
     {
       knownRooms: new Set(properties.map((p) => p.name)),
+      roomAncestors,
       today: new Date().toISOString().slice(0, 10),
     },
-  ) : null, [auditRows, fromD, toD, properties]);
+  ) : null, [auditRows, fromD, toD, properties, roomAncestors]);
 
   async function exportXlsx() {
     setExporting(true);

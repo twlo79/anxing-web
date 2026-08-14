@@ -63,7 +63,7 @@ export function AuditBadges({ entry }: {
   );
 }
 
-const ORDER: AuditIssue[] = ['重複訂單', '房源過載', '日期不合理', '資料缺失', '房價過低'];
+const ORDER: AuditIssue[] = ['空間重疊', '重複訂單', '房源過載', '日期不合理', '資料缺失', '房價過低'];
 
 /**
  * 上方摘要。

@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AddButton, ExportButton, ActionBar } from '@/components/Actions';
 import { AuditButton, AuditBadges, AuditSummary } from '@/components/Audit';
 import { auditOrders, type AuditOrder } from '@/lib/audit-orders';
@@ -126,6 +126,38 @@ export default function RevenuesPage() {
    * 這一頁的資料本來就全部在前端（不是伺服器分頁），所以不用再抓一次。
    */
   const [audit, setAudit] = useState(false);
+  /**
+   * 房源名 → 它所有上層房源的名稱（開封2-1 → ['開封2F','開封整棟']）。
+   *
+   * 防呆要靠它抓「同一塊空間被賣了兩次」—— 那些是不同的房源名稱，
+   * 一般的期間重疊看不出它們是同一塊空間。
+   *
+   * 只在防呆打開時才撈 —— 這一頁平常不需要房源資料。
+   */
+  const [roomAncestors, setRoomAncestors] = useState<Record<string, string[]>>({});
+  const ancestorsLoaded = useRef(false);
+  useEffect(() => {
+    if (!audit || ancestorsLoaded.current) return;
+    ancestorsLoaded.current = true;
+    supabase.from('properties').select('id, name, parent_property_id').then(({ data }) => {
+      const rows = data ?? [];
+      const byId = new Map(rows.map((p) => [p.id, p]));
+      const out: Record<string, string[]> = {};
+      for (const p of rows) {
+        const names: string[] = [];
+        let cur = p.parent_property_id as string | null;
+        // 上限 20 層是保險絲:資料成環時不要卡死畫面(資料庫也擋,這是第二道)
+        for (let i = 0; cur && i < 20; i++) {
+          const up = byId.get(cur);
+          if (!up) break;
+          names.push(up.name);
+          cur = up.parent_property_id as string | null;
+        }
+        if (names.length) out[p.name] = names;
+      }
+      setRoomAncestors(out);
+    });
+  }, [audit, supabase]);
   const [onlyBad, setOnlyBad] = useState(false);
 
   const load = useCallback(async () => {
@@ -186,8 +218,11 @@ export default function RevenuesPage() {
         nights: r.total_nights, amount: r.total_amount,
       });
     }
-    return auditOrders(uniq, {}, { today: new Date().toISOString().slice(0, 10) });
-  }, [audit, filtered]);
+    return auditOrders(uniq, {}, {
+      roomAncestors,
+      today: new Date().toISOString().slice(0, 10),
+    });
+  }, [audit, filtered, roomAncestors]);
 
   /** 這一列（認列列）對應的訂單有沒有問題 */
   const entryOf = (r: Row) => auditResult?.byId[r.oid ?? r.order_id];

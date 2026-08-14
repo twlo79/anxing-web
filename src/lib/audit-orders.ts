@@ -27,7 +27,8 @@
  * 做成按下去才看的話，它是一個「我現在要對帳」的動作。
  */
 
-export type AuditIssue = '重複訂單' | '房源過載' | '資料缺失' | '房價過低' | '日期不合理';
+export type AuditIssue =
+  '重複訂單' | '房源過載' | '資料缺失' | '房價過低' | '日期不合理' | '空間重疊';
 
 export type AuditOrder = {
   id: string;
@@ -142,6 +143,18 @@ export function auditOrders(
   opt: {
     /** 目前有效的房源名稱。給了就會檢查「這個房源還在不在清單裡」 */
     knownRooms?: Set<string>;
+    /**
+     * 房源名稱 → 它所有上層房源的名稱（`properties.parent_property_id` 一路往上）。
+     *
+     *     開封2-1 → ['開封2F', '開封整棟']
+     *     開封3F  → ['開封整棟']
+     *     開封店面 → []            不在任何整棟裡
+     *
+     * 給了才做「同一塊空間被賣兩次」的檢查 —— 沒給就完全不做,
+     * 而不是用名稱去猜。猜錯的兩種後果都很糟:
+     * 猜多了整排正常訂單被標紅,猜少了撞房抓不到。
+     */
+    roomAncestors?: Record<string, string[]>;
     /** 判斷年份是否離譜用。傳進來而不是直接 new Date()，測試才穩定 */
     today?: string;
   } = {},
@@ -282,6 +295,72 @@ export function auditOrders(
     }
   }
 
+  /* ── 2c. 同一塊空間被賣了兩次 ───────────────── */
+  /*
+   * 一塊空間有好幾種賣法，而它們在系統裡是各自獨立的房源：
+   *
+   *     開封整棟 ＝ 2F ＋ 3F ＋ 4F        開封2F ＝ 2-1 ＋ 2-2
+   *
+   * 【為什麼 2b 抓不到】
+   * 2b 比的是「同一個 property_raw」。開封整棟 與 開封2-1 是**兩個不同的
+   * 房源名稱** —— 在它眼裡是兩間不相干的房子，各訂各的完全合理。
+   *
+   * 【為什麼是祖先鏈，不是「整棟 vs 同物業其他」】
+   * 這一版的前身就是後者，JPR 剛好成立（三個全互斥），開封整個垮掉：
+   *   · 開封店面、開封1F-1 **不在**整棟裡，卻會被標成撞房
+   *   · 開封2F 與 開封2-1 是真的撞房，卻抓不到 —— 因為 2F 不是「整棟」
+   *
+   * 真正的關係是一棵樹。只有**一個包含另一個**才算衝突：
+   * 兄弟不算（2F 與 3F 各自獨立），沒有上層的跟誰都不衝突。
+   *
+   * 【為什麼後果比一般重疊更嚴重】
+   * 一般的期間重疊多半是同一筆被輸入兩次（資料問題）。
+   * 這一種是**兩組真的客人**：他們會在同一天出現在同一塊空間裡。
+   */
+  if (opt.roomAncestors && Object.keys(opt.roomAncestors).length) {
+    const anc = opt.roomAncestors;
+    const stays = orders.filter((o) =>
+      isStay(o) && o.property_raw && o.checkin && o.checkout && o.checkout > o.checkin);
+
+    const byRoom = new Map<string, AuditOrder[]>();
+    for (const o of stays) {
+      const k = o.property_raw!;
+      (byRoom.get(k) ?? byRoom.set(k, []).get(k)!).push(o);
+    }
+
+    /*
+     * 只比「有包含關係的房源對」。
+     *
+     * 全部訂單兩兩比是 O(n²)，幾千筆會卡住畫面；而房源對的數量
+     * 是「每個房源的祖先數總和」—— 開封整棟這種三層結構也才幾十對。
+     */
+    for (const [child, ancestors] of Object.entries(anc)) {
+      const kids = byRoom.get(child);
+      if (!kids?.length) continue;
+      for (const parent of ancestors) {
+        const ups = byRoom.get(parent);
+        if (!ups?.length) continue;
+        for (const c of kids) {
+          for (const u of ups) {
+            // 移房拆出來的段落屬於同一筆訂單，不算撞房
+            if (c.move_group && c.move_group === u.move_group) continue;
+            const s = c.checkin! > u.checkin! ? c.checkin! : u.checkin!;
+            const e = c.checkout! < u.checkout! ? c.checkout! : u.checkout!;
+            const n = daysBetween(s, e);
+            if (n <= 0) continue;
+            const note = `${parent} 包含 ${child}，兩邊重疊 ${n} 晚（${s} ~ ${e}）：`
+              + `${(u.guest_name ?? '?').trim()} ${u.checkin}~${u.checkout} / `
+              + `${(c.guest_name ?? '?').trim()} ${c.checkin}~${c.checkout}`
+              + ` —— ${parent}被訂走的期間，${child}不該再有訂單。`
+              + '去 Airbnb 確認行事曆有沒有連動';
+            add(u.id, '空間重疊', note);
+            add(c.id, '空間重疊', note);
+          }
+        }
+      }
+    }
+  }
+
   /* ── 3. 房源過載 ────────────────────────────── */
   /*
    * 【為什麼用「訂單加總」而不是「合併重疊區間」】
@@ -371,7 +450,7 @@ export function auditOrders(
   }
 
   const counts = {
-    重複訂單: 0, 房源過載: 0, 資料缺失: 0, 房價過低: 0, 日期不合理: 0,
+    重複訂單: 0, 房源過載: 0, 資料缺失: 0, 房價過低: 0, 日期不合理: 0, 空間重疊: 0,
   } as Record<AuditIssue, number>;
   for (const v of Object.values(byId)) for (const i of v.issues) counts[i]++;
 
@@ -385,4 +464,6 @@ export const ISSUE_CLS: Record<AuditIssue, string> = {
   日期不合理: 'bg-red-50 text-red-700 border-red-200',
   資料缺失: 'bg-amber-50 text-amber-800 border-amber-200',
   房價過低: 'bg-mor-bluelight text-mor-slate border-mor-slate/30',
+  // 跟重複訂單同一個紅 —— 兩者的後果一樣：客人到現場發現房間有別人
+  空間重疊: 'bg-red-50 text-red-700 border-red-200',
 };

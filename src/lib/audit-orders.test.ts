@@ -282,3 +282,128 @@ test('daysBetween 跨月跨年都對', () => {
   assert.equal(daysBetween('2026-10-01', '2026-11-01'), 31);
   assert.equal(daysBetween('2025-12-28', '2026-01-02'), 5);
 });
+
+/* ── 空間重疊（同一塊空間的不同賣法）────────── */
+
+/**
+ * 開封的真實結構：
+ *
+ *     開封整棟 ＝ 2F ＋ 3F ＋ 4F      開封2F ＝ 2-1 ＋ 2-2
+ *     開封店面、開封1F-1 不在整棟裡
+ */
+const KAI: Record<string, string[]> = {
+  '開封2F': ['開封整棟'],
+  '開封3F': ['開封整棟'],
+  '開封4F': ['開封整棟'],
+  '開封2-1': ['開封2F', '開封整棟'],
+  '開封2-2': ['開封2F', '開封整棟'],
+};
+
+test('★★ 整棟被訂走的期間,樓層不該還有訂單', () => {
+  // 這一種是兩組真的客人 —— 他們會在同一天出現在同一塊空間裡
+  const r = auditOrders([
+    o({ id: 'w', property_raw: '開封整棟', estate_id: 'kai', guest_name: '包棟客',
+        checkin: '2026-10-01', checkout: '2026-10-05' }),
+    o({ id: 'f', property_raw: '開封3F', estate_id: 'kai', guest_name: '樓層客',
+        checkin: '2026-10-03', checkout: '2026-10-08' }),
+  ], {}, { roomAncestors: KAI });
+  assert.ok(issues(r, 'w').includes('空間重疊'));
+  assert.ok(issues(r, 'f').includes('空間重疊'));
+  assert.match(r.byId['w'].notes.join(), /重疊 2 晚/);
+  assert.match(r.byId['w'].notes.join(), /行事曆/, '要告訴他去 Airbnb 看行事曆有沒有連動');
+});
+
+test('★★ 隔一層也算 —— 整棟包含 2-1,雖然中間隔著 2F', () => {
+  // 上一版用「整棟 vs 同物業其他」勉強抓得到這個,
+  // 但抓不到下面那個 2F vs 2-1
+  const r = auditOrders([
+    o({ id: 'w', property_raw: '開封整棟', estate_id: 'kai',
+        checkin: '2026-10-01', checkout: '2026-10-05' }),
+    o({ id: 'x', property_raw: '開封2-1', estate_id: 'kai',
+        checkin: '2026-10-02', checkout: '2026-10-04' }),
+  ], {}, { roomAncestors: KAI });
+  assert.ok(issues(r, 'x').includes('空間重疊'));
+});
+
+test('★★ 中間層也是容器：開封2F 與 開封2-1 撞房', () => {
+  // 這一條是改用祖先鏈的主因。用「整棟 vs 其他」的話完全抓不到 ——
+  // 因為 2F 不是「整棟」,它只是中間的一層
+  const r = auditOrders([
+    o({ id: 'f', property_raw: '開封2F', estate_id: 'kai', guest_name: '整層客',
+        checkin: '2026-10-01', checkout: '2026-10-05' }),
+    o({ id: 'x', property_raw: '開封2-1', estate_id: 'kai', guest_name: '單間客',
+        checkin: '2026-10-03', checkout: '2026-10-08' }),
+  ], {}, { roomAncestors: KAI });
+  assert.ok(issues(r, 'f').includes('空間重疊'));
+  assert.match(r.byId['f'].notes.join(), /開封2F 包含 開封2-1/);
+});
+
+test('★★ 不在整棟裡的房源不該被標 —— 開封店面', () => {
+  // 上一版用「同物業」當範圍,開封店面與 1F-1 會被誤標。
+  // 那種誤報最傷:正常訂單被標紅之後,人就開始忽略所有紅色
+  const r = auditOrders([
+    o({ id: 'w', property_raw: '開封整棟', estate_id: 'kai',
+        checkin: '2026-10-01', checkout: '2026-10-05' }),
+    o({ id: 's', property_raw: '開封店面', estate_id: 'kai',
+        checkin: '2026-10-02', checkout: '2026-10-06' }),
+    o({ id: 'g', property_raw: '開封1F-1', estate_id: 'kai',
+        checkin: '2026-10-02', checkout: '2026-10-06' }),
+  ], {}, { roomAncestors: KAI });
+  assert.equal(r.counts['空間重疊'], 0);
+});
+
+test('★ 兄弟不算 —— 開封2F 與 開封3F 各賣各的', () => {
+  const r = auditOrders([
+    o({ id: 'a', property_raw: '開封2F', estate_id: 'kai', checkin: '2026-10-01', checkout: '2026-10-05' }),
+    o({ id: 'b', property_raw: '開封3F', estate_id: 'kai', checkin: '2026-10-02', checkout: '2026-10-06' }),
+  ], {}, { roomAncestors: KAI });
+  assert.equal(r.counts['空間重疊'], 0);
+});
+
+test('★★ 沒給包含關係就完全不做 —— 不用名稱去猜', () => {
+  // 猜錯的兩種後果都很糟:猜多了整排正常訂單被標紅,猜少了撞房抓不到。
+  // 而命名會飄（整棟/全棟/包棟）,改名又是點一下的事
+  const r = auditOrders([
+    o({ id: 'w', property_raw: '開封整棟', estate_id: 'kai', checkin: '2026-10-01', checkout: '2026-10-05' }),
+    o({ id: 'f', property_raw: '開封3F', estate_id: 'kai', checkin: '2026-10-03', checkout: '2026-10-08' }),
+  ]);
+  assert.equal(r.counts['空間重疊'], 0);
+});
+
+test('★ 整棟退房那天樓層才進來,不算撞房', () => {
+  // 跟一般重疊同一條規則:退房那天房間是空的。
+  // 算成撞房的話,每一次正常的「整棟退了改賣樓層」都會被標記
+  const r = auditOrders([
+    o({ id: 'w', property_raw: '開封整棟', estate_id: 'kai', checkin: '2026-10-01', checkout: '2026-10-05' }),
+    o({ id: 'f', property_raw: '開封3F', estate_id: 'kai', checkin: '2026-10-05', checkout: '2026-10-08' }),
+  ], {}, { roomAncestors: KAI });
+  assert.equal(r.counts['空間重疊'], 0);
+});
+
+test('同一個房源之間的重疊走原本那條,不是這一條', () => {
+  const r = auditOrders([
+    o({ id: 'a', property_raw: '開封3F', estate_id: 'kai', checkin: '2026-10-01', checkout: '2026-10-05' }),
+    o({ id: 'b', property_raw: '開封3F', estate_id: 'kai', checkin: '2026-10-03', checkout: '2026-10-08', amount: 999 }),
+  ], {}, { roomAncestors: KAI });
+  assert.equal(r.counts['空間重疊'], 0);
+  assert.ok(issues(r, 'a').includes('重複訂單'));
+});
+
+test('★ 一次性收入與取消單不佔用空間', () => {
+  const r = auditOrders([
+    o({ id: 'w', property_raw: '開封整棟', estate_id: 'kai', checkin: '2026-10-01', checkout: '2026-10-05' }),
+    o({ id: 'f', property_raw: '開封3F', estate_id: 'kai', source: 'oneoff',
+        checkin: '2026-10-03', checkout: '2026-10-08' }),
+  ], {}, { roomAncestors: KAI });
+  assert.equal(r.counts['空間重疊'], 0);
+});
+
+test('★ 移房拆出來的段落不算撞房', () => {
+  const r = auditOrders([
+    o({ id: 'w', property_raw: '開封整棟', estate_id: 'kai', move_group: 'g1',
+        checkin: '2026-10-01', checkout: '2026-10-05' }),
+    o({ id: 'f', property_raw: '開封3F', estate_id: 'kai', move_group: 'g1',
+        checkin: '2026-10-03', checkout: '2026-10-08' }),
+  ], {}, { roomAncestors: KAI });
+  assert.equal(r.counts['空間重疊'], 0);
+});
