@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase';
+import { guessLink, rankNames } from '@/lib/hk-link';
 
 /**
  * 房務設定中心。
@@ -18,12 +19,24 @@ type Staff = {
   count_mode: 'rooms' | 'hours' | 'none'; count_cleans: boolean;
   color: string | null; color_text: string | null; color_bar: string | null;
   leave_prefix: string | null; active: boolean; sort: number;
+  staff_id: string | null;
 };
 type Prop = {
   id: string; code: string; name: string | null; aliases: string[];
   beds: number | null; linen_group: string; count_linen: boolean;
   ptype: string; active: boolean; sort: number;
+  property_id: string | null;
 };
+/**
+ * ERP 主檔。這一頁只用來「對應」，不編輯它們。
+ *
+ * 對應關係是事實，不是規則 —— 「開4」跟「開封4F」是不是同一間，
+ * 只有人知道。程式去猜的話，猜錯了工作會被指派到別間房，
+ * 而排班表看起來滿滿的，沒有人會發現。問一次，存起來。
+ */
+type ErpProp = { id: string; name: string; clean_points: number | null };
+type ErpStaff = { id: string; name: string };
+
 type WType = { code: string; name: string; count_workload: boolean; count_linen: boolean; sort: number; active: boolean };
 type Setting = { key: string; value: string | null; vtype: string; options: string[] | null; description: string | null; sort: number };
 /** 設定層的異動紀錄。changes 格式:{欄位: [改前, 改後]} */
@@ -60,6 +73,8 @@ export default function HkSettingsPage() {
   const [wtypes, setWtypes] = useState<WType[]>([]);
   const [settings, setSettings] = useState<Setting[]>([]);
   const [audits, setAudits] = useState<Audit[]>([]);
+  const [erpProps, setErpProps] = useState<ErpProp[]>([]);
+  const [erpStaff, setErpStaff] = useState<ErpStaff[]>([]);
   const [msg, setMsg] = useState('');
   const [kw, setKw] = useState('');
   const [showInactive, setShowInactive] = useState(false);
@@ -67,18 +82,22 @@ export default function HkSettingsPage() {
   function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 3000); }
 
   const load = useCallback(async () => {
-    const [s, p, w, st, au] = await Promise.all([
+    const [s, p, w, st, au, ep, es] = await Promise.all([
       supabase.from('hk_staff').select('*').order('sort'),
       supabase.from('hk_property').select('*').order('sort'),
       supabase.from('hk_work_type').select('*').order('sort'),
       supabase.from('hk_setting').select('*').order('sort'),
       supabase.from('hk_audit').select('*').order('at', { ascending: false }).limit(200),
+      supabase.from('properties').select('id, name, clean_points').eq('active', true).order('name'),
+      supabase.from('staff').select('id, name').eq('active', true).order('name'),
     ]);
     setStaff((s.data ?? []) as Staff[]);
     setProps((p.data ?? []) as Prop[]);
     setWtypes((w.data ?? []) as WType[]);
     setSettings((st.data ?? []) as Setting[]);
     setAudits((au.data ?? []) as Audit[]);
+    setErpProps((ep.data ?? []) as ErpProp[]);
+    setErpStaff((es.data ?? []) as ErpStaff[]);
   }, [supabase]);
   useEffect(() => { load(); }, [load]);
 
@@ -94,6 +113,27 @@ export default function HkSettingsPage() {
     const { error } = await supabase.from(table).update(p as any).eq(keyCol, keyVal);
     if (error) { flash('儲存失敗:' + error.message); load(); }
   }
+
+  /*
+   * 已經被別人佔走的 ERP 房源／員工。
+   *
+   * 資料庫有唯一索引擋著（一間 ERP 房源只能被一個房務代碼對到），
+   * 但等到按下去才跳「duplicate key」的話，看的人只會覺得壞了。
+   * 選單裡直接標「已對應：開4」——**看得到為什麼不能選**。
+   */
+  const takenProp = useMemo(
+    () => new Map(props.filter((p) => p.property_id).map((p) => [p.property_id!, p.code])), [props]);
+  const takenStaff = useMemo(
+    () => new Map(staff.filter((s) => s.staff_id).map((s) => [s.staff_id!, s.name])), [staff]);
+
+  /*
+   * 對應提示。24 個代碼各自到 70 個房源的選單裡找一遍是會亂點的,
+   * 而亂點跟讓程式猜是同一個結果 —— 所以把最可能的講出來,
+   * 選單也把對得上的排到最前面,但按下去的還是人。
+   * 判斷規則與測試在 lib/hk-link.ts。
+   */
+  const erpPropNames = useMemo(() => erpProps.map((e) => e.name), [erpProps]);
+  const erpStaffNames = useMemo(() => erpStaff.map((e) => e.name), [erpStaff]);
 
   const inp = 'rounded border border-gray-300 px-2 py-1 text-sm';
   const th = 'px-3 py-2 text-left text-xs text-gray-500 font-medium';
@@ -162,9 +202,10 @@ export default function HkSettingsPage() {
           </div>
           {/* 手機放不下這幾欄 —— 沒有這層捲軸容器，欄位會被壓到只剩幾個 px 而不是可以滑動 */}
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-sm">
+            <table className="w-full min-w-[980px] text-sm">
               <thead><tr className="border-b border-mor-line/60">
                 <th className={th}>顯示名</th><th className={th}>代號</th>
+                <th className={th}>對應 ERP 員工</th>
                 <th className={th}>排班表上的名稱</th><th className={th}>計法</th>
                 <th className={th}>計打掃次數</th><th className={th}>休假前綴</th>
                 <th className={th}>顏色</th><th className={th}>啟用</th>
@@ -177,6 +218,34 @@ export default function HkSettingsPage() {
                     <tr key={s.id} className={`border-b border-mor-line/40 last:border-0 ${s.active ? '' : 'opacity-40'}`}>
                       <td className={td}><input value={s.name} onChange={(e) => patch('hk_staff', 'id', s.id, { name: e.target.value }, setStaff)} className={`${inp} w-24`} /></td>
                       <td className={td}><input value={s.code} onChange={(e) => patch('hk_staff', 'id', s.id, { code: e.target.value }, setStaff)} className={`${inp} w-20`} /></td>
+                      <td className={td}>
+                        <select value={s.staff_id ?? ''}
+                          onChange={(e) => patch('hk_staff', 'id', s.id, { staff_id: e.target.value || null }, setStaff)}
+                          className={`${inp} w-32 ${s.staff_id ? '' : 'border-amber-400 bg-amber-50'}`}>
+                          <option value="">— 還沒對應 —</option>
+                          {rankNames(s.name, s.source_names ?? [], erpStaffNames).map((nm) => {
+                            const es = erpStaff.find((e) => e.name === nm)!;
+                            const by = takenStaff.get(es.id);
+                            return (
+                              <option key={es.id} value={es.id} disabled={!!by && by !== s.name}>
+                                {es.name}{by && by !== s.name ? `（已對應 ${by}）` : ''}
+                              </option>
+                            );
+                          })}
+                        </select>
+                        {!s.staff_id && (() => {
+                          const g = guessLink(s.name, s.source_names ?? [], erpStaffNames);
+                          if (!g) return null;
+                          const es = erpStaff.find((e) => e.name === g)!;
+                          if (takenStaff.has(es.id)) return null;
+                          return (
+                            <button onClick={() => patch('hk_staff', 'id', s.id, { staff_id: es.id }, setStaff)}
+                              className="block mt-1 text-xs text-mor-blue underline">
+                              是不是「{g}」？
+                            </button>
+                          );
+                        })()}
+                      </td>
                       <td className={td}>
                         {/* 陣列:排班系統上的顯示名會改,舊事件裡兩種寫法會並存 */}
                         <input value={(s.source_names ?? []).join(', ')}
@@ -233,15 +302,19 @@ export default function HkSettingsPage() {
             <button onClick={addProp} className="text-xs text-mor-blue underline">+ 新增房源</button>
           </div>
           <div className="px-4 py-2 text-xs text-gray-400 border-b border-mor-line/40">
+            <b>對應 ERP 房源</b>沒選的話,這個房源的排班套不到行事曆上,也算不出打掃報酬 ——
+            黃框就是還沒對的。公區類的本來就沒有對應的 ERP 房源,留空即可。
+            <b>打掃點數</b>要改請到「權限管理 → 房源管理」,整棟／整層是各層加總的,不用手填。<br />
             <b>別名</b>會在解析標題時一併比對 —— 例外清單出現「未識別房源」時,多半是這裡少一個別名。
             <b>幾床</b>留白代表尚未建檔,會在例外清單提醒;填 0 代表確定不算床（公區）。
             改幾床只影響之後的重算,已下載的報表不會變動。
           </div>
           {/* 手機放不下這幾欄 —— 沒有這層捲軸容器，欄位會被壓到只剩幾個 px 而不是可以滑動 */}
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-sm">
+            <table className="w-full min-w-[980px] text-sm">
               <thead><tr className="border-b border-mor-line/60">
-                <th className={th}>代碼</th><th className={th}>別名</th>
+                <th className={th}>代碼</th><th className={th}>對應 ERP 房源</th>
+                <th className={th}>打掃點數</th><th className={th}>別名</th>
                 <th className={th}>幾床</th><th className={th}>布巾表</th>
                 <th className={th}>類型</th><th className={th}>計布巾</th><th className={th}>啟用</th>
               </tr></thead>
@@ -249,6 +322,43 @@ export default function HkSettingsPage() {
                 {filteredProps.map((p) => (
                   <tr key={p.id} className={`border-b border-mor-line/40 last:border-0 ${p.active ? '' : 'opacity-40'}`}>
                     <td className={td}><input value={p.code} onChange={(e) => patch('hk_property', 'id', p.id, { code: e.target.value }, setProps)} className={`${inp} w-24`} /></td>
+                    <td className={td}>
+                      <select value={p.property_id ?? ''}
+                        onChange={(e) => patch('hk_property', 'id', p.id, { property_id: e.target.value || null }, setProps)}
+                        className={`${inp} w-40 ${p.property_id || p.ptype === 'common_area' ? '' : 'border-amber-400 bg-amber-50'}`}>
+                        <option value="">— 還沒對應 —</option>
+                        {rankNames(p.code, p.aliases ?? [], erpPropNames).map((nm) => {
+                          const ep = erpProps.find((e) => e.name === nm)!;
+                          const by = takenProp.get(ep.id);
+                          return (
+                            <option key={ep.id} value={ep.id} disabled={!!by && by !== p.code}>
+                              {ep.name}{by && by !== p.code ? `（已對應 ${by}）` : ''}
+                            </option>
+                          );
+                        })}
+                      </select>
+                      {!p.property_id && (() => {
+                        const g = guessLink(p.code, p.aliases ?? [], erpPropNames);
+                        if (!g) return null;
+                        const ep = erpProps.find((e) => e.name === g)!;
+                        if (takenProp.has(ep.id)) return null;
+                        return (
+                          <button onClick={() => patch('hk_property', 'id', p.id, { property_id: ep.id }, setProps)}
+                            className="block mt-1 text-xs text-mor-blue underline">
+                            是不是「{g}」？
+                          </button>
+                        );
+                      })()}
+                    </td>
+                    {/*
+                      點數只顯示不編輯 —— 它掛在 ERP 房源上（權限管理 → 房源管理），
+                      在這裡再開一個入口的話，兩邊會各改各的，而且看不出哪邊才算數。
+                    */}
+                    <td className={`${td} tabular-nums text-gray-500`}>
+                      {p.property_id
+                        ? (erpProps.find((e) => e.id === p.property_id)?.clean_points ?? '—')
+                        : ''}
+                    </td>
                     <td className={td}>
                       <input value={(p.aliases ?? []).join(', ')}
                         onChange={(e) => patch('hk_property', 'id', p.id, { aliases: e.target.value.split(',').map((x) => x.trim()).filter(Boolean) }, setProps)}

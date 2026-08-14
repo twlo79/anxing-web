@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase';
 import {
   parseRows, splitAssignees, staffLookup, type HkStaff, type HkProperty,
 } from '@/lib/hkParse';
+import { splitRecords } from '@/lib/hk-import-text';
 
 /**
  * 匯入 TimeTree 排班。
@@ -62,10 +63,15 @@ export default function ImportPanel({
 
   const preview = useMemo(() => {
     if (!raw.trim() || !staff.length) return null;
-    const rows = raw.trim().split('\n').map((l) => {
-      const parts = l.split(/[,\t]/).map((x) => x.trim());
-      return { date: parts[0], title: parts[1] ?? '', assignees: parts.slice(2).join(',') };
-    }).filter((r) => /^\d{4}-\d{2}-\d{2}$/.test(r.date));
+    /*
+     * 切法在 lib/hk-import-text.ts。
+     *
+     * 原本是 split('\n') —— 而實際貼進來的換行是掉光的，
+     * 整個月變成「一筆」，負責人欄變成後面所有內容。
+     * 預覽顯示「共 1 筆、未知人員 SHAO-YING HSIEH」,
+     * 看起來像人員主檔的問題，其實解析從第一步就散了。
+     */
+    const rows = splitRecords(raw);
     const parsed = parseRows(rows, staff, props, { includeGift });
     const unknownNames = new Set<string>();
     for (const r of rows) {
@@ -176,8 +182,10 @@ export default function ImportPanel({
         </div>
         <div className="p-6 space-y-3 text-sm">
           <div className="text-xs text-gray-500">
-            每行一筆，格式 <code className="bg-gray-100 px-1">日期,事項,負責人</code>。
-            多位負責人用 <code className="bg-gray-100 px-1">+</code> 分隔。可直接從 Excel 複製貼上。
+            格式 <code className="bg-gray-100 px-1">日期,事項,負責人</code>，多位負責人用
+            <code className="bg-gray-100 px-1">+</code> 分隔。
+            換行有沒有跟著貼進來都可以 —— 看到日期就切一筆。
+            排程抓下來的 JSON 也可以直接整份貼。
             <b className="text-amber-700 ml-1">一次只能貼一個月</b>（同月份是全刪重建）。
           </div>
           <textarea value={raw} onChange={(e) => setRaw(e.target.value)}
