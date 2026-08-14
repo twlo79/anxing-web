@@ -94,11 +94,6 @@ export default function CalendarTab({ onMsg }: { onMsg: (t: string, err?: boolea
     return TONE[(i < 0 ? 0 : i) % TONE.length];
   }, [staff]);
 
-  const monthCount = useMemo(() => {
-    const inMonth = items.filter((i) => i.work_date.slice(0, 7) === `${y}-${String(m).padStart(2, '0')}`);
-    return { rooms: inMonth.filter((i) => i.property_code).length, all: inMonth.length };
-  }, [items, y, m]);
-
   const selEntries = sel ? entriesOf(sel) : [];
 
   return (
@@ -111,9 +106,16 @@ export default function CalendarTab({ onMsg }: { onMsg: (t: string, err?: boolea
           <button onClick={() => { setYm(shiftMonth(y, m, 1)); setSel(null); }}
             className="rounded-lg border border-mor-line w-8 h-8 hover:bg-mor-sand/60">›</button>
         </div>
-        <div className="text-xs text-gray-400 tabular-nums">
-          {loading ? '載入中…' : `本月 ${monthCount.rooms} 間・${monthCount.all} 筆工作`}
-        </div>
+        {/*
+          【這裡刻意不放間數與布巾統計】（2026-08-14 使用者指定）
+
+          行事曆回答的是「誰在哪一天做什麼」，統計回答的是「這個月一共多少」。
+          兩件事塞在同一個畫面的話，那個數字既不夠完整（看不到分組）
+          也搶走了行事曆的注意力 —— 而真正要算量的人會去「排班統計」分頁。
+
+          只留載入中，因為空白的月曆跟還沒載完的月曆長得一模一樣。
+        */}
+        {loading && <div className="text-xs text-gray-400">載入中…</div>}
       </div>
 
       <div className={`${CARD} overflow-hidden`}>

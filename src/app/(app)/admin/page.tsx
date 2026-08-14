@@ -28,6 +28,11 @@ type Property = {
    * 看不出它們是同一塊空間。設了才抓得到那種撞房。
    */
   parent_property_id?: string | null;
+  /**
+   * 幾張床。布巾組數 ＝ 床數 × 打掃次數（migration_121）。
+   * null = 還沒建檔 —— 那間房算不出要帶幾組布巾。
+   */
+  beds?: number | null;
   active?: boolean | null;
 };
 type Profile = { id: string; name: string | null; role: string; active: boolean };
@@ -257,7 +262,7 @@ export default function AdminPage() {
     const { data: pf } = await supabase.from('profiles').select('id, name, role, active');
     const { data: es } = await supabase.from('estates').select('*').order('sort').order('name');
     const { data: pr } = await supabase.from('properties')
-      .select('id, name, estate_id, airbnb_listing_id, parent_property_id, active').order('name');
+      .select('id, name, estate_id, airbnb_listing_id, parent_property_id, beds, active').order('name');
     const { data: pa } = await supabase.from('payment_accounts').select('*').order('sort').order('code');
     // 任期表很小（一個物業幾段）,一次載完在前端算就好
     const { data: tn } = await supabase.from('estate_managers')
@@ -1094,6 +1099,7 @@ export default function AdminPage() {
                   <th className="px-4 py-2.5">房源名稱(點擊可改名)</th>
                   <th className="px-4 py-2.5">Airbnb listing_id</th>
                   <th className="px-4 py-2.5 whitespace-nowrap">屬於哪個房源</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">床數</th>
                   <th className="px-4 py-2.5 text-right">操作</th>
                 </tr>
               </thead>
@@ -1151,13 +1157,31 @@ export default function AdminPage() {
                           .map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
                       </select>
                     </td>
+                    {/*
+                      布巾組數 ＝ 床數 × 打掃次數。沒填的話那間房
+                      算不出房務要帶幾組 —— 而算不出來就是靜靜地少帶。
+                      公區填 0。
+                    */}
+                    <td className="px-4 py-2 whitespace-nowrap">
+                      <input defaultValue={p.beds ?? ''} placeholder="未填"
+                        inputMode="numeric"
+                        onBlur={(ev) => {
+                          const v = ev.target.value.trim();
+                          const cur = p.beds == null ? '' : String(p.beds);
+                          if (v === cur) return;
+                          if (v && !/^\d+$/.test(v)) { ev.target.value = cur; return flash('床數只能是數字'); }
+                          updateProperty(p.id, { beds: v === '' ? null : Number(v) });
+                        }}
+                        className={`rounded-lg border px-2 py-1 w-16 text-center ${
+                          p.beds == null ? 'border-amber-300 bg-amber-50/50' : 'border-gray-300'}`} />
+                    </td>
                     <td className="px-4 py-2 text-right">
                       <button onClick={() => deleteProperty(p.id, p.name)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
                     </td>
                   </tr>
                 ))}
                 {properties.filter((p) => p.estate_id === selEstate).length === 0 && (
-                  <tr><td colSpan={4} className="px-4 py-6 text-center text-gray-400">此物業尚無房源</td></tr>
+                  <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-400">此物業尚無房源</td></tr>
                 )}
               </tbody>
             </table>
@@ -1176,15 +1200,28 @@ export default function AdminPage() {
           設定錯誤 —— 其他設定錯了頂多數字怪，這個是整筆錢不存在。
         */}
         {(() => {
-          const missing = properties.filter((p) => p.estate_id === selEstate && !p.airbnb_listing_id);
-          if (!missing.length) return null;
+          const here = properties.filter((p) => p.estate_id === selEstate);
+          const noListing = here.filter((p) => !p.airbnb_listing_id);
+          const noBeds = here.filter((p) => p.beds == null);
+          if (!noListing.length && !noBeds.length) return null;
           return (
-            <p className="text-xs text-amber-700 mt-1">
-              <b>{missing.length} 間沒有對照 listing_id</b>：{missing.map((p) => p.name).join('、')}。
-              走 Airbnb 的房源一定要填 —— 沒填的話那個 listing 的訂單抓回來對不到房源,
-              整筆不會進系統。（不走 Airbnb 的房源留空是正常的。）
-              listing_id 在 Airbnb 房源網址裡:<span className="font-mono">airbnb.com/rooms/<b>1234567890</b></span>
-            </p>
+            <div className="text-xs text-amber-700 mt-1 space-y-1">
+              {noListing.length > 0 && (
+                <p>
+                  <b>{noListing.length} 間沒有對照 listing_id</b>：{noListing.map((p) => p.name).join('、')}。
+                  走 Airbnb 的房源一定要填 —— 沒填的話那個 listing 的訂單抓回來對不到房源,
+                  整筆不會進系統。（不走 Airbnb 的房源留空是正常的。）
+                  listing_id 在 Airbnb 房源網址裡:<span className="font-mono">airbnb.com/rooms/<b>1234567890</b></span>
+                </p>
+              )}
+              {noBeds.length > 0 && (
+                <p>
+                  <b>{noBeds.length} 間沒填床數</b>：{noBeds.map((p) => p.name).join('、')}。
+                  房務的布巾組數 ＝ 床數 × 打掃次數 —— 沒填的話那間房算不出要帶幾組,
+                  而算不出來就是**靜默地少帶**,到現場才發現。公區填 0。
+                </p>
+              )}
+            </div>
           );
         })()}
         <p className="text-xs text-gray-400 mt-1">
