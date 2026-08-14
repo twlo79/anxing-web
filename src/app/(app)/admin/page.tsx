@@ -10,7 +10,17 @@ import { softDelete } from '@/lib/trash';
 
 type Staff = { id: string; name: string; aliases: string[]; staff_type: string; active: boolean; sort: number; role?: string; email?: string | null; auth_uid?: string | null };
 type Estate = { id: string; name: string; manager: string | null; sort: number; active: boolean };
-type Property = { id: string; name: string; estate_id: string | null };
+type Property = {
+  id: string; name: string; estate_id: string | null;
+  /**
+   * Airbnb 的 listing id。爬蟲靠這個把訂單掛到房源上。
+   *
+   * 沒填的話那個 listing 的訂單**根本進不了系統** —— 不是數字錯，
+   * 是那筆錢在報表上完全不存在。所以這一欄要看得到、改得到。
+   */
+  airbnb_listing_id: string | null;
+  active?: boolean | null;
+};
 type Profile = { id: string; name: string | null; role: string; active: boolean };
 /** 編輯紀錄（migration_72）。changes 格式:刪除/新增是整列,修改是 {欄位: [改前, 改後]} */
 type Audit = {
@@ -236,7 +246,8 @@ export default function AdminPage() {
     const { data: st } = await supabase.from('staff').select('*').order('sort').order('name');
     const { data: pf } = await supabase.from('profiles').select('id, name, role, active');
     const { data: es } = await supabase.from('estates').select('*').order('sort').order('name');
-    const { data: pr } = await supabase.from('properties').select('id, name, estate_id').order('name');
+    const { data: pr } = await supabase.from('properties')
+      .select('id, name, estate_id, airbnb_listing_id, active').order('name');
     const { data: pa } = await supabase.from('payment_accounts').select('*').order('sort').order('code');
     // 任期表很小（一個物業幾段）,一次載完在前端算就好
     const { data: tn } = await supabase.from('estate_managers')
@@ -1060,6 +1071,7 @@ export default function AdminPage() {
               <thead>
                 <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-white/45">
                   <th className="px-4 py-2.5">房源名稱(點擊可改名)</th>
+                  <th className="px-4 py-2.5">Airbnb listing_id</th>
                   <th className="px-4 py-2.5 text-right">操作</th>
                 </tr>
               </thead>
@@ -1068,7 +1080,32 @@ export default function AdminPage() {
                   <tr key={p.id} className="border-b border-mor-line/60 last:border-0">
                     <td className="px-4 py-2">
                       <input defaultValue={p.name} onBlur={(ev) => { const v = ev.target.value.trim(); if (v && v !== p.name) updateProperty(p.id, { name: v }); }}
-                        className="rounded-lg border border-gray-300 px-2 py-1 w-64" />
+                        className="rounded-lg border border-gray-300 px-2 py-1 w-56" />
+                    </td>
+                    {/*
+                      爬蟲靠這個把訂單掛到房源上。沒填的話那個 listing 的訂單
+                      **根本進不了系統** —— 而報表看起來完全正常。
+
+                      改這一欄不需要動訂單:對照修好之後，下一輪同步
+                      那些訂單會自己補進來。
+                    */}
+                    <td className="px-4 py-2">
+                      <input defaultValue={p.airbnb_listing_id ?? ''}
+                        placeholder="未對照"
+                        inputMode="numeric"
+                        onBlur={(ev) => {
+                          const v = ev.target.value.trim();
+                          const cur = p.airbnb_listing_id ?? '';
+                          if (v === cur) return;
+                          // 只准數字。貼到整段網址的話,把 id 抓出來 ——
+                          // 從 Airbnb 複製過來時常常連 https://... 一起帶
+                          const id = (v.match(/\d{6,}/) ?? [])[0] ?? '';
+                          if (v && !id) { ev.target.value = cur; return flash('listing_id 只能是數字,或直接貼房源網址'); }
+                          updateProperty(p.id, { airbnb_listing_id: id || null });
+                          ev.target.value = id;
+                        }}
+                        className={`rounded-lg border px-2 py-1 w-52 font-mono text-xs ${
+                          p.airbnb_listing_id ? 'border-gray-300' : 'border-amber-300 bg-amber-50/50'}`} />
                     </td>
                     <td className="px-4 py-2 text-right">
                       <button onClick={() => deleteProperty(p.id, p.name)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
@@ -1076,7 +1113,7 @@ export default function AdminPage() {
                   </tr>
                 ))}
                 {properties.filter((p) => p.estate_id === selEstate).length === 0 && (
-                  <tr><td colSpan={2} className="px-4 py-6 text-center text-gray-400">此物業尚無房源</td></tr>
+                  <tr><td colSpan={3} className="px-4 py-6 text-center text-gray-400">此物業尚無房源</td></tr>
                 )}
               </tbody>
             </table>
@@ -1087,7 +1124,25 @@ export default function AdminPage() {
             <button onClick={addProperty} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 新增房源</button>
           </div>
         </div>
-        <p className="text-xs text-gray-400 mt-2">直接點房源名稱即可改名(改完點空白處儲存)。改名不影響已連結的訂單/評價(用 ID 綁定)。</p>
+        <p className="text-xs text-gray-400 mt-2">
+          直接點欄位即可修改(改完點空白處儲存)。改名不影響已連結的訂單/評價(用 ID 綁定)。
+        </p>
+        {/*
+          沒對照的房源要主動講出來。這是唯一一種「訂單根本沒進系統」的
+          設定錯誤 —— 其他設定錯了頂多數字怪，這個是整筆錢不存在。
+        */}
+        {(() => {
+          const missing = properties.filter((p) => p.estate_id === selEstate && !p.airbnb_listing_id);
+          if (!missing.length) return null;
+          return (
+            <p className="text-xs text-amber-700 mt-1">
+              <b>{missing.length} 間沒有對照 listing_id</b>：{missing.map((p) => p.name).join('、')}。
+              走 Airbnb 的房源一定要填 —— 沒填的話那個 listing 的訂單抓回來對不到房源,
+              整筆不會進系統。（不走 Airbnb 的房源留空是正常的。）
+              listing_id 在 Airbnb 房源網址裡:<span className="font-mono">airbnb.com/rooms/<b>1234567890</b></span>
+            </p>
+          );
+        })()}
       </section>
       )}
 
