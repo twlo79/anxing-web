@@ -33,6 +33,18 @@ type SyncIssue = {
   first_seen: string; last_seen: string;
   from_val: string | null; to_val: string | null; listing_id: string | null;
   extra: Record<string, unknown> | null;
+  /** migration_116：high=營收數字會錯 / mid=歸屬會錯 / low=已處理好只是通知 */
+  severity?: string | null;
+  /** 這一筆自己的原因。只有比對的當下算得出來，畫面上算不出來 */
+  reason?: string | null;
+  /** Airbnb 那邊今天才變的。舊帳沒有這個記號 */
+  airbnb_changed?: boolean | null;
+};
+
+const SEV_LABEL: Record<string, { text: string; tone: string }> = {
+  high: { text: '要處理', tone: 'bg-red-50 text-red-600 ring-1 ring-inset ring-red-100' },
+  mid: { text: '看一眼', tone: 'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-100' },
+  low: { text: '已處理', tone: 'bg-mor-greenlight text-mor-green' },
 };
 
 /**
@@ -92,29 +104,31 @@ const AUDIT_SKIP = new Set(['updated_at', 'created_at', 'id']);
  * 而問到的答案取決於對方記不記得。寫在旁邊,改資料的人自己看得到。
  */
 const SYNC_TIERS: { level: string; tone: string; fields: string; why: string }[] = [
-  { level: '一律更新', tone: 'bg-mor-bluelight text-mor-slate',
-    fields: '取消（金額歸零）、訂單狀態、住宿起訖',
-    why: '這三個不管有沒有人工改過都照做。原則是「會讓營收變小的自動套用」—— 少算有人會發現,多算不會:一筆已取消的訂單躺在營收裡看起來完全正常。住宿起訖兩個方向都更新,理由是行事曆:縮住不更新會推掉真訂單,延住不更新會重複出租。' },
-  { level: '只在空的時候填', tone: 'bg-amber-50 text-amber-800',
-    fields: '金額、房源、房客姓名',
-    why: '這三個我們會手動修正,爬蟲不該贏。不一致列進下面的清單 —— 只是不覆蓋的話,對照表永遠是錯的。' },
-  { level: '人改過就完全不填', tone: 'bg-red-50 text-red-600',
-    fields: '上面那三個,只要這筆被人工編輯過',
-    why: '連空的都不填 —— 那個空可能就是他刻意清掉的。系統從編輯紀錄判斷,而且是回溯的:2026-08 之前改的一樣算數。' },
+  { level: '自動做', tone: 'bg-mor-bluelight text-mor-slate',
+    fields: '新增訂單、取消（金額歸零、狀態改成取消）',
+    why: '只有這兩件。它們的共同點是**不會蓋掉任何人的判斷**:新增之前沒有這筆,沒有東西可以被蓋掉;取消只會讓營收變小。而少算與多算的成本不對稱 —— 少算有人會發現（錢對不上、有人來問）,多算不會:一筆已取消的訂單躺在營收裡看起來完全正常。' },
+  { level: '只建議，人工對', tone: 'bg-amber-50 text-amber-800',
+    fields: '金額、住宿起訖、房源、房客姓名',
+    why: '一個字都不自動改。每一個欄位都可能是某個人某天刻意調過的 —— 2026-08-12 有人把一筆從 95,231 改成 124,346,隔天 06:06 同步改回去,中午另一個人又改成 158,720,兩個人都以為是自己沒存到。教訓不是「要判斷得更聰明」,是根本不要自動改。差異全部列在下面,附上差多少、往哪個方向、為什麼。' },
   { level: '完全不碰', tone: 'bg-mor-greenlight text-mor-green',
     fields: '收款、押金、帳號、備註、發票、移房',
-    why: '這些是人的判斷與金流紀錄,爬蟲沒有任何依據可以動它們。' },
+    why: '這些是人的判斷與金流紀錄,爬蟲沒有任何依據可以動它們 —— 連建議都不出。' },
 ];
 
 /** 每一種差異該做什麼。沒有建議的清單只是一份焦慮清單。 */
 const ISSUE_ADVICE: Record<string, string> = {
-  金額: 'Airbnb 上的金額跟系統裡的不一樣。系統不會自己改 —— 金額是營收,它靜靜變動的代價遠大於晚一天更新。確認過再手動改。',
+  金額: 'Airbnb 算出來的（你賺得＋搭檔收款）跟系統不一樣。系統一律不自動改 —— '
+    + '每一筆的原因寫在旁邊,確認過再手動改。標成「還在結算中」的可以先放著,那些數字之後可能還會再動。',
   房源: '到「房源管理」把這個 listing_id 搬到正確的房源。搬完隔天這一列自己會消失。',
   對不到房源: '這個 listing 在系統裡沒有對應的啟用房源,訂單根本沒進來。到「房源管理」補上對照。',
   房源名稱查不到: '通常是多間房源在 Airbnb 用了同一個標題（開封 2F/3F/4F 就是）。要靠訂單反查,或手動指定。',
   房客姓名: 'Airbnb 顯示名跟我們登記的正式姓名不同。多半不用處理 —— 除非你發現是對到錯的人。',
-  住宿起訖: '日期已經跟著更新了。這裡列出來是因為它會改變營收攤提的月份,值得看一眼。',
+  住宿起訖: 'Airbnb 上的日期改了,系統**沒有**跟著改。這一條建議別放太久 —— '
+    + '日期會改變營收攤提的月份,而且行事曆沒更新可能會重複出租。訂單頁的「👀防呆」抓得到期間重疊。',
   待人工判斷: 'Airbnb 顯示已取消且無收入,但系統裡標記為已收款。錢真的進來過就不能自動歸零 —— 要你判斷。',
+  '在 Airbnb 找不到': '系統裡有這筆訂單,但爬蟲在掃描範圍內沒有再看到它。'
+    + '可能是退款結案、被 Airbnb 移除,或訂單編號改了 —— 要確認這筆錢還算不算數。'
+    + '（只在爬蟲有回報掃描範圍時才判斷,不然舊訂單會全被誤標。）',
 };
 
 /**
@@ -250,8 +264,37 @@ export default function AdminPage() {
   const issueGroups = useMemo(() => {
     const g: Record<string, SyncIssue[]> = {};
     for (const it of issues) (g[it.field] ??= []).push(it);
+    /*
+     * 每一組裡「Airbnb 今天才變的」排前面。
+     *
+     * 那是新事件 —— 多半好處理，而且錯過就會沉進舊帳裡，
+     * 明天長得跟其他幾十列一模一樣。
+     */
+    for (const list of Object.values(g)) {
+      list.sort((a, b) =>
+        Number(!!b.airbnb_changed) - Number(!!a.airbnb_changed)
+        || (a.first_seen ?? '').localeCompare(b.first_seen ?? ''));
+    }
     return g;
   }, [issues]);
+
+  /**
+   * 分組的顯示順序：要處理的在最上面。
+   *
+   * 不排的話順序由物件的鍵決定 —— 也就是由資料庫回傳的順序決定，
+   * 而那跟重要性完全無關。每天最多的那一種（住宿起訖，而且系統
+   * 已經改好了）會排在最前面，把真正要動手的蓋掉。
+   */
+  const SEV_RANK: Record<string, number> = { high: 0, mid: 1, low: 2 };
+  const issueOrder = useMemo(() => Object.entries(issueGroups).sort(
+    ([, a], [, b]) =>
+      (SEV_RANK[a[0]?.severity ?? 'mid'] ?? 1) - (SEV_RANK[b[0]?.severity ?? 'mid'] ?? 1)
+      || b.length - a.length,
+  ), [issueGroups]);
+
+  /** 今天 Airbnb 那邊真的改了的總數 —— 這是最該先看的一群 */
+  const changedToday = useMemo(
+    () => issues.filter((i) => i.airbnb_changed).length, [issues]);
 
   // profiles.id 對回姓名。編輯紀錄只存 user_id,不存名字 ——
   // 存名字的話改名之後歷史紀錄會對不上人。
@@ -998,6 +1041,16 @@ export default function AdminPage() {
           <div className="flex flex-wrap items-center gap-2 mb-2">
             <h2 className="text-sm font-semibold text-gray-700">還沒處理的差異</h2>
             <span className="text-xs text-gray-400">共 {issues.length} 筆</span>
+            {/*
+              「今天才變的」單獨標出來。這是快照機制唯一能回答、
+              純比對答不出來的事：其餘每一列都是還沒處理完的舊帳，
+              而新事件混在裡面就跟舊帳長得一模一樣。
+            */}
+            {changedToday > 0 && (
+              <span className="rounded-full bg-mor-bluelight px-2 py-0.5 text-[11px] font-medium text-mor-slate">
+                其中 {changedToday} 筆是 Airbnb 這次才改的
+              </span>
+            )}
             <div className="flex-1" />
             <button onClick={loadSync}
               className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50">重新整理</button>
@@ -1010,10 +1063,21 @@ export default function AdminPage() {
             </div>
           ) : (
             <div className="space-y-3">
-              {Object.entries(issueGroups).map(([field, list]) => (
+              {issueOrder.map(([field, list]) => (
                 <div key={field} className="rounded-xl glass overflow-hidden">
                   <div className="px-4 py-2.5 border-b border-mor-line bg-white/45">
-                    <div className="text-sm font-medium">{field} <span className="text-gray-400 font-normal">· {list.length} 筆</span></div>
+                    <div className="text-sm font-medium flex items-center gap-2">
+                      {(() => {
+                        const sev = SEV_LABEL[list[0]?.severity ?? 'mid'] ?? SEV_LABEL.mid;
+                        return (
+                          <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap ${sev.tone}`}>
+                            {sev.text}
+                          </span>
+                        );
+                      })()}
+                      <span>{field}</span>
+                      <span className="text-gray-400 font-normal">· {list.length} 筆</span>
+                    </div>
                     {ISSUE_ADVICE[field] && (
                       <div className="text-xs text-gray-500 mt-0.5">{ISSUE_ADVICE[field]}</div>
                     )}
@@ -1031,11 +1095,31 @@ export default function AdminPage() {
                       </thead>
                       <tbody>
                         {list.map((it) => (
-                          <tr key={it.kind + it.code + it.field} className="border-b border-mor-line/40 last:border-0">
-                            <td className="px-4 py-2 font-mono text-xs whitespace-nowrap">{it.code}</td>
+                          <tr key={it.kind + it.code + it.field} className="border-b border-mor-line/40 last:border-0 align-top">
+                            <td className="px-4 py-2 font-mono text-xs whitespace-nowrap">
+                              {it.code}
+                              {/* 這一筆是 Airbnb 這次才改的 —— 跟一直掛著的舊帳分開 */}
+                              {it.airbnb_changed && (
+                                <div className="mt-0.5 inline-block rounded bg-mor-bluelight px-1.5 py-0.5 text-[10px] font-sans text-mor-slate whitespace-nowrap">
+                                  這次才改的
+                                </div>
+                              )}
+                            </td>
                             <td className="px-4 py-2 text-gray-500">{it.from_val ?? '—'}</td>
                             <td className="px-4 py-2 font-medium">
                               {it.to_val ?? '—'}
+                              {/*
+                                這一筆自己的原因。
+                                上面那句 ISSUE_ADVICE 是「這一類該怎麼辦」，
+                                這一句是「這一筆為什麼」—— 例如
+                                「少了搭檔收款 $70,320（$105,480 ＋ $70,320 ＝ $175,800）」。
+                                那個算式讓他當場就能對起來，不用回 Airbnb 查。
+                              */}
+                              {it.reason && (
+                                <div className="mt-0.5 text-[11px] font-normal text-gray-500 whitespace-normal max-w-md">
+                                  {it.reason}
+                                </div>
+                              )}
                               {/* 這個 listing 目前只對到某個停用房源 —— 那通常就是元兇 */}
                               {typeof it.extra?.['停用對照'] === 'string' && (
                                 <span className="ml-1 rounded bg-amber-50 px-1.5 py-0.5 text-[11px] text-amber-800 whitespace-nowrap">

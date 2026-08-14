@@ -273,11 +273,19 @@ export async function POST(req: Request) {
     ...Object.entries(unmatched).map(([listingId, n]) => ({
       code: listingId, field: '對不到房源', listingId,
       to: `${n} 則評價沒有房源`,
+      // 沒有房源就沒有物業，沒有物業就查不到那天是誰在管 ——
+      // 這幾則評價會一直落在管家評分的「未指派」那一列
+      severity: 'high',
+      reason: '這個 listing 在系統裡沒有對照，評價找不到房源。'
+        + '沒有房源就沒有物業，管家評分會把它算進「未指派」。到「房源管理」補上對照',
     })),
     // 有 listing_id 但三層都解析不出來的,列名稱 —— 那通常是共用標題
     ...unresolved.map((name) => ({
       code: name, field: '房源名稱查不到',
       to: '三層備援都對不到,可能是多間房源共用同一個 Airbnb 標題',
+      severity: 'mid',
+      reason: '通常是多間房源在 Airbnb 用了同一個標題（開封 2F/3F/4F 就是這樣）。'
+        + '要靠訂單反查，或在「房源管理」手動指定 listing_id',
     })),
   ];
   const { error: logErr } = await supabase.rpc('record_sync_run', {

@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   decide, summarize, toIssues, revenueOf, isCancelled,
-  type Incoming, type Existing, type PropRef,
+  dedupe, isSettled, snapshotChanges, amountAdvice,
+  snapshotRowOf, incomingOf, findMissing, forgetStaleChange,
+  type Incoming, type Existing, type PropRef, type Snapshot,
 } from './airbnb-sync.ts';
 
 const PROP_A15: PropRef = { id: 'p-a15', name: 'A15', estate_id: 'e-1' };
@@ -17,7 +19,7 @@ const inc = (o: Partial<Incoming> = {}): Incoming => ({
 const ex = (o: Partial<Existing> = {}): Existing => ({
   order_key: 'HM123', source: 'airbnb',
   property_id: 'p-a15', property_raw: 'A15', guest_name: 'Kevin',
-  checkin: '2026-07-01', checkout: '2026-07-05', amount: 20000, paid: false, ...o,
+  checkin: '2026-07-01', checkout: '2026-07-05', nights: 4, amount: 20000, paid: false, ...o,
 });
 
 /* ── 新增 ────────────────────────────────────── */
@@ -121,16 +123,19 @@ test('★★ 例外一：取消照樣作廢,不管人有沒有改過', () => {
   assert.equal(decision.kind, 'void');
 });
 
-test('★★ 例外二：住宿起訖照樣更新,縮住與延住都是', () => {
-  // 理由跟營收無關,是行事曆:縮住不更新,系統以為房間還有人,會推掉真訂單;
-  // 延住不更新,行事曆說房間是空的而實際有人住 —— 那會重複出租
-  for (const [end, nights] of [['2026-07-03', 2], ['2026-07-20', 19]] as const) {
-    const { decision } = decide(inc({ end, nights }), edited(), PROP_A15);
-    assert.equal(decision.kind, 'update', `${end} 應該要更新`);
-    if (decision.kind === 'update') {
-      assert.equal(decision.patch.checkout, end);
-      assert.equal(decision.patch.nights, nights);
-    }
+test('★★ 住宿起訖也不自動改,但一定要建議', () => {
+  // 這一條不改是有代價的,而且代價不在錢上:縮住沒更新,系統以為房間還有人,
+  // 會推掉真訂單;延住沒更新,行事曆說房間是空的而實際有人住 —— 那會重複出租。
+  // 補網是訂單頁的「👀防呆」期間重疊,但補網要人去按,所以分級不能放到最低
+  for (const [end, nights, word] of [
+    ['2026-07-03', 2, '縮住 2 晚'], ['2026-07-20', 19, '延住 15 晚'],
+  ] as const) {
+    const { decision, diffs } = decide(inc({ end, nights }), ex(), PROP_A15);
+    assert.equal(decision.kind, 'skip', `${end} 不該自動改`);
+    const d = diffs.find((x) => x.field === '住宿起訖');
+    assert.ok(d, `${end} 一定要出建議`);
+    assert.match(d!.reason!, new RegExp(word));
+    assert.equal(d!.severity, 'mid', '不能放到最低 —— 這條會導致重複出租');
   }
 });
 
@@ -171,7 +176,7 @@ test('★ 房客改名不會變成第二筆訂單', () => {
 test('★ 延住不會變成第二筆訂單', () => {
   const { decision } = decide(
     inc({ end: '2026-07-10', nights: 9 }), ex(), PROP_A15);
-  assert.equal(decision.kind, 'update');
+  assert.notEqual(decision.kind, 'insert', '同一個確認碼絕對不能再新增一筆');
 });
 
 test('★ 房源對照改了也不會變成第二筆', () => {
@@ -181,24 +186,27 @@ test('★ 房源對照改了也不會變成第二筆', () => {
 
 /* ── A 級：一律更新 ──────────────────────────── */
 
-test('★ 金額有值就不覆蓋,改列進差異', () => {
+test('★★ 人工編輯過的金額不覆蓋,改列進差異', () => {
   // 2026-08-12 真的發生過:有人把一筆從 95,231.63 改成 124,346,
   // 隔天 06:06 同步改回去,中午另一個人又改成 158,720 ——
-  // 兩個人都以為是自己沒存到。金額是營收,它自己會動比晚一天更新危險
-  const { decision, diffs } = decide(inc({ earnings: 25000 }), ex({ amount: 20000 }), PROP_A15);
+  // 兩個人都以為是自己沒存到
+  const { decision, diffs } = decide(
+    inc({ earnings: 25000 }), ex({ amount: 20000, manually_edited: true }), PROP_A15);
   if (decision.kind === 'update') assert.equal(decision.patch.amount, undefined);
   const d = diffs.find((x) => x.field === '金額');
   assert.ok(d, '不覆蓋但一定要講出來,否則調整就永遠進不來');
   assert.equal(d!.from, '20000');
   assert.equal(d!.to, '25000');
+  assert.match(d!.reason!, /人工編輯/, '要說出為什麼沒改,不然他會以為系統壞了');
 });
 
-test('金額是空的或 0 才填進去', () => {
-  // 那不是「改掉人工填的值」,那是把一筆殘缺的資料補完整
+test('★★ 連空的金額都不自動填 —— 既有訂單一律只建議', () => {
+  // 「幫他補回去」跟「把他改的蓋掉」對使用者是同一件事:
+  // 那個 0 也可能是某人刻意留的
   for (const amt of [null, 0]) {
-    const { decision } = decide(inc({ earnings: 25000 }), ex({ amount: amt }), PROP_A15);
-    assert.equal(decision.kind, 'update');
-    if (decision.kind === 'update') assert.equal(decision.patch.amount, 25000);
+    const { decision, diffs } = decide(inc({ earnings: 25000 }), ex({ amount: amt }), PROP_A15);
+    assert.equal(decision.kind, 'skip');
+    assert.ok(diffs.find((d) => d.field === '金額'), '不填但一定要講');
   }
 });
 
@@ -339,22 +347,29 @@ test('summarize 把各種結果分類', () => {
     decide(inc({ code: 'E' }), ex({ order_key: 'E' }), PROP_OLD),
   ]);
   assert.equal(s.inserted, 1);
-  assert.equal(s.updated, 1);
   assert.equal(s.voided, 1);
+  // B 只有日期變了 —— 那是建議,不是自動更新
+  assert.equal(s.updated, 0);
+  assert.equal(s.diffs.filter((d) => d.field === '住宿起訖').length, 1);
   assert.equal(s.unmatched['1178627391586613020'], 1);
   assert.equal(s.diffs.filter((d) => d.field === '房源').length, 1);
 });
 
 /* ── 待辦清單 ────────────────────────────────── */
 
-test('房源與姓名差異都會變成一條待辦', () => {
+test('★★ 房源差異變成待辦,姓名差異不進清單', () => {
+  // 姓名(Airbnb 顯示名 vs 正式姓名)永遠不會被修好 —— 它不是一件待辦。
+  // 自清的清單只有在「空了就代表沒事」時才有意義,
+  // 放永遠清不掉的東西進去,幾週後就沒有人在看那份清單了
   const s = summarize([
     decide(inc({ code: 'A' }), ex({ order_key: 'A', property_id: 'p-a15', property_raw: 'A15' }), PROP_OLD),
     decide(inc({ code: 'B', guest: 'Michael Hu' }), ex({ order_key: 'B', guest_name: '麥可' }), PROP_A15),
   ]);
   const issues = toIssues(s);
   assert.equal(issues.filter((i) => i.field === '房源').length, 1);
-  assert.equal(issues.filter((i) => i.field === '房客姓名').length, 1);
+  assert.equal(issues.filter((i) => i.field === '房客姓名').length, 0);
+  // 但差異本身還在 —— API 回應裡查得到,只是不佔清單
+  assert.equal(s.diffs.filter((d) => d.field === '房客姓名').length, 1);
 });
 
 test('★ 房源不一致要附上 listing_id 與那個停用房源', () => {
@@ -402,4 +417,364 @@ test('★ 同一個 listing 對不到多次要累計,不是各報各的', () => 
     decide(inc({ code: 'B' }), null, null),
   ]);
   assert.equal(s.unmatched['1178627391586613020'], 2);
+});
+
+/* ══════════════════════════════════════════════════════
+ * 去重
+ * ══════════════════════════════════════════════════════ */
+
+test('★★ 同一個確認碼在同一批裡只留一筆', () => {
+  // 爬蟲翻頁時同一筆出現在兩頁是常態(Airbnb 的分頁依時間切)。
+  // 不去重的話同一個碼會走兩次決策,兩次都判斷「這是新訂單」,
+  // 然後插入兩列 —— 而重複的訂單在報表上看起來完全正常,
+  // 只是那個月多了一筆錢。2026-07 多算 33,053、2026-08 多算 782,102
+  const { items, dropped } = dedupe([inc({ code: 'X' }), inc({ code: 'X' }), inc({ code: 'Y' })]);
+  assert.equal(items.length, 2);
+  assert.equal(dropped, 1);
+});
+
+test('★★ 去重時不能丟掉有搭檔收款的那一筆', () => {
+  // 明細抓失敗時 cohost 是 null,那不代表真的沒有搭檔收款。
+  // 留錯的話那一筆就少算了 —— 而少算完全看不出來
+  const withCohost = inc({ code: 'X', earnings: 105479.73, cohost: -70319.83 });
+  const without = inc({ code: 'X', earnings: 105479.73, cohost: null });
+
+  for (const order of [[withCohost, without], [without, withCohost]]) {
+    const { items } = dedupe(order);
+    assert.equal(revenueOf(items[0]).revenue, 175799.56,
+      '不管哪個先來,都要留抓到搭檔收款的那筆');
+  }
+});
+
+test('兩筆都沒有搭檔收款時留後面那筆 —— 後抓的資料比較完整', () => {
+  const { items } = dedupe([inc({ code: 'X', guest: '舊' }), inc({ code: 'X', guest: '新' })]);
+  assert.equal(items[0].guest, '新');
+});
+
+test('沒有確認碼的直接丟掉 —— 沒有鑰匙就無法比對', () => {
+  const { items } = dedupe([inc({ code: '' }), inc({ code: 'X' })]);
+  assert.equal(items.length, 1);
+});
+
+/* ══════════════════════════════════════════════════════
+ * 退房後的結算窗口
+ * ══════════════════════════════════════════════════════ */
+
+test('★ 退房 7 天內還算「還在變動中」', () => {
+  // Airbnb 的金額在退房之後還會動:最終結算、事後退款、客訴賠償。
+  // 退房當天就鎖的話,那些最終數字永遠進不了系統
+  assert.equal(isSettled('2026-07-05', '2026-07-12'), false, '第 7 天還沒鎖');
+  assert.equal(isSettled('2026-07-05', '2026-07-13'), true, '第 8 天鎖住');
+});
+
+test('不知道退房日或今天就當作還沒定案', () => {
+  assert.equal(isSettled(null, '2026-07-20'), false);
+  assert.equal(isSettled('2026-07-05', null), false);
+});
+
+test('★★ 還在結算中的金額差異降一級 —— 過幾天可能還會再變', () => {
+  // 現在去對,很可能過幾天要再對一次。那種「做了但白做」的事
+  // 會讓人開始整份清單都不看
+  const { decision, diffs } = decide(
+    inc({ earnings: 105479.73, cohost: -70319.83 }),
+    ex({ amount: 105479.73, checkout: '2026-07-05' }),
+    PROP_A15, { today: '2026-07-08' });
+  assert.equal(decision.kind, 'skip', '一個字都不改');
+  const d = diffs.find((x) => x.field === '金額')!;
+  assert.equal(d.severity, 'mid');
+  assert.match(d.reason!, /還在結算中/);
+});
+
+test('★★ 已經定案的金額差異是最高級 —— 那個差是真的', () => {
+  const { decision, diffs } = decide(
+    inc({ earnings: 25000 }), ex({ amount: 20000, checkout: '2026-07-05' }),
+    PROP_A15, { today: '2026-08-01' });
+  assert.equal(decision.kind, 'skip');
+  const d = diffs.find((x) => x.field === '金額')!;
+  assert.equal(d.severity, 'high');
+  assert.ok(!/還在結算中/.test(d.reason!), '已定案就不該說還會再變');
+});
+
+/* ══════════════════════════════════════════════════════
+ * 快照比對與原因
+ * ══════════════════════════════════════════════════════ */
+
+const snap = (o: Partial<Snapshot> = {}): Snapshot => ({
+  code: 'HM123', listing_id: '1178627391586613020', guest: 'Kevin',
+  start_date: '2026-07-01', end_date: '2026-07-05', nights: 4,
+  status_key: 'accepted', earnings: 20000, cohost: 0, revenue: 20000, ...o,
+});
+
+test('第一次看到就沒有「改了什麼」可講', () => {
+  assert.deepEqual(snapshotChanges(null, inc()), []);
+});
+
+test('完全沒變就是空的', () => {
+  assert.deepEqual(snapshotChanges(snap(), inc()), []);
+});
+
+test('★★ 搭檔收款從 0 變成有值要講出來', () => {
+  // 這是這個專案最貴的一種錯:每筆有搭檔的訂單都少算,
+  // 少算的比例每筆不同,看報表完全看不出哪裡不對
+  const c = snapshotChanges(snap(), inc({ earnings: 105479.73, cohost: -70319.83 }));
+  assert.ok(c.some((x) => /搭檔收款 \$0 → \$70,320/.test(x)), c.join(' | '));
+});
+
+test('★ 延住要講幾晚,不是只給兩個日期', () => {
+  const c = snapshotChanges(snap(), inc({ end: '2026-07-09', nights: 8 }));
+  assert.ok(c.some((x) => /4 晚 → 8 晚/.test(x)), c.join(' | '));
+});
+
+test('★ 取消與取消被撤回都要講', () => {
+  assert.match(snapshotChanges(snap(), inc({ statusKey: 'canceled_by_guest' })).join(), /已取消/);
+  assert.match(
+    snapshotChanges(snap({ status_key: 'canceled_by_guest' }), inc()).join(), /撤回/);
+});
+
+test('★★ 金額建議要講方向與差多少', () => {
+  // 「105,479 → 175,799」讀完還要自己減。差額才是他要填的東西
+  const a = amountAdvice(105479.73, inc({ earnings: 105479.73, cohost: -70319.83 }));
+  assert.equal(a.direction, '增加');
+  assert.equal(a.delta, 70320);
+  assert.match(a.reason, /應增加 \$70,320/);
+});
+
+test('★★ 差額正好等於搭檔收款時要直接點破', () => {
+  // 這是一算就能確認的鐵證,而且是系統性的算法錯 ——
+  // 不是這一筆的問題,是每一筆有搭檔的都少算
+  const a = amountAdvice(105479.73, inc({ earnings: 105479.73, cohost: -70319.83 }));
+  assert.match(a.reason, /少了搭檔收款/);
+  assert.match(a.reason, /175,800/, '要把加法算式寫出來讓他當場對得起來');
+  assert.equal(a.airbnbChanged, false, '沒有快照就不是「今天才變的」');
+});
+
+test('★★ Airbnb 今天改了的話,原因要講改了什麼', () => {
+  // 這是新事件,跟「一直不一樣」的舊帳要分得開 ——
+  // 混在一起的話每天早上看到的都是同一批熟面孔
+  const a = amountAdvice(20000, inc({ earnings: 105479.73, cohost: -70319.83 }), snap());
+  assert.equal(a.airbnbChanged, true);
+  assert.match(a.reason, /Airbnb 這次改了/);
+  assert.match(a.reason, /搭檔收款/);
+});
+
+test('系統裡是 0 的時候講「從來沒填過」', () => {
+  assert.match(amountAdvice(0, inc({ earnings: 25000 })).reason, /從來沒填過/);
+});
+
+test('都對不上時說這個差是我們自己調的', () => {
+  const a = amountAdvice(30000, inc({ earnings: 25000 }));
+  assert.equal(a.direction, '減少');
+  assert.match(a.reason, /我們這邊調過/);
+});
+
+/* ══════════════════════════════════════════════════════
+ * 分級
+ * ══════════════════════════════════════════════════════ */
+
+test('★★ 會讓營收數字錯的排最前面', () => {
+  const TODAY = '2026-08-01';   // 兩筆都已退房超過 7 天 = 已定案
+  const s = summarize([
+    // 住宿起訖:要改行事曆,但不影響營收金額
+    decide(inc({ code: 'A', end: '2026-07-09', nights: 8 }),
+      ex({ order_key: 'A' }), PROP_A15, { today: TODAY }),
+    // 金額:營收數字是錯的
+    decide(inc({ code: 'B', earnings: 25000 }),
+      ex({ order_key: 'B' }), PROP_A15, { today: TODAY }),
+  ]);
+  const issues = toIssues(s);
+  assert.equal(issues[0].field, '金額');
+  assert.equal(issues[0].severity, 'high');
+  assert.equal(issues.at(-1)!.field, '住宿起訖');
+  assert.equal(issues.at(-1)!.severity, 'mid');
+});
+
+test('★★ Airbnb 今天才變的排在所有舊帳前面', () => {
+  // 新事件多半好處理,而且錯過就會沉進舊帳裡。
+  // 只按嚴重度排的話,它會被一整排陳年的高風險項目蓋住
+  const s = summarize([
+    decide(inc({ code: 'OLD', earnings: 25000 }),
+      ex({ order_key: 'OLD', manually_edited: true }), PROP_A15),
+    decide(inc({ code: 'NEW', end: '2026-07-09', nights: 8 }),
+      ex({ order_key: 'NEW' }), PROP_A15,
+      { prev: snap({ code: 'NEW' }) }),
+  ]);
+  const issues = toIssues(s);
+  assert.equal(issues[0].code, 'NEW');
+  assert.equal(issues[0].airbnbChanged, true);
+});
+
+test('對不到房源與待人工判斷都是最高級', () => {
+  const s = summarize([
+    decide(inc({ code: 'A' }), null, null),
+    decide(inc({ code: 'B', statusKey: 'canceled', earnings: 0, cohost: 0 }),
+      ex({ order_key: 'B', paid: true }), PROP_A15),
+  ]);
+  for (const i of toIssues(s)) assert.equal(i.severity, 'high', i.field);
+});
+
+test('★ 每一條待辦都要講得出「怎麼做」', () => {
+  // 沒有建議的清單只是一份焦慮清單
+  const s = summarize([
+    decide(inc({ code: 'A' }), null, null),
+    decide(inc({ code: 'B', earnings: 25000 }),
+      ex({ order_key: 'B', manually_edited: true }), PROP_A15),
+    decide(inc({ code: 'C' }), ex({ order_key: 'C' }), PROP_OLD),
+    decide(inc({ code: 'D', statusKey: 'canceled', earnings: 0, cohost: 0 }),
+      ex({ order_key: 'D', paid: true }), PROP_A15),
+  ]);
+  for (const i of toIssues(s)) {
+    assert.ok(i.reason && i.reason.length > 10, `${i.field} 沒有說明`);
+  }
+});
+
+/* ══════════════════════════════════════════════════════
+ * 階段一 ⇄ 階段二：快照的來回
+ * ══════════════════════════════════════════════════════ */
+
+const NOW = '2026-08-14T02:00:00.000Z';
+
+test('★ 第一次看到就建一列,changed_at 是空的', () => {
+  // 第一輪所有訂單都是「第一次看到」,不該有任何「這次才改的」標記 ——
+  // 全部亮起來的話那個標記等於沒有
+  const r = snapshotRowOf(inc(), null, NOW);
+  assert.equal(r.code, 'HM123');
+  assert.equal(r.revenue, 20000);
+  assert.equal(r.changed_at, null);
+  assert.equal(r.change_note, null);
+  assert.equal(r.seen_count, 1);
+});
+
+test('★★ 沒變的話 changed_at 與 change_note 要原封不動寫回去', () => {
+  // PostgREST 的批次 upsert 取所有列的欄位聯集,少了某個鍵就填 null ——
+  // 那會把「上次是什麼時候變的」整批抹掉,而且完全不報錯
+  const prev: Snapshot = {
+    code: 'HM123', start_date: '2026-07-01', end_date: '2026-07-05', nights: 4,
+    status_key: 'accepted', earnings: 20000, cohost: 0, revenue: 20000,
+    changed_at: '2026-08-01T00:00:00.000Z', change_note: '搭檔收款 $0 → $500', seen_count: 9,
+  };
+  const r = snapshotRowOf(inc(), prev, NOW);
+  assert.equal(r.changed_at, '2026-08-01T00:00:00.000Z');
+  assert.equal(r.change_note, '搭檔收款 $0 → $500');
+  assert.equal(r.last_seen, NOW, 'last_seen 每次都要更新');
+  assert.equal(r.seen_count, 10);
+});
+
+test('★★ 變了就記下改了什麼 —— 那句話只有這一刻講得出來', () => {
+  // 對帳可能晚幾小時甚至隔天跑,那時舊值已經被蓋掉,
+  // 「從多少變成多少」再也算不出來
+  const prev: Snapshot = {
+    code: 'HM123', start_date: '2026-07-01', end_date: '2026-07-05', nights: 4,
+    status_key: 'accepted', earnings: 105479.73, cohost: 0, revenue: 105479.73,
+  };
+  const r = snapshotRowOf(inc({ earnings: 105479.73, cohost: -70319.83 }), prev, NOW);
+  assert.equal(r.changed_at, NOW);
+  assert.match(r.change_note!, /搭檔收款 \$0 → \$70,320/);
+  assert.equal(r.revenue, 175799.56);
+});
+
+test('★ 又看到就把「不見了」的記號清掉', () => {
+  // 不清的話,一筆曾經因為掃描範圍沒涵蓋而被標記過的訂單,
+  // 會永遠掛著失蹤的記號
+  assert.equal(snapshotRowOf(inc(), null, NOW).missing_since, null);
+});
+
+test('★ 原始明細整包存著 —— 錯過就再也拿不到', () => {
+  // 今天只想到要比金額、日期、搭檔收款。哪天發現清潔費要單獨記帳,
+  // raw 裡有的話回頭算得出來,沒有的話那段歷史就永遠沒有了
+  const m = inc();
+  assert.deepEqual(snapshotRowOf(m, null, NOW).raw, m);
+});
+
+test('★★ 快照轉回去對帳時金額要一樣', () => {
+  // 決策邏輯只有一份,兩個階段共用 —— 轉換弄丟東西的話,
+  // 對帳看到的會是另一筆訂單
+  const m = inc({ earnings: 105479.73, cohost: -70319.83 });
+  const row = snapshotRowOf(m, null, NOW);
+  const back = incomingOf(row as unknown as Snapshot);
+  assert.equal(revenueOf(back).revenue, 175799.56);
+  assert.equal(back.code, m.code);
+  assert.equal(back.start, m.start);
+  assert.equal(back.statusKey, m.statusKey);
+});
+
+test('★★ 快照的搭檔收款已經是絕對值,轉回去不能再翻一次號', () => {
+  const row = snapshotRowOf(inc({ earnings: 1000, cohost: -500 }), null, NOW);
+  assert.equal(row.cohost, 500, '存的時候取絕對值');
+  assert.equal(revenueOf(incomingOf(row as unknown as Snapshot)).revenue, 1500);
+});
+
+/* ══════════════════════════════════════════════════════
+ * 消失偵測
+ * ══════════════════════════════════════════════════════ */
+
+const sn = (o: Partial<Snapshot> = {}): Snapshot => ({
+  code: 'A', start_date: '2026-07-01', last_seen: '2026-08-01T00:00:00.000Z', ...o,
+});
+
+test('★★ 沒給掃描範圍就完全不做 —— 那不是偵測,是猜', () => {
+  // 爬蟲每天只抓最近幾頁,一年前的訂單本來就不會出現。
+  // 拿「這輪沒看到」當「不見了」,會把幾千筆正常歷史全標成失蹤
+  assert.deepEqual(findMissing([sn()], null, NOW), []);
+  assert.deepEqual(findMissing([sn()], { from: '2026-07-01', to: null }, NOW), []);
+});
+
+test('★★ 範圍內這輪沒看到的才算不見了', () => {
+  const got = findMissing(
+    [sn({ code: 'A' }), sn({ code: 'B', last_seen: NOW })],
+    { from: '2026-06-01', to: '2026-08-31' }, NOW);
+  assert.deepEqual(got.map((s) => s.code), ['A'], 'B 這輪看到了就不算');
+});
+
+test('★ 範圍外的一律不碰', () => {
+  const got = findMissing([sn({ start_date: '2025-01-01' })],
+    { from: '2026-06-01', to: '2026-08-31' }, NOW);
+  assert.equal(got.length, 0);
+});
+
+test('已經標記過的不重複報 —— 同一件事講一次就好', () => {
+  const got = findMissing([sn({ missing_since: '2026-08-10T00:00:00.000Z' })],
+    { from: '2026-06-01', to: '2026-08-31' }, NOW);
+  assert.equal(got.length, 0);
+});
+
+/* ══════════════════════════════════════════════════════
+ * 變動記號會過期
+ * ══════════════════════════════════════════════════════ */
+
+test('★★ 太舊的變動記號要忘掉,否則標記會永遠亮著', () => {
+  // change_note 是留著的 —— 三個月前改過搭檔收款的訂單,那句話到今天都還在。
+  // 直接拿來當「這次才改的」,清單上就會永遠亮著一排,等於沒有標記
+  const old = sn({ changed_at: '2026-05-01T00:00:00.000Z', change_note: '搭檔收款 $0 → $500' });
+  const f = forgetStaleChange(old, '2026-08-13T00:00:00.000Z');
+  assert.equal(f.change_note, null);
+  assert.equal(f.changed_at, null);
+});
+
+test('夠新的就留著', () => {
+  const fresh = sn({ changed_at: '2026-08-14T01:00:00.000Z', change_note: '延住 4 晚' });
+  assert.equal(forgetStaleChange(fresh, '2026-08-13T00:00:00.000Z').change_note, '延住 4 晚');
+});
+
+test('★★ 對帳時靠 change_note 認出「這次才改的」', () => {
+  // 階段二拿到的 prev 就是快照本身(已經是今天的樣子),逐欄比一定相同 ——
+  // 認得出來全靠爬取當下存下的那句話
+  const snapNow = sn({
+    code: 'HM123', end_date: '2026-07-05', nights: 4,
+    status_key: 'accepted', earnings: 25000, cohost: 0, revenue: 25000,
+    changed_at: NOW, change_note: '搭檔收款 $0 → $5,000',
+  });
+  const a = amountAdvice(20000, incomingOf(snapNow), snapNow);
+  assert.equal(a.airbnbChanged, true);
+  assert.match(a.reason, /Airbnb 這次改了：搭檔收款/);
+});
+
+test('★ 忘掉記號之後就退回一般的原因判斷', () => {
+  const stale = forgetStaleChange(sn({
+    code: 'HM123', end_date: '2026-07-05', nights: 4, status_key: 'accepted',
+    earnings: 105479.73, cohost: 70319.83, revenue: 175799.56,
+    changed_at: '2026-05-01T00:00:00.000Z', change_note: '搭檔收款 $0 → $70,320',
+  }), '2026-08-13T00:00:00.000Z');
+  const a = amountAdvice(105479.73, incomingOf(stale), stale);
+  assert.equal(a.airbnbChanged, false);
+  assert.match(a.reason, /少了搭檔收款/, '退回「差額正好等於搭檔收款」那條');
 });
