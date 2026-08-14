@@ -798,3 +798,29 @@ test('★★ scope 是「窮舉範圍」不是「涵蓋範圍」', () => {
   const 正確 = findMissing([舊訂單, 今天抓到的], { from: '2026-08-14', to: '2026-12-31' }, NOW);
   assert.deepEqual(正確, [], '舊訂單不在窮舉範圍內,不做判斷');
 });
+
+test('★★ 1 元以下的金額差不進清單', () => {
+  // 2026-08-14 第一次跑,9 條金額建議裡大多是這種:
+  //   HMZBX24YZT  163,251 → 163,250.62   差 0.38
+  //   HME2KKYA3T   23,657 → 23,657.30    差 0.30
+  // 那是小數進位不是錯帳。而且兩邊四捨五入後顯示同一個數字,
+  // 原因會變成「Airbnb 一直是 $163,251,系統裡是 $163,251」—— 讀起來像壞掉
+  const { diffs } = decide(
+    inc({ earnings: 163250.62 }), ex({ amount: 163251 }), PROP_A15, { today: '2026-08-14' });
+  assert.equal(diffs.filter((d) => d.field === '金額').length, 0);
+});
+
+test('剛好 1 元的差還是要報 —— 門檻是「小於」才略過', () => {
+  const { diffs } = decide(
+    inc({ earnings: 20001 }), ex({ amount: 20000 }), PROP_A15, { today: '2026-08-14' });
+  assert.equal(diffs.filter((d) => d.field === '金額').length, 1);
+});
+
+test('★ 搭檔收款那種差額遠大於門檻,照樣要報', () => {
+  const { diffs } = decide(
+    inc({ earnings: 105479.73, cohost: -70319.83 }),
+    ex({ amount: 105479.73 }), PROP_A15, { today: '2026-08-14' });
+  const d = diffs.find((x) => x.field === '金額')!;
+  assert.ok(d, '70,320 的差不能被門檻濾掉');
+  assert.match(d.reason!, /少了搭檔收款/);
+});

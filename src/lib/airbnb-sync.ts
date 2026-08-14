@@ -317,6 +317,28 @@ export type Existing = {
  */
 export const AMOUNT_GRACE_DAYS = 7;
 
+/**
+ * 小於這個金額的差不進建議清單。
+ *
+ * ============================================================
+ * 【為什麼要有門檻】
+ *
+ * 2026-08-14 第一次跑，9 條金額建議裡大多長這樣：
+ *
+ *     HMZBX24YZT   163,251 → 163,250.62      差 0.38
+ *     HME2KKYA3T    23,657 → 23,657.30       差 0.30
+ *
+ * 那是 Airbnb 的小數與我們存的整數之間的進位差，不是錯帳。
+ *
+ * 更糟的是原因那句話：兩邊四捨五入後顯示同一個數字，於是變成
+ * 「Airbnb 一直是 $163,251，系統裡是 $163,251 —— 這個差是我們這邊調過的」
+ * 讀起來像系統壞了。
+ *
+ * 這種列的成本不只是佔一行 —— 它讓整份清單失去「出現在這裡就要處理」
+ * 的意義。一份九成是雜訊的清單，第三天就沒有人看了。
+ */
+export const AMOUNT_EPSILON = 1;
+
 const DAY = 86400000;
 const dayNum = (d: string) => new Date(`${d}T00:00:00Z`).getTime() / DAY;
 
@@ -732,7 +754,8 @@ export function decide(
    * 那種「做了但白做」的事會讓人開始整份清單都不看。
    */
   const erpAmount = num(exist.amount);
-  if (erpAmount !== revenue) {
+  // 1 元以下的差是小數進位，不是錯帳 —— 見 AMOUNT_EPSILON
+  if (Math.abs(erpAmount - revenue) >= AMOUNT_EPSILON) {
     const a = amountAdvice(erpAmount, m, ctx.prev);
     diffs.push({
       code: m.code, field: '金額',

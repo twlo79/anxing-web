@@ -39,6 +39,38 @@ type SyncIssue = {
   reason?: string | null;
   /** Airbnb 那邊今天才變的。舊帳沒有這個記號 */
   airbnb_changed?: boolean | null;
+  /** migration_118：被忽略了。數字再變會自動清掉，重新跳出來 */
+  dismissed_at?: string | null;
+};
+
+/** 建議對應的訂單。只有確認碼看不出是哪一間房、誰住的 */
+type IssueOrder = {
+  order_key: string;
+  property_raw: string | null;
+  guest_name: string | null;
+  checkin: string | null;
+  checkout: string | null;
+  amount: number | null;
+};
+
+/** 每條建議的一生（migration_118） */
+type IssueLog = {
+  id: number;
+  kind: string; code: string; field: string;
+  from_val: string | null; to_val: string | null;
+  severity: string | null;
+  opened_at: string; closed_at: string;
+  resolution: string;
+  acted_by: string | null;
+};
+
+/** 哪些建議可以一鍵套用 —— 這兩種的「爬蟲認為」就是該寫進去的值 */
+const APPLYABLE = new Set(['金額', '住宿起訖']);
+
+const RESOLUTION_LABEL: Record<string, { text: string; tone: string }> = {
+  applied: { text: '已套用', tone: 'bg-mor-bluelight text-mor-slate' },
+  dismissed: { text: '已忽略', tone: 'bg-mor-sand text-gray-600' },
+  resolved: { text: '自己好了', tone: 'bg-mor-greenlight text-mor-green' },
 };
 
 const SEV_LABEL: Record<string, { text: string; tone: string }> = {
@@ -194,6 +226,10 @@ export default function AdminPage() {
   const [auditWho, setAuditWho] = useState<'' | 'human' | 'auto'>('human');
   const [runs, setRuns] = useState<SyncRun[]>([]);
   const [issues, setIssues] = useState<SyncIssue[]>([]);
+  const [issueOrders, setIssueOrders] = useState<Record<string, IssueOrder>>({});
+  const [logs, setLogs] = useState<IssueLog[]>([]);
+  /** 忽略掉的預設收起來 —— 清單要維持在「還沒處理」的狀態 */
+  const [showDismissed, setShowDismissed] = useState(false);
   const [acct, setAcct] = useState<{ staffId: string; name: string; mode: 'create' | 'password'; email: string; password: string; role: string } | null>(null);
 
   const load = useCallback(async () => {
@@ -245,15 +281,65 @@ export default function AdminPage() {
 
   // ---- 同步建議 ----
   const loadSync = useCallback(async () => {
-    const [{ data: r }, { data: i, error }] = await Promise.all([
+    const [{ data: r }, { data: i, error }, { data: lg }] = await Promise.all([
       supabase.from('sync_runs').select('*').order('at', { ascending: false }).limit(12),
       supabase.from('sync_issues').select('*').order('first_seen', { ascending: true }),
+      // 處理紀錄。限 200 筆 —— 這張表只增不減
+      supabase.from('sync_issue_log').select('*').order('closed_at', { ascending: false }).limit(200),
     ]);
     if (error) return flash('同步紀錄載入失敗:' + error.message);
     setRuns((r ?? []) as SyncRun[]);
-    setIssues((i ?? []) as SyncIssue[]);
+    const rows = (i ?? []) as SyncIssue[];
+    setIssues(rows);
+    setLogs((lg ?? []) as IssueLog[]);
+
+    /*
+     * 把每條建議對應的訂單撈回來。
+     *
+     * 【為什麼一定要做】
+     * 清單上只有確認碼（HMZBX24YZT），看不出那是哪一間房、誰住的、什麼時候。
+     * 要判斷「這個金額差要不要改」，那三件事缺一不可 ——
+     * 沒有它們，每一條建議都得先開另一個分頁去查訂單。
+     */
+    const codes = Array.from(new Set(rows.map((x) => x.code).filter(Boolean)));
+    if (!codes.length) { setIssueOrders({}); return; }
+    const found: Record<string, IssueOrder> = {};
+    for (let k = 0; k < codes.length; k += 300) {
+      const { data } = await supabase.from('orders')
+        .select('order_key, property_raw, guest_name, checkin, checkout, amount')
+        .in('order_key', codes.slice(k, k + 300));
+      for (const o of data ?? []) found[String(o.order_key)] = o as IssueOrder;
+    }
+    setIssueOrders(found);
   }, [supabase]);
   useEffect(() => { if (tab === 'sync') loadSync(); }, [tab, loadSync]);
+
+  /**
+   * 套用一條建議 —— 把 Airbnb 的值寫進訂單。
+   *
+   * 走 RPC 而不是前端直接 update：金額與日期的解析規則要跟建議產生時
+   * 一致，寫在兩個地方遲早會不一樣。而且 RPC 會一併寫進處理紀錄。
+   */
+  const applyIssue = useCallback(async (it: SyncIssue) => {
+    if (!confirm(`把「${it.field}」改成 ${it.to_val}？\n\n訂單 ${it.code}\n\n`
+      + '這會直接寫進訂單，並記進編輯紀錄。')) return;
+    const { data, error } = await supabase.rpc('apply_sync_issue',
+      { p_kind: it.kind, p_code: it.code, p_field: it.field });
+    const res = data as { ok?: boolean; message?: string } | null;
+    if (error) return flash('套用失敗:' + error.message);
+    if (!res?.ok) return flash('套用失敗:' + (res?.message ?? '未知原因'));
+    flash('已套用'); loadSync();
+  }, [supabase, loadSync]);
+
+  /** 忽略一條建議。數字再變的話它會自己回來 —— 見 migration_118 */
+  const dismissIssue = useCallback(async (it: SyncIssue) => {
+    const { data, error } = await supabase.rpc('dismiss_sync_issue',
+      { p_kind: it.kind, p_code: it.code, p_field: it.field });
+    const res = data as { ok?: boolean; message?: string } | null;
+    if (error) return flash('忽略失敗:' + error.message);
+    if (!res?.ok) return flash('忽略失敗:' + (res?.message ?? '未知原因'));
+    flash('已忽略,之後數字再變會重新出現'); loadSync();
+  }, [supabase, loadSync]);
 
   /*
    * 差異按種類分組。
@@ -263,7 +349,12 @@ export default function AdminPage() {
    */
   const issueGroups = useMemo(() => {
     const g: Record<string, SyncIssue[]> = {};
-    for (const it of issues) (g[it.field] ??= []).push(it);
+    // 忽略掉的預設不顯示 —— 清單的意義是「還沒處理的」，
+    // 混進已處理的就失去「空了代表沒事」那個保證
+    for (const it of issues) {
+      if (it.dismissed_at && !showDismissed) continue;
+      (g[it.field] ??= []).push(it);
+    }
     /*
      * 每一組裡「Airbnb 今天才變的」排前面。
      *
@@ -1052,6 +1143,12 @@ export default function AdminPage() {
               </span>
             )}
             <div className="flex-1" />
+            {issues.some((i) => i.dismissed_at) && (
+              <button onClick={() => setShowDismissed((v) => !v)}
+                className="text-xs text-mor-slate underline hover:text-mor-blue">
+                {showDismissed ? '隱藏已忽略的' : `顯示已忽略的（${issues.filter((i) => i.dismissed_at).length}）`}
+              </button>
+            )}
             <button onClick={loadSync}
               className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50">重新整理</button>
           </div>
@@ -1086,22 +1183,45 @@ export default function AdminPage() {
                     <table className="w-full min-w-[620px] text-sm">
                       <thead>
                         <tr className="text-left text-xs text-gray-500 border-b border-mor-line/60">
-                          <th className="px-4 py-2">編號</th>
+                          <th className="px-4 py-2">哪一筆</th>
                           <th className="px-4 py-2">現在是</th>
                           <th className="px-4 py-2">爬蟲認為</th>
-                          <th className="px-4 py-2 whitespace-nowrap">listing_id</th>
                           <th className="px-4 py-2 whitespace-nowrap">第一次出現</th>
+                          <th className="px-4 py-2 text-right whitespace-nowrap">處理</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {list.map((it) => (
-                          <tr key={it.kind + it.code + it.field} className="border-b border-mor-line/40 last:border-0 align-top">
-                            <td className="px-4 py-2 font-mono text-xs whitespace-nowrap">
-                              {it.code}
+                        {list.map((it) => {
+                          const o = issueOrders[it.code];
+                          return (
+                          <tr key={it.kind + it.code + it.field}
+                            className={`border-b border-mor-line/40 last:border-0 align-top ${
+                              it.dismissed_at ? 'opacity-50' : ''}`}>
+                            {/*
+                              只有確認碼看不出這是哪一間房、誰住的、什麼時候。
+                              要判斷「這個差要不要改」，那三件事缺一不可 ——
+                              沒有它們，每一條建議都得先開另一個分頁去查訂單。
+                            */}
+                            <td className="px-4 py-2 whitespace-nowrap">
+                              <div className="font-medium">
+                                {o?.property_raw || '（無房源）'}
+                                <span className="text-gray-500 font-normal ml-1.5">
+                                  {o?.guest_name || (it.listing_id ? `listing ${it.listing_id}` : '—')}
+                                </span>
+                              </div>
+                              <div className="text-[11px] text-gray-400">
+                                {o?.checkin ? `${o.checkin.slice(5)}~${(o.checkout ?? '').slice(5)}・` : ''}
+                                <span className="font-mono">{it.code}</span>
+                              </div>
                               {/* 這一筆是 Airbnb 這次才改的 —— 跟一直掛著的舊帳分開 */}
                               {it.airbnb_changed && (
-                                <div className="mt-0.5 inline-block rounded bg-mor-bluelight px-1.5 py-0.5 text-[10px] font-sans text-mor-slate whitespace-nowrap">
+                                <div className="mt-0.5 inline-block rounded bg-mor-bluelight px-1.5 py-0.5 text-[10px] text-mor-slate whitespace-nowrap">
                                   這次才改的
+                                </div>
+                              )}
+                              {it.dismissed_at && (
+                                <div className="mt-0.5 inline-block rounded bg-mor-sand px-1.5 py-0.5 text-[10px] text-gray-600 whitespace-nowrap">
+                                  已忽略・數字再變會回來
                                 </div>
                               )}
                             </td>
@@ -1127,16 +1247,124 @@ export default function AdminPage() {
                                 </span>
                               )}
                             </td>
-                            <td className="px-4 py-2 font-mono text-[11px] text-gray-400 whitespace-nowrap">{it.listing_id ?? '—'}</td>
                             {/* 放多久了。同一個問題掛了兩週的話,那不是「還沒處理」,是被忽略了 */}
                             <td className="px-4 py-2 text-xs text-gray-400 whitespace-nowrap">{it.first_seen?.slice(0, 10)}</td>
+                            {/*
+                              打勾＝接受（把爬蟲的值寫進訂單），打叉＝忽略。
+
+                              兩顆一樣大、並排、位置固定 —— 一整排掃下來時，
+                              手指落在哪一欄是可以預期的。文字連結做不到這件事：
+                              「套用」比「忽略」寬，每一列的按鈕位置都不一樣。
+
+                              打勾只出現在金額與住宿起訖：那兩種的「爬蟲認為」
+                              就是該寫進去的值。房源刻意不給 —— 正解是去修
+                              「房源管理」的 listing 對照表，改單一筆只是把症狀蓋掉。
+                            */}
+                            <td className="px-4 py-2 text-right whitespace-nowrap">
+                              {!it.dismissed_at && (
+                                <div className="inline-flex items-center gap-1.5">
+                                  {APPLYABLE.has(it.field) ? (
+                                    <button onClick={() => applyIssue(it)}
+                                      title={`接受：把${it.field}改成 ${it.to_val}`}
+                                      aria-label={`接受，把${it.field}改成 ${it.to_val}`}
+                                      className="w-8 h-8 rounded-lg border border-mor-green/30 bg-mor-greenlight
+                                                 text-mor-green text-base leading-none
+                                                 hover:bg-mor-green hover:text-white transition-colors">
+                                      ✓
+                                    </button>
+                                  ) : (
+                                    // 佔位,讓打叉永遠在同一欄。少了它,
+                                    // 沒有打勾的那幾列打叉會往左跳一格
+                                    <span className="w-8 h-8 inline-block" aria-hidden />
+                                  )}
+                                  <button onClick={() => dismissIssue(it)}
+                                    title="忽略：確認沒問題。之後數字再變會重新出現"
+                                    aria-label="忽略這條建議"
+                                    className="w-8 h-8 rounded-lg border border-mor-line bg-white
+                                               text-gray-400 text-base leading-none
+                                               hover:bg-gray-100 hover:text-gray-600 transition-colors">
+                                    ✕
+                                  </button>
+                                </div>
+                              )}
+                            </td>
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+
+        {/* ── 處理紀錄 ─────────────────────────── */}
+        {/*
+          【為什麼存「一生」而不是每天一份快照】
+          每天存一份的話，同一個問題掛一週就有七列 —— 那正是上面那份清單
+          做成自清、而不是流水帳的原因。存一生就沒有這個問題：
+          一條建議一列，消失時補上時間與原因。
+        */}
+        <div>
+          <div className="flex flex-wrap items-baseline gap-2 mb-2">
+            <h2 className="text-sm font-semibold text-gray-700">處理紀錄</h2>
+            <span className="text-xs text-gray-400">
+              已經消失的建議 · 最近 {logs.length} 筆
+            </span>
+          </div>
+          {logs.length === 0 ? (
+            <div className="rounded-xl glass px-4 py-8 text-center text-sm text-gray-400">
+              還沒有處理紀錄。這張表從 migration_118 之後才開始累積。
+            </div>
+          ) : (
+            <div className="rounded-xl glass overflow-x-auto">
+              <table className="w-full min-w-[720px] text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-white/45">
+                    <th className="px-4 py-2.5 whitespace-nowrap">處理時間</th>
+                    <th className="px-4 py-2.5 whitespace-nowrap">結果</th>
+                    <th className="px-4 py-2.5">哪一筆</th>
+                    <th className="px-4 py-2.5">改了什麼</th>
+                    <th className="px-4 py-2.5 whitespace-nowrap">掛了多久</th>
+                    <th className="px-4 py-2.5 whitespace-nowrap">誰</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {logs.map((g) => {
+                    const tone = RESOLUTION_LABEL[g.resolution] ?? RESOLUTION_LABEL.resolved;
+                    const days = Math.max(0, Math.round(
+                      (new Date(g.closed_at).getTime() - new Date(g.opened_at).getTime()) / 86400000));
+                    return (
+                      <tr key={g.id} className="border-b border-mor-line/40 last:border-0">
+                        <td className="px-4 py-2 text-xs text-gray-500 whitespace-nowrap">{twTime(g.closed_at)}</td>
+                        <td className="px-4 py-2 whitespace-nowrap">
+                          <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${tone.tone}`}>
+                            {tone.text}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2 whitespace-nowrap">
+                          <span className="font-medium">{g.field}</span>
+                          <span className="text-gray-400 font-mono text-[11px] ml-1.5">{g.code}</span>
+                        </td>
+                        <td className="px-4 py-2 text-xs">
+                          <span className="text-gray-500">{g.from_val ?? '—'}</span>
+                          <span className="text-gray-400 mx-1">→</span>
+                          <span className="font-medium">{g.to_val ?? '—'}</span>
+                        </td>
+                        {/* 掛了兩週才處理的,那不是「處理了」,是被忽略了很久 */}
+                        <td className="px-4 py-2 text-xs text-gray-400 whitespace-nowrap">
+                          {days === 0 ? '當天' : `${days} 天`}
+                        </td>
+                        <td className="px-4 py-2 text-xs text-gray-500 whitespace-nowrap">
+                          {g.acted_by ? (nameOfUser[g.acted_by] ?? '—') : '系統'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
         </div>
