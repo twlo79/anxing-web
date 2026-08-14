@@ -3,13 +3,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { monthGrid, shiftMonth, twToday } from '@/lib/attendance-ui';
 import { byDate, groupByStaff, entryText, dayTotal, type WorkItem } from '@/lib/hk-calendar';
-import { CARD, type TabProps } from './types';
+import { CARD } from '../attendance/types';
 
 /**
  * 房務行事曆：每天哪些房源要清、誰負責。
  *
  * 【唯讀】
- * 要改排班仍然到「房務管理」。兩套編輯介面的話，之後改規則
+ * 要改排班到隔壁的「排班統計」分頁。兩套編輯介面的話，之後改規則
  * （例如「同一天同一間不能排兩次」）要改兩邊，而漏掉的那一邊不會報錯。
  *
  * 【全公司都看得到全部】（使用者指定）
@@ -33,7 +33,11 @@ const TONE = [
   'bg-teal-50 text-teal-700',
 ];
 
-export default function HkCalendarTab({ onMsg }: TabProps) {
+/**
+ * 只吃 onMsg —— 這個分頁是唯讀的，不需要知道你是誰。
+ * 原本收整包 TabProps 是因為它住在出勤頁，跟其他分頁共用同一組 props。
+ */
+export default function CalendarTab({ onMsg }: { onMsg: (t: string, err?: boolean) => void }) {
   const supabase = useMemo(() => createClient(), []);
   const now = new Date();
   const [[y, m], setYm] = useState<[number, number]>([now.getFullYear(), now.getMonth() + 1]);

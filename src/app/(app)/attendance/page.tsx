@@ -5,16 +5,18 @@ import PunchTab from './punch-tab';
 import ApplyTab from './apply-tab';
 import ApproveTab from './approve-tab';
 import CalendarTab from './calendar-tab';
-import HkCalendarTab from './hk-calendar-tab';
 import AdminTab from './admin-tab';
 import type { Role, TabProps } from './types';
 
 /**
- * 出勤：打卡 · 申請 · 核可 · 行事曆 · 公告 · 管理
+ * 出勤：打卡 · 申請 · 核可 · 出勤日曆（含公告）· 管理
  *
- * 【為什麼全部擠在一頁，不是六個側欄項目】
+ * 【為什麼全部擠在一頁，不是五個側欄項目】
  * 側欄已經 13 個項目。每多一項，真正每天要用的功能就被往下擠一格。
- * 這六塊都屬於「出勤」這件事，放一起找得到。
+ * 這幾塊都屬於「出勤」這件事，放一起找得到。
+ *
+ * 反過來說：**不屬於出勤的就不該放進來**。房務行事曆一度在這裡，
+ * 但它講的是「哪一間房要清」而不是「誰幾點上班」—— 2026-08-14 搬去房務管理。
  *
  * 【核可與管理對員工完全不渲染】
  * 不是灰掉 —— 灰掉的按鈕會讓人一直去點，然後問「為什麼我不能用」。
@@ -31,11 +33,17 @@ import type { Role, TabProps } from './types';
  */
 const TAB_LABEL = {
   punch: '打卡', apply: '申請', approve: '核可',
-  calendar: '出勤日曆', hk: '房務行事曆', admin: '管理',
+  calendar: '出勤日曆', admin: '管理',
 } as const;
 type TabKey = keyof typeof TAB_LABEL;
-// 房務行事曆全員可見（migration_110 的唯讀政策）—— 排班是要互相配合的資訊
-const STAFF_TABS: TabKey[] = ['punch', 'apply', 'calendar', 'hk'];
+/*
+ * 房務行事曆搬到「房務管理」了（2026-08-14）。
+ *
+ * 它原本掛在這裡，但它跟出勤沒有關係 —— 出勤講的是員工幾點上下班，
+ * 行事曆講的是哪一間房什麼時候要清。放錯地方的代價是找不到：
+ * 要看排班的人會先點「房務管理」。
+ */
+const STAFF_TABS: TabKey[] = ['punch', 'apply', 'calendar'];
 const ALL_TABS = Object.keys(TAB_LABEL) as TabKey[];
 
 export default function AttendancePage() {
@@ -157,7 +165,6 @@ export default function AttendancePage() {
       {cur === 'apply' && <ApplyTab {...props} prefill={fix} />}
       {cur === 'approve' && isAdmin && <ApproveTab {...props} />}
       {cur === 'calendar' && <CalendarTab {...props} />}
-      {cur === 'hk' && <HkCalendarTab {...props} />}
       {cur === 'admin' && isAdmin && <AdminTab {...props} />}
     </div>
   );

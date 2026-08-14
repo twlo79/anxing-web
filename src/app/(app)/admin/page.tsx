@@ -175,7 +175,8 @@ const ISSUE_ADVICE: Record<string, string> = {
   房源名稱查不到: '通常是多間房源在 Airbnb 用了同一個標題（開封 2F/3F/4F 就是）。要靠訂單反查,或手動指定。',
   房客姓名: 'Airbnb 顯示名跟我們登記的正式姓名不同。多半不用處理 —— 除非你發現是對到錯的人。',
   住宿起訖: 'Airbnb 上的日期改了,系統**沒有**跟著改。這一條建議別放太久 —— '
-    + '日期會改變營收攤提的月份,而且行事曆沒更新可能會重複出租。訂單頁的「👀防呆」抓得到期間重疊。',
+    + '日期會改變營收攤提的月份,而且行事曆沒更新可能會重複出租。訂單頁的「👀防呆」抓得到期間重疊。'
+    + '按 ✓ 會**連金額一起**同步成 Airbnb 目前的值 —— 延住不可能只改日期不改錢。',
   待人工判斷: 'Airbnb 顯示已取消且無收入,但系統裡標記為已收款。錢真的進來過就不能自動歸零 —— 要你判斷。',
   '在 Airbnb 找不到': '系統裡有這筆訂單,但爬蟲在掃描範圍內沒有再看到它。'
     + '可能是退款結案、被 Airbnb 移除,或訂單編號改了 —— 要確認這筆錢還算不算數。'
@@ -341,14 +342,25 @@ export default function AdminPage() {
    * 一致，寫在兩個地方遲早會不一樣。而且 RPC 會一併寫進處理紀錄。
    */
   const applyIssue = useCallback(async (it: SyncIssue) => {
+    /*
+     * 套用日期時金額也會一起更新 —— 延住 2 晚不可能只改日期不改錢。
+     * 這件事一定要在按下去之前講，不然他會以為只動了日期，
+     * 而金額被改掉是他沒預期的。
+     */
+    const alsoAmount = it.field === '住宿起訖';
     if (!confirm(`把「${it.field}」改成 ${it.to_val}？\n\n訂單 ${it.code}\n\n`
+      + (alsoAmount ? '⚠ 金額也會一起同步成 Airbnb 目前的金額。\n\n' : '')
       + '這會直接寫進訂單，並記進編輯紀錄。')) return;
     const { data, error } = await supabase.rpc('apply_sync_issue',
       { p_kind: it.kind, p_code: it.code, p_field: it.field });
-    const res = data as { ok?: boolean; message?: string } | null;
+    const res = data as { ok?: boolean; message?: string; amount?: number | null } | null;
     if (error) return flash('套用失敗:' + error.message);
     if (!res?.ok) return flash('套用失敗:' + (res?.message ?? '未知原因'));
-    flash('已套用'); loadSync();
+    // 金額被一起改掉的話要講出來 —— 靜靜改掉營收數字是這個專案最貴的一種錯
+    flash(alsoAmount && res.amount
+      ? `已套用，金額一併改成 $${Math.round(res.amount).toLocaleString('en-US')}`
+      : '已套用');
+    loadSync();
   }, [supabase, loadSync]);
 
   /** 忽略一條建議。數字再變的話它會自己回來 —— 見 migration_118 */

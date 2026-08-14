@@ -41,7 +41,10 @@ const NAV: { href: string; label: string; icon: string; roles: string[] }[] = [
   { href: '/deposits', label: '押金管理', icon: '🔐', roles: ['accountant', 'manager', 'super_admin'] },
   { href: '/expenses', label: '支出明細', icon: '📒', roles: ['accountant', 'manager', 'super_admin'] },
   { href: '/dashboard', label: '財務儀錶板', icon: '📊', roles: ['accountant', 'manager', 'super_admin'] },
-  { href: '/housekeeping', label: '房務管理', icon: '🧺', roles: ['manager', 'super_admin'] },
+  // 全員都進得來 —— 但一般員工只看得到「行事曆」分頁（頁面內再分流）。
+  // 排班是要互相配合的資訊:今天誰在哪一棟、誰可以幫忙、誰休假。
+  // 資料庫那邊對應 migration_110 的唯讀政策,寫入仍然只有主管以上。
+  { href: '/housekeeping', label: '房務管理', icon: '🧺', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   // 客戶管理跟房務、評價、清潔是同一組:都是「人在現場會用到的」。
   // 上面那半段是錢(訂單、契約、營收、請款、押金、支出、儀表板)。
   // 客戶資料原本散在訂單 guest_name 與契約 tenant_name 兩邊,
