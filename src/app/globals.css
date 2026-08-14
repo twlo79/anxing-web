@@ -303,3 +303,43 @@
   /* 表格列的分隔線壓淡：Apple 的清單靠留白分隔，不靠線 */
   table tbody tr { border-color: rgb(224 221 213 / 0.55); }
 }
+
+/*
+ * ============================================================
+ * 捲軸：拿掉上下箭頭，改成細的懸浮式（2026-08-14 使用者指定）
+ *
+ * Windows 的預設捲軸在畫面右邊是一條灰色的槽，上下各一顆箭頭按鈕。
+ * 那條槽是**永遠亮著的介面元件**，而它跟這個網站的其他東西
+ * 沒有一處長得像 —— 每一頁的右邊都被它切掉一塊。
+ *
+ * 【為什麼不是整個隱藏】
+ * 完全藏起來的話，用滑鼠（不是滾輪）的人就沒有東西可以拖，
+ * 而且看不出「下面還有內容」。所以是**變細、拿掉箭頭、平常淡到看不見、
+ * 滑過去才變深**，不是消失。
+ *
+ * 兩套語法都要寫：Firefox 只認 scrollbar-width / scrollbar-color，
+ * Chrome 與 Safari 只認 ::-webkit-scrollbar。少寫一套就會有一邊沒生效，
+ * 而那一邊看起來完全正常（只是還是舊捲軸），不會有人回報。
+ * ============================================================
+ */
+* {
+  scrollbar-width: thin;                       /* Firefox：細版,本來就沒有箭頭 */
+  scrollbar-color: rgb(0 0 0 / 0.18) transparent;
+}
+
+/* Chrome / Edge / Safari */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgb(0 0 0 / 0.15);
+  border-radius: 999px;
+  /* 內縮一點,滑塊不會貼著邊 */
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background: rgb(0 0 0 / 0.3); background-clip: content-box; }
+/* 上下箭頭按鈕。display:none 才會連空間都不留 —— 只設 background 的話
+   那兩格還在,只是變成空白的方塊 */
+::-webkit-scrollbar-button { display: none; }
+/* 兩條捲軸交會的那個小方塊 */
+::-webkit-scrollbar-corner { background: transparent; }

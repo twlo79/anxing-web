@@ -34,6 +34,18 @@ const NAV: { href: string; label: string; icon: string; roles: string[] }[] = [
   // 出勤排第一：全公司每天最少點兩次,而且是「上班第一件事」。
   // 它原本排在清潔記錄後面 —— 每天要用的東西不該讓人往下找。
   { href: '/attendance', label: '出勤', icon: '🕐', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  /*
+   * 房務管理緊接在出勤後面（2026-08-14 使用者指定）。
+   *
+   * 這兩個是「人在現場」的兩件事:出勤講員工幾點上下班,
+   * 房務講今天哪間房要清、誰去清。中間隔著訂單、營收、請款那一整段錢的東西,
+   * 每天要看排班的人得從頭滑到中間。
+   *
+   * 全員都進得來 —— 但一般員工只看得到「行事曆」分頁（頁面內再分流）。
+   * 排班是要互相配合的資訊。資料庫對應 migration_110 的唯讀政策,
+   * 寫入仍然只有主管以上。
+   */
+  { href: '/housekeeping', label: '房務管理', icon: '🧺', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/shortterm', label: '訂單 | 收入', icon: '🛏️', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/contracts', label: '契約 | 收入', icon: '📋', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/revenues', label: '營收表', icon: '💰', roles: ['accountant', 'manager', 'super_admin'] },
@@ -41,10 +53,6 @@ const NAV: { href: string; label: string; icon: string; roles: string[] }[] = [
   { href: '/deposits', label: '押金管理', icon: '🔐', roles: ['accountant', 'manager', 'super_admin'] },
   { href: '/expenses', label: '支出明細', icon: '📒', roles: ['accountant', 'manager', 'super_admin'] },
   { href: '/dashboard', label: '財務儀錶板', icon: '📊', roles: ['accountant', 'manager', 'super_admin'] },
-  // 全員都進得來 —— 但一般員工只看得到「行事曆」分頁（頁面內再分流）。
-  // 排班是要互相配合的資訊:今天誰在哪一棟、誰可以幫忙、誰休假。
-  // 資料庫那邊對應 migration_110 的唯讀政策,寫入仍然只有主管以上。
-  { href: '/housekeeping', label: '房務管理', icon: '🧺', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   // 客戶管理跟房務、評價、清潔是同一組:都是「人在現場會用到的」。
   // 上面那半段是錢(訂單、契約、營收、請款、押金、支出、儀表板)。
   // 客戶資料原本散在訂單 guest_name 與契約 tenant_name 兩邊,

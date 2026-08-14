@@ -84,7 +84,7 @@ export default function HousekeepingPage() {
   }, [msg]);
 
   return (
-    <div className="p-4 md:p-6 max-w-[1400px] mx-auto">
+    <div className="p-4 md:p-6">
       <h1 className="text-xl md:text-2xl font-semibold mb-3">房務管理</h1>
 
       {/* 只有一個分頁時整條不畫 —— 一個孤零零的分頁看起來像壞掉 */}
@@ -119,7 +119,7 @@ export default function HousekeepingPage() {
       {/* canEdit 還沒載到之前 tab 不可能是 stats，載到之後若被降權也會退回行事曆 */}
       {tab === 'stats' && canEdit
         ? <StatsTab />
-        : <CalendarTab onMsg={(t, err) => setMsg({ t, err })} />}
+        : <CalendarTab onMsg={(t, err) => setMsg({ t, err })} canEdit={canEdit} />}
     </div>
   );
 }
