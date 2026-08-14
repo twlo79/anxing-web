@@ -48,6 +48,8 @@ type Dep = {
   payee_bank_code?: string | null; payee_name?: string | null; payee_account?: string | null;
   planned_refund_on?: string | null;
   manager_approved_at?: string | null; admin_approved_at?: string | null;
+  /** 送審退款的人。分享訊息與請款頁的「請款者」欄位都用這一個。 */
+  refund_requested_by?: string | null;
   reject_reason?: string | null;
 };
 type Estate = { id: string; name: string };
@@ -112,6 +114,7 @@ export default function DepositsPage() {
   const [edit, setEdit] = useState<Dep | null>(null);
   const [saving, setSaving] = useState(false);
   const [me, setMe] = useState<{ id: string; role: string } | null>(null);
+  const [people, setPeople] = useState<{ id: string; name: string | null }[]>([]);
   const [rejecting, setRejecting] = useState<Dep | null>(null);
   const [rejectReason, setRejectReason] = useState('');
 
@@ -156,6 +159,11 @@ export default function DepositsPage() {
       .then(({ data }) => setEstates(data ?? []));
     supabase.from('payment_accounts').select('code, name, method').eq('active', true).order('sort')
       .then(({ data }) => setPayAccounts(data ?? []));
+    // 分享訊息裡要寫「請款者」—— 資料庫存的是 uuid,要換成名字。
+    // 請款頁的「請款者」欄位用的是同一個人,兩邊不一致的話收到訊息的人
+    // 會以為訊息講的是另一筆
+    supabase.from('profiles').select('id, name')
+      .then(({ data }) => setPeople(data ?? []));
     (async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
@@ -166,6 +174,12 @@ export default function DepositsPage() {
 
   const estateName = useMemo(() => Object.fromEntries(estates.map((e) => [e.id, e.name])), [estates]);
   const acctName = useMemo(() => Object.fromEntries(payAccounts.map((a) => [a.code, a.name])), [payAccounts]);
+  const personName = useMemo(
+    () => Object.fromEntries(people.map((p) => [p.id, p.name ?? ''])), [people]);
+  /** 分享時一併帶上送審的人 —— 兩個呼叫點都走這裡,不會有一邊漏帶 */
+  const shareDep = useCallback((d: Dep) => shareDeposit(
+    d, d.refund_requested_by ? personName[d.refund_requested_by] : undefined,
+  ), [personName]);
   const rooms = useMemo(
     () => Array.from(new Set(rows.map((r) => r.room).filter(Boolean) as string[])).sort(),
     [rows]);
@@ -791,7 +805,7 @@ export default function DepositsPage() {
                   <button onClick={() => setDetail(r)} className="text-xs text-mor-slate underline hover:text-mor-blue">檢視</button>
                   {/* 只有進了退款流程的才給分享 —— 還沒送審的單分享出去,對方點進待核可也看不到 */}
                   {(r.refund_status === 'pending' || r.refund_status === 'approved') && !r.returned_on && (
-                    <button onClick={(e) => { e.stopPropagation(); shareDeposit(r); }}
+                    <button onClick={(e) => { e.stopPropagation(); shareDep(r); }}
                       className="text-xs text-mor-slate underline hover:text-mor-blue">分享</button>
                   )}
                 </td>
@@ -885,7 +899,7 @@ export default function DepositsPage() {
                       分享的連結指向請款頁的待核可分頁,不是這一頁 ——
                       核可統一在那裡做,主管點進去就能直接投票,不用自己找那一筆。
                     */}
-                    <button onClick={() => shareDeposit(d)}
+                    <button onClick={() => shareDep(d)}
                       className={`${btn} border border-mor-line`}>↗ 分享</button>
                     {(p.canVoteMgr || p.canVoteAdm) && (
                       <button onClick={() => vote(d)} className={`${btn} bg-mor-green text-white`}>核可退款</button>

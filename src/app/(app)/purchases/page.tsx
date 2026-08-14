@@ -8,7 +8,7 @@ import { createClient } from '@/lib/supabase';
 import { fetchAll } from '@/lib/fetch-all';
 import Receipts, { type ReceiptsHandle } from '@/components/Receipts';
 import RefundFields, { METHOD_LABEL as DEP_METHOD } from '@/components/RefundFields';
-import { shareDeposit } from '@/lib/share';
+import { shareDeposit, shareRequest } from '@/lib/share';
 import { softDelete } from '@/lib/trash';
 import TrashLink from '@/components/TrashLink';
 
@@ -384,8 +384,8 @@ export default function PurchasesPage() {
    * 是先把兩種單攤平成同一個形狀(Pend),再只寫一份畫面。
    *
    * 【欄位怎麼對應】
-   *   who    請款=申請人      押金=房客
-   *   what   請款=項目名稱     押金=房源・房客收款帳號
+   *   who    兩種都是**送出這張單的人**（請款=申請人，押金=送審退款的人）
+   *   what   請款=項目名稱     押金=房源・物業・房客
    *   meta   請款=送出日・支付方式・項目數   押金=預計匯款日
    *   since  排序用的「等多久了」
    */
@@ -442,8 +442,11 @@ export default function PurchasesPage() {
       out.push({
         kind: 'dep', id: d.id,
         stage: d.refund_status === 'approved' ? 'approved' : 'pending',
-        who: d.guest_name ?? '—',
-        what: [d.room, d.estate_id ? estateName[d.estate_id] : ''].filter(Boolean).join('・') || '—',
+        // 送審的人,跟請款單的「申請人」是同一個意思。
+        // 房客改放到 what —— 他是錢要退去的人,不是請款者
+        who: (d.refund_requested_by ? personName[d.refund_requested_by] : '') || '—',
+        what: [d.room, d.estate_id ? estateName[d.estate_id] : '', d.guest_name]
+          .filter(Boolean).join('・') || '—',
         meta: [
           d.returned_on
             ? `${d.returned_on.slice(5).replace('-', '/')} 已退款`
@@ -820,7 +823,8 @@ export default function PurchasesPage() {
    * id 是 uuid,看起來不好看,但押金本來就沒有對外的編號可用,
    * 硬編一組出來只是為了好看,反而多一個要維護的東西。
    */
-  const shareDep = (d: Dep) => shareDeposit(d);
+  const shareDep = (d: Dep) =>
+    shareDeposit(d, d.refund_requested_by ? personName[d.refund_requested_by] : undefined);
 
   async function doSetDate() {
     if (!dating) return;
@@ -1048,27 +1052,11 @@ export default function PurchasesPage() {
    * 只給網址的話對方還要自己找,單號一多就找不到。
    */
   function shareReq(r: Req) {
-    const items = (r.purchase_request_items ?? []).map((i) => i.item_name).filter(Boolean).join('、');
-    const url = `${typeof window !== 'undefined' ? window.location.origin : ''}/purchases?req=${encodeURIComponent(r.req_no)}`;
-    const text = [
-      r.status === 'pending' ? '🧾 請款單待核可' : '🧾 請款單',
-      '',
-      r.req_no,
-      `NT$ ${fmt(r.total_amount)}`,
-      '',
-      `申請人　${personName[r.requester_id] ?? '—'}`,
-      `項目　　${items || '—'}`,
-      `支出方式　${r.payment_method ? PAY_LABEL[r.payment_method] ?? r.payment_method : '—'}`,
-      '',
-      '前往核可',
-      url,
-    ].join('\n');
-
-    if (typeof navigator !== 'undefined' && navigator.share) {
-      navigator.share({ title: '請款單 ' + r.req_no, text }).catch(() => {});
-      return;
-    }
-    window.open('https://line.me/R/msg/text/?' + encodeURIComponent(text), '_blank', 'noopener');
+    shareRequest(r, {
+      requester: personName[r.requester_id],
+      items: (r.purchase_request_items ?? []).map((i) => i.item_name).filter(Boolean).join('、'),
+      payment: r.payment_method ? PAY_LABEL[r.payment_method] ?? r.payment_method : '',
+    });
   }
 
   const card = (title: string, list: Req[], hint: string, onClick: () => void) => (
@@ -1222,7 +1210,13 @@ export default function PurchasesPage() {
                 <thead>
                   <tr className="border-b border-mor-line bg-white/45 text-left">
                     <th className="px-3 py-2.5">類型</th>
-                    <th className="px-3 py-2.5">對象</th>
+                    {/*
+                      「請款者」而不是「對象」—— 這一欄兩種單放的是同一件事：
+                      **是誰把這張單送出來的**。改版前押金放的是房客姓名，
+                      而房客不是請款者，他是錢要退去的人 ——
+                      同一欄兩種意思，看的人得先分辨這列是哪一種單才讀得懂。
+                    */}
+                    <th className="px-3 py-2.5">請款者</th>
                     <th className="px-3 py-2.5">內容</th>
                     <th className="px-3 py-2.5 text-right">金額</th>
                     <th className="px-3 py-2.5">核可進度</th>
