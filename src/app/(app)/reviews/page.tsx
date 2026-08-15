@@ -22,7 +22,14 @@ type Review = {
   rating_communication: number | null; rating_location: number | null; rating_value: number | null;
   detail_comments: any; host_reply: string | null; source_url: string | null;
 };
-type Stat = { estate_id: string; estate_name: string; manager: string | null; sort: number; review_count: number; avg_rating: number };
+/**
+ * `active` 是 migration_130 加的。
+ *
+ * 統計現在**含停用物業** —— 那些住宿真的發生過，停用只表示
+ * 「現在不管這棟了」，不該回頭改寫歷史。但畫面要標出來，
+ * 不然排行榜上突然多兩棟已經不做的，看起來像資料錯了。
+ */
+type Stat = { estate_id: string; estate_name: string; manager: string | null; sort: number; review_count: number; avg_rating: number; active?: boolean };
 type MgrStat = { manager: string; avg_rating: number; s5: number; s4: number; s3: number; s2: number; s1: number; total: number };
 
 const PAGE_SIZE = 50;
@@ -362,6 +369,7 @@ export default function ReviewsPage() {
           {/* 總覽 + 星等分布 */}
           <div onClick={() => drillTo('')} title="點擊查看全部評價" className="rounded-xl bg-mor-slate text-white p-5 flex flex-col cursor-pointer hover:bg-mor-slatedark transition-colors">
             <div className="flex items-center justify-between">
+              {/* 「所有」現在是名副其實的 —— migration_130 之前它其實不含停用物業 */}
               <span className="text-xs opacity-75">所有平均評價</span>
               <span className="text-xs opacity-75">{overall.cnt.toLocaleString()} 筆</span>
             </div>
@@ -393,7 +401,10 @@ export default function ReviewsPage() {
                 return (
                   <div key={x.estate_id} onClick={() => setListModal({ title: `物業「${x.estate_name}」的評價`, propIds: properties.filter((pp) => pp.estate_id === x.estate_id).map((pp) => pp.id), rating: null })} title="點擊查看該物業評價"
                     className="px-4 py-2 flex items-center gap-3 text-sm border-b border-mor-line/50 last:border-0 cursor-pointer hover:bg-mor-bluelight/50">
-                    <span className="w-14 truncate font-medium">{x.estate_name}</span>
+                    <span className={`w-14 truncate font-medium ${x.active === false ? 'text-gray-400' : ''}`}
+                      title={x.active === false ? `${x.estate_name}（已停用）` : x.estate_name}>
+                      {x.estate_name}
+                    </span>
                     <div className="flex-1 h-1.5 rounded-full bg-mor-sand overflow-hidden">
                       <div className="h-full bg-mor-blue" style={{ width: `${(Number(x.review_count) / max) * 100}%` }} />
                     </div>
