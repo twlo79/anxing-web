@@ -343,3 +343,25 @@
 ::-webkit-scrollbar-button { display: none; }
 /* 兩條捲軸交會的那個小方塊 */
 ::-webkit-scrollbar-corner { background: transparent; }
+
+/*
+ * 瀏覽器自動填入的黃底。
+ *
+ * Chrome 會把填進去的欄位塗成鮮黃色 —— 那是「這格是自動填的」的提示，
+ * 但在登入頁上它蓋掉整張卡片的配色，看起來像壞掉。
+ *
+ * background-color 對 autofill 無效（Chrome 用內部樣式蓋掉），
+ * 只有超長的 inset box-shadow 有用 —— 這是十年來唯一可行的作法，
+ * 不是隨手寫的 hack。文字顏色要另外用 -webkit-text-fill-color。
+ *
+ * 保留一點點淡藍底：完全拿掉的話，使用者看不出這格是自動填的，
+ * 而那個提示本身是有價值的（尤其共用電腦）。
+ */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 1000px #f2f7fb inset;
+  -webkit-text-fill-color: #2e3840;
+  caret-color: #2e3840;
+  transition: background-color 9999s ease-in-out 0s;
+}

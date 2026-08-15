@@ -81,7 +81,16 @@ $staged | ForEach-Object { Write-Host "      $_" }
 # migration 是手動貼進 Supabase SQL Editor 跑的，CI 不會碰它。
 # 程式推上去了、SQL 沒跑，症狀是線上噴「column does not exist」——
 # 而且是等有人點到那個頁面才發現。所以這裡把清單印出來擋一下。
-$newMigrations = $staged | Where-Object { $_ -like "supabase/migrations/*.sql" }
+# 只算「新增」的那些（狀態 A）。
+#
+# 用 --name-only 的話，搬走或刪掉的舊 migration 也會被算進來 ——
+# 封存一次 70 支就會跳出「這次帶了 70 支 migration」，
+# 而那個數字一旦不可信，下次真的有 3 支要跑的時候也不會有人細看。
+$newMigrations = @()
+foreach ($line in (git diff --cached --name-status --diff-filter=A)) {
+    $path = ($line -split "`t")[-1]
+    if ($path -like "supabase/migrations/*.sql") { $newMigrations += $path }
+}
 if ($newMigrations) {
     Write-Host ""
     Write-Host "  這次帶了 $($newMigrations.Count) 支 migration，CI 不會執行：" -ForegroundColor Yellow

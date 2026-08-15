@@ -24,7 +24,7 @@ export const ltPrefix = (room: string) => `LT_${room}_`;
  * 而全部改用契約 id 要改寫已經收過錢的訂單鍵 —— paid / paid_at / 發票都掛在上面,
  * 搬遷寫錯就是收款紀錄對不上。所以只讓新的情況走 id,舊的維持原樣。
  *
- * 跟 supabase/migrations/migration_77 裡的 kbase 必須完全一致,
+ * 跟 archive/migrations-30-99/migration_77 裡的 kbase 必須完全一致,
  * 兩邊算出不同的鍵就會產生重複的月租單。
  */
 export function keyBase(c: { id?: string | null; room?: string | null }): string {

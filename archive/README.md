@@ -39,6 +39,30 @@ routes/  contracts-general/  contracts-seed/  shortterm-seed/  snapshots/
 
 ---
 
+## `migrations-30-99/` — 已經跑完、不再需要翻的 migration
+
+71 支，2026-08-15 從 `supabase/migrations/` 搬過來。線上全部跑過了（`select * from schema_migrations`），**不要再跑一次**。
+
+**為什麼搬走**
+
+`supabase/migrations/` 累積到 100 個檔案。那個目錄的用途是「這一輪要貼進 SQL Editor 的東西」——100 個檔案裡有 97 個已經跑過，真正要找的那 3 個埋在中間。
+
+`migration_100` 之後的留在原處：那些是還在演進中的（房務、爬蟲同步、通知），改東西時常常要回頭看上一支怎麼寫的。
+
+**為什麼不合併成一支**
+
+直覺是「跑過的都合併成一個 baseline」。不能這樣做：
+
+* `schema_migrations` 記的是**檔名**。合併之後那些名字對不上任何檔案，而「線上跑到哪了」這個查詢就再也回答不了。
+* migration 的價值不只是「建了什麼」，是**「為什麼這樣建」**。`migration_112` 講的是「同一批訂單被匯入兩次」，`migration_117` 講的是「203 筆誤報怎麼來的」。合併成 DDL 之後那些全部消失，而那正是半年後最需要的資訊。
+* 要「現在的樣子」的話，`supabase/schema-baseline.sql` 就是快照 —— 那才是查定義該去的地方。
+
+**要找某一支的時候**
+
+主 README 的〈Migration 索引〉一行一支寫著它做了什麼，看完再決定要不要來這裡開檔案。
+
+---
+
 ## `migrations-pre-30/` — 版控之前的 migration
 
 ```

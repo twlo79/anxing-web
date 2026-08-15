@@ -17,3 +17,16 @@ Thumbs.db
 
 # Supabase CLI 的本機快取(含 project ref、pooler url),不是專案的一部分
 supabase/.temp/
+
+# 公司財務檔。不是程式的一部分,而且進了版控就永遠留在歷史裡 ——
+# 之後再刪也刪不掉,任何拿得到 repo 的人都翻得出來
+*.xlsx
+
+# TimeTree 抓下來的排班原始資料。
+#
+# 檔名看起來無害,內容是**員工姓名 ＋ 房客姓名**(「退-A2-Martin Kossa」)。
+# 那是個資,不該躺在程式碼倉庫裡跟著每一次 clone 複製出去。
+#
+# 抓取腳本本身留著(sync-housekeeping.ps1)—— 那是程式,要版控。
+timetree-sync/*.json
+timetree-sync/*.txt
