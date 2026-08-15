@@ -1,6 +1,7 @@
 'use client';
 import { Suspense, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import NewsTab from './news-tab';
 import NotifyTab from './notify-tab';
 import TrashTab from './trash-tab';
 
@@ -18,10 +19,19 @@ import TrashTab from './trash-tab';
  * `?tab=trash` 直接落在紀錄，`?table=orders` 再篩到訂單 ——
  * 各列表頁的 🗑️ 入口靠這個直接把人送到他要看的那一段，
  * 而不是丟到一個「全部」的清單前面讓他自己找。
+ *
+ * 【新訊息排第一】（2026-08-15 使用者指定）
+ *
+ * 分頁順序 = 使用頻率。「通知設定」是設一次就不動的東西，
+ * 「新訊息」是每天會來看的 —— 手機上滑掉的那則要回來這裡查。
+ *
+ * 原本的分頁叫「通知」，跟新訊息擺在一起會分不出誰是誰，
+ * 所以改名「通知設定」—— 它本來就只是四個開關。
  */
 
 const TABS = [
-  { key: 'notify', label: '通知', icon: '🔔' },
+  { key: 'news', label: '新訊息', icon: '📬' },
+  { key: 'notify', label: '通知設定', icon: '🔔' },
   { key: 'trash', label: '紀錄', icon: '🗑️' },
 ] as const;
 type TabKey = (typeof TABS)[number]['key'];
@@ -30,8 +40,14 @@ function SettingsInner() {
   const params = useSearchParams();
   // 網址指定的分頁只在第一次載入時採用 —— 之後使用者點分頁是他的選擇，
   // 不該因為網址沒變就被拉回去。
-  const [tab, setTab] = useState<TabKey>(
-    params.get('tab') === 'trash' ? 'trash' : 'notify');
+  /*
+   * 推播點開會帶 ?tab=news 進來 —— 那是這一頁存在的主要入口,
+   * 網址對不上的話,人點了通知會落在「通知設定」的四個開關前面。
+   */
+  const [tab, setTab] = useState<TabKey>(() => {
+    const t = params.get('tab');
+    return TABS.some((x) => x.key === t) ? (t as TabKey) : 'news';
+  });
   const [initialTable] = useState(params.get('table') ?? '');
 
   return (
@@ -51,7 +67,9 @@ function SettingsInner() {
         ))}
       </div>
 
-      {tab === 'notify' ? <NotifyTab /> : <TrashTab initialTable={initialTable} />}
+      {tab === 'news' ? <NewsTab />
+        : tab === 'notify' ? <NotifyTab />
+        : <TrashTab initialTable={initialTable} />}
     </div>
   );
 }

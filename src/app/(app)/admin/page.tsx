@@ -180,8 +180,11 @@ const SYNC_TIERS: { level: string; tone: string; fields: string; why: string }[]
 const ISSUE_ADVICE: Record<string, string> = {
   金額: 'Airbnb 算出來的（你賺得＋搭檔收款）跟系統不一樣。系統一律不自動改 —— '
     + '每一筆的原因寫在旁邊,確認過再手動改。標成「還在結算中」的可以先放著,那些數字之後可能還會再動。',
-  房源: '到「房源管理」把這個 listing_id 搬到正確的房源。搬完隔天這一列自己會消失。',
-  對不到房源: '這個 listing 在系統裡沒有對應的啟用房源,訂單根本沒進來。到「房源管理」補上對照。',
+  房源: '到「房源管理」把這個 listing_id 指到正確的房源。改完隔天這一列自己會消失。',
+  對不到房源: '這個編號沒有對應到任何啟用中的房源,訂單根本沒進來 —— 不是數字錯,是那筆錢在報表上不存在。'
+    + '到「房源管理」找到那間房,在 listing_id 欄底下按「＋ 加一個舊編號」把它加上去。'
+    + '房源在 Airbnb 上重新上架過就會換一個新編號,舊編號的訂單還是同一間房的 —— '
+    + '一間房可以掛好幾個編號,不用去動已經停用的舊房源。',
   房源名稱查不到: '通常是多間房源在 Airbnb 用了同一個標題（開封 2F/3F/4F 就是）。要靠訂單反查,或手動指定。',
   房客姓名: 'Airbnb 顯示名跟我們登記的正式姓名不同。多半不用處理 —— 除非你發現是對到錯的人。',
   住宿起訖: 'Airbnb 上的日期改了,系統**沒有**跟著改。這一條建議別放太久 —— '
@@ -232,6 +235,13 @@ export default function AdminPage() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [estates, setEstates] = useState<Estate[]>([]);
   const [properties, setProperties] = useState<Property[]>([]);
+  /*
+   * 一間房的所有 Airbnb 編號（migration_127）。
+   *
+   * 房源在 Airbnb 上被重建過就會換一個新編號,而舊編號的訂單
+   * 還是要落到同一間房 —— properties.airbnb_listing_id 只放得下一個。
+   */
+  const [listings, setListings] = useState<{ listing_id: string; property_id: string; is_current: boolean; note: string | null }[]>([]);
   const [payAccounts, setPayAccounts] = useState<PayAccount[]>([]);
   const [selEstate, setSelEstate] = useState<string>('');
   const [newPropName, setNewPropName] = useState('');
@@ -269,6 +279,8 @@ export default function AdminPage() {
     const { data: pr } = await supabase.from('properties')
       .select('id, name, estate_id, airbnb_listing_id, parent_property_id, beds, clean_points, active').order('name');
     const { data: pa } = await supabase.from('payment_accounts').select('*').order('sort').order('code');
+    const { data: pl } = await supabase.from('property_listings')
+      .select('listing_id, property_id, is_current, note').order('is_current', { ascending: false });
     // 任期表很小（一個物業幾段）,一次載完在前端算就好
     const { data: tn } = await supabase.from('estate_managers')
       .select('id, estate_id, staff_id, start_date, end_date')
@@ -276,6 +288,7 @@ export default function AdminPage() {
     setStaff(st ?? []);
     setProfiles(pf ?? []);
     setEstates(es ?? []);
+    setListings(pl ?? []);
     setProperties(pr ?? []);
     setPayAccounts(pa ?? []);
     setTenures((tn ?? []) as MgrTenure[]);
@@ -678,6 +691,76 @@ export default function AdminPage() {
     if (error) return flash('更新失敗:' + error.message);
     flash('已更新'); load();
   }
+  /**
+   * 把 listing_id 從原本的房源搬過來。
+   *
+   * 走 RPC 而不是前端做兩次 update —— 第一次成功、第二次失敗
+   * （RLS、網路斷）就是兩邊都空,而那時連提醒的那條建議都沒了。
+   */
+  async function moveListing(listing: string, toId: string) {
+    const { data, error } = await supabase.rpc('move_listing_id', {
+      p_listing: listing, p_to: toId,
+    });
+    if (error) return flash('搬移失敗:' + error.message);
+    const r = (data as { item: string; detail: string }[] | null)?.[0];
+    flash(r ? `${r.item}　${r.detail}` : '已搬移');
+    load();
+  }
+
+  /**
+   * 設 listing_id；撞到唯一索引就問要不要搬過來。
+   *
+   * 先試著直接寫 —— 絕大多數情況沒有人跟他搶,不該多一次確認。
+   * 撞到才問,而且問的時候已經知道是「有人拿著」,不是「格式錯」。
+   */
+  async function takeListing(id: string, propId: string, propName: string) {
+    const { error } = await supabase.from('properties')
+      .update({ airbnb_listing_id: id }).eq('id', propId);
+    if (!error) { flash('已更新'); load(); return; }
+
+    // 23505 = unique_violation。這個 listing_id 已經掛在別的房源上,
+    // 而那一列可能在回收桶裡,畫面上根本看不到
+    const dup = (error as { code?: string }).code === '23505'
+      || /duplicate key|unique constraint/i.test(error.message);
+    if (!dup) return flash('更新失敗:' + error.message);
+
+    if (!confirm('這個 listing_id 已經掛在另一個房源上（畫面上這份清單是載入當下的，'
+      + `可能已經不是最新的）。\n\n要搬到「${propName}」嗎？\n`
+      + '原本那個房源的對照會被清空，搬完會告訴你是從哪一間搬來的。')) { load(); return; }
+    moveListing(id, propId);
+  }
+
+  /** 幫某間房再掛一個舊編號。編號本身是唯一的 —— 已經指給別人就先問。 */
+  async function addListing(propId: string, propName: string) {
+    const v = prompt(`要幫「${propName}」加哪一個 Airbnb 編號？\n\n`
+      + '可以直接貼房源網址。舊編號一樣要加 —— 那些訂單還是這間房的。');
+    if (!v) return;
+    const id = (v.match(/\d{6,}/) ?? [])[0] ?? '';
+    if (!id) return flash('編號只能是數字,或直接貼房源網址');
+
+    const held = listings.find((l) => l.listing_id === id);
+    if (held && held.property_id !== propId) {
+      const who = properties.find((x) => x.id === held.property_id)?.name ?? '另一個房源';
+      if (!confirm(`這個編號現在指向「${who}」。要改成指向「${propName}」嗎？`)) return;
+    }
+    const { error } = await supabase.from('property_listings')
+      .upsert({ listing_id: id, property_id: propId }, { onConflict: 'listing_id' });
+    if (error) return flash('加不上去:' + error.message);
+    flash('已加上'); load();
+  }
+
+  async function removeListing(id: string, propName: string) {
+    /*
+     * 這是刪對照,不是刪房源 —— 但後果一樣要講清楚:
+     * 刪掉之後那個編號的訂單就對不到房源,而對不到的訂單整筆不會進系統。
+     */
+    if (!confirm(`拿掉「${propName}」的編號 ${id}？\n\n`
+      + '之後這個編號抓回來的訂單會對不到房源,整筆不會進系統。')) return;
+    const { error } = await supabase.from('property_listings').delete().eq('listing_id', id);
+    if (error) return flash('刪除失敗:' + error.message);
+    flash('已拿掉'); load();
+  }
+
   async function deleteProperty(id: string, name: string) {
     if (!confirm(`確定刪除房源「${name}」?(訂單/評價/清潔的房源文字仍保留)\n\n會移到回收桶,可以復原。`)) return;
     const r = await softDelete(supabase, 'properties', id);
@@ -1135,11 +1218,70 @@ export default function AdminPage() {
                           // 從 Airbnb 複製過來時常常連 https://... 一起帶
                           const id = (v.match(/\d{6,}/) ?? [])[0] ?? '';
                           if (v && !id) { ev.target.value = cur; return flash('listing_id 只能是數字,或直接貼房源網址'); }
-                          updateProperty(p.id, { airbnb_listing_id: id || null });
+                          /*
+                            這個 id 已經掛在別的房源上（多半是停用的「舊-XXX」）。
+
+                            airbnb_listing_id 是 UNIQUE,直接寫會噴 duplicate key。
+                            叫人「先去把舊的清掉再回來貼」是四個步驟,而那一列還是
+                            停用的、通常在清單最底下 —— 中間分心就變成兩邊都空,
+                            比原本更糟:原本至少還有一條同步建議在提醒。
+
+                            所以在這裡問一次,一支 RPC 一個交易搬完。
+                          */
+                          const holder = id ? properties.find((x) => x.id !== p.id && x.airbnb_listing_id === id) : null;
+                          if (holder) {
+                            ev.target.value = cur;
+                            if (!confirm(`這個 listing_id 現在掛在「${holder.name}」`
+                              + `${holder.active ? '' : '（已停用）'}。\n\n`
+                              + `要搬到「${p.name}」嗎？\n`
+                              + `「${holder.name}」的對照會被清空。`)) return;
+                            moveListing(id, p.id);
+                            return;
+                          }
+                          /*
+                            上面找不到持有者也不能就直接寫。
+
+                            前端這份清單是載入當下的快照 —— 別人剛剛填了同一個
+                            listing_id、或這頁開著沒重新整理,都會漏掉。
+                            而漏掉的下場是使用者看到一句
+                            「duplicate key value violates unique constraint」,
+                            那句話沒有告訴他任何一件他能做的事。
+
+                            所以撞到不當成失敗,問一次就搬過去。
+                            RPC 是 SECURITY DEFINER,不受這份清單的限制。
+                          */
                           ev.target.value = id;
+                          if (id) {
+                            takeListing(id, p.id, p.name);
+                            return;
+                          }
+                          updateProperty(p.id, { airbnb_listing_id: null });
                         }}
                         className={`rounded-lg border px-2 py-1 w-52 font-mono text-xs ${
                           p.airbnb_listing_id ? 'border-gray-300' : 'border-amber-300 bg-amber-50/50'}`} />
+                      {/*
+                        舊編號。房源在 Airbnb 上被重建過就會換一個新的，
+                        而那些舊編號的訂單還是這間房的 —— 上面那一格只放得下一個，
+                        所以多的掛在這裡（migration_127 的 property_listings）。
+                      */}
+                      {(() => {
+                        const mine = listings.filter((l) => l.property_id === p.id
+                          && l.listing_id !== p.airbnb_listing_id);
+                        return (
+                          <div className="mt-1 space-y-0.5">
+                            {mine.map((l) => (
+                              <div key={l.listing_id} className="flex items-center gap-1 text-[11px] text-gray-500">
+                                <span className="font-mono">{l.listing_id}</span>
+                                <span className="text-gray-400">舊</span>
+                                <button onClick={() => removeListing(l.listing_id, p.name)}
+                                  className="text-gray-300 hover:text-red-500">✕</button>
+                              </div>
+                            ))}
+                            <button onClick={() => addListing(p.id, p.name)}
+                              className="text-[11px] text-mor-blue underline">＋ 加一個舊編號</button>
+                          </div>
+                        );
+                      })()}
                     </td>
                     {/*
                       包含這個房源的上層。開封2-1 → 開封2F → 開封整棟。

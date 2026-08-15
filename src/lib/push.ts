@@ -28,6 +28,13 @@ export type PushPayload = {
    * 批次匯入尤其重要 —— 早上同步兩次就該只留最新那一則。
    */
   tag: string;
+  /**
+   * 種類。存底時要記（「新訊息」分頁靠它顯示圖示與分類）。
+   *
+   * 選填是為了不動既有呼叫端 —— 沒帶的話存底照存，
+   * 只是歸到 'orders'。少一個分類比少一則訊息好。
+   */
+  kind?: NotifyKind;
 };
 
 export type SendResult = { sent: number; removed: number; recipients: number; skipped?: string };
@@ -91,6 +98,32 @@ export async function sendToUsers(
 ): Promise<SendResult> {
   if (!userIds.length) return { sent: 0, removed: 0, recipients: 0, skipped: 'no recipients' };
 
+  /*
+   * 先存底，再推播。
+   *
+   * 【為什麼順序不能反】
+   * 推播是「錯過就沒了」—— 開會中、在開車、手機在充電、根本沒訂閱這台裝置。
+   * 存底正是為了那些情況，所以它**不能取決於推播成不成功**。
+   *
+   * 下面那行「沒有訂閱就提早 return」尤其危險:一個從來沒開過推播權限的人
+   * 會走到那裡就結束,而他才是最需要「新訊息」那一頁的人。
+   *
+   * 【為什麼吞掉錯誤】
+   * 跟 notifyImport 同一個道理:存底失敗不該讓推播也不發。
+   * 兩件事的價值各自獨立,一個掛了另一個還是要做。
+   */
+  try {
+    await admin.from('notifications').insert(userIds.map((id) => ({
+      user_id: id,
+      kind: payload.kind ?? 'orders',
+      title: payload.title,
+      body: payload.body,
+      url: payload.url,
+    })));
+  } catch (e) {
+    console.error('[push] 存底失敗（推播照發）:', (e as Error).message);
+  }
+
   const { data: subs } = await admin.from('push_subscriptions').select('*').in('user_id', userIds);
   if (!subs?.length) return { sent: 0, removed: 0, recipients: userIds.length, skipped: 'no subscriptions' };
 
@@ -135,7 +168,7 @@ export async function notifyImport(
     const ids = await filterByPref(admin, (data ?? []).map((p) => p.id), kind);
     // tag 帶日期：同一天重複同步會取代前一則，不會疊成一排
     return await sendToUsers(admin, ids, {
-      title, body, url, tag: `${kind}-${new Date().toISOString().slice(0, 10)}`,
+      title, body, url, kind, tag: `${kind}-${new Date().toISOString().slice(0, 10)}`,
     });
   } catch (e) {
     console.error('[push] notifyImport 失敗（匯入本身不受影響）:', (e as Error).message);

@@ -100,7 +100,32 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
    */
   const [pinned, setPinned] = useState(false);
   const [hover, setHover] = useState(false);
-  const expanded = pinned || hover;
+  /*
+   * 【按了收合卻沒收起來】（2026-08-14 回報）
+   *
+   * expanded = pinned || hover。按 ‹ 的時候滑鼠正好在側邊欄上面 ——
+   * pinned 變成 false，但 hover 還是 true，所以**畫面一動也沒動**。
+   *
+   * 使用者只知道「按了沒反應」，然後會再按一次（變回 pinned），
+   * 再按一次（又沒反應）—— 一顆按起來像壞掉的按鈕。
+   *
+   * 收起來的當下先把 hover 展開鎖住，滑鼠真的移開才解鎖。
+   * 之後滑過去照樣展開，那個行為沒有變。
+   */
+  /*
+   * 未讀通知數（migration_128）。
+   *
+   * 【為什麼要標在側邊欄上】
+   * 推播是「錯過就沒了」—— 手機鎖屏滑掉之後,那則訊息在 app 裡
+   * 沒有任何痕跡。打開 app 看不出有東西等著,等於存了也沒用。
+   *
+   * 數字掛在「設定」旁邊,因為新訊息就在那一頁底下。
+   * 收起來的側邊欄只剩 emoji,所以那時改成一個小圓點 ——
+   * 位置有限的時候「有沒有」比「幾則」重要。
+   */
+  const [unread, setUnread] = useState(0);
+  const [hoverLock, setHoverLock] = useState(false);
+  const expanded = pinned || (hover && !hoverLock);
 
   // 掛載後才讀 —— 伺服器算不出 localStorage,直接用會 hydration 不一致
   useEffect(() => {
@@ -110,6 +135,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     setPinned((v) => {
       const next = !v;
       try { localStorage.setItem('navPinned', next ? '1' : '0'); } catch {}
+      // 收起來時滑鼠一定還在側邊欄上（不然按不到那顆鈕）——
+      // 不鎖的話 hover 會立刻把它撐回去，看起來就是「按了沒反應」
+      if (!next) setHoverLock(true);
       return next;
     });
   }
@@ -122,6 +150,24 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       if (data) setProfile(data);
     });
   }, []);
+
+  /*
+   * 未讀數。切換頁面時重算 —— 使用者在新訊息頁標了已讀之後,
+   * 數字要跟著掉,不然那顆紅點會一直在,然後它就失去意義了。
+   *
+   * 只算七天內的,跟新訊息頁顯示的範圍一致。
+   * 兩邊不一致的話會出現「說有 3 則未讀,點進去只看到 1 則」。
+   */
+  useEffect(() => {
+    const supabase = createClient();
+    (async () => {
+      const since = new Date(Date.now() - 7 * 86400_000).toISOString();
+      const { count } = await supabase.from('notifications')
+        .select('id', { count: 'exact', head: true })
+        .is('read_at', null).gte('created_at', since);
+      setUnread(count ?? 0);
+    })();
+  }, [pathname]);
 
   // 換頁後把抽屜關掉,否則點完連結選單還蓋在畫面上
   useEffect(() => { setNavOpen(false); }, [pathname]);
@@ -164,6 +210,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               )}
               <span className="text-[19px] leading-none"
                 style={{ filter: on ? 'none' : 'saturate(0.55)' }}>{n.icon}</span>
+              {/* 收起來只有 56px —— 塞不下數字,而「有沒有」本來就比「幾則」重要 */}
+              {n.href === '/settings' && unread > 0 && (
+                <span aria-label={`${unread} 則未讀`}
+                  className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500" />
+              )}
             </Link>
           );
         }
@@ -189,6 +240,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               {n.icon}
             </span>
             {n.label}
+            {n.href === '/settings' && unread > 0 && (
+              <span className="ml-auto rounded-full bg-red-500 text-white text-[11px] font-semibold
+                               min-w-[18px] h-[18px] px-1 flex items-center justify-center tabular-nums">
+                {unread > 99 ? '99+' : unread}
+              </span>
+            )}
           </Link>
         );
       })}
@@ -245,7 +302,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                        ${pinned ? 'w-52' : 'w-14'}`} />
       <aside
         onMouseEnter={() => setHover(true)}
-        onMouseLeave={() => setHover(false)}
+        onMouseLeave={() => { setHover(false); setHoverLock(false); }}
         className={`hidden md:flex fixed inset-y-0 left-0 z-40 flex-col
                     bg-white/95 backdrop-blur-xl border-r border-mor-line
                     transition-[width] duration-200

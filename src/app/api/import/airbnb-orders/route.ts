@@ -2,7 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { notifyImport } from '@/lib/push';
 import {
-  dedupe, snapshotRowOf, snapshotChanges, findMissing,
+  dedupe, snapshotRowOf, snapshotChanges, findMissing, missVerdict, toMark,
   type Incoming, type Snapshot,
 } from '@/lib/airbnb-sync';
 import { runReconcile } from '@/lib/airbnb-reconcile';
@@ -117,23 +117,58 @@ export async function POST(req: Request) {
    * 沒給範圍就完全不做。不知道掃了哪裡就說某筆不見了，那不是偵測，是猜。
    */
   let missing: string[] = [];
+  /** 這一輪疑似沒抓完的說明。有值的時候一筆都不標記 */
+  let missSuspect = '';
   if (scope?.from && scope?.to && !dryRun) {
-    const inScope: Snapshot[] = [];
+    const inScope: (Snapshot & { miss_streak?: number | null })[] = [];
     const PAGE = 1000;
     for (let from = 0; ; from += PAGE) {
       const { data } = await supabase.from('airbnb_snapshots')
-        .select('code, start_date, last_seen, missing_since')
+        .select('code, start_date, last_seen, missing_since, miss_streak')
         .gte('start_date', scope.from).lte('start_date', scope.to)
         .order('code').range(from, from + PAGE - 1);
-      const got = (data ?? []) as Snapshot[];
+      const got = (data ?? []) as (Snapshot & { miss_streak?: number | null })[];
       inScope.push(...got);
       if (got.length < PAGE) break;
     }
-    missing = findMissing(inScope, scope, runStart).map((s) => s.code);
-    for (let i = 0; i < missing.length; i += 200) {
-      await supabase.from('airbnb_snapshots')
-        .update({ missing_since: runStart })
-        .in('code', missing.slice(i, i + 200));
+
+    const unseen = findMissing(inScope, scope, runStart).map((s) => s.code);
+
+    /*
+     * 【兩道防線】（2026-08-15）
+     *
+     * 一、一輪掉太多就整批不算 —— 46 筆同時消失的合理解釋永遠是
+     *     「這次沒抓完」，而不是「46 組客人同時退掉」。
+     * 二、連續兩輪沒看到才標記 —— 偶發的抓取不全撐不過第二輪。
+     *
+     * 判斷規則與測試在 lib/airbnb-sync.ts。
+     */
+    const verdict = missVerdict(inScope.length, unseen);
+    missSuspect = verdict.reason;
+
+    if (!verdict.suspect) {
+      const streak = new Map(inScope.map((s) => [s.code, s.miss_streak ?? 0]));
+      const seen = inScope.filter((s) => !unseen.includes(s.code) && (s.miss_streak ?? 0) > 0);
+
+      // 這一輪又沒看到的：累加
+      for (let i = 0; i < unseen.length; i += 200) {
+        const batch = unseen.slice(i, i + 200);
+        await Promise.all(batch.map((c) => supabase.from('airbnb_snapshots')
+          .update({ miss_streak: (streak.get(c) ?? 0) + 1 }).eq('code', c)));
+      }
+      // 這一輪又看到的：歸零。不歸零的話累計會一路加上去，
+      // 中間看到過幾次也沒用 —— 那不是「連續」
+      for (let i = 0; i < seen.length; i += 200) {
+        await supabase.from('airbnb_snapshots').update({ miss_streak: 0 })
+          .in('code', seen.slice(i, i + 200).map((s) => s.code));
+      }
+
+      missing = toMark(unseen, (c) => streak.get(c) ?? 0);
+      for (let i = 0; i < missing.length; i += 200) {
+        await supabase.from('airbnb_snapshots')
+          .update({ missing_since: runStart })
+          .in('code', missing.slice(i, i + 200));
+      }
     }
   }
 
@@ -194,6 +229,8 @@ export async function POST(req: Request) {
           Airbnb這次改了: changed.length,
           對帳筆數: rec.scanned,
           在Airbnb找不到: rec.missing.length,
+          // 有值就代表這一輪沒抓完，這次的「找不到」全部沒有算數
+          抓取疑似不完整: missSuspect || null,
           待人工判斷: rec.attention.length,
           對不到房源: Object.keys(rec.unmatched).length,
         },

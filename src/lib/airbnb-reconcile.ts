@@ -65,20 +65,29 @@ export async function runReconcile(
   const since = opts.since ?? new Date(Date.now() - 36 * 3600_000).toISOString();
 
   /*
-   * listing_id → 房源。**排除停用的房源** ——
-   * 對照表指著「舊-A15」這種已停用的列，是訂單一直掛錯房源的根本原因。
-   * 兩間房搶同一個 listing 時取啟用中的那間（排序讓 active 排後面，後寫入的贏）。
+   * listing_id → 房源。
+   *
+   * 【為什麼改讀 listing_property_map】（migration_127）
+   *
+   * 舊版讀 properties.airbnb_listing_id —— 那是**一間房一個編號**。
+   * 但同一間房在 Airbnb 上被重建過好幾次，每次換一個新編號：
+   * 舊-A18 身上有 664230…，另一個 1457776… 掛在另一列停用的 舊-A18 上。
+   *
+   * 一個欄位放不下兩個編號，所以總有一個編號的訂單對不到房源 ——
+   * 而對不到的訂單**整筆不會進系統**，報表看起來完全正常。
+   *
+   * 現在一間房掛幾個編號都行，舊編號的訂單一樣落到現行那間房。
    */
-  const { data: props } = await supabase
-    .from('properties').select('id, name, estate_id, airbnb_listing_id, active')
-    .order('active', { ascending: true });
+  const { data: maps } = await supabase
+    .from('listing_property_map')
+    .select('listing_id, property_id, property_name, estate_id, active');
   const byListing: Record<string, PropRef> = {};
   const staleOnly: Record<string, string> = {};
-  for (const p of props ?? []) {
-    if (!p.airbnb_listing_id) continue;
-    const key = String(p.airbnb_listing_id);
-    if (p.active) byListing[key] = { id: p.id, name: p.name, estate_id: p.estate_id };
-    else if (!staleOnly[key]) staleOnly[key] = p.name;
+  for (const m of maps ?? []) {
+    const key = String(m.listing_id);
+    // 對照指向的房源本身停用了 —— 那是真的要人處理的,不是自動補得回來的
+    if (m.active) byListing[key] = { id: m.property_id, name: m.property_name, estate_id: m.estate_id };
+    else if (!staleOnly[key]) staleOnly[key] = m.property_name;
   }
 
   // ── 讀快照 ──────────────────────────────────────

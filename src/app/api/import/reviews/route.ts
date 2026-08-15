@@ -90,9 +90,17 @@ export async function POST(req: Request) {
   const items: any[] = body.reviews ?? [];
   if (!items.length) return NextResponse.json({ upserted: 0 }, { headers: CORS });
 
-  const { data: props, error: pe } = await supabase.from('properties').select('id, name, airbnb_listing_id');
+  const { data: props, error: pe } = await supabase.from('properties').select('id, name');
   if (pe) return NextResponse.json({ error: pe.message }, { status: 500, headers: CORS });
-  const propByListing = Object.fromEntries((props ?? []).filter((p) => p.airbnb_listing_id).map((p) => [p.airbnb_listing_id, p.id]));
+  /*
+   * listing_id → 房源走 listing_property_map（migration_127）——
+   * 一間房在 Airbnb 上被重建過就會換一個新編號，而
+   * properties.airbnb_listing_id 只放得下一個。
+   * 讀那個欄位的話，舊編號的評價會對不到房源。
+   */
+  const { data: maps } = await supabase.from('listing_property_map')
+    .select('listing_id, property_id');
+  const propByListing = Object.fromEntries((maps ?? []).map((m) => [m.listing_id, m.property_id]));
   // 通知要顯示房源名稱。用我們自己的名字，不用 Airbnb 的標題 ——
   // 「開封 2F/3F/4F」在 Airbnb 是同一個標題，看了也分不出是哪一間
   const nameById = Object.fromEntries((props ?? []).map((p) => [p.id, p.name]));

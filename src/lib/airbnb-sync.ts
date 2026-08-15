@@ -258,6 +258,85 @@ export function findMissing(
   });
 }
 
+/**
+ * ============================================================
+ * 【一輪沒看到 ≠ 不見了】（2026-08-15 第二次踩到）
+ *
+ * 修掉 scope 的定義之後又冒出 46 筆，裡面有：
+ *
+ *     開封整棟 08-28~08-30 Ryan Collin
+ *     JPR整棟  08-15~08-17 Conrad Chan
+ *
+ * 那兩筆就在同一天的房務排班表上 —— 客人正要入住。它們沒有不見，
+ * 是**那一輪沒抓完**：登入過期、翻頁斷在一半、網路抖一下，
+ * 結果都一樣 —— 那一段沒抓到的訂單全部被當成消失。
+ *
+ * scope 是爬蟲**自己宣告**的，而宣告不等於做到。上一次的教訓是
+ * 「宣告的範圍要正確」，這一次是「就算範圍正確，那一趟也可能沒跑完」。
+ *
+ *
+ * ============================================================
+ * 【兩道防線，都不需要爬蟲多做什麼】
+ *
+ * 一、**一輪掉太多就整批不算**。
+ *     訂單真的從 Airbnb 上消失是稀有事件 —— 一天冒出 46 筆，
+ *     比較合理的解釋永遠是「這次沒抓完」而不是「46 組客人同時退掉」。
+ *     這種時候整批不標記，改回報「這一輪的資料不完整」。
+ *
+ * 二、**連續兩輪沒看到才算數**。
+ *     偶發的抓取不全撐不過第二輪。代價是慢一天，
+ *     而「這筆錢還算不算數」本來就不是幾小時內要決定的事。
+ *
+ * 兩道都是往「寧可晚一天報」倒。漏報一筆的成本是晚一天發現；
+ * 誤報 46 筆的成本是這份清單再也沒有人看 —— 連真的那一筆也被埋掉。
+ */
+
+/** 少於這麼多筆就不看比例 —— 小樣本的百分比沒有意義 */
+export const MISS_ABS = 5;
+/** 一輪掉超過範圍內的這個比例，判定為抓取不完整 */
+export const MISS_RATIO = 0.1;
+/** 連續幾輪沒看到才標記為消失 */
+export const MISS_STREAK = 2;
+
+export type MissVerdict = {
+  /** 這一輪可以確定「又沒看到」的 code —— 拿去累加連續次數 */
+  unseen: string[];
+  /** 抓取疑似不完整。true 的時候 unseen 一律不算數 */
+  suspect: boolean;
+  reason: string;
+};
+
+/**
+ * @param inScopeCount 掃描範圍內的快照總數（分母）
+ * @param unseen       這一輪沒看到的 code
+ */
+export function missVerdict(inScopeCount: number, unseen: string[]): MissVerdict {
+  const n = unseen.length;
+  if (n === 0) return { unseen: [], suspect: false, reason: '' };
+
+  const ratio = inScopeCount > 0 ? n / inScopeCount : 1;
+  if (n >= MISS_ABS && ratio > MISS_RATIO) {
+    return {
+      unseen: [],
+      suspect: true,
+      reason: `這一輪掃描範圍內有 ${inScopeCount} 筆，其中 ${n} 筆沒抓到`
+        + `（${Math.round(ratio * 100)}%）—— 訂單真的消失是稀有事件，`
+        + '這個比例比較像是抓取沒跑完（登入過期、翻頁中斷）。'
+        + '這一輪不標記任何一筆為消失，請看爬蟲那邊的紀錄。',
+    };
+  }
+  return { unseen, suspect: false, reason: '' };
+}
+
+/**
+ * 累加後達到門檻、可以標記為消失的。
+ *
+ * @param streakOf 這個 code 在**這一輪之前**已經連續幾輪沒看到
+ */
+export function toMark(unseen: string[], streakOf: (code: string) => number): string[] {
+  return unseen.filter((c) => streakOf(c) + 1 >= MISS_STREAK);
+}
+
 /** 爬蟲送進來的一筆 */
 export type Incoming = {
   /** Airbnb 確認碼。唯一識別，永遠不變。 */

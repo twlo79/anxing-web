@@ -4,6 +4,7 @@ import {
   decide, summarize, toIssues, revenueOf, isCancelled,
   dedupe, isSettled, snapshotChanges, amountAdvice,
   snapshotRowOf, incomingOf, findMissing, forgetStaleChange,
+  missVerdict, toMark,
   type Incoming, type Existing, type PropRef, type Snapshot,
 } from './airbnb-sync.ts';
 
@@ -823,4 +824,46 @@ test('★ 搭檔收款那種差額遠大於門檻,照樣要報', () => {
   const d = diffs.find((x) => x.field === '金額')!;
   assert.ok(d, '70,320 的差不能被門檻濾掉');
   assert.match(d.reason!, /少了搭檔收款/);
+});
+
+/* ── 一輪沒看到 ≠ 不見了（2026-08-15） ────────── */
+
+test('★★ 一輪掉太多 = 抓取沒跑完,整批不算', () => {
+  // 實際發生:46 筆被標成消失,裡面有當天正要入住的 Ryan Collin、
+  // Conrad Chan —— 它們就在同一天的房務排班表上。
+  // 訂單真的消失是稀有事件,一天冒出 46 筆的合理解釋永遠是「沒抓完」
+  const v = missVerdict(200, Array.from({ length: 46 }, (_, i) => 'C' + i));
+  assert.equal(v.suspect, true);
+  assert.deepEqual(v.unseen, [], '疑似沒抓完的時候一筆都不標記');
+  assert.match(v.reason, /46 筆沒抓到/);
+});
+
+test('★ 掉一兩筆是正常的,照算', () => {
+  const v = missVerdict(200, ['A', 'B']);
+  assert.equal(v.suspect, false);
+  assert.deepEqual(v.unseen, ['A', 'B']);
+});
+
+test('★★ 小樣本不看比例 —— 3 筆裡掉 1 筆不是異常', () => {
+  // 33% 看起來很高,但 3 筆的百分比沒有意義
+  const v = missVerdict(3, ['A']);
+  assert.equal(v.suspect, false);
+});
+
+test('一筆都沒掉就沒事', () => {
+  assert.deepEqual(missVerdict(200, []), { unseen: [], suspect: false, reason: '' });
+});
+
+test('★★ 連續兩輪沒看到才標記', () => {
+  // 偶發的抓取不全撐不過第二輪。慢一天,換掉整份清單的可信度
+  const first = toMark(['A'], () => 0);
+  assert.deepEqual(first, [], '第一次沒看到只累加,不標記');
+
+  const second = toMark(['A'], () => 1);
+  assert.deepEqual(second, ['A'], '第二次才算數');
+});
+
+test('看到了就從頭算起 —— 累計次數不是永久的', () => {
+  // 這條靠呼叫端把看到的歸零。這裡釘住「streak 是 0 就要重新累積」
+  assert.deepEqual(toMark(['A'], () => 0), []);
 });

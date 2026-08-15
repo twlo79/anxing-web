@@ -38,7 +38,15 @@ export async function POST(req: Request) {
   const estateByName = Object.fromEntries((estates ?? []).map((e) => [e.name, e.id]));
   const { data: props } = await supabase.from('properties').select('id, name, estate_id, airbnb_listing_id, estates(name)');
   const propList = (props ?? []).map((p: any) => ({ id: p.id, name: p.name, estate: p.estates?.name, estateId: p.estate_id, listingId: p.airbnb_listing_id }));
-  const propByListingId = Object.fromEntries(propList.filter((p) => p.listingId).map((p) => [p.listingId, p]));
+  /*
+   * listing_id → 房源走 listing_property_map（migration_127）。
+   * 一間房可以有多個歷史編號 —— properties.airbnb_listing_id 只放得下一個,
+   * 讀那個欄位的話舊編號的訂單會對不到房源,而**整筆不會進系統**。
+   */
+  const { data: maps } = await supabase.from('listing_property_map').select('listing_id, property_id');
+  const byId = Object.fromEntries(propList.map((p) => [p.id, p]));
+  const propByListingId = Object.fromEntries(
+    (maps ?? []).map((m) => [String(m.listing_id), byId[m.property_id]]).filter(([, p]) => p));
 
   const unmatchedProp: Record<string, number> = {};
   const records = items.map((o) => {

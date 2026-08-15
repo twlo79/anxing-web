@@ -32,14 +32,16 @@ self.addEventListener('push', (event) => {
     icon: '/icons/icon-192.png',
     badge: '/icons/icon-192.png',
     tag: data.tag || 'anxing',
-    data: { url: data.url || '/purchases' },
+    // 沒帶網址就落在「新訊息」——那一頁看得到這則通知本身,
+    // 而 /purchases 對一則訂單通知來說是完全不相干的地方
+    data: { url: data.url || '/settings?tab=news' },
   };
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const url = (event.notification.data && event.notification.data.url) || '/purchases';
+  const url = (event.notification.data && event.notification.data.url) || '/settings?tab=news';
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
       // 已經開著的分頁就直接切過去，不要每次都開新視窗

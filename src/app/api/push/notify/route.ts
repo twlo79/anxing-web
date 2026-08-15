@@ -78,7 +78,7 @@ export async function POST(req: Request) {
   if (wanted.length === 0) return NextResponse.json({ ok: true, skipped: 'all opted out' });
 
   const r = await sendToUsers(admin, wanted, {
-    title, body: bodyText, url: '/purchases', tag: 'pr-' + rec.id,
+    title, body: bodyText, url: '/purchases', kind: 'approvals', tag: 'pr-' + rec.id,
   });
   return NextResponse.json({ ok: true, ...r });
 }

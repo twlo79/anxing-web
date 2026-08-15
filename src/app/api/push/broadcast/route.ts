@@ -46,6 +46,7 @@ export async function POST(req: Request) {
     body: String(body.body),
     url: String(body.url ?? '/'),
     tag: String(body.tag ?? kind),
+    kind,
   };
 
   initWebPush();
