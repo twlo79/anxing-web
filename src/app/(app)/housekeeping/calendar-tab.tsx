@@ -3,10 +3,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { monthGrid, shiftMonth, twToday } from '@/lib/attendance-ui';
 import {
-  byDate, dayCounts, isAuto, isPending, linenSets, sortTasks, taskLabel,
+  byDate, dayCounts, isAuto, isPending, linenSets, sortTasks,
+  displayTitle, timeRangeText, startKeyOf,
   toneOfType, TYPE_LEGEND, type TaskView,
 } from '@/lib/hk-task';
 import ImportPanel from './import-panel';
+import TaskForm, { emptyDraft, draftOf, type TaskDraft } from './task-form';
 
 /**
  * 房務行事曆：每天哪些房源要清、誰負責。
@@ -81,14 +83,21 @@ export default function CalendarTab({
   const [staff, setStaff] = useState<Staff[]>([]);
   const [sel, setSel] = useState<string | null>(twToday());
   const [loading, setLoading] = useState(true);
-  const [adding, setAdding] = useState(false);
+  /*
+   * 新增／編輯用同一張表單（照 TimeTree）。null = 沒開。
+   *
+   * 原本新增是三個下拉並排、編輯只能改指派 —— 兩條不一樣的路，
+   * 而「我剛剛新增時填得到房源，為什麼改的時候不行」是必然會被問的。
+   */
+  const [form, setForm] = useState<TaskDraft | null>(null);
+  const [saving, setSaving] = useState(false);
   /*
    * 匯入 TimeTree 排班。放在行事曆這一頁而不是排班統計 ——
    * 匯入改變的是這個畫面，按完格子就從灰色變成各人的顏色，
    * 那個變化本身就是「成功了」的證據。
    */
   const [importing, setImporting] = useState(false);
-  const [draft, setDraft] = useState({ property_id: '', work_type: '公區清潔', staff_id: '' });
+
 
   const grid = useMemo(() => monthGrid(y, m), [y, m]);
   const from = grid[0].date;
@@ -101,7 +110,7 @@ export default function CalendarTab({
     // 不然一號在畫面上會突然變成空白
     const [{ data: tk, error }, { data: pr }, { data: st }] = await Promise.all([
       supabase.from('hk_task')
-        .select('id, work_date, property_id, work_type, staff_id, auto_kind, done_at, note, order_id, accepted, orders(guest_name)')
+        .select('id, work_date, property_id, work_type, staff_id, auto_kind, done_at, note, order_id, accepted, title, all_day, start_time, end_time, orders(guest_name)')
         .gte('work_date', from).lte('work_date', to).order('work_date'),
       supabase.from('properties').select('id, name, beds, count_linen').order('name'),
       supabase.from('staff').select('id, name, active').order('sort').order('name'),
@@ -129,6 +138,8 @@ export default function CalendarTab({
   useEffect(() => { load(); }, [load]);
 
   const perDay = useMemo(() => byDate(tasks), [tasks]);
+  /** 自動長出來的 id。表單要靠它決定給不給刪 */
+  const autoIds = useMemo(() => new Set(tasks.filter(isAuto).map((t) => t.id)), [tasks]);
   const bedsOf = useCallback((id: string) => props.find((p) => p.id === id)?.beds, [props]);
   const linenOf = useCallback((id: string) => props.find((p) => p.id === id)?.count_linen !== false, [props]);
 
@@ -170,26 +181,55 @@ export default function CalendarTab({
     load();
   }
 
-  async function addTask() {
-    if (!sel) return;
-    const { error } = await supabase.from('hk_task').insert({
-      work_date: sel,
-      property_id: draft.property_id || null,
-      work_type: draft.work_type,
-      staff_id: draft.staff_id || null,
-    });
-    if (error) return onMsg('新增失敗：' + error.message, true);
-    setAdding(false);
-    setDraft({ property_id: '', work_type: '公區清潔', staff_id: '' });
-    onMsg('已新增');
-    load();
+  /**
+   * 存表單。新增與編輯走同一支 —— 有 id 就 update，沒有就 insert。
+   *
+   * 分兩支的話「編輯時能不能改房源」這種問題會有兩個答案，
+   * 而使用者只會記住其中一個。
+   */
+  async function saveForm() {
+    if (!form) return;
+    setSaving(true);
+    try {
+      const row = {
+        work_date: form.work_date,
+        title: form.title.trim() || null,
+        all_day: form.all_day,
+        /*
+         * 全天時把時間寫成 null。
+         *
+         * 留著的話「全天」的工作在資料庫裡有時間 —— 之後有人寫報表
+         * 直接讀 start_time，那些全天的會突然有 09:00。
+         * 畫面上切換時保留（使用者只是切過去看一下），存的時候才清掉。
+         */
+        start_time: form.all_day ? null : form.start_time || null,
+        end_time: form.all_day ? null : form.end_time || null,
+        work_type: form.work_type,
+        staff_id: form.staff_id || null,
+        property_id: form.property_id || null,
+        note: form.note.trim() || null,
+      };
+
+      const q = form.id
+        ? supabase.from('hk_task').update(row).eq('id', form.id).select('id')
+        : supabase.from('hk_task').insert(row).select('id');
+      const { data, error } = await q;
+      if (error) return onMsg((form.id ? '儲存' : '新增') + '失敗：' + error.message, true);
+      // RLS 擋掉的 update 會回成功而且影響 0 列 —— 不檢查的話畫面說成功、
+      // 資料一個字都沒變
+      if (!data?.length) return onMsg('沒有存進去 —— 你的帳號沒有排班的權限。', true);
+
+      setForm(null);
+      onMsg(form.id ? '已儲存' : '已新增');
+      load();
+    } finally { setSaving(false); }
   }
 
   async function removeTask(t: TaskView) {
     if (isAuto(t)) {
       return onMsg('這筆是從訂單自動長出來的,不能直接刪 —— 要拿掉請改訂單（取消或改日期）。', true);
     }
-    if (!confirm(`刪掉「${taskLabel(t)}」？`)) return;
+    if (!confirm(`刪掉「${displayTitle(t)}」？`)) return;
     const { error } = await supabase.from('hk_task').delete().eq('id', t.id);
     if (error) return onMsg('刪除失敗：' + error.message, true);
     onMsg('已刪除'); load();
@@ -199,6 +239,22 @@ export default function CalendarTab({
     <div className="space-y-3">
       {importing && (
         <ImportPanel onClose={() => setImporting(false)} onDone={load} onMsg={onMsg} />
+      )}
+      {form && (
+        <TaskForm
+          draft={form} setDraft={setForm}
+          workTypes={WORK_TYPES}
+          staff={staff} props={props}
+          onSave={saveForm} onClose={() => setForm(null)} saving={saving}
+          /*
+           * 自動長出來的不給刪 —— 訂單還在，工作就還在。
+           * 給了刪除鈕的話，下次觸發器又會把它長回來，
+           * 而那時人會以為系統壞了。
+           */
+          onDelete={form.id && !autoIds.has(form.id)
+            ? () => { const t = tasks.find((x) => x.id === form.id); if (t) removeTask(t); }
+            : undefined}
+        />
       )}
       <div className="flex items-center gap-2 px-4 md:px-0">
         <button onClick={() => setYm(shiftMonth(y, m, -1))}
@@ -333,7 +389,10 @@ export default function CalendarTab({
                           : unassigned
                             ? { color: tone.bg, borderColor: tone.bg, backgroundColor: `${tone.bg}1A` }
                             : { backgroundColor: tone.bg, color: tone.fg }}>
-                        {pending ? '☐ ' : ''}{taskLabel(t)}{t.staff ? `・${t.staff}` : ''}
+                        {pending ? '☐ ' : ''}
+                        {/* 有時間的把時間放最前面 —— 那是硬約束,比做什麼更早要知道 */}
+                        {timeRangeText(t) ? `${timeRangeText(t).split('–')[0]} ` : ''}
+                        {displayTitle(t)}{t.staff ? `・${t.staff}` : ''}
                       </div>
                     );
                   })}
@@ -369,8 +428,8 @@ export default function CalendarTab({
               )}
             </div>
             <div className="flex-1" />
-            {canEdit && !adding && (
-              <button onClick={() => setAdding(true)}
+            {canEdit && (
+              <button onClick={() => setForm(emptyDraft(sel))}
                 className="rounded-lg bg-mor-slate text-white px-3 py-1.5 text-sm font-medium hover:bg-mor-slatedark">
                 ＋ 加工作
               </button>
@@ -378,45 +437,28 @@ export default function CalendarTab({
             <button onClick={() => setSel(null)} className="text-gray-400 hover:text-gray-600 px-1">✕</button>
           </div>
 
-          {adding && (
-            <div className="rounded-lg border border-mor-line bg-mor-sand/20 p-3 mb-3 flex flex-wrap items-end gap-2">
-              <label className="flex flex-col gap-1">
-                <span className="text-xs text-gray-500">房源</span>
-                <select value={draft.property_id} onChange={(e) => setDraft({ ...draft, property_id: e.target.value })}
-                  className="rounded-lg border border-mor-line px-2 py-1.5 text-sm w-44">
-                  <option value="">（無房源）</option>
-                  {props.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-xs text-gray-500">工作類型</span>
-                <select value={draft.work_type} onChange={(e) => setDraft({ ...draft, work_type: e.target.value })}
-                  className="rounded-lg border border-mor-line px-2 py-1.5 text-sm w-32">
-                  {WORK_TYPES.map((w) => <option key={w} value={w}>{w}</option>)}
-                </select>
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-xs text-gray-500">指派給</span>
-                <select value={draft.staff_id} onChange={(e) => setDraft({ ...draft, staff_id: e.target.value })}
-                  className="rounded-lg border border-mor-line px-2 py-1.5 text-sm w-32">
-                  <option value="">（未指派）</option>
-                  {staff.filter((s) => s.active).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
-              </label>
-              <button onClick={addTask}
-                className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium hover:bg-mor-slatedark">新增</button>
-              <button onClick={() => setAdding(false)}
-                className="rounded-lg border border-mor-line px-3 py-1.5 text-sm hover:bg-mor-sand/60">取消</button>
-            </div>
-          )}
-
           {!selList.length ? (
             <div className="text-sm text-gray-400 py-6 text-center">這天沒有工作</div>
           ) : (
             <div className="space-y-1.5">
-              {sortTasks(selList).map((t) => (
+              {/*
+                全天排前面、其餘照開始時間（startKeyOf）——
+                有指定時間的是硬約束,看的人要先掃過軟的再看硬的。
+                同一組裡面再照原本的規則（未指派最前）。
+              */}
+              {[...sortTasks(selList)].sort((a, b) => startKeyOf(a) - startKeyOf(b)).map((t) => (
                 <div key={t.id}
+                  onClick={(e) => {
+                    /*
+                      點整列開編輯表單。按鈕上的點擊要擋掉 ——
+                      不然按「完成」會同時把表單也打開。
+                    */
+                    if (!canEdit) return;
+                    if ((e.target as HTMLElement).closest('button,select,a')) return;
+                    setForm(draftOf(t));
+                  }}
                   className={`flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2
+                    ${canEdit ? 'cursor-pointer hover:bg-white' : ''}
                     ${isPending(t) ? 'border-dashed border-mor-slate/40 bg-white'
                       : t.done_at ? 'border-mor-line/60 bg-mor-greenlight/40'
                       : 'border-mor-line/60 bg-white/50'}`}>
@@ -445,9 +487,17 @@ export default function CalendarTab({
                           backgroundColor: `${toneOfType(t.work_type).bg}1A` }}>
                     {t.work_type}
                   </span>
+                  {/* 時間在最前面。沒有就是全天 —— 不寫「全天」兩個字 */}
+                  {timeRangeText(t) && (
+                    <span className="text-xs tabular-nums text-gray-500 shrink-0">
+                      {timeRangeText(t)}
+                    </span>
+                  )}
                   <span className={`text-sm ${t.done_at ? 'line-through text-gray-400' : ''}`}>
-                    {t.room ?? '（無房源）'}
-                    {t.guest && <span className="text-gray-500 ml-1.5">{t.guest}</span>}
+                    {t.title?.trim() || t.room || '（無房源）'}
+                    {!t.title?.trim() && t.guest && (
+                      <span className="text-gray-500 ml-1.5">{t.guest}</span>
+                    )}
                   </span>
                   {/*
                     自動長出來的明寫出來。不寫的話看的人會以為「有人排過了」，

@@ -32,6 +32,20 @@ export type HkTask = {
   done_at: string | null;
   note: string | null;
   order_id: string | null;
+  /*
+   * 時間與標題（migration_134，照 TimeTree）。
+   *
+   * 全部選填 —— 既有的幾百筆都沒有這些欄位，
+   * 設成必填的話那些會全部變成空白或跳型別錯誤。
+   */
+  /** 全天。**沒有值一律當成全天** —— 既有資料沒有時間 */
+  all_day?: boolean | null;
+  /** 當天的開始時間 "09:00:00"。work_date 已經是台北日期，這裡不帶時區 */
+  start_time?: string | null;
+  /** 結束。**小於 start_time 代表跨夜**，算時長要 +24 小時 */
+  end_time?: string | null;
+  /** 自訂標題。沒填就用 taskLabel 組 */
+  title?: string | null;
 };
 
 /** 補上人看得懂的名字之後的樣子 */
@@ -236,3 +250,77 @@ export function toneOfType(workType: string | null | undefined): TypeTone {
 /** 圖例用。順序 = 月曆上出現的頻率，不是字母序 */
 export const TYPE_LEGEND: { key: string; tone: TypeTone }[] =
   ['退房', '入住', '清潔', '休假', '其他'].map((key) => ({ key, tone: TONE_MAP[key] }));
+
+/* ============================================================
+ * 時間（migration_134，照 TimeTree）
+ * ============================================================ */
+
+/** "09:00:00" / "09:00" → 分鐘。空的回 null */
+export function toMin(t: string | null | undefined): number | null {
+  if (!t) return null;
+  const [h, m] = t.split(':');
+  const hh = Number(h), mm = Number(m ?? 0);
+  return Number.isFinite(hh) && Number.isFinite(mm) ? hh * 60 + mm : null;
+}
+
+/**
+ * 工作時長（分鐘）。
+ *
+ * 【跨夜用 +24 小時，不是錯誤】
+ *
+ * `end_time < start_time`（22:00–02:00）代表做到隔天。
+ * 資料庫沒有 CHECK 擋它 —— 那是合法的排班，不是打錯。
+ *
+ * 直接相減會得到負數，而負數在畫面上會顯示成「−20 小時」，
+ * 看的人只會覺得系統壞了。
+ */
+export function durationMin(
+  start: string | null | undefined, end: string | null | undefined,
+): number | null {
+  const a = toMin(start), b = toMin(end);
+  if (a == null || b == null) return null;
+  return b >= a ? b - a : b + 24 * 60 - a;
+}
+
+/** "09:00:00" → "09:00"。給畫面用 —— 秒沒有資訊 */
+export const hhmmOf = (t: string | null | undefined): string =>
+  t ? t.slice(0, 5) : '';
+
+/**
+ * 時間區間的顯示字串。
+ *
+ * 全天不寫「全天」兩個字 —— 絕大多數工作都是全天，
+ * 每一列都掛一個「全天」等於整片噪音。**沒有時間就是全天**，
+ * 而有時間的那幾筆自然會跳出來。
+ */
+export function timeRangeText(t: {
+  all_day?: boolean | null; start_time?: string | null; end_time?: string | null;
+}): string {
+  if (t.all_day !== false) return '';
+  const s = hhmmOf(t.start_time), e = hhmmOf(t.end_time);
+  if (!s && !e) return '';
+  if (s && e) return `${s}–${e}`;
+  return s || e;
+}
+
+/**
+ * 排序用的鍵：全天排最前，其餘照開始時間。
+ *
+ * 全天排前面是因為那些是「今天要做，時間自己抓」——
+ * 有指定時間的是硬約束，看的人要先掃過軟的再看硬的。
+ */
+export const startKeyOf = (t: {
+  all_day?: boolean | null; start_time?: string | null;
+}): number => (t.all_day !== false ? -1 : (toMin(t.start_time) ?? 24 * 60));
+
+/**
+ * 這一筆在畫面上要顯示的一行字。
+ *
+ * 有自訂標題就用它 —— 「聚餐」「洗烘折毛巾」這種本來就不該被組成
+ * 「其他工時 (無房源)」。沒填才用 taskLabel 組。
+ */
+export function displayTitle(t: Pick<TaskView, 'work_type' | 'room' | 'guest'> & {
+  title?: string | null;
+}): string {
+  return t.title?.trim() || taskLabel(t);
+}

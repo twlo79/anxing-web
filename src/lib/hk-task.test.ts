@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   taskLabel, sortTasks, byDate, dayCounts, linenSets, tasksOf, isAuto,
   toneKeyOf, toneOfType, TYPE_LEGEND, isPending,
+  durationMin, hhmmOf, timeRangeText, startKeyOf, displayTitle,
   type TaskView,
 } from './hk-task.ts';
 
@@ -215,4 +216,49 @@ test('isPending 只認明確的 false', () => {
   assert.equal(isPending({ accepted: false }), true);
   assert.equal(isPending({ accepted: true }), false);
   assert.equal(isPending({}), false);
+});
+
+/* ── 時間（migration_134） ─────────────────────── */
+
+test('★★ 跨夜是 +24 小時,不是負數', () => {
+  // end < start 代表做到隔天。直接相減會顯示「−20 小時」,
+  // 看的人只會覺得系統壞了
+  assert.equal(durationMin('22:00', '02:00'), 240);
+});
+
+test('★ 正常區間', () => {
+  assert.equal(durationMin('09:00', '17:30'), 510);
+});
+
+test('缺一半就算不出來', () => {
+  assert.equal(durationMin('09:00', null), null);
+  assert.equal(durationMin(null, '17:00'), null);
+});
+
+test('★ 秒不顯示 —— 那個 :00 沒有資訊', () => {
+  assert.equal(hhmmOf('09:00:00'), '09:00');
+  assert.equal(hhmmOf(null), '');
+});
+
+test('★★ 全天不寫「全天」兩個字', () => {
+  // 絕大多數工作都是全天,每一列掛一個「全天」等於整片噪音
+  assert.equal(timeRangeText({ all_day: true }), '');
+  assert.equal(timeRangeText({ all_day: false, start_time: '09:00:00', end_time: '11:00:00' }), '09:00–11:00');
+});
+
+test('只填開始時間也顯示得出來', () => {
+  assert.equal(timeRangeText({ all_day: false, start_time: '14:00', end_time: null }), '14:00');
+});
+
+test('★ 全天排最前,其餘照開始時間', () => {
+  assert.equal(startKeyOf({ all_day: true }), -1);
+  assert.equal(startKeyOf({ all_day: false, start_time: '09:00' }), 540);
+  assert.equal(startKeyOf({ all_day: false, start_time: null }), 1440, '沒填時間的排最後');
+});
+
+test('★★ 有自訂標題就用它', () => {
+  // 「聚餐」不該被組成「其他工時 (無房源)」
+  assert.equal(displayTitle({ ...t(), title: '聚餐' }), '聚餐');
+  assert.equal(displayTitle({ ...t(), title: '  ' }), '退房清潔 A15・Kevin', '只有空白不算填了');
+  assert.equal(displayTitle(t()), '退房清潔 A15・Kevin');
 });
