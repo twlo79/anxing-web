@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   taskLabel, sortTasks, byDate, dayCounts, linenSets, tasksOf, isAuto,
+  toneKeyOf, toneOfType, TYPE_LEGEND, isPending,
   type TaskView,
 } from './hk-task.ts';
 
@@ -73,13 +74,13 @@ test('依日期分組,而且每天都排好序', () => {
   assert.equal(g['2026-08-14'][0].id, 'b', '未指派的要在前面');
 });
 
-test('★ 一天的三個數字：總數、未指派、已完成', () => {
+test('★ 一天的四個數字：總數、未指派、已完成、待確認', () => {
   const c = dayCounts([
     t({ staff_id: 's1', done_at: '2026-08-14T03:00:00Z' }),
     t({ staff_id: 's1' }),
     t({ staff_id: null }),
   ]);
-  assert.deepEqual(c, { total: 3, unassigned: 1, done: 1 });
+  assert.deepEqual(c, { total: 3, unassigned: 1, done: 1, pending: 0 });
 });
 
 /* ── 布巾 ────────────────────────────────────── */
@@ -134,4 +135,84 @@ test('★ 分得出哪些是系統自動長出來的', () => {
   assert.equal(isAuto(t({ auto_kind: 'checkout' })), true);
   assert.equal(isAuto(t({ auto_kind: 'checkin' })), true);
   assert.equal(isAuto(t({ auto_kind: null })), false);
+});
+
+/* ── 工作類型的顏色（2026-08-16，照 TimeTree） ─── */
+
+test('★★ 退房要排在清潔前面 —— 不然「退房清潔」會撞到「清潔」', () => {
+  assert.equal(toneKeyOf('退房清潔'), '退房');
+  assert.equal(toneKeyOf('入住清潔'), '入住');
+});
+
+test('★ 換房、細清、公區都歸清潔', () => {
+  assert.equal(toneKeyOf('換房清潔'), '清潔');
+  assert.equal(toneKeyOf('細清'), '清潔');
+  assert.equal(toneKeyOf('公區清潔'), '清潔');
+});
+
+test('★★ 用包含比對,類型改名不會掉回「其他」', () => {
+  // 工作類型是設定頁可以改的。「退房清潔（含布巾）」不該變成灰色
+  assert.equal(toneKeyOf('退房清潔（含布巾）'), '退房');
+});
+
+test('休假與請假同一色', () => {
+  assert.equal(toneKeyOf('U休'), '休假');
+  assert.equal(toneKeyOf('請假'), '休假');
+});
+
+test('認不出來的落到「其他」,不是沒有顏色', () => {
+  assert.equal(toneKeyOf('贈品補充'), '其他');
+  assert.equal(toneKeyOf(''), '其他');
+  assert.equal(toneKeyOf(null), '其他');
+});
+
+test('★ 每一種都真的拿得到顏色', () => {
+  for (const t of ['退房清潔', '入住清潔', '細清', 'U休', '其他工時']) {
+    assert.ok(toneOfType(t).bg.startsWith('#'), t);
+    assert.ok(toneOfType(t).fg.startsWith('#'), t);
+  }
+});
+
+test('★★ 黃色用深字 —— 白字在黃底上讀不到', () => {
+  assert.equal(toneOfType('U休').fg, '#5C4B00');
+  assert.equal(toneOfType('退房清潔').fg, '#FFFFFF');
+});
+
+test('圖例五種都在', () => {
+  assert.equal(TYPE_LEGEND.length, 5);
+  assert.deepEqual(TYPE_LEGEND.map((x) => x.key), ['退房', '入住', '清潔', '休假', '其他']);
+});
+
+/* ── 未接受的建議（migration_133） ─────────────── */
+
+test('★★ 未接受的不算進 total —— 那是建議不是工作', () => {
+  // 「今天 6 件」跟「4 件 ＋ 2 個建議」是兩回事。
+  // 混在一起的話人會照 6 去排人力，而其中兩件他還沒決定要不要做
+  const c = dayCounts([
+    t({ accepted: true }), t({ accepted: true }),
+    t({ accepted: false }), t({ accepted: false }),
+  ]);
+  assert.equal(c.total, 2);
+  assert.equal(c.pending, 2);
+});
+
+test('★ 沒有 accepted 欄位的一律當成已接受', () => {
+  // 舊資料與還沒跑 migration 的環境不能突然變空白
+  const c = dayCounts([t({}), t({})]);
+  assert.equal(c.total, 2);
+  assert.equal(c.pending, 0);
+});
+
+test('★ 未指派只數已接受的', () => {
+  const c = dayCounts([
+    t({ accepted: true, staff_id: null }),
+    t({ accepted: false, staff_id: null }),
+  ]);
+  assert.equal(c.unassigned, 1, '未接受的還沒到「要指派」那一步');
+});
+
+test('isPending 只認明確的 false', () => {
+  assert.equal(isPending({ accepted: false }), true);
+  assert.equal(isPending({ accepted: true }), false);
+  assert.equal(isPending({}), false);
 });

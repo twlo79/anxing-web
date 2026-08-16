@@ -15,6 +15,13 @@
  */
 
 export type HkTask = {
+  /**
+   * 有沒有被人確認過（migration_133）。
+   *
+   * 自動從訂單長出來的預設 false —— 那是**建議**，不是工作。
+   * 打勾之後才上行事曆。人工加的直接 true。
+   */
+  accepted?: boolean;
   id: string;
   work_date: string;
   property_id: string | null;
@@ -77,15 +84,32 @@ export function byDate(list: TaskView[]): Record<string, TaskView[]> {
   return out;
 }
 
-export type DayCount = { total: number; unassigned: number; done: number };
+export type DayCount = {
+  total: number;
+  unassigned: number;
+  done: number;
+  /** 還沒打勾接受的建議（migration_133）。要人動手的第一順位 */
+  pending: number;
+};
 
 export function dayCounts(list: TaskView[]): DayCount {
+  /*
+   * 【未接受的不算進 total】（migration_133）
+   *
+   * 「今天有 6 件工作」跟「今天有 4 件工作 ＋ 2 個建議」是兩回事。
+   * 混在一起的話,人會照著 6 去排人力,而其中兩件他還沒決定要不要做。
+   */
+  const real = list.filter((t) => t.accepted !== false);
   return {
-    total: list.length,
-    unassigned: list.filter((t) => !t.staff_id).length,
-    done: list.filter((t) => t.done_at).length,
+    total: real.length,
+    unassigned: real.filter((t) => !t.staff_id).length,
+    done: real.filter((t) => t.done_at).length,
+    pending: list.filter((t) => t.accepted === false).length,
   };
 }
+
+/** 還沒打勾的建議 */
+export const isPending = (t: Pick<HkTask, 'accepted'>) => t.accepted === false;
 
 /**
  * 布巾組數 ＝ Σ 每筆工作的房源床數。
@@ -125,3 +149,90 @@ export function linenSets(
 export function tasksOf(list: TaskView[], staffId: string): TaskView[] {
   return sortTasks(list.filter((t) => t.staff_id === staffId));
 }
+
+/* ============================================================
+ * 工作類型的顏色（2026-08-16 使用者指定：照 TimeTree）
+ * ============================================================
+ *
+ * 【為什麼從「按人配色」改成「按工作類型」】
+ *
+ * 他們在 TimeTree 上就是這樣用的:藍＝退房、綠＝入住、紫＝清潔、黃＝休假。
+ * 打開月曆掃一眼，看到的是「今天有幾件退房、幾件入住」——
+ * 那是排班要回答的第一個問題。
+ *
+ * 按人配色回答的是「誰今天比較忙」，那要等你先記住六個人各是什麼顏色。
+ * 而人會換、會離職，顏色跟著位移，記憶就作廢了。
+ * 工作類型不會換。
+ *
+ *
+ * 【那「誰做」怎麼看】
+ *
+ * 寫在 bar 上（「退房清潔 A15・庭玉」）。顏色讓你分類，文字讓你確認。
+ *
+ *
+ * 【未指派不用灰色，用虛線】
+ *
+ * 原本灰色＝未指派，換成類型配色之後那個訊號就沒地方放了。
+ * 改成**保留類型顏色但畫虛線邊框、文字淡一階** ——
+ * 「這是什麼工作」跟「有沒有人接」是兩件事，各自用一個視覺通道，
+ * 不用互相犧牲。
+ *
+ * 灰色會弄丟「這是退房還是入住」，而那正是要指派的人第一個要知道的。
+ */
+
+/**
+ * 一個類型一組色。
+ *
+ * 【實心滿版 ＋ 白字，不是淺底深字】（照 TimeTree 網頁版）
+ *
+ * 淺底深字在一格塞五六條的時候，每條之間的界線會糊掉 ——
+ * 五個淡藍色的方塊看起來像一整塊。實心色條有明確的邊界，
+ * 而顏色本身就是分類，不需要再靠邊框去分。
+ *
+ * 黃色配白字讀不到，所以休假那一條用深字 —— 唯一的例外。
+ */
+export type TypeTone = {
+  /** 實心背景色（inline style，不是 Tailwind class —— 這些不是調色盤裡的色） */
+  bg: string;
+  /** 條上的文字色 */
+  fg: string;
+};
+
+const TONE_MAP: Record<string, TypeTone> = {
+  // 退房 —— 藍。整個月最多的一種
+  退房: { bg: '#4FC3F7', fg: '#FFFFFF' },
+  // 入住 —— 綠
+  入住: { bg: '#5CC98C', fg: '#FFFFFF' },
+  // 清潔（換房、細清、公區…）—— 紫
+  清潔: { bg: '#B39DDB', fg: '#FFFFFF' },
+  // 休假 —— 黃。**這一條用深字**，白字在黃底上讀不到
+  休假: { bg: '#FFE04D', fg: '#5C4B00' },
+  // 其他（贈品、點交、拆備品、其他工時）—— 褐
+  其他: { bg: '#A1887F', fg: '#FFFFFF' },
+};
+
+/**
+ * 工作類型 → 分類。
+ *
+ * 用 `includes` 而不是完全比對:工作類型是使用者可以在設定頁改的，
+ * 「退房清潔」哪天變成「退房清潔（含布巾）」不該讓顏色掉回「其他」。
+ *
+ * 順序有意義 —— 「退房」要排在「清潔」前面，
+ * 不然「退房清潔」會先撞到「清潔」那一條。
+ */
+export function toneKeyOf(workType: string | null | undefined): string {
+  const t = workType ?? '';
+  if (t.includes('退房') || t.includes('退')) return '退房';
+  if (t.includes('入住')) return '入住';
+  if (t.includes('休') || t.includes('假')) return '休假';
+  if (t.includes('清潔') || t.includes('細清') || t.includes('清')) return '清潔';
+  return '其他';
+}
+
+export function toneOfType(workType: string | null | undefined): TypeTone {
+  return TONE_MAP[toneKeyOf(workType)];
+}
+
+/** 圖例用。順序 = 月曆上出現的頻率，不是字母序 */
+export const TYPE_LEGEND: { key: string; tone: TypeTone }[] =
+  ['退房', '入住', '清潔', '休假', '其他'].map((key) => ({ key, tone: TONE_MAP[key] }));

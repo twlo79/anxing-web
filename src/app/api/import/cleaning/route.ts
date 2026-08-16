@@ -1,6 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { fetchIn } from '@/lib/fetch-all';
+import { notifyImport } from '@/lib/push';
+import { importTitle, importBody } from '@/lib/notify-text';
 
 export const dynamic = 'force-dynamic';
 
@@ -83,5 +85,30 @@ export async function POST(req: Request) {
     const { error } = await supabase.from('cleaning_records').upsert(records.slice(i, i + 500), { onConflict: 'record_key' });
     if (error) return NextResponse.json({ error: error.message }, { status: 500, headers: CORS });
   }
+
+  /*
+   * 【清潔記錄的通知原本掛在錯的端點上】（2026-08-16）
+   *
+   * `notifyImport('cleaning', …)` 之前掛在 `/api/import/housekeeping`
+   * ——那是 TimeTree 排班匯入，寫的是 `hk_event`，不是清潔記錄。
+   *
+   * 結果是:「清潔記錄通知」那個開關實際上通知的是排班匯入，
+   * 而真的新增清潔記錄時一個字都不會發。
+   * 訊息內容還寫「新增 N 筆排班記錄」—— 文字跟開關名稱對不起來，
+   * 但沒有人會把兩邊放在一起看。
+   *
+   * 【只有真的新增才通知】
+   * 這支是 upsert,每天同步都會跑。筆數沒變只是內容更新的話不叮 ——
+   * 一天一則、內容永遠一樣的通知，很快就會被整個關掉。
+   */
+  if (inserted > 0) {
+    const fresh = records.filter((r) => !has.has(r.record_key));
+    const lines = fresh.slice(0, 6).map((r) =>
+      [r.record_date, r.property_raw || r.estate_name || '(未對應房源)', r.staff_name]
+        .filter(Boolean).join('・'));
+    await notifyImport('cleaning', importTitle(inserted, '筆', '清潔記錄'),
+      importBody(lines), '/cleaning');
+  }
+
   return NextResponse.json({ inserted, updated: records.length - inserted, total: records.length, unmatchedProp }, { headers: CORS });
 }

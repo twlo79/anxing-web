@@ -3,7 +3,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { monthGrid, shiftMonth, twToday } from '@/lib/attendance-ui';
 import {
-  byDate, dayCounts, isAuto, linenSets, sortTasks, taskLabel, type TaskView,
+  byDate, dayCounts, isAuto, isPending, linenSets, sortTasks, taskLabel,
+  toneOfType, TYPE_LEGEND, type TaskView,
 } from '@/lib/hk-task';
 import ImportPanel from './import-panel';
 
@@ -47,17 +48,18 @@ import ImportPanel from './import-panel';
 
 const DOW = ['日', '一', '二', '三', '四', '五', '六'];
 
-/** 每個人一個顏色。同一個人整個月都是同一色，一眼看得出誰的班比較密。 */
-const TONE = [
-  'bg-mor-bluelight text-mor-slate ring-mor-slate/15',
-  'bg-mor-greenlight text-mor-green ring-mor-green/15',
-  'bg-amber-50 text-amber-800 ring-amber-200',
-  'bg-purple-50 text-purple-700 ring-purple-200',
-  'bg-rose-50 text-rose-700 ring-rose-200',
-  'bg-teal-50 text-teal-700 ring-teal-200',
-];
-/** 還沒指派的。灰色 = 還沒有人接手 */
-const TONE_NONE = 'bg-gray-100 text-gray-500 ring-gray-200';
+/*
+ * 【顏色按工作類型，不按人】（2026-08-16 使用者指定：照 TimeTree）
+ *
+ * 他們在 TimeTree 上就是這樣用的:藍＝退房、綠＝入住、紫＝清潔、黃＝休假。
+ * 打開月曆掃一眼，看到的是「今天有幾件退房、幾件入住」——
+ * 那是排班要回答的第一個問題。
+ *
+ * 按人配色回答的是「誰今天比較忙」，但那要先記住六個人各是什麼顏色，
+ * 而人會換、會離職，顏色跟著位移，記憶就作廢了。工作類型不會換。
+ *
+ * 配色表與分類規則在 lib/hk-task.ts（有測試釘住「退房清潔」不會撞到「清潔」）。
+ */
 
 type Prop = { id: string; name: string; beds: number | null; count_linen: boolean };
 type Staff = { id: string; name: string; active: boolean };
@@ -99,7 +101,7 @@ export default function CalendarTab({
     // 不然一號在畫面上會突然變成空白
     const [{ data: tk, error }, { data: pr }, { data: st }] = await Promise.all([
       supabase.from('hk_task')
-        .select('id, work_date, property_id, work_type, staff_id, auto_kind, done_at, note, order_id, orders(guest_name)')
+        .select('id, work_date, property_id, work_type, staff_id, auto_kind, done_at, note, order_id, accepted, orders(guest_name)')
         .gte('work_date', from).lte('work_date', to).order('work_date'),
       supabase.from('properties').select('id, name, beds, count_linen').order('name'),
       supabase.from('staff').select('id, name, active').order('sort').order('name'),
@@ -130,13 +132,6 @@ export default function CalendarTab({
   const bedsOf = useCallback((id: string) => props.find((p) => p.id === id)?.beds, [props]);
   const linenOf = useCallback((id: string) => props.find((p) => p.id === id)?.count_linen !== false, [props]);
 
-  // 顏色照人員排序固定，不照當天出現順序 —— 不然同一個人在不同日期會變色
-  const toneOf = useCallback((staffId: string | null) => {
-    if (!staffId) return TONE_NONE;
-    const i = staff.findIndex((s) => s.id === staffId);
-    return TONE[(i < 0 ? 0 : i) % TONE.length];
-  }, [staff]);
-
   const selList = sel ? perDay[sel] ?? [] : [];
   const selCount = dayCounts(selList);
   const selLinen = linenSets(selList, bedsOf, linenOf);
@@ -149,6 +144,21 @@ export default function CalendarTab({
     // RLS 擋掉的 update 會回成功而且影響 0 列 —— 不檢查的話畫面說成功、
     // 資料一個字都沒變，而那比報錯更難查
     if (!data?.length) return onMsg('指派沒有存進去 —— 你的帳號沒有排班的權限。', true);
+    load();
+  }
+
+  /**
+   * 接受建議 —— 自動長出來的工作放上行事曆（migration_133）。
+   *
+   * 沒有「拒絕」按鈕:訂單還在，工作就還在。要它消失請改訂單
+   * （取消或改日期），不然下次觸發器又會把它長回來，
+   * 而那時人會以為系統壞了。
+   */
+  async function accept(id: string) {
+    const { data, error } = await supabase.from('hk_task')
+      .update({ accepted: true }).eq('id', id).select('id');
+    if (error) return onMsg('接受失敗：' + error.message, true);
+    if (!data?.length) return onMsg('沒有存進去 —— 你的帳號沒有排班的權限。', true);
     load();
   }
 
@@ -190,7 +200,7 @@ export default function CalendarTab({
       {importing && (
         <ImportPanel onClose={() => setImporting(false)} onDone={load} onMsg={onMsg} />
       )}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 px-4 md:px-0">
         <button onClick={() => setYm(shiftMonth(y, m, -1))}
           className="rounded-lg border border-mor-line w-9 h-9 hover:bg-mor-sand/60">‹</button>
         <div className="text-base font-semibold w-28 text-center tabular-nums">{y} 年 {m} 月</div>
@@ -209,11 +219,38 @@ export default function CalendarTab({
       </div>
 
       {/*
+        圖例。顏色是分類，而分類沒有標示就只是好看的顏色 ——
+        第一次打開的人不知道藍色是退房還是入住。
+
+        放在月曆上方而不是下方:要先知道規則再看內容，
+        放下面的話人會先困惑一次再往下找。
+      */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 md:px-0 text-[11px] text-gray-500">
+        {TYPE_LEGEND.map(({ key, tone }) => (
+          <span key={key} className="inline-flex items-center gap-1">
+            <span className="w-3 h-3 rounded-[2px] inline-block"
+              style={{ backgroundColor: tone.bg }} />
+            {key}
+          </span>
+        ))}
+        <span className="inline-flex items-center gap-1">
+          <span className="w-3 h-3 rounded-[2px] inline-block border border-dashed border-gray-300 bg-white" />
+          待確認
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span className="w-3 h-3 rounded-[2px] inline-block border border-dashed"
+            style={{ borderColor: '#4FC3F7', backgroundColor: '#4FC3F71A' }} />
+          未指派
+        </span>
+      </div>
+
+      {/*
         整片月曆自己捲。格子拉高之後整頁會很長，而月份切換鈕在最上面 ——
         看到月底想換月要滑回頂端。
       */}
-      <div className="rounded-xl glass overflow-hidden">
-        <div className="grid grid-cols-7 text-center text-xs text-gray-500 border-b border-mor-line/60">
+      {/* 手機滿版:七欄月曆在 390px 上，每欄多 5px 就是多一個字 */}
+      <div className="glass overflow-hidden md:rounded-xl">
+        <div className="grid grid-cols-7 text-center text-[11px] md:text-xs text-gray-500 border-b border-mor-line/60">
           {DOW.map((d, i) => (
             <div key={d} className={`py-2 ${i === 0 || i === 6 ? 'text-red-400' : ''}`}>{d}</div>
           ))}
@@ -224,37 +261,84 @@ export default function CalendarTab({
             const cnt = dayCounts(list);
             return (
               <button key={c.date} onClick={() => setSel(c.date === sel ? null : c.date)}
-                className={`min-h-[8.5rem] border-b border-r border-mor-line/60 p-1.5 text-left
+                className={`min-h-[5.5rem] md:min-h-[7.5rem] border-b border-r border-mor-line/60
+                  p-0.5 md:p-1 text-left
                   align-top hover:bg-white/45 transition-colors
                   ${!c.inMonth ? 'bg-gray-50/60' : ''}
                   ${sel === c.date ? 'ring-2 ring-inset ring-mor-slate' : ''}`}>
                 <div className="flex items-center gap-1 mb-1">
-                  <span className={`text-xs tabular-nums ${
-                    c.date === today ? 'font-bold text-mor-slate' : 'text-gray-500'}`}>
+                  {/*
+                    今天用實心黑圓包住數字（TimeTree 的做法），週末數字紅色。
+                    原本是加粗＋旁邊一個小圓點 —— 小圓點在一格塞滿色條時看不到，
+                    而「今天是哪一格」是每次打開都要先找的東西。
+                  */}
+                  <span className={`text-xs tabular-nums leading-none inline-flex items-center
+                    justify-center w-[18px] h-[18px] rounded-full ${
+                      c.date === today ? 'bg-mor-slate text-white font-bold'
+                      : new Date(`${c.date}T00:00:00+08:00`).getDay() % 6 === 0
+                        ? 'text-red-400' : 'text-gray-500'}`}>
                     {Number(c.date.slice(8))}
                   </span>
-                  {c.date === today && <span className="w-1.5 h-1.5 rounded-full bg-mor-slate" />}
-                  {/* 未指派的數量。這是唯一需要人動手的東西,要在收合之前就看得到 */}
-                  {cnt.unassigned > 0 && (
+                  {/*
+                    要人動手的東西。待確認排在未指派前面 ——
+                    還沒決定要不要做的，比「要做但沒人接」更前面一步。
+                  */}
+                  {cnt.pending > 0 ? (
+                    <span className="ml-auto text-[10px] rounded-full bg-mor-slate/15 text-mor-slate px-1.5">
+                      {cnt.pending} 待確認
+                    </span>
+                  ) : cnt.unassigned > 0 ? (
                     <span className="ml-auto text-[10px] rounded-full bg-gray-200 text-gray-600 px-1.5">
                       {cnt.unassigned} 未派
                     </span>
-                  )}
+                  ) : null}
                 </div>
-                <div className="space-y-0.5">
-                  {/* 最多五條。第六條以後收成「+N」—— 格子塞滿的話整個月曆的
-                      高度會被最忙的那天決定，其他天全是空白 */}
-                  {list.slice(0, 5).map((t) => (
-                    <div key={t.id}
-                      className={`rounded px-1.5 py-0.5 text-[11px] leading-snug truncate
-                        ring-1 ring-inset ${toneOf(t.staff_id)} ${t.done_at ? 'line-through opacity-60' : ''}`}>
-                      {t.staff ? <b className="font-medium">{t.staff}</b> : null}
-                      {t.staff ? ' ' : null}
-                      {taskLabel(t)}
-                    </div>
-                  ))}
+                {/*
+                  【實心色條，緊密堆疊】（照 TimeTree 網頁版）
+
+                  淺底深字在一格塞五六條時，每條之間的界線會糊掉 ——
+                  五個淡藍方塊看起來像一整塊。實心條有明確邊界，
+                  而顏色本身就是分類，不用再靠邊框分。
+
+                  【未指派用虛線，不用灰色】
+                  灰色會弄丟「這是退房還是入住」，而那正是要指派的人
+                  第一個要知道的。虛線邊框讓「什麼工作」跟「有沒有人接」
+                  各佔一個視覺通道，不用互相犧牲。
+                */}
+                <div className="space-y-px">
+                  {list.slice(0, 5).map((t) => {
+                    const tone = toneOfType(t.work_type);
+                    /*
+                      三個狀態，三種樣子（migration_133）：
+
+                        待確認  白底虛線灰字      ← 系統的建議，還沒有人決定
+                        已接受未指派  淡色虛線     ← 要做，但還沒人接
+                        已接受已指派  實心色條     ← 排好了
+
+                      「這個月還沒排」跟「排好了」要一眼分得出來。
+                      全部沒勾的話整片是白的 —— 那是刻意的。
+                    */
+                    const pending = isPending(t);
+                    const unassigned = !t.staff_id;
+                    return (
+                      <div key={t.id}
+                        title={pending
+                          ? `建議：${t.work_type}${t.room ? '・' + t.room : ''}（點日期展開後打勾接受）`
+                          : `${t.work_type}${t.room ? '・' + t.room : ''}${t.staff ? '・' + t.staff : '（未指派）'}`}
+                        className={`px-1 py-[1px] text-[10px] leading-[1.35] truncate rounded-[2px]
+                          ${pending || unassigned ? 'border border-dashed' : ''}
+                          ${t.done_at ? 'line-through opacity-55' : ''}`}
+                        style={pending
+                          ? { color: '#9CA3AF', borderColor: '#D1D5DB', backgroundColor: '#FFFFFF' }
+                          : unassigned
+                            ? { color: tone.bg, borderColor: tone.bg, backgroundColor: `${tone.bg}1A` }
+                            : { backgroundColor: tone.bg, color: tone.fg }}>
+                        {pending ? '☐ ' : ''}{taskLabel(t)}{t.staff ? `・${t.staff}` : ''}
+                      </div>
+                    );
+                  })}
                   {list.length > 5 && (
-                    <div className="text-[11px] text-gray-400 px-1">＋{list.length - 5}</div>
+                    <div className="text-[10px] text-gray-400 px-1 leading-tight">＋{list.length - 5}</div>
                   )}
                 </div>
               </button>
@@ -264,7 +348,7 @@ export default function CalendarTab({
       </div>
 
       {sel && (
-        <div className="rounded-xl glass p-4">
+        <div className="glass p-4 md:rounded-xl mx-0">
           <div className="flex flex-wrap items-baseline gap-2 mb-3">
             <div className="font-semibold tabular-nums">
               {sel}（{DOW[new Date(`${sel}T00:00:00+08:00`).getDay()]}）
@@ -332,9 +416,33 @@ export default function CalendarTab({
             <div className="space-y-1.5">
               {sortTasks(selList).map((t) => (
                 <div key={t.id}
-                  className={`flex flex-wrap items-center gap-2 rounded-lg border border-mor-line/60 px-3 py-2
-                    ${t.done_at ? 'bg-mor-greenlight/40' : 'bg-white/50'}`}>
-                  <span className={`rounded px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${toneOf(t.staff_id)}`}>
+                  className={`flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2
+                    ${isPending(t) ? 'border-dashed border-mor-slate/40 bg-white'
+                      : t.done_at ? 'border-mor-line/60 bg-mor-greenlight/40'
+                      : 'border-mor-line/60 bg-white/50'}`}>
+                  {/*
+                    【建議要打勾才上行事曆】（migration_133）
+
+                    自動從訂單長出來的先當建議 —— 系統負責看見，人負責決定。
+                    跟同步建議同一個模式。
+
+                    勾選框放在最前面:那是這一列唯一要動手的東西，
+                    而人的眼睛從左邊開始掃。
+                  */}
+                  {canEdit && isPending(t) && (
+                    <button onClick={() => accept(t.id)} title="接受這個建議，放上行事曆"
+                      className="w-6 h-6 shrink-0 rounded border-2 border-mor-slate/50 text-mor-slate
+                                 hover:bg-mor-slate hover:text-white transition-colors
+                                 flex items-center justify-center text-sm leading-none">
+                      ✓
+                    </button>
+                  )}
+                  <span className="rounded px-2 py-0.5 text-xs font-medium"
+                    style={t.staff_id
+                      ? { backgroundColor: toneOfType(t.work_type).bg, color: toneOfType(t.work_type).fg }
+                      : { color: toneOfType(t.work_type).bg,
+                          border: `1px dashed ${toneOfType(t.work_type).bg}`,
+                          backgroundColor: `${toneOfType(t.work_type).bg}1A` }}>
                     {t.work_type}
                   </span>
                   <span className={`text-sm ${t.done_at ? 'line-through text-gray-400' : ''}`}>

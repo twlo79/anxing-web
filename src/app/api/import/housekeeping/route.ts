@@ -179,11 +179,23 @@ export async function POST(req: Request) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500, headers: CORS });
   }
 
-  // 真的多出來才通知。同步了但筆數沒變（只是內容更新）不叮 ——
-  // 排班每天同步，那種通知一天一則、內容永遠一樣，很快就會被整個關掉。
+  /*
+   * 【這裡發的是排班，不是清潔記錄】（2026-08-16 修正）
+   *
+   * 原本用 `notifyImport('cleaning', '新增清潔記錄', …)` —— 種類與標題
+   * 都指向清潔記錄，但這支端點寫的是 `hk_event`（TimeTree 排班）。
+   * 真正的清潔記錄在 `/api/import/cleaning`，那支當時完全沒有通知。
+   *
+   * 結果是「清潔記錄通知」那個開關通知的是排班匯入，而清潔記錄靜靜地不發。
+   *
+   * 現在標題改成講實話。種類仍然掛 `cleaning` ——
+   * 那四個種類（orders/approvals/reviews/cleaning）對應
+   * `notification_prefs` 的四個布林欄位，加第五個要動 migration_92 與設定頁，
+   * 而排班跟清潔本來就是同一群人在看。
+   */
   const added = events.length - (beforeCount ?? 0);
   if (added > 0) {
-    await notifyImport('cleaning', '新增清潔記錄',
+    await notifyImport('cleaning', '新增房務排班',
       `${period} 新增 ${added} 筆排班記錄`, '/housekeeping');
   }
 

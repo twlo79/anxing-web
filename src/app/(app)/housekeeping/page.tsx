@@ -76,12 +76,23 @@ export default function HousekeepingPage() {
   }, [msg]);
 
   return (
-    <div className="p-4 md:p-6">
-      <h1 className="text-xl md:text-2xl font-semibold mb-3">房務管理</h1>
+    /*
+     * 【手機上滿版】（2026-08-16 使用者指定：照 TimeTree）
+     *
+     * 月曆七欄，手機寬度 390px 扣掉左右各 16px 的 padding，
+     * 每欄只剩 51px —— 「退-開封整棟」在那個寬度只放得下三個字。
+     *
+     * TimeTree 手機版是貼齊左右邊緣的，那不是省空間的取巧，
+     * 是七欄月曆在小螢幕上唯一讀得到內容的做法。
+     *
+     * 桌機維持有 padding —— 那裡不缺寬度，貼邊反而難看。
+     */
+    <div className="-mx-4 px-0 py-4 md:mx-0 md:p-6">
+      <h1 className="text-xl md:text-2xl font-semibold mb-3 px-4 md:px-0">房務管理</h1>
 
       {/* 只有一個分頁時整條不畫 —— 一個孤零零的分頁看起來像壞掉 */}
       {tabs.length > 1 && (
-      <div className="flex gap-1 border-b border-mor-line mb-4 overflow-x-auto">
+      <div className="flex gap-1 border-b border-mor-line mb-4 overflow-x-auto px-4 md:px-0">
         {tabs.map((k) => (
           <button key={k} onClick={() => setTab(k)}
             className={`px-4 py-2 text-sm whitespace-nowrap border-b-2 -mb-px transition-colors ${
@@ -96,7 +107,7 @@ export default function HousekeepingPage() {
       )}
 
       {msg && (
-        <div className={`mb-3 rounded-lg px-3 py-2 text-sm ${
+        <div className={`mb-3 mx-4 md:mx-0 rounded-lg px-3 py-2 text-sm ${
           msg.err ? 'bg-red-50 text-red-700' : 'bg-mor-greenlight text-mor-green'}`}
           onClick={() => setMsg(null)}>
           {msg.t}
