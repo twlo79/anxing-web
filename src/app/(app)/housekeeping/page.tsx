@@ -1,6 +1,6 @@
 'use client';
-import { useEffect, useMemo, useState } from 'react';
-import { createClient } from '@/lib/supabase';
+import { useEffect, useState } from 'react';
+import { useProfile } from '@/lib/profile';
 import CalendarTab from './calendar-tab';
 import StatsTab from './stats-tab';
 
@@ -43,7 +43,6 @@ const TAB_LABEL = { calendar: '行事曆', stats: '排班統計' } as const;
 type TabKey = keyof typeof TAB_LABEL;
 
 export default function HousekeepingPage() {
-  const supabase = useMemo(() => createClient(), []);
   const [tab, setTab] = useState<TabKey>('calendar');
   const [msg, setMsg] = useState<{ t: string; err?: boolean } | null>(null);
 
@@ -60,15 +59,8 @@ export default function HousekeepingPage() {
    * 灰掉的分頁會讓人一直去點，然後問「為什麼我不能用」。
    * 跟權限管理那頁同樣的處理。
    */
-  const [canEdit, setCanEdit] = useState(false);
-  useEffect(() => {
-    (async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const { data } = await supabase.from('profiles').select('role').eq('id', user.id).single();
-      setCanEdit(data?.role === 'manager' || data?.role === 'super_admin');
-    })();
-  }, [supabase]);
+  const { role } = useProfile();
+  const canEdit = role === 'manager' || role === 'super_admin';
   const tabs: TabKey[] = canEdit ? ['calendar', 'stats'] : ['calendar'];
 
   /**

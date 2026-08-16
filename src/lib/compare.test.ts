@@ -2,7 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   yearRange, monthRange, lastDayOf, prevPeriod, lastYearPeriod,
-  yoySameAsPrev, growth, partialMonth,
+  yoySameAsPrev, growth, partialMonth, sameMonthRange,
 } from './compare.ts';
 
 /**
@@ -103,4 +103,32 @@ describe('未走完的月份', () => {
   test('今天剛好是月底就算走完', () => {
     assert.equal(partialMonth('2026-08-31', new Date(2026, 7, 31)), null);
   });
+});
+
+/* ── 比較期的重複查詢（2026-08-15 實測） ────────── */
+
+test('★★ 近 12 個月：環比與同比換算成月份是同一段', () => {
+  // 這就是儀表板把同一支查詢跑兩次的原因 ——
+  // 日期差幾天，但 revenue_recognitions 是按 ym 存的，看不出差別
+  const cur: [string, string] = ['2025-09-01', '2026-08-16'];
+  const prev = prevPeriod('custom', cur[0], cur[1]);
+  const yoy = lastYearPeriod('custom', cur[0], cur[1]);
+  assert.equal(sameMonthRange(prev, yoy), true);
+});
+
+test('★ 短區間就不是同一段,不能省', () => {
+  const cur: [string, string] = ['2026-08-01', '2026-08-16'];
+  const prev = prevPeriod('custom', cur[0], cur[1]);   // 7 月中~7 月底
+  const yoy = lastYearPeriod('custom', cur[0], cur[1]); // 去年 8 月
+  assert.equal(sameMonthRange(prev, yoy), false);
+});
+
+test('月模式的環比與同比不同月', () => {
+  assert.equal(sameMonthRange(prevPeriod('month', '2026-08-01', '2026-08-31'),
+    lastYearPeriod('month', '2026-08-01', '2026-08-31')), false);
+});
+
+test('★ 年模式兩者本來就相同', () => {
+  assert.equal(sameMonthRange(prevPeriod('year', '2026-01-01', '2026-12-31'),
+    lastYearPeriod('year', '2026-01-01', '2026-12-31')), true);
 });

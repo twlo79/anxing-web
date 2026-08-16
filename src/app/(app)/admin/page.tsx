@@ -4,8 +4,8 @@ import {
   checkTenure, handoverPatch, tenureLabel, managerIdOn, type Tenure,
 } from '@/lib/estate-manager';
 import Toast from '@/components/Toast';
-import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
+import { useProfile } from '@/lib/profile';
 import { softDelete } from '@/lib/trash';
 
 type Staff = { id: string; name: string; aliases: string[]; staff_type: string; active: boolean; sort: number; role?: string; email?: string | null; auth_uid?: string | null };
@@ -229,8 +229,7 @@ const ROLE_OF: Record<string, string> = {
 
 export default function AdminPage() {
   const supabase = useMemo(() => createClient(), []);
-  const router = useRouter();
-  const [role, setRole] = useState<string | null>(null);
+  const { role, loading: loadingProfile } = useProfile();
   const [staff, setStaff] = useState<Staff[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [estates, setEstates] = useState<Estate[]>([]);
@@ -295,16 +294,19 @@ export default function AdminPage() {
     setSelEstate((cur) => cur || es?.[0]?.id || '');
   }, [supabase]);
 
+  /*
+   * 角色來自 ProfileProvider（lib/profile.tsx），這一頁不再自己查一次。
+   *
+   * 這裡仍然用 role 卡住 load() —— 跟儀表板不同，因為權限管理載的是
+   * 全站主檔（人員、帳號、房源…），給看不到這一頁的人白載一次
+   * 沒有任何意義。儀表板那邊的資料是他本來就要看的，所以不等。
+   */
   useEffect(() => {
-    supabase.auth.getUser().then(async ({ data: { user } }) => {
-      if (!user) { router.push('/login'); return; }
-      const { data } = await supabase.from('profiles').select('role').eq('id', user.id).single();
-      setRole(data?.role ?? null);
-      // 會計也要載 —— 他看得到收付款帳號與常用帳號兩個分頁
-      if (data?.role !== 'super_admin' && data?.role !== 'accountant') return;
-      load();
-    });
-  }, [supabase, router, load]);
+    if (loadingProfile) return;
+    // 會計也要載 —— 他看得到收付款帳號與常用帳號兩個分頁
+    if (role !== 'super_admin' && role !== 'accountant') return;
+    load();
+  }, [role, loadingProfile, load]);
 
   function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 2500); }
 

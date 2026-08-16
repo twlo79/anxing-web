@@ -9,6 +9,7 @@ import FilterToggle from '@/components/FilterToggle';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
+import { useProfile } from '@/lib/profile';
 import { fetchAll } from '@/lib/fetch-all';
 import Receipts from '@/components/Receipts';
 import RefundFields, { METHOD_LABEL, METHOD_OPTS } from '@/components/RefundFields';
@@ -113,7 +114,9 @@ export default function DepositsPage() {
   const [detail, setDetail] = useState<Dep | null>(null);
   const [edit, setEdit] = useState<Dep | null>(null);
   const [saving, setSaving] = useState(false);
-  const [me, setMe] = useState<{ id: string; role: string } | null>(null);
+  // 同 purchases：身分與角色來自 ProfileProvider，不再自己查一次
+  const prof = useProfile();
+  const me = prof.profile ? { id: prof.profile.id, role: prof.profile.role ?? '' } : null;
   const [people, setPeople] = useState<{ id: string; name: string | null }[]>([]);
   const [rejecting, setRejecting] = useState<Dep | null>(null);
   const [rejectReason, setRejectReason] = useState('');
@@ -164,12 +167,6 @@ export default function DepositsPage() {
     // 會以為訊息講的是另一筆
     supabase.from('profiles').select('id, name')
       .then(({ data }) => setPeople(data ?? []));
-    (async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const { data } = await supabase.from('profiles').select('role').eq('id', user.id).single();
-      setMe({ id: user.id, role: data?.role ?? '' });
-    })();
   }, [load, supabase]);
 
   const estateName = useMemo(() => Object.fromEntries(estates.map((e) => [e.id, e.name])), [estates]);

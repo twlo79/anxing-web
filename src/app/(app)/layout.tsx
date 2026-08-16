@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
+import { ProfileProvider, useProfile } from '@/lib/profile';
 
 
 const ROLE_LABEL: Record<string, string> = {
@@ -70,10 +71,22 @@ const NAV: { href: string; label: string; icon: string; roles: string[] }[] = [
   { href: '/admin', label: '權限管理', icon: '⚙️', roles: ['accountant', 'super_admin'] },
 ];
 
+/**
+ * Provider 包在最外層，裡面那層才是真正的版面。
+ *
+ * 拆成兩個元件是因為 `useProfile()` 必須在 Provider **底下**才讀得到 ——
+ * 同一個元件裡自己提供又自己讀，拿到的是預設值（loading: true），
+ * 而那個錯誤不會報錯，只會讓側邊欄永遠顯示不出職稱。
+ */
 export default function AppLayout({ children }: { children: React.ReactNode }) {
+  return <ProfileProvider><AppShell>{children}</AppShell></ProfileProvider>;
+}
+
+function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [profile, setProfile] = useState<{ name: string; role: string } | null>(null);
+  // 身分與角色由 ProfileProvider 提供 —— 全站只查一次（lib/profile.tsx）
+  const { profile } = useProfile();
   const [navOpen, setNavOpen] = useState(false);
   /*
    * ============================================================
@@ -142,15 +155,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     });
   }
 
-  useEffect(() => {
-    const supabase = createClient();
-    supabase.auth.getUser().then(async ({ data: { user } }) => {
-      if (!user) return;
-      const { data } = await supabase.from('profiles').select('name, role').eq('id', user.id).single();
-      if (data) setProfile(data);
-    });
-  }, []);
-
   /*
    * 未讀數。切換頁面時重算 —— 使用者在新訊息頁標了已讀之後,
    * 數字要跟著掉,不然那顆紅點會一直在,然後它就失去意義了。
@@ -178,7 +182,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     router.refresh();
   }
 
-  const items = NAV.filter((n) => !profile || n.roles.includes(profile.role));
+  // role 可能是 null（還在查，或這個帳號沒設角色）。
+  // 那時先顯示全部選單項 —— 少顯示會讓人以為功能不見了，
+  // 而點進去照樣被 RLS 擋，不會看到不該看的資料。
+  const items = NAV.filter((n) => !profile?.role || n.roles.includes(profile.role));
   const current = items.find((n) => pathname.startsWith(n.href));
 
   /*
@@ -267,7 +274,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </button>
         <div className="min-w-0">
           <div className="font-bold leading-tight truncate">{current?.label ?? '安幸上工'}</div>
-          {profile && <div className="text-[11px] text-gray-500 truncate">{profile.name}・{ROLE_LABEL[profile.role] ?? profile.role}</div>}
+          {profile && <div className="text-[11px] text-gray-500 truncate">{profile.name}・{(profile.role && ROLE_LABEL[profile.role]) ?? profile.role ?? ''}</div>}
         </div>
       </header>
 
@@ -281,7 +288,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               <div className="font-bold text-lg">安幸上工</div>
               {profile && (
                 <div className="mt-1 text-xs text-gray-500">
-                  {profile.name}・{ROLE_LABEL[profile.role] ?? profile.role}
+                  {profile.name}・{(profile.role && ROLE_LABEL[profile.role]) ?? profile.role ?? ''}
                 </div>
               )}
             </div>
@@ -319,7 +326,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 <div className="font-bold text-lg leading-tight truncate">安幸上工</div>
                 {profile && (
                   <div className="text-xs text-gray-500 truncate">
-                    {profile.name}・{ROLE_LABEL[profile.role] ?? profile.role}
+                    {profile.name}・{(profile.role && ROLE_LABEL[profile.role]) ?? profile.role ?? ''}
                   </div>
                 )}
               </div>

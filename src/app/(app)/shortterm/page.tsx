@@ -9,6 +9,7 @@ import FilterToggle from '@/components/FilterToggle';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, type SortState } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
+import { useProfile } from '@/lib/profile';
 import { FEE_TYPES, ONEOFF_FEE_TYPES } from '@/lib/fee-types';
 import { ONEOFF_LABEL } from '@/lib/revenue-report';
 import RecurringPanel from '@/components/RecurringPanel';
@@ -102,14 +103,7 @@ export default function ShortTermPage() {
   const [agg, setAgg] = useState<any[]>([]);
   // 定期收費的設定只有會計/主管/總經理能改 —— 跟 recurring_charges 的 RLS 一致。
   // 前端擋只是少讓人白按一次,真正的把關在資料庫。
-  const [role, setRole] = useState('');
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (!user) return;
-      supabase.from('profiles').select('role').eq('id', user.id).single()
-        .then(({ data }) => setRole(data?.role ?? ''));
-    });
-  }, [supabase]);
+  const role = useProfile().role ?? '';
 
   useEffect(() => { supabase.from('estates').select('id, name, sort, active').order('sort').then(({ data }) => setEstates(data ?? [])); }, [supabase]);
   // 安幸收款帳號改讀主檔,不再寫死。現金與加密貨幣沒有帳號,直接列在選單上。

@@ -9,6 +9,7 @@ import FilterToggle from '@/components/FilterToggle';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
+import { useProfile } from '@/lib/profile';
 import Receipts, { type ReceiptsHandle } from '@/components/Receipts';
 import DeferralPanel from '@/components/DeferralPanel';
 import { deferralLabel, childLabel, recognizedTotal, paidTotal, paidCell } from '@/lib/deferral';
@@ -61,7 +62,7 @@ export default function ExpensesPage() {
   const [saving, setSaving] = useState(false);
   // 新支出還沒有 id，憑證要等這筆建立後才傳得上去 —— 存檔時呼叫 flush()
   const receiptsRef = useRef<ReceiptsHandle>(null);
-  const [role, setRole] = useState('');
+  const role = useProfile().role ?? '';
 
   // 篩選
   const [fromD, setFromD] = useState('');
@@ -77,12 +78,6 @@ export default function ExpensesPage() {
   function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 2500); }
 
   useEffect(() => {
-    (async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const { data } = await supabase.from('profiles').select('role').eq('id', user.id).single();
-      setRole(data?.role ?? '');
-    })();
     supabase.from('account_codes').select('code, name, sort, active, kind').order('sort').then(({ data }) => setCodes(data ?? []));
     supabase.from('estates').select('id, name, sort, active').order('sort').then(({ data }) => setEstates(data ?? []));
     supabase.from('payment_accounts').select('code, name, method')

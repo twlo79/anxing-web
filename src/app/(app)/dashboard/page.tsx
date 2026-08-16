@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
+import { useProfile } from '@/lib/profile';
 import { ymOf, ymShow, ymMonth, monthsAgo, todayStr, fmtRange } from '@/lib/period';
 // Supabase 一次只回 1000 列且不報錯 —— 這一頁全部是加總,一定要撈完
 import { fetchAll } from '@/lib/fetch-all';
@@ -9,7 +9,7 @@ import { FilterBar, FilterSelect, FilterDateRange, FilterClear } from '@/lib/fil
 import { srcLabel } from '@/lib/revenue-report';
 import {
   type PeriodMode, yearRange, monthRange, prevPeriod, lastYearPeriod,
-  yoySameAsPrev, growth, partialMonth,
+  yoySameAsPrev, growth, partialMonth, sameMonthRange,
 } from '@/lib/compare';
 
 /**
@@ -106,8 +106,8 @@ const short = (n: number) => {
 
 export default function DashboardPage() {
   const supabase = useMemo(() => createClient(), []);
-  const router = useRouter();
-  const [role, setRole] = useState<string | null>(null);
+  // 角色由 layout 的 ProfileProvider 提供，全站只查一次（lib/profile.tsx）
+  const { role } = useProfile();
   const [loading, setLoading] = useState(true);
   /** 資料沒撈完時的警告。這一頁全部是加總,少一列就是錯的,不能靜靜顯示。 */
   const [truncated, setTruncated] = useState('');
@@ -123,7 +123,16 @@ export default function DashboardPage() {
 
   // ── 篩選：期間 / 物業 / 房源 ────────────────────────
   // 預設近 12 個月 —— 一年的區間才看得出季節性，這是短租最重要的形狀。
-  const [fromD, setFromD] = useState(monthsAgo(11));
+  /*
+   * 【預設本月，不是近 12 個月】（2026-08-15 使用者指定）
+   *
+   * 實測打開一次要 3.4 秒，其中一大塊是 12 個月的資料量 ——
+   * 訂單與認列都破 1000 列各要多翻一輪分頁，比較期也跟著各撈 12 個月。
+   *
+   * 12 個月是「偶爾想看」的區間，不該是每次打開都跑的。
+   * 想看整年按右上角的快捷鍵。
+   */
+  const [fromD, setFromD] = useState(monthsAgo(0));
   const [toD, setToD] = useState(todayStr());
   const [estF, setEstF] = useState('');
   const [propF, setPropF] = useState('');
@@ -151,13 +160,6 @@ export default function DashboardPage() {
     }
   }
 
-  useEffect(() => {
-    supabase.auth.getUser().then(async ({ data: { user } }) => {
-      if (!user) { router.push('/login'); return; }
-      const { data } = await supabase.from('profiles').select('role').eq('id', user.id).single();
-      setRole(data?.role ?? null);
-    });
-  }, [supabase, router]);
 
   // ── 物業/房源篩選在前端做（資料已按期間縮小）──────
   // 認列與支出的 estate_id 有機會是空的（訂單本身沒歸物業，或匯入時漏帶）。
@@ -196,7 +198,46 @@ export default function DashboardPage() {
      * 兩個畫面互相矛盾，而且沒有任何錯誤訊息。
      * 當時「訂單數」本期與上一期都剛好是 1,000 筆 —— 那個整數是唯一的線索。
      */
-    const [rv, ex, od, r5, es, pr, cd, pd] = await Promise.all([
+    /*
+     * 【比較期跟主查詢一起發】（2026-08-15）
+     *
+     * 原本是「主查詢全部回來 → 再發比較期」。那兩組**沒有任何依賴關係** ——
+     * 比較期的區間只由 mode/fromD/toD 算出來，不需要主查詢的任何結果。
+     *
+     * 實測那一等就是 750ms:主查詢在 2168ms 開始、2427ms 結束，
+     * 比較期到 2922ms 才發出去。改成一起發之後那段完全消失。
+     */
+    const [pf, pt] = prevPeriod(mode, fromD, toD);
+    const [yf, yt] = lastYearPeriod(mode, fromD, toD);
+
+    /*
+     * 【同一段月份只查一次】
+     *
+     * 近 12 個月的預設區間下，環比與同比換算成 ym 是同一段 ——
+     * 實測 `revenue_recognitions?ym=gte.202409&ym=lte.202508` 跑了兩次，
+     * 一模一樣，而且那是全頁最大的一支（要分頁）。
+     *
+     * 只有認列表能省:支出與訂單是日粒度的，那兩段真的不同。
+     */
+    const revSameSpan = sameMonthRange([pf, pt], [yf, yt]);
+
+    const cmpRev = (f: string, t: string) =>
+      fetchAll<CmpRaw['rev'][number]>((a, b) => supabase.from('revenue_recognitions')
+        .select('source, estate_id, property_id, month_amount')
+        .gte('ym', ymOf(f)).lte('ym', ymOf(t)).range(a, b));
+    const cmpExp = (f: string, t: string) =>
+      fetchAll<CmpRaw['exp'][number]>((a, b) => supabase.from('expenses')
+        .select('amount, estate_id, property_id')
+        .gte('spent_on', f).lte('spent_on', t).range(a, b));
+    const cmpOrd = (f: string, t: string) =>
+      fetchAll<CmpRaw['ord'][number]>((a, b) => supabase.from('orders')
+        .select('estate_id, property_id')
+        .gte('checkin', f).lte('checkin', t).range(a, b));
+
+    const [
+      rv, ex, od, r5, es, pr, cd, pd,
+      pRev, pExp, pOrd, yRevMaybe, yExp, yOrd,
+    ] = await Promise.all([
       fetchAll<Rev>((f, t) => supabase.from('revenue_recognitions')
         .select('ym, source, estate_id, property_id, month_amount, fee_type, order_id')
         .gte('ym', ymOf(fromD)).lte('ym', ymOf(toD)).range(f, t)),
@@ -224,11 +265,18 @@ export default function DashboardPage() {
       fetchAll<Pending>((f, t) => supabase.from('purchase_requests')
         .select('total_amount, planned_transfer_on')
         .eq('status', 'approved').is('purchased_on', null).range(f, t)),
+
+      // ── 比較期（跟上面同時發，不排隊）────────────
+      cmpRev(pf, pt), cmpExp(pf, pt), cmpOrd(pf, pt),
+      // 同一段月份的話不重發，下面直接沿用環比的結果
+      revSameSpan ? Promise.resolve(null) : cmpRev(yf, yt),
+      cmpExp(yf, yt), cmpOrd(yf, yt),
     ]);
 
     // 撈不完就明講。這一頁的數字全部是加總，少一列就是錯的 ——
     // 靜靜顯示一個偏低的數字比顯示錯誤訊息糟糕得多。
-    const bad = [rv, ex, od, r5, es, pr, cd, pd].find((r) => r.error);
+    const bad = [rv, ex, od, r5, es, pr, cd, pd,
+      pRev, pExp, pOrd, yExp, yOrd].find((r) => r.error);
     if (bad?.error) setTruncated(bad.error);
 
     setRevs(rv.rows);
@@ -241,44 +289,40 @@ export default function DashboardPage() {
     setPending(pd.rows);
 
     /*
-     * 比較期。環比(上一期)與同比(去年同期)各撈一次。
+     * 比較期的結果組裝。查詢已經在上面跟主查詢一起發完了。
      *
-     * 為什麼分開查而不是拉一個大區間再切:2026-08 對 2025-08 中間隔了 11 個月,
-     * 一次撈會把不需要的月份全部拉回來。分開查各自有界,而且平行跑不會比較慢。
+     * 環比(上一期)與同比(去年同期)分開查而不是拉一個大區間再切:
+     * 2026-08 對 2025-08 中間隔了 11 個月,一次撈會把不需要的月份全部拉回來。
      *
-     * 物業/房源篩選在這裡就套用 —— 比較期跟當期不同範圍的話,成長率是假的。
+     * 分頁一樣不能省 —— 少了的話「去年同期」會偏低,成長率跟著假,
+     * 而那個假的百分比看起來完全正常,不會有人懷疑。
      */
-    const [pf, pt] = prevPeriod(mode, fromD, toD);
-    const [yf, yt] = lastYearPeriod(mode, fromD, toD);
-    // 比較期一樣要分頁。少了的話「去年同期」會偏低，成長率跟著假 ——
-    // 而那個假的百分比看起來完全正常，不會有人懷疑。
-    const fetchCmp = async (f: string, t: string): Promise<CmpRaw> => {
-      const [r1, e1, o1] = await Promise.all([
-        fetchAll<CmpRaw['rev'][number]>((a, b) => supabase.from('revenue_recognitions')
-          .select('source, estate_id, property_id, month_amount')
-          .gte('ym', ymOf(f)).lte('ym', ymOf(t)).range(a, b)),
-        fetchAll<CmpRaw['exp'][number]>((a, b) => supabase.from('expenses')
-          .select('amount, estate_id, property_id')
-          .gte('spent_on', f).lte('spent_on', t).range(a, b)),
-        fetchAll<CmpRaw['ord'][number]>((a, b) => supabase.from('orders')
-          .select('estate_id, property_id')
-          .gte('checkin', f).lte('checkin', t).range(a, b)),
-      ]);
-      return { rev: r1.rows, exp: e1.rows, ord: o1.rows };
-    };
-    const [prevC, yoyC] = await Promise.all([fetchCmp(pf, pt), fetchCmp(yf, yt)]);
-    setCmpRaw({ prev: prevC, yoy: yoyC });
+    setCmpRaw({
+      prev: { rev: pRev.rows, exp: pExp.rows, ord: pOrd.rows },
+      // 同一段月份時沿用環比的認列 —— 上面已經確認過那兩段的 ym 完全相同
+      yoy: { rev: (yRevMaybe ?? pRev).rows, exp: yExp.rows, ord: yOrd.rows },
+    });
 
     setLoading(false);
     // matchScope 不能放進來 —— 見 CmpRaw 的說明,會變成無限迴圈
   }, [supabase, fromD, toD, mode]);
 
-  useEffect(() => { if (role) load(); }, [role, load]);
+  /*
+   * 【不等 role 就開始載】（2026-08-15）
+   *
+   * 原本是 `if (role) load()` —— 資料查詢排在「查身分 → 查角色」後面，
+   * 實測那一等 627ms。
+   *
+   * 但 role 在這裡的用途只有「要不要渲染這一頁」，**不是安全機制** ——
+   * 真正的把關是資料庫的 RLS。前端等 role 才敢查，等的是一個
+   * 已經有人在擋的東西。
+   */
+  useEffect(() => { load(); }, [load]);
 
   // 物業改了就把房源清掉 —— 否則會留著上一個物業的房間，篩出空結果
   function pickEstate(v: string) { setEstF(v); setPropF(''); }
   function clearFilters() {
-    setFromD(monthsAgo(11)); setToD(todayStr()); setEstF(''); setPropF('');
+    setFromD(monthsAgo(0)); setToD(todayStr()); setEstF(''); setPropF('');
   }
 
   const estateName = useMemo(() => Object.fromEntries(estates.map((e) => [e.id, e.name])), [estates]);

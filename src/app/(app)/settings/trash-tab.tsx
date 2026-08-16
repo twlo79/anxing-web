@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
+import { useProfile } from '@/lib/profile';
 import { fetchAll } from '@/lib/fetch-all';
 import { TABLE_LABEL, trashAge, fieldRows, typeOptions } from '@/lib/trash';
 
@@ -46,7 +47,7 @@ export default function TrashTab({ initialTable = '' }: { initialTable?: string 
   const supabase = useMemo(() => createClient(), []);
   const [rows, setRows] = useState<Trash[]>([]);
   const [names, setNames] = useState<Map<string, string>>(new Map());
-  const [role, setRole] = useState<string | null>(null);
+  const { role } = useProfile();
   const [filter, setFilter] = useState<Filter>('open');
   const [table, setTable] = useState(initialTable);
   const [q, setQ] = useState('');
@@ -59,14 +60,8 @@ export default function TrashTab({ initialTable = '' }: { initialTable?: string 
   function fail(t: string) { setMsg({ t, err: true }); }
 
   const load = useCallback(async () => {
-    const [{ data: { user } }, pf] = await Promise.all([
-      supabase.auth.getUser(),
-      supabase.from('profiles').select('id, name'),
-    ]);
-    if (user) {
-      const { data: me } = await supabase.from('profiles').select('role').eq('id', user.id).single();
-      setRole(me?.role ?? null);
-    }
+    // 角色由 ProfileProvider 提供 —— 這裡只要名字對照表
+    const pf = await supabase.from('profiles').select('id, name');
     setNames(new Map((pf.data ?? []).map((p) => [p.id as string, p.name as string])));
 
     // fetchAll：回收桶會一直長大，而「少了一截」在這一頁等於「東西不見了」

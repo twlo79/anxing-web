@@ -5,6 +5,7 @@ import Req, { ReqMark } from '@/components/Req';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
+import { useProfile } from '@/lib/profile';
 import { fetchAll } from '@/lib/fetch-all';
 import Receipts, { type ReceiptsHandle } from '@/components/Receipts';
 import RefundFields, { METHOD_LABEL as DEP_METHOD } from '@/components/RefundFields';
@@ -90,7 +91,10 @@ const todayStr = () => new Date().toISOString().slice(0, 10);
 
 export default function PurchasesPage() {
   const supabase = useMemo(() => createClient(), []);
-  const [me, setMe] = useState<{ id: string; role: string } | null>(null);
+  // 身分與角色由 layout 的 ProfileProvider 提供（lib/profile.tsx）——
+  // 這一頁原本自己再查一次 auth ＋ profiles，那是兩次多餘的往返
+  const prof = useProfile();
+  const me = prof.profile ? { id: prof.profile.id, role: prof.profile.role ?? 'housekeeper' } : null;
   const [rows, setRows] = useState<Req[]>([]);
   const [codes, setCodes] = useState<AccountCode[]>([]);
   const [payees, setPayees] = useState<Payee[]>([]);
@@ -170,12 +174,6 @@ export default function PurchasesPage() {
   function flashErr(t: string) { setMsg({ t, err: true }); }
 
   useEffect(() => {
-    (async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const { data } = await supabase.from('profiles').select('role').eq('id', user.id).single();
-      setMe({ id: user.id, role: data?.role ?? 'housekeeper' });
-    })();
     supabase.from('account_codes').select('code, name, kind, active').order('sort').then(({ data }) => setCodes(data ?? []));
     supabase.from('payee_presets').select('id, label, bank_code, account, company, tax_id')
       .eq('active', true).order('sort').order('label')

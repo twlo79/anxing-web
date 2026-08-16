@@ -79,6 +79,37 @@ export function lastYearPeriod(mode: PeriodMode, from: string, to: string): [str
 export const yoySameAsPrev = (mode: PeriodMode) => mode === 'year';
 
 /**
+ * 這兩段在「月份粒度」下是不是同一段？
+ *
+ * ============================================================
+ * 【為什麼要問這個】（2026-08-15 實測）
+ *
+ * 儀表板打開一次發了 23 個查詢，其中這一支跑了**兩次，一模一樣**：
+ *
+ *     revenue_recognitions?ym=gte.202409&ym=lte.202508
+ *
+ * 因為預設區間是「近 12 個月」（自訂模式），環比往前推 12 個月、
+ * 同比整段平移一年 —— **日期差幾天，但換算成月份完全相同**。
+ *
+ * `yoySameAsPrev` 只擋 `mode === 'year'`，擋不到這種。
+ *
+ * 而 `revenue_recognitions` 是按 `ym`（六碼月份）存的，
+ * 所以那兩段在資料庫眼裡就是同一個查詢 —— 白跑一次，
+ * 而且是全頁最大的一支（要分頁）。
+ *
+ * 【為什麼只看月份，不看日期】
+ * 支出與訂單是日粒度的（`spent_on` / `checkin`），那兩段真的不同，
+ * 不能一起省。只有認列表能省 —— 所以判斷條件寫「月份相同」，
+ * 而不是「區間相同」。名字也照這個意思取。
+ */
+export function sameMonthRange(
+  a: [string, string], b: [string, string],
+): boolean {
+  const ym = (s: string) => s.slice(0, 7);
+  return ym(a[0]) === ym(b[0]) && ym(a[1]) === ym(b[1]);
+}
+
+/**
  * 成長率。比較期是 0 就回 null —— 除以零會是 Infinity,
  * 畫面上會出現「▲ Infinity%」這種東西。
  */
