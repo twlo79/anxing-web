@@ -150,6 +150,8 @@ export default function DashboardPage() {
   });
   /** 比較用的兩組數字。環比=上一期,同比=去年同期。 */
   const [cmpRaw, setCmpRaw] = useState<{ prev: CmpRaw; yoy: CmpRaw } | null>(null);
+  /** 載入編號。比較期是背景補的，回來時要確認自己還是最新那一次 */
+  const runRef = useRef(0);
 
   function applyMode(m: PeriodMode, y = yearSel, ym = monthSel) {
     setMode(m);
@@ -185,8 +187,27 @@ export default function DashboardPage() {
   }, [estF, propF, estateOfProp]);
 
   const load = useCallback(async () => {
+    /*
+     * 【為什麼要編號】
+     *
+     * 比較期改成背景補上之後，多了一個競態:連續切換期間時，
+     * 上一次的比較期可能在這一次之後才回來，把新的數字蓋掉 ——
+     * 而畫面上會是「本月的營收」配「上上個月的成長率」，
+     * 兩個數字各自都合理，沒有人看得出來。
+     *
+     * 每次載入拿一個號碼，回來時對不上就整批丟掉。
+     */
+    const myRun = ++runRef.current;
     setLoading(true);
     setTruncated('');
+    /*
+     * 比較期資料先清掉。
+     *
+     * 不清的話，換期間之後成長率會**先顯示上一次的數字**再跳掉 ——
+     * 而那個舊數字看起來完全正常，沒有人會發現它是上一個期間的。
+     * 清成 null，畫面顯示「—」，等新的補上。
+     */
+    setCmpRaw(null);
     /*
      * 期間篩選一律在資料庫端做。全撈回來前端篩，資料一多就會卡在瀏覽器。
      *
@@ -234,9 +255,32 @@ export default function DashboardPage() {
         .select('estate_id, property_id')
         .gte('checkin', f).lte('checkin', t).range(a, b));
 
+    /*
+     * 【兩批：先畫得出來的，後補的】（2026-08-16）
+     *
+     * 全部 16 支放在同一個 await 裡的話，「載入中」要等到**最慢那一支**
+     * 才消失 —— 而其中六支是比較期（成長率）與待付款，那些不是
+     * 打開儀表板第一眼要看的東西。
+     *
+     * 拆成兩批之後：主資料回來就把畫面畫出來，比較期在背景補。
+     * 兩批**同時發出**，所以總時間沒有變長，只是不用等齊。
+     *
+     * 成長率在補上之前顯示「—」，不是先顯示一個錯的再跳掉 ——
+     * 數字自己變動比慢一點更讓人不信任。
+     */
+    const later = Promise.all([
+      cmpRev(pf, pt), cmpExp(pf, pt), cmpOrd(pf, pt),
+      // 同一段月份的話不重發，下面直接沿用環比的結果
+      revSameSpan ? Promise.resolve(null) : cmpRev(yf, yt),
+      cmpExp(yf, yt), cmpOrd(yf, yt),
+      // 待付款是側欄的一張小卡，晚幾百毫秒沒有人會發現
+      fetchAll<Pending>((f, t) => supabase.from('purchase_requests')
+        .select('total_amount, planned_transfer_on')
+        .eq('status', 'approved').is('purchased_on', null).range(f, t)),
+    ]);
+
     const [
-      rv, ex, od, r5, es, pr, cd, pd,
-      pRev, pExp, pOrd, yRevMaybe, yExp, yOrd,
+      rv, ex, od, r5, es, pr, cd,
     ] = await Promise.all([
       fetchAll<Rev>((f, t) => supabase.from('revenue_recognitions')
         .select('ym, source, estate_id, property_id, month_amount, fee_type, order_id')
@@ -261,22 +305,12 @@ export default function DashboardPage() {
         .select('id, name, estate_id').order('name').range(f, t)),
       fetchAll<Code>((f, t) => supabase.from('account_codes')
         .select('code, name').range(f, t)),
-      // 待付款：已核可但還沒填出款日 —— 這是「錢還沒出去但已經承諾要出」的部位
-      fetchAll<Pending>((f, t) => supabase.from('purchase_requests')
-        .select('total_amount, planned_transfer_on')
-        .eq('status', 'approved').is('purchased_on', null).range(f, t)),
-
-      // ── 比較期（跟上面同時發，不排隊）────────────
-      cmpRev(pf, pt), cmpExp(pf, pt), cmpOrd(pf, pt),
-      // 同一段月份的話不重發，下面直接沿用環比的結果
-      revSameSpan ? Promise.resolve(null) : cmpRev(yf, yt),
-      cmpExp(yf, yt), cmpOrd(yf, yt),
     ]);
 
     // 撈不完就明講。這一頁的數字全部是加總，少一列就是錯的 ——
     // 靜靜顯示一個偏低的數字比顯示錯誤訊息糟糕得多。
-    const bad = [rv, ex, od, r5, es, pr, cd, pd,
-      pRev, pExp, pOrd, yExp, yOrd].find((r) => r.error);
+    if (myRun !== runRef.current) return;   // 已經有更新的一次在跑了
+    const bad = [rv, ex, od, r5, es, pr, cd].find((r) => r.error);
     if (bad?.error) setTruncated(bad.error);
 
     setRevs(rv.rows);
@@ -286,10 +320,12 @@ export default function DashboardPage() {
     setEstates(es.rows);
     setProperties(pr.rows);
     setCodes(cd.rows);
-    setPending(pd.rows);
+
+    // 主資料到齊 —— 畫面現在就畫得出來，不等比較期
+    setLoading(false);
 
     /*
-     * 比較期的結果組裝。查詢已經在上面跟主查詢一起發完了。
+     * 比較期在背景補上。
      *
      * 環比(上一期)與同比(去年同期)分開查而不是拉一個大區間再切:
      * 2026-08 對 2025-08 中間隔了 11 個月,一次撈會把不需要的月份全部拉回來。
@@ -297,13 +333,17 @@ export default function DashboardPage() {
      * 分頁一樣不能省 —— 少了的話「去年同期」會偏低,成長率跟著假,
      * 而那個假的百分比看起來完全正常,不會有人懷疑。
      */
+    const [pRev, pExp, pOrd, yRevMaybe, yExp, yOrd, pd] = await later;
+    if (myRun !== runRef.current) return;
+    const badLater = [pRev, pExp, pOrd, yExp, yOrd, pd].find((r) => r?.error);
+    if (badLater?.error) setTruncated(badLater.error);
+
+    setPending(pd.rows);
     setCmpRaw({
       prev: { rev: pRev.rows, exp: pExp.rows, ord: pOrd.rows },
       // 同一段月份時沿用環比的認列 —— 上面已經確認過那兩段的 ym 完全相同
       yoy: { rev: (yRevMaybe ?? pRev).rows, exp: yExp.rows, ord: yOrd.rows },
     });
-
-    setLoading(false);
     // matchScope 不能放進來 —— 見 CmpRaw 的說明,會變成無限迴圈
   }, [supabase, fromD, toD, mode]);
 
