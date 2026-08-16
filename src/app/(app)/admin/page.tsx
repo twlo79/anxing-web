@@ -219,12 +219,27 @@ function twTime(iso: string | null | undefined): string {
 
 const TYPE_LABEL: Record<string, string> = { housekeeper: '管家', roomservice: '房務', manager: '經理', accountant: '會計', gm: '總經理', other: '其他' };
 const TYPE_OPTS = ['housekeeper', 'roomservice', 'manager', 'accountant', 'gm', 'other'];
-const ROLE_LABEL: Record<string, string> = { super_admin: '總經理', manager: '主管', accountant: '會計', housekeeper: '一般' };
+const ROLE_LABEL: Record<string, string> = {
+  super_admin: '總經理', manager: '主管', accountant: '會計',
+  housekeeper: '管家', cleaner: '房務',
+};
 // 職位 → 權限 一對一。職位是主軸,權限由職位決定,不再各改各的 ——
 // 原本兩欄各自可改,結果同一個人可以是「管家職位 + 管理員權限」,對不起來。
 const ROLE_OF: Record<string, string> = {
-  housekeeper: 'housekeeper', roomservice: 'housekeeper', manager: 'manager',
-  accountant: 'accountant', gm: 'super_admin', other: 'housekeeper',
+  housekeeper: 'housekeeper',
+  /*
+   * 房務有自己的角色（migration_131）。
+   *
+   * 原本跟管家共用 `housekeeper` —— 房務打開系統看到的是十四個選單項，
+   * 而他每天只用其中三個。
+   *
+   * ⚠️ `cleaner` 目前只收窄**選單**，資料庫 RLS 跟管家相同。
+   *    知道網址還是進得去。真要隔離見 migration_131 的說明。
+   */
+  roomservice: 'cleaner',
+  manager: 'manager', accountant: 'accountant', gm: 'super_admin',
+  // 「其他」給最小的那一組 —— 不知道他做什麼的時候，少給比多給安全
+  other: 'cleaner',
 };
 
 export default function AdminPage() {

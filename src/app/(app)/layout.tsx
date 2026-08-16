@@ -7,7 +7,7 @@ import { ProfileProvider, useProfile } from '@/lib/profile';
 
 
 const ROLE_LABEL: Record<string, string> = {
-  housekeeper: '一般', accountant: '會計', manager: '主管', super_admin: '總經理',
+  cleaner: '房務', housekeeper: '管家', accountant: '會計', manager: '主管', super_admin: '總經理',
 };
 
 /*
@@ -31,10 +31,28 @@ const ROLE_LABEL: Record<string, string> = {
  * 未選取時用 CSS 把彩度壓到 55%：整排看起來收斂，
  * 選到的那一項恢復滿彩度 —— 對比就從那裡來，不需要再加別的顏色。
  */
+/**
+ * 【房務 `cleaner`】（2026-08-16 使用者指定）
+ *
+ * 選單只留四項:出勤、房務管理、清潔記錄、設定。
+ *
+ * 【這是收窄選單，不是權限隔離】（使用者選的做法）
+ *
+ * 資料庫的 RLS 沒有動 —— `cleaner` 在資料庫眼裡跟管家一樣。
+ * 房務如果知道網址，直接打 `/shortterm` 還是進得去。
+ *
+ * 為什麼先這樣:真正的權限隔離要改一批 RLS policy，而漏掉一條的症狀是
+ * 「他當天打不了卡」或「看不到自己的班表」—— 那兩個都不會報錯，
+ * 只會是一片空白，而他不會知道要跟誰講。
+ *
+ * 房務是內部員工不是外人，先把每天用的東西整理乾淨、
+ * 不要每次都從十四項裡找那三項，價值已經到手了。
+ * 哪天真的需要隔離（例如要防止看到房客電話），再單獨處理。
+ */
 const NAV: { href: string; label: string; icon: string; roles: string[] }[] = [
   // 出勤排第一：全公司每天最少點兩次,而且是「上班第一件事」。
   // 它原本排在清潔記錄後面 —— 每天要用的東西不該讓人往下找。
-  { href: '/attendance', label: '出勤', icon: '🕐', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/attendance', label: '出勤', icon: '🕐', roles: ['cleaner', 'housekeeper', 'accountant', 'manager', 'super_admin'] },
   /*
    * 房務管理緊接在出勤後面（2026-08-14 使用者指定）。
    *
@@ -46,7 +64,7 @@ const NAV: { href: string; label: string; icon: string; roles: string[] }[] = [
    * 排班是要互相配合的資訊。資料庫對應 migration_110 的唯讀政策,
    * 寫入仍然只有主管以上。
    */
-  { href: '/housekeeping', label: '房務管理', icon: '🧺', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/housekeeping', label: '房務管理', icon: '🧺', roles: ['cleaner', 'housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/shortterm', label: '訂單 | 收入', icon: '🛏️', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/contracts', label: '契約 | 收入', icon: '📋', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/revenues', label: '營收表', icon: '💰', roles: ['accountant', 'manager', 'super_admin'] },
@@ -60,12 +78,12 @@ const NAV: { href: string; label: string; icon: string; roles: string[] }[] = [
   // 要查一位房客的電話得先猜他是長租還是短租。
   { href: '/customers', label: '客戶管理', icon: '👤', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/reviews', label: '房源評價', icon: '⭐', roles: ['housekeeper', 'manager', 'super_admin'] },
-  { href: '/cleaning', label: '清潔記錄', icon: '🧹', roles: ['housekeeper', 'manager', 'super_admin'] },
+  { href: '/cleaning', label: '清潔記錄', icon: '🧹', roles: ['cleaner', 'housekeeper', 'manager', 'super_admin'] },
   // 設定 = 通知偏好 ＋ 刪除紀錄。兩個都是「偶爾才進來一次」的東西，
   // 各佔一格會把每天要用的功能往下推。全角色都看得到：
   // 通知是每個人自己的偏好；刪除紀錄藏起來的話，誤刪的人第一時間
   // 找不到救回來的地方 —— 而那正是最需要它的時候。
-  { href: '/settings', label: '設定', icon: '🎛️', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/settings', label: '設定', icon: '🎛️', roles: ['cleaner', 'housekeeper', 'accountant', 'manager', 'super_admin'] },
   // 會計進得去，但只看得到「收付款帳號」與「常用帳號」兩個分頁
   // —— 改人員角色那一頁仍然只有總經理，見 admin 頁的 ACCOUNTANT_TABS
   { href: '/admin', label: '權限管理', icon: '⚙️', roles: ['accountant', 'super_admin'] },

@@ -1,6 +1,10 @@
 /** 出勤頁各分頁共用的型別與小工具。 */
 
-export type Role = 'housekeeper' | 'accountant' | 'manager' | 'super_admin';
+/**
+ * 權限角色。`cleaner`（房務）是 migration_131 加的 ——
+ * 出勤這一頁對它的行為跟管家一樣（只看得到自己的班與假）。
+ */
+export type Role = 'cleaner' | 'housekeeper' | 'accountant' | 'manager' | 'super_admin';
 
 /** 訊息回報。err = true 的不會自動消失（使用者可能低頭看手機）。 */
 export type Msg = (text: string, err?: boolean) => void;
