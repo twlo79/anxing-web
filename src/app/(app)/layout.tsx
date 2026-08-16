@@ -64,26 +64,26 @@ const NAV: { href: string; label: string; icon: string; roles: string[] }[] = [
    * 排班是要互相配合的資訊。資料庫對應 migration_110 的唯讀政策,
    * 寫入仍然只有主管以上。
    */
-  { href: '/housekeeping', label: '房務管理', icon: '🧺', roles: ['cleaner', 'housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/housekeeping', label: '房務管理', icon: '🛎️', roles: ['cleaner', 'housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/shortterm', label: '訂單 | 收入', icon: '🛏️', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
-  { href: '/contracts', label: '契約 | 收入', icon: '📋', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/contracts', label: '契約 | 收入', icon: '🤝', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/revenues', label: '營收表', icon: '💰', roles: ['accountant', 'manager', 'super_admin'] },
   { href: '/purchases', label: '請款單控管', icon: '🧾', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
-  { href: '/deposits', label: '押金管理', icon: '🔐', roles: ['accountant', 'manager', 'super_admin'] },
-  { href: '/expenses', label: '支出明細', icon: '📒', roles: ['accountant', 'manager', 'super_admin'] },
+  { href: '/deposits', label: '押金管理', icon: '🏦', roles: ['accountant', 'manager', 'super_admin'] },
+  { href: '/expenses', label: '支出明細', icon: '💳', roles: ['accountant', 'manager', 'super_admin'] },
   { href: '/dashboard', label: '財務儀錶板', icon: '📊', roles: ['accountant', 'manager', 'super_admin'] },
   // 客戶管理跟房務、評價、清潔是同一組:都是「人在現場會用到的」。
   // 上面那半段是錢(訂單、契約、營收、請款、押金、支出、儀表板)。
   // 客戶資料原本散在訂單 guest_name 與契約 tenant_name 兩邊,
   // 要查一位房客的電話得先猜他是長租還是短租。
-  { href: '/customers', label: '客戶管理', icon: '👤', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/customers', label: '客戶管理', icon: '👥', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/reviews', label: '房源評價', icon: '⭐', roles: ['housekeeper', 'manager', 'super_admin'] },
   { href: '/cleaning', label: '清潔記錄', icon: '🧹', roles: ['cleaner', 'housekeeper', 'manager', 'super_admin'] },
   // 設定 = 通知偏好 ＋ 刪除紀錄。兩個都是「偶爾才進來一次」的東西，
   // 各佔一格會把每天要用的功能往下推。全角色都看得到：
   // 通知是每個人自己的偏好；刪除紀錄藏起來的話，誤刪的人第一時間
   // 找不到救回來的地方 —— 而那正是最需要它的時候。
-  { href: '/settings', label: '設定', icon: '🎛️', roles: ['cleaner', 'housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/settings', label: '設定', icon: '🔔', roles: ['cleaner', 'housekeeper', 'accountant', 'manager', 'super_admin'] },
   // 會計進得去，但只看得到「收付款帳號」與「常用帳號」兩個分頁
   // —— 改人員角色那一頁仍然只有總經理，見 admin 頁的 ACCOUNTANT_TABS
   { href: '/admin', label: '權限管理', icon: '⚙️', roles: ['accountant', 'super_admin'] },
@@ -129,7 +129,16 @@ function AppShell({ children }: { children: React.ReactNode }) {
    * 不記的話每次重整都彈回收起。使用者會按第二次、第三次，
    * 然後不再按 —— 一個每次都要重設的偏好等於沒有這個偏好。
    */
-  const [pinned, setPinned] = useState(false);
+  /*
+   * 【預設打開】（2026-08-16 使用者指定）
+   *
+   * 原本預設收起，滑過去才展開。收起來只剩十四個 emoji，
+   * 而 emoji 沒有共同的視覺語言 —— 每次要點某一項都得先滑過去看名稱，
+   * 那等於每天做幾十次多餘的動作。
+   *
+   * 現在預設展開，按 ‹ 才收起來，而且那個選擇會記住。
+   */
+  const [pinned, setPinned] = useState(true);
   const [hover, setHover] = useState(false);
   /*
    * 【按了收合卻沒收起來】（2026-08-14 回報）
@@ -160,7 +169,13 @@ function AppShell({ children }: { children: React.ReactNode }) {
 
   // 掛載後才讀 —— 伺服器算不出 localStorage,直接用會 hydration 不一致
   useEffect(() => {
-    try { setPinned(localStorage.getItem('navPinned') === '1'); } catch {}
+    /*
+     * 沒存過就是打開（預設值）。
+     *
+     * 寫成 `=== '1'` 的話，第一次來的人會拿到收起來的側邊欄 ——
+     * 那跟上面的 useState(true) 對不起來，畫面會先展開再收掉，閃一下。
+     */
+    try { setPinned(localStorage.getItem('navPinned') !== '0'); } catch {}
   }, []);
   function togglePinned() {
     setPinned((v) => {
