@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { getPosition, punchUi, hhmm, type GeoFail } from '@/lib/punch';
 import { dayPhase, taipeiHour, workedText, type CardInk } from '@/lib/day-phase';
+import { fmtLate } from '@/lib/attendance-hours';
 import {
   twToday, dayStatus, monthSummary, monthRange, shiftMonth, type ReportRow,
 } from '@/lib/attendance-ui';
@@ -320,12 +321,19 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
 
           顏色沿用側邊欄那三個：綠＝正常累積、橘＝要注意、藍＝中性。
         */}
-        <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
           {([
             // 只有兩個色：綠＝正常累積、藍＝中性。
             // 「遲到早退」有數字才轉琥珀 —— 那是唯一需要被看見的異常。
+            /*
+              【應到與實到分兩格】（2026-08-16）
+              原本只有一格「工時」，而它的算法是「有打卡就算滿 8 小時」——
+              遲到兩小時跟準時來，那個數字一模一樣。
+              兩格並排，這個月少做多少一眼看得到。
+            */
             ['出勤', sum.days, '天', C_IN],
-            ['工時', sum.workHours, '小時', C_IN],
+            ['應到', sum.dueHours, '小時', C_NEUTRAL],
+            ['實到', sum.actualHours, '小時', C_IN],
             ['加班', sum.otHours, '小時', C_NEUTRAL],
             ['請假', sum.leaveHours, '小時', C_NEUTRAL],
             ['遲到早退', sum.lateDays + sum.earlyDays, '次', C_WARN],
@@ -352,6 +360,18 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
           })}
         </div>
       </div>
+
+      {/*
+        算不出實到的日子要講出來。
+        不講的話「實到 120 小時」看起來完全正常，
+        而那個數字少了三天 —— 少掉的部分沒有任何跡象。
+      */}
+      {sum.actualUnknownDays > 0 && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          有 <b>{sum.actualUnknownDays} 天</b>算不出實到（有上班卡、沒有下班卡）——
+          那幾天沒有算進上面的實到合計。
+        </div>
+      )}
 
       {/* ── 要處理的 ───────────────────────────────── */}
       {sum.todo > 0 && (

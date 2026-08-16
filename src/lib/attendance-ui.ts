@@ -151,7 +151,12 @@ export type ReportRow = {
   item: string;              // 上班日 / 例假日 / 國定假日名 / 假別 / 未出勤
   in_at: string | null;      // HH:MM
   out_at: string | null;
+  /** @deprecated 等於 due_hours。migration_132 之後改讀 due_hours/actual_hours */
   work_hours: number;
+  /** 應到 = 每日工時 − 請假（migration_132） */
+  due_hours?: number;
+  /** 實到 = 下班 − 上班 − 休息。**null = 算不出來（沒打下班卡），不是 0** */
+  actual_hours?: number | null;
   leave_hours: number;
   ot_hours: number;
   late_min: number | null;
@@ -229,7 +234,18 @@ export function countTodo(
  */
 export type MonthSummary = {
   days: number;        // 有出勤的天數
+  /** @deprecated 等於 dueHours */
   workHours: number;
+  /** 應到合計 */
+  dueHours: number;
+  /**
+   * 實到合計。**沒打下班卡的那幾天不算進來** ——
+   * 當成 0 加進去的話，這個月的實到會憑空少一整天，
+   * 而少掉的那個數字看起來完全正常。
+   */
+  actualHours: number;
+  /** 有幾天算不出實到（沒打下班卡）。分母不完整要講出來 */
+  actualUnknownDays: number;
   otHours: number;
   leaveHours: number;
   lateDays: number;
@@ -244,6 +260,11 @@ export function monthSummary(
   return {
     days: rows.filter((r) => r.in_at).length,
     workHours: r2(rows.reduce((s, r) => s + Number(r.work_hours || 0), 0)),
+    dueHours: r2(rows.reduce((s, r) => s + Number(r.due_hours ?? r.work_hours ?? 0), 0)),
+    actualHours: r2(rows.reduce(
+      (s, r) => s + (r.actual_hours == null ? 0 : Number(r.actual_hours)), 0)),
+    // 有打上班卡但算不出實到 = 忘了打下班。那幾天要被看見，不是靜靜略過
+    actualUnknownDays: rows.filter((r) => r.in_at && r.actual_hours == null).length,
     otHours: r2(rows.reduce((s, r) => s + Number(r.ot_hours || 0), 0)),
     leaveHours: r2(rows.reduce((s, r) => s + Number(r.leave_hours || 0), 0)),
     lateDays: rows.filter((r) => (r.late_min ?? 0) > 0).length,

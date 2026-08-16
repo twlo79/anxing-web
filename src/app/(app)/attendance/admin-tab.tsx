@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx-js-style';
 import { createClient } from '@/lib/supabase';
 import { getPosition, type GeoFail } from '@/lib/punch';
 import { twToday } from '@/lib/attendance-ui';
+import { fmtLate } from '@/lib/attendance-hours';
 import {
   BTN, BTN2, CARD, INPUT, noRowsMsg,
   type Balance, type Estate, type LeaveType, type TabProps,
@@ -475,32 +476,57 @@ function ReportSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
 
         const rows = (data ?? []) as {
           work_date: string; item: string; in_at: string | null; out_at: string | null;
-          work_hours: number; leave_hours: number; ot_hours: number;
+          work_hours: number; due_hours: number; actual_hours: number | null;
+          leave_hours: number; ot_hours: number;
           late_min: number | null; early_min: number | null; note: string | null;
         }[];
 
-        const head = ['日期', '星期', '類別', '上班', '下班', '工作時數', '請假時數', '加班時數', '遲到(分)', '早退(分)', '備註'];
+        /*
+         * 【應到與實到分兩欄】（migration_132）
+         *
+         * 原本只有一欄「工作時數」，而它的算法是「有打卡就算滿 8 小時」——
+         * 遲到兩小時跟準時來，那一欄一模一樣。
+         *
+         * 拆成兩欄之後，差多少在 Excel 上並排看得到，
+         * 不用再自己去對「遲到(分)」那一欄換算。
+         */
+        const head = ['日期', '星期', '類別', '上班', '下班',
+          '應到時數', '實到時數', '差額', '請假時數', '加班時數', '遲到', '早退', '備註'];
         const A: unknown[][] = [
           [`${p.name}　出勤表　${from} ~ ${to}`],
-          ['工作時數 = 每日工時 − 當日已核可請假時數（下限 0）。加班時數以核可的申請為準，不是打卡待多久。'],
+          ['應到 = 每日工時 − 當日已核可請假時數（下限 0）。'
+            + '實到 = 下班 − 上班 − 休息（休息由上下班時間與每日工時推導）。'
+            + '實到空白代表沒打下班卡，算不出來 —— 不是 0。'
+            + '加班時數以核可的申請為準，不是打卡待多久。'],
           head,
         ];
         const dow = ['日', '一', '二', '三', '四', '五', '六'];
-        let sumW = 0, sumL = 0, sumO = 0;
+        let sumDue = 0, sumAct = 0, sumL = 0, sumO = 0;
         for (const r of rows) {
           const d = new Date(`${r.work_date}T00:00:00+08:00`);
-          sumW += Number(r.work_hours) || 0;
+          const due = Number(r.due_hours) || 0;
+          // 沒打下班卡是 null —— 不能當成 0 加進合計，
+          // 那會讓「這個月實到幾小時」憑空少一整天
+          const act = r.actual_hours == null ? null : Number(r.actual_hours);
+          sumDue += due;
+          if (act != null) sumAct += act;
           sumL += Number(r.leave_hours) || 0;
           sumO += Number(r.ot_hours) || 0;
           A.push([
             r.work_date, dow[d.getDay()], r.item,
             r.in_at ?? '', r.out_at ?? '',
-            Number(r.work_hours) || 0, Number(r.leave_hours) || 0, Number(r.ot_hours) || 0,
-            r.late_min ?? '', r.early_min ?? '', r.note ?? '',
+            due,
+            act ?? '',
+            act == null ? '' : Number((due - act).toFixed(2)),
+            Number(r.leave_hours) || 0, Number(r.ot_hours) || 0,
+            // 遲到早退改用「幾小時幾分」—— 「135 分」要停下來算才知道是兩小時多
+            fmtLate(r.late_min), fmtLate(r.early_min), r.note ?? '',
           ]);
           anyRow = true;
         }
-        A.push(['合計', '', '', '', '', sumW, sumL, sumO, '', '', '']);
+        A.push(['合計', '', '', '', '',
+          Number(sumDue.toFixed(2)), Number(sumAct.toFixed(2)),
+          Number((sumDue - sumAct).toFixed(2)), sumL, sumO, '', '', '']);
 
         const ws = XLSX.utils.aoa_to_sheet(A);
         ws['!merges'] = [
@@ -508,7 +534,9 @@ function ReportSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
           { s: { r: 1, c: 0 }, e: { r: 1, c: head.length - 1 } },
         ];
         ws['!cols'] = [{ wch: 12 }, { wch: 5 }, { wch: 12 }, { wch: 7 }, { wch: 7 },
-          { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 9 }, { wch: 9 }, { wch: 24 }];
+          { wch: 10 }, { wch: 10 }, { wch: 8 }, { wch: 10 }, { wch: 10 },
+          // 遲到早退改成「超過 2 小時 15 分」，比純數字寬
+          { wch: 15 }, { wch: 15 }, { wch: 24 }];
         // 表頭凍住 —— 一個月三十列，捲下去就不知道哪一欄是加班了
         ws['!freeze'] = { xSplit: 0, ySplit: 3 };
 
