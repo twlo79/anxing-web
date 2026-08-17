@@ -133,6 +133,15 @@ function AppShell({ children }: { children: React.ReactNode }) {
    * 那等於每天做幾十次多餘的動作。
    *
    * 現在預設展開，按 ‹ 才收起來，而且那個選擇會記住。
+   *
+   * 【收起來之後怎麼回來】（2026-08-16 修，症狀「左邊變打不開了」）
+   *
+   * 拿掉滑過展開的那一版，把收合鈕只留在展開狀態的標題列裡 ——
+   * 收起來之後畫面上就**沒有任何東西可以把它打開**，而且那個狀態
+   * 存進 localStorage，重整也回不來。單向的收合等於壞掉。
+   *
+   * 現在收起時的「安」自己就是展開鈕（滑過去變成 ›）。
+   * 規則:**收起來的狀態必須自己帶著展開的方法。**
    */
   const [pinned, setPinned] = useState(true);
   /*
@@ -372,9 +381,34 @@ function AppShell({ children }: { children: React.ReactNode }) {
               </button>
             </>
           ) : (
-            // 收起來時只剩一個字。名字與職稱在 56px 下一定會被截斷，
-            // 而截斷的名字比沒有名字更難讀
-            <span className="font-bold text-lg" title="安幸上工">安</span>
+            /*
+             * 收起來的時候「安」**本身就是展開鈕**。
+             *
+             * 【為什麼這裡一定要是按鈕】
+             * 前一版這裡是純文字 `<span>安</span>`，而收合鈕只寫在上面
+             * `expanded ?` 的那一支 —— 也就是**收起來之後畫面上沒有任何東西
+             * 可以把它打開**。同一次改動又拿掉了滑過展開（那是為了修「側邊欄
+             * 蓋住內容」），於是收合變成單向的:按一次就再也回不來。
+             *
+             * 這種錯不會報錯、tsc 不會抓、測試也測不到 ——
+             * 它只在「使用者按下去之後」才存在。
+             *
+             * 規則:**任何可以收起來的東西，收起來的狀態必須自己帶著展開的方法。**
+             * 不能靠另一個狀態下才出現的按鈕。
+             */
+            <button onClick={togglePinned} title="展開選單" aria-label="展開選單"
+              aria-pressed={false}
+              className="w-9 h-9 flex items-center justify-center rounded-lg relative
+                         text-gray-700 hover:bg-mor-sand/70 transition-colors group">
+              {/* 平常顯示「安」，滑過去換成箭頭 —— 兩個都在，用透明度切換，
+                  這樣寬度不會跳動 */}
+              <span className="font-bold text-lg group-hover:opacity-0 transition-opacity">安</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}
+                strokeLinecap="round" strokeLinejoin="round"
+                className="w-4 h-4 absolute opacity-0 group-hover:opacity-100 transition-opacity">
+                <path d="M9 6l6 6-6 6" />
+              </svg>
+            </button>
           )}
         </div>
 
