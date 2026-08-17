@@ -140,7 +140,7 @@ export default function TrashTab({ initialTable = '' }: { initialTable?: string 
   const isBoss = role === 'super_admin';
 
   return (
-    <div className="max-w-[1100px]">
+    <div>
       <p className="text-xs text-gray-400 mb-3">
         刪掉的東西會先放在這裡。<b>已刪除的不會算進營收與支出</b>，復原之後才會重新計入。
       </p>

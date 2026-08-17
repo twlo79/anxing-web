@@ -458,9 +458,27 @@ function AppShell({ children }: { children: React.ReactNode }) {
         </button>
       </aside>
 
+      {/*
+        【內容寬度統一在這裡，不在各頁】（2026-08-16 使用者指定）
+
+        原本每一頁自己寫 max-w:儀表板 1400、設定與客戶 1100、出勤 980，
+        營收與訂單完全沒寫（跟著螢幕拉滿）。結果是**換一頁邊界就跳一次** ——
+        而那個跳動看起來像頁面沒對齊,實際上是五個不同的決定。
+
+        統一在 <main> 上,各頁不再自己管。1280px 的理由:
+
+          · 併成六欄之後營收表最寬的那一列約 1,100px,還有餘裕
+          · 再寬下去每一列會拉成一條長線,眼睛從房源掃到金額要橫跨整個螢幕
+          · 27 吋螢幕上兩側各留約 200px,看起來是刻意的留白而不是沒填滿
+
+        `mx-auto` 讓它置中 —— 靠左的話在寬螢幕上右半邊會空一大片,
+        而側邊欄在左邊,整個畫面會偏得很明顯。
+      */}
       <main className="flex-1 min-w-0 p-4 md:p-6"
         style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
-        {children}
+        <div className="mx-auto w-full max-w-[1280px]">
+          {children}
+        </div>
       </main>
     </div>
   );

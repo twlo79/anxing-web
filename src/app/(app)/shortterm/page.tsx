@@ -10,7 +10,6 @@ import * as XLSX from 'xlsx-js-style';
 import { SortTh, type SortState } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
 import { useOpenFromUrl } from '@/lib/open-from-url';
-import OverflowMenu, { MenuItem, MenuSep, MenuInfo } from '@/components/OverflowMenu';
 import { useProfile } from '@/lib/profile';
 import { FEE_TYPES, ONEOFF_FEE_TYPES } from '@/lib/fee-types';
 import { ONEOFF_LABEL } from '@/lib/revenue-report';
@@ -21,7 +20,7 @@ import { toLines, fromLines, totalTwd, validateLines, type Line } from '@/lib/mo
 import { payStatus, remaining, isExempt, STATUS_LABEL, STATUS_CLASS, STATUS_FILTER } from '@/lib/order-payment';
 import { softDelete } from '@/lib/trash';
 import { feeFilterOptions, feeFilterPredicate, ONEOFF_SOURCES, FEE_F_ALL, FEE_F_RENT } from '@/lib/order-filter';
-import { useRouter } from 'next/navigation';
+import TrashLink from '@/components/TrashLink';
 import { checkDates, checkPrice, checkRequired, lookbackFrom, type PastOrder } from '@/lib/order-check';
 import MoneyInput from '@/components/MoneyInput';
 
@@ -72,7 +71,6 @@ const SORT_DB_COL: Record<string, string> = {
 
 export default function ShortTermPage() {
   const supabase = useMemo(() => createClient(), []);
-  const router = useRouter();
   const [estates, setEstates] = useState<Estate[]>([]);
   const [detail, setDetail] = useState<Order | null>(null);
   const [rows, setRows] = useState<Order[]>([]);
@@ -745,36 +743,25 @@ export default function ShortTermPage() {
             className="text-gray-500 underline pb-1.5">清除</button>
         )}
         {/*
-          防呆、筆數、回收桶收進 ⋯（2026-08-16 使用者指定）——
-          跟營收頁**同一個位置、同一個選單**，不然每換一頁就要重新找。
+          防呆只在手機收進篩選（2026-08-16 使用者指定）——
+          跟營收頁完全一樣的做法。桌機不缺那塊寬度,收起來只換到一顆按鈕的空間,
+          卻讓每次要用都多一次點擊。
 
-          新增與下載留在外面:判準是「多久用一次」不是「重不重要」。
+          手機這一顆放在欄位區,跟著「篩選」一起收。
         */}
-        <div className="ml-auto flex items-end gap-2">
-          <OverflowMenu>
-            <MenuItem
-              icon={<span className="text-base leading-none">🕵️</span>}
-              onClick={toggleAudit}
-              right={
-                <span className={`w-9 h-5 rounded-full relative shrink-0 transition-colors
-                                  ${audit ? 'bg-mor-green' : 'bg-gray-300'}`}>
-                  <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all
-                                    ${audit ? 'left-[1.125rem]' : 'left-0.5'}`} />
-                </span>
-              }>
-              防呆檢查{auditBusy && <span className="text-xs text-gray-400">（檢查中…）</span>}
-            </MenuItem>
-            {/* 帶 table 參數 —— 不帶會落在「全部」的清單，訂單只佔其中一小段，
-                使用者還要再篩一次（跟 components/TrashLink 同一個理由） */}
-            <MenuItem icon={<span className="text-base leading-none">🗑️</span>}
-              onClick={() => router.push('/settings?tab=trash&table=orders')}>
-              訂單回收桶
-            </MenuItem>
-            <MenuSep />
-            <MenuInfo label="本期共" value={`${total.toLocaleString()} 筆`} />
-          </OverflowMenu>
+        <div className="md:hidden">
+          <AuditButton on={audit} onToggle={toggleAudit} busy={auditBusy} />
+        </div>
+
+        <div className="ml-auto flex items-end gap-3">
+          {/* 桌機版。這一組在手機上是 .ml-auto 不會被收起來,所以要自己藏 */}
+          <div className="hidden md:block">
+            <AuditButton on={audit} onToggle={toggleAudit} busy={auditBusy} />
+          </div>
+          <div className="text-xs text-gray-400 pb-1.5">共 {total.toLocaleString()} 筆</div>
           <AddButton onClick={() => openEdit(blank())}>新增訂單</AddButton>
           <ExportButton onClick={exportXlsx} disabled={!total} busy={exporting} />
+          <TrashLink table="orders" label="訂單" />
         </div>
       </div>
 

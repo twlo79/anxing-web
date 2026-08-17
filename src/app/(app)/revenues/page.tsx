@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AddButton, ExportButton, ActionBar } from '@/components/Actions';
-import { AuditBadges, AuditSummary } from '@/components/Audit';
+import { AuditButton, AuditBadges, AuditSummary } from '@/components/Audit';
 import { auditOrders, type AuditOrder } from '@/lib/audit-orders';
 import FilterToggle from '@/components/FilterToggle';
 import { createClient } from '@/lib/supabase';
@@ -13,7 +13,6 @@ import {
   itemLabel, oneoffItems, oneoffLabel, skeleton, reconcile, SHORT_SOURCES, ROOM_NONE, ONEOFF_LABEL,
 } from '@/lib/revenue-report';
 import { roomCell, periodCell, amountCell, nightsText } from '@/lib/revenue-row';
-import OverflowMenu, { MenuItem, MenuSep, MenuInfo } from '@/components/OverflowMenu';
 import RowDrawer from './row-drawer';
 
 type Row = {
@@ -660,34 +659,35 @@ export default function RevenuesPage() {
         </div>
         {(estateFilter || roomFilter || sourceFilter || kw) && <button onClick={() => { setEstateFilter(''); setRoomFilter(''); setSourceFilter(''); setKw(''); setKwInput(''); }} className="text-gray-500 underline pb-1.5">清除</button>}
         {/*
-          【防呆與總額收進 ⋯】（2026-08-16 使用者指定）
+          【防呆只在手機收起來】（2026-08-16 使用者指定，修正前一版）
 
-          判準是「多久用一次」不是「重不重要」:
-          防呆很重要，但一天按一次也還是一天一次，而它佔的寬度是每次載入都在佔。
-          下載 Excel 留在外面 —— 那是每天在用的。
+          前一版把它收進「⋯」選單,兩邊都收。錯在**桌機根本不缺那塊寬度** ——
+          收起來只換到一顆按鈕的空間,卻讓每次要用都多一次點擊。
 
-          **代價**:總額 `$10,635,656` 現在要點一下才看得到。
-          那個數字原本掃過去就看到。這是使用者明確選的取捨。
+          手機不一樣:篩選列在手機是直的一欄,六個下拉疊起來超過一個螢幕高,
+          所以本來就有「篩選」收合。防呆放進那一組,跟著一起收 ——
+          不是為了省寬度,是為了**跟其他篩選條件放在一起**。
 
-          ⋯ 在兩頁要在同一個位置 —— 不然每換一頁就要重新找。
+          實作:同一顆按鈕寫兩次,用 md 斷點決定哪一顆出現。
+          條件渲染（useMediaQuery）會在第一次繪製時閃一下,而這一列在畫面最上方。
+
+          這一顆是手機版,放在 .collapsible-filters 的欄位區 ——
+          globals.css 收起時會把非 .ml-auto 的子元素藏掉,它就跟著收了。
         */}
-        <div className="ml-auto flex items-end gap-2">
-          <OverflowMenu>
-            <MenuItem
-              icon={<span className="text-base leading-none">🕵️</span>}
-              onClick={() => { setAudit((v) => !v); setOnlyBad(false); }}
-              right={
-                <span className={`w-9 h-5 rounded-full relative shrink-0 transition-colors
-                                  ${audit ? 'bg-mor-green' : 'bg-gray-300'}`}>
-                  <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all
-                                    ${audit ? 'left-[1.125rem]' : 'left-0.5'}`} />
-                </span>
-              }>
-              防呆檢查
-            </MenuItem>
-            <MenuSep />
-            <MenuInfo label={`本期共 ${filtered.length.toLocaleString()} 筆`} value={`$${fmt(total)}`} />
-          </OverflowMenu>
+        <div className="md:hidden">
+          <AuditButton on={audit}
+            onToggle={() => { setAudit((v) => !v); setOnlyBad(false); }} />
+        </div>
+
+        <div className="ml-auto flex items-end gap-3">
+          {/* 桌機版。手機上這一組是 .ml-auto,不會被收起來,所以要自己藏 */}
+          <div className="hidden md:block">
+            <AuditButton on={audit}
+              onToggle={() => { setAudit((v) => !v); setOnlyBad(false); }} />
+          </div>
+          <div className="text-xs text-gray-400 pb-1.5 whitespace-nowrap">
+            共 {filtered.length} 筆・${fmt(total)}
+          </div>
           <ExportButton onClick={exportXlsx} disabled={!filtered.length} />
         </div>
       </div>

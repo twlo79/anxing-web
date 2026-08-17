@@ -51,7 +51,7 @@ function SettingsInner() {
   const [initialTable] = useState(params.get('table') ?? '');
 
   return (
-    <div className="max-w-[1100px]">
+    <div>
       <h1 className="mb-3">設定</h1>
 
       <div className="inline-flex gap-1 p-1 mb-4 rounded-xl bg-white/45 backdrop-blur border border-white/60">

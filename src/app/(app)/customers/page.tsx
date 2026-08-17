@@ -133,7 +133,7 @@ export default function CustomersPage() {
   const staleCount = rows.filter((r) => r.stale && (r.estate_id ?? NO_ESTATE) === cur).length;
 
   return (
-    <div className="max-w-[1100px]">
+    <div>
       <div className="flex items-center gap-3 mb-3">
         <h1 className="hidden md:block">客戶管理</h1>
         <div className="flex-1" />

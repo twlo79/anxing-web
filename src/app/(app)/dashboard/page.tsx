@@ -579,7 +579,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="max-w-[1400px]">
+    <div>
       <div className="flex items-center justify-between mb-4">
         <div>
           <h1>財務儀表板</h1>

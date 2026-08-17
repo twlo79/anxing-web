@@ -112,7 +112,7 @@ export default function AttendancePage() {
   const props: TabProps = { me, isAdmin, onMsg };
 
   return (
-    <div className="max-w-[980px]">
+    <div>
       <h1 className="hidden md:block mb-4">出勤</h1>
 
       {/*
