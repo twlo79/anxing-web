@@ -75,6 +75,30 @@
 -- 那一支會動到已收款的單，所以要先看過對照表再跑。
 -- 結尾的自檢就是那張對照表（預覽，不寫入）。
 
+/*
+ * ============================================================
+ * 【身分改用 (contract_id, checkin)，不再用 order_key】
+ *
+ * 第一版用 `on conflict (order_key)`，跑下去直接炸:
+ *
+ *     duplicate key value violates unique constraint "uq_contract_order_month"
+ *     Key (contract_id, checkin)=(23032edd…, 2025-10-01) already exists.
+ *
+ * 資料庫上還有一條 `uq_contract_order_month (contract_id, checkin)`，
+ * 而 `on conflict (order_key)` **攔不到它** —— 一個 insert 只能宣告一個
+ * 衝突目標，另一條約束擋下來就是直接拋錯。
+ *
+ * 會撞到是因為 order_key 是 `LT_房號_年月` 組出來的:
+ * 房號改過的契約，舊單掛著舊房號的 key，新的 key 對不上 → 走 insert →
+ * 撞上 (contract_id, checkin)。
+ *
+ * 【真正的身分是什麼】
+ * 「這份契約的這一期」—— 也就是 (contract_id, checkin)。
+ * order_key 只是給人看的編號，它會因為改房號而變，本來就不該當主鍵用。
+ *
+ * 所以改成:先清掉不屬於目標期間的自動單，再以 (contract_id, checkin) upsert，
+ * order_key 變成**被更新的欄位**而不是比對的依據。
+ */
 create or replace function public.gen_contract_orders(ct contracts)
 returns void language plpgsql as $fn$
 declare
@@ -87,27 +111,40 @@ declare
   total numeric := 0;                -- 應收總額
   acc numeric := 0;                  -- 前面各期已開出的合計
   amt numeric;
+  starts date[] := '{}';             -- 目標期間的起日，用來清掉不該存在的
+  k text;
 begin
-  if ct.room is null or ct.start_date is null or ct.end_date is null then return; end if;
-
   /*
-   * 刪除超出租期、未收款、由契約自動生成的月份。
+   * ============================================================
+   * 【房號空白的契約一律跳過 —— 那些不歸這支管】
    *
-   * 下界改成 date_trunc(start_date) —— 第一張單的 checkin 現在是
-   * start_date 本人（7/16）而不是月初，但 order_key 還是用月份組的，
-   * 所以範圍判斷仍然要用月初當界。
+   * 原本只擋 `ct.room is null`。但房號是**空字串**的契約擋不掉，
+   * 於是它組出 `LT__202510` 這種鍵去 insert，撞上
+   * uq_contract_order_month —— 因為那一期早就存在了，
+   * 只是鍵長得不一樣。
+   *
+   * 房號空白的契約（公司登記、辦公室租金這種本來就不屬於某一間房）
+   * 走的是 **`LTC_{契約id}_`**，由前端的契約頁產生（見 lib/ltKey.keyBase）。
+   * 兩套產生器同時對同一份契約動手，就是現在這個結果。
+   *
+   * 這裡不改成也走 LTC_ —— 那會變成資料庫和前端搶著產同一批單，
+   * 而它們的算法目前不一樣。先讓這支退出，界線劃清楚。
+   *
+   * ⚠ 代價:**房號空白的契約沒有套用到「頭尾按比例」**，
+   * 它們仍然是整月整額。要一起修的話得先決定由誰產。
    */
-  delete from orders
-  where order_key like 'LT_' || ct.room || '_%'
-    and imported_via = 'contract' and paid = false
-    and (checkin < date_trunc('month', ct.start_date)::date
-         or checkin > ct.end_date);
-
-  if not ct.active or ct.monthly_rent is null or ct.monthly_rent <= 0 then return; end if;
+  if ct.room is null or btrim(ct.room) = '' then return; end if;
+  if ct.start_date is null or ct.end_date is null then return; end if;
+  if not ct.active or ct.monthly_rent is null or ct.monthly_rent <= 0 then
+    -- 契約停用或沒有月租:未收款的自動單全部清掉,不留半套
+    delete from orders
+     where contract_id = ct.id and imported_via = 'contract' and paid = false;
+    return;
+  end if;
 
   lease_end := (ct.end_date + 1)::date;
 
-  -- ── 第一趟：算應收總額，順便記住最後一期是哪個月 ──
+  -- ── 第一趟：算應收總額、收集目標起日 ──
   ms := date_trunc('month', ct.start_date)::date;
   while ms < lease_end loop
     me      := (ms + interval '1 month')::date;
@@ -115,13 +152,29 @@ begin
     p_end   := least(me, lease_end);
     n       := p_end - p_start;
     if n > 0 then
-      dim   := me - ms;
-      total := total + ct.monthly_rent::numeric * n / dim;
+      dim     := me - ms;
+      total   := total + ct.monthly_rent::numeric * n / dim;
       last_ms := ms;
+      starts  := starts || p_start;
     end if;
     ms := me;
   end loop;
   total := round(total);
+
+  /*
+   * 清掉這份契約底下**不在目標期間**的自動單（未收款的才刪）。
+   *
+   * 這一段同時處理三種情況:
+   *   · 租期改短 → 尾巴多出來的期數
+   *   · 起日從月初改成月中 → 舊的 10-01 那張要讓位給 10-16
+   *   · 「月中起租多一期」那個老 bug 留下的第 13 張
+   *
+   * 已收款的不刪 —— 錢進來過的單不該無聲消失。那些留著會在
+   * migration_136 的報表上被列出來讓人看。
+   */
+  delete from orders
+   where contract_id = ct.id and imported_via = 'contract' and paid = false
+     and not (checkin = any(starts));
 
   -- ── 第二趟：寫入。除最後一期外無條件捨去，餘數全給最後一期 ──
   ms := date_trunc('month', ct.start_date)::date;
@@ -139,23 +192,35 @@ begin
         acc := acc + amt;
       end if;
       ymtxt := to_char(ms, 'YYYYMM');
+      k     := 'LT_' || ct.room || '_' || ymtxt;
+
+      /*
+       * order_key 上也有唯一約束。房號改過時那個 key 可能還被
+       * **別的列**佔著（同房號的舊契約、或這份契約的另一期）——
+       * 不先讓開的話 upsert 會撞第二條約束，而 on conflict 只擋得住一條。
+       */
+      delete from orders
+       where order_key = k and imported_via = 'contract' and paid = false
+         and not (contract_id = ct.id and checkin = p_start);
 
       insert into orders (order_key, source, estate_id, property_raw, guest_name,
         checkin, checkout, nights, amount, deposit, note, imported_via, contract_id, paid)
-      values ('LT_' || ct.room || '_' || ymtxt, 'longterm', ct.estate_id, ct.room, ct.tenant_name,
+      values (k, 'longterm', ct.estate_id, ct.room, ct.tenant_name,
         p_start, p_end, n, amt, 0, '契約應收', 'contract', ct.id, false)
-      on conflict (order_key) do update
+      on conflict on constraint uq_contract_order_month do update
         /*
-         * **checkin / checkout / nights 一定要一起更新。**
+         * **checkout / nights 一定要一起更新。**
          *
-         * 舊版只更新 amount，所以既有那些「7/01 開始」的單改了金額
-         * 也還是掛在 7/01 —— 畫面上會變成「16 天的錢配 31 天的期間」，
+         * 舊版只更新 amount，所以既有的單改了金額也還是掛在原本的期間 ——
+         * 畫面上會變成「16 天的錢配 31 天的期間」，
          * 而營收認列是照 checkin/checkout 拆的，會拆錯月。
+         *
+         * checkin 不用寫 —— 它是衝突鍵的一部分，本來就相等。
          */
-        set amount = excluded.amount, guest_name = excluded.guest_name,
-            estate_id = excluded.estate_id, contract_id = excluded.contract_id,
-            checkin = excluded.checkin, checkout = excluded.checkout,
-            nights = excluded.nights
+        set order_key = excluded.order_key, amount = excluded.amount,
+            guest_name = excluded.guest_name, estate_id = excluded.estate_id,
+            property_raw = excluded.property_raw,
+            checkout = excluded.checkout, nights = excluded.nights
         where orders.imported_via = 'contract' and orders.paid = false;
     end if;
     ms := me;
@@ -192,11 +257,38 @@ begin
               like '%lease_end%' then '✅' else '❌' end,
     '這一支只換函式,沒有動任何一張月租單');
 
-  -- 有幾份契約是月中起租
+  -- 有幾份契約是月中起租（只算有房號的 —— 沒房號的這支不管）
   select count(*) into n from public.contracts
-   where start_date is not null and extract(day from start_date) <> 1;
-  insert into _chk135 values (2, '★ 月中起租的契約', n || ' 份',
+   where start_date is not null and extract(day from start_date) <> 1
+     and room is not null and btrim(room) <> '';
+  insert into _chk135 values (2, '★ 月中起租・有房號的契約', n || ' 份',
     '1 號起租的不受影響 —— 它們的第一期本來就是整月');
+
+  /*
+   * 房號空白的契約走 LTC_{契約id}_，由前端產生。
+   * 這支跳過它們 —— 兩套產生器搶同一份契約就是這次撞約束的原因。
+   * 但那代表它們**沒有套用到頭尾按比例**，要單獨列出來讓人知道。
+   */
+  select count(*) into n from public.contracts
+   where start_date is not null and (room is null or btrim(room) = '');
+  insert into _chk135 values (3, '★★ 房號空白的契約（這支不管）',
+    case when n = 0 then '0 份' else '⚠ ' || n || ' 份' end,
+    '走 LTC_{契約id}_，由前端契約頁產生。**沒有套用頭尾按比例**，'
+    '仍然整月整額。要一起修得先決定由誰產');
+
+  insert into _chk135
+  select 4, '　（LTC）' || coalesce(c.tenant_name, '?'),
+         to_char(c.start_date, 'YYYY-MM-DD') || ' ~ ' || to_char(c.end_date, 'YYYY-MM-DD'),
+         '月租 $' || to_char(c.monthly_rent, 'FM999,999,999')
+         || '・已開 ' || count(o.id) || ' 張'
+         || case when extract(day from c.start_date) <> 1
+                 then '　⚠ 月中起租但沒按比例' else '' end
+    from public.contracts c
+    left join public.orders o on o.contract_id = c.id and o.imported_via = 'contract'
+   where c.start_date is not null and c.end_date is not null
+     and (c.room is null or btrim(c.room) = '')
+   group by c.id, c.tenant_name, c.start_date, c.end_date, c.monthly_rent
+   order by 2;
 
   /*
    * 這些契約現在總共開了多少、照新規則應該是多少。
