@@ -4,6 +4,7 @@ import Link from 'next/link';
 import * as XLSX from 'xlsx-js-style';
 import { createClient } from '@/lib/supabase';
 import { cleanCounts, filterItems, type HkStaff, type HkProperty } from '@/lib/hkParse';
+import { payroll, fmtUnits } from '@/lib/hk-payroll';
 import { softDelete, restoreTrash } from '@/lib/trash';
 
 /**
@@ -114,6 +115,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
   const hourStaff = useMemo(() => staff.filter((s) => s.count_mode === 'hours'), [staff]);
   const propByCode = useMemo(() => Object.fromEntries(props.map((p) => [p.code, p])), [props]);
 
+
   // ── 設定（hk_setting / hk_work_type） ───────────────────────
   // 這些開關以前是寫死的，設定頁按了沒反應。現在真的接上計算。
   const countMode = (settings['count_mode'] === 'headcount' ? 'headcount' : 'clean') as 'clean' | 'headcount';
@@ -124,6 +126,41 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
   const { rooms: roomItems, linen: linenItems } = useMemo(
     () => filterItems(items, { workTypes: wtypes, properties: props, includeGift }),
     [items, wtypes, props, includeGift]);
+
+  /*
+   * ERP 房源的打掃點數。`hk_property.property_id` → `properties.clean_points`
+   * （那座橋是 migration_124 建的）。
+   *
+   * 【為什麼不寫在 hk_property 上】
+   * 點數是房子的性質，而 ERP 那邊已經有一份（含整棟／分層的加總規則）。
+   * 房務再存一份就會有兩個真相,而漏改的那一份不會報錯 ——
+   * 只會讓那個人那個月的點數少一截。
+   */
+  const [pointsById, setPointsById] = useState<Record<string, number>>({});
+  useEffect(() => {
+    supabase.from('properties').select('id, clean_points').then(({ data }) => {
+      const m: Record<string, number> = {};
+      for (const r of (data ?? []) as any[]) if (r.clean_points != null) m[r.id] = Number(r.clean_points);
+      setPointsById(m);
+    });
+  }, [supabase]);
+
+  /*
+   * 每人的打掃量與報酬點數。算法在 lib/hk-payroll（有測試）——
+   * 合掃各 0.5、點數 = 打掃量 × 該房源點數、算不出點數的另外報。
+   *
+   * **不要在這裡重寫一份。** 上方卡片、每日表格、Excel 三處都讀這一份,
+   * 各算各的就會出現「卡片說 28 間、表格加起來 26.5」。
+   */
+  const pay = useMemo(() => payroll(
+    roomItems.map((i) => ({
+      work_date: i.work_date,
+      property_id: propByCode[i.property_code ?? '']?.property_id ?? null,
+      work_type: i.work_type,
+      staff_id: i.staff_id,
+    })),
+    (pid) => (pid ? pointsById[pid] : null),
+  ), [roomItems, propByCode, pointsById]);
 
   /** 每人每日間數（由房源格推導的自動值） */
   const autoRooms = useMemo(() => {
@@ -285,7 +322,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
       const list = props.filter((p) => p.linen_group === g
         && (countOf(p.code) > 0 || linenOf(p.code) > 0));
       if (!list.length) continue;
-      sheet.push([GROUP_LABEL[g], '次數', '幾床', '床數', '拿床單', '小計']);
+      sheet.push([GROUP_LABEL[g], '次數', '床數', '更換床數', '拿床單', '小計']);
       let sub = 0;
       for (const p of list) {
         const c = countOf(p.code), b = p.beds ?? 0, lt = linenOf(p.code);
@@ -344,12 +381,31 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
       {/* 摘要 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
         {roomStaff.map((s) => {
-          const total = dayList.reduce((a, d) => a + (roomCount[`${d}|${s.id}`] ?? 0), 0);
+          const line = pay.get(s.id);
           const leave = dayList.filter((d) => dayMap[`${d}|${s.id}`]?.status).length;
+          /*
+           * 間數改用 lib/hk-payroll 的打掃量 —— **合掃各 0.5**。
+           * 原本是「一筆算一間」,兩個人合掃一間會變成兩間,
+           * 而那個差直接進報酬點數。
+           */
+          const units = line?.units ?? 0;
           return (
             <div key={s.id} className="rounded-xl bg-white border border-mor-line p-4 min-w-0">
               <div className="text-xs text-gray-500">{s.name}</div>
-              <div className="stat-num font-bold mt-1">{total} <span className="text-sm font-normal text-gray-400">間</span></div>
+              <div className="stat-num font-bold mt-1">{fmtUnits(units)} <span className="text-sm font-normal text-gray-400">間</span></div>
+              <div className="text-xs text-mor-slate font-medium mt-0.5">
+                清潔點數 {fmtUnits(line?.points ?? 0)}
+                {/*
+                  算不出點數的要講出來,不能靜靜地少算。
+                  那個人會少領,而他要自己對帳才發現。
+                */}
+                {!!line?.unknownPoints && (
+                  <span className="ml-1 text-[11px] text-amber-600 font-normal"
+                    title="這些房源還沒設打掃點數,或還沒對到 ERP 房源">
+                    ⚠ {line.unknownPoints} 筆未計
+                  </span>
+                )}
+              </div>
               <div className="text-xs text-gray-400 mt-0.5">休假 {leave} 天</div>
             </div>
           );
@@ -575,8 +631,8 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                     <tr className="border-b border-mor-line/60 text-left text-xs text-gray-500">
                       <th className="px-3 py-2">房源</th>
                       <th className="px-3 py-2 text-right">次數</th>
-                      <th className="px-3 py-2 text-right">幾床</th>
                       <th className="px-3 py-2 text-right">床數</th>
+                      <th className="px-3 py-2 text-right">更換床數</th>
                       <th className="px-3 py-2 text-right">拿床單</th>
                       <th className="px-3 py-2 text-right">小計</th>
                     </tr>
@@ -592,7 +648,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                         <tr key={p.code} className={`border-b border-mor-line/40 last:border-0 ${c === 0 ? 'text-gray-300' : ''}`}>
                           <td className="px-3 py-1.5 whitespace-nowrap">
                             {p.code}
-                            {p.beds == null && <span className="ml-1 text-[10px] text-amber-600">待補幾床</span>}
+                            {p.beds == null && <span className="ml-1 text-[10px] text-amber-600">待補床數</span>}
                           </td>
                           <td className="px-3 py-1.5 text-right">
                             <span className="inline-flex items-center gap-1 justify-end">
@@ -617,7 +673,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                             <input type="number" min="0" value={p.beds ?? ''}
                               onChange={(e) => setBeds(p.code, e.target.value === '' ? null : Number(e.target.value))}
                               placeholder="—"
-                              title={p.beds == null ? '尚未建檔,填了才算得出床數' : '房源主檔的幾床,改了影響所有月份'}
+                              title={p.beds == null ? '尚未建檔,填了才算得出更換床數' : '房源主檔的幾床,改了影響所有月份'}
                               className={`${inp} w-12 text-right ${p.beds == null ? 'bg-amber-50 border-amber-300' : ''}`} />
                           </td>
                           <td className="px-3 py-1.5 text-right">{c * beds}</td>

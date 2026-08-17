@@ -37,6 +37,8 @@ export function staffLookup(staff: HkStaff[]) {
 }
 
 export type HkProperty = {
+  /** 對到的 ERP 房源（migration_124）。打掃點數要靠它去 properties 拿 */
+  property_id?: string | null;
   code: string; aliases: string[]; beds: number | null;
   linen_group: 'kai' | 'ab' | 'zl' | 'other';
   /** room / building / common_area / other。公區的判斷只看這個 —— is_common 已於 migration_68 移除 */
