@@ -4,7 +4,7 @@ import Link from 'next/link';
 import * as XLSX from 'xlsx-js-style';
 import { createClient } from '@/lib/supabase';
 import { cleanCounts, filterItems, type HkStaff, type HkProperty } from '@/lib/hkParse';
-import { payroll, fmtUnits } from '@/lib/hk-payroll';
+import { payroll, dailyUnits, fmtUnits } from '@/lib/hk-payroll';
 import { softDelete, restoreTrash } from '@/lib/trash';
 
 /**
@@ -162,12 +162,25 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
     (pid) => (pid ? pointsById[pid] : null),
   ), [roomItems, propByCode, pointsById]);
 
-  /** 每人每日間數（由房源格推導的自動值） */
+  /**
+   * 每人每日間數（由房源格推導的自動值）。
+   *
+   * 【合掃各 0.5】（2026-08-17 使用者指定）
+   * 原本是「一筆算一間」—— 07-01 Una 與庭玉一起清 17B5，兩邊都算 1，
+   * 那一間就被算成兩間。
+   *
+   * 改用 lib/hk-payroll 的 dailyUnits，跟上方卡片同一套規則 ——
+   * 各算各的就會出現「表格逐日加起來 40、卡片說 34.5」。
+   */
   const autoRooms = useMemo(() => {
-    const m: Record<string, number> = {};
-    for (const i of roomItems) m[`${i.work_date}|${i.staff_id}`] = (m[`${i.work_date}|${i.staff_id}`] ?? 0) + 1;
-    return m;
-  }, [roomItems]);
+    const d = dailyUnits(roomItems.map((i) => ({
+      work_date: i.work_date,
+      property_id: propByCode[i.property_code ?? '']?.property_id ?? i.property_code ?? null,
+      work_type: i.work_type,
+      staff_id: i.staff_id,
+    })));
+    return Object.fromEntries(d);
+  }, [roomItems, propByCode]);
 
   const dayMap = useMemo(
     () => Object.fromEntries(days.map((d) => [`${d.work_date}|${d.staff_id}`, d])), [days]);
@@ -484,7 +497,8 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                                 清空就還原。直接改掉自動值的話,月底發現不對就查不出多在哪。
                                 注意這只影響間數,不影響布巾 —— 沒有房源就沒有床單可算。
                               */
-                              <input type="number" min="0" value={n || ''}
+                              /* step 0.5 —— 合掃是各 0.5，step=1 的話瀏覽器的上下鍵改不出小數 */
+                              <input type="number" min="0" step="0.5" value={n || ''}
                                 onChange={(e) => setDay(d, s.id, {
                                   rooms_override: e.target.value === '' ? null : Number(e.target.value),
                                 })}

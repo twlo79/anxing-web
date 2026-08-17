@@ -2,8 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   crewSize, cleanUnits, linenJobs, linenSets, payroll, fmtUnits,
-  type PayrollRow,
-} from './hk-payroll.ts';
+  type PayrollRow, dailyUnits } from './hk-payroll.ts';
 
 const r = (p: Partial<PayrollRow> = {}): PayrollRow => ({
   work_date: '2026-08-14', property_id: 'A15', work_type: '退房清潔',
@@ -167,4 +166,43 @@ test('沒指派的不進任何人的帳', () => {
 test('整數不補小數點 —— 一整排「12.00」會被當成金額', () => {
   assert.equal(fmtUnits(3), '3');
   assert.equal(fmtUnits(3.5), '3.5');
+});
+
+// ── 每日打掃量 ────────────────────────────────────
+
+test('★ 兩人合掃同一間，當天各算 0.5', () => {
+  const d = dailyUnits([
+    { work_date: '2026-07-01', property_id: 'p17B5', work_type: '退房清潔', staff_id: 'una' },
+    { work_date: '2026-07-01', property_id: 'p17B5', work_type: '退房清潔', staff_id: 'ting' },
+  ]);
+  assert.equal(d.get('2026-07-01|una'), 0.5);
+  assert.equal(d.get('2026-07-01|ting'), 0.5);
+});
+
+test('一個人自己掃就是 1', () => {
+  const d = dailyUnits([
+    { work_date: '2026-07-03', property_id: 'p14B1', work_type: '退房清潔', staff_id: 'una' },
+  ]);
+  assert.equal(d.get('2026-07-03|una'), 1);
+});
+
+test('退房與入住是兩份工，同一間同一天不算合掃', () => {
+  const d = dailyUnits([
+    { work_date: '2026-07-05', property_id: 'pA1', work_type: '退房清潔', staff_id: 'una' },
+    { work_date: '2026-07-05', property_id: 'pA1', work_type: '入住清潔', staff_id: 'ting' },
+  ]);
+  assert.equal(d.get('2026-07-05|una'), 1);
+  assert.equal(d.get('2026-07-05|ting'), 1);
+});
+
+test('★ 逐日加起來要等於 cleanUnits 的月合計 —— 兩處必須同一套規則', () => {
+  const rows = [
+    { work_date: '2026-07-01', property_id: 'p1', work_type: '退房清潔', staff_id: 'una' },
+    { work_date: '2026-07-01', property_id: 'p1', work_type: '退房清潔', staff_id: 'ting' },
+    { work_date: '2026-07-02', property_id: 'p2', work_type: '退房清潔', staff_id: 'una' },
+  ];
+  const daily = dailyUnits(rows);
+  let unaSum = 0;
+  for (const [k, v] of daily) if (k.endsWith('|una')) unaSum += v;
+  assert.equal(unaSum, cleanUnits(rows).get('una'));
 });

@@ -178,3 +178,30 @@ export function payroll(
  */
 export const fmtUnits = (n: number) =>
   Number.isInteger(n) ? String(n) : n.toFixed(1);
+
+/**
+ * 每人**每日**的打掃量。合掃的除以人數。
+ *
+ * 【為什麼不能用 cleanUnits 再自己分日】
+ * `cleanUnits` 回傳的是每個人的月合計 —— 拆不回每一天。
+ * 而每日表格要的正是每一天,兩個數字必須來自同一套規則,
+ * 否則會出現「表格逐日加起來 40、上方卡片說 34.5」。
+ *
+ * 鍵是 `${work_date}|${staff_id}`，跟頁面既有的 roomCount 一致，
+ * 換上去不用改讀取端。
+ */
+export function dailyUnits(rows: PayrollRow[]): Map<string, number> {
+  const crew = crewSize(rows);
+  const out = new Map<string, number>();
+  const counted = new Set<string>();
+  for (const r of rows) {
+    if (!r.staff_id) continue;
+    const k = jobKey(r);
+    const dedupe = `${k}|${r.staff_id}`;
+    if (counted.has(dedupe)) continue;
+    counted.add(dedupe);
+    const key = `${r.work_date}|${r.staff_id}`;
+    out.set(key, (out.get(key) ?? 0) + 1 / (crew.get(k) ?? 1));
+  }
+  return out;
+}
