@@ -106,6 +106,23 @@ export default function ContractsPage() {
     return (data as Contract) ?? null;
   }, openEdit);
   const curFirst = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`; })();
+  /*
+   * 下個月 1 號。用來把「本月」表達成半開區間 [curFirst, nextFirst)。
+   *
+   * 【為什麼需要它】（2026-08-16）
+   * migration_135 之後，月租單的 checkin **不再一定是月初** ——
+   * 7/16 起租的契約，它的八月那期是 8/16，不是 8/01。
+   *
+   * 原本用 `.eq('checkin', curFirst)` 精確比對月初，
+   * 那些契約一筆都撈不到 → 列表的「收租」欄顯示「—」，
+   * 看起來像本月沒有應收，實際上月租單好好地在那裡。
+   * 10A5 就是這樣被發現的。
+   */
+  const nextFirst = (() => {
+    const d = new Date();
+    const x = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+    return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-01`;
+  })();
   const curMon = (() => { const d = new Date(); return `${d.getFullYear()}/${d.getMonth() + 1}`; })();
   const curYm = (() => { const d = new Date(); return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`; })();
   // 待開發票的回溯窗口:本月 + 前 INVOICE_LOOKBACK 個月。
@@ -126,7 +143,15 @@ export default function ContractsPage() {
      *
      * contract_id 是契約產生月租單時一定會寫的,而且不受房號改名或刪除影響。
      */
-    const { data: lts } = await supabase.from('orders').select('contract_id, amount, paid').in('source', ['longterm', 'company', 'office']).eq('checkin', curFirst);
+    /*
+     * 【用區間，不用 `.eq(checkin, 月初)`】（2026-08-16）
+     * migration_135 之後 checkin 是契約週期的起日（7/16 起租就是 8/16），
+     * 精確比對月初會讓 29 份月中起租的契約整欄變成「—」。
+     */
+    const { data: lts } = await supabase.from('orders')
+      .select('contract_id, amount, paid')
+      .in('source', ['longterm', 'company', 'office'])
+      .gte('checkin', curFirst).lt('checkin', nextFirst);
     const m: Record<string, { amount: number; paid: boolean }> = {};
     (lts ?? []).forEach((o: any) => { if (o.contract_id) m[o.contract_id] = { amount: Number(o.amount || 0), paid: !!o.paid }; });
     setCurLT(m);
@@ -149,14 +174,15 @@ export default function ContractsPage() {
       .select('property_raw, amount, paid, checkin')
       .in('source', ['longterm', 'company', 'office'])
       .gte('checkin', lookFirst)
-      .lte('checkin', curFirst)
+      // 本月含在內。`lte(curFirst)` 會漏掉 checkin 在月中的那些期
+      .lt('checkin', nextFirst)
       .order('checkin');
     setInvOrders((invO as any) ?? []);
     const { data: invR } = await supabase.from('invoices')
       .select('*').eq('status', 'issued').gte('ym', lookYm);
     setInvoices((invR as any) ?? []);
     setLoading(false);
-  }, [supabase, curFirst, lookFirst, lookYm]);
+  }, [supabase, curFirst, nextFirst, lookFirst, lookYm]);
   useEffect(() => {
     supabase.from('estates').select('id, name, sort').eq('active', true).order('sort').then(({ data }) => setEstates(data ?? []));
     // 安幸收款帳號改讀主檔,不再寫死
