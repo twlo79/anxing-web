@@ -604,19 +604,9 @@ export default function RevenuesPage() {
         原本跟篩選欄位擠在同一個 flex-wrap 裡，1280px 放不下就掉到第二行。
         標題列本來只有「營收」兩個字和一大片空白,搬過來不佔任何垂直高度。
       */}
-      <div className="flex flex-wrap items-center gap-3 mb-4">
-        <h1 className="mr-auto">營收</h1>
-        <div className="flex items-center gap-3">
-          {/* 桌機才在這裡。手機的防呆在篩選列裡 */}
-          <div className="hidden md:block">
-            <AuditButton on={audit}
-              onToggle={() => { setAudit((v) => !v); setOnlyBad(false); }} />
-          </div>
-          <div className="text-xs text-gray-400 whitespace-nowrap">
-            共 {filtered.length} 筆・${fmt(total)}
-          </div>
-          <ExportButton onClick={exportXlsx} disabled={!filtered.length} />
-        </div>
+      {/* 標題列只放標題。動作鈕在篩選列下方自成一列 —— 跟訂單頁同一個排法 */}
+      <div className="mb-4">
+        <h1>營收</h1>
       </div>
 
       {/* Dashboard */}
@@ -710,10 +700,17 @@ export default function RevenuesPage() {
           這一顆是手機版,放在 .collapsible-filters 的欄位區 ——
           globals.css 收起時會把非 .ml-auto 的子元素藏掉,它就跟著收了。
         */}
-        <div className="md:hidden">
-          <AuditButton on={audit}
-            onToggle={() => { setAudit((v) => !v); setOnlyBad(false); }} />
+        {/* 防呆跟篩選條件同一組 —— 它問的是「這批資料有沒有問題」 */}
+        <AuditButton on={audit}
+          onToggle={() => { setAudit((v) => !v); setOnlyBad(false); }} />
+      </div>
+
+      {/* 動作列。自成一行,不跟篩選欄位搶寬度 */}
+      <div className="flex flex-wrap items-center justify-end gap-3 mb-4">
+        <div className="text-xs text-gray-400 whitespace-nowrap mr-auto md:mr-0">
+          共 {filtered.length} 筆・${fmt(total)}
         </div>
+        <ExportButton onClick={exportXlsx} disabled={!filtered.length} />
       </div>
 
       {/* Table */}

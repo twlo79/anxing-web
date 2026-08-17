@@ -662,18 +662,13 @@ export default function ShortTermPage() {
         它現在在標題列，永遠看得到。而篩選列收起來時可以整塊藏掉，
         不再是「一片空白框裡浮著幾顆按鈕」。
       */}
+      {/*
+        【標題列只放標題】（2026-08-17 使用者指定）
+        動作鈕搬到篩選列下方自成一列 —— 標題列塞滿按鈕時，
+        頁面最上緣同時有「這是哪一頁」與五顆按鈕在搶注意力。
+      */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <h1 className="mr-auto">短租訂單與收款 <span className="text-sm font-normal text-gray-400">Airbnb・Agoda・私下・一次性</span></h1>
-        <div className="flex items-center gap-3">
-          {/* 桌機才在這裡。手機的防呆在篩選列裡（跟其他條件放一起） */}
-          <div className="hidden md:block">
-            <AuditButton on={audit} onToggle={toggleAudit} busy={auditBusy} />
-          </div>
-          <div className="text-xs text-gray-400 whitespace-nowrap">共 {total.toLocaleString()} 筆</div>
-          <AddButton onClick={() => openEdit(blank())}>新增訂單</AddButton>
-          <ExportButton onClick={exportXlsx} disabled={!total} busy={exporting} />
-          <TrashLink table="orders" label="訂單" />
-        </div>
         {/* 訊息改成浮在最上層 —— 原本畫在這裡，會被 z-50 的編輯視窗蓋掉，
             存檔失敗時使用者看到的是「按了沒反應」 */}
         <Toast msg={msg} error={msgErr} onClose={() => setMsg('')} />
@@ -778,9 +773,22 @@ export default function ShortTermPage() {
 
           手機這一顆放在欄位區,跟著「篩選」一起收。
         */}
-        <div className="md:hidden">
-          <AuditButton on={audit} onToggle={toggleAudit} busy={auditBusy} />
+        {/*
+          防呆跟篩選條件放在一起 —— 它問的是「這批資料有沒有問題」，
+          跟「我要看哪些」是同一類；而新增、下載是「我要做什麼」，另一類。
+          手機收起篩選時它跟著收，那是對的:兩者本來就同一組。
+        */}
+        <AuditButton on={audit} onToggle={toggleAudit} busy={auditBusy} />
+      </div>
+
+      {/* 動作列。自成一行,不跟篩選欄位搶寬度 —— 1280px 下七個篩選加五顆鈕放不進同一行 */}
+      <div className="flex flex-wrap items-center justify-end gap-3 mb-4">
+        <div className="text-xs text-gray-400 whitespace-nowrap mr-auto md:mr-0">
+          共 {total.toLocaleString()} 筆
         </div>
+        <AddButton onClick={() => openEdit(blank())}>新增訂單</AddButton>
+        <ExportButton onClick={exportXlsx} disabled={!total} busy={exporting} />
+        <TrashLink table="orders" label="訂單" />
       </div>
 
       {/*
