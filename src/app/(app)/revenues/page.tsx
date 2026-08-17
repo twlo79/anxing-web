@@ -579,8 +579,24 @@ export default function RevenuesPage() {
 
   return (
     <div>
-      <div className="mb-4">
-        <h1>營收</h1>
+      {/*
+        動作鈕在標題列 —— 跟訂單頁同一個位置（2026-08-16 使用者指定「上移」）。
+        原本跟篩選欄位擠在同一個 flex-wrap 裡，1280px 放不下就掉到第二行。
+        標題列本來只有「營收」兩個字和一大片空白,搬過來不佔任何垂直高度。
+      */}
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <h1 className="mr-auto">營收</h1>
+        <div className="flex items-center gap-3">
+          {/* 桌機才在這裡。手機的防呆在篩選列裡 */}
+          <div className="hidden md:block">
+            <AuditButton on={audit}
+              onToggle={() => { setAudit((v) => !v); setOnlyBad(false); }} />
+          </div>
+          <div className="text-xs text-gray-400 whitespace-nowrap">
+            共 {filtered.length} 筆・${fmt(total)}
+          </div>
+          <ExportButton onClick={exportXlsx} disabled={!filtered.length} />
+        </div>
       </div>
 
       {/* Dashboard */}
@@ -677,18 +693,6 @@ export default function RevenuesPage() {
         <div className="md:hidden">
           <AuditButton on={audit}
             onToggle={() => { setAudit((v) => !v); setOnlyBad(false); }} />
-        </div>
-
-        <div className="ml-auto flex items-end gap-3">
-          {/* 桌機版。手機上這一組是 .ml-auto,不會被收起來,所以要自己藏 */}
-          <div className="hidden md:block">
-            <AuditButton on={audit}
-              onToggle={() => { setAudit((v) => !v); setOnlyBad(false); }} />
-          </div>
-          <div className="text-xs text-gray-400 pb-1.5 whitespace-nowrap">
-            共 {filtered.length} 筆・${fmt(total)}
-          </div>
-          <ExportButton onClick={exportXlsx} disabled={!filtered.length} />
         </div>
       </div>
 
