@@ -281,7 +281,9 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
     const sheet = [head, ...body, []];
 
     for (const g of GROUPS) {
-      const list = props.filter((p) => p.linen_group === g);
+      // 跟畫面同一條規則:本月沒排到、也沒手動填拿床單的不匯出
+      const list = props.filter((p) => p.linen_group === g
+        && (countOf(p.code) > 0 || linenOf(p.code) > 0));
       if (!list.length) continue;
       sheet.push([GROUP_LABEL[g], '次數', '幾床', '床數', '拿床單', '小計']);
       let sub = 0;
@@ -549,7 +551,20 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
 
         <div className="space-y-4 2xl:sticky 2xl:top-4">
           {GROUPS.map((g) => {
-            const list = props.filter((p) => p.linen_group === g);
+            /*
+             * 【本月沒排到的房源不列】（2026-08-17 使用者指定）
+             *
+             * 72 間房裡一個月通常只排到十幾間，其餘整排都是 0 —— 而那些 0
+             * 佔掉的高度，正是真正有數字的那幾列需要的。
+             *
+             * 判斷用「次數」而不是「小計」:小計是 次數 × 幾床 ＋ 拿床單，
+             * 而幾床沒填的房源小計會是 0 —— 那種要留著，
+             * 因為它是**有排到班但算不出布巾**，正是最需要被看到的一種。
+             *
+             * 拿床單有填的也留著:那是人手動輸入的，不該因為系統沒排班就藏掉。
+             */
+            const list = props.filter((p) => p.linen_group === g
+              && (countOf(p.code) > 0 || linenOf(p.code) > 0));
             if (!list.length) return null;
             const sub = list.reduce((a, p) => a + countOf(p.code) * (p.beds ?? 0) + linenOf(p.code), 0);
             return (
