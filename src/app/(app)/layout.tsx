@@ -110,20 +110,16 @@ function AppShell({ children }: { children: React.ReactNode }) {
    * ============================================================
    * 【桌機側邊欄：預設收起，滑過去暫時展開，按住才固定】
    *
-   * 三個狀態、兩個變數：
-   *   pinned  = false  收起（預設）—— 只剩圖示，內容區多 96px
-   *   hover            滑鼠移上去暫時展開，移開就收回去
-   *   pinned  = true   按了 ‹ 之後固定展開，滑鼠移開也不收
+   * 兩個狀態，一個變數：
+   *   pinned = true   展開（預設）
+   *   pinned = false  收起，只剩圖示，內容區多 152px
    *
-   * 【為什麼滑過去要展開】
-   * 收起來只剩十四個 emoji，而 emoji 沒有共同的視覺語言 ——
-   * 🧺 房務、🧹 清潔、📒 支出、🧾 請款，光看圖示分不出來。
-   * 純收起等於逼人背圖示；滑過去就看得到名稱，那個成本就消失了。
+   * 【滑過去不展開】（2026-08-16）
+   * 原本收起時滑鼠移上去會浮出來 —— 而浮出來會蓋住底下的字。
+   * 那個功能是為了「預設收起」設計的，現在預設展開，它就沒有存在的理由了。
+   * 收起來的人是主動選的,滑過去又跳出來只會擋到他要看的東西。
    *
-   * 【為什麼暫時展開要用蓋的，不能把內容推開】
-   * 推開的話，滑鼠只是路過側邊欄，整頁的文字就往右跳一格。
-   * 那種「我沒做什麼但畫面動了」是最讓人不安的互動。
-   * 所以 hover 展開時側邊欄浮在內容上面，底下的版面一動也不動。
+   * 收起時靠每一項的 `title` 認 —— 停一秒出現原生提示，不蓋住任何東西。
    *
    * 【為什麼 pinned 要記住】
    * 不記的話每次重整都彈回收起。使用者會按第二次、第三次，
@@ -139,19 +135,6 @@ function AppShell({ children }: { children: React.ReactNode }) {
    * 現在預設展開，按 ‹ 才收起來，而且那個選擇會記住。
    */
   const [pinned, setPinned] = useState(true);
-  const [hover, setHover] = useState(false);
-  /*
-   * 【按了收合卻沒收起來】（2026-08-14 回報）
-   *
-   * expanded = pinned || hover。按 ‹ 的時候滑鼠正好在側邊欄上面 ——
-   * pinned 變成 false，但 hover 還是 true，所以**畫面一動也沒動**。
-   *
-   * 使用者只知道「按了沒反應」，然後會再按一次（變回 pinned），
-   * 再按一次（又沒反應）—— 一顆按起來像壞掉的按鈕。
-   *
-   * 收起來的當下先把 hover 展開鎖住，滑鼠真的移開才解鎖。
-   * 之後滑過去照樣展開，那個行為沒有變。
-   */
   /*
    * 未讀通知數（migration_128）。
    *
@@ -164,8 +147,23 @@ function AppShell({ children }: { children: React.ReactNode }) {
    * 位置有限的時候「有沒有」比「幾則」重要。
    */
   const [unread, setUnread] = useState(0);
-  const [hoverLock, setHoverLock] = useState(false);
-  const expanded = pinned || (hover && !hoverLock);
+  /*
+   * 【滑過去不再展開】（2026-08-16）
+   *
+   * 原本收起時滑鼠移上去會暫時展開，而且是**浮在內容上面**
+   * （刻意不推開版面 —— 滑鼠只是路過就讓整頁文字往右跳很不安）。
+   *
+   * 但浮上去的代價是**蓋住底下的字**。實際用起來是:
+   * 滑鼠不小心經過側邊欄，右邊那一段內容就讀不到了。
+   *
+   * 而且這個功能存在的理由已經消失 —— 它是為了「預設收起」設計的，
+   * 現在預設是展開的。收起來是使用者主動選的，
+   * 那他就是要一條窄的側邊欄，不該滑過去又跳出來蓋住東西。
+   *
+   * 收起時分不出哪個 emoji 是哪一頁？每一項都有 `title`，
+   * 停住一秒會出現原生提示 —— 那個不會蓋住任何東西。
+   */
+  const expanded = pinned;
 
   // 掛載後才讀 —— 伺服器算不出 localStorage,直接用會 hydration 不一致
   useEffect(() => {
@@ -181,9 +179,6 @@ function AppShell({ children }: { children: React.ReactNode }) {
     setPinned((v) => {
       const next = !v;
       try { localStorage.setItem('navPinned', next ? '1' : '0'); } catch {}
-      // 收起來時滑鼠一定還在側邊欄上（不然按不到那顆鈕）——
-      // 不鎖的話 hover 會立刻把它撐回去，看起來就是「按了沒反應」
-      if (!next) setHoverLock(true);
       return next;
     });
   }
@@ -335,19 +330,18 @@ function AppShell({ children }: { children: React.ReactNode }) {
 
       {/*
         桌機側邊欄。
-        外面這層只負責「佔位」—— 真正的側邊欄是 fixed 的，
-        hover 展開時才不會把內容推開。
+
+        外面這層只負責「佔位」，真正的側邊欄是 fixed 的。
+        兩層的寬度都跟著 pinned 走 —— **一定要一致**，
+        不一致的話內容會被側邊欄蓋住一段，而那一段就是讀不到的字。
       */}
       <div className={`hidden md:block shrink-0 transition-[width] duration-200
                        ${pinned ? 'w-52' : 'w-14'}`} />
       <aside
-        onMouseEnter={() => setHover(true)}
-        onMouseLeave={() => { setHover(false); setHoverLock(false); }}
         className={`hidden md:flex fixed inset-y-0 left-0 z-40 flex-col
                     bg-white/95 backdrop-blur-xl border-r border-mor-line
                     transition-[width] duration-200
-                    ${expanded ? 'w-52' : 'w-14'}
-                    ${!pinned && hover ? 'shadow-2xl shadow-black/10' : ''}`}>
+                    ${expanded ? 'w-52' : 'w-14'}`}>
 
         {/* 標題列 ＋ 收合鈕。鈕放這裡而不是最下面 —— 那是視線第一個
             到的地方，也是「這條東西可以動」最直覺的位置 */}
