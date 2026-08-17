@@ -99,14 +99,18 @@ if ($newMigrations) {
     Write-Host "  依編號順序貼進 Supabase SQL Editor 執行。每支結尾會回報有沒有記錄成功。" -ForegroundColor Yellow
     Write-Host "  想確認線上跑到哪：select * from schema_migrations order by name;" -ForegroundColor DarkGray
     Write-Host ""
-    $ans = Read-Host "  已經知道要跑這幾支了嗎？(Y 繼續 / 其他中止)"
-    if ($ans -ne "Y" -and $ans -ne "y") { Fail "已中止。跑完 migration 再回來，或直接按 Y 先推程式。" }
+    # .Trim() 不能省 —— 貼上或多按一次空白鍵，$ans 就是 " y"，
+    # 兩個比較都不相等，於是打了 y 卻被中止。那個空白在畫面上看不出來。
+    $ans = (Read-Host "  已經知道要跑這幾支了嗎？(Y 繼續 / 其他中止)").Trim()
+    if ($ans -notin @("Y", "y", "yes", "是")) {
+        Fail "已中止。跑完 migration 再回來，或直接按 Y 先推程式。"
+    }
 }
 
 # ── 5. Commit 訊息 ──────────────────────────────────
 if (-not $Message) {
     Write-Host ""
-    $Message = Read-Host "commit 訊息"
+    $Message = (Read-Host "commit 訊息").Trim()
 }
 if (-not $Message) { Fail "沒有 commit 訊息，已中止" }
 

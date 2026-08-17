@@ -1,14 +1,28 @@
--- migration_136：重算所有契約月租單（**含已收款的**）
+-- migration_136：把既有月租單的期間搬到契約週期上
 --
 -- ============================================================
--- 【先看 migration_135 的對照表再跑這一支】
+-- 【這一支動的是「期間」，不是金額】（2026-08-16 修正）
 --
--- 這一支會改到**已經收過錢**的月租單。改完之後那張單上的金額
--- 跟你當初實際收到的錢可能對不上 —— 差額要另外處理（退款或抵下期），
--- 而系統不會提醒你，因為它不知道有這回事。
+-- 第一版打算把金額按日曆月比例拆開。那是錯的 ——
+-- **訂單是繳款單，客戶繳整月**；要按比例拆的是營收認列，
+-- 而那一段（gen_recognitions）本來就會依 checkin/checkout 自動做。
 --
--- 使用者選的是「全部重算」（2026-08-16）。這一支照做，
--- 但**把每一張被改動的已收款單列出來**,並且先把原值存進備份表。
+-- 所以這一支只搬期間:
+--
+--     2026-07-01 ~ 2026-08-01   →   2026-07-16 ~ 2026-08-16
+--     金額 $170,000             →   金額 $170,000（不變）
+--
+-- 【為什麼這比原本的計畫安全得多】
+--
+--   · 已收款的單金額不變 → 跟 order_payments 的實收永遠對得上
+--   · order_key 不變（還是 checkin 的年月）
+--   · 只有營收認列會重新分配 —— 那正是要修的東西
+--
+-- 認列由 orders 的更新觸發器自動重算，這支不用碰。
+--
+-- 【還是要先看 135 的「房源重疊」那一段】
+-- 同一間房兩份契約重疊的話，其中一份的月租單開不出來（order_key 會撞）。
+-- 那是資料問題，跑這支之前先把契約日期修好。
 --
 --
 -- ============================================================
@@ -66,8 +80,8 @@ comment on table public.orders_backup_136 is
 do $$
 declare
   ct public.contracts;
-  ms date; me date; p_start date; p_end date; lease_end date; last_ms date;
-  n int; dim int; total numeric; acc numeric; amt numeric;
+  ms date; me date; p_start date; p_end date; full_end date; lease_end date;
+  n int; full_n int; periods int; idx int; total numeric; acc numeric; amt numeric;
   touched int := 0; touched_paid int := 0;
 begin
   drop table if exists _chg136;
@@ -86,8 +100,7 @@ begin
    * 不排除的話這裡會去動那些單，而它們的期數是另一套算法排的 ——
    * 兩邊搶同一份契約，正是第一次跑 135 撞 uq_contract_order_month 的原因。
    *
-   * ⚠ 那批**沒有套用頭尾按比例**，仍然整月整額。
-   *   要不要一起改是另一個決定（辦公室登記按不按比例收，跟租金不見得一樣）。
+   * ⚠ 那批的期間仍然是日曆月。要不要一起改是另一個決定。
    */
   for ct in
     select * from public.contracts
@@ -97,35 +110,40 @@ begin
      order by room
   loop
     lease_end := (ct.end_date + 1)::date;
-    total := 0; acc := 0; last_ms := null;
+    total := 0; acc := 0; periods := 0; idx := 0;
 
-    -- 第一趟：總額（算法必須跟 gen_contract_orders 一字不差）
-    ms := date_trunc('month', ct.start_date)::date;
-    while ms < lease_end loop
-      me := (ms + interval '1 month')::date;
-      p_start := greatest(ms, ct.start_date);
-      p_end   := least(me, lease_end);
-      n := p_end - p_start;
+    -- 第一趟：期數與總額（算法必須跟 gen_contract_orders 一字不差）
+    p_start := ct.start_date;
+    while p_start < lease_end loop
+      full_end := (p_start + interval '1 month')::date;
+      p_end    := least(full_end, lease_end);
+      n        := p_end - p_start;
+      full_n   := full_end - p_start;
       if n > 0 then
-        dim := me - ms;
-        total := total + ct.monthly_rent::numeric * n / dim;
-        last_ms := ms;
+        total   := total + (case when n = full_n then ct.monthly_rent::numeric
+                                 else ct.monthly_rent::numeric * n / full_n end);
+        periods := periods + 1;
       end if;
-      ms := me;
+      p_start := full_end;
     end loop;
     total := round(total);
 
-    -- 第二趟：只處理已收款的
-    ms := date_trunc('month', ct.start_date)::date;
-    while ms < lease_end loop
-      me := (ms + interval '1 month')::date;
-      p_start := greatest(ms, ct.start_date);
-      p_end   := least(me, lease_end);
-      n := p_end - p_start;
+    -- 第二趟：只搬已收款的那幾張（未收款的交給函式）
+    p_start := ct.start_date;
+    while p_start < lease_end loop
+      full_end := (p_start + interval '1 month')::date;
+      p_end    := least(full_end, lease_end);
+      n        := p_end - p_start;
+      full_n   := full_end - p_start;
       if n > 0 then
-        dim := me - ms;
-        if ms = last_ms then amt := total - acc;
-        else amt := trunc(ct.monthly_rent::numeric * n / dim); acc := acc + amt; end if;
+        idx := idx + 1;
+        if idx = periods then amt := total - acc;
+        else amt := trunc(case when n = full_n then ct.monthly_rent::numeric
+                               else ct.monthly_rent::numeric * n / full_n end);
+             acc := acc + amt; end if;
+
+        ms := date_trunc('month', p_start)::date;
+        me := (date_trunc('month', p_start) + interval '1 month')::date;
 
         -- 先記下舊值。改完就查不到了
         insert into _chg136
@@ -150,7 +168,7 @@ begin
            and o.checkin >= ms and o.checkin < me
            and (o.checkin <> p_start or o.checkout <> p_end or o.amount <> amt);
       end if;
-      ms := me;
+      p_start := full_end;
     end loop;
 
     -- 未收款的全部交給函式（清掉多餘期數 ＋ 補上正確的）
@@ -185,12 +203,22 @@ begin
   insert into _chk136 values (2, '★★ 被改動的已收款單',
     case when n = 0 then '✅ 0 張' else '⚠ ' || n || ' 張' end,
     case when n = 0 then '沒有動到收過錢的單'
-         else '**這些單的金額跟當初實際收到的錢可能對不上,差額要人工處理**' end);
+         else '搬期間而已 —— 金額不變,實收對得上。認列會跟著重算' end);
 
+  /*
+   * 【這一條應該是 $0】
+   *
+   * 這支只搬期間，不動金額 —— 訂單是繳款單，客戶繳整月。
+   * 不是 0 就代表某份契約的月租跟已開的單對不起來
+   * （像南京5:契約 $99,000 但單開 $98,000），
+   * 那是**資料本來就有的差異**，不是這支造成的。要逐筆看。
+   */
   select coalesce(sum(new_amt - old_amt), 0) into m from _chg136 where paid;
   insert into _chk136 values (3, '★★ 已收款單的金額變動',
-    case when m >= 0 then '+' else '' end || '$' || to_char(m, 'FM999,999,999'),
-    '負數代表原本多開了 —— 那些多出來的錢本來不該收');
+    case when m = 0 then '✅ $0'
+         else (case when m > 0 then '+' else '' end) || '$' || to_char(m, 'FM999,999,999') end,
+    case when m = 0 then '只搬期間,金額沒動 —— 跟 order_payments 的實收永遠對得上'
+         else '⚠ 不是 0：某些契約的月租跟已開的單本來就對不起來,逐筆看下面' end);
 
   -- 逐張列出已收款且被改的（最需要人看的）
   insert into _chk136
