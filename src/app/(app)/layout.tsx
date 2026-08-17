@@ -396,16 +396,33 @@ function AppShell({ children }: { children: React.ReactNode }) {
              * 規則:**任何可以收起來的東西，收起來的狀態必須自己帶著展開的方法。**
              * 不能靠另一個狀態下才出現的按鈕。
              */
+            /*
+             * 收起時標題列是「安幸」，滑過去換成 ›。
+             *
+             * 【為什麼這裡可以靠 hover，下面那顆不行】（2026-08-16 使用者指定）
+             *
+             * 這裡的 hover 是**錦上添花**，不是唯一的入口 ——
+             * 選單底部有一顆常駐的 › 按鈕（見下面）。真正要保證的是
+             * 「收起來的狀態必須自己帶著展開的方法」，那條由底部那顆負責。
+             *
+             * 既然入口已經有了，這裡就不需要再放一顆有底色的膠囊 ——
+             * 兩個常駐的箭頭在 56px 寬的欄位裡是視覺噪音，
+             * 而「安幸」本身要留著:那是整條欄位唯一的定位點。
+             *
+             * 【為什麼用透明度切換而不是換文字】
+             * 兩個元素都在，只切 opacity —— 直接換內容的話寬度會跳一下，
+             * 而那一跳會讓旁邊的圖示列跟著抖。
+             */
             <button onClick={togglePinned} title="展開選單" aria-label="展開選單"
               aria-pressed={false}
-              className="w-9 h-9 flex items-center justify-center rounded-lg relative
-                         text-gray-700 hover:bg-mor-sand/70 transition-colors group">
-              {/* 平常顯示「安」，滑過去換成箭頭 —— 兩個都在，用透明度切換，
-                  這樣寬度不會跳動 */}
-              <span className="font-bold text-lg group-hover:opacity-0 transition-opacity">安</span>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}
+              className="w-full h-full flex items-center justify-center relative
+                         text-gray-700 hover:bg-mor-sand/60 transition-colors group">
+              <span className="font-bold text-[15px] tracking-tight
+                               group-hover:opacity-0 transition-opacity">安幸</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3}
                 strokeLinecap="round" strokeLinejoin="round"
-                className="w-4 h-4 absolute opacity-0 group-hover:opacity-100 transition-opacity">
+                className="w-4 h-4 absolute text-mor-slate
+                           opacity-0 group-hover:opacity-100 transition-opacity">
                 <path d="M9 6l6 6-6 6" />
               </svg>
             </button>
@@ -413,6 +430,26 @@ function AppShell({ children }: { children: React.ReactNode }) {
         </div>
 
         {navList(!expanded)}
+
+        {/*
+          收起時**下面再放一顆展開鈕**。
+          只有最上面那一顆的話，人在點下半部的選單（設定、全線管理）時
+          要把滑鼠拉回頂端才展開得了 —— 那是一段每次都要走的多餘距離。
+
+          兩顆做同一件事不是重複，是**讓入口靠近手在的位置**。
+          展開之後這一顆就消失，因為那時標題列的 ‹ 就在旁邊。
+        */}
+        {!expanded && (
+          <button onClick={togglePinned} title="展開選單" aria-label="展開選單"
+            className="mx-2 mb-1 h-8 rounded-[10px] flex items-center justify-center
+                       bg-mor-slate/[0.10] text-mor-slate
+                       hover:bg-mor-slate hover:text-white transition-colors">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3}
+              strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5">
+              <path d="M9 6l6 6-6 6" />
+            </svg>
+          </button>
+        )}
 
         <button onClick={logout} title="登出"
           className={`m-2 rounded-[10px] border border-mor-line py-2 text-sm text-gray-500
