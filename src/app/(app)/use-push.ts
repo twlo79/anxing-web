@@ -104,7 +104,30 @@ export function usePush() {
       return { ok: false, state, message: MESSAGE[state] };
 
     try {
-      const perm = await Notification.requestPermission();
+      /*
+       * 【為什麼要 race 一個逾時】
+       *
+       * `Notification.requestPermission()` 回傳的 Promise **可能永遠不 resolve**。
+       *
+       * Chrome 的「安靜通知請求」（quieter notification permissions）不跳彈窗，
+       * 而是在網址列右邊放一個很小的鈴鐺圖示。使用者不會注意到它，
+       * 而在他點下那個圖示之前，這個 await **就停在這裡**。
+       *
+       * 沒有逾時的話後面的程式一行都不會跑 —— 按鈕永遠停在「啟用中…」，
+       * 而畫面上沒有任何東西說明在等什麼。
+       *
+       * 15 秒之後放棄並明講鈴鐺在哪。放棄不代表失敗:
+       * 他點了鈴鐺按允許之後，「重新檢查」就會看到。
+       */
+      const perm = await Promise.race([
+        Notification.requestPermission(),
+        new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), 15000)),
+      ]);
+      if (perm === 'timeout') {
+        return { ok: false, state: 'off',
+          message: '瀏覽器沒有跳出詢問視窗 —— Chrome 可能把它縮成網址列右邊的小鈴鐺 🔔。'
+                 + '點那個鈴鐺選「允許」，再按「重新檢查」。' };
+      }
       if (perm !== 'granted') {
         const s: PushState = perm === 'denied' ? 'denied' : 'off';
         setState(s);
@@ -124,6 +147,45 @@ export function usePush() {
   }, [state]);
 
   /**
+   * 對這台裝置發一則測試通知。
+   *
+   * 【為什麼需要它】
+   * 推播失敗**沒有任何徵兆** —— 訂閱存進去了、開關是綠的、
+   * 而通知就是不會跳出來。使用者唯一的驗證方式是「等下一則真的通知」，
+   * 而那可能是三天後，那時他已經不記得今天調過什麼。
+   *
+   * 這顆按鈕把「有沒有真的通」從等待變成一次點擊。
+   *
+   * **不寫進 notifications 表** —— 測試訊息混進「新訊息」分頁，
+   * 那一頁就開始有雜訊，而那一頁存在的理由正是「這裡只有真的事情」。
+   */
+  const sendTest = useCallback(async (): Promise<string> => {
+    try {
+      const supabase = createClient();
+      const { data: { session } } = await supabase.auth.getSession();
+      const r = await fetch('/api/push/subscribe', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: 'Bearer ' + (session?.access_token ?? ''),
+        },
+        body: JSON.stringify({ action: 'test' }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) return '測試失敗：' + (j.error || String(r.status));
+      /*
+       * sent 是「推播服務收下了幾則」，不是「跳出來幾則」。
+       * 說成「已送出」而不是「已收到」—— 送出去之後還有作業系統的
+       * 專注模式、勿擾、通知中心設定，那些這裡看不到。
+       */
+      if (!j.sent) return '你的帳號目前沒有任何裝置訂閱成功。先按上面的「在這台裝置啟用」。';
+      return `已送出 ${j.sent} 則到你的 ${j.subscriptions} 台裝置。沒跳出來的話看下面第 3 步。`;
+    } catch (e) {
+      return '測試失敗：' + (e as Error).message;
+    }
+  }, []);
+
+  /**
    * 解除這台裝置的訂閱。
    *
    * 全部通知都關掉時呼叫 —— 留著一個永遠收不到東西的訂閱沒有意義，
@@ -139,5 +201,15 @@ export function usePush() {
     } catch { /* 解除失敗不影響使用者,下次還會再試 */ }
   }, []);
 
-  return { state, ensureSubscribed, unsubscribe };
+  /*
+   * 重新檢查權限狀態。
+   *
+   * 【為什麼一定要有】
+   * `Notification.permission` 是在頁面載入時讀一次的快照。使用者到 Chrome 設定
+   * 把封鎖改成允許之後，**這個頁面完全不知道** —— React 裡的 state 還是 'denied'，
+   * 而 denied 會讓 ensureSubscribed() 連試都不試就回失敗。
+   *
+   * 沒有這支的話，唯一的出路是整頁重新整理，而畫面上沒有任何地方寫著要這麼做。
+   */
+  return { state, ensureSubscribed, unsubscribe, sendTest, recheck: check };
 }
