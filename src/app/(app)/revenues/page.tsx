@@ -570,7 +570,27 @@ export default function RevenuesPage() {
   const orderRange = (r: Row) => {
     if (r.source === 'longterm') {
       const cands = contracts.filter((c) => c.room === r.property_raw && (!r.estate_name || c.estate === r.estate_name));
-      const c = cands.find((c) => !r.period_start || (c.start <= r.period_start && r.period_start <= c.end)) ?? cands[0];
+      /*
+       * 【改成「有沒有重疊」，不是「起日在不在契約內」】（2026-08-16）
+       *
+       * 原本的條件是 `c.start <= period_start`，也就是要求**認列的第一天
+       * 已經在租期內**。月中起租的契約會整個對不上:
+       *
+       *   10A5  契約 2026-07-16 ~ 2027-07-15
+       *         7 月的認列 2026-07-01 ~ 2026-08-01
+       *         → 7/16 <= 7/01 不成立 → 找不到 → 印出訂單自己的起訖
+       *
+       * 但那份契約**確實就是這張單的契約**（orders.contract_id 對得上）。
+       * 改成看兩段有沒有重疊,月中起租就對得上了。
+       *
+       * 【還是不留 `?? cands[0]` 的退路】
+       * 完全沒有重疊時就不猜。同一個房間換過三個租客的話,
+       * 退路會印出一份跟這筆錢無關的契約 ——
+       * 一個看起來很具體的錯日期比留白更糟,留白至少會讓人去查。
+       */
+      const ps = r.period_start || r.checkin;
+      const pe = r.period_end || r.checkout;
+      const c = cands.find((c) => !ps || (c.start <= pe && ps <= c.end));
       if (c) return `${c.start}~${c.end}`;
     }
     return r.checkin && r.checkout ? `${r.checkin}~${r.checkout}` : '—';

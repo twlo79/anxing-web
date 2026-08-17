@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase';
 import {
-  roomCell, rangeText, nightlyRate, isSplit, fmtMoney, nightsText, type RevRow,
+  roomCell, rangeText, dayBefore, nightlyRate, isSplit, fmtMoney, nightsText, type RevRow,
 } from '@/lib/revenue-row';
 
 /**
@@ -161,13 +161,27 @@ export default function RowDrawer({
           <div className={ROW}><span className={LB}>物業</span><span className="flex-1">{row.estate_name ?? '—'}</span></div>
           <div className={ROW}><span className={LB}>房源</span><span className="flex-1">{room.sub ? room.main : '—'}</span></div>
           <div className={ROW}><span className={LB}>客戶</span><span className="flex-1">{row.guest_name ?? '—'}</span></div>
+          {/* 有查到契約才叫「契約期間」。查不到就顯示訂單自己的起訖 ——
+              不猜一份可能無關的契約（見 revenues/page.tsx 的 orderRange） */}
+          {orderRangeText && (
+            <div className={ROW}>
+              <span className={LB}>契約期間</span>
+              <span className="flex-1">{orderRangeText}</span>
+            </div>
+          )}
           <div className={ROW}>
-            <span className={LB}>{row.source === 'longterm' ? '契約期間' : '訂單起訖'}</span>
-            <span className="flex-1">{orderRangeText || rangeText(row.checkin, row.checkout)}</span>
+            <span className={LB}>訂單起訖</span>
+            <span className="flex-1">{rangeText(row.checkin, row.checkout)}</span>
           </div>
           <div className={ROW}>
             <span className={LB}>認列起訖</span>
-            <span className="flex-1">{rangeText(row.period_start || row.checkin, row.period_end || row.checkout)}</span>
+            {/*
+              period_end 是排他的（7 月整月存成 08-01）。減一天才是最後一晚 ——
+              直接印會變成「07-01~08-01」，看起來像認列了 32 天。
+            */}
+            <span className="flex-1">
+              {rangeText(row.period_start || row.checkin, dayBefore(row.period_end) || row.checkout)}
+            </span>
           </div>
           <div className={ROW}><span className={LB}>認列天數</span><span className="flex-1">{nightsText(row)}</span></div>
           <div className={ROW}>

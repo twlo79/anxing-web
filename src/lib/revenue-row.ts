@@ -83,6 +83,24 @@ export function rangeText(from: string | null, to: string | null): string {
 }
 
 /**
+ * 前一天。用來把**排他**的結束邊界轉成看得懂的日期。
+ *
+ * `revenue_recognitions.period_end` 存的是「到這天為止（不含）」——
+ * 7 月整月是 `2026-08-01`。給人看要寫 `2026-07-31`。
+ *
+ * 用 UTC 算，不用本地時區:`new Date('2026-08-01')` 在 UTC+8 會是
+ * 7/31 08:00，減一天變 7/30 —— **差一天而且只在某些時區發生**，
+ * 那種錯在台北看不出來，在別的地方跑測試才會炸。
+ */
+export function dayBefore(d: string | null | undefined): string {
+  const s = (d ?? '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return '';
+  const dt = new Date(s + 'T00:00:00Z');
+  dt.setUTCDate(dt.getUTCDate() - 1);
+  return dt.toISOString().slice(0, 10);
+}
+
+/**
  * 期間欄:認列在上、訂單在下。
  *
  * 【為什麼認列是主要那行】
@@ -95,20 +113,47 @@ export function rangeText(from: string | null, to: string | null): string {
  * 而那幾筆才是需要看第二行的。
  */
 export function periodCell(r: RevRow, orderRangeText?: string): TwoLine {
-  // period_start 缺值退回 checkin —— 舊資料沒有這兩欄,
-  // 不退回的話那些列的認列期間會是空白
-  const recog = rangeText(r.period_start || r.checkin, r.period_end || r.checkout);
   /*
-   * 【長租的第二行是契約期間，不是月租單的起訖】
+   * period_start 缺值退回 checkin —— 舊資料沒有這兩欄,
+   * 不退回的話那些列的認列期間會是空白。
    *
-   * 長租的每一張月租單 checkin~checkout 就是那個月 —— 印出來跟認列期間
-   * 幾乎一樣，等於什麼都沒說。真正有用的是**這張單屬於哪一份契約**，
-   * 而那要另外查 contracts（頁面算好之後從 orderRangeText 傳進來）。
+   * **period_end 要減一天。** 資料庫存的是
+   * `least(o.checkout, 下個月1號)` —— 一個**排他**的邊界:
+   * 7 月整月的認列存成 `2026-07-01 ~ 2026-08-01`，而 8/1 那天不屬於 7 月。
    *
-   * 傳空字串代表「查不到契約」—— 那時退回訂單起訖，不要留白。
+   * 直接印出來的話畫面上會是「7/01~08/01」，看起來像認列了 32 天。
+   * 舊版的 recogRange() 有做這件事（minus1），我併欄時漏掉了。
    */
-  const order = orderRangeText || rangeText(r.checkin, r.checkout);
-  return { main: recog, sub: recog === order ? '' : order };
+  const recog = rangeText(r.period_start || r.checkin, dayBefore(r.period_end) || r.checkout);
+
+  /*
+   * 【長租的第二行是契約期間】
+   *
+   * 長租每張月租單的 checkin~checkout 就是那個月 —— 印出來跟認列期間
+   * 幾乎一樣，等於什麼都沒說。真正有用的是**這張單屬於哪一份契約**，
+   * 而那要另外查 contracts（頁面算好之後傳進來）。
+   *
+   * 查不到就傳空字串，走下面的一般規則 —— 不猜一份可能無關的契約。
+   */
+  if (orderRangeText) return { main: recog, sub: orderRangeText === recog ? '' : orderRangeText };
+
+  /*
+   * 【比日期，不比字串】
+   *
+   * 這裡不能拿兩行的**文字**去比。兩邊的慣例本來就差一天:
+   *
+   *   認列  印到「最後一晚」   7/25~7/28
+   *   訂單  印到「退房日」     7/25~7/29
+   *
+   * 比字串的話沒跨月的訂單也永遠不相等，於是**每一列都印兩行** ——
+   * 而第二行存在的理由正是「這一列跟整張訂單不一樣」。
+   * 全部都印等於沒有這個提示。
+   *
+   * 所以比原始日期:認列涵蓋整張訂單就只印一行。
+   */
+  const coversWhole =
+    (r.period_start || r.checkin) === r.checkin && (r.period_end || r.checkout) === r.checkout;
+  return { main: recog, sub: coversWhole ? '' : rangeText(r.checkin, r.checkout) };
 }
 
 /**
