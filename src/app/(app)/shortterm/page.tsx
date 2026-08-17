@@ -52,7 +52,26 @@ type MoveState = { grp: string; checkin: string; checkout: string; totalNights: 
 
 const SRC = ['airbnb', 'agoda', 'private', 'oneoff', 'partner', 'airbnb_cancelled'];
 const MANUAL_SRC = ['private', 'oneoff'];  // 可手動新增的來源
-const FILTER_SRC = ['airbnb', 'agoda', 'private', 'oneoff'];  // 來源篩選下拉
+/*
+ * 來源篩選下拉。**不放 oneoff（其他收入）**（2026-08-17 使用者指定）。
+ *
+ * 【為什麼拿掉】
+ * 「費用類別」的預設值是**房租**，而房租的實作是排除一次性來源:
+ *
+ *     if (fp.kind === 'rent') q = q.not('source', 'in', ONEOFF_SOURCES)
+ *
+ * 所以「來源＝其他收入」＋「費用類別＝房租」= `source = 'oneoff' AND
+ * source <> 'oneoff'`，永遠零筆。而房租是預設值，只改來源就會踩到 ——
+ * 畫面回「無訂單」，跟「真的沒有這種訂單」長得一模一樣。
+ *
+ * 【為什麼不是加提示就好】
+ * 加提示等於承認「這裡有一個你不該選的選項」。
+ * 一次性收入本來就該用「費用類別」篩（那裡有「一次性費用」與各科目），
+ * 兩個下拉各開一個入口去篩同一件事，多的那個只會製造矛盾。
+ *
+ * 互斥的提示仍然留著 —— 網址帶參數、或之後有人把 oneoff 加回來時還擋得住。
+ */
+const FILTER_SRC = ['airbnb', 'agoda', 'private'];
 const SRC_LABEL: Record<string, string> = { airbnb: 'Airbnb', agoda: 'Agoda', private: '私下', oneoff: ONEOFF_LABEL, partner: '搭檔收款', airbnb_cancelled: 'Airbnb取消' };
 const SRC_COLOR: Record<string, string> = {
   airbnb: 'bg-mor-bluelight text-mor-slate', agoda: 'bg-purple-50 text-purple-700',
