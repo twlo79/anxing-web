@@ -217,7 +217,7 @@ export default function OrderPayments({
   const acctName = useMemo(
     () => Object.fromEntries(accounts.map((a) => [a.code, a.name])), [accounts]);
 
-  const exempt = isExempt(order.source);
+  const exempt = isExempt(order);
 
   return (
     // 手機:貼底的整頁面板。置中小視窗在手機上鍵盤一跳出來就被推到看不見。

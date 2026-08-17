@@ -103,3 +103,33 @@ test('lastPaidOn:取最晚的一天,不是最後輸入的那筆', () => {
   assert.equal(lastPaidOn([p('2026-03-01', 1), p('2026-01-01', 1), p('2026-02-01', 1)]), '2026-03-01');
   assert.equal(lastPaidOn([]), null);
 });
+
+// ── Airbnb 取消收入也是平台代收 ────────────────────
+
+test('Airbnb 取消收入（fee_type=取消費）視同平台代收', () => {
+  // 房客取消時 Airbnb 扣的違約金跟房費走同一條路，我們不會去跟房客要
+  assert.equal(payStatus({ source: 'oneoff', fee_type: '取消費', amount: 102589 }), 'exempt');
+});
+
+test('項目寫著取消也認 —— migration_75 之後科目會變成「其他」', () => {
+  assert.equal(payStatus({ source: 'oneoff', fee_type: '其他',
+    item_name: 'Airbnb 取消收入', amount: 35555 }), 'exempt');
+});
+
+test('清潔費、垃圾代收費仍然要收 —— 不能整個 oneoff 放行', () => {
+  assert.equal(payStatus({ source: 'oneoff', fee_type: '清潔費', amount: 1200 }), 'unpaid');
+  assert.equal(payStatus({ source: 'oneoff', fee_type: '垃圾代收費', amount: 300 }), 'unpaid');
+});
+
+test('沒有科目也沒有項目的一次性收入照樣要收', () => {
+  assert.equal(payStatus({ source: 'oneoff', amount: 5000 }), 'unpaid');
+});
+
+test('取消費但不是 oneoff 來源不套用這條 —— 只有一次性收入才看科目', () => {
+  assert.equal(payStatus({ source: 'longterm', fee_type: '取消費', amount: 5000 }), 'unpaid');
+});
+
+test('isExempt 傳字串仍然可用（舊呼叫端），但看不出取消收入', () => {
+  assert.equal(isExempt('airbnb'), true);
+  assert.equal(isExempt('oneoff'), false);
+});

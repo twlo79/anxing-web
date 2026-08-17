@@ -19,7 +19,7 @@ import MoneyLines from '@/components/MoneyLines';
 import { toLines, fromLines, totalTwd, validateLines, type Line } from '@/lib/money-lines';
 import { payStatus, remaining, isExempt, STATUS_LABEL, STATUS_CLASS, STATUS_FILTER } from '@/lib/order-payment';
 import { softDelete } from '@/lib/trash';
-import { feeFilterOptions, feeFilterPredicate, ONEOFF_SOURCES, FEE_F_ALL, FEE_F_RENT } from '@/lib/order-filter';
+import { feeFilterOptions, feeFilterPredicate, feeSourceConflict, ONEOFF_SOURCES, FEE_F_ALL, FEE_F_RENT } from '@/lib/order-filter';
 import TrashLink from '@/components/TrashLink';
 import { checkDates, checkPrice, checkRequired, lookbackFrom, type PastOrder } from '@/lib/order-check';
 import MoneyInput from '@/components/MoneyInput';
@@ -783,6 +783,26 @@ export default function ShortTermPage() {
         </div>
       </div>
 
+      {/*
+        兩個條件互斥時直接講出來。
+        不講的話畫面只顯示「無訂單」—— 那跟「真的沒有這種訂單」長得一模一樣，
+        而後者會讓人以為資料不見了。
+      */}
+      {feeSourceConflict(src, feeF) && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 mb-3
+                        text-sm text-amber-800 flex flex-wrap items-center gap-2">
+          <span>
+            「<b>{SRC_LABEL[src] ?? src}</b>」是一次性收入，而「費用類別」選的是
+            <b>房租</b> —— 這兩個條件湊不到一起，所以一筆都不會有。
+          </span>
+          <button onClick={() => setFeeF(FEE_F_ALL)}
+            className="rounded-lg border border-amber-400 bg-white px-3 py-1 text-xs
+                       hover:bg-amber-100 whitespace-nowrap">
+            把費用類別改成「全部」
+          </button>
+        </div>
+      )}
+
       {audit && auditResult && (
         <AuditSummary result={auditResult} onlyBad={onlyBad}
           onToggleOnly={() => setOnlyBad((v) => !v)} />
@@ -848,7 +868,7 @@ export default function ShortTermPage() {
                   })()}
                 </td>
                 <td className="px-3 py-2 text-right whitespace-nowrap">
-                  {!isExempt(o.source) && canCollect && (
+                  {!isExempt(o) && canCollect && (
                     <button onClick={(e) => { e.stopPropagation(); setCollect(o); }}
                       className="text-xs text-mor-green underline hover:opacity-80 mr-3">收款</button>
                   )}
@@ -905,7 +925,7 @@ export default function ShortTermPage() {
                       <span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${STATUS_CLASS[st]}`}>
                         {STATUS_LABEL[st]}
                       </span>
-                      {!isExempt(d.source) && (
+                      {!isExempt(d) && (
                         <span className="ml-2 text-xs text-gray-500">
                           已收 ${fmt(Number(d.paid_amount) || 0)}
                           {rest > 0 && <span className="text-red-500">・尚欠 ${fmt(rest)}</span>}
@@ -949,7 +969,7 @@ export default function ShortTermPage() {
                 style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
                 <button onClick={() => { setDetail(null); openEdit(d); }}
                   className="flex-1 min-w-[6rem] h-11 rounded-lg bg-mor-slate text-white text-sm font-medium hover:bg-mor-slatedark">編輯</button>
-                {!isExempt(d.source) && canCollect && (
+                {!isExempt(d) && canCollect && (
                   <button onClick={() => { setDetail(null); setCollect(d); }}
                     className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-green text-mor-green text-sm font-medium hover:bg-mor-greenlight">收款</button>
                 )}

@@ -34,9 +34,39 @@ export type PayableOrder = {
   source: string;
   amount: number | null;
   paid_amount?: number | null;
+  /** 一次性收入的科目。Airbnb 取消收入是「取消費」—— 那也是平台代收的 */
+  fee_type?: string | null;
+  item_name?: string | null;
 };
 
-export const isExempt = (source: string) => (EXEMPT_SOURCES as readonly string[]).includes(source);
+/**
+ * 這筆錢需不需要我們自己去收。
+ *
+ * ============================================================
+ * 【Airbnb 取消收入也是平台代收】（2026-08-17 使用者指定）
+ *
+ * 房客取消時 Airbnb 依政策扣他一筆違約金，**那筆錢跟房費走同一條路** ——
+ * 平台收了之後結算給我們，我們不會去跟房客要。
+ *
+ * 但它的來源是 `oneoff`（一次性收入），而 `oneoff` 底下還有清潔費、
+ * 垃圾代收費那些**真的要跟人收**的項目。所以不能整個 `oneoff` 放行，
+ * 要看科目。
+ *
+ * 【為什麼同時看 fee_type 與 item_name】
+ * `fee_type` 是「取消費」，但 migration_75 之後前端的下拉**已經沒有這個選項**
+ * （取消相關的三種都併進「其他」了）。所以將來新建的取消收入
+ * 科目可能是「其他」，只有項目名稱寫著「Airbnb 取消收入」。
+ *
+ * 兩個都認,才不會有一批新的取消收入又靜靜地掛在待收清單上。
+ */
+export function isExempt(o: PayableOrder | string): boolean {
+  // 舊呼叫端傳字串。保留是為了不用一次改完所有地方 ——
+  // 但字串版看不到 fee_type，判斷不出取消收入
+  if (typeof o === 'string') return (EXEMPT_SOURCES as readonly string[]).includes(o);
+  if ((EXEMPT_SOURCES as readonly string[]).includes(o.source)) return true;
+  if (o.source !== 'oneoff') return false;
+  return o.fee_type === '取消費' || /取消/.test(o.item_name ?? '');
+}
 
 /** 四捨五入到整數再比較。金額是台幣,小數點只會製造「差 0.001 所以永遠收不完」。 */
 const round = (n: number | null | undefined) => Math.round(Number(n) || 0);
@@ -59,7 +89,7 @@ export function remaining(o: PayableOrder): number {
  * 而實際上沒有人欠任何錢。
  */
 export function payStatus(o: PayableOrder): PayStatus {
-  if (isExempt(o.source)) return 'exempt';
+  if (isExempt(o)) return 'exempt';
   const due = round(o.amount);
   const got = round(o.paid_amount);
   if (due <= 0) return 'paid';

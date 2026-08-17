@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  feeFilterOptions, feeFilterPredicate, feeFilterLabel,
+  feeFilterOptions, feeFilterPredicate, feeFilterLabel, feeSourceConflict,
   ONEOFF_SOURCES, FEE_F_ALL, FEE_F_RENT, FEE_F_ONEOFF,
 } from './order-filter.ts';
 import { FEE_TYPES } from './fee-types.ts';
@@ -50,4 +50,26 @@ test('說明文字：沒篩就是空字串,不要寫「全部」', () => {
   assert.equal(feeFilterLabel(FEE_F_RENT), '房租');
   assert.equal(feeFilterLabel(FEE_F_ONEOFF), '一次性費用');
   assert.equal(feeFilterLabel('水費'), '水費');
+});
+
+// ── 來源與費用類別互斥 ────────────────────────────
+
+test('選了「其他收入」而費用類別是房租 —— 必定空集合，要提示', () => {
+  // 房租的實作是「排除一次性來源」，而其他收入就是一次性來源
+  assert.equal(feeSourceConflict('oneoff', FEE_F_RENT), true);
+  assert.equal(feeSourceConflict('airbnb_cancelled', FEE_F_RENT), true);
+});
+
+test('費用類別不是房租就不衝突', () => {
+  assert.equal(feeSourceConflict('oneoff', FEE_F_ALL), false);
+  assert.equal(feeSourceConflict('oneoff', '清潔費'), false);
+});
+
+test('一般來源配房租是正常的', () => {
+  assert.equal(feeSourceConflict('airbnb', FEE_F_RENT), false);
+  assert.equal(feeSourceConflict('longterm', FEE_F_RENT), false);
+});
+
+test('沒選來源就不算衝突 —— 那是預設狀態，不該一進頁面就跳警告', () => {
+  assert.equal(feeSourceConflict('', FEE_F_RENT), false);
 });
