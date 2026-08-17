@@ -136,9 +136,20 @@ export default function NewsTab() {
           <input type="checkbox" checked={onlyUnread} onChange={(e) => setOnlyUnread(e.target.checked)} />
           只看未讀
         </label>
+        {/*
+          【為什麼不用 ml-auto】（2026-08-16 使用者指定）
+
+          原本靠 `ml-auto` 推到那一列的最右邊。在寬螢幕上那是**一公尺外** ——
+          左邊「有 N 則還沒看」「只看未讀」是同一組控制項，
+          而這顆被單獨丟到視線的另一端，中間隔著一整片空白。
+
+          按鈕要放在**它作用的東西旁邊**，不是版面的角落。
+          靠右對齊在這裡沒有換到任何東西:它不是主要動作，
+          也不需要跟下面的清單對齊。
+        */}
         <button onClick={() => markRead(unread.map((r) => r.id))}
           disabled={!unread.length}
-          className="ml-auto rounded-lg border border-mor-line px-3 py-1.5 text-xs hover:bg-mor-sand/60 disabled:opacity-40">
+          className="ml-1 rounded-lg border border-mor-line px-3 py-1.5 text-xs hover:bg-mor-sand/60 disabled:opacity-40">
           全部標為已讀
         </button>
       </div>
