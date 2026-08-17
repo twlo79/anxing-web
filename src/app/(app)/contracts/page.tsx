@@ -7,6 +7,7 @@ import { checkContractRequired } from '@/lib/order-check';
 import Toast from '@/components/Toast';
 import { FilterBar, FilterSelect, FilterDateRange, FilterSearch, FilterClear, FilterCount } from '@/lib/filters';
 import { createClient } from '@/lib/supabase';
+import { useOpenFromUrl } from '@/lib/open-from-url';
 import { FEE_TYPES, feeLabel } from '@/lib/fee-types';
 import ContractFees, { type Rc } from '@/components/ContractFees';
 import { feeMonthly, leasePeriods, periodOf } from '@/lib/lease';
@@ -97,6 +98,13 @@ export default function ContractsPage() {
   // 第二張契約會帶著第一張的押金 —— 短租頁踩過同一個坑。
   const [formSeq, setFormSeq] = useState(0);
   const openEdit = (o: Contract | null) => { setEdit(o); if (o) setFormSeq((n) => n + 1); };
+
+  /* `/contracts?contract=<id>` 直接開那一筆。營收頁抽屜的「看契約」靠它 */
+  useOpenFromUrl<Contract>('contract', async (id) => {
+    const { data } = await supabase.from('contracts')
+      .select('*, estates(name)').eq('id', id).maybeSingle();
+    return (data as Contract) ?? null;
+  }, openEdit);
   const curFirst = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`; })();
   const curMon = (() => { const d = new Date(); return `${d.getFullYear()}/${d.getMonth() + 1}`; })();
   const curYm = (() => { const d = new Date(); return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`; })();

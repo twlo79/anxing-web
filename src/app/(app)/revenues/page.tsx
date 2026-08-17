@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AddButton, ExportButton, ActionBar } from '@/components/Actions';
-import { AuditButton, AuditBadges, AuditSummary } from '@/components/Audit';
+import { AuditBadges, AuditSummary } from '@/components/Audit';
 import { auditOrders, type AuditOrder } from '@/lib/audit-orders';
 import FilterToggle from '@/components/FilterToggle';
 import { createClient } from '@/lib/supabase';
@@ -12,6 +12,9 @@ import {
   isOffice, isCompany, inEstateBlock, estateOf, guestOf, roomOf,
   itemLabel, oneoffItems, oneoffLabel, skeleton, reconcile, SHORT_SOURCES, ROOM_NONE, ONEOFF_LABEL,
 } from '@/lib/revenue-report';
+import { roomCell, periodCell, amountCell, nightsText } from '@/lib/revenue-row';
+import OverflowMenu, { MenuItem, MenuSep, MenuInfo } from '@/components/OverflowMenu';
+import RowDrawer from './row-drawer';
 
 type Row = {
   /** 這一列的 id（認列列，不是訂單）—— 一筆訂單跨三個月就有三列 */
@@ -89,6 +92,8 @@ export default function RevenuesPage() {
   const [kw, setKw] = useState('');
   const [kwInput, setKwInput] = useState('');
   const [sort, setSort] = useState<SortState>({ key: 'period_start', dir: 'desc' });
+  /** 抽屜打開的是哪一列。null 就是沒開 */
+  const [openRow, setOpenRow] = useState<Row | null>(null);
   const [contracts, setContracts] = useState<{ estate: string; room: string; start: string; end: string }[]>([]);
   useEffect(() => { (async () => {
     const { data } = await supabase.from('contracts').select('room, start_date, end_date, estates(name)');
@@ -654,12 +659,35 @@ export default function RevenuesPage() {
           </div>
         </div>
         {(estateFilter || roomFilter || sourceFilter || kw) && <button onClick={() => { setEstateFilter(''); setRoomFilter(''); setSourceFilter(''); setKw(''); setKwInput(''); }} className="text-gray-500 underline pb-1.5">清除</button>}
-        {/* 防呆放在動作那一組的最左邊,跟訂單頁同一個位置 ——
-            同一個功能在兩頁要在同一個地方,不然每換一頁就要重新找 */}
-        <div className="ml-auto flex items-end gap-3">
-          <AuditButton on={audit}
-            onToggle={() => { setAudit((v) => !v); setOnlyBad(false); }} />
-          <div className="text-xs text-gray-400 pb-1.5">共 {filtered.length} 筆・${fmt(total)}</div>
+        {/*
+          【防呆與總額收進 ⋯】（2026-08-16 使用者指定）
+
+          判準是「多久用一次」不是「重不重要」:
+          防呆很重要，但一天按一次也還是一天一次，而它佔的寬度是每次載入都在佔。
+          下載 Excel 留在外面 —— 那是每天在用的。
+
+          **代價**:總額 `$10,635,656` 現在要點一下才看得到。
+          那個數字原本掃過去就看到。這是使用者明確選的取捨。
+
+          ⋯ 在兩頁要在同一個位置 —— 不然每換一頁就要重新找。
+        */}
+        <div className="ml-auto flex items-end gap-2">
+          <OverflowMenu>
+            <MenuItem
+              icon={<span className="text-base leading-none">🕵️</span>}
+              onClick={() => { setAudit((v) => !v); setOnlyBad(false); }}
+              right={
+                <span className={`w-9 h-5 rounded-full relative shrink-0 transition-colors
+                                  ${audit ? 'bg-mor-green' : 'bg-gray-300'}`}>
+                  <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all
+                                    ${audit ? 'left-[1.125rem]' : 'left-0.5'}`} />
+                </span>
+              }>
+              防呆檢查
+            </MenuItem>
+            <MenuSep />
+            <MenuInfo label={`本期共 ${filtered.length.toLocaleString()} 筆`} value={`$${fmt(total)}`} />
+          </OverflowMenu>
           <ExportButton onClick={exportXlsx} disabled={!filtered.length} />
         </div>
       </div>
@@ -670,53 +698,89 @@ export default function RevenuesPage() {
           onToggleOnly={() => setOnlyBad((v) => !v)} />
       )}
 
+      <RowDrawer row={openRow} oid={openRow?.oid ?? null}
+        sourceLabel={openRow ? (SOURCE_LABEL[openRow.source] ?? openRow.source) : ''}
+        orderRangeText={openRow ? orderRange(openRow) : ''}
+        onClose={() => setOpenRow(null)} />
+
+      {/* 併欄之後最小寬度可以收窄 —— 900px 是九欄時的數字 */}
       <div className="rounded-xl glass overflow-x-auto">
-        <table className="w-full min-w-[900px] text-sm">
+        <table className="w-full min-w-[620px] text-sm">
           <thead>
             <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-white/45">
+              {/*
+                【九欄併成六欄】（2026-08-16 使用者指定）
+
+                  物業 ＋ 房源        → 房源（房源大、物業小）
+                  訂單 ＋ 認列起訖    → 期間（認列大、訂單小）
+                  訂單總額 ＋ 當期認列 → 金額（認列大、總額小）
+
+                合併欄只能有一個排序鍵,所以**少了三個排序**:
+                依訂單起訖排、依訂單總額排、依物業排。
+                使用者確認過可以接受（2026-08-16）—— 那三個的替代方案是
+                表頭點兩下切換排序目標，但那是沒有人找得到的隱藏功能。
+
+                看不到的欄位在抽屜裡（點一列）。
+              */}
               <SortTh label="來源" sortKey="source" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
-              <SortTh label="物業" sortKey="estate_name" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <SortTh label="房源" sortKey="property_raw" type="room" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <SortTh label="客戶" sortKey="guest_name" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
-              <SortTh label="訂單起訖" sortKey="checkin" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="whitespace-nowrap" />
-              <SortTh label="認列起訖" sortKey="period_start" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="whitespace-nowrap" />
-              <SortTh label="訂單總額" sortKey="total_amount" type="number" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="text-right" align="right" />
-              <SortTh label="認列天數" sortKey="month_nights" type="number" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="text-right whitespace-nowrap" align="right" />
-              <SortTh label="當期認列" sortKey="month_amount" type="number" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="text-right" align="right" />
+              <SortTh label="期間" sortKey="period_start" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="whitespace-nowrap" />
+              <SortTh label="天數" sortKey="month_nights" type="number" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="text-right whitespace-nowrap" align="right" />
+              <SortTh label="認列 / 總額" sortKey="month_amount" type="number" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="text-right whitespace-nowrap" align="right" />
             </tr>
           </thead>
           <tbody>
-            {loading ? <tr><td colSpan={9} className="px-4 py-10 text-center text-gray-400">載入中…</td></tr>
-            : filtered.length === 0 ? <tr><td colSpan={9} className="px-4 py-10 text-center text-gray-400">此期間無認列營收</td></tr>
+            {loading ? <tr><td colSpan={6} className="px-4 py-10 text-center text-gray-400">載入中…</td></tr>
+            : filtered.length === 0 ? <tr><td colSpan={6} className="px-4 py-10 text-center text-gray-400">此期間無認列營收</td></tr>
             : (audit && onlyBad && auditResult
                 ? sorted.filter((r) => entryOf(r))
-                : pageRows).map((r) => (
-              <tr key={r.order_id} className="border-b border-mor-line/60 hover:bg-mor-bluelight/30">
+                : pageRows).map((r) => {
+              const room = roomCell(r);
+              // 長租傳契約期間進去 —— 月租單的 checkin~checkout 就是那個月，
+              // 印出來跟認列期間幾乎一樣。orderRange() 會去 contracts 查
+              const period = periodCell(r, orderRange(r));
+              const money = amountCell(r);
+              const on = openRow?.order_id === r.order_id;
+              return (
+              /*
+                整列可點開抽屜。
+                做成 <tr onClick> 而不是某一格加連結 —— 表格列上哪裡可以點
+                不會有任何視覺提示，所以答案必須是「哪裡都可以」。
+              */
+              <tr key={r.order_id} onClick={() => setOpenRow(r)}
+                className={`border-b border-mor-line/60 cursor-pointer transition-colors
+                            ${on ? 'bg-mor-bluelight/60' : 'hover:bg-mor-bluelight/30'}`}>
                 <td className="px-3 py-2 whitespace-nowrap"><span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${SOURCE_COLOR[r.source]}`}>{r.source === 'oneoff' ? `${ONEOFF_LABEL}・${oneoffLabel(r)}` : (SOURCE_LABEL[r.source] ?? r.source)}</span></td>
-                <td className="px-3 py-2 whitespace-nowrap">{r.estate_name ?? '—'}</td>
                 {/*
-                  辦公室出租與公司登記不顯示房源。
-
-                  資料上 property_raw 是有值的 —— 契約產生月租單時會帶 contracts.room,
-                  而那些契約確實填了房號(公司登記在 2F-28)。那個資訊本身有用,
-                  所以不清資料,只是不在營收報表上顯示。
-
-                  理由:這兩類不是租金收入,報表上依物業房源分組時它們本來就不參與
-                  (見 lib/revenue-report 的三段分法)。顯示房號會讓人以為
-                  「這間房這個月有這筆收入」,然後拿去跟房源營收對帳,對不起來。
+                  房源在上、物業在下。辦公室出租與公司登記不顯示房源 ——
+                  資料上 property_raw 是有值的（契約帶的房號,公司登記在 2F-28），
+                  但那兩類不是租金收入,依物業房源分組時本來就不參與。
+                  顯示房號會讓人以為「這間房這個月有這筆收入」,拿去對帳對不起來。
+                  規則與測試在 lib/revenue-row.roomCell。
                 */}
-                <td className="px-3 py-2 whitespace-nowrap">{isOffice(r) || isCompany(r) ? '—' : (r.property_raw ?? '—')}</td>
+                <td className="px-3 py-2 whitespace-nowrap">
+                  <div>{room.main}</div>
+                  {room.sub && <div className="text-xs text-gray-400">{room.sub}</div>}
+                </td>
                 <td className="px-3 py-2 whitespace-nowrap">
                   {r.guest_name ?? '—'}
                   {audit && <div className="mt-0.5"><AuditBadges entry={entryOf(r)} /></div>}
                 </td>
-                <td className="px-3 py-2 whitespace-nowrap text-gray-500 text-xs">{orderRange(r)}</td>
-                <td className="px-3 py-2 whitespace-nowrap text-gray-500 text-xs">{recogRange(r)}</td>
-                <td className="px-3 py-2 text-right text-gray-500">${fmt(r.total_amount)}</td>
-                <td className="px-3 py-2 text-right text-gray-500 text-xs">{r.month_nights}/{r.total_nights}</td>
-                <td className="px-3 py-2 text-right font-semibold">${fmt(r.month_amount)}</td>
+                {/* 認列在上、訂單在下。兩段相同時只印一行 —— 重複的那行會
+                    稀釋掉真正跨月的那幾筆,而那幾筆才是要多看一眼的 */}
+                <td className="px-3 py-2 whitespace-nowrap text-xs">
+                  <div className="text-gray-600">{period.main}</div>
+                  {period.sub && <div className="text-gray-400">訂 {period.sub}</div>}
+                </td>
+                <td className="px-3 py-2 text-right text-gray-500 text-xs">{nightsText(r)}</td>
+                <td className="px-3 py-2 text-right whitespace-nowrap">
+                  <div className="font-semibold">{money.main}</div>
+                  {money.sub && <div className="text-xs text-gray-400">{money.sub}</div>}
+                </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
         {sorted.length > ROWS && (

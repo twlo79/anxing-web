@@ -9,6 +9,8 @@ import FilterToggle from '@/components/FilterToggle';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, type SortState } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
+import { useOpenFromUrl } from '@/lib/open-from-url';
+import OverflowMenu, { MenuItem, MenuSep, MenuInfo } from '@/components/OverflowMenu';
 import { useProfile } from '@/lib/profile';
 import { FEE_TYPES, ONEOFF_FEE_TYPES } from '@/lib/fee-types';
 import { ONEOFF_LABEL } from '@/lib/revenue-report';
@@ -19,7 +21,7 @@ import { toLines, fromLines, totalTwd, validateLines, type Line } from '@/lib/mo
 import { payStatus, remaining, isExempt, STATUS_LABEL, STATUS_CLASS, STATUS_FILTER } from '@/lib/order-payment';
 import { softDelete } from '@/lib/trash';
 import { feeFilterOptions, feeFilterPredicate, ONEOFF_SOURCES, FEE_F_ALL, FEE_F_RENT } from '@/lib/order-filter';
-import TrashLink from '@/components/TrashLink';
+import { useRouter } from 'next/navigation';
 import { checkDates, checkPrice, checkRequired, lookbackFrom, type PastOrder } from '@/lib/order-check';
 import MoneyInput from '@/components/MoneyInput';
 
@@ -70,6 +72,7 @@ const SORT_DB_COL: Record<string, string> = {
 
 export default function ShortTermPage() {
   const supabase = useMemo(() => createClient(), []);
+  const router = useRouter();
   const [estates, setEstates] = useState<Estate[]>([]);
   const [detail, setDetail] = useState<Order | null>(null);
   const [rows, setRows] = useState<Order[]>([]);
@@ -135,6 +138,18 @@ export default function ShortTermPage() {
    */
   const [formSeq, setFormSeq] = useState(0);
   const openEdit = (o: Order | null) => { setEdit(o); if (o) setFormSeq((n) => n + 1); };
+
+  /*
+   * `/shortterm?order=<id>` 直接開那一筆。營收頁的抽屜「看訂單」靠它。
+   *
+   * 直接查那一筆而不是篩選列表 —— 那筆可能不在目前的日期範圍、
+   * 可能在第 3 頁，而篩選會被記住,下次打開會看到被篩過的清單卻不知道為什麼。
+   */
+  useOpenFromUrl<Order>('order', async (id) => {
+    const { data } = await supabase.from('orders')
+      .select('*, properties(name)').eq('id', id).maybeSingle();
+    return (data as Order) ?? null;
+  }, openEdit);
   useEffect(() => {
     setRevLines(toLines(edit?.amount, (edit as any)?.fx_revenue, 'revenue'));
     setDepLines(toLines(edit?.deposit, (edit as any)?.fx_deposit, 'deposit'));
@@ -729,14 +744,37 @@ export default function ShortTermPage() {
           <button onClick={() => { setSrc(''); setKw(''); setKwIn(''); setEstF(''); setFromD(''); setToD(''); setFeeF(FEE_F_RENT); setPayF(''); }}
             className="text-gray-500 underline pb-1.5">清除</button>
         )}
-        {/* 防呆放在動作鈕那一組的最左邊 —— 它跟下載、新增不同類:
-            那些是日常操作,這個是「我現在要挑毛病」 */}
-        <div className="ml-auto flex items-end gap-3">
-          <AuditButton on={audit} onToggle={toggleAudit} busy={auditBusy} />
-          <div className="text-xs text-gray-400 pb-1.5">共 {total.toLocaleString()} 筆</div>
+        {/*
+          防呆、筆數、回收桶收進 ⋯（2026-08-16 使用者指定）——
+          跟營收頁**同一個位置、同一個選單**，不然每換一頁就要重新找。
+
+          新增與下載留在外面:判準是「多久用一次」不是「重不重要」。
+        */}
+        <div className="ml-auto flex items-end gap-2">
+          <OverflowMenu>
+            <MenuItem
+              icon={<span className="text-base leading-none">🕵️</span>}
+              onClick={toggleAudit}
+              right={
+                <span className={`w-9 h-5 rounded-full relative shrink-0 transition-colors
+                                  ${audit ? 'bg-mor-green' : 'bg-gray-300'}`}>
+                  <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all
+                                    ${audit ? 'left-[1.125rem]' : 'left-0.5'}`} />
+                </span>
+              }>
+              防呆檢查{auditBusy && <span className="text-xs text-gray-400">（檢查中…）</span>}
+            </MenuItem>
+            {/* 帶 table 參數 —— 不帶會落在「全部」的清單，訂單只佔其中一小段，
+                使用者還要再篩一次（跟 components/TrashLink 同一個理由） */}
+            <MenuItem icon={<span className="text-base leading-none">🗑️</span>}
+              onClick={() => router.push('/settings?tab=trash&table=orders')}>
+              訂單回收桶
+            </MenuItem>
+            <MenuSep />
+            <MenuInfo label="本期共" value={`${total.toLocaleString()} 筆`} />
+          </OverflowMenu>
           <AddButton onClick={() => openEdit(blank())}>新增訂單</AddButton>
           <ExportButton onClick={exportXlsx} disabled={!total} busy={exporting} />
-          <TrashLink table="orders" label="訂單" />
         </div>
       </div>
 
