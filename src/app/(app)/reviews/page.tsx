@@ -117,6 +117,21 @@ export default function ReviewsPage() {
   const [listModal, setListModal] = useState<{ title: string; propIds: string[] | null; rating: number | null } | null>(null);
 
   const propById = useMemo(() => Object.fromEntries(properties.map((p) => [p.id, p])), [properties]);
+  /*
+   * 主檔（房源／物業）載完了沒。
+   *
+   * 【為什麼需要這個旗標】（2026-08-17）
+   * 這三支查詢跟評價列表是各自獨立發出去的，列表不等它們就先畫。
+   * 所以載入的頭一兩秒 `propById` 是空的，畫面把每一列都寫成
+   * 「未對應」「—」—— 而那跟「這筆真的對不到房源」長得一模一樣。
+   *
+   * 使用者看到的是「爬進來的評價都沒有物業」，然後去查爬蟲 ——
+   * 而爬蟲是好的，資料也是好的，只是畫面早畫了一步。
+   *
+   * 這裡不改成「等載完再畫列表」—— 那會讓整頁多空白一秒。
+   * 只要把「還沒載完」跟「對不到」分開講就夠了。
+   */
+  const mastersLoaded = properties.length > 0;
   const estateById = useMemo(() => Object.fromEntries(estates.map((e) => [e.id, e])), [estates]);
   const visibleProps = useMemo(
     () => (estateId ? properties.filter((p) => p.estate_id === estateId) : properties),
@@ -552,13 +567,13 @@ export default function ReviewsPage() {
                   <td className="px-3 py-2.5 whitespace-nowrap text-gray-600">{r.checkin_date ?? '—'}</td>
                   <td className="px-3 py-2.5 whitespace-nowrap text-gray-600">{r.checkout_date ?? '—'}</td>
                   <td className="px-3 py-2.5 whitespace-nowrap">
-                    <span className="inline-block rounded-md bg-mor-bluelight text-mor-slate px-2 py-0.5 text-xs font-medium">{e?.name ?? '—'}</span>
+                    <span className="inline-block rounded-md bg-mor-bluelight text-mor-slate px-2 py-0.5 text-xs font-medium">{e?.name ?? (mastersLoaded ? '—' : '⋯')}</span>
                   </td>
                   <td className="px-3 py-2.5 whitespace-nowrap">
-                    <span className="inline-block rounded-md bg-mor-sand px-2 py-0.5 text-xs font-medium">{p?.name ?? '未對應'}</span>
+                    <span className="inline-block rounded-md bg-mor-sand px-2 py-0.5 text-xs font-medium">{p?.name ?? (mastersLoaded ? '未對應' : '⋯')}</span>
                   </td>
                   <td className="px-3 py-2.5 whitespace-nowrap">{r.guest_name}</td>
-                  <td className="px-3 py-2.5 whitespace-nowrap text-gray-600">{mgrOf(r) || '—'}</td>
+                  <td className="px-3 py-2.5 whitespace-nowrap text-gray-600">{mgrOf(r) || (mastersLoaded ? '—' : '⋯')}</td>
                   <td className="px-3 py-2.5 whitespace-nowrap">
                     {hasNegative(r) && <span className="mr-1 inline-block w-2 h-2 rounded-full bg-red-500" title="需關注" />}
                     <Stars n={r.overall_rating} />
