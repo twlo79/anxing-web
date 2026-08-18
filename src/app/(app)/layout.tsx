@@ -69,7 +69,16 @@ const NAV: { href: string; label: string; icon: string; roles: string[] }[] = [
   { href: '/contracts', label: '契約 | 收入', icon: '🤝', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/revenues', label: '營收表', icon: '💰', roles: ['accountant', 'manager', 'super_admin'] },
   { href: '/purchases', label: '請款單控管', icon: '🧾', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
-  { href: '/deposits', label: '押金管理', icon: '🏦', roles: ['accountant', 'manager', 'super_admin'] },
+  /*
+   * 管家看得到押金，但**只能檢視**（2026-08-17 使用者指定）——
+   * 房客問「押金退了沒」時不用再去找會計。
+   * 寫入由 RLS 擋（migration_139 只加 select policy），
+   * 畫面上的新增／編輯／刪除／回收桶也一併藏掉。
+   *
+   * `cleaner` 不放進選單 —— 但 RLS 跟 housekeeper 相同（migration_131），
+   * 知道網址還是進得去。那是既有的取捨,不是這次新增的。
+   */
+  { href: '/deposits', label: '押金管理', icon: '🏦', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/expenses', label: '支出明細', icon: '💳', roles: ['accountant', 'manager', 'super_admin'] },
   { href: '/dashboard', label: '財務儀錶板', icon: '📊', roles: ['accountant', 'manager', 'super_admin'] },
   // 客戶管理跟房務、評價、清潔是同一組:都是「人在現場會用到的」。

@@ -292,6 +292,15 @@ export default function DepositsPage() {
   const isManager = role === 'manager';
   const isAdmin = role === 'super_admin';
   const canRequest = ['accountant', 'manager', 'super_admin'].includes(role);
+  /*
+   * 能不能改押金。**管家（與房務）只能看**（2026-08-17 使用者指定）。
+   *
+   * 資料庫那邊已經擋住了（migration_139 只加 select policy），
+   * 這裡藏按鈕是為了不要讓人按下去才發現不行 ——
+   * RLS 擋下的 UPDATE **會回成功且影響 0 列**，
+   * 畫面上看起來像存好了，重整才發現沒變。
+   */
+  const canEdit = ['accountant', 'manager', 'super_admin'].includes(role);
 
   /** 退款流程的權限判斷,集中一處 —— 分散寫遲早有一邊漏改 */
   function refundPerms(d: Dep) {
@@ -742,10 +751,12 @@ export default function DepositsPage() {
       <div className="flex flex-wrap items-center justify-end gap-3 mb-4">
         <div className="text-xs text-gray-400 whitespace-nowrap mr-auto md:mr-0">
           共 {sorted.length.toLocaleString()} 筆
+          {!canEdit && <span className="ml-2 text-gray-400">・檢視模式</span>}
         </div>
-        <AddButton onClick={() => setEdit(blankManual())}>新增押金</AddButton>
+        {/* 下載留給所有人 —— 看得到就帶得走,藏它只是讓人改用截圖 */}
+        {canEdit && <AddButton onClick={() => setEdit(blankManual())}>新增押金</AddButton>}
         <ExportButton onClick={exportXlsx} disabled={!sorted.length} />
-        <TrashLink table="deposits" label="押金" />
+        {canEdit && <TrashLink table="deposits" label="押金" />}
       </div>
 
       {/* 手機卡片 */}
@@ -914,8 +925,13 @@ export default function DepositsPage() {
                   const p = refundPerms(d);
                   const btn = 'flex-1 min-w-[5rem] h-11 rounded-lg text-sm font-medium';
                   return <>
-                    <button onClick={() => { setEdit({ ...d }); setDetail(null); }}
-                      className={`${btn} border border-mor-line`}>管理押金</button>
+                    {/* 管家只能看 —— 藏起來而不是按了才擋。
+                        RLS 擋下的 UPDATE 會回成功且影響 0 列,
+                        畫面上看起來像存好了,重整才發現沒變 */}
+                    {canEdit && (
+                      <button onClick={() => { setEdit({ ...d }); setDetail(null); }}
+                        className={`${btn} border border-mor-line`}>管理押金</button>
+                    )}
                     {/*
                       分享的連結指向請款頁的待核可分頁,不是這一頁 ——
                       核可統一在那裡做,主管點進去就能直接投票,不用自己找那一筆。
