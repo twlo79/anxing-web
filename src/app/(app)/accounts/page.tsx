@@ -6,6 +6,9 @@ import Toast from '@/components/Toast';
 import UploadPanel from './upload-panel';
 import StatementsPanel from './statements-panel';
 import { totalBalance } from '@/lib/bank-import';
+import { filterTxns, hasFilter, sumRows, amountOf, type BankFilter } from '@/lib/bank-filter';
+import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
+import FilterToggle from '@/components/FilterToggle';
 
 /**
  * 帳戶管理 —— 三個銀行帳戶的流水鏡像。
@@ -71,7 +74,13 @@ export default function AccountsPage() {
   const [latest, setLatest] = useState<Record<string, Stmt | undefined>>({});
   const [txns, setTxns] = useState<Txn[]>([]);
   const [tab, setTab] = useState<string>('');
-  const [q, setQ] = useState('');
+  const [f, setF] = useState<BankFilter>({ from: '', to: '', dir: '', min: '', max: '', q: '' });
+  const set = <K extends keyof BankFilter>(k: K, v: BankFilter[K]) => setF((o) => ({ ...o, [k]: v }));
+  /*
+   * 預設帳務日新到舊。**null 不是「沒排序」** ——
+   * 這裡給明確的初值,因為流水沒有排序等於沒辦法看。
+   */
+  const [sort, setSort] = useState<SortState>({ key: 'post_date', dir: 'desc' });
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState(false);
@@ -164,22 +173,42 @@ export default function AccountsPage() {
     [accounts, latest],
   );
 
-  const shown = useMemo(() => {
-    const k = q.trim().toLowerCase();
-    if (!k) return txns;
-    return txns.filter((t) =>
-      [t.description, t.counterparty, t.memo, t.ref_no, t.post_date, String(t.debit || t.credit)]
-        .some((v) => (v ?? '').toString().toLowerCase().includes(k)),
-    );
-  }, [txns, q]);
+  /*
+   * 篩選與排序都在前端做 —— 一個帳戶的流水已經整批撈回來了
+   * （`fetchAll` 分頁撈完），再打一次伺服器只是多一趟來回。
+   *
+   * 篩選的規則寫在 `lib/bank-filter.ts`,不寫在這裡:
+   * `.tsx` 裡的判斷式測不到,而篩錯只會「少幾筆」,不會報錯。
+   */
+  const SORT_COLS: SortCols<Txn> = {
+    post_date: { type: 'date', get: (t) => t.post_date },
+    description: { type: 'text', get: (t) => t.description ?? '' },
+    counterparty: { type: 'text', get: (t) => t.counterparty ?? '' },
+    debit: { type: 'number', get: (t) => Number(t.debit) || 0 },
+    credit: { type: 'number', get: (t) => Number(t.credit) || 0 },
+    amount: { type: 'number', get: (t) => amountOf(t) },
+    balance: { type: 'number', get: (t) => Number(t.balance) || 0 },
+  };
 
-  const sums = useMemo(
-    () => ({
-      debit: shown.reduce((a, t) => a + Number(t.debit || 0), 0),
-      credit: shown.reduce((a, t) => a + Number(t.credit || 0), 0),
-    }),
-    [shown],
-  );
+  const shown = useMemo(() => {
+    const hit = filterTxns(txns, f);
+    /*
+     * 同一天有好幾筆時，日期排序分不出先後 —— 用 seq 當第二順位。
+     * 不加的話同一天那幾筆的順序每次重新整理都可能不一樣。
+     */
+    if (sort?.key === 'post_date') {
+      const sign = sort.dir === 'asc' ? 1 : -1;
+      return [...hit].sort(
+        (a, b) =>
+          (a.post_date < b.post_date ? -1 : a.post_date > b.post_date ? 1 : 0) * sign ||
+          ((a.seq ?? 0) - (b.seq ?? 0)) * sign,
+      );
+    }
+    return sortRows(hit, sort, SORT_COLS);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [txns, f, sort]);
+
+  const sums = useMemo(() => sumRows(shown), [shown]);
 
   return (
     <div className="mx-auto w-full max-w-[1280px] px-4 py-4">
@@ -279,23 +308,66 @@ export default function AccountsPage() {
                 匯入紀錄
               </button>
             </div>
-            {view === 'txn' && (
-              <>
-                <input
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                  placeholder="找摘要、對方、金額…"
-                  className="w-48 rounded-md border px-2 py-1 text-sm"
-                />
-                {q && (
-                  <button onClick={() => setQ('')} className="text-sm text-gray-500 underline">
-                    清除
-                  </button>
-                )}
-              </>
-            )}
+            {view === 'txn' && <FilterToggle active={hasFilter(f)} />}
           </div>
         </div>
+
+        {/* ── 篩選列 ────────────────────────────── */}
+        {view === 'txn' && (
+          <div className="filter-bar collapsible-filters flex flex-wrap items-end gap-2 border-b px-3 py-2 text-sm">
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-gray-500">帳務日(起)</span>
+              <input type="date" value={f.from ?? ''} onChange={(e) => set('from', e.target.value)}
+                className="rounded-lg border border-mor-line px-2 py-1.5" />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-gray-500">帳務日(迄)</span>
+              <input type="date" value={f.to ?? ''} onChange={(e) => set('to', e.target.value)}
+                className="rounded-lg border border-mor-line px-2 py-1.5" />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-gray-500">方向</span>
+              <select value={f.dir ?? ''} onChange={(e) => set('dir', e.target.value as BankFilter['dir'])}
+                className="rounded-lg border border-mor-line px-2 py-1.5">
+                <option value="">全部</option>
+                <option value="debit">只看支出</option>
+                <option value="credit">只看存入</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-gray-500">金額(最少)</span>
+              <input type="number" value={String(f.min ?? '')} onChange={(e) => set('min', e.target.value)}
+                placeholder="不限" className="w-24 rounded-lg border border-mor-line px-2 py-1.5" />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-gray-500">金額(最多)</span>
+              <input type="number" value={String(f.max ?? '')} onChange={(e) => set('max', e.target.value)}
+                placeholder="不限" className="w-24 rounded-lg border border-mor-line px-2 py-1.5" />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-gray-500">關鍵字</span>
+              <input value={f.q ?? ''} onChange={(e) => set('q', e.target.value)}
+                placeholder="摘要、對方、帳號、金額…"
+                className="w-52 rounded-lg border border-mor-line px-2 py-1.5" />
+            </label>
+            {/*
+              一年可能只出現一次的東西 —— 沒有這個開關就只能一頁一頁翻
+            */}
+            <label className="flex items-center gap-1.5 pb-1.5 text-xs text-gray-600">
+              <input type="checkbox" checked={!!f.onlyNoted}
+                onChange={(e) => set('onlyNoted', e.target.checked)} />
+              只看餘額有備註的
+            </label>
+            {hasFilter(f) && (
+              <button
+                onClick={() => setF({ from: '', to: '', dir: '', min: '', max: '', q: '' })}
+                className="pb-1.5 text-sm text-gray-500 underline"
+              >
+                清除
+              </button>
+            )}
+          </div>
+        )}
 
         {view === 'stmt' ? (
           <StatementsPanel
@@ -313,12 +385,18 @@ export default function AccountsPage() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-xs text-gray-600">
               <tr>
-                <th className="px-3 py-2 text-left font-medium">日期</th>
-                <th className="px-3 py-2 text-left font-medium">摘要</th>
-                <th className="px-3 py-2 text-left font-medium">對方</th>
-                <th className="px-3 py-2 text-right font-medium">支出</th>
-                <th className="px-3 py-2 text-right font-medium">存入</th>
-                <th className="px-3 py-2 text-right font-medium">餘額</th>
+                <SortTh label="日期" sortKey="post_date" type="date" state={sort}
+                  onSort={(key, dir) => setSort({ key, dir })} className="text-left font-medium" />
+                <SortTh label="摘要" sortKey="description" state={sort}
+                  onSort={(key, dir) => setSort({ key, dir })} className="text-left font-medium" />
+                <SortTh label="對方" sortKey="counterparty" state={sort}
+                  onSort={(key, dir) => setSort({ key, dir })} className="text-left font-medium" />
+                <SortTh label="支出" sortKey="debit" type="number" state={sort} align="right"
+                  onSort={(key, dir) => setSort({ key, dir })} className="text-right font-medium" />
+                <SortTh label="存入" sortKey="credit" type="number" state={sort} align="right"
+                  onSort={(key, dir) => setSort({ key, dir })} className="text-right font-medium" />
+                <SortTh label="餘額" sortKey="balance" type="number" state={sort} align="right"
+                  onSort={(key, dir) => setSort({ key, dir })} className="text-right font-medium" />
               </tr>
             </thead>
             <tbody>
@@ -328,7 +406,9 @@ export default function AccountsPage() {
               {!loading && shown.length === 0 && (
                 <tr>
                   <td colSpan={6} className="px-3 py-8 text-center text-gray-400">
-                    {txns.length === 0 ? '這個帳戶還沒有流水 —— 上傳一份對帳單試試' : '沒有符合的資料'}
+                    {txns.length === 0
+                      ? '這個帳戶還沒有流水 —— 上傳一份對帳單試試'
+                      : `沒有符合的資料（全部 ${txns.length} 筆）`}
                   </td>
                 </tr>
               )}
@@ -346,7 +426,18 @@ export default function AccountsPage() {
                     {/* 摘要是全形的（１２月房租、南５）—— 原樣顯示,不要轉半形 */}
                     {t.memo && <div className="text-[11px] text-gray-500">{t.memo}</div>}
                   </td>
-                  <td className="px-3 py-1.5 text-gray-600">{t.counterparty ?? ''}</td>
+                  <td className="px-3 py-1.5 text-gray-600">
+                    <div>{t.counterparty ?? ''}</div>
+                    {/*
+                      對方帳號／票據號碼。PDF 的「備註票據號碼」欄裡
+                      純數字的那部分 —— 存了卻不顯示等於沒存。
+                      斷行用 break-all:那是 16–20 位的數字串,
+                      不斷行會把整張表撐開。
+                    */}
+                    {t.ref_no && (
+                      <div className="break-all font-mono text-[11px] text-gray-400">{t.ref_no}</div>
+                    )}
+                  </td>
                   <td className="px-3 py-1.5 text-right tabular-nums text-red-600">
                     {Number(t.debit) ? money(Number(t.debit)) : ''}
                   </td>
@@ -376,7 +467,9 @@ export default function AccountsPage() {
               <tfoot className="border-t bg-gray-50 text-xs">
                 <tr>
                   <td colSpan={3} className="px-3 py-2 text-gray-600">
-                    {shown.length} 筆{q && `（共 ${txns.length} 筆）`}
+                    {shown.length} 筆
+                    {/* 有篩的時候一定要講「總共幾筆」—— 不然「為什麼只有 3 筆」查不到原因 */}
+                    {hasFilter(f) && `（全部 ${txns.length} 筆）`}
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums">{money(sums.debit)}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{money(sums.credit)}</td>

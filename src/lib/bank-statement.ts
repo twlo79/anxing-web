@@ -486,31 +486,50 @@ function pickTxn(row: Word[], above: Word[] | undefined, below: Word[] | undefin
    * 主列(對方名稱／用途)、下一行(摘要),三行都要收。
    */
   /*
-   * 備註欄橫跨三行,三行的意思不一樣:
+   * 【備註欄橫跨三行，逐行判斷是「帳號」還是「說明」】
    *
-   *   上一行  012-0000341168247682          ← 票據號碼
-   *   主列    1040077312 代繳市水 08025 112 TPCW   ← 摘要（含數字,要原樣留）
-   *   下一行  １２月房租 ／ 0374507           ← 摘要，或票據號碼的下半段
+   * 備註票據號碼那一欄裡混著兩種東西:
    *
-   * 所以:
-   *   上一行 → 票據號碼
-   *   主列   → 摘要，**數字照留**（「08025 112」是那句話的一部分）
-   *   下一行 → 整行都是純數字才當票據號碼的下半段，否則是摘要
+   *     013-0000009550332784        ← 對方帳號／票據號碼
+   *     開封街二段６６之２號１樓        ← 說明
+   *     1040077312 代繳市水 08025 112 TPCW   ← 一整句話（含數字）
+   *     京饌企業有限公司 板信民權       ← 對方名稱
    *
-   * 一開始寫成「純數字就是票據號碼」不分行,結果主列的
-   * 「1040077312 代繳市水 08025 112 TPCW」被拆成兩半 ——
-   * 摘要只剩「代繳市水 TPCW」，讀起來不像原本那句話了。
+   * **規則:每一行,開頭連續的「長數字串」是號碼,其餘全部是說明。**
+   *
+   *     013-0000009550332784        → 全部是號碼
+   *     1040077312 代繳市水 08025 112 TPCW
+   *       ↑ 戶號                ↑ 這些留在說明裡
+   *     京饌企業有限公司 板信民權     → 開頭不是數字,整行都是說明
+   *
+   * 兩個細節，兩個都是踩出來的:
+   *
+   *   · **只看行首。** 「08025」「112」是代繳單位的代號，是那句話的一部分。
+   *     逐 token 抽數字的話,「代繳市水 08025 112 TPCW」會變成「代繳市水 TPCW」,
+   *     讀起來不像原本那句了。
+   *
+   *   · **要夠長（7 碼以上）。** 帳號與戶號都是 7 碼以上;
+   *     而摘要真的可能以短數字開頭（「12月房租」的半形寫法）——
+   *     沒有長度門檻的話那個「12」會被抽走,只剩「月房租」。
+   *
+   * 為什麼戶號算「號碼」:同一天 14 筆媒體轉帳,戶號每筆都不同
+   * （1040077312 / 1040077750 / …）而「代繳市水 08025 112 TPCW」完全相同 ——
+   * 那是 14 個水錶各自的識別號,跟對方帳號同一種東西。
    */
   const inMemoCol = (r: Word[] | undefined) =>
     (r ?? []).filter((w) => w.x0 >= cols.memoLeft).map((w) => w.text);
-  const isRefLike = (t: string) => /^[\d-]+$/.test(t);
+  /** 7 碼以上的純數字／連字號 —— 帳號、票據號碼、代繳戶號都長這樣。 */
+  const isRefLike = (t: string) => /^[\d-]{7,}$/.test(t) && /\d/.test(t);
 
-  const aboveMemo = inMemoCol(above);
-  const belowMemo = inMemoCol(below);
-  const belowIsRef = belowMemo.length > 0 && belowMemo.every(isRefLike);
-
-  const refNo = [...aboveMemo, ...(belowIsRef ? belowMemo : [])].join(' ');
-  const memo = [...inMemoCol(row), ...(belowIsRef ? [] : belowMemo)].join(' ');
+  const refParts: string[] = [];
+  const memoParts: string[] = [];
+  for (const line of [inMemoCol(above), inMemoCol(row), inMemoCol(below)]) {
+    let i = 0;
+    while (i < line.length && isRefLike(line[i])) refParts.push(line[i++]);
+    memoParts.push(...line.slice(i));
+  }
+  const refNo = refParts.join(' ');
+  const memo = memoParts.join(' ');
 
   return {
     page: row[0].page,
