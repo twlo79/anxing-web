@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { useProfile } from '@/lib/profile';
+import { ReqMark } from '@/components/Req';
 import {
   demandProgress, progressText, DEMAND_STATUS_CLASS, ITEM_STATUS_LABEL,
   type DemandItemStatus,
@@ -181,6 +182,23 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
     load();
   }
 
+  /*
+   * 【可以送出了嗎】
+   *
+   * 跟 save() 裡的驗證是**同一組條件** —— 分成兩份的話,
+   * 按鈕亮著卻送不出去（或反過來）,而使用者只會覺得系統壞了。
+   *
+   * 這裡只負責「亮不亮」,save() 仍然要再驗一次:
+   * 按鈕的 disabled 擋得住滑鼠,擋不住 Enter 鍵與程式呼叫。
+   */
+  const canSubmit = useMemo(() => {
+    if (!edit) return false;
+    const items = edit.items.filter((i) => i.item_name.trim() || i.estate_id);
+    if (!items.length) return false;
+    if (items.some((i) => !i.item_name.trim() || !i.estate_id)) return false;
+    return !!edit.ship_to;
+  }, [edit]);
+
   const setItem = (idx: number, patch: Partial<Item>) =>
     setEdit((e) => e && ({ ...e, items: e.items.map((it, i) => (i === idx ? { ...it, ...patch } : it)) }));
 
@@ -290,9 +308,14 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
               <div className="flex gap-2">
                 <button onClick={() => setEdit(null)} disabled={saving}
                   className="rounded-lg border border-mor-line px-3 py-1.5 text-sm">取消</button>
-                <button onClick={save} disabled={saving}
+                {/*
+                  沒填完就鎖住。**但滑鼠移上去要說得出為什麼** ——
+                  一顆灰掉而不解釋的按鈕，使用者會以為是系統壞了而一直點。
+                */}
+                <button onClick={save} disabled={saving || !canSubmit}
+                  title={canSubmit ? '' : '品名、用途、寄送地點都要填'}
                   className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium
-                             disabled:opacity-40">
+                             disabled:opacity-40 disabled:cursor-not-allowed">
                   {saving ? '送出中…' : '送出'}
                 </button>
               </div>
@@ -300,6 +323,7 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
 
             <div className="p-4 space-y-3">
               <p className="text-xs text-gray-400">
+                <span className="text-red-500">*</span> 是必填，填完「送出」才會亮。{' '}
                 <b className="text-gray-500">不用填金額與數量</b> —— 金額由會計詢價後在轉請款時填；
                 大概要幾個寫在「規格說明」裡就好。
                 用途選<b className="text-gray-500">物業</b>不是房號，採購多半是整棟共用的。
@@ -309,19 +333,29 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                 <div key={idx} className="rounded-xl border border-mor-line p-3 space-y-2">
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-gray-400 w-8">{idx + 1}.</span>
-                    <input value={it.item_name} onChange={(e) => setItem(idx, { item_name: e.target.value })}
-                      placeholder="品名（必填）" className={`${inp} flex-1`} />
+                    {/*
+                      placeholder 只吃純文字，塞不進 <Req /> —— 所以用 ReqMark
+                      把紅星畫在框線的左上角（跟請款單的項目列同一個做法）。
+                    */}
+                    <span className="relative flex-1">
+                      <ReqMark />
+                      <input value={it.item_name} onChange={(e) => setItem(idx, { item_name: e.target.value })}
+                        placeholder="品名" className={`${inp} w-full`} />
+                    </span>
                     {edit.items.length > 1 && (
                       <button onClick={() => setEdit((e) => e && ({ ...e, items: e.items.filter((_, i) => i !== idx) }))}
                         className="text-red-500 hover:text-red-700 text-sm px-1">✕</button>
                     )}
                   </div>
                   <div className="flex flex-wrap items-center gap-2 pl-10">
-                    <select value={it.estate_id} onChange={(e) => setItem(idx, { estate_id: e.target.value })}
-                      className={`${inp} w-32`}>
-                      <option value="">用途（必填）</option>
-                      {estates.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-                    </select>
+                    <span className="relative">
+                      <ReqMark />
+                      <select value={it.estate_id} onChange={(e) => setItem(idx, { estate_id: e.target.value })}
+                        className={`${inp} w-32`}>
+                        <option value="">用途</option>
+                        {estates.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+                      </select>
+                    </span>
                     <input value={it.spec} onChange={(e) => setItem(idx, { spec: e.target.value })}
                       placeholder="規格說明／大概數量" className={`${inp} flex-1 min-w-[8rem]`} />
                     <input value={it.buy_link} onChange={(e) => setItem(idx, { buy_link: e.target.value })}
@@ -352,13 +386,16 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                   要分開寄請另外開一張
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
+                  <span className="relative">
+                  <ReqMark />
                   <select value={edit.ship_to}
                     onChange={(e) => setEdit((x) => x && ({ ...x, ship_to: e.target.value }))}
                     className={`${inp} w-36`}>
-                    <option value="">寄送地點（必填）</option>
+                    <option value="">寄送地點</option>
                     {estates.map((e) => <option key={e.id} value={e.name}>{e.name}</option>)}
                     {SHIP_EXTRA.map((x) => <option key={x} value={x}>{x}</option>)}
                   </select>
+                  </span>
                   <input value={edit.ship_floor}
                     onChange={(e) => setEdit((x) => x && ({ ...x, ship_floor: e.target.value }))}
                     placeholder="送達樓層／位置（例：2樓儲藏室）"
