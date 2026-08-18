@@ -360,6 +360,112 @@ describe('去重鑰匙', () => {
 });
 
 // ============================================================
+// 詞的邊界會變 —— 抬頭不可以依賴切法
+// ============================================================
+
+/**
+ * 【這一組測試是實機踩出來的】2026-08-18
+ *
+ * 三份 fixture 是 pdfplumber 抽的，它把
+ * 「帳號元大中崙-綜合活期-21762000024145」當成**一個詞**。
+ *
+ * pdfjs 切成好幾塊。接起來變成「帳號 元大中崙-綜合活期-21762000024145」，
+ * 而第一版的正規式要求「帳號」後面不能有空白 —— 就讀不到了。
+ *
+ * 上面那 57 條測試全綠，因為它們全部餵的是 pdfplumber 的切法。
+ * **素材只有一種切法，就測不到「換一種切法會怎樣」。**
+ *
+ * 所以底下把每一個詞再切碎，模擬另一種 PDF 函式庫的行為 ——
+ * 表格靠座標所以不受影響，抬頭則必須切法無關。
+ */
+function shatter(words: Word[]): Word[] {
+  const out: Word[] = [];
+  for (const w of words) {
+    /*
+     * **數字與日期不切。**
+     *
+     * 不是為了讓測試好過 —— 是因為那不是真實會發生的事:
+     * 金額在 PDF 裡是一次畫完的一段,任何函式庫都不會把
+     * 「2,085,031」拆成「2,08」與「5,031」。
+     *
+     * 而且真的被拆成那樣的話,**沒有任何辦法還原** ——
+     * 「2,08」「5,031」到底是一個數字還是兩個,資訊已經沒了。
+     * 那時該做的是停下來報錯,不是猜。
+     *
+     * 這裡要測的是「文字的斷點會變」,不是「數字會被腰斬」。
+     */
+    if (/[\d,]{2,}|\d{4}\/\d{2}/.test(w.text)) {
+      out.push(w);
+      continue;
+    }
+    // 四個字以上的詞對半切成兩塊,x 也按比例分
+    if (w.text.length >= 4) {
+      const mid = Math.floor(w.text.length / 2);
+      const xm = w.x0 + (w.x1 - w.x0) * (mid / w.text.length);
+      out.push({ ...w, text: w.text.slice(0, mid), x1: xm });
+      out.push({ ...w, text: w.text.slice(mid), x0: xm });
+    } else out.push(w);
+  }
+  return out;
+}
+
+describe('詞的切法換了也要讀得到抬頭', () => {
+  for (const e of EXPECT) {
+    test(`★★ ${e.tail}：詞被切碎之後，帳號與期間照樣讀得到`, () => {
+      const s = parseStatement(shatter(W[e.tail]));
+      assert.equal(s.accountNo, e.acct, '帳號讀不到 —— 抬頭比對又依賴切法了');
+      assert.equal(s.periodFrom, '2025-01-01');
+      assert.equal(s.periodTo, '2025-06-30');
+    });
+  }
+
+  test('★ 帳號與期間都不可以依賴「詞剛好切在哪裡」', () => {
+    // 直接用最極端的切法:整份每個字元一塊
+    const chars: Word[] = [];
+    for (const w of W['24145']) {
+      const per = (w.x1 - w.x0) / w.text.length;
+      [...w.text].forEach((c, i) => {
+        chars.push({ ...w, text: c, x0: w.x0 + per * i, x1: w.x0 + per * (i + 1) });
+      });
+    }
+    const s = parseStatement(chars);
+    assert.equal(s.accountNo, '21762000024145');
+    assert.equal(s.periodTo, '2025-06-30');
+  });
+});
+
+// ============================================================
+// 讀不到總計本身就是問題
+// ============================================================
+
+describe('★★ 總計讀不到要報，不可以安靜跳過', () => {
+  test('沒有總計 → no_total', () => {
+    // 第一版寫 `if (totalDebit != null)` 才比 ——
+    // 那表示 footer 讀不到時,最強的那道檢查安靜地不執行,
+    // 而畫面上一片綠。「跳過了」跟「通過了」長得一模一樣。
+    const st: Statement = JSON.parse(JSON.stringify(S['70564']));
+    st.totalDebit = null;
+    st.totalCredit = null;
+    assert.ok(validate(st).some((p) => p.code === 'no_total'));
+  });
+
+  test('三份都讀得到總計', () => {
+    for (const e of EXPECT) {
+      assert.equal(S[e.tail].totalDebit, e.debit);
+      assert.equal(S[e.tail].totalCredit, e.credit);
+    }
+  });
+
+  test('★ 詞被切碎之後，總計照樣讀得到', () => {
+    for (const e of EXPECT) {
+      const s = parseStatement(shatter(W[e.tail]));
+      assert.equal(s.totalDebit, e.debit, `${e.tail} 支出總計`);
+      assert.equal(s.totalCredit, e.credit, `${e.tail} 存入總計`);
+    }
+  });
+});
+
+// ============================================================
 // pdfjs 有沒有把整列黏成一塊
 // ============================================================
 

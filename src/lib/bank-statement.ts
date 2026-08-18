@@ -230,15 +230,28 @@ export function readColumns(words: Word[]): Cols | null {
  * 解析結果才能把「哪一筆對不上」指給人看。
  */
 export function parseStatement(words: Word[]): Statement {
-  const text = words.map((w) => w.text).join(' ');
+  /*
+   * 【抬頭一律用「拿掉所有空白」的版本比對】（2026-08-18 修正）
+   *
+   * PDF 抽出來的「詞」邊界不是固定的:
+   *
+   *   pdfplumber  「帳號元大中崙-綜合活期-21762000024145」 一個詞
+   *   pdfjs       切成好幾塊,接起來變成「帳號 元大中崙-綜合活期-21762000024145」
+   *
+   * 第一版的帳號正規式要求「帳號」後面不能有空白 —— pdfjs 那邊就讀不到,
+   * 而**期間那一條剛好有先拿掉空白所以讀得到**。
+   * 同一份程式碼裡兩種寫法,其中一種碰巧對 —— 那不叫對。
+   *
+   * 抬頭是連續的一段字,詞怎麼切跟意思無關。所以一律拿掉空白再比。
+   * 表格不能這樣做 —— 那裡的空白就是欄位的分界。
+   */
+  const flat = words.map((w) => w.text).join('').replace(/\s+/g, '');
+  const spaced = words.map((w) => w.text).join(' ');
 
   // 帳號:「帳號元大中崙-綜合活期-20992000170564」
-  const mAcct = /帳號(\S+?)-(\S+?)-(\d{6,})/.exec(text);
+  const mAcct = /帳號(\S+?)-(\S+?)-(\d{6,})/.exec(flat);
   // 期間:「查詢期間2025/01/01~2025/06/30」
-  const mPeriod = /查詢期間\s*(\d{4}\/\d{2}\/\d{2})\s*~\s*(\d{4}\/\d{2}\/\d{2})/.exec(
-    text.replace(/\s+/g, ''),
-  );
-  const mTotal = /總計\s+([\d,]+)\s+([\d,]+)/.exec(text);
+  const mPeriod = /查詢期間(\d{4}\/\d{2}\/\d{2})~(\d{4}\/\d{2}\/\d{2})/.exec(flat);
 
   const rows = groupRows(words);
 
@@ -251,6 +264,7 @@ export function parseStatement(words: Word[]): Statement {
    */
   let cols: Cols | null = null;
   const txns: Txn[] = [];
+  let totals: { debit: number; credit: number } | null = null;
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
@@ -261,8 +275,18 @@ export function parseStatement(words: Word[]): Statement {
     }
     if (!cols) continue; // 表頭之前的抬頭區
 
+    if (row.some((w) => w.text.includes('總計'))) {
+      totals = totals ?? pickTotals(row, cols);
+      continue;
+    }
     const t = pickTxn(row, rows[i - 1], rows[i + 1], cols);
     if (t) txns.push(t);
+  }
+
+  // 表格裡讀不到就退回整份文字找 —— 空白多少都吃
+  if (!totals) {
+    const m = /總計\s*([\d,]+)\s+([\d,]+)/.exec(spaced);
+    if (m) totals = { debit: toNum(m[1]), credit: toNum(m[2]) };
   }
 
   return {
@@ -270,10 +294,35 @@ export function parseStatement(words: Word[]): Statement {
     branch: mAcct ? mAcct[1] : null,
     periodFrom: mPeriod ? toIso(mPeriod[1]) : null,
     periodTo: mPeriod ? toIso(mPeriod[2]) : null,
-    totalDebit: mTotal ? toNum(mTotal[1]) : null,
-    totalCredit: mTotal ? toNum(mTotal[2]) : null,
+    totalDebit: totals ? totals.debit : null,
+    totalCredit: totals ? totals.credit : null,
     txns,
   };
+}
+
+/**
+ * footer 的「總計 2,085,031 2,138,901」。
+ *
+ * **用欄位位置讀，不用「總計後面第一個數字」** ——
+ * 某一邊是 0 的時候（例如整個期間只有存入沒有支出），
+ * PDF 上那一格是空的，靠順序會把存入的金額當成支出。
+ */
+function pickTotals(row: Word[], cols: Cols): { debit: number; credit: number } | null {
+  const amts = row.filter(
+    (w) => AMOUNT.test(w.text) && w.x1 > cols.left && w.x1 <= cols.right,
+  );
+  if (amts.length > 0) {
+    let debit = 0;
+    let credit = 0;
+    for (const w of amts) {
+      if (w.x1 <= cols.debitCredit) debit = toNum(w.text);
+      else if (w.x1 <= cols.creditBalance) credit = toNum(w.text);
+    }
+    if (debit || credit) return { debit, credit };
+  }
+  // 整列被黏成一塊時座標救不了,退回讀文字
+  const m = /總計\s*([\d,]+)\s+([\d,]+)/.exec(row.map((w) => w.text).join(' '));
+  return m ? { debit: toNum(m[1]), credit: toNum(m[2]) } : null;
 }
 
 /**
@@ -417,7 +466,24 @@ export function validate(st: Statement): Problem[] {
     }
   }
 
-  /* 【總計相符】對 footer 那一行 */
+  /*
+   * 【總計相符】對 footer 那一行。
+   *
+   * **讀不到總計本身就是問題。**（2026-08-18 補）
+   *
+   * 第一版寫 `if (st.totalDebit != null)` 才比 —— 那表示 footer 讀不到時,
+   * 這道最強的檢查會**安靜地不執行**,而畫面上一片綠。
+   *
+   * 「檢查跳過了」跟「檢查通過了」在畫面上長得一模一樣,
+   * 那是所有沉默錯誤裡最貴的一種。
+   */
+  if (st.totalDebit == null || st.totalCredit == null) {
+    p.push({
+      code: 'no_total',
+      message: 'PDF 上讀不到「總計」那一行 —— 少了它就無法確認有沒有漏讀交易',
+    });
+  }
+
   const sd = t.reduce((a, x) => a + x.debit, 0);
   const sc = t.reduce((a, x) => a + x.credit, 0);
   if (st.totalDebit != null && Math.abs(sd - st.totalDebit) > 0.005) {
