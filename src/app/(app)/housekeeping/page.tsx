@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useProfile } from '@/lib/profile';
 import CalendarTab from './calendar-tab';
 import StatsTab from './stats-tab';
+import DemandTab from './demand-tab';
 
 /**
  * 房務管理：行事曆 · 排班統計
@@ -39,7 +40,17 @@ import StatsTab from './stats-tab';
  * 而且點錯進去會看到一堆看不懂的開關。留在統計頁右上角的 ⚙ 就好。
  */
 
-const TAB_LABEL = { calendar: '行事曆', stats: '排班統計' } as const;
+/*
+ * 【採購需求排第三】（2026-08-17 使用者指定）
+ *
+ * 順序仍然是使用頻率:行事曆每天看、統計月底算一次、
+ * 採購需求是「想到才提」。
+ *
+ * 但它**全員可見**（含房務）—— 提需求的人正是每天在現場、
+ * 發現東西用完的那些人。放在他們每天會來的頁面底下，
+ * 比獨立一頁更容易被想起來。
+ */
+const TAB_LABEL = { calendar: '行事曆', stats: '排班統計', demand: '採購需求' } as const;
 type TabKey = keyof typeof TAB_LABEL;
 
 export default function HousekeepingPage() {
@@ -61,7 +72,14 @@ export default function HousekeepingPage() {
    */
   const { role } = useProfile();
   const canEdit = role === 'manager' || role === 'super_admin';
-  const tabs: TabKey[] = canEdit ? ['calendar', 'stats'] : ['calendar'];
+  /*
+   * 採購需求全員可見 —— 房務也要能提。
+   * 「只看得到自己提的」由 RLS 擋（migration_140 的 pd_own），
+   * 不是靠這裡少給一個分頁。
+   */
+  const tabs: TabKey[] = canEdit
+    ? ['calendar', 'stats', 'demand']
+    : ['calendar', 'demand'];
 
   /**
    * 成功訊息四秒後消失，失敗的不會。
@@ -120,9 +138,11 @@ export default function HousekeepingPage() {
         （排班統計會改資料，切走再切回來時舊狀態可能已經過期。）
       */}
       {/* canEdit 還沒載到之前 tab 不可能是 stats，載到之後若被降權也會退回行事曆 */}
-      {tab === 'stats' && canEdit
-        ? <StatsTab onGoCalendar={() => setTab('calendar')} />
-        : <CalendarTab onMsg={(t, err) => setMsg({ t, err })} canEdit={canEdit} />}
+      {tab === 'demand'
+        ? <DemandTab onMsg={(t, err) => setMsg({ t, err })} />
+        : tab === 'stats' && canEdit
+          ? <StatsTab onGoCalendar={() => setTab('calendar')} />
+          : <CalendarTab onMsg={(t, err) => setMsg({ t, err })} canEdit={canEdit} />}
     </div>
   );
 }

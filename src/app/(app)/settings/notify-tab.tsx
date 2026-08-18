@@ -65,7 +65,7 @@ import {
  */
 
 const ICON: Record<NotifyKind, string> = {
-  orders: '🏨', approvals: '🧾', reviews: '⭐', cleaning: '🧹',
+  orders: '🏨', approvals: '🧾', reviews: '⭐', cleaning: '🧹', purchasing: '🛒',
 };
 
 type Prefs = Record<NotifyKind, boolean>;
@@ -89,7 +89,7 @@ export default function NotifyTab() {
     if (!user) return;
     const { data } = await supabase
       .from('notification_prefs')
-      .select('orders, approvals, reviews, cleaning')
+      .select('orders, approvals, reviews, cleaning, purchasing')
       .eq('user_id', user.id).maybeSingle();
     // 沒有列的時候用預設值,不要顯示空白 —— 空白會讓人以為設定壞了。
     // 存檔時會 upsert 建立那一列。
