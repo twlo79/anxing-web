@@ -183,6 +183,7 @@ export default function AccountsPage() {
   const SORT_COLS: SortCols<Txn> = {
     post_date: { type: 'date', get: (t) => t.post_date },
     description: { type: 'text', get: (t) => t.description ?? '' },
+    memo: { type: 'text', get: (t) => t.memo ?? '' },
     counterparty: { type: 'text', get: (t) => t.counterparty ?? '' },
     debit: { type: 'number', get: (t) => Number(t.debit) || 0 },
     credit: { type: 'number', get: (t) => Number(t.credit) || 0 },
@@ -385,9 +386,21 @@ export default function AccountsPage() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-xs text-gray-600">
               <tr>
-                <SortTh label="日期" sortKey="post_date" type="date" state={sort}
+                {/*
+                  排序鍵是**帳務日**，標題卻寫「交易日」—— 這是刻意的。
+
+                  顯示交易日是因為對帳時人看的是那一天（使用者指定 2026-08-18）。
+                  但**餘額的順序跟著帳務日走** —— 用交易日排的話，
+                  交易日與帳務日差一天的那幾筆會插進別的位置，
+                  餘額欄就不再是連續遞增，而那看起來像資料壞了。
+
+                  兩者差距通常只有一兩天，排出來的順序幾乎相同。
+                */}
+                <SortTh label="交易日" sortKey="post_date" type="date" state={sort}
                   onSort={(key, dir) => setSort({ key, dir })} className="text-left font-medium" />
-                <SortTh label="摘要" sortKey="description" state={sort}
+                <SortTh label="交易型態" sortKey="description" state={sort}
+                  onSort={(key, dir) => setSort({ key, dir })} className="text-left font-medium" />
+                <SortTh label="摘要" sortKey="memo" state={sort}
                   onSort={(key, dir) => setSort({ key, dir })} className="text-left font-medium" />
                 <SortTh label="對方" sortKey="counterparty" state={sort}
                   onSort={(key, dir) => setSort({ key, dir })} className="text-left font-medium" />
@@ -401,11 +414,11 @@ export default function AccountsPage() {
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={6} className="px-3 py-8 text-center text-gray-400">載入中⋯</td></tr>
+                <tr><td colSpan={7} className="px-3 py-8 text-center text-gray-400">載入中⋯</td></tr>
               )}
               {!loading && shown.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-3 py-8 text-center text-gray-400">
+                  <td colSpan={7} className="px-3 py-8 text-center text-gray-400">
                     {txns.length === 0
                       ? '這個帳戶還沒有流水 —— 上傳一份對帳單試試'
                       : `沒有符合的資料（全部 ${txns.length} 筆）`}
@@ -415,16 +428,28 @@ export default function AccountsPage() {
               {shown.map((t) => (
                 <tr key={t.id} className="border-t hover:bg-gray-50">
                   <td className="whitespace-nowrap px-3 py-1.5 tabular-nums">
-                    <div>{md(t.post_date)}</div>
-                    {/* 交易日跟帳務日不同時才印第二行 —— 相同的話那一行沒有多講任何事 */}
+                    {/* 交易日為主 —— 對帳時人看的是那一天 */}
+                    <div>{md(t.txn_date ?? t.post_date)}</div>
+                    {/*
+                      帳務日不同時才印第二行。相同的話那一行沒有多講任何事,
+                      而九成以上的交易兩者相同 —— 每列都印會讓表格多一倍高度
+                      卻沒有多給任何資訊。
+                    */}
                     {t.txn_date && t.txn_date !== t.post_date && (
-                      <div className="text-[11px] text-gray-400">交易 {md(t.txn_date)}</div>
+                      <div className="text-[11px] text-gray-400">入帳 {md(t.post_date)}</div>
                     )}
                   </td>
-                  <td className="px-3 py-1.5">
-                    <div>{t.description ?? ''}</div>
-                    {/* 摘要是全形的（１２月房租、南５）—— 原樣顯示,不要轉半形 */}
-                    {t.memo && <div className="text-[11px] text-gray-500">{t.memo}</div>}
+                  <td className="whitespace-nowrap px-3 py-1.5">{t.description ?? ''}</td>
+                  {/*
+                    摘要獨立一欄（使用者指定 2026-08-18）。
+
+                    原本跟交易型態擠在同一格,黑字一行灰字一行 ——
+                    那樣「摘要」這一欄排序時排的其實是交易型態,
+                    而點下去看起來沒反應。
+                  */}
+                  <td className="px-3 py-1.5 text-gray-600">
+                    {/* 全形字原樣顯示（１２月房租、南５）—— 轉半形之後跟 PDF 對不起來 */}
+                    {t.memo ?? ''}
                   </td>
                   <td className="px-3 py-1.5 text-gray-600">
                     <div>{t.counterparty ?? ''}</div>
@@ -466,7 +491,7 @@ export default function AccountsPage() {
             {shown.length > 0 && (
               <tfoot className="border-t bg-gray-50 text-xs">
                 <tr>
-                  <td colSpan={3} className="px-3 py-2 text-gray-600">
+                  <td colSpan={4} className="px-3 py-2 text-gray-600">
                     {shown.length} 筆
                     {/* 有篩的時候一定要講「總共幾筆」—— 不然「為什麼只有 3 筆」查不到原因 */}
                     {hasFilter(f) && `（全部 ${txns.length} 筆）`}
