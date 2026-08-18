@@ -260,6 +260,15 @@ export default function DepositsPage() {
   const fxLine = (cur: Record<string, number>) =>
     Object.entries(cur).filter(([c]) => c !== 'TWD').map(([c, v]) => `${c} ${fmt(v)}`).join('・');
 
+  /*
+   * 有沒有套用任何篩選。
+   *
+   * **狀態要跟預設值比，不是跟空字串比** —— `statusF` 預設是 'held'，
+   * 拿它是不是空的來判斷,那顆「清除」就會永遠不出現。
+   */
+  const hasFilter = !!(fromD || toD || estateF || roomF || methodF || acctF || kw)
+    || statusF !== 'held';
+
   function clearFilters() {
     setFromD(''); setToD(''); setEstateF(''); setRoomF('');
     setMethodF(''); setAcctF(''); setKwInput(''); setKw('');
@@ -713,15 +722,30 @@ export default function DepositsPage() {
               placeholder="搜尋" className={`${inp} w-28`} />
             <button onClick={() => setKw(kwInput.trim())}
               className="rounded-lg bg-mor-slate text-white px-3 py-1.5 hover:bg-mor-slatedark">搜尋</button>
-            {/* 清除放在搜尋旁邊 —— 清條件跟下條件是同一件事,分在畫面兩端要來回移動滑鼠 */}
-            <button onClick={clearFilters}
-              className="rounded-lg border border-gray-300 px-3 py-1.5">清除</button>
           </div></label>
-        <ActionBar>
-          <AddButton onClick={() => setEdit(blankManual())}>新增押金</AddButton>
-          <ExportButton onClick={exportXlsx} disabled={!sorted.length} />
-          <TrashLink table="deposits" label="押金" />
-        </ActionBar>
+        {/*
+          清除只在真的有篩選時出現，樣式改成底線文字 —— 跟訂單頁一致。
+          常駐一顆有邊框的按鈕會讓人以為那是主要動作之一,
+          而它其實只在「我剛才篩過」的時候才有意義。
+        */}
+        {hasFilter && (
+          <button onClick={clearFilters}
+            className="text-gray-500 underline pb-1.5">清除</button>
+        )}
+      </div>
+
+      {/*
+        動作鈕自成一行，跟訂單頁同一個排法（2026-08-17 使用者指定）。
+        篩選欄位一多就會把它們擠到第二行，而擠出來的那一行是一整片空白
+        配右邊一小撮按鈕。
+      */}
+      <div className="flex flex-wrap items-center justify-end gap-3 mb-4">
+        <div className="text-xs text-gray-400 whitespace-nowrap mr-auto md:mr-0">
+          共 {sorted.length.toLocaleString()} 筆
+        </div>
+        <AddButton onClick={() => setEdit(blankManual())}>新增押金</AddButton>
+        <ExportButton onClick={exportXlsx} disabled={!sorted.length} />
+        <TrashLink table="deposits" label="押金" />
       </div>
 
       {/* 手機卡片 */}

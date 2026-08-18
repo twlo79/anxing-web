@@ -725,12 +725,7 @@ export default function ContractsPage() {
           同一個動作三個位置。現在只有一顆，底線文字，在搜尋右邊。 */}
       <FilterBar
         active={!!(estateFilter || cadFilter || typeFilter || statusFilter || fromD || toD || kw)}
-        right={<>
-          <FilterCount n={filtered.length} />
-          <AddButton onClick={() => openEdit(blank())}>新增契約</AddButton>
-          <ExportButton onClick={exportXlsx} disabled={!filtered.length} />
-          <TrashLink table="contracts" label="契約" />
-        </>}>
+        >
         <FilterSelect label="物業" value={estateFilter} onChange={setEstateFilter}
           options={estates.map((e) => ({ value: e.name, label: e.name }))} />
         <FilterSelect label="繳別" value={cadFilter} onChange={setCadFilter} options={[
@@ -749,6 +744,18 @@ export default function ContractsPage() {
           active={!!(estateFilter || cadFilter || typeFilter || statusFilter || fromD || toD || kw || kwIn)}
           onClear={() => { setEstateFilter(''); setCadFilter(''); setTypeFilter(''); setStatusFilter(''); setFromD(''); setToD(''); setKw(''); setKwIn(''); }} />
       </FilterBar>
+
+      {/*
+        動作鈕自成一行，跟訂單頁同一個排法（2026-08-17 使用者指定）——
+        篩選欄位一多就會把它們擠到第二行，而擠出來的那一行是一整片空白
+        配右邊一小撮按鈕，看起來像排版壞了。自己一行就不會再被擠。
+      */}
+      <div className="flex flex-wrap items-center justify-end gap-3 mb-4">
+        <div className="mr-auto md:mr-0"><FilterCount n={filtered.length} /></div>
+        <AddButton onClick={() => openEdit(blank())}>新增契約</AddButton>
+        <ExportButton onClick={exportXlsx} disabled={!filtered.length} />
+        <TrashLink table="contracts" label="契約" />
+      </div>
 
       <div className="rounded-xl glass overflow-x-auto">
         <table className="w-full min-w-[640px] text-sm">
