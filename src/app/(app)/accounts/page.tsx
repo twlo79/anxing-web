@@ -66,7 +66,14 @@ type Txn = {
 
 const money = (n: number | null | undefined) =>
   n == null ? '—' : '$' + Math.round(n).toLocaleString('en-US');
-const md = (d: string | null) => (d ? d.slice(5).replace('-', '/') : '—');
+/*
+ * 日期一律帶年份。
+ *
+ * 一個帳戶的流水橫跨 2025 與 2026 —— 只印「08/18」的話，
+ * 排序或篩選之後根本看不出那是哪一年的 08/18，
+ * 而**兩年的同一天會長得一模一樣**。
+ */
+const ymd = (d: string | null) => (d ? d.slice(0, 10).replace(/-/g, '/') : '—');
 
 export default function AccountsPage() {
   const supabase = useMemo(() => createClient(), []);
@@ -429,14 +436,14 @@ export default function AccountsPage() {
                 <tr key={t.id} className="border-t hover:bg-gray-50">
                   <td className="whitespace-nowrap px-3 py-1.5 tabular-nums">
                     {/* 交易日為主 —— 對帳時人看的是那一天 */}
-                    <div>{md(t.txn_date ?? t.post_date)}</div>
+                    <div>{ymd(t.txn_date ?? t.post_date)}</div>
                     {/*
                       帳務日不同時才印第二行。相同的話那一行沒有多講任何事,
                       而九成以上的交易兩者相同 —— 每列都印會讓表格多一倍高度
                       卻沒有多給任何資訊。
                     */}
                     {t.txn_date && t.txn_date !== t.post_date && (
-                      <div className="text-[11px] text-gray-400">入帳 {md(t.post_date)}</div>
+                      <div className="text-[11px] text-gray-400">入帳 {ymd(t.post_date)}</div>
                     )}
                   </td>
                   <td className="whitespace-nowrap px-3 py-1.5">{t.description ?? ''}</td>
