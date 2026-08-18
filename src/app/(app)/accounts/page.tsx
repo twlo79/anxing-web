@@ -53,6 +53,8 @@ type Txn = {
   debit: number;
   credit: number;
   balance: number;
+  bank_balance: number | null;
+  balance_note: string | null;
   memo: string | null;
   ref_no: string | null;
   seq: number | null;
@@ -120,7 +122,7 @@ export default function AccountsPage() {
       const { rows, error } = await fetchAll<Txn>((f, t) =>
         supabase
           .from('bank_transactions')
-          .select('id, account_id, txn_date, post_date, txn_time, description, counterparty, debit, credit, balance, memo, ref_no, seq')
+          .select('id, account_id, txn_date, post_date, txn_time, description, counterparty, debit, credit, balance, bank_balance, balance_note, memo, ref_no, seq')
           .eq('account_id', accountId)
           .order('post_date', { ascending: false })
           .order('seq', { ascending: false })
@@ -317,7 +319,22 @@ export default function AccountsPage() {
                   <td className="px-3 py-1.5 text-right tabular-nums text-green-700">
                     {Number(t.credit) ? money(Number(t.credit)) : ''}
                   </td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{money(Number(t.balance))}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums">
+                    {money(Number(t.balance))}
+                    {/*
+                      銀行印的跟我們算的不一樣時要看得見。
+                      存了卻不顯示等於沒存 —— 那一格是「為什麼跟網銀對不起來」
+                      唯一的線索，而它一年可能只出現一次。
+                    */}
+                    {t.balance_note && (
+                      <div
+                        className="text-[11px] font-normal text-amber-700"
+                        title="銀行印的餘額跟依交易金額推算的不一致。餘額以我們算的為準。"
+                      >
+                        ⚠ {t.balance_note}
+                      </div>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

@@ -18,22 +18,23 @@ import type { Statement, Txn } from './bank-statement.ts';
 const txn = (o: Partial<Txn> = {}): Txn => ({
   page: 1, seq: 1, txnDate: '2025-01-01', postDate: '2025-01-02', txnTime: '01:06:44',
   description: 'ＡＴＭ轉', counterparty: '台北富邦',
-  debit: 0, credit: 17_836, balance: 45_943, memo: '', refNo: '', ...o,
+  debit: 0, credit: 17_836, balance: 45_943, bankBalance: 45_943, balanceNote: null,
+  memo: '', refNo: '', ...o,
 });
 
 // ── 去重 ──────────────────────────────────────────
 
 describe('去重', () => {
   test('資料庫是空的 → 全部都是新的', () => {
-    const p = planImport('a', [txn({ seq: 1 }), txn({ seq: 2, balance: 82_153 })], []);
+    const p = planImport('a', [txn({ seq: 1 }), txn({ seq: 2, bankBalance: 82_153 })], []);
     assert.equal(p.fresh.length, 2);
     assert.equal(p.duplicate.length, 0);
   });
 
   test('★★ 同一份重傳 → 全部算重複', () => {
-    const rows = [txn({ seq: 1 }), txn({ seq: 2, balance: 82_153, txnTime: '09:00:00' })];
+    const rows = [txn({ seq: 1 }), txn({ seq: 2, bankBalance: 82_153, txnTime: '09:00:00' })];
     const have: ExistingTxn[] = rows.map((t) => ({
-      post_date: t.postDate, balance: t.balance, txn_time: t.txnTime,
+      post_date: t.postDate, bank_balance: t.bankBalance, txn_time: t.txnTime,
     }));
     const p = planImport('a', rows, have);
     assert.equal(p.fresh.length, 0);
@@ -43,7 +44,7 @@ describe('去重', () => {
   test('★★ 序號變了但內容相同,仍算重複', () => {
     // 換一個查詢期間,同一筆交易的序號會不一樣 ——
     // 拿序號當鑰匙的話這裡會重複匯入
-    const have: ExistingTxn[] = [{ post_date: '2025-01-02', balance: 45_943, txn_time: '01:06:44' }];
+    const have: ExistingTxn[] = [{ post_date: '2025-01-02', bank_balance: 45_943, txn_time: '01:06:44' }];
     const p = planImport('a', [txn({ seq: 88 })], have);
     assert.equal(p.duplicate.length, 1);
     assert.equal(p.fresh.length, 0);
@@ -53,32 +54,32 @@ describe('去重', () => {
     // `13:07:00+08` vs `13:07:00` —— 不切齊的話每一筆都會被當成新的,
     // 而症狀是「每次上傳都說全部是新的」,流水一路長
     const have: ExistingTxn[] = [
-      { post_date: '2025-01-02T00:00:00', balance: '45943.00', txn_time: '01:06:44+08' },
+      { post_date: '2025-01-02T00:00:00', bank_balance: '45943.00', txn_time: '01:06:44+08' },
     ];
     const p = planImport('a', [txn()], have);
     assert.equal(p.duplicate.length, 1, '時區或型別沒切齊');
   });
 
   test('★★ 沒印時間的兩筆,null 要收斂成 00:00:00', () => {
-    const have: ExistingTxn[] = [{ post_date: '2025-01-02', balance: 45_943, txn_time: null }];
+    const have: ExistingTxn[] = [{ post_date: '2025-01-02', bank_balance: 45_943, txn_time: null }];
     const p = planImport('a', [txn({ txnTime: null })], have);
     assert.equal(p.duplicate.length, 1);
   });
 
   test('★ 同日同額但餘額不同 → 是兩筆不同的交易', () => {
     // 同一天收兩筆一樣的房租(都 46,000),金額會撞,餘額不會
-    const have: ExistingTxn[] = [{ post_date: '2025-03-01', balance: 46_000, txn_time: '10:00:00' }];
+    const have: ExistingTxn[] = [{ post_date: '2025-03-01', bank_balance: 46_000, txn_time: '10:00:00' }];
     const p = planImport('a', [
-      txn({ postDate: '2025-03-01', balance: 46_000, credit: 46_000, txnTime: '10:00:00' }),
-      txn({ postDate: '2025-03-01', balance: 92_000, credit: 46_000, txnTime: '11:00:00' }),
+      txn({ postDate: '2025-03-01', bankBalance: 46_000, credit: 46_000, txnTime: '10:00:00' }),
+      txn({ postDate: '2025-03-01', bankBalance: 92_000, credit: 46_000, txnTime: '11:00:00' }),
     ], have);
     assert.equal(p.duplicate.length, 1);
     assert.equal(p.fresh.length, 1);
-    assert.equal(p.fresh[0].balance, 92_000);
+    assert.equal(p.fresh[0].bankBalance, 92_000);
   });
 
   test('★ 換一個帳戶,同樣的流水算新的', () => {
-    const have: ExistingTxn[] = [{ post_date: '2025-01-02', balance: 45_943, txn_time: '01:06:44' }];
+    const have: ExistingTxn[] = [{ post_date: '2025-01-02', bank_balance: 45_943, txn_time: '01:06:44' }];
     const p = planImport('別的帳戶', [txn()], []);
     assert.equal(p.fresh.length, 1);
     // 上面那個 have 是給 'a' 的,換帳戶就不該比對到

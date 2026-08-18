@@ -19,7 +19,8 @@ import { txnKey, type Statement, type Txn } from './bank-statement.ts';
 /** 資料庫裡已經有的一筆(只需要組鑰匙的欄位)。 */
 export type ExistingTxn = {
   post_date: string;
-  balance: number | string;
+  /** **銀行印的**餘額。去重看這個,不是我們算的（migration_143）。 */
+  bank_balance: number | string | null;
   txn_time: string | null;
 };
 
@@ -42,7 +43,7 @@ function normTime(t: string | null): string {
 }
 
 function existingKey(accountId: string, r: ExistingTxn): string {
-  return `${accountId}|${r.post_date.slice(0, 10)}|${Number(r.balance)}|${normTime(r.txn_time)}`;
+  return `${accountId}|${r.post_date.slice(0, 10)}|${Number(r.bank_balance)}|${normTime(r.txn_time)}`;
 }
 
 /**

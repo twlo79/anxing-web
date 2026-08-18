@@ -285,12 +285,15 @@ describe('validate 抓得到問題', () => {
   const clone = (tail: string): Statement =>
     JSON.parse(JSON.stringify(S[tail])) as Statement;
 
-  test('★★ 支出存入判反 → 餘額接不上', () => {
+  test('★★ 支出存入判反 → 被擋下來', () => {
+    // 餘額現在是我們自己算的,所以判反的徵兆從「餘額接不上」
+    // 變成「加總對不上 footer 的總計」—— 但一樣要擋
     const st = clone('70564');
     const t = st.txns[5];
     [t.debit, t.credit] = [t.credit, t.debit];
-    const p = validate(st);
-    assert.ok(p.some((x) => x.code === 'balance_break'), '判反了卻沒報');
+    const p = validate(st).filter((x) => x.level === 'block');
+    assert.ok(p.length > 0, '判反了卻沒擋');
+    assert.ok(p.some((x) => x.code.startsWith('total_')), '應該是總計對不上');
   });
 
   test('★★ 漏掉一筆 → 序號斷掉', () => {
@@ -348,9 +351,20 @@ describe('去重鑰匙', () => {
   test('同日同額但餘額不同 → 鑰匙不同', () => {
     // 同一天收兩筆一樣的房租,金額會撞,餘額不會
     const base = S['70564'].txns[0];
-    const a = txnKey('acc', { ...base, balance: 46_000 });
-    const b = txnKey('acc', { ...base, balance: 92_000 });
-    assert.notEqual(a, b);
+    assert.notEqual(
+      txnKey('acc', { ...base, bankBalance: 46_000 }),
+      txnKey('acc', { ...base, bankBalance: 92_000 }),
+    );
+  });
+
+  test('★★ 鑰匙看的是銀行印的餘額,不是我們算的', () => {
+    // 我們算的會跟著「這份對帳單從哪裡起算」跑 ——
+    // 拿它當鑰匙的話,期間重疊的第二份 PDF 會整份被當成新的
+    const base = S['70564'].txns[0];
+    assert.equal(
+      txnKey('acc', { ...base, balance: 111 }),
+      txnKey('acc', { ...base, balance: 222 }),
+    );
   });
 
   test('不同帳戶的同一筆 → 鑰匙不同', () => {
@@ -404,12 +418,31 @@ describe('備註與票據號碼', () => {
     assert.equal(t1.memo, '');
   });
 
-  test('票據號碼與摘要用長相分，不用行號分', () => {
+  test('★★ 主列的備註要原樣留，數字不可以被抽走', () => {
+    // 「1040077312 代繳市水 08025 112 TPCW」是一句話。
+    // 早一版的規則是「純數字就是票據號碼」不分行,結果這句被拆成
+    // 「代繳市水 TPCW」—— 沒有掉字,但讀起來不像原本那句了
     const st = parseStatement(load('24145-2607'));
-    for (const t of st.txns) {
-      // 摘要不可以是純數字串（那是票據號碼）
-      if (t.memo) assert.ok(!/^[\d-]+$/.test(t.memo), `第 ${t.seq} 筆摘要像票據號碼：${t.memo}`);
-    }
+    const t39 = st.txns.find((t) => t.seq === 39);
+    assert.equal(t39?.memo, '1040077312 代繳市水 08025 112 TPCW');
+  });
+
+  test('★★ 備註欄一個字都不可以掉', () => {
+    // 分到 memo 還是 refNo 是次要的,**掉了才是問題** ——
+    // 而掉了不會有徵兆,那一格本來就常常是空的
+    const words = load('24145-2607');
+    const bal = words.find((w) => w.text === '帳面餘額')!;
+    // 粗略重算一次備註欄:餘額表頭右緣以右。
+    // 排除日期 —— footer 的列印日期也落在這個範圍,但它不屬於任何一筆交易
+    const inCol = new Set(
+      words
+        .filter((w) => w.x0 >= bal.x1 + 2 && w.top > 160 && !/^\d{4}\/\d{2}\/\d{2}$/.test(w.text))
+        .map((w) => w.text),
+    );
+    const st = parseStatement(words);
+    const got = new Set(st.txns.flatMap((t) => [...t.memo.split(' '), ...t.refNo.split(' ')]));
+    const lost = [...inCol].filter((t) => !got.has(t));
+    assert.deepEqual(lost, [], `備註欄掉了 ${lost.length} 個詞`);
   });
 
   test('★ 摘要真的被讀到了 —— 不是每一筆都空白', () => {
@@ -440,6 +473,35 @@ describe('備註與票據號碼', () => {
  */
 describe('★★ 餘額印錯一格：資料完整時只警告，不擋', () => {
   const st = parseStatement(load('24145-2607'));
+
+  /*
+   * 【使用者的更正】2026-08-18
+   *
+   * 我一開始寫成「銀行印的存成備註」—— 那會變成**每一筆都有備註**。
+   * 使用者更正:「是銀行若有差異 要備註」。
+   *
+   * 差別在訊號:132 筆裡只有 1 筆該有備註。
+   * 每筆都寫的話那一欄就沒有用了 —— 全部都寫等於全部都不用看。
+   */
+  test('★★ 只有不一致的那一筆有備註', () => {
+    const noted = st.txns.filter((t) => t.balanceNote);
+    assert.equal(noted.length, 1, `有備註的筆數應該是 1，實際 ${noted.length}`);
+    assert.equal(noted[0].seq, 22);
+    assert.match(noted[0].balanceNote!, /3,976,587/); // 銀行印的
+    assert.match(noted[0].balanceNote!, /806/);       // 差多少
+  });
+
+  test('★★ 一致的那 131 筆備註是 null，不是空字串', () => {
+    // 空字串在資料庫裡也是「有值」—— 查「哪幾筆有備註」時會全部撈出來
+    const others = st.txns.filter((t) => t.seq !== 22);
+    assert.deepEqual([...new Set(others.map((t) => t.balanceNote))], [null]);
+  });
+
+  test('三份舊的一筆備註都沒有', () => {
+    for (const e of EXPECT) {
+      assert.equal(S[e.tail].txns.filter((t) => t.balanceNote).length, 0);
+    }
+  });
 
   test('金額全部讀對 —— 加總跟 footer 一字不差', () => {
     const sd = st.txns.reduce((a, t) => a + t.debit, 0);

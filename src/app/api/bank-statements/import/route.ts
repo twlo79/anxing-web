@@ -112,7 +112,7 @@ export async function POST(req: Request) {
   for (let from = 0; ; from += 1000) {
     const { data, error } = await db
       .from('bank_transactions')
-      .select('post_date, balance, txn_time')
+      .select('post_date, bank_balance, txn_time')
       .eq('account_id', account.id)
       .gte('post_date', st.periodFrom)
       .lte('post_date', st.periodTo)
@@ -169,7 +169,10 @@ export async function POST(req: Request) {
       counterparty: t.counterparty || null,
       debit: t.debit,
       credit: t.credit,
-      balance: t.balance,
+      balance: t.balance,           // 我們算的 —— 畫面顯示這個
+      bank_balance: t.bankBalance,  // 銀行印的 —— 技術欄位,去重看這個
+      // **只有不一樣才有備註** —— 每筆都寫的話這一欄就沒有訊號了
+      balance_note: t.balanceNote,
       memo: t.memo || null, // 全形字原樣存 —— 轉半形之後跟 PDF 對不起來
       ref_no: t.refNo || null,
     }));

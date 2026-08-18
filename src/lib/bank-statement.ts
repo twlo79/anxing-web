@@ -77,7 +77,36 @@ export type Txn = {
   counterparty: string;
   debit: number;
   credit: number;
+  /**
+   * 餘額 —— **我們自己算的**（期初 ＋ 到這一筆為止的存入 − 支出）。
+   *
+   * 使用者指定（2026-08-18）:「這種數字問題 我們自己算 備註銀行計算的」。
+   *
+   * 照抄 PDF 的話,銀行印錯的那一格會**永遠壞在資料庫裡** ——
+   * 而那一欄會被拿去對帳、被拿去查「那天帳上有多少」。
+   * 自己算的整條鏈永遠自洽,銀行印錯只是一個註記。
+   */
   balance: number;
+  /**
+   * PDF 上印的餘額。
+   *
+   * **這是技術欄位,去重鑰匙用它** —— 我們算的值會跟著
+   * 「這份對帳單從哪裡起算」跑,期間重疊的兩份算出來可能不同,
+   * 那樣同一筆會被匯兩次。銀行印的不管在哪一份 PDF 都一樣。
+   *
+   * **給人看的是 `balanceNote`,而那個只有不一致時才有值。**
+   */
+  bankBalance: number;
+  /**
+   * 餘額備註 —— **只有銀行印的跟我們算的不一樣時才有值**（2026-08-18 使用者指定）。
+   *
+   * 「銀行若有差異 要備註」。
+   *
+   * 每一筆都寫「銀行印 X」的話，這一欄就沒有訊號了 ——
+   * 132 筆裡只有 1 筆該有備註，那 1 筆才是要人看的。
+   * 全部都寫等於全部都不用看。
+   */
+  balanceNote: string | null;
   /** 摘要。**全形字原樣保留** —— １２月房租／南５／林思瑜３月租金。 */
   memo: string;
   /** 票據號碼。 */
@@ -184,7 +213,21 @@ type Cols = {
   creditBalance: number;
   /** 金額區的左界（交易說明的左緣）。 */
   left: number;
-  /** 金額區的右界。**再往右是票據號碼,不是金額**（坑③）。 */
+  /**
+   * 金額區的右界 —— **貼著帳面餘額表頭的右緣**，不是貼著備註表頭的左緣。
+   *
+   * 兩者差很多，而且中間會有東西:
+   *
+   *     1,872,877    x1=351.0   ← 餘額（表頭 x1=346.3，只超出 4.7）
+   *     1040077312   x1=431.0   ← **水費戶號**，坐在兩欄中間
+   *     代繳市水      x0=435.1   ← 備註表頭
+   *
+   * 用備註表頭當界的話，那個 10 位數戶號會被當成餘額 ——
+   * 於是那一筆的餘額變成十億，而且**不會報錯**，
+   * 只會讓後面每一筆的「PDF 印的 vs 我們算的」全部對不上。
+   *
+   * 金額靠右對齊，所以右緣一定貼著自己欄位的表頭（實測超出 4–7pt）。
+   */
   right: number;
   /** 序號欄的右界。 */
   seqRight: number;
@@ -231,7 +274,14 @@ export function readColumns(words: Word[]): Cols | null {
     debitCredit: (d.x1 + c.x1) / 2,
     creditBalance: (c.x1 + b.x1) / 2,
     left: desc.x0,
-    right: ref.x0 - 2,
+    /*
+     * 餘額欄右緣與備註欄左緣的**中線**。
+     *
+     * 不用固定的 pt 數 —— 四份實測的超出量從 4.0 到 13.1 都有,
+     * 挑一個數字要嘛太緊(擋掉正常的餘額)要嘛太鬆(放進戶號)。
+     * 中線是版面自己給的界線,跟著欄寬一起變。
+     */
+    right: (b.x1 + ref.x0) / 2,
     seqRight: seq.x1 + 4,
     memoLeft: b.x1 + 2,
   };
@@ -303,6 +353,29 @@ export function parseStatement(words: Word[]): Statement {
   if (!totals) {
     const m = /總計\s*([\d,]+)\s+([\d,]+)/.exec(spaced);
     if (m) totals = { debit: toNum(m[1]), credit: toNum(m[2]) };
+  }
+
+  /*
+   * 【餘額改成自己算】（2026-08-18 使用者指定）
+   *
+   * 期初只能從第一筆的「PDF 餘額 − 存入 + 支出」推 —— 那是唯一的錨點。
+   * 從那裡開始一路加減,每一筆的 balance 就是我們算的。
+   *
+   * 2026/07 的 24145 實例:第 22 筆銀行印 3,976,587、我們算 3,977,393,
+   * 而第 23 筆之後兩邊又一致 —— 所以只有那一格是銀行印錯的。
+   */
+  if (txns.length > 0) {
+    let run = txns[0].bankBalance - txns[0].credit + txns[0].debit; // 期初
+    for (const t of txns) {
+      run = run - t.debit + t.credit;
+      t.balance = run;
+      // **只有不一樣才備註** —— 每一筆都寫的話這一欄就沒有訊號了
+      const gap = t.balance - t.bankBalance;
+      t.balanceNote =
+        Math.abs(gap) > 0.005
+          ? `PDF 上印 ${t.bankBalance.toLocaleString()}，差 ${Math.abs(gap).toLocaleString()}`
+          : null;
+    }
   }
 
   return {
@@ -412,24 +485,32 @@ function pickTxn(row: Word[], above: Word[] | undefined, below: Word[] | undefin
    * 正確的做法是看 x 座標:備註欄的東西可能出現在上一行(票據號碼)、
    * 主列(對方名稱／用途)、下一行(摘要),三行都要收。
    */
-  const memoWords = [above, row, below]
-    .filter(Boolean)
-    .flatMap((r) => r!.filter((w) => w.x0 >= cols.memoLeft))
-    .map((w) => w.text);
-
   /*
-   * 票據號碼與摘要都在同一欄,**用長相分**而不是用「在第幾行」分:
+   * 備註欄橫跨三行,三行的意思不一樣:
    *
-   *   012-0000341168247682   純數字與連字號 → 票據號碼
-   *   0374507                同上（它是上一行號碼的下半段）
-   *   京饌企業有限公司        → 摘要
-   *   7月A棟租金 / １２月房租  → 摘要
+   *   上一行  012-0000341168247682          ← 票據號碼
+   *   主列    1040077312 代繳市水 08025 112 TPCW   ← 摘要（含數字,要原樣留）
+   *   下一行  １２月房租 ／ 0374507           ← 摘要，或票據號碼的下半段
    *
-   * 靠行號分的話,票據號碼折到第二行的那幾筆會被當成摘要。
-   * 分錯的代價很小(兩個欄位都會顯示),但分對讓對帳好查很多。
+   * 所以:
+   *   上一行 → 票據號碼
+   *   主列   → 摘要，**數字照留**（「08025 112」是那句話的一部分）
+   *   下一行 → 整行都是純數字才當票據號碼的下半段，否則是摘要
+   *
+   * 一開始寫成「純數字就是票據號碼」不分行,結果主列的
+   * 「1040077312 代繳市水 08025 112 TPCW」被拆成兩半 ——
+   * 摘要只剩「代繳市水 TPCW」，讀起來不像原本那句話了。
    */
-  const refNo = memoWords.filter((t) => /^[\d-]+$/.test(t)).join(' ');
-  const memo = memoWords.filter((t) => !/^[\d-]+$/.test(t)).join(' ');
+  const inMemoCol = (r: Word[] | undefined) =>
+    (r ?? []).filter((w) => w.x0 >= cols.memoLeft).map((w) => w.text);
+  const isRefLike = (t: string) => /^[\d-]+$/.test(t);
+
+  const aboveMemo = inMemoCol(above);
+  const belowMemo = inMemoCol(below);
+  const belowIsRef = belowMemo.length > 0 && belowMemo.every(isRefLike);
+
+  const refNo = [...aboveMemo, ...(belowIsRef ? belowMemo : [])].join(' ');
+  const memo = [...inMemoCol(row), ...(belowIsRef ? [] : belowMemo)].join(' ');
 
   return {
     page: row[0].page,
@@ -441,7 +522,10 @@ function pickTxn(row: Word[], above: Word[] | undefined, below: Word[] | undefin
     counterparty,
     debit,
     credit,
+    // 這裡先放 PDF 上的值,parseStatement 收尾時再算出我們自己的
     balance: toNum(bal.text),
+    bankBalance: toNum(bal.text),
+    balanceNote: null,
     memo,
     refNo,
   };
@@ -517,47 +601,45 @@ export function validate(st: Statement): Problem[] {
   }
 
   /*
-   * 【餘額連續】前一筆餘額 − 支出 + 存入 = 這一筆餘額。
+   * 【PDF 印的餘額 vs 我們算的】
    *
    * ============================================================
-   * 【為什麼這一條可能只是警告】（2026-08-18 實例）
+   * 餘額欄現在是**我們自己算的**（使用者指定 2026-08-18），
+   * 所以這一條不再是「我們的鏈斷了」，而是
+   * **「銀行印的跟我們算的不一樣」**。
    *
    * 2026/07 那份 24145 的第 22 筆:
    *
-   *     21  匯出匯款    37,756   餘額 5,307,081
-   *     22  匯出匯款 1,329,688   餘額 3,976,587   ← 算出來是 3,977,393，差 806
-   *     23  匯出匯款 2,657,459   餘額 1,319,934   ← 又接回正確的鏈
+   *     21  匯出匯款    37,756   銀行印 5,307,081
+   *     22  匯出匯款 1,329,688   銀行印 3,976,587   ← 我們算 3,977,393，差 806
+   *     23  匯出匯款 2,657,459   銀行印 1,319,934   ← 又跟我們一致
    *
    * 而同一份的支出加總 15,311,998、存入加總 13,925,207
    * **跟 footer 的總計一字不差**，期初 ＋ 存入 − 支出 也剛好等於期末。
    *
-   * 兩條獨立的檢查都過了 —— 那就表示一筆都沒漏、金額全部讀對，
-   * **是銀行把那一格餘額印錯了**，不是我們解析錯。
+   * 兩條獨立的檢查都過 → 一筆都沒漏、金額全部讀對 → **是銀行印錯那一格**。
    *
    * 這時候整份擋掉是錯的:資料是完整的，擋掉只會讓會計沒有數字可用，
    * 而下次拿到同一份 PDF 還是一樣擋。
    *
-   * 所以規則是:
-   *   總計對得上 ＆ 頭尾對得起來  → **警告**，人看過可以匯，記進 warnings
-   *   任一條沒過                → **擋**，那時餘額接不上代表我們真的讀錯了
+   * 反過來，**總計對不上時同樣的現象代表我們真的讀錯了** —— 那要擋。
    */
-  for (let i = 1; i < t.length; i++) {
-    const want = t[i - 1].balance - t[i].debit + t[i].credit;
-    if (Math.abs(want - t[i].balance) > 0.005) {
-      p.push({
-        code: 'balance_break',
-        level: complete ? 'warn' : 'block',
-        message:
-          `第 ${t[i].seq} 筆（${t[i].postDate}）PDF 上的餘額是 ` +
-          `${t[i].balance.toLocaleString()}，但由上一筆推算應該是 ${want.toLocaleString()}` +
-          (complete
-            ? `（差 ${Math.abs(want - t[i].balance).toLocaleString()}）。` +
-              '整份的支出、存入加總與期初期末都對得起來 —— ' +
-              '所以交易一筆都沒漏，是銀行那一格餘額印得不一致。'
-            : ' —— 而且總計也對不上，代表解析可能有誤。'),
-      });
-      break;
-    }
+  const off = t.filter((x) => Math.abs(x.balance - x.bankBalance) > 0.005);
+  if (off.length > 0) {
+    const f = off[0];
+    p.push({
+      code: 'balance_break',
+      level: complete ? 'warn' : 'block',
+      message: complete
+        ? `第 ${f.seq} 筆（${f.postDate}）PDF 上印 ${f.bankBalance.toLocaleString()}，` +
+          `依交易金額推算是 ${f.balance.toLocaleString()}（差 ` +
+          `${Math.abs(f.balance - f.bankBalance).toLocaleString()}）` +
+          (off.length > 1 ? `，另有 ${off.length - 1} 筆也不一致` : '') +
+          '。整份的支出、存入加總與期初期末都對得起來 —— ' +
+          '交易一筆都沒漏，是銀行那一格印得不一致。**餘額以我們算的為準，銀行印的存成備註。**'
+        : `第 ${f.seq} 筆（${f.postDate}）PDF 印 ${f.bankBalance.toLocaleString()}、` +
+          `推算 ${f.balance.toLocaleString()}，而且總計也對不上 —— 代表解析可能有誤`,
+    });
   }
 
   /*
@@ -598,7 +680,11 @@ export function validate(st: Statement): Problem[] {
 }
 
 /**
- * 去重鑰匙:`帳號 + 帳務日 + 餘額 + 交易時間`。
+ * 去重鑰匙:`帳號 + 帳務日 + **銀行印的**餘額 + 交易時間`。
+ *
+ * **用 bankBalance 不用 balance**（migration_143）——
+ * balance 是我們算的,會跟著「這份對帳單從哪裡起算」跑,
+ * 期間重疊的兩份算出來可能不同,那樣同一筆會被匯兩次。
  *
  * **不用序號** —— 那是本次查詢的流水號,換期間就從 1 重來。
  *
@@ -609,5 +695,5 @@ export function validate(st: Statement): Problem[] {
  * （null 在唯一索引裡互不相等,不收斂的話沒印時間的兩筆會重複匯入）。
  */
 export function txnKey(accountId: string, t: Txn): string {
-  return `${accountId}|${t.postDate}|${t.balance}|${t.txnTime ?? '00:00:00'}`;
+  return `${accountId}|${t.postDate}|${t.bankBalance}|${t.txnTime ?? '00:00:00'}`;
 }
