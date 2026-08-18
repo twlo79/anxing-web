@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase';
-import { pdfToWords, looksCombined, PDF_COMBINED_MESSAGE } from '@/lib/pdf-words';
+import { pdfToWords, looksCombined, describeWords, PDF_COMBINED_MESSAGE } from '@/lib/pdf-words';
 import { parseStatement, validate, type Statement } from '@/lib/bank-statement';
 
 /**
@@ -41,7 +41,7 @@ type Ready = {
   /** 空陣列才可以匯入。 */
   problems: { code: string; message: string }[];
 };
-type Failed = { file: string; error: string };
+type Failed = { file: string; error: string; detail?: string };
 type Result = { file: string; text: string; ok: boolean };
 
 const money = (n: number) => '$' + Math.round(n).toLocaleString('en-US');
@@ -73,12 +73,32 @@ export default function UploadPanel({
           bad.push({ file: f.name, error: '這份 PDF 抽不到文字 —— 是掃描檔嗎？請用網銀下載的原始檔。' });
           continue;
         }
-        if (looksCombined(words)) {
-          bad.push({ file: f.name, error: PDF_COMBINED_MESSAGE });
+
+        /*
+         * 【先解析，再解釋】（2026-08-18 修正）
+         *
+         * 第一版先檢查「有沒有黏成一塊」再解析，結果擋掉了一份好好的 PDF：
+         * 抬頭的「列印日期時間：2026/08/07 11:53:01」被當成兩個數字黏在一起。
+         *
+         * 能不能解析出正確的數字，答案在 validate() ——
+         * 不在文字長相上。所以現在先跑，跑不出來才問為什麼。
+         */
+        const st = parseStatement(words);
+        const problems = validate(st);
+
+        if (problems.length > 0 && st.txns.length === 0) {
+          bad.push({
+            file: f.name,
+            error: looksCombined(words)
+              ? PDF_COMBINED_MESSAGE
+              : '解析不出交易明細 —— 版面可能跟已知的元大格式不同。',
+            // 把原始輸出印出來:是抽不到文字、欄位換位置、還是整列黏在一起,
+            // 三種的處理方式完全不同,而分辨它們只需要看幾行
+            detail: describeWords(words),
+          });
           continue;
         }
-        const st = parseStatement(words);
-        ok.push({ file: f.name, statement: st, problems: validate(st) });
+        ok.push({ file: f.name, statement: st, problems });
       } catch (e) {
         bad.push({ file: f.name, error: (e as Error).message });
       }
@@ -183,6 +203,16 @@ export default function UploadPanel({
             <div key={f.file} className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm">
               <div className="font-medium text-red-700">{f.file}</div>
               <div className="text-red-600">{f.error}</div>
+              {f.detail && (
+                <details className="mt-1">
+                  <summary className="cursor-pointer text-xs text-red-500">
+                    看 PDF 實際讀到什麼（給工程師）
+                  </summary>
+                  <pre className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap rounded bg-white/70 p-2 text-[11px] text-gray-700">
+                    {f.detail}
+                  </pre>
+                </details>
+              )}
             </div>
           ))}
 
