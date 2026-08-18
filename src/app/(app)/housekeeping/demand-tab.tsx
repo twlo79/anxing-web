@@ -37,10 +37,11 @@ import {
 type Item = {
   id?: string;
   item_name: string;
+  /** 規格說明。**大概數量寫在這裡**（migration_141 之後沒有數量欄） */
   spec: string;
-  qty: number;
   estate_id: string;
-  note: string;
+  /** 建議採購連結（蝦皮／露天等）。知道去哪買時填,會計省一趟詢價 */
+  buy_link: string;
   status: DemandItemStatus;
   request_item_id?: string | null;
   /** 這一項被哪張請款單領走。只在讀取時帶進來，存檔不寫 */
@@ -54,12 +55,23 @@ type Demand = {
   requester_name?: string | null;
   requested_on: string;
   note: string | null;
+  /** 寄送地點。物業名稱、「安幸辦公室」或「其他」—— 存文字,後兩個不是物業 */
+  ship_to: string | null;
+  ship_floor: string | null;
   status: 'open' | 'partial' | 'done' | 'cancelled';
   items: Item[];
 };
 
+/*
+ * 寄送地點的額外選項。
+ *
+ * 物業清單從 estates 來，但這兩個不是物業 —— 所以 ship_to 存文字
+ * 而不是 estate_id（見 migration_141 的註解）。
+ */
+const SHIP_EXTRA = ['安幸辦公室', '其他'];
+
 const blankItem = (): Item =>
-  ({ item_name: '', spec: '', qty: 1, estate_id: '', note: '', status: 'pending' });
+  ({ item_name: '', spec: '', estate_id: '', buy_link: '', status: 'pending' });
 
 const inp = 'rounded-lg border border-gray-300 px-2 py-1.5 text-sm';
 
@@ -74,7 +86,8 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
   const [estates, setEstates] = useState<{ id: string; name: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState<Set<string>>(new Set());
-  const [edit, setEdit] = useState<{ note: string; items: Item[] } | null>(null);
+  const [edit, setEdit] = useState<
+    { note: string; ship_to: string; ship_floor: string; items: Item[] } | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -86,10 +99,10 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
     setLoading(true);
     const { data } = await supabase
       .from('purchase_demands')
-      .select(`id, demand_no, requester_id, requested_on, note, status,
+      .select(`id, demand_no, requester_id, requested_on, note, status, ship_to, ship_floor,
                profiles(name),
                purchase_demand_items(
-                 id, item_name, spec, qty, estate_id, note, status, request_item_id,
+                 id, item_name, spec, estate_id, buy_link, status, request_item_id,
                  purchase_request_items(purchase_requests(req_no))
                )`)
       .order('requested_on', { ascending: false })
@@ -103,10 +116,12 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
       requester_name: d.profiles?.name ?? null,
       requested_on: d.requested_on,
       note: d.note,
+      ship_to: d.ship_to,
+      ship_floor: d.ship_floor,
       status: d.status,
       items: (d.purchase_demand_items ?? []).map((i: any) => ({
-        id: i.id, item_name: i.item_name, spec: i.spec ?? '', qty: Number(i.qty),
-        estate_id: i.estate_id, note: i.note ?? '', status: i.status,
+        id: i.id, item_name: i.item_name, spec: i.spec ?? '',
+        estate_id: i.estate_id, buy_link: i.buy_link ?? '', status: i.status,
         request_item_id: i.request_item_id,
         request_no: i.purchase_request_items?.purchase_requests?.req_no ?? null,
       })),
@@ -121,7 +136,7 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
 
   // ── 新增 ───────────────────────────────────────────
   function startNew() {
-    setEdit({ note: '', items: [blankItem()] });
+    setEdit({ note: '', ship_to: '', ship_floor: '', items: [blankItem()] });
   }
 
   async function save() {
@@ -135,19 +150,22 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
      */
     const items = edit.items.filter((i) => i.item_name.trim() || i.estate_id);
     if (!items.length) return onMsg('至少要填一個項目', true);
-    const bad = items.findIndex((i) => !i.item_name.trim() || !i.estate_id || !(i.qty > 0));
-    if (bad >= 0) return onMsg(`第 ${bad + 1} 項的品名、數量、用途都要填`, true);
+    const bad = items.findIndex((i) => !i.item_name.trim() || !i.estate_id);
+    if (bad >= 0) return onMsg(`第 ${bad + 1} 項的品名與用途都要填`, true);
+    // 寄送地點必填 —— 東西買了不知道寄哪的話，會計要回頭問一次
+    if (!edit.ship_to) return onMsg('請選寄送地點', true);
 
     setSaving(true);
     const { data: d, error } = await supabase.from('purchase_demands')
-      .insert({ requester_id: profile.id, note: edit.note.trim() || null })
+      .insert({ requester_id: profile.id, note: edit.note.trim() || null,
+                ship_to: edit.ship_to, ship_floor: edit.ship_floor.trim() || null })
       .select('id').single();
     if (error || !d) { setSaving(false); return onMsg('建立失敗：' + (error?.message ?? ''), true); }
 
     const { error: e2 } = await supabase.from('purchase_demand_items').insert(
       items.map((i) => ({
         demand_id: d.id, item_name: i.item_name.trim(), spec: i.spec.trim() || null,
-        qty: i.qty, estate_id: i.estate_id, note: i.note.trim() || null,
+        estate_id: i.estate_id, buy_link: i.buy_link.trim() || null,
       })));
     setSaving(false);
     if (e2) {
@@ -213,7 +231,14 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                                     ${DEMAND_STATUS_CLASS[p.status]}`}>
                     {p.label}
                   </span>
-                  <span className="w-full text-xs text-gray-500">{progressText(p)}</span>
+                  <span className="w-full text-xs text-gray-500">
+                    {progressText(p)}
+                    {d.ship_to && (
+                      <span className="ml-2 text-gray-400">
+                        寄 {d.ship_to}{d.ship_floor ? `・${d.ship_floor}` : ''}
+                      </span>
+                    )}
+                  </span>
                 </button>
 
                 {isOpen && (
@@ -221,11 +246,16 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                     {d.items.map((i) => (
                       <div key={i.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-sm">
                         <span className="font-medium">{i.item_name}</span>
-                        <span className="text-gray-500">×{i.qty}</span>
                         <span className="text-xs rounded bg-mor-sand px-1.5 py-0.5">
                           {estateName[i.estate_id] ?? '—'}
                         </span>
+                        {/* 規格說明裡就有大概數量 —— 沒有獨立的數量欄（migration_141） */}
                         {i.spec && <span className="text-xs text-gray-400">{i.spec}</span>}
+                        {i.buy_link && (
+                          <a href={i.buy_link} target="_blank" rel="noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-xs text-mor-slate underline">建議連結</a>
+                        )}
                         <span className="ml-auto text-xs text-gray-500">
                           {ITEM_STATUS_LABEL[i.status]}
                           {/*
@@ -270,7 +300,8 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
 
             <div className="p-4 space-y-3">
               <p className="text-xs text-gray-400">
-                <b className="text-gray-500">不用填金額</b> —— 會計詢價後在轉請款時填。
+                <b className="text-gray-500">不用填金額與數量</b> —— 金額由會計詢價後在轉請款時填；
+                大概要幾個寫在「規格說明」裡就好。
                 用途選<b className="text-gray-500">物業</b>不是房號，採購多半是整棟共用的。
               </p>
 
@@ -280,9 +311,6 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                     <span className="text-xs text-gray-400 w-8">{idx + 1}.</span>
                     <input value={it.item_name} onChange={(e) => setItem(idx, { item_name: e.target.value })}
                       placeholder="品名（必填）" className={`${inp} flex-1`} />
-                    <input type="number" min="1" step="1" value={it.qty}
-                      onChange={(e) => setItem(idx, { qty: Number(e.target.value) })}
-                      className={`${inp} w-20 text-right`} />
                     {edit.items.length > 1 && (
                       <button onClick={() => setEdit((e) => e && ({ ...e, items: e.items.filter((_, i) => i !== idx) }))}
                         className="text-red-500 hover:text-red-700 text-sm px-1">✕</button>
@@ -295,9 +323,9 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                       {estates.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
                     </select>
                     <input value={it.spec} onChange={(e) => setItem(idx, { spec: e.target.value })}
-                      placeholder="規格說明" className={`${inp} flex-1 min-w-[8rem]`} />
-                    <input value={it.note} onChange={(e) => setItem(idx, { note: e.target.value })}
-                      placeholder="備註" className={`${inp} flex-1 min-w-[8rem]`} />
+                      placeholder="規格說明／大概數量" className={`${inp} flex-1 min-w-[8rem]`} />
+                    <input value={it.buy_link} onChange={(e) => setItem(idx, { buy_link: e.target.value })}
+                      placeholder="建議採購連結（蝦皮、露天…）" className={`${inp} flex-1 min-w-[10rem]`} />
                   </div>
                 </div>
               ))}
@@ -307,6 +335,36 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                            text-gray-500 hover:bg-mor-sand/40">
                 + 加一個項目
               </button>
+
+              {/*
+                ── 寄送 ──────────────────────────────
+                **一張單只有一個寄送地點。**
+
+                這批東西會一起寄到同一個地方。放在每一個項目上的話，
+                填的人要為五樣東西各選一次同樣的地點 —— 而真的要分開寄時，
+                會計還得拆成兩張請款單才寄得對。
+
+                要分開寄就開兩張需求單。那比每一項都問一次誠實。
+              */}
+              <div className="rounded-xl bg-mor-sand/40 p-3 space-y-2">
+                <div className="text-xs text-gray-500">
+                  寄送地點 <b className="text-gray-600">一張單一個</b> ——
+                  要分開寄請另外開一張
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <select value={edit.ship_to}
+                    onChange={(e) => setEdit((x) => x && ({ ...x, ship_to: e.target.value }))}
+                    className={`${inp} w-36`}>
+                    <option value="">寄送地點（必填）</option>
+                    {estates.map((e) => <option key={e.id} value={e.name}>{e.name}</option>)}
+                    {SHIP_EXTRA.map((x) => <option key={x} value={x}>{x}</option>)}
+                  </select>
+                  <input value={edit.ship_floor}
+                    onChange={(e) => setEdit((x) => x && ({ ...x, ship_floor: e.target.value }))}
+                    placeholder="送達樓層／位置（例：2樓儲藏室）"
+                    className={`${inp} flex-1 min-w-[12rem]`} />
+                </div>
+              </div>
 
               <textarea value={edit.note} onChange={(e) => setEdit((x) => x && ({ ...x, note: e.target.value }))}
                 rows={2} placeholder="整張單的備註（選填）"
