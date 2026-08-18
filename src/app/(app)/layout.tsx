@@ -80,6 +80,16 @@ const NAV: { href: string; label: string; icon: string; roles: string[] }[] = [
    */
   { href: '/deposits', label: '押金管理', icon: '🏦', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/expenses', label: '支出明細', icon: '💳', roles: ['accountant', 'manager', 'super_admin'] },
+  /*
+   * 帳戶管理（migration_142）。三個銀行帳戶的流水鏡像。
+   *
+   * 只給會計以上 —— 銀行流水沒有「只看自己的」這回事，
+   * 而 RLS 也是這樣寫的（bank_* 三張表都限這三個角色）。
+   * 這一頁的選單與 RLS 一致，藏起來不是為了安全，是為了不騙人。
+   *
+   * 放在支出明細後面：它跟押金、支出是同一組「錢從哪裡進出」。
+   */
+  { href: '/accounts', label: '帳戶管理', icon: '🏛️', roles: ['accountant', 'manager', 'super_admin'] },
   { href: '/dashboard', label: '財務儀錶板', icon: '📊', roles: ['accountant', 'manager', 'super_admin'] },
   // 客戶管理跟房務、評價、清潔是同一組:都是「人在現場會用到的」。
   // 上面那半段是錢(訂單、契約、營收、請款、押金、支出、儀表板)。

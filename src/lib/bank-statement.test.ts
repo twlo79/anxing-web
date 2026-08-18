@@ -8,6 +8,7 @@ import {
   accountMatches, digitsOnly, txnKey,
   type Word, type Statement,
 } from './bank-statement.ts';
+import { looksCombined } from './pdf-words.ts';
 
 /**
  * 對帳單解析器的測試。
@@ -355,6 +356,41 @@ describe('去重鑰匙', () => {
   test('不同帳戶的同一筆 → 鑰匙不同', () => {
     const t = S['70564'].txns[0];
     assert.notEqual(txnKey('acc-1', t), txnKey('acc-2', t));
+  });
+});
+
+// ============================================================
+// pdfjs 有沒有把整列黏成一塊
+// ============================================================
+
+describe('黏成一塊的偵測', () => {
+  test('★★ 三份對帳單都沒有「一塊裡裝兩個數字」', () => {
+    // 這一條同時是**前提檢查**:整個 x 座標的做法建立在
+    // 「一個詞一個座標」上面。哪天不成立了,這裡先紅。
+    for (const e of EXPECT) {
+      const bad = W[e.tail].filter((w) => /\d[\d,]*\s+\d[\d,]*/.test(w.text));
+      assert.deepEqual(bad, [], `${e.tail} 有黏在一起的塊`);
+      assert.equal(looksCombined(W[e.tail]), false);
+    }
+  });
+
+  test('★★ 整列黏成一塊要被抓到', () => {
+    // pdfjs 若把整列當成一個 item,那一塊只有一個 x ——
+    // 支出與存入就分不出來,而那不會報錯,只會讓解析結果安靜地錯
+    const glued: Word[] = [
+      { page: 1, x0: 28, x1: 380, top: 200, text: '1 2025/01/02 ＡＴＭ轉 台北富邦 17,836 45,943' },
+    ];
+    assert.equal(looksCombined(glued), true);
+  });
+
+  test('票據號碼那種單一長數字不算黏', () => {
+    // 「7176235030200100」是一個數字,不是兩個 —— 誤報的話每份都匯不進去
+    const ok: Word[] = [
+      { page: 1, x0: 100, x1: 200, top: 100, text: '7176235030200100' },
+      { page: 1, x0: 100, x1: 200, top: 110, text: '012-0000341168247682' },
+      { page: 1, x0: 100, x1: 200, top: 120, text: '1,000,000' },
+    ];
+    assert.equal(looksCombined(ok), false);
   });
 });
 
