@@ -360,6 +360,124 @@ describe('去重鑰匙', () => {
 });
 
 // ============================================================
+// 備註欄橫跨三行，而且會往左伸出表頭
+// ============================================================
+
+/**
+ * 【2026-08-18 使用者指出：「也要留票據備註」】
+ *
+ * 第一版的摘要只讀「下一行去掉時間」，**主列的備註整個掉了**：
+ *
+ *     3  2026/07/01 匯入匯款 2,280,000 7,232,252  京饌企業有限公司 板信民權
+ *     22 2026/07/03 匯出匯款 1,329,688 3,976,587  7月A棟租金
+ *     1  2025/01/03 企網付款    79,969    84,473  美商炒飯吧科技股份有限公司台灣分公司
+ *
+ * 這些是**將來跟訂單對帳最值錢的欄位** —— 而三份舊的對帳單也一樣掉了。
+ * 沒有人會發現，因為畫面上那一格本來就常常是空的。
+ */
+describe('備註與票據號碼', () => {
+  test('★★ 主列的備註不可以掉', () => {
+    const t1 = S['48088'].txns[0];
+    assert.equal(t1.memo, '美商炒飯吧科技股份有限公司台灣分公司');
+  });
+
+  test('★★ 備註欄的內容會往左伸出表頭，界線要用餘額欄的右緣', () => {
+    // 「京饌企業有限公司」x0=409，而備註表頭 x0=435.1 ——
+    // 拿表頭左緣當界的話那個公司名整個掉出去
+    const st = parseStatement(load('24145-2607'));
+    const t3 = st.txns.find((t) => t.seq === 3);
+    assert.match(t3?.memo ?? '', /京饌企業有限公司/);
+    assert.match(t3?.memo ?? '', /板信民權/);
+  });
+
+  test('★ 三行的備註欄都要收：上一行票據號碼、主列、下一行摘要', () => {
+    const t1 = S['70564'].txns[0];
+    assert.equal(t1.refNo, '012-0000341168247682'); // 上一行
+    assert.equal(t1.memo, '１２月房租');             // 下一行，全形原樣
+  });
+
+  test('★★ 票據號碼折成兩行要接回同一欄', () => {
+    // 24145 第 1 筆:上一行 7176235030200100、下一行 0374507
+    // 靠「在第幾行」分的話，下半段會被當成摘要
+    const t1 = S['24145'].txns[0];
+    assert.equal(t1.refNo, '7176235030200100 0374507');
+    assert.equal(t1.memo, '');
+  });
+
+  test('票據號碼與摘要用長相分，不用行號分', () => {
+    const st = parseStatement(load('24145-2607'));
+    for (const t of st.txns) {
+      // 摘要不可以是純數字串（那是票據號碼）
+      if (t.memo) assert.ok(!/^[\d-]+$/.test(t.memo), `第 ${t.seq} 筆摘要像票據號碼：${t.memo}`);
+    }
+  });
+
+  test('★ 摘要真的被讀到了 —— 不是每一筆都空白', () => {
+    // 「有讀到欄位」與「欄位剛好都是空的」在畫面上長得一樣
+    const st = parseStatement(load('24145-2607'));
+    const n = st.txns.filter((t) => t.memo).length;
+    assert.ok(n > 50, `只有 ${n} 筆有摘要，太少了`);
+  });
+});
+
+// ============================================================
+// 銀行自己把一格餘額印錯
+// ============================================================
+
+/**
+ * 【2026-08-18 實例】2026/07 的 24145 第 22 筆：
+ *
+ *     21  匯出匯款    37,756   餘額 5,307,081
+ *     22  匯出匯款 1,329,688   餘額 3,976,587   ← 算出來是 3,977,393，差 806
+ *     23  匯出匯款 2,657,459   餘額 1,319,934   ← 又接回正確的鏈
+ *
+ * 而支出加總 15,311,998、存入加總 13,925,207 **跟 footer 一字不差**，
+ * 期初 ＋ 存入 − 支出 也剛好等於期末。
+ *
+ * 兩條獨立的檢查都過 → 一筆都沒漏、金額全讀對 → **是銀行印錯那一格**。
+ * 這時整份擋掉是錯的:資料完整，擋掉只會讓會計沒有數字可用，
+ * 而下次拿同一份 PDF 還是一樣擋。
+ */
+describe('★★ 餘額印錯一格：資料完整時只警告，不擋', () => {
+  const st = parseStatement(load('24145-2607'));
+
+  test('金額全部讀對 —— 加總跟 footer 一字不差', () => {
+    const sd = st.txns.reduce((a, t) => a + t.debit, 0);
+    const sc = st.txns.reduce((a, t) => a + t.credit, 0);
+    assert.equal(st.txns.length, 132);
+    assert.equal(sd, 15_311_998);
+    assert.equal(sc, 13_925_207);
+    assert.equal(st.totalDebit, 15_311_998);
+    assert.equal(st.totalCredit, 13_925_207);
+  });
+
+  test('期初 ＋ 存入 − 支出 = 期末', () => {
+    const sd = st.txns.reduce((a, t) => a + t.debit, 0);
+    const sc = st.txns.reduce((a, t) => a + t.credit, 0);
+    assert.equal(openingBalance(st.txns)! + sc - sd, st.txns[st.txns.length - 1].balance);
+  });
+
+  test('★★ 只有一項 warn，沒有任何 block', () => {
+    const p = validate(st);
+    assert.deepEqual(p.map((x) => x.code), ['balance_break']);
+    assert.equal(p[0].level, 'warn');
+    assert.match(p[0].message, /第 22 筆/);
+    assert.match(p[0].message, /806/);
+  });
+
+  test('★★ 但總計也對不上時就要擋 —— 那代表真的讀錯了', () => {
+    const broken: Statement = JSON.parse(JSON.stringify(st));
+    broken.totalDebit = 999;
+    const p = validate(broken);
+    assert.equal(p.find((x) => x.code === 'balance_break')?.level, 'block');
+  });
+
+  test('三份舊的仍然一項都不報', () => {
+    for (const e of EXPECT) assert.deepEqual(validate(S[e.tail]), []);
+  });
+});
+
+// ============================================================
 // 詞的邊界會變 —— 抬頭不可以依賴切法
 // ============================================================
 

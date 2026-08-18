@@ -2,7 +2,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { pdfToWords, looksCombined, describeWords, PDF_COMBINED_MESSAGE } from '@/lib/pdf-words';
-import { parseStatement, validate, type Statement } from '@/lib/bank-statement';
+import { parseStatement, validate, type Statement, type Problem } from '@/lib/bank-statement';
 
 /**
  * 上傳對帳單。
@@ -38,8 +38,8 @@ import { parseStatement, validate, type Statement } from '@/lib/bank-statement';
 type Ready = {
   file: string;
   statement: Statement;
-  /** 空陣列才可以匯入。 */
-  problems: { code: string; message: string }[];
+  /** `block` 一項都不能有才匯得進去；`warn` 會顯示但仍可匯。 */
+  problems: Problem[];
 };
 type Failed = { file: string; error: string; detail?: string };
 type Result = { file: string; text: string; ok: boolean };
@@ -86,7 +86,7 @@ export default function UploadPanel({
         const st = parseStatement(words);
         const problems = validate(st);
 
-        if (problems.length > 0 && st.txns.length === 0) {
+        if (st.txns.length === 0) {
           bad.push({
             file: f.name,
             error: looksCombined(words)
@@ -116,7 +116,7 @@ export default function UploadPanel({
     const out: Result[] = [];
 
     for (const r of ready) {
-      if (r.problems.length > 0) continue;
+      if (isBlocked(r)) continue;
       try {
         const res = await fetch('/api/bank-statements/import', {
           method: 'POST',
@@ -146,8 +146,9 @@ export default function UploadPanel({
     if (good > 0) await onDone(`匯入完成：${good} 份對帳單`);
   }, [ready, onDone]);
 
-  const canSend = ready.length > 0 && ready.every((r) => r.problems.length === 0);
-  const blocked = ready.filter((r) => r.problems.length > 0);
+  const isBlocked = (r: Ready) => r.problems.some((p) => p.level === 'block');
+  const canSend = ready.length > 0 && !ready.some(isBlocked);
+  const blocked = ready.filter(isBlocked);
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4">
@@ -219,7 +220,7 @@ export default function UploadPanel({
           {/* ── 預覽 ───────────────────────────── */}
           {ready.map((r) => {
             const st = r.statement;
-            const bad = r.problems.length > 0;
+            const bad = isBlocked(r);
             const last = st.txns[st.txns.length - 1];
             return (
               <div
@@ -243,8 +244,11 @@ export default function UploadPanel({
                   </div>
                 )}
                 {r.problems.map((p) => (
-                  <div key={p.code} className="mt-1 text-red-600">
-                    ✕ {p.message}
+                  <div
+                    key={p.code}
+                    className={`mt-1 ${p.level === 'block' ? 'text-red-600' : 'text-amber-700'}`}
+                  >
+                    {p.level === 'block' ? '✕' : '⚠'} {p.message}
                   </div>
                 ))}
               </div>

@@ -96,7 +96,11 @@ export type Statement = {
   txns: Txn[];
 };
 
-export type Problem = { code: string; message: string };
+/**
+ * `block` 一項都不能有，有就整份不匯。
+ * `warn` 是「PDF 本身有問題但資料是完整的」—— 人看過之後可以匯，會記進 `warnings`。
+ */
+export type Problem = { code: string; message: string; level: 'block' | 'warn' };
 
 // ── 小工具 ────────────────────────────────────────
 
@@ -184,6 +188,17 @@ type Cols = {
   right: number;
   /** 序號欄的右界。 */
   seqRight: number;
+  /**
+   * 備註／摘要欄的左界。
+   *
+   * **用「帳面餘額表頭的右緣」而不是「備註表頭的左緣」** ——
+   * 備註欄的內容會往左伸出表頭:
+   *
+   *     備註表頭 x0=435.1，而「京饌企業有限公司」x0=409
+   *
+   * 拿表頭左緣當界的話,那個公司名整個掉出去。
+   */
+  memoLeft: number;
 };
 
 const HDR = {
@@ -218,6 +233,7 @@ export function readColumns(words: Word[]): Cols | null {
     left: desc.x0,
     right: ref.x0 - 2,
     seqRight: seq.x1 + 4,
+    memoLeft: b.x1 + 2,
   };
 }
 
@@ -379,13 +395,41 @@ function pickTxn(row: Word[], above: Word[] | undefined, below: Word[] | undefin
   const description = words[0]?.text ?? '';
   const counterparty = words.slice(1).map((w) => w.text).join(' ');
 
-  // 上一行:交易日 ＋ 票據號碼
   const txnDate = above?.find((w) => DATE.test(w.text));
-  const refNo = above?.filter((w) => !DATE.test(w.text)).map((w) => w.text).join(' ') ?? '';
-
-  // 下一行:交易時間 ＋ 摘要（全形字原樣保留）
   const timeW = below?.find((w) => TIME.test(w.text));
-  const memo = below?.filter((w) => !TIME.test(w.text)).map((w) => w.text).join(' ') ?? '';
+
+  /*
+   * 【備註欄橫跨三行,而且要靠 x 座標抓】（2026-08-18 修正）
+   *
+   * 第一版只讀「下一行去掉時間」當摘要,結果**主列的備註整個掉了**:
+   *
+   *     3  2026/07/01 匯入匯款  2,280,000  7,232,252  京饌企業有限公司 板信民權
+   *     22 2026/07/03 匯出匯款  1,329,688  3,976,587  7月A棟租金
+   *
+   * 「京饌企業有限公司」「7月A棟租金」「電視」「家具」全部沒進資料庫 ——
+   * **而那是將來跟訂單對帳最值錢的欄位**。三份舊的對帳單也一樣掉了。
+   *
+   * 正確的做法是看 x 座標:備註欄的東西可能出現在上一行(票據號碼)、
+   * 主列(對方名稱／用途)、下一行(摘要),三行都要收。
+   */
+  const memoWords = [above, row, below]
+    .filter(Boolean)
+    .flatMap((r) => r!.filter((w) => w.x0 >= cols.memoLeft))
+    .map((w) => w.text);
+
+  /*
+   * 票據號碼與摘要都在同一欄,**用長相分**而不是用「在第幾行」分:
+   *
+   *   012-0000341168247682   純數字與連字號 → 票據號碼
+   *   0374507                同上（它是上一行號碼的下半段）
+   *   京饌企業有限公司        → 摘要
+   *   7月A棟租金 / １２月房租  → 摘要
+   *
+   * 靠行號分的話,票據號碼折到第二行的那幾筆會被當成摘要。
+   * 分錯的代價很小(兩個欄位都會顯示),但分對讓對帳好查很多。
+   */
+  const refNo = memoWords.filter((t) => /^[\d-]+$/.test(t)).join(' ');
+  const memo = memoWords.filter((t) => !/^[\d-]+$/.test(t)).join(' ');
 
   return {
     page: row[0].page,
@@ -429,12 +473,31 @@ export function validate(st: Statement): Problem[] {
   const t = st.txns;
 
   if (!st.accountNo) {
-    p.push({ code: 'no_account', message: '這份 PDF 找不到帳號 —— 是元大的對帳單嗎？' });
+    p.push({ code: 'no_account', level: 'block', message: '這份 PDF 找不到帳號 —— 是元大的對帳單嗎？' });
   }
   if (t.length === 0) {
-    p.push({ code: 'empty', message: '解析不出任何交易 —— 版面可能改了' });
+    p.push({ code: 'empty', level: 'block', message: '解析不出任何交易 —— 版面可能改了' });
     return p; // 沒有資料,後面幾項驗了也沒意義
   }
+
+  /*
+   * 【整份對不對得起來】
+   *
+   * 期初 ＋ 所有存入 − 所有支出 = 最後一筆的餘額。
+   *
+   * 這一條加上「加總等於 footer 的總計」,兩條同時成立就表示
+   * **一筆都沒漏、每一筆金額都讀對了**。
+   *
+   * 有了它,單一格餘額對不上的意義就變了 —— 見下面 balance_break。
+   */
+  const sumD = t.reduce((a, x) => a + x.debit, 0);
+  const sumC = t.reduce((a, x) => a + x.credit, 0);
+  const totalsMatch =
+    st.totalDebit != null && st.totalCredit != null &&
+    Math.abs(sumD - st.totalDebit) <= 0.005 && Math.abs(sumC - st.totalCredit) <= 0.005;
+  const opening = t[0].balance - t[0].credit + t[0].debit;
+  const endToEnd = Math.abs(opening + sumC - sumD - t[t.length - 1].balance) <= 0.005;
+  const complete = totalsMatch && endToEnd;
 
   /*
    * 【序號連續】免費的第三道驗證。
@@ -446,21 +509,52 @@ export function validate(st: Statement): Problem[] {
     if (t[i].seq !== i + 1) {
       p.push({
         code: 'seq_gap',
+        level: 'block',
         message: `序號在第 ${i + 1} 筆斷掉（讀到 ${t[i].seq}）—— 有列沒讀到`,
       });
       break;
     }
   }
 
-  /* 【餘額連續】前一筆餘額 − 支出 + 存入 = 這一筆餘額 */
+  /*
+   * 【餘額連續】前一筆餘額 − 支出 + 存入 = 這一筆餘額。
+   *
+   * ============================================================
+   * 【為什麼這一條可能只是警告】（2026-08-18 實例）
+   *
+   * 2026/07 那份 24145 的第 22 筆:
+   *
+   *     21  匯出匯款    37,756   餘額 5,307,081
+   *     22  匯出匯款 1,329,688   餘額 3,976,587   ← 算出來是 3,977,393，差 806
+   *     23  匯出匯款 2,657,459   餘額 1,319,934   ← 又接回正確的鏈
+   *
+   * 而同一份的支出加總 15,311,998、存入加總 13,925,207
+   * **跟 footer 的總計一字不差**，期初 ＋ 存入 − 支出 也剛好等於期末。
+   *
+   * 兩條獨立的檢查都過了 —— 那就表示一筆都沒漏、金額全部讀對，
+   * **是銀行把那一格餘額印錯了**，不是我們解析錯。
+   *
+   * 這時候整份擋掉是錯的:資料是完整的，擋掉只會讓會計沒有數字可用，
+   * 而下次拿到同一份 PDF 還是一樣擋。
+   *
+   * 所以規則是:
+   *   總計對得上 ＆ 頭尾對得起來  → **警告**，人看過可以匯，記進 warnings
+   *   任一條沒過                → **擋**，那時餘額接不上代表我們真的讀錯了
+   */
   for (let i = 1; i < t.length; i++) {
     const want = t[i - 1].balance - t[i].debit + t[i].credit;
     if (Math.abs(want - t[i].balance) > 0.005) {
       p.push({
         code: 'balance_break',
+        level: complete ? 'warn' : 'block',
         message:
-          `第 ${t[i].seq} 筆（${t[i].postDate}）餘額接不上：` +
-          `算出來是 ${want.toLocaleString()}，PDF 上寫 ${t[i].balance.toLocaleString()}`,
+          `第 ${t[i].seq} 筆（${t[i].postDate}）PDF 上的餘額是 ` +
+          `${t[i].balance.toLocaleString()}，但由上一筆推算應該是 ${want.toLocaleString()}` +
+          (complete
+            ? `（差 ${Math.abs(want - t[i].balance).toLocaleString()}）。` +
+              '整份的支出、存入加總與期初期末都對得起來 —— ' +
+              '所以交易一筆都沒漏，是銀行那一格餘額印得不一致。'
+            : ' —— 而且總計也對不上，代表解析可能有誤。'),
       });
       break;
     }
@@ -480,22 +574,23 @@ export function validate(st: Statement): Problem[] {
   if (st.totalDebit == null || st.totalCredit == null) {
     p.push({
       code: 'no_total',
+      level: 'block',
       message: 'PDF 上讀不到「總計」那一行 —— 少了它就無法確認有沒有漏讀交易',
     });
   }
 
-  const sd = t.reduce((a, x) => a + x.debit, 0);
-  const sc = t.reduce((a, x) => a + x.credit, 0);
-  if (st.totalDebit != null && Math.abs(sd - st.totalDebit) > 0.005) {
+  if (st.totalDebit != null && Math.abs(sumD - st.totalDebit) > 0.005) {
     p.push({
       code: 'total_debit',
-      message: `支出加總 ${sd.toLocaleString()} 對不上 PDF 的總計 ${st.totalDebit.toLocaleString()}`,
+      level: 'block',
+      message: `支出加總 ${sumD.toLocaleString()} 對不上 PDF 的總計 ${st.totalDebit.toLocaleString()}`,
     });
   }
-  if (st.totalCredit != null && Math.abs(sc - st.totalCredit) > 0.005) {
+  if (st.totalCredit != null && Math.abs(sumC - st.totalCredit) > 0.005) {
     p.push({
       code: 'total_credit',
-      message: `存入加總 ${sc.toLocaleString()} 對不上 PDF 的總計 ${st.totalCredit.toLocaleString()}`,
+      level: 'block',
+      message: `存入加總 ${sumC.toLocaleString()} 對不上 PDF 的總計 ${st.totalCredit.toLocaleString()}`,
     });
   }
 

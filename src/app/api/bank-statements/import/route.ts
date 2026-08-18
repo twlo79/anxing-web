@@ -82,10 +82,19 @@ export async function POST(req: Request) {
   const account = m.account;
 
   // ── 2. 重驗 ──────────────────────────────────────
+  /*
+   * `block` 一項都不能有。`warn` 是「PDF 本身有瑕疵但資料完整」——
+   * 例如銀行把某一格餘額印錯,而總計與期初期末都對得起來。
+   *
+   * warn 放行,但**一定要留痕跡**:寫進 bank_statements.warnings。
+   * 將來數字對不上時,這裡是唯一查得到「當初就知道有這件事」的地方。
+   */
   const problems = validate(st);
-  if (problems.length > 0) {
+  const blocks = problems.filter((x) => x.level === 'block');
+  const warns = problems.filter((x) => x.level === 'warn');
+  if (blocks.length > 0) {
     return NextResponse.json(
-      { error: '對帳單沒通過檢查，沒有寫入任何資料', problems },
+      { error: '對帳單沒通過檢查，沒有寫入任何資料', problems: blocks },
       { status: 400 },
     );
   }
@@ -130,6 +139,7 @@ export async function POST(req: Request) {
       parsed_count: st.txns.length,
       inserted_count: plan.fresh.length,
       skipped_count: plan.duplicate.length,
+      warnings: warns.length > 0 ? warns.map((w) => w.message) : null,
       file_name: body.fileName ?? null,
       uploaded_by: me.user.id,
     })
@@ -201,5 +211,6 @@ export async function POST(req: Request) {
     duplicate: plan.duplicate.length,
     selfDuplicate: plan.selfDuplicate.length,
     closingBalance: last.balance,
+    warnings: warns.map((w) => w.message),
   });
 }
