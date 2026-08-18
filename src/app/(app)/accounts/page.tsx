@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase';
 import { fetchAll } from '@/lib/fetch-all';
 import Toast from '@/components/Toast';
 import UploadPanel from './upload-panel';
+import StatementsPanel from './statements-panel';
 import { totalBalance } from '@/lib/bank-import';
 
 /**
@@ -75,6 +76,8 @@ export default function AccountsPage() {
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
+  // 流水 ／ 匯入紀錄。匯入紀錄是「哪一批可以撤銷」的地方
+  const [view, setView] = useState<'txn' | 'stmt'>('txn');
 
   const loadAccounts = useCallback(async () => {
     const { data, error } = await supabase
@@ -261,20 +264,51 @@ export default function AccountsPage() {
             ))}
           </div>
           <div className="ml-auto flex items-center gap-2">
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="找摘要、對方、金額…"
-              className="w-48 rounded-md border px-2 py-1 text-sm"
-            />
-            {q && (
-              <button onClick={() => setQ('')} className="text-sm text-gray-500 underline">
-                清除
+            {/* 流水 ／ 匯入紀錄 */}
+            <div className="flex rounded-md border text-sm">
+              <button
+                onClick={() => setView('txn')}
+                className={`px-2.5 py-1 ${view === 'txn' ? 'bg-gray-100 font-medium' : 'text-gray-500'}`}
+              >
+                流水
               </button>
+              <button
+                onClick={() => setView('stmt')}
+                className={`border-l px-2.5 py-1 ${view === 'stmt' ? 'bg-gray-100 font-medium' : 'text-gray-500'}`}
+              >
+                匯入紀錄
+              </button>
+            </div>
+            {view === 'txn' && (
+              <>
+                <input
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="找摘要、對方、金額…"
+                  className="w-48 rounded-md border px-2 py-1 text-sm"
+                />
+                {q && (
+                  <button onClick={() => setQ('')} className="text-sm text-gray-500 underline">
+                    清除
+                  </button>
+                )}
+              </>
             )}
           </div>
         </div>
 
+        {view === 'stmt' ? (
+          <StatementsPanel
+            accountId={tab}
+            onChanged={async (text) => {
+              setMsg(text); setErr(false);
+              // 撤銷會影響卡片上的餘額（那份可能是最新的一份）
+              await loadAccounts();
+              await loadTxns(tab);
+            }}
+            onError={(text) => { setMsg(text); setErr(true); }}
+          />
+        ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-xs text-gray-600">
@@ -352,6 +386,7 @@ export default function AccountsPage() {
             )}
           </table>
         </div>
+        )}
       </div>
 
       {showUpload && (
