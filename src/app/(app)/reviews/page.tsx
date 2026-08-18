@@ -140,8 +140,20 @@ export default function ReviewsPage() {
       .then(({ data }) => setTenures((data ?? []) as Tenure[]));
     supabase.from('staff').select('id, name')
       .then(({ data }) => setStaffNames(Object.fromEntries((data ?? []).map((x: any) => [x.id, x.name]))));
-    supabase.from('properties').select('id, name, active, estate_id').order('active', { ascending: false }).order('name')
-      .then(({ data }) => setProperties(data ?? []));
+    /*
+     * 【一定要分頁】（2026-08-17）
+     *
+     * Supabase 預設**最多回 1000 列而且不報錯**。房源超過 1000 之後，
+     * 撈不到的那些在 `propById` 裡查不到 → 評價列表顯示「未對應」、物業「—」，
+     * 而管家是靠物業回查任期的，所以負責人也跟著空。
+     *
+     * 症狀看起來像「爬蟲沒對到房源」，實際上 reviews.property_id 好好的 ——
+     * 1,592 筆全部有值。錯的只是畫面查不到名字。
+     */
+    fetchAll<Property>((f, t) => supabase.from('properties')
+      .select('id, name, active, estate_id')
+      .order('active', { ascending: false }).order('name').range(f, t))
+      .then(({ rows }) => setProperties(rows));
   }, [supabase]);
 
   // Dashboard 統計
