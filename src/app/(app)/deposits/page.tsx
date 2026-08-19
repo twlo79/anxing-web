@@ -18,8 +18,8 @@ import {
   lineText, type DepLine,
 } from '@/lib/deposit-lines';
 import {
-  canBeTarget, canTransfer, transferCandidates, transferChip, roleCanTransfer,
-  depName, isTransfer, type TransferDep,
+  canBeSource, canBeTarget, canTransfer, transferCandidates, transferTargets,
+  transferChip, roleCanTransfer, depName, isTransfer, type TransferDep,
 } from '@/lib/deposit-transfer';
 import { shareDeposit } from '@/lib/share';
 import { softDelete } from '@/lib/trash';
@@ -128,10 +128,21 @@ export default function DepositsPage() {
   const [sort, setSort] = useState<SortState>({ key: 'received_on', dir: 'desc' });
   const [detail, setDetail] = useState<Dep | null>(null);
   const [edit, setEdit] = useState<Dep | null>(null);
-  /** 正在替哪一筆（B，尚未收）找來源。null = 沒有在移轉。 */
-  const [moving, setMoving] = useState<Dep | null>(null);
+  /**
+   * 正在移轉哪一筆。null = 沒有在移轉。
+   *
+   * `side` 是「使用者點進去的那一筆扮演什麼角色」：
+   *   'to'   他站在目的（B，尚未收）→ 清單列出可以當來源的
+   *   'from' 他站在來源（A，暫收中）→ 清單列出可以移過去的
+   *
+   * ★ 兩個方向都要有。原本只放目的那一邊，實際操作時人手上先有的是
+   *   **要移走的那筆押金**，點進去卻什麼按鈕都沒有（2026-08-19）。
+   */
+  const [moving, setMoving] = useState<{ dep: Dep; side: 'to' | 'from' } | null>(null);
   const [moveKw, setMoveKw] = useState('');
   const [moveOn, setMoveOn] = useState('');
+  /** 要不要連「條件不符」的也列出來。預設不列 —— 見移轉視窗裡的說明。 */
+  const [showBad, setShowBad] = useState(false);
   const [saving, setSaving] = useState(false);
   // 同 purchases：身分與角色來自 ProfileProvider，不再自己查一次
   const prof = useProfile();
@@ -448,20 +459,23 @@ export default function DepositsPage() {
    * 分兩句寫的話第二句被擋掉時畫面會說「移轉成功」,
    * 實際上 A 已退、B 還是未收,那筆錢在系統裡人間蒸發而且沒有錯誤訊息。
    */
-  async function doTransfer(from: Dep) {
+  async function doTransfer(other: Dep) {
     if (!moving) return;
-    const v = canTransfer(from as TransferDep, moving as TransferDep);
+    // 使用者站在哪一邊，另一邊就是 other —— 兩個方向共用同一支
+    const from = moving.side === 'from' ? moving.dep : other;
+    const to = moving.side === 'from' ? other : moving.dep;
+    const v = canTransfer(from as TransferDep, to as TransferDep);
     if (!v.ok) return flash(v.reason + (v.hint ? `：${v.hint}` : ''));
     const on = /^\d{4}-\d{2}-\d{2}$/.test(moveOn) ? moveOn : todayStr();
     if (!confirm(
-      `把 ${depName(from)} 的押金 NT$ ${fmt(from.amount)} 移轉到 ${depName(moving)}？\n\n`
+      `把 ${depName(from)} 的押金 NT$ ${fmt(from.amount)} 移轉到 ${depName(to)}？\n\n`
       + `・${depName(from)} → 已退押金（移轉，錢沒有實際匯出）\n`
-      + `・${depName(moving)} → 已收押金\n`
+      + `・${depName(to)} → 已收押金\n`
       + `・移轉日 ${on}\n\n兩邊備註都會自動註記，移錯了可以撤銷。`
     )) return;
     setSaving(true);
     const { data, error } = await supabase.rpc('transfer_deposit', {
-      p_from: from.id, p_to: moving.id, p_on: on,
+      p_from: from.id, p_to: to.id, p_on: on,
     });
     setSaving(false);
     if (error) return flash('移轉失敗：' + error.message);
@@ -1111,8 +1125,14 @@ export default function DepositsPage() {
                       放在 A 那邊的話,他得先想到「喔要去舊房間按」。
                     */}
                     {canMove && canBeTarget(d as TransferDep).ok && (
-                      <button onClick={() => { setMoving(d); setMoveKw(''); setMoveOn(todayStr()); }}
+                      <button onClick={() => { setMoving({ dep: d, side: 'to' }); setMoveKw(''); setMoveOn(todayStr()); setShowBad(false); }}
                         className={`${btn} border border-violet-300 text-violet-700`}>從別房移轉押金</button>
+                    )}
+                    {/* ★ 反過來也要有:人手上先有的往往是「要移走的那筆押金」,
+                        點進去卻只有退款按鈕的話,他不會想到要去新房間那邊按 */}
+                    {canMove && canBeSource(d as TransferDep).ok && (
+                      <button onClick={() => { setMoving({ dep: d, side: 'from' }); setMoveKw(''); setMoveOn(todayStr()); setShowBad(false); }}
+                        className={`${btn} border border-violet-300 text-violet-700`}>移轉到別房</button>
                     )}
                     {canMove && isTransfer(d) && (
                       <button onClick={() => undoTransfer(d)} disabled={saving}
@@ -1154,61 +1174,119 @@ export default function DepositsPage() {
             onClick={(e) => e.stopPropagation()}>
             <div className="border-b border-mor-line px-4 md:px-6 py-4"
               style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
-              <div className="font-bold">押金移房・移轉到 {depName(moving)}</div>
+              <div className="font-bold">
+                押金移房・{moving.side === 'to' ? '移轉到' : '從'} {depName(moving.dep)}
+                {moving.side === 'from' ? ' 移出' : ''}
+              </div>
               <div className="text-xs text-gray-500 mt-1">
-                這筆需要 <b>NT$ {fmt(moving.amount)}</b>（{moving.currency}）。
-                選一筆同金額、同幣別的暫收中押金移過來 —— 錢不會實際進出。
+                {moving.side === 'to'
+                  ? <>這筆需要 <b>NT$ {fmt(moving.dep.amount)}</b>（{moving.dep.currency}）。
+                      選一筆同金額、同幣別的暫收中押金移過來 —— 錢不會實際進出。</>
+                  : <>這筆有 <b>NT$ {fmt(moving.dep.amount)}</b>（{moving.dep.currency}）在我們手上。
+                      選一筆同金額、同幣別的未收押金移過去 —— 錢不會實際進出。</>}
               </div>
             </div>
 
-            <div className="px-4 md:px-6 py-3 border-b border-mor-line flex flex-wrap gap-2 items-center text-sm">
-              <input value={moveKw} onChange={(e) => setMoveKw(e.target.value)}
-                placeholder="搜房號、房客、金額" className={`${inp} flex-1 min-w-[10rem]`} />
-              <label className="text-xs text-gray-500">移轉日</label>
-              <input type="date" value={moveOn} onChange={(e) => setMoveOn(e.target.value)} className={inp} />
-            </div>
-
-            <div className="flex-1 overflow-y-auto px-4 md:px-6 py-2">
-              {(() => {
-                const list = transferCandidates(rows as TransferDep[], moving as TransferDep, moveKw);
-                if (!list.length) {
-                  return (
-                    <div className="py-10 text-center text-sm text-gray-400">
-                      沒有暫收中的押金可以移轉
-                      {moveKw && <div className="mt-1 text-xs">（正在搜「{moveKw}」，清掉看全部）</div>}
+            {(() => {
+              const all = moving.side === 'to'
+                ? transferCandidates(rows as TransferDep[], moving.dep as TransferDep, moveKw)
+                : transferTargets(rows as TransferDep[], moving.dep as TransferDep, moveKw);
+              const good = all.filter((x) => x.verdict.ok);
+              const bad = all.filter((x) => !x.verdict.ok);
+              /*
+               * ★★ 預設**只列可以移的**（2026-08-19，David 實測時找不到那一筆）。
+               *
+               * 原本把不能移的也一起列出來,理由是「直接消失的話使用者會一直找」。
+               * 那個理由對，但實際跑起來的比例完全不是我想的:
+               * 目的要 100,000，而暫收中的押金是 288,000 / 284,800 / 240,000…
+               * **一筆能移的被十一筆紅字埋掉**，畫面看起來像「全部都不行」。
+               *
+               * 所以改成:能移的先列，不能的收在「另有 N 筆條件不符」後面。
+               * 兩個需求都要顧 —— 藏起來但**說出有幾筆被藏了**，
+               * 而不是讓人以為那些押金不存在。
+               */
+              const list = showBad ? [...good, ...bad] : good;
+              const rowOf = ({ dep, verdict }: typeof all[number]) => (
+                <div key={dep.id}
+                  className={`flex items-center gap-3 py-2.5 border-b border-mor-line last:border-0
+                    ${verdict.ok ? '' : 'opacity-60'}`}>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium truncate">
+                      {depName(dep)}
+                      <span className="ml-2 text-xs text-gray-500 font-normal">{dep.guest_name ?? ''}</span>
                     </div>
-                  );
-                }
-                return list.map(({ dep, verdict }) => (
-                  <div key={dep.id}
-                    className={`flex items-center gap-3 py-2.5 border-b border-mor-line last:border-0
-                      ${verdict.ok ? '' : 'opacity-60'}`}>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium truncate">
-                        {depName(dep)}
-                        <span className="ml-2 text-xs text-gray-500 font-normal">{dep.guest_name ?? ''}</span>
-                      </div>
-                      <div className="text-xs text-gray-500 mt-0.5">
-                        NT$ {fmt(dep.amount)}
-                        {(dep.currency || 'TWD') !== 'TWD' && <span className="ml-1">（{dep.currency}）</span>}
-                        ・收 {dep.received_on ?? '—'}
-                      </div>
-                      {!verdict.ok && (
-                        <div className="text-xs text-amber-700 mt-0.5">
-                          {verdict.reason}{verdict.hint ? `・${verdict.hint}` : ''}
-                        </div>
-                      )}
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      NT$ {fmt(dep.amount)}
+                      {(dep.currency || 'TWD') !== 'TWD' && <span className="ml-1">（{dep.currency}）</span>}
+                      {dep.received_on ? `・收 ${dep.received_on}` : '・尚未收'}
                     </div>
-                    <button disabled={!verdict.ok || saving}
-                      onClick={() => doTransfer(depById[dep.id])}
-                      className="shrink-0 h-9 px-3 rounded-lg text-sm font-medium bg-violet-600 text-white
-                        disabled:bg-gray-200 disabled:text-gray-400">
-                      移過來
-                    </button>
+                    {/* 不能移的只留一行原因。三行說明乘以十幾筆就是一面紅牆,
+                        而真正該被看到的那一筆就在裡面 —— 詳細的怎麼辦寫在下面那條提示 */}
+                    {!verdict.ok && (
+                      <div className="text-xs text-amber-700 mt-0.5 truncate">{verdict.reason}</div>
+                    )}
                   </div>
-                ));
-              })()}
-            </div>
+                  <button disabled={!verdict.ok || saving}
+                    onClick={() => doTransfer(depById[dep.id])}
+                    className="shrink-0 h-9 px-3 rounded-lg text-sm font-medium bg-violet-600 text-white
+                      disabled:bg-gray-200 disabled:text-gray-400">
+                    {moving.side === 'to' ? '移過來' : '移過去'}
+                  </button>
+                </div>
+              );
+
+              return <>
+                <div className="px-4 md:px-6 py-3 border-b border-mor-line flex flex-wrap gap-2 items-center text-sm">
+                  <input value={moveKw} onChange={(e) => setMoveKw(e.target.value)}
+                    placeholder="搜房號、房客、金額" className={`${inp} flex-1 min-w-[10rem]`} />
+                  <label className="text-xs text-gray-500">移轉日</label>
+                  <input type="date" value={moveOn} onChange={(e) => setMoveOn(e.target.value)} className={inp} />
+                </div>
+
+                {/* 筆數一定要寫出來 —— 「金額對得上的有幾筆」是這個視窗唯一重要的數字 */}
+                <div className="px-4 md:px-6 py-2 border-b border-mor-line text-xs flex flex-wrap items-center gap-2">
+                  <span className={good.length ? 'text-mor-green font-medium' : 'text-gray-400'}>
+                    金額相符 {good.length} 筆
+                  </span>
+                  {bad.length > 0 && (
+                    <button onClick={() => setShowBad(!showBad)} className="text-gray-500 underline">
+                      另有 {bad.length} 筆條件不符（{showBad ? '收起來' : '也顯示'}）
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex-1 overflow-y-auto px-4 md:px-6 py-2">
+                  {list.length ? list.map(rowOf) : (
+                    <div className="py-10 text-center text-sm text-gray-400 px-4">
+                      {all.length === 0
+                        ? <>
+                            {moving.side === 'to' ? '沒有暫收中的押金可以移轉' : '沒有還沒收押金的訂單可以移過去'}
+                            {moveKw
+                              ? <div className="mt-1 text-xs">（正在搜「{moveKw}」，清掉看全部）</div>
+                              : moving.side === 'from' && (
+                                <div className="mt-1 text-xs">
+                                  新房間要先有訂單、訂單上要填押金金額 —— 那一筆「尚未收」長出來之後才移得過去
+                                </div>
+                              )}
+                          </>
+                        : <>
+                            <div>沒有金額相符的押金</div>
+                            {/*
+                              這是最常見的情況,所以要把「該怎麼辦」寫完整。
+                              金額不同不能放行的原因:deposits.amount 由觸發器從訂單同步,
+                              移轉時改不動 —— 硬移的話這一筆會顯示一個從來沒收到的數字。
+                            */}
+                            <div className="mt-2 text-xs leading-relaxed">
+                              {depName(moving.dep)} 是 <b>NT$ {fmt(moving.dep.amount)}</b>。
+                              先到{moving.dep.order_id ? '訂單' : '契約'}把兩邊的押金金額改成一致，再回來移轉。
+                              <br />上面的「另有 {bad.length} 筆條件不符」點開可以看每一筆差多少。
+                            </div>
+                          </>}
+                    </div>
+                  )}
+                </div>
+              </>;
+            })()}
 
             <div className="border-t border-mor-line px-4 md:px-6 py-3 flex justify-between items-center gap-2"
               style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>

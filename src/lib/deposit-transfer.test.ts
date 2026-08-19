@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  canBeSource, canBeTarget, canTransfer, transferCandidates, transferChip,
+  canBeSource, canBeTarget, canTransfer, transferCandidates, transferTargets, transferChip,
   roleCanTransfer, depName, isTransfer, type TransferDep,
 } from './deposit-transfer.ts';
 
@@ -186,6 +186,49 @@ describe('挑來源的清單', () => {
     assert.equal(c.length, 2);
     assert.equal(c.every((x) => !x.verdict.ok), true);
     assert.match(c[0].verdict.reason, /金額不同/);
+  });
+});
+
+describe('挑目的的清單（從來源那邊開始）', () => {
+  /*
+   * 【為什麼這個方向也要有】（2026-08-19，實際操作時卡住）
+   *
+   * 原本入口只放在目的那一筆。但人手上先有的是**要移走的那筆押金** ——
+   * 點進去卻什麼按鈕都沒有,而他不會想到「要去新房間那邊按」。
+   */
+  const ROWS = [
+    B({ id: 'b1', room: 'B201' }),
+    B({ id: 'b2', room: 'B101' }),
+    B({ id: 'b3', room: 'B301', received_on: '2026-07-01' }),   // 已收過
+    B({ id: 'b4', room: 'B401', orphaned: true }),              // 孤兒
+  ];
+
+  test('★★ 只列得出還沒收押金的', () => {
+    const c = transferTargets(ROWS, A());
+    assert.deepEqual(c.map((x) => x.dep.id).sort(), ['b1', 'b2']);
+  });
+
+  test('★★ 來源自己不會出現在清單裡', () => {
+    const self = A({ id: 'self', received_on: null });
+    assert.equal(
+      transferTargets([...ROWS, self], self).some((x) => x.dep.id === 'self'), false);
+  });
+
+  test('★ 金額不同的排後面，但仍然看得到原因', () => {
+    const c = transferTargets([...ROWS, B({ id: 'b9', room: 'B999', amount: 55_000 })], A());
+    assert.equal(c[c.length - 1].dep.id, 'b9');
+    assert.match(c[c.length - 1].verdict.reason, /金額不同/);
+  });
+
+  test('搜房號找得到', () => {
+    assert.equal(transferTargets(ROWS, A(), 'B101').length, 1);
+  });
+
+  test('★ 兩個方向對同一組答案要一致', () => {
+    // 不一致的話會出現「從 A 看得到 B,從 B 看不到 A」,而那沒有人查得出原因
+    const a = A(); const b = B();
+    assert.equal(canTransfer(a, b).ok, transferTargets([b], a)[0].verdict.ok);
+    assert.equal(canTransfer(a, b).ok, transferCandidates([a], b)[0].verdict.ok);
   });
 });
 

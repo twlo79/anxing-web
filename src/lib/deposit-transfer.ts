@@ -151,6 +151,37 @@ export function transferCandidates(
       || (b.dep.received_on ?? '').localeCompare(a.dep.received_on ?? ''));
 }
 
+/**
+ * 給定來源（A），列出可以移過去的押金。
+ *
+ * ============================================================
+ * 【為什麼兩個方向都要有】（2026-08-19，David 實際操作時卡住）
+ *
+ * 原本入口只放在目的（B，尚未收）那一筆上，理由是「人是從
+ * B 房怎麼會有押金未收 開始找的」。
+ *
+ * 實際上不是。他手上先有的是**那筆要移走的押金** ——
+ * 13A5 Roger 那筆退款被駁回，因為他其實是換房。
+ * 他點進那筆押金要「移過去」，而那一頁上什麼按鈕都沒有。
+ *
+ * 兩邊都放入口，不用猜他從哪一邊開始。
+ *
+ * 排序:能移的排前面，其次房號 —— 未收的那些沒有收款日可以排。
+ */
+export function transferTargets(
+  rows: TransferDep[], from: TransferDep, q = '',
+): { dep: TransferDep; verdict: Verdict }[] {
+  const kw = q.trim().toLowerCase();
+  return rows
+    .filter((d) => d.id !== from.id && canBeTarget(d).ok)
+    .filter((d) => !kw || [d.room, d.guest_name, String(d.amount)]
+      .some((v) => (v ?? '').toString().toLowerCase().includes(kw)))
+    .map((dep) => ({ dep, verdict: canTransfer(from, dep) }))
+    .sort((a, b) =>
+      Number(b.verdict.ok) - Number(a.verdict.ok)
+      || depName(a.dep).localeCompare(depName(b.dep)));
+}
+
 export const isTransferOut = (d: Pick<TransferDep, 'transfer_to_id'>) => !!d.transfer_to_id;
 export const isTransferIn = (d: Pick<TransferDep, 'transfer_from_id'>) => !!d.transfer_from_id;
 export const isTransfer = (d: Pick<TransferDep, 'transfer_to_id' | 'transfer_from_id'>) =>
