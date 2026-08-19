@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 326 428" width="326" height="428" role="img" aria-label="安幸">
+  <title>安幸 標誌</title>
+  <desc>拱形外框，內含三條橫線。幾何量自 estia_m11_ceremonial_draft 原稿：外框 326×428、線寬 17.5、拱中心線半徑 154.25、橫線間距 70。</desc>
+  <g fill="none" stroke="#221D17" stroke-width="17.5" stroke-linecap="butt">
+    <path d="M8.75 428 V162.5 A154.25 154.25 0 0 1 317.25 162.5 V428" />
+    <path d="M98.75 213.5 H226.25" />
+    <path d="M98.75 283.5 H187.25" />
+    <path d="M98.75 354 H226.25" />
+  </g>
+</svg>
