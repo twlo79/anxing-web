@@ -121,7 +121,16 @@ export const CONTRACT_FEE_PRESETS: { label: string; fee_type: string; item_name:
   // 垃圾代收歸在清潔費底下（使用者指定）—— 科目看清潔費，
   // 要單獨知道垃圾代收收了多少就看項目。另立科目要改資料庫的科目對應表，
   // 為一個小金額的細目不值得。
+  /*
+   * 【清潔費與修繕費要留一個「沒有項目」的選項】（2026-08-19）
+   *
+   * 改成用 presets 之前,這兩個科目在下拉裡是選得到的。
+   * 只留「垃圾代收」的話,想記一筆純清潔費就沒有選項可選 ——
+   * **那是功能倒退,而且不會報錯**,只會讓人退而選一個最像的。
+   */
+  { label: '清潔費',        fee_type: '清潔費', item_name: null },
   { label: '垃圾代收',      fee_type: '清潔費', item_name: '垃圾代收' },
+  { label: '修繕費',        fee_type: '修繕費', item_name: null },
   { label: '設備費－冰箱',   fee_type: '設備費', item_name: '冰箱' },
   { label: '設備費－洗烘衣機', fee_type: '設備費', item_name: '洗烘衣機' },
   { label: '設備費－電視',   fee_type: '設備費', item_name: '電視' },

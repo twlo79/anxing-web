@@ -11,7 +11,7 @@ import { SortTh, type SortState } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
 import { useOpenFromUrl } from '@/lib/open-from-url';
 import { useProfile } from '@/lib/profile';
-import { FEE_TYPES, ONEOFF_FEE_TYPES } from '@/lib/fee-types';
+import { FEE_TYPES, ONEOFF_FEE_TYPES, ONEOFF_PRESETS, presetOf } from '@/lib/fee-types';
 import { ONEOFF_LABEL } from '@/lib/revenue-report';
 import RecurringPanel from '@/components/RecurringPanel';
 import OrderPayments from '@/components/OrderPayments';
@@ -46,6 +46,16 @@ type Order = {
   properties?: { name: string } | null;
 };
 type Estate = { id: string; name: string; sort: number; active: boolean };
+/**
+ * 短租的一次性加費。
+ *
+ * `type` 是**選單的 label**（清潔費／電費／飲用水…），
+ * 寫入時才拆成 `fee_type`（會計科目）＋ `item_name`（項目）——
+ * 見 migration_145 與 lib/fee-types 的 ONEOFF_PRESETS。
+ *
+ * **不要把「水電瓦斯－電費」合成一個字串塞進 fee_type**:
+ * 營收報表會把它當成一個獨立科目,算不出水電瓦斯的合計。
+ */
 type Fee = { id?: string; date: string; type: string; amount: number; note: string };
 type Stay = { room: string; estateId: string | null; propertyId: string | null; from: string };
 type MoveState = { grp: string; checkin: string; checkout: string; totalNights: number; totalAmount: number; guest: string | null; source: string; account: string | null; stays: Stay[] };
@@ -171,7 +181,13 @@ export default function ShortTermPage() {
     setRevLines(toLines(edit?.amount, (edit as any)?.fx_revenue, 'revenue'));
     setDepLines(toLines(edit?.deposit, (edit as any)?.fx_deposit, 'deposit'));
     if (edit?.id) {
-      supabase.from('orders').select('id, checkin, amount, fee_type, note').eq('parent_order_id', edit.id).eq('source', 'oneoff').then(({ data }) => setFees((data ?? []).map((f: any) => ({ id: f.id, date: f.checkin ?? '', type: f.fee_type ?? '其他', amount: Number(f.amount) || 0, note: f.note ?? '' }))));
+      supabase.from('orders').select('id, checkin, amount, fee_type, item_name, note').eq('parent_order_id', edit.id).eq('source', 'oneoff').then(({ data }) => setFees((data ?? []).map((f: any) => ({ id: f.id, date: f.checkin ?? '', /*
+       * 兩欄還原成選單的 label。找不到對應的預設就用科目當 label ——
+       * 舊資料沒有 item_name,直接丟原字串比顯示成空白好。
+       */
+      type: ONEOFF_PRESETS.find((p) => p.fee_type === f.fee_type
+        && (p.item_name ?? null) === (f.item_name || null))?.label ?? (f.fee_type ?? '其他'),
+      amount: Number(f.amount) || 0, note: f.note ?? '' }))));
     } else { setFees([]); }
     // formSeq 而不是 edit?.id —— 理由見上面 formSeq 的宣告。
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -524,7 +540,7 @@ export default function ShortTermPage() {
     if (delIds.length) await supabase.from('orders').delete().in('id', delIds);
     for (const f of fees) {
       if (!f.date || !f.amount) continue;
-      const row = { source: 'oneoff', estate_id: edit.estate_id, property_id: edit.property_id ?? null, property_raw: edit.property_raw, guest_name: edit.guest_name, checkin: f.date, checkout: f.date, nights: 0, amount: f.amount, fee_type: f.type, note: f.note || null, parent_order_id: orderId };
+      const row = { source: 'oneoff', estate_id: edit.estate_id, property_id: edit.property_id ?? null, property_raw: edit.property_raw, guest_name: edit.guest_name, checkin: f.date, checkout: f.date, nights: 0, amount: f.amount, ...(presetOf(f.type) ?? { fee_type: f.type, item_name: null }), note: f.note || null, parent_order_id: orderId };
       if (f.id) await supabase.from('orders').update(row).eq('id', f.id);
       else await supabase.from('orders').insert({ ...row, order_key: `FEE_${String(orderId).slice(0, 8)}_${Date.now()}${Math.floor(Math.random() * 1000)}`, imported_via: 'manual' });
     }
@@ -1238,7 +1254,7 @@ export default function ShortTermPage() {
                     {fees.map((f, i) => (
                       <div key={i} className="flex flex-wrap items-center gap-2 bg-mor-sand/30 rounded-lg px-2 py-2">
                         <input type="date" value={f.date} onChange={(e) => updFee(i, { date: e.target.value })} className="rounded border border-gray-300 px-2 py-1 text-xs" />
-                        <select value={f.type} onChange={(e) => updFee(i, { type: e.target.value })} className="rounded border border-gray-300 px-2 py-1 text-xs">{FEE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}</select>
+                        <select value={f.type} onChange={(e) => updFee(i, { type: e.target.value })} className="rounded border border-gray-300 px-2 py-1 text-xs">{ONEOFF_PRESETS.map((p) => <option key={p.label} value={p.label}>{p.label}</option>)}</select>
                         <MoneyInput value={f.amount || 0} onChange={(n) => updFee(i, { amount: n })} placeholder="費用" className="rounded border border-gray-300 px-2 py-1 text-xs w-24 text-right" />
                         <input value={f.note} onChange={(e) => updFee(i, { note: e.target.value })} placeholder="備註" className="rounded border border-gray-300 px-2 py-1 text-xs flex-1 min-w-[6rem]" />
                         <button type="button" onClick={() => delFee(i)} className="text-xs text-red-500 underline">刪除</button>

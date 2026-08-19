@@ -167,3 +167,31 @@ describe('新加的三個項目', () => {
     }
   });
 });
+
+describe('改用 presets 之後不可以少掉原本選得到的科目', () => {
+  test('★★ FEE_TYPES 裡的每個科目，presets 都要有辦法選到', () => {
+    /*
+     * 短租加費原本是直接列 FEE_TYPES,改成 presets 之後
+     * 沒有 preset 的科目就**選不到了** —— 那是功能倒退,
+     * 而且不會報錯,只會讓人退而選一個最像的。
+     *
+     * 水費／電費／瓦斯費三個是刻意的例外:它們被水電瓦斯取代,
+     * 舊資料還在用所以留在 FEE_TYPES,但不該再新增。
+     */
+    const 取代掉的 = ['水費', '電費', '瓦斯費', '網路費'];
+    const 選得到 = new Set(ONEOFF_PRESETS.map((p) => p.fee_type));
+    for (const t of FEE_TYPES) {
+      if (取代掉的.includes(t)) continue;
+      assert.ok(選得到.has(t), `科目「${t}」在 presets 裡選不到`);
+    }
+  });
+
+  test('★ 清潔費與修繕費要有「沒有項目」的選項', () => {
+    for (const t of ['清潔費', '修繕費']) {
+      assert.ok(
+        ONEOFF_PRESETS.some((p) => p.fee_type === t && p.item_name === null),
+        `「${t}」少了不帶項目的選項`,
+      );
+    }
+  });
+});
