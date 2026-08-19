@@ -67,7 +67,9 @@ const NAV: { href: string; label: string; icon: string; roles: string[] }[] = [
   { href: '/housekeeping', label: '房務管理', icon: '🛎️', roles: ['cleaner', 'housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/shortterm', label: '訂單 | 收入', icon: '🛏️', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/contracts', label: '契約 | 收入', icon: '🤝', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
-  { href: '/revenues', label: '營收表', icon: '💰', roles: ['accountant', 'manager', 'super_admin'] },
+  // 🤑 是整份選單裡**唯一的一張臉** —— 收合成只剩 icon 時最好認的就是它。
+  // 💰 讓給帳戶明細（2026-08-19 使用者指定）。
+  { href: '/revenues', label: '營收表', icon: '🤑', roles: ['accountant', 'manager', 'super_admin'] },
   { href: '/purchases', label: '請款單控管', icon: '🧾', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   /*
    * 管家看得到押金，但**只能檢視**（2026-08-17 使用者指定）——
@@ -79,7 +81,16 @@ const NAV: { href: string; label: string; icon: string; roles: string[] }[] = [
    * 知道網址還是進得去。那是既有的取捨,不是這次新增的。
    */
   { href: '/deposits', label: '押金管理', icon: '🏦', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
-  { href: '/expenses', label: '支出明細', icon: '💳', roles: ['accountant', 'manager', 'super_admin'] },
+  /*
+   * 【💸 而不是 💰】（2026-08-19 使用者要求「其中一個放錢」）
+   *
+   * 💰 給了帳戶明細 —— 側邊欄收合成只剩 icon 時，
+   * 錢進來跟錢出去長得一樣是最糟的一種撞衫。
+   *
+   * 💸 是「錢長翅膀飛走」,那就是支出的意思本身,
+   * 而且外形是長方形紙鈔＋翅膀,跟 💰 那個圓袋子分得開。
+   */
+  { href: '/expenses', label: '支出明細', icon: '💸', roles: ['accountant', 'manager', 'super_admin'] },
   /*
    * 帳戶管理（migration_142）。三個銀行帳戶的流水鏡像。
    *
@@ -89,12 +100,15 @@ const NAV: { href: string; label: string; icon: string; roles: string[] }[] = [
    *
    * 放在支出明細後面：它跟押金、支出是同一組「錢從哪裡進出」。
    *
-   * 【icon 不能跟押金太像】（2026-08-19 使用者指出）
-   * 原本是 🏛️,而押金是 🏦 —— 兩個都是「有柱子的建築物」,
-   * 側邊欄收合成只剩 icon 時分不出來。
-   * 改成 🏧:提款機,一眼就是「銀行流水」,跟其他頁都不撞。
+   * 【icon 換過三次，每一次都是為了「收合之後分得出來」】
+   *
+   *   🏛️ → 🏧（2026-08-19）押金是 🏦,兩個都是有柱子的建築物,分不出來。
+   *   🏧 → 📒（2026-08-19）🏧 上面那三個字母在 16px 下糊成一團,
+   *                        而且它是「機器」不是「帳」,語意也不準。
+   *   📒 → 💰（2026-08-19 使用者指定）這一頁是三個銀行帳戶裡「現在有多少錢」,
+   *                        錢袋比帳本直接。原本佔著 💰 的營收表改用 🤑。
    */
-  { href: '/accounts', label: '帳戶明細', icon: '🏧', roles: ['accountant', 'manager', 'super_admin'] },
+  { href: '/accounts', label: '帳戶明細', icon: '💰', roles: ['accountant', 'manager', 'super_admin'] },
   { href: '/dashboard', label: '財務儀錶板', icon: '📊', roles: ['accountant', 'manager', 'super_admin'] },
   // 客戶管理跟房務、評價、清潔是同一組:都是「人在現場會用到的」。
   // 上面那半段是錢(訂單、契約、營收、請款、押金、支出、儀表板)。
