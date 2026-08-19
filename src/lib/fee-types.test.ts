@@ -1,8 +1,8 @@
-import test from 'node:test';
+import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   FEE_TYPES, ONEOFF_FEE_TYPES, ONEOFF_ONLY_FEE_TYPES,
-  FEE_DEFAULT, CONTRACT_FEE_PRESETS, feeLabel,
+  FEE_DEFAULT, CONTRACT_FEE_PRESETS, ONEOFF_PRESETS, presetOf, feeLabel,
 } from './fee-types.ts';
 
 test('★★ 保證金只出現在一次性收入,不在共用清單裡', () => {
@@ -103,4 +103,67 @@ test('水費是預設項目,而且沒有細目', () => {
 
 test('feeLabel:空字串的項目視同沒有項目', () => {
   assert.equal(feeLabel('管理費', ''), '管理費');
+});
+
+// ============================================================
+// 電費／飲用水／其它（2026-08-19 使用者指定）
+// ============================================================
+
+describe('新加的三個項目', () => {
+  const need = [
+    { label: '電費',   fee_type: '水電瓦斯', item_name: '電費' },
+    { label: '飲用水', fee_type: '管理費',   item_name: '飲用水' },
+    { label: '其它',   fee_type: '其他',     item_name: '其它' },
+  ];
+
+  test('★★ 固定加費與一次性費用兩邊都要有', () => {
+    // 使用者:「固定加費 一次性費用都加入喔」。
+    // 只加一邊的話,同一種費用在兩張表裡會歸到不同科目 —— 而且不會報錯
+    for (const n of need) {
+      for (const [name, list] of [['固定加費', CONTRACT_FEE_PRESETS], ['一次性', ONEOFF_PRESETS]] as const) {
+        const hit = list.find((p) => p.label === n.label);
+        assert.ok(hit, `${name}缺少「${n.label}」`);
+        assert.equal(hit.fee_type, n.fee_type, `${name}「${n.label}」的科目`);
+        assert.equal(hit.item_name, n.item_name, `${name}「${n.label}」的項目`);
+      }
+    }
+  });
+
+  test('★★ 電費的科目是「水電瓦斯」不是「電費」', () => {
+    // account_codes 裡只有 utility 水電瓦斯 —— 水電瓦斯在會計上是同一格。
+    // 記成「電費」的話跟那張表對不起來
+    assert.equal(presetOf('電費')?.fee_type, '水電瓦斯');
+  });
+
+  test('★ 科目要在 FEE_TYPES 裡，不然選單選不到', () => {
+    for (const p of [...CONTRACT_FEE_PRESETS, ...ONEOFF_PRESETS]) {
+      assert.ok(
+        (FEE_TYPES as readonly string[]).includes(p.fee_type) ||
+        (ONEOFF_ONLY_FEE_TYPES as readonly string[]).includes(p.fee_type),
+        `「${p.label}」的科目「${p.fee_type}」不在清單裡`,
+      );
+    }
+  });
+
+  test('★ 「其它」永遠排最後 —— 它是保底不是分類', () => {
+    assert.equal(CONTRACT_FEE_PRESETS[CONTRACT_FEE_PRESETS.length - 1].label, '其它');
+    assert.equal(ONEOFF_PRESETS[ONEOFF_PRESETS.length - 1].label, '其它');
+  });
+
+  test('★ 一次性才有保證金，固定加費不可以有', () => {
+    // 每個月自動產生的保證金在會計上講不通 —— 那個選項存在本身就是在邀請人填錯
+    assert.ok(ONEOFF_PRESETS.some((p) => p.label === '保證金'));
+    assert.ok(!CONTRACT_FEE_PRESETS.some((p) => p.label === '保證金'));
+  });
+
+  test('label 找不到就回 null，不要猜一個最像的', () => {
+    assert.equal(presetOf('不存在的東西'), null);
+  });
+
+  test('★ label 不可以重複 —— 重複的話 presetOf 只會回第一個', () => {
+    for (const list of [CONTRACT_FEE_PRESETS, ONEOFF_PRESETS]) {
+      const labels = list.map((p) => p.label);
+      assert.equal(new Set(labels).size, labels.length, `重複的 label：${labels}`);
+    }
+  });
 });

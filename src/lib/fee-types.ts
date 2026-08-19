@@ -32,6 +32,21 @@
  * 資料都還在,不是不可逆的。
  */
 export const FEE_TYPES = [
+  /*
+   * 【水電瓦斯 vs 水費／電費／瓦斯費】（2026-08-19）
+   *
+   * `account_codes`（收支共用的會計科目表）裡只有一個 `utility 水電瓦斯` ——
+   * 水、電、瓦斯在會計上是同一格。而這份硬寫的清單把它拆成三個,
+   * 兩邊對不起來。
+   *
+   * **這裡加上「水電瓦斯」而不是拿掉那三個** —— 舊資料還在用
+   * （水費 2 張契約、網路費 3 張）,拿掉會讓那幾筆的科目變成選不到的值。
+   *
+   * 代價要知道:同一筆電費可能被記成「電費」也可能是「水電瓦斯」,
+   * 而營收報表分不出那是同一件事。新的一律走固定加費的預設值
+   * （CONTRACT_FEE_PRESETS 已經指定水電瓦斯）,舊的等哪天一起遷移。
+   */
+  '水電瓦斯',
   '水費', '電費', '網路費', '瓦斯費', '管理費',
   '停車費', '設備費', '清潔費', '修繕費', '其他',
 ] as const;
@@ -77,6 +92,27 @@ export type FeeType = (typeof FEE_TYPES)[number];
  */
 export const CONTRACT_FEE_PRESETS: { label: string; fee_type: string; item_name: string | null }[] = [
   { label: '管理費',        fee_type: '管理費', item_name: null },
+  /*
+   * 【電費／飲用水／其它】（2026-08-19 使用者指定）
+   *
+   *     項目：電費   → 會計科目：水電瓦斯
+   *     項目：飲用水 → 會計科目：管理費
+   *     項目：其它   → 會計科目：其它
+   *
+   * 三個都是「科目已經有了，缺的是項目」——
+   * 所以只加預設值，不動 FEE_TYPES 也不動資料庫。
+   *
+   * 【為什麼電費的科目是「水電瓦斯」而不是「電費」】
+   *
+   * `account_codes` 那張表（收支共用的會計科目）裡就是 `utility 水電瓦斯`,
+   * 沒有「電費」這個科目 —— 水、電、瓦斯在會計上是同一格。
+   *
+   * 而 FEE_TYPES 這份硬寫的清單把它拆成「水費／電費／瓦斯費」三個,
+   * 跟資料庫那張表對不起來。**這裡先照使用者要的歸類走**,
+   * 兩份清單要不要合併是另一件事（見底下 FEE_TYPES 的註解）。
+   */
+  { label: '電費',          fee_type: '水電瓦斯', item_name: '電費' },
+  { label: '飲用水',        fee_type: '管理費',   item_name: '飲用水' },
   { label: '停車費',        fee_type: '停車費', item_name: null },
   // 網路費本來就在 FEE_TYPES 裡（營收科目對到 internet，見 migration_91），
   // 只是沒放進固定加費的預設清單 —— 加在這裡就好，不用動資料庫。
@@ -89,6 +125,8 @@ export const CONTRACT_FEE_PRESETS: { label: string; fee_type: string; item_name:
   { label: '設備費－冰箱',   fee_type: '設備費', item_name: '冰箱' },
   { label: '設備費－洗烘衣機', fee_type: '設備費', item_name: '洗烘衣機' },
   { label: '設備費－電視',   fee_type: '設備費', item_name: '電視' },
+  // 「其它」永遠排最後 —— 它是保底,不是一個真的分類
+  { label: '其它',          fee_type: '其他',   item_name: '其它' },
 ];
 
 /** 由科目＋項目反查預設的顯示名稱。找不到就自己組，不要顯示成空白。 */
@@ -104,3 +142,36 @@ export function feeLabel(fee_type: string | null, item_name: string | null): str
  * 跟 migration_75 裡的預設一致 —— 兩邊不同步的話,同一種單會出現兩個科目。
  */
 export const FEE_DEFAULT = '其他';
+
+
+/**
+ * 一次性費用的預設項目（2026-08-19 使用者指定「固定加費 一次性費用都加入喔」）。
+ *
+ * = 固定加費那份 ＋ 保證金。
+ *
+ * **兩邊共用同一份清單是刻意的** —— 分開寫的話,
+ * 加一個項目要記得改兩個地方,而漏掉的那邊不會報錯,
+ * 只會讓同一種費用在兩張表裡歸到不同的科目。
+ * 那正是 FEE_TYPES 這支檔案當初要解決的問題。
+ *
+ * 保證金只在這裡出現:它是一次性的事件（違約沒收、履約保證金轉列收入）,
+ * 不會每個月自動長出來。
+ */
+export const ONEOFF_PRESETS: { label: string; fee_type: string; item_name: string | null }[] = [
+  ...CONTRACT_FEE_PRESETS.filter((p) => p.label !== '其它'),
+  { label: '保證金', fee_type: '保證金', item_name: null },
+  { label: '其它',   fee_type: '其他',   item_name: '其它' },
+];
+
+/**
+ * 由 label 反查科目與項目。找不到回 null —— **不要猜一個最像的**。
+ *
+ * 猜錯的代價是那筆收入被歸到別的科目,而營收報表上看不出來。
+ */
+export function presetOf(
+  label: string,
+  list: { label: string; fee_type: string; item_name: string | null }[] = ONEOFF_PRESETS,
+): { fee_type: string; item_name: string | null } | null {
+  const hit = list.find((p) => p.label === label);
+  return hit ? { fee_type: hit.fee_type, item_name: hit.item_name } : null;
+}

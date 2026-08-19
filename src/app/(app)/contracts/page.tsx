@@ -8,7 +8,7 @@ import Toast from '@/components/Toast';
 import { FilterBar, FilterSelect, FilterDateRange, FilterSearch, FilterClear, FilterCount } from '@/lib/filters';
 import { createClient } from '@/lib/supabase';
 import { useOpenFromUrl } from '@/lib/open-from-url';
-import { FEE_TYPES, feeLabel } from '@/lib/fee-types';
+import { FEE_TYPES, ONEOFF_PRESETS, presetOf, feeLabel } from '@/lib/fee-types';
 import ContractFees, { type Rc } from '@/components/ContractFees';
 import { feeMonthly, leasePeriods, periodOf } from '@/lib/lease';
 import { dueDateOf, resolvePayDay, checkFirstDue, fmtDue, periodRange, fmtPeriodRange, rentMonthCount, checkContractDates } from '@/lib/due-date';
@@ -50,6 +50,20 @@ const CAD_LABEL: Record<string, string> = { monthly: '月繳', quarterly: '季�
 const TYPE_LABEL: Record<string, string> = { longterm: '長租', company: '公司登記', office: '辦公室' };
 const STEP_OF: Record<string, number> = { monthly: 1, quarterly: 3, halfyear: 6, yearly: 12 };
 const TYPE_SRC: Record<string, string> = { longterm: 'longterm', company: 'company', office: 'office' };
+/**
+ * 選單的 label（電費／飲用水／…）→ 寫進資料庫的兩欄:科目 ＋ 項目。
+ *
+ * **module scope,不要放進元件裡** —— 契約編輯與收租視窗是兩個元件,
+ * 兩邊都要用。放在其中一個裡面,另一個就看不到（而 tsc 會抓到,
+ * 這一條是實際踩過才寫上來的）。
+ *
+ * 找不到 label 就回「其他」而不是把原字串塞進 fee_type ——
+ * 塞進去的話營收報表會多出一個沒人認得的科目,而那不會報錯。
+ */
+function feeSplit(label: string): { fee_type: string; item_name: string | null } {
+  return presetOf(label) ?? { fee_type: '其他', item_name: label || null };
+}
+
 // FEE_TYPES 的定義搬到 @/lib/fee-types —— 契約加費、短租加費、一次性收入共用一份
 const fmt = (n: number | null) => (n == null ? '' : Math.round(n).toLocaleString());
 
@@ -379,7 +393,7 @@ export default function ContractsPage() {
     return (data ?? []) as OrderLite[];
   }
 
-  const nameOf = (c: Contract) =>
+const nameOf = (c: Contract) =>
     (c.display_name || [c.tenant_name, c.room].filter(Boolean).join(' ') || '(未命名契約)').trim();
 
   /**
@@ -1117,7 +1131,14 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
   const [rcRows, setRcRows] = useState<Rc[]>([]);
   const rcPeriods = useMemo(
     () => leasePeriods(c.start_date, c.end_date, c.cadence), [c.start_date, c.end_date, c.cadence]);
-  const [feeDraft, setFeeDraft] = useState<{ pi: number; date: string; type: string; amount: number } | null>(null);
+  /*
+   * 一次性加費的暫存。`label` 是使用者選的那一項（電費／飲用水／…）,
+   * 送出時拆成 fee_type ＋ item_name 兩欄（migration_145）。
+   *
+   * **不要把「水電瓦斯－電費」合成一個字串塞進 fee_type** ——
+   * 那樣營收報表會把它當成一個獨立科目,算不出水電瓦斯的合計。
+   */
+  const [feeDraft, setFeeDraft] = useState<{ pi: number; date: string; label: string; amount: number } | null>(null);
   /*
    * 收款確認視窗。自己畫而不是用 confirm() —— 見 setPeriodPaid 的註解：
    * confirm() 是比例字型，金額欄永遠對不齊。
@@ -1397,7 +1418,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
   useEffect(() => { loadFees(); }, [loadFees]);
   async function saveFee() {
     if (!feeDraft || !feeDraft.amount || !feeDraft.date) { alert('請填費用日期與金額'); return; }
-    const { error } = await supabase.from('orders').insert({ order_key: `CFEE_${String(c.id).slice(0, 8)}_${Date.now()}`, source: 'oneoff', contract_id: c.id, estate_id: c.estate_id, property_raw: c.room, guest_name: c.tenant_name, checkin: feeDraft.date, checkout: feeDraft.date, nights: 0, amount: feeDraft.amount, fee_type: feeDraft.type, note: '契約加費', imported_via: 'manual' });
+    const { error } = await supabase.from('orders').insert({ order_key: `CFEE_${String(c.id).slice(0, 8)}_${Date.now()}`, source: 'oneoff', contract_id: c.id, estate_id: c.estate_id, property_raw: c.room, guest_name: c.tenant_name, checkin: feeDraft.date, checkout: feeDraft.date, nights: 0, amount: feeDraft.amount, ...feeSplit(feeDraft.label), note: '契約加費', imported_via: 'manual' });
     if (error) { alert('失敗:' + error.message); return; }
     setFeeDraft(null); loadFees();
   }
@@ -1767,7 +1788,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
                     })}
                     {feeDraft?.pi === i ? (
                       <div className="flex flex-wrap items-center gap-1 mt-1">
-                        <select value={feeDraft.type} onChange={(e) => setFeeDraft({ ...feeDraft, type: e.target.value })} className="rounded border border-gray-300 px-1.5 py-0.5 text-xs">{FEE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}</select>
+                        <select value={feeDraft.label} onChange={(e) => setFeeDraft({ ...feeDraft, label: e.target.value })} className="rounded border border-gray-300 px-1.5 py-0.5 text-xs">{ONEOFF_PRESETS.map((p) => <option key={p.label} value={p.label}>{p.label}</option>)}</select>
                         <MoneyInput value={feeDraft.amount || 0} placeholder="金額"
                           onChange={(n) => setFeeDraft({ ...feeDraft, amount: n })}
                           className="rounded border border-gray-300 px-1.5 py-0.5 text-xs w-20 text-right" />
@@ -1792,7 +1813,7 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
                       </div>
                     ) : (
                       <div className="flex items-center gap-3">
-                        <button onClick={() => setFeeDraft({ pi: i, date: `${first.y}-${String(first.m).padStart(2, '0')}-01`, type: '電費', amount: 0 })} className="text-xs text-mor-blue underline">+ 加費(認列營收)</button>
+                        <button onClick={() => setFeeDraft({ pi: i, date: `${first.y}-${String(first.m).padStart(2, '0')}-01`, label: '電費', amount: 0 })} className="text-xs text-mor-blue underline">+ 加費(認列營收)</button>
                         <button onClick={() => setConcDraft({ pi: i, date: `${first.y}-${String(first.m).padStart(2, '0')}-01`, amount: 0, note: '', baseAmount: amount, priorDisc: discTotal })} className="text-xs text-orange-600 underline">− 折讓</button>
                       </div>
                     )}
