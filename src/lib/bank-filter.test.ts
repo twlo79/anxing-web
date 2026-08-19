@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { filterTxns, hasFilter, sumRows, amountOf, splitTail, type BankRow } from './bank-filter.ts';
+import { filterTxns, hasFilter, sumRows, amountOf, splitTail, splitRef, type BankRow } from './bank-filter.ts';
 
 /**
  * 流水篩選的測試。
@@ -157,5 +157,66 @@ describe('帳號切出末五碼', () => {
   test('沒有帳號回空字串', () => {
     assert.equal(splitTail(null), '');
     assert.equal(splitTail(''), '');
+  });
+});
+
+describe('對方帳號切出末五碼', () => {
+  test('★★ 銀行代號要留在原地，不可以跟帳號黏起來', () => {
+    /*
+     * 前三碼是銀行代號（013 國泰世華、007 第一銀行、012 台北富邦）。
+     * 直接套 splitTail 的話會先把 `-` 去掉,變成
+     * `0130000009550-332784` —— 切點跑掉,而且看不出是哪家銀行。
+     */
+    assert.equal(splitRef('013-0000009550332784'), '013-00000095503-32784');
+    assert.equal(splitRef('007-0000024568165555'), '007-00000245681-65555');
+    assert.equal(splitRef('012-0000630102023211'), '012-00006301020-23211');
+  });
+
+  test('★ 沒有代號的整串切 —— 要跟我們自己的帳戶同一個格式', () => {
+    // 兩邊格式一致才對得動:我們的是 217620000-24145
+    assert.equal(splitRef('0021762000024117'), '00217620000-24117');
+    assert.equal(splitRef('7099230070650103'), '70992300706-50103');
+  });
+
+  test('★★ 一個數字都不能少 —— 是切開不是遮罩', () => {
+    assert.equal(splitRef('013-0000009550332784').replace(/-/g, ''), '0130000009550332784');
+  });
+
+  test('代號後面沒東西就原樣回去，不要切出空段', () => {
+    assert.equal(splitRef('013-'), '013-');
+  });
+
+  test('比末五碼還短的原樣顯示', () => {
+    assert.equal(splitRef('013-123'), '013-123');
+    assert.equal(splitRef('12345'), '12345');
+  });
+
+  test('沒有帳號回空字串', () => {
+    assert.equal(splitRef(null), '');
+    assert.equal(splitRef(''), '');
+    assert.equal(splitRef('   '), '');
+  });
+});
+
+describe('搜對方帳號', () => {
+  const R = [
+    r({ ref_no: '013-0000009550332784' }),
+    r({ ref_no: '0021762000024117' }),
+  ];
+
+  test('★★ 複製畫面上切過的字串也要搜得到', () => {
+    /*
+     * 畫面顯示 `013-00000095503-32784`，資料庫存 `013-0000009550332784`。
+     * 使用者一定是複製畫面上那串去搜的 —— 搜不到的時候他會以為那筆不見了,
+     * 不會想到是分隔號的問題。
+     */
+    assert.equal(filterTxns(R, { q: '013-00000095503-32784' }).length, 1);
+    assert.equal(filterTxns(R, { q: '00217620000-24117' }).length, 1);
+  });
+
+  test('原本的搜法不能壞', () => {
+    assert.equal(filterTxns(R, { q: '013-0000009550332784' }).length, 1);
+    assert.equal(filterTxns(R, { q: '32784' }).length, 1);
+    assert.equal(filterTxns(R, { q: '2026-07-03' }).length, 2);  // 日期帶 - 照舊
   });
 });

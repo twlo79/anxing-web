@@ -92,8 +92,18 @@ export function filterTxns<T extends BankRow>(rows: T[], f: BankFilter): T[] {
       const hay = [r.description, r.counterparty, r.memo, r.ref_no, r.balance_note, d]
         .map((v) => (v ?? '').toString().toLowerCase())
         .join(' ');
-      // 金額也要能搜:打「46000」找得到那筆房租
-      if (!hay.includes(q) && !String(amt).includes(q.replace(/,/g, ''))) return false;
+      /*
+       * 分隔號不算數。
+       *
+       * 畫面上的對方帳號是切過的（`013-00000095503-32784`），而資料庫裡
+       * 存的是 `013-0000009550332784` —— **使用者複製畫面上看到的去搜就搜不到**,
+       * 而那時他會以為那筆不見了,不會想到是分隔號的問題。
+       *
+       * 先比原文（日期那種帶 `-` 的照舊），比不到再兩邊都拿掉分隔號比一次。
+       */
+      const flat = q.replace(/-/g, '');
+      if (!hay.includes(q) && !hay.replace(/-/g, '').includes(flat)
+        && !String(amt).includes(q.replace(/,/g, ''))) return false;
     }
     return true;
   });
@@ -133,4 +143,33 @@ export function splitTail(no: string | null | undefined, tail = 5): string {
   const s = (no ?? '').replace(/\D/g, '');
   if (!s || s.length <= tail) return s;
   return s.slice(0, -tail) + '-' + s.slice(-tail);
+}
+
+/**
+ * 對方帳號切出末五碼：`013-0000009550332784` → `013-00000095503-32784`。
+ *
+ * ============================================================
+ * 【為什麼不能直接套 splitTail】（2026-08-19 使用者反映「沒有末五碼切出來」）
+ *
+ * splitTail 會先把非數字全部去掉 —— 對方帳號前面那三碼是**銀行代號**
+ * （013 國泰世華、007 第一銀行、012 台北富邦），跟帳號黏起來之後
+ * 會變成 `0130000009550-332784`，切點整個跑掉，而且從此看不出是哪家銀行。
+ *
+ * 所以第一個 `-` 前面原樣保留，只切後面那段。
+ *
+ * 沒有代號的（`0021762000024117` 這種）就整串切，
+ * 結果 `00217620000-24117` 跟我們自己的帳戶長得一樣 —— 那是刻意的，
+ * 對帳時兩邊格式一致才比得動。
+ *
+ * ★ **一個數字都不會少**，只是斷開。跟 splitTail 同一條規矩。
+ */
+export function splitRef(ref: string | null | undefined, tail = 5): string {
+  const s = (ref ?? '').trim();
+  if (!s) return '';
+  const i = s.indexOf('-');
+  // 代號後面沒東西（`013-`）就原樣回去 —— 硬切會切出一個空段
+  if (i < 0) return splitTail(s, tail) || s;
+  const head = s.slice(0, i);
+  const body = splitTail(s.slice(i + 1), tail);
+  return body ? `${head}-${body}` : s;
 }

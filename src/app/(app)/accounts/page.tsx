@@ -6,7 +6,7 @@ import Toast from '@/components/Toast';
 import UploadPanel from './upload-panel';
 import StatementsPanel from './statements-panel';
 import { totalBalance } from '@/lib/bank-import';
-import { filterTxns, hasFilter, sumRows, amountOf, splitTail, type BankFilter } from '@/lib/bank-filter';
+import { filterTxns, hasFilter, sumRows, amountOf, splitTail, splitRef, type BankFilter } from '@/lib/bank-filter';
 import * as XLSX from 'xlsx-js-style';
 import { ExportButton } from '@/components/Actions';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
@@ -238,6 +238,13 @@ export default function AccountsPage() {
       交易型態: t.description ?? '',
       摘要: t.memo ?? '',
       對方: t.counterparty ?? '',
+      /*
+       * Excel 裡放**原文**，不切末五碼。
+       *
+       * 畫面上切是為了眼睛好認；Excel 是拿去跟別的系統比對的
+       * （VLOOKUP、貼進網銀查詢），多一個分隔號就對不上，
+       * 而那種錯只會表現成「查無此帳號」。兩邊目的不同，格式就該不同。
+       */
       對方帳號: t.ref_no ?? '',
       // Excel 裡放數字不放字串 —— 放字串就不能加總,而那正是下載的目的
       支出: Number(t.debit) || 0,
@@ -522,7 +529,9 @@ export default function AccountsPage() {
                       不斷行會把整張表撐開。
                     */}
                     {t.ref_no && (
-                      <div className="break-all font-mono text-[11px] text-gray-400">{t.ref_no}</div>
+                      // 切出末五碼,跟我們自己的三個帳戶同一個格式（見 lib/bank-filter splitRef）——
+                      // 銀行代號那三碼留在原地,不然看不出是哪家銀行
+                      <div className="break-all font-mono text-[11px] text-gray-400">{splitRef(t.ref_no)}</div>
                     )}
                   </td>
                   <td className="px-3 py-1.5 text-right tabular-nums text-red-600">
