@@ -194,6 +194,14 @@ export default function AccountsPage() {
     description: { type: 'text', get: (t) => t.description ?? '' },
     memo: { type: 'text', get: (t) => t.memo ?? '' },
     counterparty: { type: 'text', get: (t) => t.counterparty ?? '' },
+    /*
+     * 交易帳號。這一欄改成以帳號為主體之後（2026-08-19 使用者指定），
+     * 排序也要跟著排帳號 —— 標題寫「交易帳號」卻按銀行名排的話，
+     * 點下去會看起來像沒反應（摘要那一欄踩過同一個坑）。
+     *
+     * 沒有帳號的排最後:空字串會被排到最前面,而那幾列正是最沒有資訊的。
+     */
+    ref_no: { type: 'text', get: (t) => t.ref_no || '￿' },
     debit: { type: 'number', get: (t) => Number(t.debit) || 0 },
     credit: { type: 'number', get: (t) => Number(t.credit) || 0 },
     amount: { type: 'number', get: (t) => amountOf(t) },
@@ -237,6 +245,14 @@ export default function AccountsPage() {
       時間: t.txn_time ?? '',
       交易型態: t.description ?? '',
       摘要: t.memo ?? '',
+      /*
+       * Excel 兩欄分開，**不跟著畫面合併成一欄**。
+       *
+       * 畫面上合併是為了省寬度、讓眼睛一次看到一組;
+       * Excel 是拿去篩選與樞紐分析的,合在一格就不能單獨按銀行分組。
+       * 欄名也刻意不改 —— 已經下載過的檔案還在別人的資料夾裡,
+       * 改名只會讓兩份對不起來。
+       */
       對方: t.counterparty ?? '',
       /*
        * Excel 裡放**原文**，不切末五碼。
@@ -417,7 +433,7 @@ export default function AccountsPage() {
             <label className="flex flex-col gap-1">
               <span className="text-xs text-gray-500">關鍵字</span>
               <input value={f.q ?? ''} onChange={(e) => set('q', e.target.value)}
-                placeholder="摘要、對方、帳號、金額…"
+                placeholder="摘要、交易帳號、銀行、金額…"
                 className="w-52 rounded-lg border border-mor-line px-2 py-1.5" />
             </label>
             {/*
@@ -471,7 +487,14 @@ export default function AccountsPage() {
                   onSort={(key, dir) => setSort({ key, dir })} className="text-left font-medium" />
                 <SortTh label="摘要" sortKey="memo" state={sort}
                   onSort={(key, dir) => setSort({ key, dir })} className="text-left font-medium" />
-                <SortTh label="對方" sortKey="counterparty" state={sort}
+                {/*
+                  「交易帳號」不是「對方」（使用者指定 2026-08-19）。
+
+                  對帳時人在找的是**帳號** —— 銀行名只有十來種，
+                  同一家銀行底下幾十個房客,靠它分不出任何東西。
+                  所以帳號當主體，銀行名縮小當註腳。
+                */}
+                <SortTh label="交易帳號" sortKey="ref_no" state={sort}
                   onSort={(key, dir) => setSort({ key, dir })} className="text-left font-medium" />
                 <SortTh label="支出" sortKey="debit" type="number" state={sort} align="right"
                   onSort={(key, dir) => setSort({ key, dir })} className="text-right font-medium" />
@@ -520,18 +543,23 @@ export default function AccountsPage() {
                     {/* 全形字原樣顯示（１２月房租、南５）—— 轉半形之後跟 PDF 對不起來 */}
                     {t.memo ?? ''}
                   </td>
-                  <td className="px-3 py-1.5 text-gray-600">
-                    <div>{t.counterparty ?? ''}</div>
+                  <td className="px-3 py-1.5">
                     {/*
-                      對方帳號／票據號碼。PDF 的「備註票據號碼」欄裡
-                      純數字的那部分 —— 存了卻不顯示等於沒存。
-                      斷行用 break-all:那是 16–20 位的數字串,
-                      不斷行會把整張表撐開。
+                      ★ 帳號是主體，銀行名是註腳（2026-08-19 使用者指定，跟原本相反）。
+
+                      理由是對帳時要找的東西:銀行名只有十來種,
+                      「國泰世華」重複出現幾十次,分不出是誰匯的;
+                      帳號才是那筆錢唯一的身分。
+
+                      末五碼切出來（splitRef）—— 銀行代號那三碼留在原地,
+                      不然看不出是哪家銀行。斷行用 break-all:
+                      那是 16–20 位的數字串，不斷行會把整張表撐開。
                     */}
                     {t.ref_no && (
-                      // 切出末五碼,跟我們自己的三個帳戶同一個格式（見 lib/bank-filter splitRef）——
-                      // 銀行代號那三碼留在原地,不然看不出是哪家銀行
-                      <div className="break-all font-mono text-[11px] text-gray-400">{splitRef(t.ref_no)}</div>
+                      <div className="break-all font-mono text-[12px] text-gray-700">{splitRef(t.ref_no)}</div>
+                    )}
+                    {t.counterparty && (
+                      <div className="text-[11px] text-gray-400 mt-0.5">{t.counterparty}</div>
                     )}
                   </td>
                   <td className="px-3 py-1.5 text-right tabular-nums text-red-600">

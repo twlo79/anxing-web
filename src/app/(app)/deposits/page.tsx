@@ -704,9 +704,21 @@ export default function DepositsPage() {
 
   const statusChip = (r: Dep) => {
     if (r.orphaned) return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-red-50 text-red-600">孤兒</span>;
+    /*
+     * ★ 順序有意義:移轉出去 → 真的退了 → 移轉進來。
+     *
+     * 一筆押金可以**同時**是「移轉進來的」跟「已經退給房客了」——
+     * 移進來之後房客退租就是這樣（B6 移到 B5、B5 再退款）。
+     * 那種時候狀態欄要說「已退」,因為錢真的出去了,那是更重要的事實;
+     * 「移轉自 B6」在詳情裡看得到。
+     *
+     * 先判斷移轉進來的話,一筆已經退掉的押金會顯示成「移轉自 ⋯」,
+     * 而清單上就再也看不出那筆錢已經不在我們手上了。
+     */
+    if (r.transfer_to_id) return moveChip(r);
+    if (r.returned_on) return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-gray-100 text-gray-500">已退</span>;
     const mc = moveChip(r);
     if (mc) return mc;
-    if (r.returned_on) return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-gray-100 text-gray-500">已退</span>;
     if (r.received_on) {
       // 退款流程進行中的,狀態欄直接顯示流程狀態 —— 「暫收中」看不出有人正在等核可
       const rc = refundChip(r);
