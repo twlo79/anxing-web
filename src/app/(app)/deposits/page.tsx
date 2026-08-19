@@ -1258,9 +1258,11 @@ export default function DepositsPage() {
         使用者會一直找那筆押金,不知道它就在眼前只是不合條件。
       */}
       {moving && (
-        <div className="fixed inset-0 bg-black/30 flex items-stretch md:items-center justify-center overflow-auto md:py-10 z-50"
+        /* 外層不捲、內容自己捲 —— 兩層都可捲時捲哪一層要看手指落在哪，
+           而使用者只會覺得「這個視窗有時候捲不動」 */
+        <div className="fixed inset-0 bg-black/30 flex items-stretch md:items-center justify-center md:py-10 z-50"
           onClick={() => setMoving(null)}>
-          <div className="bg-white w-full md:w-[620px] md:max-w-[95vw] md:rounded-xl shadow-xl min-h-full md:min-h-0 flex flex-col"
+          <div className="bg-white w-full md:w-[620px] md:max-w-[95vw] md:rounded-xl shadow-xl flex flex-col h-full md:h-auto md:max-h-[85vh]"
             onClick={(e) => e.stopPropagation()}>
             <div className="border-b border-mor-line px-4 md:px-6 py-4"
               style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
@@ -1345,7 +1347,7 @@ export default function DepositsPage() {
                   )}
                 </div>
 
-                <div className="flex-1 overflow-y-auto px-4 md:px-6 py-2">
+                <div className="flex-1 overflow-y-auto overscroll-contain px-4 md:px-6 py-2">
                   {list.length ? list.map(rowOf) : (
                     <div className="py-10 text-center text-sm text-gray-400 px-4">
                       {all.length === 0
@@ -1408,17 +1410,24 @@ export default function DepositsPage() {
 
       {/* 管理押金 */}
       {edit && (
-        <div className="fixed inset-0 bg-black/30 flex items-stretch md:items-start justify-center overflow-auto md:py-10 z-50">
-          <div className="bg-white w-full md:w-[560px] md:max-w-[95vw] md:rounded-xl shadow-xl min-h-full md:min-h-0"
+        /*
+         * 外層不捲、內容自己捲（2026-08-19 修）。
+         *
+         * 原本外層 `overflow-auto` ＋ 標題 `sticky top-0` ——
+         * sticky 的定位基準是最近的捲動祖先，而那一層自己也在動，
+         * 於是標題會飄到內容中間。使用者看到的是「版面會跑」。
+         */
+        <div className="fixed inset-0 bg-black/30 flex items-stretch md:items-center justify-center md:py-10 z-50">
+          <div className="bg-white w-full md:w-[560px] md:max-w-[95vw] md:rounded-xl shadow-xl flex flex-col h-full md:h-auto md:max-h-[85vh]"
             onClick={(e) => e.stopPropagation()}>
-            <div className="sticky top-0 bg-white border-b border-mor-line px-4 md:px-6 py-4 font-bold flex items-center justify-between z-10"
+            <div className="shrink-0 bg-white border-b border-mor-line px-4 md:px-6 py-4 font-bold flex items-center justify-between"
               style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
               {edit.id ? `管理押金・${edit.room ?? '—'}` : '手動新增押金'}
               <button onClick={() => setEdit(null)} aria-label="關閉"
                 className="w-10 h-10 -mr-2 flex items-center justify-center text-gray-400 hover:text-gray-600 text-xl">✕</button>
             </div>
 
-            <div className="p-4 md:p-6 space-y-4 text-sm">
+            <div className="flex-1 overflow-y-auto overscroll-contain p-4 md:p-6 space-y-4 text-sm">
               {edit.is_manual ? (
                 /* 手動列沒有來源可同步,這幾欄就在這裡填 */
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -1591,7 +1600,7 @@ export default function DepositsPage() {
                   className="bg-white rounded-lg border border-mor-line px-2 py-2 h-24 md:h-16" /></label>
             </div>
 
-            <div className="sticky bottom-0 md:static bg-white border-t border-mor-line px-4 md:px-6 py-3 md:py-4 flex gap-2 md:justify-end"
+            <div className="shrink-0 bg-white border-t border-mor-line px-4 md:px-6 py-3 md:py-4 flex gap-2 md:justify-end"
               style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
               {/* 連動列不能刪 —— 刪了下次來源同步又會長回來,只會讓人以為壞掉 */}
               {edit.id && (edit.is_manual || edit.orphaned) && (

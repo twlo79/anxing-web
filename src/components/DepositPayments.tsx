@@ -167,12 +167,29 @@ export default function DepositPayments({
   const name = (dep.room ?? '').trim() || (dep.guest_name ?? '').trim() || '押金';
 
   return (
-    <div className="fixed inset-0 bg-black/30 flex items-stretch md:items-center justify-center overflow-auto md:py-10 z-50"
+    /*
+     * ══════════ 為什麼是「外層不捲、內容自己捲」 ══════════
+     *
+     * 原本是外層 `overflow-auto` ＋ 標題 `sticky top-0`。
+     * 兩個一起用會漂:sticky 的定位基準是**最近的捲動祖先**,
+     * 而那一層自己也在動,於是標題會跟著飄到內容中間
+     * （2026-08-19 使用者回報「版面會跑」）。
+     *
+     * 正確的做法是把捲動放在**內容區**:
+     *   外層  固定滿版，不捲
+     *   卡片  flex 直排，高度封頂
+     *   標題／底部  shrink-0，是 flex 的兄弟 —— 不是 sticky，所以不可能移動
+     *   內容  flex-1 + overflow-y-auto，只有它在捲
+     *
+     * `overscroll-contain` 是為了捲到底時不要把背後的頁面一起帶著捲。
+     */
+    <div className="fixed inset-0 bg-black/30 flex items-stretch md:items-center justify-center md:py-10 z-50"
       onClick={onClose}>
-      <div className="bg-white w-full md:w-[560px] md:max-w-[95vw] md:rounded-xl shadow-xl min-h-full md:min-h-0 flex flex-col"
+      <div className="bg-white w-full md:w-[560px] md:max-w-[95vw] md:rounded-xl shadow-xl
+          flex flex-col h-full md:h-auto md:max-h-[85vh]"
         onClick={(e) => e.stopPropagation()}>
 
-        <div className="sticky top-0 bg-white border-b border-mor-line px-4 md:px-6 py-4 flex items-start justify-between z-10"
+        <div className="shrink-0 bg-white border-b border-mor-line px-4 md:px-6 py-4 flex items-start justify-between"
           style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
           <div className="min-w-0">
             <div className="font-bold">收押金</div>
@@ -184,7 +201,7 @@ export default function DepositPayments({
             className="w-10 h-10 -mr-2 flex items-center justify-center text-gray-400 hover:text-gray-600 text-xl">✕</button>
         </div>
 
-        <div className="flex-1 p-4 md:p-6 space-y-4 text-sm">
+        <div className="flex-1 overflow-y-auto overscroll-contain p-4 md:p-6 space-y-4 text-sm">
           {msg && (
             <div className="rounded-lg bg-mor-sand px-3 py-2 text-xs text-gray-700">{msg}</div>
           )}
@@ -361,7 +378,7 @@ export default function DepositPayments({
           </div>
         </div>
 
-        <div className="sticky bottom-0 bg-white border-t border-mor-line px-4 md:px-6 py-3"
+        <div className="shrink-0 bg-white border-t border-mor-line px-4 md:px-6 py-3"
           style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
           <button onClick={onClose} className="w-full h-11 rounded-lg border border-gray-300 text-sm">關閉</button>
         </div>
