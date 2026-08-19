@@ -15,6 +15,7 @@ export const TABLE_LABEL: Record<string, string> = {
   deposits: '押金',
   invoices: '發票',
   order_payments: '訂單收款',
+  deposit_payments: '押金收款',
   contract_payments: '契約期款',
   attachments: '憑證',
   revenue_recognitions: '營收認列',
@@ -47,7 +48,7 @@ export const TABLE_LABEL: Record<string, string> = {
 export const DELETABLE_TABLES = [
   'orders', 'contracts', 'contract_recurring_charges',
   'expenses', 'purchase_requests', 'deposits',
-  'invoices', 'order_payments', 'recurring_charges',
+  'invoices', 'order_payments', 'deposit_payments', 'recurring_charges',
   'attachments',
   'estates', 'properties', 'payment_accounts', 'payee_presets',
   'hk_work_item',

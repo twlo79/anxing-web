@@ -21,6 +21,8 @@ import {
   canBeSource, canBeTarget, canTransfer, transferCandidates, transferTargets,
   transferChip, roleCanTransfer, depName, isTransfer, type TransferDep,
 } from '@/lib/deposit-transfer';
+import DepositPayments from '@/components/DepositPayments';
+import { depPayStatus, remainingDep, DEP_STATUS_LABEL, DEP_STATUS_CLASS } from '@/lib/deposit-payment';
 import { shareDeposit } from '@/lib/share';
 import { softDelete } from '@/lib/trash';
 import TrashLink from '@/components/TrashLink';
@@ -46,6 +48,13 @@ type Dep = {
    */
   lines?: DepLine[] | null;
   received_on: string | null; received_method: string | null; received_account: string | null;
+  /**
+   * 實收合計，由 deposit_payments 的觸發器維護（migration_147）。
+   *
+   * ★ 大於 0 而小於 amount = **部分收款**。舊模型記不下這個狀態,
+   *   所以「收了一半」跟「一毛沒收」以前在畫面上長得一模一樣。
+   */
+  received_amount?: number | null;
   returned_on: string | null; returned_method: string | null; returned_account: string | null;
   note: string | null; orphaned: boolean; is_manual?: boolean; created_at: string;
   // 退款審核流程（migration_61）
@@ -139,6 +148,8 @@ export default function DepositsPage() {
    *   **要移走的那筆押金**，點進去卻什麼按鈕都沒有（2026-08-19）。
    */
   const [moving, setMoving] = useState<{ dep: Dep; side: 'to' | 'from' } | null>(null);
+  /** 開著收押金視窗的那一筆。收款明細在那裡增刪（migration_147）。 */
+  const [paying, setPaying] = useState<Dep | null>(null);
   const [moveKw, setMoveKw] = useState('');
   const [moveOn, setMoveOn] = useState('');
   /** 要不要連「條件不符」的也列出來。預設不列 —— 見移轉視窗裡的說明。 */
@@ -203,6 +214,23 @@ export default function DepositsPage() {
   const acctName = useMemo(() => Object.fromEntries(payAccounts.map((a) => [a.code, a.name])), [payAccounts]);
   const personName = useMemo(
     () => Object.fromEntries(people.map((p) => [p.id, p.name ?? ''])), [people]);
+  /**
+   * 收款方式的顯示文字。
+   *
+   * ★ 觸發器只在**單筆收款**時填 received_method（migration_147）——
+   *   多筆時是 null，因為挑哪一筆都會讓另一半的錢看起來走錯管道。
+   *
+   *   但 null 直接顯示成「—」會讓人以為沒收到錢。所以這裡分開講:
+   *   真的沒收 → 「—」；收了但有多筆 → 「多筆」，要看明細。
+   */
+  const recvMethodText = (d: Dep) => {
+    if (d.received_method) {
+      return `${METHOD_LABEL[d.received_method] ?? d.received_method}`
+        + (d.received_account ? `・${acctName[d.received_account] ?? d.received_account}` : '');
+    }
+    return Number(d.received_amount) > 0 ? '多筆（看明細）' : '—';
+  };
+
   /** 分享時一併帶上送審的人 —— 兩個呼叫點都走這裡,不會有一邊漏帶 */
   const shareDep = useCallback((d: Dep) => shareDeposit(
     d, d.refund_requested_by ? personName[d.refund_requested_by] : undefined,
@@ -319,7 +347,7 @@ export default function DepositsPage() {
     return {
       id: '', order_id: null, contract_id: null, estate_id: null, property_id: null,
       room: '', guest_name: '', currency: 'TWD', amount: 0,
-      received_on: null, received_method: null, received_account: null,
+      received_on: null, received_method: null, received_account: null, received_amount: 0,
       returned_on: null, returned_method: null, returned_account: null,
       note: null, orphaned: false, is_manual: true, created_at: '',
       refund_status: 'none', payee_bank_code: null, payee_name: null, payee_account: null,
@@ -527,11 +555,18 @@ export default function DepositsPage() {
       if (!edit.room?.trim() && !edit.guest_name?.trim()) return flash('房源與姓名至少要填一個');
     }
     setSaving(true);
+    /*
+     * ★★ 這裡**不再寫 received_on / received_method / received_account**（migration_147）。
+     *
+     * 那三欄現在由 deposit_payments 的觸發器維護。前端也寫的話：
+     *   · 存檔會把觸發器算出來的收滿日蓋成手填的值
+     *   · 下一次任何一筆收款異動，觸發器又蓋回去
+     *
+     * 結果是同一個欄位有兩個主人，而**兩次寫入都會成功** ——
+     * 你只會看到「收款日有時候會自己變」，查不到原因。
+     * 一個欄位只該有一個地方負責寫。
+     */
     const payload: any = {
-      received_on: edit.received_on || null,
-      received_method: edit.received_on ? (edit.received_method || null) : null,
-      // 現金沒有帳戶可言。換了方式要把舊帳號清掉,否則會留下「現金 + 元大8088」這種組合。
-      received_account: edit.received_on && edit.received_method !== 'cash' ? (edit.received_account || null) : null,
       note: edit.note || null,
     };
     // 連動列的這幾欄是來源的快照,改了下次同步就被蓋回去,所以只有手動列能改
@@ -586,7 +621,9 @@ export default function DepositsPage() {
     const T = (v: any, st: any) => ({ v: v ?? '', t: typeof v === 'number' ? 'n' : 's', s: st, z: typeof v === 'number' ? '#,##0' : undefined });
 
     const header = ['物業', '房源', '姓名', '幣別', '押金',
-      '收押金日', '收款方式', '安幸收款帳號',
+      // ★ 實收獨立一欄（migration_147）。應收那一欄現在可能只收了一半 ——
+      //   不列出來的話 Excel 上「押金 2,800」看起來就是收齊了
+      '實收', '收押金日', '收款方式', '安幸收款帳號',
       '預定退款日', '退押金日', '退款方式', '退款帳號',
       '銀行代號', '戶名', '房客收款帳號',
       // ★ 移轉獨立一欄。狀態欄寫「已退」的那幾筆裡，有些錢根本沒出去 ——
@@ -601,8 +638,10 @@ export default function DepositsPage() {
         // 多幣別的押金是一筆,幣別欄放完整摘要,只印 currency 會漏掉外幣
         T(summaryText(r), stCell),
         T(Math.round(Number(r.amount) || 0), stNum),
+        T(Math.round(Number(r.received_amount) || 0), stNum),
         T(r.received_on ?? '', stCell),
-        T(r.received_method ? METHOD_LABEL[r.received_method] ?? r.received_method : '', stCell),
+        T(r.received_method ? METHOD_LABEL[r.received_method] ?? r.received_method
+          : (Number(r.received_amount) > 0 ? '多筆' : ''), stCell),
         // 安幸收款帳號 = 押金收進我方哪個帳戶。跟銀行對帳要靠它。現金收的就是空的。
         T(r.received_account ? acctName[r.received_account] ?? r.received_account : '', stCell),
         T(r.planned_refund_on ?? '', stCell),
@@ -630,6 +669,7 @@ export default function DepositsPage() {
       { wch: 12 },  // 姓名
       { wch: 6 },   // 幣別
       { wch: 11 },  // 押金
+      { wch: 11 },  // 實收
       { wch: 12 },  // 收押金日
       { wch: 10 },  // 收款方式
       { wch: 18 },  // 安幸收款帳號
@@ -719,6 +759,20 @@ export default function DepositsPage() {
     if (r.returned_on) return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-gray-100 text-gray-500">已退</span>;
     const mc = moveChip(r);
     if (mc) return mc;
+    /*
+     * ★ 部分收款要單獨顯示（migration_147）。
+     *
+     * 舊模型記不下這個狀態,所以「收了一半」跟「一毛沒收」以前長得一樣。
+     * 併回「尚未收」的話這支功能等於白做 —— 那正是它要解決的問題。
+     */
+    if (depPayStatus(r) === 'partial') {
+      return (
+        <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-amber-50 text-amber-700"
+          title={`已收 ${fmt(r.received_amount ?? 0)} / ${fmt(r.amount)}`}>
+          部分收款
+        </span>
+      );
+    }
     if (r.received_on) {
       // 退款流程進行中的,狀態欄直接顯示流程狀態 —— 「暫收中」看不出有人正在等核可
       const rc = refundChip(r);
@@ -982,8 +1036,7 @@ export default function DepositsPage() {
                 </td>
                 <td className="px-3 py-2 whitespace-nowrap">{r.received_on ?? '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-500 text-xs">
-                  {r.received_method ? METHOD_LABEL[r.received_method] ?? r.received_method : '—'}
-                  {r.received_account && <div className="text-gray-400">{acctName[r.received_account] ?? r.received_account}</div>}
+                  {recvMethodText(r)}
                 </td>
                 <td className="px-3 py-2 whitespace-nowrap">{r.returned_on ?? '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-500 text-xs">
@@ -1042,10 +1095,16 @@ export default function DepositsPage() {
                     ))}
                   </span>
                 ))}
-                {row('收押金日', d.received_on ?? '—')}
-                {row('收款方式', d.received_method
-                  ? `${METHOD_LABEL[d.received_method] ?? d.received_method}${d.received_account ? `・${acctName[d.received_account] ?? d.received_account}` : ''}`
-                  : '—')}
+                {row('收押金', (
+                  <span className="tabular-nums">
+                    {fmt(d.received_amount ?? 0)} / {fmt(d.amount)}
+                    {remainingDep(d) > 0 && (
+                      <span className="text-amber-700 ml-1 text-xs">尚欠 {fmt(remainingDep(d))}</span>
+                    )}
+                  </span>
+                ))}
+                {row('收滿日', d.received_on ?? '—')}
+                {row('收款方式', recvMethodText(d))}
                 {/*
                   移轉的來龍去脈。**要在退款狀態上面** ——
                   移轉的 A 那筆 refund_status 是 approved（dep_refund_chk 逼的）,
@@ -1119,6 +1178,14 @@ export default function DepositsPage() {
                         className={`${btn} border border-mor-line`}>管理押金</button>
                     )}
                     {/*
+                      收款明細（migration_147）。**沒退款之前都開得起來** ——
+                      已經收滿了還是要看得到明細與收款證明照片。
+                    */}
+                    {canEdit && !d.returned_on && (
+                      <button onClick={() => { setPaying(d); setDetail(null); }}
+                        className={`${btn} border border-mor-slate text-mor-slate`}>收款明細</button>
+                    )}
+                    {/*
                       分享的連結指向請款頁的待核可分頁,不是這一頁 ——
                       核可統一在那裡做,主管點進去就能直接投票,不用自己找那一筆。
                     */}
@@ -1168,6 +1235,17 @@ export default function DepositsPage() {
           </div>
         );
       })()}
+
+      {/* 收押金：一筆一列（migration_147） */}
+      {paying && (
+        <DepositPayments
+          dep={paying}
+          accounts={payAccounts}
+          canEdit={canEdit}
+          onClose={() => setPaying(null)}
+          onChanged={load}
+        />
+      )}
 
       {/*
         ══════════ 押金移房：挑來源 ══════════
@@ -1393,36 +1471,51 @@ export default function DepositsPage() {
                 </div>
               )}
 
+              {/*
+                ══════════ 收押金 ══════════
+
+                ★★ 這裡**不再直接填收款日與方式**（migration_147）。
+
+                那三個欄位（received_on / received_method / received_account）
+                現在是 deposit_payments 的觸發器維護的。手動填的話:
+                  · received_on 有值但 received_amount 還是 0 → 狀態自相矛盾
+                  · 下一次任何一筆收款有異動，觸發器就把手填的值蓋掉
+
+                兩個症狀都**不會報錯**，只會讓那筆押金的數字慢慢變得沒人看得懂。
+                所以入口收斂成一個:開收款視窗，一筆一列地記。
+              */}
               <div className="border-t border-mor-line pt-3">
                 <div className="text-xs font-semibold text-gray-500 mb-2">收押金</div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">收押金日</span>
-                    <input type="date" value={edit.received_on ?? ''}
-                      onChange={(e) => setEdit({ ...edit, received_on: e.target.value || null })}
-                      className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5" /></label>
-                  <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">收款方式</span>
-                    <select value={edit.received_method ?? ''} disabled={!edit.received_on}
-                      onChange={(e) => setEdit({ ...edit, received_method: e.target.value || null, received_account: null })}
-                      className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-100">
-                      <option value="">請選擇</option>
-                      {METHOD_OPTS.map((m) => <option key={m} value={m}>{METHOD_LABEL[m]}</option>)}
-                    </select></label>
-                  {/* 現金沒有帳戶可言 */}
-                  {edit.received_method && edit.received_method !== 'cash' && (
-                    <label className="flex flex-col gap-1 md:col-span-2"><span className="text-xs text-gray-500">安幸收款帳號</span>
-                      <select value={edit.received_account ?? ''}
-                        onChange={(e) => setEdit({ ...edit, received_account: e.target.value || null })}
-                        className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5">
-                        <option value="">未指定</option>
-                        {payAccounts.filter((a) => a.method === edit.received_method)
-                          .map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
-                      </select></label>
-                  )}
-                </div>
-                {!edit.received_on && (
-                  <button onClick={() => setEdit({ ...edit, received_on: todayStr() })}
-                    className="mt-2 text-xs text-mor-blue underline">填入今天</button>
-                )}
+                {(() => {
+                  const st = depPayStatus(edit);
+                  const rest = remainingDep(edit);
+                  return (
+                    <div className="rounded-lg border border-mor-line bg-mor-sand/30 px-3 py-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] font-medium ${DEP_STATUS_CLASS[st]}`}>
+                          {DEP_STATUS_LABEL[st]}
+                        </span>
+                        <span className="text-xs text-gray-600 tabular-nums">
+                          已收 {fmt(edit.received_amount ?? 0)} / {fmt(edit.amount)}
+                          {rest > 0 && <span className="text-amber-700 ml-1">（尚欠 {fmt(rest)}）</span>}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-gray-500 mt-1.5">
+                        收押金日與收款方式由收款明細算出來 —— 收兩次就記兩筆。
+                      </div>
+                      {edit.id && (
+                        <button
+                          onClick={() => { setPaying(edit); setEdit(null); setTriedRefund(false); }}
+                          className="mt-2 h-9 w-full rounded-lg border border-mor-slate text-mor-slate text-sm font-medium">
+                          開啟收款明細
+                        </button>
+                      )}
+                      {!edit.id && (
+                        <div className="text-[11px] text-gray-400 mt-2">先存檔，才能記收款。</div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
 
               {/*

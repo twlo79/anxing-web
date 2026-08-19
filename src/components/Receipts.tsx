@@ -72,7 +72,17 @@ function fmtSize(n: number | null) {
 type Staged = { key: string; file: File; preview: string };
 
 const Receipts = forwardRef<ReceiptsHandle, {
-  kind: 'pr' | 'exp' | 'dep' | 'op';
+  /**
+   * 掛在哪一種母體上。
+   *   pr  請款單 ／ exp 支出 ／ op 短租收款（migration_85）
+   *   dep 押金本身 —— **退款憑證**與既有的舊圖片
+   *   dp  押金的某一筆收款（migration_147）—— **收款證明**
+   *
+   * ★ dep 與 dp 是兩件事，不要混。收兩次就有兩張單據，
+   *   都掛在押金底下的話分不出哪張對哪筆 ——
+   *   而金額對不上時，那正是唯一能查的東西。
+   */
+  kind: 'pr' | 'exp' | 'dep' | 'op' | 'dp';
   parentId: string | null | undefined;
   canEdit?: boolean;
   label?: string;
@@ -94,6 +104,7 @@ const Receipts = forwardRef<ReceiptsHandle, {
   const col = kind === 'pr' ? 'request_id'
     : kind === 'dep' ? 'deposit_id'
     : kind === 'op' ? 'order_payment_id'   // 短租收款的證明照片（migration_85）
+    : kind === 'dp' ? 'deposit_payment_id' // 押金某一筆收款的證明（migration_147）
     : 'expense_id';
 
   const load = useCallback(async () => {
