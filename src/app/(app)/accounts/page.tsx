@@ -288,18 +288,15 @@ export default function AccountsPage() {
     <div className="mx-auto w-full max-w-[1280px] px-4 py-4">
       <Toast msg={msg} error={err} onClose={() => setMsg('')} />
 
-      <div className="mb-4 flex items-center justify-between gap-3">
+      {/*
+        標題列只剩標題（2026-08-19 使用者指定「下載 上傳 向下移」）。
+
+        那兩顆按鈕搬到底下的分頁列 —— 它們操作的對象是**某一個帳戶的流水**
+        （下載是當前分頁的、上傳也是進那個帳戶），放在頁面最上面時
+        看起來像是「整頁」的動作，跟實際行為對不起來。
+      */}
+      <div className="mb-4">
         <h1 className="text-lg font-semibold">帳戶明細</h1>
-        <div className="flex items-center gap-2">
-          {/* 只有在看流水時才給下載 —— 匯入紀錄那一頁下載什麼並不清楚 */}
-          {view === 'txn' && <ExportButton onClick={exportXlsx} disabled={shown.length === 0} />}
-          <button
-            onClick={() => setShowUpload(true)}
-            className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
-          >
-            ⬆ 上傳對帳單
-          </button>
-        </div>
       </div>
 
       {/* ── 合計 ────────────────────────────────── */}
@@ -308,9 +305,21 @@ export default function AccountsPage() {
         三份對帳單的截止日可能不一樣。只上傳了兩份新的就顯示一個數字,
         那是「兩個新的 ＋ 一個舊的」—— 看起來像現在的現金,其實不是。
       */}
-      <div className="mb-3 rounded-lg border bg-white px-4 py-3">
+      {/*
+        【顏色分層】（2026-08-19 使用者要求「做一點區別 可以用顏色」）
+
+        原本從合計、卡片、分頁到表格全是白底配灰框，一整片糊在一起,
+        眼睛找不到「哪裡是哪裡」。用全站既有的 mor 色票分成三層:
+
+          藍（bluelight） 合計與選中的帳戶 —— 錢的數字
+          砂（sand）      面板的頭與腳     —— 操作與小計
+          白             資料本身
+
+        不引進新顏色 —— 這一頁自己配一組色的話，跟其他頁走不在一起。
+      */}
+      <div className="mb-3 rounded-lg border border-mor-line bg-mor-bluelight px-4 py-3">
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <span className="text-sm text-gray-500">總計</span>
+          <span className="text-sm text-mor-slate">總計</span>
           <span className="text-2xl font-semibold tabular-nums">{money(totals.total)}</span>
           {totals.asOf && <span className="text-sm text-gray-500">至 {totals.asOf}</span>}
         </div>
@@ -331,11 +340,13 @@ export default function AccountsPage() {
             <button
               key={a.id}
               onClick={() => setTab(a.id)}
-              className={`rounded-lg border bg-white p-4 text-left transition ${
-                on ? 'border-blue-500 ring-1 ring-blue-500' : 'hover:border-gray-400'
+              className={`rounded-lg border p-4 text-left transition ${
+                on
+                  ? 'border-mor-slate bg-mor-bluelight ring-1 ring-mor-slate'
+                  : 'border-mor-line bg-white hover:border-gray-400'
               }`}
             >
-              <div className="text-sm text-gray-600">{a.name}</div>
+              <div className={`text-sm ${on ? 'font-medium text-mor-slate' : 'text-gray-600'}`}>{a.name}</div>
               <div className="mt-1 text-2xl font-semibold tabular-nums">
                 {money(s?.closing_balance)}
               </div>
@@ -363,15 +374,15 @@ export default function AccountsPage() {
       </div>
 
       {/* ── 流水 ────────────────────────────────── */}
-      <div className="rounded-lg border bg-white">
-        <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
+      <div className="rounded-lg border border-mor-line bg-white">
+        <div className="flex flex-wrap items-center gap-2 rounded-t-lg border-b border-mor-line bg-mor-sand/30 px-3 py-2">
           <div className="flex flex-wrap gap-1">
             {accounts.map((a) => (
               <button
                 key={a.id}
                 onClick={() => setTab(a.id)}
                 className={`rounded px-2.5 py-1 text-sm ${
-                  tab === a.id ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-100'
+                  tab === a.id ? 'bg-mor-slate text-white' : 'text-gray-600 hover:bg-white'
                 }`}
               >
                 {a.name}
@@ -380,21 +391,39 @@ export default function AccountsPage() {
           </div>
           <div className="ml-auto flex items-center gap-2">
             {/* 流水 ／ 匯入紀錄 */}
-            <div className="flex rounded-md border text-sm">
+            <div className="flex rounded-md border border-mor-line bg-white text-sm">
               <button
                 onClick={() => setView('txn')}
-                className={`px-2.5 py-1 ${view === 'txn' ? 'bg-gray-100 font-medium' : 'text-gray-500'}`}
+                className={`rounded-l-md px-2.5 py-1 ${view === 'txn' ? 'bg-mor-bluelight font-medium text-mor-slate' : 'text-gray-500'}`}
               >
                 流水
               </button>
               <button
                 onClick={() => setView('stmt')}
-                className={`border-l px-2.5 py-1 ${view === 'stmt' ? 'bg-gray-100 font-medium' : 'text-gray-500'}`}
+                className={`rounded-r-md border-l border-mor-line px-2.5 py-1 ${view === 'stmt' ? 'bg-mor-bluelight font-medium text-mor-slate' : 'text-gray-500'}`}
               >
                 匯入紀錄
               </button>
             </div>
             {view === 'txn' && <FilterToggle active={hasFilter(f)} />}
+            {/*
+              下載與上傳搬到這裡（2026-08-19 使用者指定「下載 上傳 向下移」）。
+
+              它們本來就是**針對當前這個帳戶**的動作 ——
+              下載的是這個分頁篩出來的流水、上傳也是進這個帳戶。
+              放在頁面標題旁邊時看起來像「整頁」的動作,跟實際行為對不起來。
+
+              分隔線是為了跟左邊的檢視切換分開:那兩組一個是「看什麼」、
+              一個是「做什麼」，擠在一起會被當成同一排選項。
+            */}
+            <span className="hidden h-6 w-px bg-mor-line sm:block" />
+            {view === 'txn' && <ExportButton onClick={exportXlsx} disabled={shown.length === 0} />}
+            <button
+              onClick={() => setShowUpload(true)}
+              className="rounded-md bg-mor-slate px-3 py-1.5 text-sm font-medium text-white hover:bg-mor-slatedark"
+            >
+              ⬆ 上傳對帳單
+            </button>
           </div>
         </div>
 
@@ -488,17 +517,17 @@ export default function AccountsPage() {
             min-w 是給窄螢幕的 —— 沒有它的話 table-fixed 會等比壓縮，
             帳號又會折回去。寧可讓外層橫向捲動。
           */}
-          <table className="w-full min-w-[58rem] text-sm table-fixed">
+          <table className="w-full min-w-[62rem] table-fixed text-sm">
             <colgroup>
               <col className="w-[7rem]" />     {/* 交易日（含「入帳 ⋯」第二行） */}
               <col className="w-[5.5rem]" />   {/* 交易型態 */}
-              <col className="w-[13rem]" />    {/* 摘要 —— 窄，折行 */}
-              <col className="w-[12.5rem]" />  {/* 交易帳號 —— 一行放得下 */}
+              <col className="w-[16rem]" />    {/* 摘要 —— 放寬（2026-08-19），字多仍折行 */}
+              <col className="w-[13rem]" />    {/* 交易帳號 —— 13px 等寬字一行放得下 21 個字 */}
               <col className="w-[6.5rem]" />   {/* 支出 */}
               <col className="w-[6.5rem]" />   {/* 存入 */}
-              <col className="w-[7rem]" />     {/* 餘額 */}
+              <col className="w-[7.5rem]" />   {/* 餘額（可能有備註第二行） */}
             </colgroup>
-            <thead className="bg-gray-50 text-xs text-gray-600">
+            <thead className="bg-mor-sand/40 text-xs text-gray-600">
               <tr>
                 {/*
                   排序鍵是**帳務日**，標題卻寫「交易日」—— 這是刻意的。
@@ -547,7 +576,13 @@ export default function AccountsPage() {
                 </tr>
               )}
               {shown.map((t) => (
-                <tr key={t.id} className="border-t hover:bg-gray-50">
+                /*
+                  斑馬紋。**這是這一頁最需要顏色的地方** ——
+                  七欄寬的表格，眼睛從左邊的日期掃到右邊的餘額時
+                  很容易跳到隔壁列，而跳錯一列在對帳時就是對到別筆交易。
+                  隔列淡底可以把視線釘在同一條水平線上。
+                */
+                <tr key={t.id} className="border-t border-mor-line even:bg-mor-sand/20 hover:bg-mor-sand/60">
                   <td className="whitespace-nowrap px-3 py-1.5 tabular-nums">
                     {/* 交易日為主 —— 對帳時人看的是那一天 */}
                     <div>{ymd(t.txn_date ?? t.post_date)}</div>
@@ -588,8 +623,12 @@ export default function AccountsPage() {
                     */}
                     {/* 欄寬已經放得下整串（colgroup 12.5rem），break-all 只是萬一
                         遇到更長的號碼時的保險 —— 折行總比溢出去蓋到別欄好 */}
+                    {/* 13px（2026-08-19 使用者指定放大）—— 這一欄是對帳時真正在讀的東西,
+                        原本 12px 的等寬數字在一堆 14px 中文旁邊看起來像註腳 */}
                     {t.ref_no && (
-                      <div className="break-all font-mono text-[12px] text-gray-700">{splitRef(t.ref_no)}</div>
+                      <div className="break-all font-mono text-[13px] font-medium tracking-tight text-gray-800">
+                        {splitRef(t.ref_no)}
+                      </div>
                     )}
                     {t.counterparty && (
                       <div className="text-[11px] text-gray-400 mt-0.5 truncate">{t.counterparty}</div>
@@ -622,7 +661,7 @@ export default function AccountsPage() {
               ))}
             </tbody>
             {shown.length > 0 && (
-              <tfoot className="border-t bg-gray-50 text-xs">
+              <tfoot className="border-t border-mor-line bg-mor-sand/30 text-xs">
                 <tr>
                   <td colSpan={4} className="px-3 py-2 text-gray-600">
                     {shown.length} 筆
