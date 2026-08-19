@@ -17,6 +17,10 @@ import {
   depLines, primaryText, extraLines, summaryText, isMultiCurrency, sumByCurrency,
   lineText, type DepLine,
 } from '@/lib/deposit-lines';
+import {
+  canBeTarget, canTransfer, transferCandidates, transferChip, roleCanTransfer,
+  depName, isTransfer, type TransferDep,
+} from '@/lib/deposit-transfer';
 import { shareDeposit } from '@/lib/share';
 import { softDelete } from '@/lib/trash';
 import TrashLink from '@/components/TrashLink';
@@ -52,6 +56,17 @@ type Dep = {
   /** 送審退款的人。分享訊息與請款頁的「請款者」欄位都用這一個。 */
   refund_requested_by?: string | null;
   reject_reason?: string | null;
+  /*
+   * 押金移房（migration_146）。A 房收過的押金轉到 B 房的新訂單。
+   *
+   * ★ 有值就代表這一筆的 received_on / returned_on **不是真的收付** ——
+   *   錢從頭到尾沒有離開公司,只是換了名目。
+   *   押金收退報表要靠這兩欄把移轉排除,不然那個月會憑空多一收一退。
+   */
+  transfer_to_id?: string | null;
+  transfer_from_id?: string | null;
+  transferred_by?: string | null;
+  transferred_at?: string | null;
 };
 type Estate = { id: string; name: string };
 type PayAccount = { code: string; name: string; method: string };
@@ -113,6 +128,10 @@ export default function DepositsPage() {
   const [sort, setSort] = useState<SortState>({ key: 'received_on', dir: 'desc' });
   const [detail, setDetail] = useState<Dep | null>(null);
   const [edit, setEdit] = useState<Dep | null>(null);
+  /** 正在替哪一筆（B，尚未收）找來源。null = 沒有在移轉。 */
+  const [moving, setMoving] = useState<Dep | null>(null);
+  const [moveKw, setMoveKw] = useState('');
+  const [moveOn, setMoveOn] = useState('');
   const [saving, setSaving] = useState(false);
   // 同 purchases：身分與角色來自 ProfileProvider，不再自己查一次
   const prof = useProfile();
@@ -240,6 +259,14 @@ export default function DepositsPage() {
     const s = {
       pending: mk(), held: mk(), returned: mk(), orphan: mk(),
       refund_pending: mk(), refund_approved: mk(),
+      /*
+       * ★★ 「已退款」裡有一部分**錢根本沒有出去** —— 那是移房（migration_146）。
+       *
+       * 不分開列的話,「這段期間退了多少押金」這個數字會被灌水,
+       * 而且灌得非常合理:每一筆單看都是一筆已退的押金。
+       * 所以卡片上要把移轉的金額寫出來,讓人自己扣。
+       */
+      moved: mk(),
     };
     const add = (t: { n: number; cur: Record<string, number> }, r: Dep) => {
       t.n++;
@@ -249,6 +276,7 @@ export default function DepositsPage() {
       add(s[bucketOf(r) as 'pending' | 'held' | 'returned'], r);
       // 以下兩組跟上面三類重疊,是故意的 —— 見 Status 的說明
       if (r.orphaned) add(s.orphan, r);
+      if (r.transfer_to_id) add(s.moved, r);
       const rs = refundStage(r);
       if (rs === 'pending' || rs === 'approved') {
         add(s[rs === 'pending' ? 'refund_pending' : 'refund_approved'], r);
@@ -398,6 +426,76 @@ export default function DepositsPage() {
     setDetail(null); flash('已完成退款'); load();
   }
 
+  /* ══════════════ 押金移房（migration_146）══════════════ */
+
+  /** id → 那筆押金，給移轉標籤查對方叫什麼名字用。 */
+  const depById = useMemo(() => Object.fromEntries(rows.map((r) => [r.id, r])) as Record<string, Dep>, [rows]);
+  const nameOfDep = useCallback(
+    (id: string) => (depById[id] ? depName(depById[id]) : null), [depById]);
+
+  /*
+   * 只有會計與總管理員能移（2026-08-19 使用者指定）——
+   * **經理不在內**,他能改押金、能投退款票,但不能移房。
+   *
+   * 這裡藏按鈕只是為了不讓人白按:真正說了算的是 RPC 裡的同一條檢查。
+   */
+  const canMove = roleCanTransfer(role);
+
+  /**
+   * 把來源那筆的押金移到 `moving`（目的）。
+   *
+   * 走 RPC 而不是前端兩次 update —— ★★ RLS 擋下的 UPDATE 會回成功且影響 0 列,
+   * 分兩句寫的話第二句被擋掉時畫面會說「移轉成功」,
+   * 實際上 A 已退、B 還是未收,那筆錢在系統裡人間蒸發而且沒有錯誤訊息。
+   */
+  async function doTransfer(from: Dep) {
+    if (!moving) return;
+    const v = canTransfer(from as TransferDep, moving as TransferDep);
+    if (!v.ok) return flash(v.reason + (v.hint ? `：${v.hint}` : ''));
+    const on = /^\d{4}-\d{2}-\d{2}$/.test(moveOn) ? moveOn : todayStr();
+    if (!confirm(
+      `把 ${depName(from)} 的押金 NT$ ${fmt(from.amount)} 移轉到 ${depName(moving)}？\n\n`
+      + `・${depName(from)} → 已退押金（移轉，錢沒有實際匯出）\n`
+      + `・${depName(moving)} → 已收押金\n`
+      + `・移轉日 ${on}\n\n兩邊備註都會自動註記，移錯了可以撤銷。`
+    )) return;
+    setSaving(true);
+    const { data, error } = await supabase.rpc('transfer_deposit', {
+      p_from: from.id, p_to: moving.id, p_on: on,
+    });
+    setSaving(false);
+    if (error) return flash('移轉失敗：' + error.message);
+    // RPC 回 ok 布林。靠字串比對判斷成功與否的話,訊息改一個字就會變成「失敗也顯示成功」
+    const r = (data ?? [])[0] as { ok: boolean; item: string; detail: string } | undefined;
+    if (!r?.ok) return flash(`${r?.item ?? '移轉失敗'}${r?.detail ? '：' + r.detail : ''}`);
+    setMoving(null); setMoveKw(''); setDetail(null);
+    flash(`${r.item}・${r.detail}`);
+    load();
+  }
+
+  /**
+   * 撤銷移轉。兩列一起復原。
+   *
+   * 【為什麼一定要有】選錯 A 或選錯 B 之後,前端**沒有任何地方能清掉 returned_on**——
+   * settle() 只填日期不會清,編輯視窗刻意不碰 returned_*。
+   * 沒有這顆按鈕,移錯一次就只能請人去改資料庫,而那通常等於沒有人會去改。
+   */
+  async function undoTransfer(d: Dep) {
+    const other = d.transfer_to_id ?? d.transfer_from_id;
+    if (!confirm(
+      `撤銷這筆押金移轉？\n\n`
+      + `${depName(d)} 與 ${other ? nameOfDep(other) ?? '對應那筆' : '對應那筆'} 都會回到移轉前的狀態。\n`
+      + `備註不會刪掉，會再加一行撤銷紀錄。`
+    )) return;
+    setSaving(true);
+    const { data, error } = await supabase.rpc('undo_deposit_transfer', { p_id: d.id });
+    setSaving(false);
+    if (error) return flash('撤銷失敗：' + error.message);
+    const r = (data ?? [])[0] as { ok: boolean; item: string; detail: string } | undefined;
+    if (!r?.ok) return flash(`${r?.item ?? '撤銷失敗'}${r?.detail ? '：' + r.detail : ''}`);
+    setDetail(null); flash(`${r.item}・${r.detail}`); load();
+  }
+
   /**
    * 儲存「收押金」那一段與備註。
    *
@@ -477,7 +575,9 @@ export default function DepositsPage() {
       '收押金日', '收款方式', '安幸收款帳號',
       '預定退款日', '退押金日', '退款方式', '退款帳號',
       '銀行代號', '戶名', '房客收款帳號',
-      '狀態', '備註'];
+      // ★ 移轉獨立一欄。狀態欄寫「已退」的那幾筆裡，有些錢根本沒出去 ——
+      //   對帳的人要能一眼把它們挑掉，不然當月的退款金額會多算
+      '押金移房', '狀態', '備註'];
     const aoa: any[][] = [header.map((h) => T(h, stHead))];
     for (const r of sorted) {
       aoa.push([
@@ -501,7 +601,11 @@ export default function DepositsPage() {
         T(r.payee_name ?? '', stCell),
         // 帳號一律當文字。當數字的話 Excel 會吃掉開頭的 0,長帳號還會變科學記號
         T(r.payee_account ?? '', stCell),
-        T(r.orphaned ? '孤兒' : r.returned_on ? '已退' : r.received_on ? '暫收中' : '尚未收', stCell),
+        T(transferChip(r, nameOfDep)?.text ?? '', stCell),
+        T(r.orphaned ? '孤兒'
+          : r.transfer_to_id ? '已移轉'
+          : r.returned_on ? '已退'
+          : r.received_on ? '暫收中' : '尚未收', stCell),
         T(r.note ?? '', stCell),
       ]);
     }
@@ -522,6 +626,7 @@ export default function DepositsPage() {
       { wch: 10 },  // 銀行代號
       { wch: 18 },  // 戶名
       { wch: 20 },  // 房客收款帳號
+      { wch: 18 },  // 押金移房
       { wch: 10 },  // 狀態
       { wch: 24 },  // 備註
     ];
@@ -565,8 +670,28 @@ export default function DepositsPage() {
     return null;
   };
 
+  /**
+   * ★★ 移轉的標籤要跟「已退／已收」分開。
+   *
+   * 同一個 returned_on 兩種意思:一個是錢匯給房客了,一個是錢還在我們手上
+   * 只是換了名目。共用一個灰色「已退」的話,看清單的人會以為錢退出去了 ——
+   * 而押金總額其實一毛都沒少。
+   */
+  const moveChip = (r: Dep) => {
+    const c = transferChip(r, nameOfDep);
+    if (!c) return null;
+    return (
+      <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] ${
+        c.dir === 'out' ? 'bg-violet-50 text-violet-700' : 'bg-mor-greenlight text-mor-green'}`}>
+        {c.text}
+      </span>
+    );
+  };
+
   const statusChip = (r: Dep) => {
     if (r.orphaned) return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-red-50 text-red-600">孤兒</span>;
+    const mc = moveChip(r);
+    if (mc) return mc;
     if (r.returned_on) return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-gray-100 text-gray-500">已退</span>;
     if (r.received_on) {
       // 退款流程進行中的,狀態欄直接顯示流程狀態 —— 「暫收中」看不出有人正在等核可
@@ -632,6 +757,13 @@ export default function DepositsPage() {
                 共 {s.n} 筆
               </div>
               <div className={`text-xs mt-0.5 ${on ? 'opacity-70' : 'text-gray-400'}`}>{t.hint}</div>
+              {/* ★ 已退款裡混著「移房」—— 那幾筆錢沒有出去。不寫出來的話
+                  「這段期間退了多少押金」會被灌水,而每一筆單看都很正常 */}
+              {t.k === 'returned' && stats.moved.n > 0 && (
+                <div className={`text-xs mt-1 ${on ? 'opacity-90' : 'text-violet-700'}`}>
+                  其中移房 {stats.moved.n} 筆・NT$ {fmt(stats.moved.cur['TWD'] ?? 0)}（錢沒有出去）
+                </div>
+              )}
             </button>
           );
         })}
@@ -888,7 +1020,35 @@ export default function DepositsPage() {
                 {row('收款方式', d.received_method
                   ? `${METHOD_LABEL[d.received_method] ?? d.received_method}${d.received_account ? `・${acctName[d.received_account] ?? d.received_account}` : ''}`
                   : '—')}
-                {(d.refund_status ?? 'none') !== 'none' && <>
+                {/*
+                  移轉的來龍去脈。**要在退款狀態上面** ——
+                  移轉的 A 那筆 refund_status 是 approved（dep_refund_chk 逼的）,
+                  先看到「已核可」會以為它走過兩票審核。
+                */}
+                {isTransfer(d) && (() => {
+                  const otherId = d.transfer_to_id ?? d.transfer_from_id!;
+                  const other = depById[otherId];
+                  const out = !!d.transfer_to_id;
+                  return <>
+                    {row('押金移房', (
+                      <span className="space-x-2">
+                        {moveChip(d)}
+                        {other && (
+                          <button onClick={() => setDetail(other)}
+                            className="text-xs text-mor-blue underline">看那一筆</button>
+                        )}
+                      </span>
+                    ))}
+                    {row(out ? '移轉出去' : '移轉進來', (
+                      <span className="text-xs text-gray-500">
+                        {d.transferred_at ? d.transferred_at.slice(0, 10) : '—'}
+                        {d.transferred_by ? `・${personName[d.transferred_by] ?? ''}` : ''}
+                        <span className="ml-1">・錢沒有實際進出</span>
+                      </span>
+                    ))}
+                  </>;
+                })()}
+                {(d.refund_status ?? 'none') !== 'none' && !isTransfer(d) && <>
                   {row('退款狀態', <span className="space-x-1">
                     {refundChip(d)}
                     {d.refund_status === 'pending' && (
@@ -945,7 +1105,22 @@ export default function DepositsPage() {
                       <button onClick={() => { setDetail(null); setRejecting(d); setRejectReason(''); }}
                         className={`${btn} border border-amber-400 text-amber-700`}>駁回</button>
                     )}
-                    {p.canSettle && (
+                    {/*
+                      移轉的入口放在**目的那筆（尚未收）**上,不是來源。
+                      因為人是從「B 房怎麼會有押金未收」開始找的 ——
+                      放在 A 那邊的話,他得先想到「喔要去舊房間按」。
+                    */}
+                    {canMove && canBeTarget(d as TransferDep).ok && (
+                      <button onClick={() => { setMoving(d); setMoveKw(''); setMoveOn(todayStr()); }}
+                        className={`${btn} border border-violet-300 text-violet-700`}>從別房移轉押金</button>
+                    )}
+                    {canMove && isTransfer(d) && (
+                      <button onClick={() => undoTransfer(d)} disabled={saving}
+                        className={`${btn} border border-amber-400 text-amber-700 disabled:opacity-50`}>撤銷移轉</button>
+                    )}
+                    {/* 移轉來的那筆不給「確認已退款」—— 那是移轉，不是退給房客,
+                        真的要退錢請先撤銷移轉,回到正常的退款流程 */}
+                    {p.canSettle && !isTransfer(d) && (
                       <button onClick={() => {
                         const v = prompt('實際退款日（YYYY-MM-DD）', d.planned_refund_on ?? todayStr());
                         if (v && /^\d{4}-\d{2}-\d{2}$/.test(v)) settle(d, v);
@@ -961,6 +1136,89 @@ export default function DepositsPage() {
           </div>
         );
       })()}
+
+      {/*
+        ══════════ 押金移房：挑來源 ══════════
+
+        清單列出**全部**暫收中的押金,不用房客姓名自動比對 ——
+        換房常常也換人（原本兩人住、剩一人續租）,照名字猜會漏掉一半,
+        而漏掉的那半使用者只會看到「找不到」,不會知道是被條件濾掉的。
+
+        不能移的也留在清單上並寫出原因（金額差多少）,直接消失的話
+        使用者會一直找那筆押金,不知道它就在眼前只是不合條件。
+      */}
+      {moving && (
+        <div className="fixed inset-0 bg-black/30 flex items-stretch md:items-center justify-center overflow-auto md:py-10 z-50"
+          onClick={() => setMoving(null)}>
+          <div className="bg-white w-full md:w-[620px] md:max-w-[95vw] md:rounded-xl shadow-xl min-h-full md:min-h-0 flex flex-col"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="border-b border-mor-line px-4 md:px-6 py-4"
+              style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
+              <div className="font-bold">押金移房・移轉到 {depName(moving)}</div>
+              <div className="text-xs text-gray-500 mt-1">
+                這筆需要 <b>NT$ {fmt(moving.amount)}</b>（{moving.currency}）。
+                選一筆同金額、同幣別的暫收中押金移過來 —— 錢不會實際進出。
+              </div>
+            </div>
+
+            <div className="px-4 md:px-6 py-3 border-b border-mor-line flex flex-wrap gap-2 items-center text-sm">
+              <input value={moveKw} onChange={(e) => setMoveKw(e.target.value)}
+                placeholder="搜房號、房客、金額" className={`${inp} flex-1 min-w-[10rem]`} />
+              <label className="text-xs text-gray-500">移轉日</label>
+              <input type="date" value={moveOn} onChange={(e) => setMoveOn(e.target.value)} className={inp} />
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-4 md:px-6 py-2">
+              {(() => {
+                const list = transferCandidates(rows as TransferDep[], moving as TransferDep, moveKw);
+                if (!list.length) {
+                  return (
+                    <div className="py-10 text-center text-sm text-gray-400">
+                      沒有暫收中的押金可以移轉
+                      {moveKw && <div className="mt-1 text-xs">（正在搜「{moveKw}」，清掉看全部）</div>}
+                    </div>
+                  );
+                }
+                return list.map(({ dep, verdict }) => (
+                  <div key={dep.id}
+                    className={`flex items-center gap-3 py-2.5 border-b border-mor-line last:border-0
+                      ${verdict.ok ? '' : 'opacity-60'}`}>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium truncate">
+                        {depName(dep)}
+                        <span className="ml-2 text-xs text-gray-500 font-normal">{dep.guest_name ?? ''}</span>
+                      </div>
+                      <div className="text-xs text-gray-500 mt-0.5">
+                        NT$ {fmt(dep.amount)}
+                        {(dep.currency || 'TWD') !== 'TWD' && <span className="ml-1">（{dep.currency}）</span>}
+                        ・收 {dep.received_on ?? '—'}
+                      </div>
+                      {!verdict.ok && (
+                        <div className="text-xs text-amber-700 mt-0.5">
+                          {verdict.reason}{verdict.hint ? `・${verdict.hint}` : ''}
+                        </div>
+                      )}
+                    </div>
+                    <button disabled={!verdict.ok || saving}
+                      onClick={() => doTransfer(depById[dep.id])}
+                      className="shrink-0 h-9 px-3 rounded-lg text-sm font-medium bg-violet-600 text-white
+                        disabled:bg-gray-200 disabled:text-gray-400">
+                      移過來
+                    </button>
+                  </div>
+                ));
+              })()}
+            </div>
+
+            <div className="border-t border-mor-line px-4 md:px-6 py-3 flex justify-between items-center gap-2"
+              style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
+              <span className="text-xs text-gray-400">移錯了可以在押金詳情裡撤銷</span>
+              <button onClick={() => setMoving(null)}
+                className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 駁回 */}
       {rejecting && (

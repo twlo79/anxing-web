@@ -15,8 +15,21 @@
 
 export const METHOD_LABEL: Record<string, string> = {
   cash: '現金', transfer: '匯款', credit_card: '信用卡', crypto: '加密貨幣',
+  /*
+   * 【internal 顯示得出來，但選不到】（migration_146，押金移房）
+   *
+   * 押金從 A 房移到 B 房時，錢**沒有實際進出** —— A 那筆記成
+   * 「退款・匯款」的話，明年對元大帳戶時會有一筆匯出永遠找不到
+   * 對應的銀行流水，而那時沒有人記得那是移房。
+   *
+   * ★ 刻意**不放進 METHOD_OPTS** —— 手動選得到的話，早晚有人
+   *   在一般收款時選它，那筆錢就從此不屬於任何銀行帳戶。
+   *   它只由 transfer_deposit RPC 寫入。
+   */
+  internal: '押金移轉',
 };
 
+/** 人可以選的方式。`internal` 不在內 —— 見上面的註解。 */
 export const METHOD_OPTS = ['cash', 'transfer', 'credit_card', 'crypto'];
 
 /** 只有匯款需要（也才允許）指定收款帳號。 */
