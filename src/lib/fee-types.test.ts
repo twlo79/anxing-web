@@ -195,3 +195,21 @@ describe('改用 presets 之後不可以少掉原本選得到的科目', () => {
     }
   });
 });
+
+describe('運費（2026-08-19 新增）', () => {
+  test('★ 科目與預設都要有 —— 只加一邊會安靜地歸錯科目', () => {
+    /*
+     * 資料庫的 order_account_code() 也要有 '運費' → 'freight'（migration_148）。
+     * 只加前端的話，那筆收入在營收報表上會掉進「其他」——
+     * 金額對、名目對，只有分組錯，沒有人會發現。
+     */
+    assert.ok((FEE_TYPES as readonly string[]).includes('運費'));
+    assert.deepEqual(presetOf('運費', CONTRACT_FEE_PRESETS), { fee_type: '運費', item_name: null });
+    assert.deepEqual(presetOf('運費'), { fee_type: '運費', item_name: null });
+  });
+
+  test('「其他」還是排最後', () => {
+    assert.equal(FEE_TYPES[FEE_TYPES.length - 1], '其他');
+    assert.equal(ONEOFF_PRESETS[ONEOFF_PRESETS.length - 1].label, '其它');
+  });
+});
