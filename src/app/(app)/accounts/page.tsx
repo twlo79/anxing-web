@@ -468,7 +468,36 @@ export default function AccountsPage() {
           />
         ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          {/*
+            ══════════ 欄寬 ══════════
+
+            【為什麼要寫死，不讓瀏覽器自己算】（2026-08-19 使用者指定）
+
+            預設的 table-auto 是「誰的字多誰就寬」—— 摘要那一欄有
+            「4010054659 代繳市水 08025 112 TPCW」這種長字串，
+            它就把寬度全吃掉，而交易帳號被擠到剩下一點點，
+            `013-00000095503-32784` 只好折成兩三行。
+
+            結果剛好相反:**佔最多版面的是最不重要的那一欄**。
+            對帳時人在找的是帳號，摘要是輔助。
+
+            所以改成 table-fixed ＋ colgroup:
+              摘要     窄，字多就折行（它本來就是自由文字，折行不影響閱讀）
+              交易帳號 放得下 21 個字的等寬數字串，不折行
+
+            min-w 是給窄螢幕的 —— 沒有它的話 table-fixed 會等比壓縮，
+            帳號又會折回去。寧可讓外層橫向捲動。
+          */}
+          <table className="w-full min-w-[58rem] text-sm table-fixed">
+            <colgroup>
+              <col className="w-[7rem]" />     {/* 交易日（含「入帳 ⋯」第二行） */}
+              <col className="w-[5.5rem]" />   {/* 交易型態 */}
+              <col className="w-[13rem]" />    {/* 摘要 —— 窄，折行 */}
+              <col className="w-[12.5rem]" />  {/* 交易帳號 —— 一行放得下 */}
+              <col className="w-[6.5rem]" />   {/* 支出 */}
+              <col className="w-[6.5rem]" />   {/* 存入 */}
+              <col className="w-[7rem]" />     {/* 餘額 */}
+            </colgroup>
             <thead className="bg-gray-50 text-xs text-gray-600">
               <tr>
                 {/*
@@ -539,8 +568,10 @@ export default function AccountsPage() {
                     那樣「摘要」這一欄排序時排的其實是交易型態,
                     而點下去看起來沒反應。
                   */}
-                  <td className="px-3 py-1.5 text-gray-600">
+                  <td className="px-3 py-1.5 text-gray-600 break-words">
                     {/* 全形字原樣顯示（１２月房租、南５）—— 轉半形之後跟 PDF 對不起來 */}
+                    {/* 折行:摘要是自由文字，斷在哪裡都讀得懂，
+                        而它擠掉帳號的代價比多佔一行高度大得多 */}
                     {t.memo ?? ''}
                   </td>
                   <td className="px-3 py-1.5">
@@ -555,21 +586,24 @@ export default function AccountsPage() {
                       不然看不出是哪家銀行。斷行用 break-all:
                       那是 16–20 位的數字串，不斷行會把整張表撐開。
                     */}
+                    {/* 欄寬已經放得下整串（colgroup 12.5rem），break-all 只是萬一
+                        遇到更長的號碼時的保險 —— 折行總比溢出去蓋到別欄好 */}
                     {t.ref_no && (
                       <div className="break-all font-mono text-[12px] text-gray-700">{splitRef(t.ref_no)}</div>
                     )}
                     {t.counterparty && (
-                      <div className="text-[11px] text-gray-400 mt-0.5">{t.counterparty}</div>
+                      <div className="text-[11px] text-gray-400 mt-0.5 truncate">{t.counterparty}</div>
                     )}
                   </td>
-                  <td className="px-3 py-1.5 text-right tabular-nums text-red-600">
+                  <td className="whitespace-nowrap px-3 py-1.5 text-right tabular-nums text-red-600">
                     {Number(t.debit) ? money(Number(t.debit)) : ''}
                   </td>
-                  <td className="px-3 py-1.5 text-right tabular-nums text-green-700">
+                  <td className="whitespace-nowrap px-3 py-1.5 text-right tabular-nums text-green-700">
                     {Number(t.credit) ? money(Number(t.credit)) : ''}
                   </td>
                   <td className="px-3 py-1.5 text-right tabular-nums">
-                    {money(Number(t.balance))}
+                    {/* 金額本身不折行,但底下的餘額備註要折 —— 所以 nowrap 給那一行不給整格 */}
+                    <div className="whitespace-nowrap">{money(Number(t.balance))}</div>
                     {/*
                       銀行印的跟我們算的不一樣時要看得見。
                       存了卻不顯示等於沒存 —— 那一格是「為什麼跟網銀對不起來」
