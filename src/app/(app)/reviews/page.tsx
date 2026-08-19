@@ -79,6 +79,15 @@ function csvEsc(v: unknown) {
 export default function ReviewsPage() {
   const supabase = useMemo(() => createClient(), []);
   const [estates, setEstates] = useState<Estate[]>([]);
+  /*
+   * 物業查詢**回來了沒**，跟「回來幾筆」是兩件事。
+   *
+   * 不能用 `estates.length > 0` 代替 —— 查詢失敗時 data 是 null,
+   * 存進去也是空陣列，兩種情況長得一模一樣。
+   * 而失敗那次的下場是整欄永遠顯示「—」，看起來像資料真的沒有物業。
+   */
+  const [estatesLoaded, setEstatesLoaded] = useState(false);
+  const [estatesErr, setEstatesErr] = useState('');
   const [tenures, setTenures] = useState<Tenure[]>([]);
   const [staffNames, setStaffNames] = useState<Record<string, string>>({});
   /**
@@ -131,7 +140,21 @@ export default function ReviewsPage() {
    * 這裡不改成「等載完再畫列表」—— 那會讓整頁多空白一秒。
    * 只要把「還沒載完」跟「對不到」分開講就夠了。
    */
-  const mastersLoaded = properties.length > 0;
+  /*
+   * ★★ 房源**與物業**都載到才算載完（2026-08-19 修）。
+   *
+   * 原本只看 properties。四支查詢是各自獨立發出去的，
+   * 而 properties 走 fetchAll（可能好幾趟）、estates 是單趟小查詢 ——
+   * 桌機幾乎都是 estates 先到，所以看不出問題。
+   *
+   * 手機上順序會翻過來:properties 先回 → 這個旗標變 true →
+   * 物業那一格印出「—」。而「—」的意思是**這筆對不到物業**,
+   * 跟「還在載」完全是兩件事。使用者看到的是「手機讀不出物業」。
+   *
+   * 一個只等一半的「載完了嗎」比沒有這個旗標更糟:
+   * 它會用很有把握的語氣講一件還不知道的事。
+   */
+  const mastersLoaded = properties.length > 0 && estatesLoaded;
   const estateById = useMemo(() => Object.fromEntries(estates.map((e) => [e.id, e])), [estates]);
   const visibleProps = useMemo(
     () => (estateId ? properties.filter((p) => p.estate_id === estateId) : properties),
@@ -139,7 +162,20 @@ export default function ReviewsPage() {
   );
 
   useEffect(() => {
-    supabase.from('estates').select('id, name, manager, sort').eq('active', true).order('sort').then(({ data }) => setEstates(data ?? []));
+    /*
+     * ★ 錯誤不可以吞掉。
+     *
+     * 原本是 `.then(({ data }) => setEstates(data ?? []))` —— 查詢失敗時
+     * data 是 null，靜靜地存進一個空陣列，然後整欄物業顯示「—」。
+     * 而「—」看起來就是「這筆沒有物業」,沒有任何跡象指向網路失敗。
+     * 手機在電梯裡重整一次就會踩到。
+     */
+    supabase.from('estates').select('id, name, manager, sort').eq('active', true).order('sort')
+      .then(({ data, error }) => {
+        if (error) setEstatesErr(error.message);
+        else setEstates(data ?? []);
+        setEstatesLoaded(true);
+      });
     /*
      * 管家任期（migration_115）。
      *
@@ -540,12 +576,33 @@ export default function ReviewsPage() {
 
       {/* ===== 表格 ===== */}
       <div className="rounded-xl glass overflow-x-auto">
-        <table className="w-full min-w-[820px] text-sm">
+        {/*
+          物業載不到要講出來。
+
+          不講的話畫面只是每一列的物業都空著 —— 而那看起來就是
+          「這些評價沒有物業」,人會去查爬蟲或資料庫，
+          問題其實在這一支查詢失敗了（手機訊號不穩時真的會）。
+        */}
+        {estatesErr && (
+          <div className="mx-3 mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            ⚠ 物業名稱載入失敗，下面的物業欄會是空的（房源與評價本身沒問題）。
+            重新整理通常就好了。<span className="text-amber-600">（{estatesErr}）</span>
+          </div>
+        )}
+        <table className="w-full min-w-[760px] text-sm">
           <thead>
             <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-white/45">
               <th className="px-3 py-2.5 whitespace-nowrap">入住日</th>
               <th className="px-3 py-2.5 whitespace-nowrap">退房日</th>
-              <th className="px-3 py-2.5">物業</th>
+              {/*
+                物業與房源併成一欄（2026-08-19 使用者指定）。
+
+                分成兩欄的問題是它們**永遠一起看** —— 沒有人只看物業不看房源,
+                而兩欄各佔一個標題、各一個色塊，在手機上把後面的旅客與評分擠出畫面。
+
+                併之後房源當主體、物業縮成小字（跟帳戶明細的「交易帳號」同一個作法）:
+                真正要認的是 3A3、A13 那些房號，物業是它的歸屬。
+              */}
               <th className="px-3 py-2.5">房源</th>
               <th className="px-3 py-2.5">旅客</th>
               <th className="px-3 py-2.5">負責人</th>
@@ -555,9 +612,9 @@ export default function ReviewsPage() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={8} className="px-4 py-10 text-center text-gray-400">載入中…</td></tr>
+              <tr><td colSpan={7} className="px-4 py-10 text-center text-gray-400">載入中…</td></tr>
             ) : rows.length === 0 ? (
-              <tr><td colSpan={8} className="px-4 py-10 text-center text-gray-400">沒有符合條件的評價</td></tr>
+              <tr><td colSpan={7} className="px-4 py-10 text-center text-gray-400">沒有符合條件的評價</td></tr>
             ) : rows.map((r) => {
               const p = r.property_id ? propById[r.property_id] : null;
               const e = p?.estate_id ? estateById[p.estate_id] : null;
@@ -567,10 +624,19 @@ export default function ReviewsPage() {
                   <td className="px-3 py-2.5 whitespace-nowrap text-gray-600">{r.checkin_date ?? '—'}</td>
                   <td className="px-3 py-2.5 whitespace-nowrap text-gray-600">{r.checkout_date ?? '—'}</td>
                   <td className="px-3 py-2.5 whitespace-nowrap">
-                    <span className="inline-block rounded-md bg-mor-bluelight text-mor-slate px-2 py-0.5 text-xs font-medium">{e?.name ?? (mastersLoaded ? '—' : '⋯')}</span>
-                  </td>
-                  <td className="px-3 py-2.5 whitespace-nowrap">
-                    <span className="inline-block rounded-md bg-mor-sand px-2 py-0.5 text-xs font-medium">{p?.name ?? (mastersLoaded ? '未對應' : '⋯')}</span>
+                    <span className="inline-block rounded-md bg-mor-sand px-2 py-0.5 text-xs font-medium">
+                      {p?.name ?? (mastersLoaded ? '未對應' : '⋯')}
+                    </span>
+                    {/*
+                      物業縮成第二行小字。房源名稱本身常常就含物業（開封4F），
+                      那種時候重複兩次是雜訊 —— 所以名稱裡已經有的就不再印一次。
+                    */}
+                    {e?.name && !(p?.name ?? '').includes(e.name) && (
+                      <div className="mt-0.5 text-[11px] text-gray-400">{e.name}</div>
+                    )}
+                    {!e?.name && !mastersLoaded && (
+                      <div className="mt-0.5 text-[11px] text-gray-300">⋯</div>
+                    )}
                   </td>
                   <td className="px-3 py-2.5 whitespace-nowrap">{r.guest_name}</td>
                   <td className="px-3 py-2.5 whitespace-nowrap text-gray-600">{mgrOf(r) || (mastersLoaded ? '—' : '⋯')}</td>
