@@ -6,12 +6,14 @@ import Toast from '@/components/Toast';
 import UploadPanel from './upload-panel';
 import StatementsPanel from './statements-panel';
 import { totalBalance } from '@/lib/bank-import';
-import { filterTxns, hasFilter, sumRows, amountOf, type BankFilter } from '@/lib/bank-filter';
+import { filterTxns, hasFilter, sumRows, amountOf, splitTail, type BankFilter } from '@/lib/bank-filter';
+import * as XLSX from 'xlsx-js-style';
+import { ExportButton } from '@/components/Actions';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import FilterToggle from '@/components/FilterToggle';
 
 /**
- * 帳戶管理 —— 三個銀行帳戶的流水鏡像。
+ * 帳戶明細 —— 三個銀行帳戶的流水鏡像。
  *
  * ============================================================
  * 【餘額不是算出來的，是銀行說的】
@@ -218,18 +220,63 @@ export default function AccountsPage() {
 
   const sums = useMemo(() => sumRows(shown), [shown]);
 
+  /*
+   * 下載 Excel。
+   *
+   * **下載的是「畫面上這幾筆」而不是全部** —— 篩了日期或方向之後
+   * 按下載，拿到的檔案要跟眼前看到的一致。
+   * 下載全部的話,人會以為篩選沒生效,或更糟:拿去對帳才發現多了幾百筆。
+   *
+   * 檔名帶帳戶與日期範圍,不然下載三次會變成三個同名檔案。
+   */
+  function exportXlsx() {
+    const acc = accounts.find((a) => a.id === tab);
+    const rows = shown.map((t) => ({
+      交易日: t.txn_date ?? t.post_date,
+      帳務日: t.post_date,
+      時間: t.txn_time ?? '',
+      交易型態: t.description ?? '',
+      摘要: t.memo ?? '',
+      對方: t.counterparty ?? '',
+      對方帳號: t.ref_no ?? '',
+      // Excel 裡放數字不放字串 —— 放字串就不能加總,而那正是下載的目的
+      支出: Number(t.debit) || 0,
+      存入: Number(t.credit) || 0,
+      餘額: Number(t.balance) || 0,
+      // 只有銀行印錯的那幾筆才有值
+      餘額備註: t.balance_note ?? '',
+    }));
+    if (rows.length === 0) { setMsg('沒有資料可以下載'); setErr(true); return; }
+
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = [
+      { wch: 11 }, { wch: 11 }, { wch: 9 }, { wch: 10 }, { wch: 22 },
+      { wch: 12 }, { wch: 22 }, { wch: 12 }, { wch: 12 }, { wch: 13 }, { wch: 30 },
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '流水');
+    const span = shown.length
+      ? `${shown[shown.length - 1].post_date}_${shown[0].post_date}`.replace(/-/g, '')
+      : '';
+    XLSX.writeFile(wb, `帳戶明細_${acc?.name ?? ''}_${span}.xlsx`);
+  }
+
   return (
     <div className="mx-auto w-full max-w-[1280px] px-4 py-4">
       <Toast msg={msg} error={err} onClose={() => setMsg('')} />
 
       <div className="mb-4 flex items-center justify-between gap-3">
-        <h1 className="text-lg font-semibold">帳戶管理</h1>
-        <button
-          onClick={() => setShowUpload(true)}
-          className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
-        >
-          ⬆ 上傳對帳單
-        </button>
+        <h1 className="text-lg font-semibold">帳戶明細</h1>
+        <div className="flex items-center gap-2">
+          {/* 只有在看流水時才給下載 —— 匯入紀錄那一頁下載什麼並不清楚 */}
+          {view === 'txn' && <ExportButton onClick={exportXlsx} disabled={shown.length === 0} />}
+          <button
+            onClick={() => setShowUpload(true)}
+            className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+          >
+            ⬆ 上傳對帳單
+          </button>
+        </div>
       </div>
 
       {/* ── 合計 ────────────────────────────────── */}
@@ -276,8 +323,16 @@ export default function AccountsPage() {
                 */}
                 {s ? `至 ${s.period_to}` : '還沒上傳對帳單'}
               </div>
-              <div className="mt-2 text-[11px] text-gray-400">
-                {a.bank}　{a.account_no ?? `…${a.account_no_tail}`}
+              {/*
+                銀行名縮小、帳號放大（2026-08-19 使用者指定）。
+
+                三個帳戶都是同一家銀行 —— 銀行名對「這是哪一個帳戶」
+                完全沒有幫助,佔的視覺重量卻跟帳號一樣。
+                真正要看的是末五碼,所以帳號放大並切出來。
+              */}
+              <div className="mt-2 text-[10px] text-gray-400">{a.bank}</div>
+              <div className="font-mono text-[13px] tracking-tight text-gray-600">
+                {splitTail(a.account_no) || `…${a.account_no_tail}`}
               </div>
             </button>
           );

@@ -114,3 +114,23 @@ export function sumRows(rows: BankRow[]): { debit: number; credit: number } {
     { debit: 0, credit: 0 },
   );
 }
+
+/**
+ * 帳號切出末五碼：`20992000170564` → `209920001-70564`。
+ *
+ * ============================================================
+ * 【為什麼要切】（2026-08-19 使用者指定）
+ *
+ * 三個帳戶只有末五碼分得出來（70564 / 24145 / 48088），
+ * 而 14 位數連在一起時眼睛得逐字比對。加一個分隔號就一眼認得出。
+ *
+ * **不是遮罩** —— 數字一個都沒少，只是斷開。
+ *
+ * 位置跟著長度走，不寫死前面幾碼:24145 那個帳戶是 21762 開頭的
+ * 另一個號碼系列，將來換銀行長度也會不同。
+ */
+export function splitTail(no: string | null | undefined, tail = 5): string {
+  const s = (no ?? '').replace(/\D/g, '');
+  if (!s || s.length <= tail) return s;
+  return s.slice(0, -tail) + '-' + s.slice(-tail);
+}

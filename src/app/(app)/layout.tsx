@@ -88,8 +88,13 @@ const NAV: { href: string; label: string; icon: string; roles: string[] }[] = [
    * 這一頁的選單與 RLS 一致，藏起來不是為了安全，是為了不騙人。
    *
    * 放在支出明細後面：它跟押金、支出是同一組「錢從哪裡進出」。
+   *
+   * 【icon 不能跟押金太像】（2026-08-19 使用者指出）
+   * 原本是 🏛️,而押金是 🏦 —— 兩個都是「有柱子的建築物」,
+   * 側邊欄收合成只剩 icon 時分不出來。
+   * 改成 🏧:提款機,一眼就是「銀行流水」,跟其他頁都不撞。
    */
-  { href: '/accounts', label: '帳戶管理', icon: '🏛️', roles: ['accountant', 'manager', 'super_admin'] },
+  { href: '/accounts', label: '帳戶明細', icon: '🏧', roles: ['accountant', 'manager', 'super_admin'] },
   { href: '/dashboard', label: '財務儀錶板', icon: '📊', roles: ['accountant', 'manager', 'super_admin'] },
   // 客戶管理跟房務、評價、清潔是同一組:都是「人在現場會用到的」。
   // 上面那半段是錢(訂單、契約、營收、請款、押金、支出、儀表板)。

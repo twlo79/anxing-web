@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { filterTxns, hasFilter, sumRows, amountOf, type BankRow } from './bank-filter.ts';
+import { filterTxns, hasFilter, sumRows, amountOf, splitTail, type BankRow } from './bank-filter.ts';
 
 /**
  * 流水篩選的測試。
@@ -124,5 +124,38 @@ describe('合計', () => {
     const s = sumRows(filterTxns(ROWS, { dir: 'credit' }));
     assert.equal(s.credit, 110_000);
     assert.equal(s.debit, 0);
+  });
+});
+
+describe('帳號切出末五碼', () => {
+  test('★ 末五碼前面加分隔號 —— 三個帳戶只有那裡分得出來', () => {
+    assert.equal(splitTail('20992000170564'), '209920001-70564');
+    assert.equal(splitTail('21762000024145'), '217620000-24145');
+    assert.equal(splitTail('20992000148088'), '209920001-48088');
+  });
+
+  test('★★ 是切開不是遮罩 —— 數字一個都不能少', () => {
+    // 遮掉的話對帳時要看完整帳號就得回資料庫查
+    assert.equal(splitTail('20992000170564').replace('-', ''), '20992000170564');
+  });
+
+  test('★ 位置跟著長度走，不寫死前面幾碼', () => {
+    // 換銀行帳號長度就不同
+    assert.equal(splitTail('1234567890'), '12345-67890');
+    assert.equal(splitTail('123456'), '1-23456');
+  });
+
+  test('比末五碼還短就原樣顯示', () => {
+    assert.equal(splitTail('12345'), '12345');
+    assert.equal(splitTail('123'), '123');
+  });
+
+  test('帶分隔號的先去掉非數字，不要切出兩個橫線', () => {
+    assert.equal(splitTail('2099-2000-170564'), '209920001-70564');
+  });
+
+  test('沒有帳號回空字串', () => {
+    assert.equal(splitTail(null), '');
+    assert.equal(splitTail(''), '');
   });
 });
