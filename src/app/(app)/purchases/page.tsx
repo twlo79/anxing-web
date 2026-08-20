@@ -885,20 +885,44 @@ export default function PurchasesPage() {
   const shareDep = (d: Dep) =>
     shareDeposit(d, d.refund_requested_by ? personName[d.refund_requested_by] : undefined);
 
+  /**
+   * 「確認付款日」彈窗**自己的**錯誤訊息。
+   *
+   * ★★ 為什麼不能用 flashErr（2026-08-19 修）
+   *
+   * flash 的訊息印在頁面上，而這個彈窗蓋在頁面之上 ——
+   * 訊息出現在**彈窗後面**，使用者完全看不到。
+   * 症狀就是「按了確認，沒反應」。
+   *
+   * 這個檔案第 163 行早就記過同一件事（送出審核那顆按鈕），
+   * 但只修了那一處。彈窗裡的擋門一律要把訊息印在彈窗裡。
+   */
+  const [dateErr, setDateErr] = useState('');
+
   async function doSetDate() {
     if (!dating) return;
+    setDateErr('');
     // 前端按鈕已經藏起來,這裡再擋一次 —— 按鈕藏起來擋不住重新整理後的舊畫面
-    if (dating.purchased_on) return flashErr('出款日已經填過,不能再改。要調整請撤銷整張單,或到支出頁修改。');
-    if (!dateVal) return flashErr('請選擇日期');
+    if (dating.purchased_on) return setDateErr('出款日已經填過，不能再改。要調整請撤銷整張單，或到支出頁修改。');
+    if (!dateVal) return setDateErr('請選擇日期');
     // 匯款/信用卡一定要記錄從哪個帳戶付出去。
     // 這個檢查放在「匯出」而不是「排匯款」—— 排匯款可以跳過,匯出不行,
     // 把必填綁在可跳過的步驟上,等於沒綁。
     const needAcct = dating.payment_method === 'transfer' || dating.payment_method === 'credit_card';
-    if (needAcct && !dateAcct) return flashErr('請選擇安幸付款帳號');
+    if (needAcct && !dateAcct) return setDateErr(`請選擇${acctWord(dating.payment_method)}（我方）—— 沒有它就不知道錢從哪個帳戶出去。`);
     const patch: Record<string, unknown> = { purchased_on: dateVal };
     if (needAcct) patch.payout_account = dateAcct;
-    const { error } = await supabase.from('purchase_requests').update(patch).eq('id', dating.id);
-    if (error) return flash('儲存失敗:' + error.message);
+    /*
+     * ★★ 要看改到幾列。RLS 擋下的 UPDATE 回成功且影響 0 列 ——
+     * 只看 error 的話畫面會說「已確認出款」而那張單一動也沒動。
+     */
+    const { data: upd, error } = await supabase.from('purchase_requests')
+      .update(patch).eq('id', dating.id).select('id');
+    if (error) return setDateErr('儲存失敗：' + error.message);
+    if (!upd || upd.length === 0) {
+      return setDateErr('沒有任何一列被更新，通常是權限或這張單的狀態已經變了。'
+        + '請關掉重新整理後再試一次。');
+    }
     setDating(null);
     flash('已確認出款,費用已連動到支出');
     load();
@@ -1872,7 +1896,7 @@ export default function PurchasesPage() {
                     className={`${btn} border border-mor-slate text-mor-slate`}>{d.planned_transfer_on ? '改付款計畫' : `排${dateWord(d.payment_method)}`}</button>
                 )}
                 {p.canDate && (
-                  <button onClick={() => { setDetail(null); setDating(d); setDateVal(d.purchased_on ?? d.planned_transfer_on ?? todayStr()); setDateAcct(d.payout_account ?? ''); }}
+                  <button onClick={() => { setDetail(null); setDating(d); setDateVal(d.purchased_on ?? d.planned_transfer_on ?? todayStr()); setDateAcct(d.payout_account ?? ''); setDateErr(''); }}
                     className={`${btn} border border-mor-blue text-mor-blue`}>{d.purchased_on ? `改${dateWord(d.payment_method)}` : `確認${dateWord(d.payment_method)}`}</button>
                 )}
                 {p.canCancel && (
@@ -2277,6 +2301,13 @@ export default function PurchasesPage() {
               <label className="block text-xs text-gray-500 pt-1">確認{dateWord(dating.payment_method)}</label>
               <input type="date" value={dateVal} onChange={(e) => setDateVal(e.target.value)}
                 className="w-full rounded-lg border border-mor-line px-2 py-1.5" />
+              {/* 擋門的訊息一定要印在**彈窗裡**。印在頁面上的話會被這個彈窗蓋住,
+                  使用者看到的是「按了沒反應」（2026-08-19） */}
+              {dateErr && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 whitespace-pre-wrap">
+                  {dateErr}
+                </div>
+              )}
               {/* 匯款與信用卡必須記錄從哪個帳戶付出去,現金沒有帳戶所以不問 */}
               {(dating.payment_method === 'transfer' || dating.payment_method === 'credit_card') && (
                 <>
