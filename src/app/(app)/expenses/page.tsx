@@ -303,6 +303,15 @@ export default function ExpensesPage() {
 
   // 來自請款單的支出只有 super_admin 能刪(RLS 也擋一次)。
   // 刪掉後請款單仍顯示已採購、支出卻不見了,而且重填採購日不會重新產生。
+  /**
+   * 檢視抽屜（2026-08-19 使用者指定，比照契約頁）。
+   *
+   * ★ 「檢視」不該直接開編輯表單。
+   *   先看內容、確認是這一筆，再決定要編輯還是刪除 ——
+   *   尤其刪除是不可逆的，把它擺在「已經看過內容」之後才合理。
+   */
+  const [detail, setDetail] = useState<Expense | null>(null);
+
   const canDelete = (e: Expense) => !e.source_item_id || role === 'super_admin';
 
   async function del(e: Expense) {
@@ -520,7 +529,7 @@ export default function ExpensesPage() {
                 視窗上會被橫向捲出去，於是整張表變成看得到、點不到。
                 押金頁與請款單頁本來就是整列可點,這裡跟上。
               */
-              <tr key={r.id} onClick={() => setEdit(r)}
+              <tr key={r.id} onClick={() => setDetail(r)}
                 className="border-b border-mor-line/60 hover:bg-mor-bluelight/30 cursor-pointer">
                 <td className="px-3 py-2 whitespace-nowrap">{r.spent_on}</td>
                 <td className="px-3 py-2">
@@ -585,7 +594,7 @@ export default function ExpensesPage() {
                     className={`text-sm align-middle ${r.starred ? 'text-amber-500' : 'text-gray-300 hover:text-amber-400'}`}>
                     {r.starred ? '★' : '☆'}
                   </button>
-                  <button onClick={(e) => { e.stopPropagation(); setEdit(r); }}
+                  <button onClick={(e) => { e.stopPropagation(); setDetail(r); }}
                     className="text-xs text-mor-slate underline hover:text-mor-blue">檢視</button>
                 </td>
               </tr>
@@ -595,6 +604,99 @@ export default function ExpensesPage() {
       </div>
 
       {/* 表單 */}
+      {/*
+        ══════════ 檢視抽屜（比照契約頁）══════════
+
+        唯讀。看完再決定要不要編輯或刪除 —— 尤其刪除不可逆，
+        擺在「已經看過這一筆」之後才合理。
+      */}
+      {detail && (() => {
+        const d = detail;
+        const row = (label: string, value: React.ReactNode) => (
+          <div className="flex gap-3 py-1.5 border-b border-mor-line/40 last:border-0">
+            <div className="w-24 shrink-0 text-xs text-gray-400 pt-0.5">{label}</div>
+            <div className="flex-1 min-w-0 text-sm">{value ?? '—'}</div>
+          </div>
+        );
+        return (
+          <div className="fixed inset-0 z-50" onClick={() => setDetail(null)}>
+            <div className="absolute inset-0 bg-black/30" />
+            <div onClick={(e) => e.stopPropagation()}
+              className="absolute right-0 top-0 h-full w-full max-w-lg bg-white shadow-xl flex flex-col">
+              <div className="shrink-0 bg-white border-b border-mor-line px-6 py-4 flex items-start justify-between"
+                style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
+                <div className="min-w-0">
+                  <div className="font-bold truncate">{d.item_name}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">
+                    {d.spent_on}
+                    {d.source_item_id && <span className="ml-2 rounded bg-mor-bluelight text-mor-slate px-1.5 py-0.5 text-[10px]">來自請款單</span>}
+                    {d.parent_expense_id && <span className="ml-2 rounded bg-mor-sand text-gray-600 px-1.5 py-0.5 text-[10px]">遞延子單</span>}
+                  </div>
+                </div>
+                <button onClick={() => setDetail(null)}
+                  className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-4">
+                {row('金額', <span className="font-bold tabular-nums">${fmt(d.amount)}</span>)}
+                {row('會計科目', d.account_code ? (codeName[d.account_code] ?? d.account_code) : '—')}
+                {row('用途', d.purpose_type === 'office' ? '安幸辦公室'
+                  : (d.estate_id ? (estateName[d.estate_id] ?? '—') : '—'))}
+                {row('房源', d.property_id ? (properties.find((x) => x.id === d.property_id)?.name ?? '—') : '整個物業（不指定房源）')}
+                {row('支付方式', d.payment_method
+                  ? `${PAY_LABEL[d.payment_method] ?? d.payment_method}${d.pay_account ? `・${acctName[d.pay_account] ?? d.pay_account}` : ''}`
+                  : '—')}
+                {/* 憑證號碼與「無憑證」是兩件事 —— 空白代表還沒有人填，是待辦 */}
+                {row('憑證號碼', d.voucher_no
+                  ? <span className="break-all">{d.voucher_no}</span>
+                  : d.no_voucher
+                    ? <span className="text-gray-400">無憑證（已註記）</span>
+                    : <span className="text-amber-700">未填 —— 還要去補單據</span>)}
+                {row('備註', d.note ? <span className="whitespace-pre-wrap">{d.note}</span> : '—')}
+
+                <div className="mt-3">
+                  <Receipts kind="exp" parentId={d.id} canEdit={false} label="憑證圖片"
+                    inheritFromRequestId={d.request_id ?? null} />
+                </div>
+              </div>
+
+              {/*
+                底部動作。刪除縮成一行小字、跟主要按鈕分開 ——
+                跟契約頁同一條規矩:破壞性的動作不做成正常大小的按鈕。
+              */}
+              <div className="shrink-0 border-t border-mor-line px-6 py-3 space-y-2"
+                style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
+                <div className="flex gap-2">
+                  {d.parent_expense_id ? (
+                    <button onClick={() => { const p = byId[d.parent_expense_id!]; setDetail(null); if (p) setEdit(p); }}
+                      className="flex-1 h-11 rounded-lg border border-mor-blue text-mor-blue text-sm font-medium">
+                      這是子單・到母單修改
+                    </button>
+                  ) : (
+                    <button onClick={() => { setDetail(null); setEdit(d); }}
+                      className="flex-1 h-11 rounded-lg bg-mor-slate text-white text-sm font-medium hover:bg-mor-slatedark">
+                      編輯
+                    </button>
+                  )}
+                  <button onClick={() => setDetail(null)}
+                    className="flex-1 h-11 rounded-lg border border-gray-300 text-sm">關閉</button>
+                </div>
+                {!d.parent_expense_id && (
+                  canDelete(d)
+                    ? <button onClick={() => { setDetail(null); del(d); }}
+                        className="block w-full text-center text-xs text-red-500 underline hover:text-red-700">
+                        刪除這筆支出（會移到回收桶，可以復原）
+                      </button>
+                    : <div className="text-center text-xs text-gray-400">
+                        來自請款單的支出不可刪除，需由總管理員處理
+                      </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {edit && (
         <div className="fixed inset-0 bg-black/30 flex items-start justify-center overflow-auto py-10 z-50">
           <div className="bg-white rounded-xl w-[560px] max-w-[94vw] shadow-xl" onClick={(e) => e.stopPropagation()}>
