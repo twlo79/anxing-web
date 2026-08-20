@@ -680,14 +680,26 @@ export default function PurchasesPage() {
         // 但約束擋下來的錯誤訊息是約束名稱,沒人看得懂,所以前端先對齊。
         fee_mode: feeApplies ? 'extra' : 'included',
         fee_amount: feeApplies ? (Number(edit.fee_amount) || 0) : 0,
-        // 送審中或已核可被編輯:退回草稿並清空核可票。
-        // 退回 draft 有兩個作用 —— 項目的 pri_write policy 只認 draft/rejected,
-        // 而且之後再送 pending 會走既有狀態機,免核門檻依「新金額」重算。
-        ...(wasSubmitted ? {
-          status: 'draft',
-          manager_approved_by: null, manager_approved_at: null,
-          admin_approved_by: null, admin_approved_at: null,
-        } : {}),
+        /*
+         * 送審中或已核可被編輯:退回草稿。
+         * 退回 draft 有兩個作用 —— 項目的 pri_write policy 只認 draft/rejected,
+         * 而且之後再送 pending 會走既有狀態機,免核門檻依「新金額」重算。
+         *
+         * ★★ **這裡不清核可票**（2026-08-19 修，migration_149）。
+         *
+         * 原本連 manager_approved_* / admin_approved_* 四欄一起送 null。
+         * 但 pr_guard_votes 那支觸發器規定「會計不得動核可欄位」,
+         * 而對它來說「11:12 → null」也算動 —— 於是會計編輯自己送的單時
+         * 會噴「儲存失敗：會計不得核可請款單」。
+         *
+         * 她根本沒在核可,所以那句話跟她做的事完全對不起來,
+         * 回報回來是「編輯沒有用」，查了很久。
+         *
+         * 清票改由 pr_apply_status 在狀態轉成 draft 時做（跟「駁回」同一套）。
+         * 那支是 SECURITY DEFINER,不受角色守衛限制 ——
+         * 而且變成**一定**會清:前端漏送那四欄就繞過清票的路，反而是原本才有的。
+         */
+        ...(wasSubmitted ? { status: 'draft' } : {}),
       };
       let reqId = edit.id;
       let newReqNo = '';
