@@ -626,11 +626,31 @@ export default function PurchasesPage() {
     // 不清票的話,「核可後改金額」就等於繞過審核,兩票白審。
     const wasSubmitted = !!edit.id && (edit.status === 'pending' || edit.status === 'approved');
     const hadVotes = !!edit.manager_approved_at || !!edit.admin_approved_at;
-    if (wasSubmitted && hadVotes && !confirm(
-      edit.status === 'approved'
-        ? '這張單已經核可通過。存檔會清掉核可票、退回重新送審,確定嗎?'
-        : '這張單已經有人核可。存檔會清掉既有核可票並重新送審,確定嗎?'
-    )) return;
+    if (wasSubmitted && hadVotes) {
+      /*
+       * ★★ 按「取消」之後一定要說一句話（2026-08-19 修）。
+       *
+       * 原本是 `if (... && !confirm(...)) return;` —— 取消就靜靜結束，
+       * 畫面一點反應都沒有。使用者的體驗是「我改了、我按了存檔、沒有用」,
+       * 而真相是他自己按掉了那個確認框。
+       *
+       * PR-202608-064 就是這樣卡了半天:會計改廠商收款帳號改不動,
+       * 查遍 RLS、權限、觸發器都是通的 —— 因為那次存檔根本沒送出去。
+       *
+       * 靜默的中止跟「壞掉」在使用者眼裡是同一件事。
+       */
+      const ok = confirm(
+        (edit.status === 'approved'
+          ? '這張單已經核可通過。存檔會清掉核可票、退回重新送審。'
+          : '這張單已經有人核可。存檔會清掉既有核可票並重新送審。')
+        + '\n\n按「確定」才會存檔；按「取消」的話這次的修改不會生效。'
+      );
+      if (!ok) {
+        flashErr('已取消，這次的修改沒有存檔。'
+          + '要改就得重新送審（既有的核可票會被清掉），請再按一次存檔並選「確定」。');
+        return;
+      }
+    }
     setSaving(true);
     try {
       const header: any = {
@@ -681,8 +701,28 @@ export default function PurchasesPage() {
         reqId = data.id;
         newReqNo = data.req_no;
       } else {
-        const { error } = await supabase.from('purchase_requests').update(header).eq('id', reqId);
+        /*
+         * ★★ 一定要看「改到幾列」，不能只看 error。
+         *
+         * RLS 擋下的 UPDATE **會回成功且影響 0 列**（CLAUDE.md 的第二條坑）。
+         * 只檢查 error 的話，畫面會說「已重新送審」而資料一個字都沒變 ——
+         * 2026-08-19 就發生過：會計改廠商收款帳號，畫面說成功，
+         * 資料庫裡還是舊帳號，而沒有任何線索指向權限。
+         *
+         * 更糟的是後面還有「刪項目 → 重寫項目」。母單沒改成 draft 的話，
+         * 刪除會被 pri_write 擋下（它只認 draft/rejected），
+         * 而插入若沒被擋就會多寫一份 —— 那時總金額會直接變兩倍。
+         * 所以這裡擋不住就必須**當場中止**，不能往下走。
+         */
+        const { data: upd, error } = await supabase.from('purchase_requests')
+          .update(header).eq('id', reqId).select('id');
         if (error) { flash('儲存失敗:' + error.message); return; }
+        if (!upd || upd.length === 0) {
+          flash('存不進去：沒有任何一列被更新。'
+            + '通常是權限（這張單目前的狀態不允許你修改），請重新整理後再試，'
+            + '或請總管理員處理。');
+          return;
+        }
         // 硬刪除,不進回收桶 —— 這是「項目重存」（全刪再全寫）,每次存檔都會跑。
         // 撤銷整張請款單才是使用者的刪除動作,那條走 soft_delete。
         await supabase.from('purchase_request_items').delete().eq('request_id', reqId);
@@ -709,8 +749,17 @@ export default function PurchasesPage() {
       if (submit) {
         // 狀態一律送 'pending'。免核門檻由資料庫觸發器判斷後自行翻成 approved,
         // 前端不自己算 —— 否則改前端就能繞過門檻。
-        const { error: se } = await supabase.from('purchase_requests').update({ status: 'pending' }).eq('id', reqId);
+        //
+        // 這裡也要看筆數。擋下來卻報成功的話,單會卡在 draft 而畫面說已送審 ——
+        // 那張單就從所有人的待辦清單上消失了。
+        const { data: sub, error: se } = await supabase.from('purchase_requests')
+          .update({ status: 'pending' }).eq('id', reqId).select('id');
         if (se) { flash('送出失敗:' + se.message); return; }
+        if (!sub || sub.length === 0) {
+          flash('內容已存成草稿，但送審沒有成功（沒有任何一列被更新，通常是權限）。'
+            + '請重新整理後再送出一次。');
+          setEdit(null); load(); return;
+        }
         const head = wasSubmitted ? '已重新送審' : '已送出';
         flash(editTotal < FREE_THRESHOLD ? `${head}・未達 $${fmt(FREE_THRESHOLD)},自動核可` : `${head},等待主管與總經理核可`);
         setEdit(null); load();
