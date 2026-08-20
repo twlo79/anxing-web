@@ -502,19 +502,31 @@ export default function ExpensesPage() {
               <SortTh label="憑證號碼" sortKey="voucher_no" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <th className="px-3 py-2.5">支付方式</th>
               <th className="px-3 py-2.5">備註</th>
-              <th className="px-3 py-2.5 text-right">操作</th>
+              {/*
+                ★ 操作欄釘在右邊。九欄的表在窄視窗要橫向捲，
+                  而捲軸在表格底部 —— 一百多列時要先捲到最下面才找得到。
+                  釘住之後不管捲到哪，編輯／刪除永遠在。
+              */}
+              <th className="sticky right-0 z-10 bg-white px-3 py-2.5 text-right">操作</th>
             </tr>
           </thead>
           <tbody>
             {loading ? <tr><td colSpan={9} className="px-4 py-10 text-center text-gray-400">載入中…</td></tr>
             : sorted.length === 0 ? <tr><td colSpan={9} className="px-4 py-10 text-center text-gray-400">無支出紀錄</td></tr>
             : sorted.map((r) => (
-              <tr key={r.id} className="border-b border-mor-line/60 hover:bg-mor-bluelight/30">
+              /*
+                整列可點就開抽屜（2026-08-19 使用者指定）。
+                原本只有最右邊那個「編輯」小字可以點 —— 而那一欄在窄一點的
+                視窗上會被橫向捲出去，於是整張表變成看得到、點不到。
+                押金頁與請款單頁本來就是整列可點,這裡跟上。
+              */
+              <tr key={r.id} onClick={() => setEdit(r)}
+                className="border-b border-mor-line/60 hover:bg-mor-bluelight/30 cursor-pointer">
                 <td className="px-3 py-2 whitespace-nowrap">{r.spent_on}</td>
                 <td className="px-3 py-2">
                   {/* 子單縮排並標明來自哪一張母單,點了跳到母單 */}
                   {r.parent_expense_id && (
-                    <button onClick={() => { const p = byId[r.parent_expense_id!]; if (p) setEdit(p); }}
+                    <button onClick={(e) => { e.stopPropagation(); const p = byId[r.parent_expense_id!]; if (p) setEdit(p); }}
                       className="mr-1 text-[11px] text-mor-blue underline hover:text-mor-slate"
                       title="回到母單修改">
                       {childLabel(byId[r.parent_expense_id]?.spent_on ?? '', null)}
@@ -550,7 +562,9 @@ export default function ExpensesPage() {
                   {r.pay_account && <span className="text-xs text-gray-400 ml-1">{r.pay_account}</span>}
                 </td>
                 <td className="px-3 py-2 text-gray-500 max-w-56 truncate" title={r.note ?? ''}>{r.note ?? '—'}</td>
-                <td className="px-3 py-2 text-right whitespace-nowrap space-x-2">
+                {/* 釘住的那一格要有自己的底色 —— 透明的話捲過去時
+                    底下的內容會透出來，字疊在字上 */}
+                <td className="sticky right-0 z-10 bg-white px-3 py-2 text-right whitespace-nowrap space-x-2">
                   {/*
                     子單不給單獨編輯或刪除 —— 刪一筆就會破壞
                     「母單 + 子單 = 實付總額」那條等式（資料庫也會擋）。
@@ -560,18 +574,18 @@ export default function ExpensesPage() {
                     關注。遞延的母子單會一起亮 —— 連動由資料庫觸發器做,
                     所以子單上的星星也可以點,母單與其他兄弟會跟著。
                   */}
-                  <button onClick={() => toggleStar(r)}
+                  <button onClick={(e) => { e.stopPropagation(); toggleStar(r); }}
                     title={r.starred ? '取消關注' : '關注這筆支出'}
                     className={`text-sm align-middle ${r.starred ? 'text-amber-500' : 'text-gray-300 hover:text-amber-400'}`}>
                     {r.starred ? '★' : '☆'}
                   </button>
                   {r.parent_expense_id ? (
-                    <button onClick={() => { const p = byId[r.parent_expense_id!]; if (p) setEdit(p); }}
+                    <button onClick={(e) => { e.stopPropagation(); const p = byId[r.parent_expense_id!]; if (p) setEdit(p); }}
                       className="text-xs text-mor-blue underline hover:text-mor-slate">到母單</button>
                   ) : (<>
-                    <button onClick={() => setEdit(r)} className="text-xs text-mor-slate underline hover:text-mor-blue">編輯</button>
+                    <button onClick={(e) => { e.stopPropagation(); setEdit(r); }} className="text-xs text-mor-slate underline hover:text-mor-blue">編輯</button>
                     {canDelete(r)
-                      ? <button onClick={() => del(r)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
+                      ? <button onClick={(e) => { e.stopPropagation(); del(r); }} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
                       : <span className="text-xs text-gray-300" title="來自請款單的支出不可刪除,需由 Super Admin 處理">刪除</span>}
                   </>)}
                 </td>

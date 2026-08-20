@@ -184,8 +184,33 @@ export default function PurchasesPage() {
     supabase.from('payment_accounts').select('code, name, method')
       .eq('for_payment', true).eq('active', true).order('sort')
       .then(({ data }) => setPayAccounts(data ?? []));
-    supabase.from('profiles').select('id, name, role').then(({ data }) => setPeople(data ?? []));
   }, [supabase]);
+
+  /*
+   * ══════════ 請款者名字：要等身分載到才查 ══════════
+   *
+   * ★★ profiles 的 RLS 是 `id = auth.uid() OR current_role_of() = 'super_admin'`。
+   *
+   * 跟其他主檔放在同一個 useEffect 裡的話，它會在**元件掛載當下**就發出去 ——
+   * 而那時 Supabase 的 session 可能還沒還原完，`auth.uid()` 是 null，
+   * RLS 一列都不放行。回來的是空陣列、沒有 error，
+   * 於是「請款者」整欄永遠是「—」，而且**不會重試**。
+   *
+   * 症狀跟房源評價那個物業欄一模一樣（2026-08-19 也是這樣）:
+   * 看起來像資料沒有請款者，實際上是查詢早跑了一步。
+   *
+   * 改成等 useProfile 把身分載到（prof.profile 有值）才查。
+   * 錯誤也不再吞掉 —— 空白跟失敗要分得出來。
+   */
+  const [peopleErr, setPeopleErr] = useState('');
+  useEffect(() => {
+    if (!prof.profile) return;          // 身分還沒到，先不查
+    supabase.from('profiles').select('id, name, role')
+      .then(({ data, error }) => {
+        if (error) setPeopleErr(error.message);
+        else setPeople(data ?? []);
+      });
+  }, [supabase, prof.profile]);
 
   const codeName = useMemo(() => Object.fromEntries(codes.map((c) => [c.code, c.name])), [codes]);
   /*
