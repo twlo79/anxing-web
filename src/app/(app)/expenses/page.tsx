@@ -14,6 +14,7 @@ import Receipts, { type ReceiptsHandle } from '@/components/Receipts';
 import DeferralPanel from '@/components/DeferralPanel';
 import { deferralLabel, childLabel, recognizedTotal, paidTotal, paidCell } from '@/lib/deferral';
 import { softDelete } from '@/lib/trash';
+import { voucherBrief, isMultiVoucher } from '@/lib/voucher';
 import TrashLink from '@/components/TrashLink';
 
 type Expense = {
@@ -44,6 +45,7 @@ type Property = { id: string; name: string; estate_id: string | null };
 const CURRENCIES = ['TWD', 'USD', 'JPY', 'CNY', 'EUR'];
 
 const PAY_LABEL: Record<string, string> = { cash: '現金', transfer: '匯款', credit_card: '信用卡' };
+
 const PAY_OPTS = ['cash', 'transfer', 'credit_card'];
 const fmt = (n: number | null | undefined) => (n == null ? '' : Math.round(n).toLocaleString());
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -565,7 +567,20 @@ export default function ExpensesPage() {
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{r.account_code ? codeName[r.account_code] ?? r.account_code : '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-600">{purposeLabel(r)}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-500">
-                  {r.voucher_no ?? (r.no_voucher ? <span className="text-gray-400 text-xs">無憑證</span> : '—')}</td>
+                  {(() => {
+                    const v = voucherBrief(r.voucher_no);
+                    if (!v) return r.no_voucher
+                      ? <span className="text-gray-400 text-xs">無憑證</span>
+                      : <span className="text-amber-700 text-xs">未填</span>;
+                    return (
+                      <span title={v.full}>
+                        {v.text}
+                        {v.more > 0 && (
+                          <span className="ml-1 text-[11px] text-gray-400">＋{v.more} 個</span>
+                        )}
+                      </span>
+                    );
+                  })()}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-gray-500">
                   {r.payment_method ? PAY_LABEL[r.payment_method] ?? r.payment_method : '—'}
                   {r.pay_account && <span className="text-xs text-gray-400 ml-1">{r.pay_account}</span>}
@@ -648,7 +663,19 @@ export default function ExpensesPage() {
                   : '—')}
                 {/* 憑證號碼與「無憑證」是兩件事 —— 空白代表還沒有人填，是待辦 */}
                 {row('憑證號碼', d.voucher_no
-                  ? <span className="break-all">{d.voucher_no}</span>
+                  ? <div>
+                      <div className="break-all">{d.voucher_no}</div>
+                      {/*
+                        ★ 一串多個號碼時要講出來源。
+                        不講的話,看的人會以為這一筆真的對應這麼多張單據,
+                        而實際上那是整張請款單共用的清單。
+                      */}
+                      {d.source_item_id && isMultiVoucher(d.voucher_no) && (
+                        <div className="mt-1 text-[11px] text-gray-400">
+                          這串號碼來自請款單單頭，涵蓋該單的多個項目 —— 不一定全部屬於這一筆。
+                        </div>
+                      )}
+                    </div>
                   : d.no_voucher
                     ? <span className="text-gray-400">無憑證（已註記）</span>
                     : <span className="text-amber-700">未填 —— 還要去補單據</span>)}
