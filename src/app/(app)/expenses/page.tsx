@@ -566,28 +566,27 @@ export default function ExpensesPage() {
                     底下的內容會透出來，字疊在字上 */}
                 <td className="sticky right-0 z-10 bg-white px-3 py-2 text-right whitespace-nowrap space-x-2">
                   {/*
-                    子單不給單獨編輯或刪除 —— 刪一筆就會破壞
-                    「母單 + 子單 = 實付總額」那條等式（資料庫也會擋）。
-                    要改一律回母單重設整組。
-                  */}
-                  {/*
-                    關注。遞延的母子單會一起亮 —— 連動由資料庫觸發器做,
-                    所以子單上的星星也可以點,母單與其他兄弟會跟著。
+                    ══════════ 操作欄只留「星」與「檢視」 ══════════
+                    （2026-08-19 使用者指定）
+
+                    編輯與刪除搬進抽屜。理由:
+
+                    · **刪除**是不可逆的動作（雖然進回收桶），
+                      放在列上跟「檢視」只差幾個像素 —— 一百多列的表格
+                      掃過去時很容易按錯隔壁那顆。
+                    · 進抽屜之後，按刪除的人至少已經看過這筆的完整內容。
+                    · 列上剩兩個東西，橫向捲的壓力也小了。
+
+                    「星」留著是因為它是**一鍵切換**、按錯了再按一次就好，
+                    而且關注清單常常要一次標很多筆。
                   */}
                   <button onClick={(e) => { e.stopPropagation(); toggleStar(r); }}
                     title={r.starred ? '取消關注' : '關注這筆支出'}
                     className={`text-sm align-middle ${r.starred ? 'text-amber-500' : 'text-gray-300 hover:text-amber-400'}`}>
                     {r.starred ? '★' : '☆'}
                   </button>
-                  {r.parent_expense_id ? (
-                    <button onClick={(e) => { e.stopPropagation(); const p = byId[r.parent_expense_id!]; if (p) setEdit(p); }}
-                      className="text-xs text-mor-blue underline hover:text-mor-slate">到母單</button>
-                  ) : (<>
-                    <button onClick={(e) => { e.stopPropagation(); setEdit(r); }} className="text-xs text-mor-slate underline hover:text-mor-blue">編輯</button>
-                    {canDelete(r)
-                      ? <button onClick={(e) => { e.stopPropagation(); del(r); }} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
-                      : <span className="text-xs text-gray-300" title="來自請款單的支出不可刪除,需由 Super Admin 處理">刪除</span>}
-                  </>)}
+                  <button onClick={(e) => { e.stopPropagation(); setEdit(r); }}
+                    className="text-xs text-mor-slate underline hover:text-mor-blue">檢視</button>
                 </td>
               </tr>
             ))}
@@ -745,7 +744,38 @@ export default function ExpensesPage() {
               <Receipts ref={receiptsRef} kind="exp" parentId={edit.id || null} label="憑證圖片"
                 inheritFromRequestId={edit.request_id ?? null} />
             </div>
-            <div className="border-t border-mor-line px-6 py-4 flex justify-end gap-2">
+            {/*
+              抽屜底部:刪除放**最左邊**、跟儲存隔開（2026-08-19）。
+
+              放在右邊跟「儲存」相鄰的話，手滑一格就是不可逆的動作。
+              左右分開是這一類版面的通則 —— 破壞性的動作不跟主要動作並排。
+            */}
+            <div className="border-t border-mor-line px-6 py-4 flex items-center gap-2">
+              {edit.id && (
+                <>
+                  {/*
+                    子單不能單獨刪也不能單獨改 —— 遞延的母子單是一組，
+                    只刪其中一張會讓另一張變成孤兒，而金額還掛在帳上。
+                  */}
+                  {edit.parent_expense_id ? (
+                    <button onClick={() => { const p = byId[edit.parent_expense_id!]; if (p) setEdit(p); }}
+                      className="rounded-lg border border-mor-blue text-mor-blue px-4 py-1.5 text-sm">
+                      這是子單・到母單修改
+                    </button>
+                  ) : canDelete(edit) ? (
+                    <button onClick={() => { const e = edit; setEdit(null); del(e); }}
+                      className="rounded-lg border border-red-300 text-red-600 px-4 py-1.5 text-sm hover:bg-red-50">
+                      刪除
+                    </button>
+                  ) : (
+                    <span className="text-xs text-gray-400"
+                      title="來自請款單的支出不可刪除，需由總管理員處理">
+                      來自請款單，不可刪除
+                    </span>
+                  )}
+                </>
+              )}
+              <div className="flex-1" />
               <button onClick={() => setEdit(null)} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>
               <button onClick={save} disabled={saving}
                 className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium hover:bg-mor-slatedark disabled:opacity-40">
