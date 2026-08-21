@@ -14,6 +14,8 @@ import { useProfile } from '@/lib/profile';
 import { FEE_TYPES, ONEOFF_FEE_TYPES, ONEOFF_PRESETS, presetOf } from '@/lib/fee-types';
 import { ONEOFF_LABEL } from '@/lib/revenue-report';
 import RecurringPanel from '@/components/RecurringPanel';
+// 角色清單只留一份 —— 散在畫面各處的話，改了一處不會有東西提醒你其他處還是舊的
+import { canEditOrders } from '@/lib/roles';
 import OrderPayments from '@/components/OrderPayments';
 import MoneyLines from '@/components/MoneyLines';
 import { toLines, fromLines, totalTwd, validateLines, type Line } from '@/lib/money-lines';
@@ -144,11 +146,15 @@ export default function ShortTermPage() {
       .then(({ data }) => setPayAccounts(data ?? []));
   }, [supabase]);
   /*
-   * 收款只有會計/主管/總經理能做 —— 跟 order_payments 的 RLS 一致。
-   * 沒有這道的話,其他角色點得到「收款」但視窗裡永遠是空的（RLS 擋掉查詢,
+   * 收款的角色清單跟 order_payments 的 RLS 一致 —— 見 lib/roles.ts。
+   * 沒有這道的話,沒權限的角色點得到「收款」但視窗裡永遠是空的（RLS 擋掉查詢,
    * 而 RLS 擋掉不會報錯,只會回空陣列）—— 看起來像壞掉,實際上是沒權限。
+   *
+   * 2026-08-21 起管家也在清單裡（migration_154）。
+   * 清單搬進 lib 是因為這一頁用了兩次、契約頁又是另一套 ——
+   * 散在三個地方的話,改了其中一個不會有任何東西提醒你另外兩個還是舊的。
    */
-  const canCollect = useMemo(() => ['accountant', 'manager', 'super_admin'].includes(role), [role]);
+  const canCollect = useMemo(() => canEditOrders(role), [role]);
   const estateName = useMemo(() => Object.fromEntries(estates.map((e) => [e.id, e.name])), [estates]);
   const [fees, setFees] = useState<Fee[]>([]);
   /*
@@ -746,7 +752,7 @@ export default function ShortTermPage() {
         差別只在「要不要每個月自動長出來」。分兩個頁面會讓人以為是兩件事,
         而且側邊選單每多一項,真正每天要用的功能就被往下擠一格。
       */}
-      <RecurringPanel canEdit={['accountant', 'manager', 'super_admin'].includes(role)} />
+      <RecurringPanel canEdit={canEditOrders(role)} />
 
       <FilterToggle active={!!(src || kw || estF || fromD || toD || payF)} />
       <div className="filter-bar collapsible-filters rounded-xl glass p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
