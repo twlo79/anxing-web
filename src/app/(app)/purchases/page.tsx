@@ -12,6 +12,8 @@ import RefundFields, { METHOD_LABEL as DEP_METHOD } from '@/components/RefundFie
 import { shareDeposit, shareRequest } from '@/lib/share';
 import { softDelete } from '@/lib/trash';
 import TrashLink from '@/components/TrashLink';
+// 憑證是共同還是逐項、這一項最後套用哪個號碼 —— 判斷全在這裡（migration_155）
+import { resolveVoucher, voucherText, voucherSummary, missingVouchers } from '@/lib/voucher';
 
 type Item = {
   id?: string; request_id?: string; item_name: string; amount: number;
@@ -20,6 +22,11 @@ type Item = {
   property_id?: string | null;
   note: string | null; sort: number;
   amount_original?: number | null;   // 原幣別金額。amount 一律是換算後的台幣。
+  /**
+   * 這個項目自己的憑證（migration_155）。
+   * 請款單勾了 shared_voucher 時不使用 —— 但**留著**，取消勾選就回來。
+   */
+  voucher_no?: string | null; no_voucher?: boolean;
 };
 type Req = {
   id: string; req_no: string; requester_id: string; status: string; total_amount: number;
@@ -32,6 +39,11 @@ type Req = {
   purchased_on: string | null; expense_generated_at: string | null; created_at: string;
   planned_transfer_on: string | null; payout_account: string | null;
   voucher_no?: string | null; no_voucher?: boolean;
+  /**
+   * true = 整張單共用上面那一個號碼;false = 每個項目各自填（migration_155）。
+   * 既有的 59 張全部回填成 true，所以舊單的畫面完全沒變。
+   */
+  shared_voucher?: boolean;
   /**
    * 匯款手續費。
    *   included 內扣   受款人吸收 —— 我方支出就是請款金額,帳上不多記
@@ -574,7 +586,7 @@ export default function PurchasesPage() {
   }, [schedule]);
 
   function blankItem(): Item {
-    return { item_name: '', amount: 0, amount_original: 0, account_code: null, purpose_type: 'estate', estate_id: null, property_id: null, note: null, sort: 0 };
+    return { item_name: '', amount: 0, amount_original: 0, account_code: null, purpose_type: 'estate', estate_id: null, property_id: null, note: null, sort: 0, voucher_no: null, no_voucher: false };
   }
 
   function openNew() {
@@ -586,6 +598,9 @@ export default function PurchasesPage() {
       purchased_on: null, expense_generated_at: null, created_at: '',
       planned_transfer_on: null, payout_account: null,
       voucher_no: null, no_voucher: false,
+      // 新單預設**逐項**憑證（migration_155）。既有的 59 張則回填成 true，
+      // 所以舊單打開來還是跟以前一樣的單一欄位。
+      shared_voucher: false,
       fee_mode: 'included', fee_amount: 0,
       currency: 'TWD', fx_rate: 1,
     });
@@ -615,6 +630,29 @@ export default function PurchasesPage() {
     }
     if (edit.payment_method === 'transfer' && !edit.payee_account) return flashErr('匯款需填廠商收款帳號');
     if (edit.currency !== 'TWD' && !(fxRate > 0)) return flashErr('請填匯率');
+
+    /*
+     * 憑證沒填的提醒（migration_155）。
+     *
+     * ★ **不擋送審** —— 憑證選填是使用者 8/19 訂的。
+     *   這裡只負責讓人看見:系統負責看見，人負責決定。
+     *
+     * ★ 要唸出是**哪幾項**。十七個項目的單子上，
+     *   「有項目沒填憑證」等於沒說 —— 使用者得自己一個一個找，
+     *   而找的過程中很容易就放棄，然後直接按確定。
+     *
+     * ★ 只在送審時問，存草稿不問。
+     *   草稿本來就是還沒填完的狀態，每次存都跳一次會被學會無視 ——
+     *   而被無視的提醒比沒有提醒更糟，因為它讓人以為系統有在把關。
+     */
+    if (submit) {
+      const miss = missingVouchers(edit, clean);
+      if (miss.length && !confirm(
+        `這 ${miss.length} 項還沒填憑證：\n\n${miss.map((m) => `・${m}`).join('\n')}\n\n`
+        + `憑證是選填，還是要送審嗎？\n`
+        + `（沒有單據的項目請勾「無憑證」，跟「還沒填」在帳上是兩件事）`
+      )) return;
+    }
     // 手續費只在匯款時成立。非匯款就算 fee_mode 還留著舊值也一律當成內扣。
     const feeApplies = edit.payment_method === 'transfer' && edit.fee_mode === 'extra';
     /*
@@ -699,6 +737,10 @@ export default function PurchasesPage() {
         // 互斥,見 pr_voucher_chk
         no_voucher: !!edit.no_voucher,
         voucher_no: edit.no_voucher ? null : (edit.voucher_no?.trim() || null),
+        // 共同憑證 / 逐項的開關（migration_155）。
+        // 上面那兩欄不管開關是什麼都照存 —— 跟項目層級同一個道理:
+        // 切回來的時候號碼要還在。
+        shared_voucher: !!edit.shared_voucher,
         // 只有匯款會有手續費。非匯款一律歸零 —— 這裡是最後一道,
         // 因為 payment_method 有可能被別的路徑改掉而沒經過上面那個 onChange。
         // pr_fee_chk 會擋「內扣卻有金額」與「非匯款卻不內扣」,
@@ -775,6 +817,19 @@ export default function PurchasesPage() {
         // 辦公室沒有房源可言,清成 null;跟支出頁同一套規則
         property_id: i.purpose_type === 'office' ? null : (i.property_id || null),
         note: i.note || null, sort: idx,
+        /*
+         * 逐項憑證（migration_155）。
+         *
+         * ★ 即使勾了共同憑證也照存 —— 使用者指定「留著但不使用」。
+         *   存檔時清成 null 的話,取消勾選之後號碼就回不來了,
+         *   而使用者不會知道是自己勾那一下弄掉的。
+         *
+         * ★ 兩欄互斥（資料庫的 pri_voucher_chk 會擋）。
+         *   有號碼就以號碼為準,no_voucher 一律清成 false ——
+         *   讓約束去擋會變成一句看不懂的 SQL 錯誤訊息。
+         */
+        voucher_no: (i.voucher_no ?? '').trim() || null,
+        no_voucher: (i.voucher_no ?? '').trim() ? false : !!i.no_voucher,
       }));
       const { error: ie } = await supabase.from('purchase_request_items').insert(payload);
       if (ie) { flash('項目儲存失敗:' + ie.message); return; }
@@ -1868,7 +1923,26 @@ export default function PurchasesPage() {
                     {d.payee_tax_id ? <div>統編 {d.payee_tax_id}</div> : null}
                   </span>
                 )) : null}
-                {row('憑證號碼', d.voucher_no ?? (d.no_voucher ? <span className="text-gray-400 text-xs">無憑證</span> : '—'))}
+                {/*
+                  憑證（migration_155）。
+
+                  共同憑證  只印一個號碼 —— 舊單全部走這條，畫面跟以前一樣
+                  逐項      印「幾項填好 / 共幾項」，號碼在下面的項目清單裡
+
+                  ★ 沒填完要標紅。印一個「3 / 17」而不標色的話，
+                    跟填好的長得太像 —— 看的人不會停下來。
+                */}
+                {row('憑證', (() => {
+                  const s = voucherSummary(d, d.purchase_request_items ?? []);
+                  return (
+                    <span title={s.full}>
+                      <span className={s.warn ? 'text-amber-600' : ''}>{s.text}</span>
+                      <span className="block text-xs text-gray-400 mt-0.5">
+                        {d.shared_voucher ? '整張單共用一個憑證' : '每個項目各自的憑證，見下方清單'}
+                      </span>
+                    </span>
+                  );
+                })())}
                 {d.payment_method === 'transfer' && row('手續費', d.fee_mode === 'extra'
                   ? <span>不內扣 ${fmt(Number(d.fee_amount) || 0)}
                       <span className="text-gray-400 text-xs ml-1">
@@ -1900,6 +1974,24 @@ export default function PurchasesPage() {
                         {i.property_id && `／${properties.find((pp) => pp.id === i.property_id)?.name ?? ''}`}
                         {i.note ? `・${i.note}` : ''}
                       </div>
+                      {/*
+                        這一項實際套用的憑證（migration_155）。
+
+                        ★ 共同憑證時**不重複印**號碼 —— 上面已經有了。
+                          每一項都印一次同一個號碼，看起來會像有十七張發票，
+                          而那正是這次要修掉的誤會。
+
+                        ★ 沒填的印「憑證未填」而不是留白 ——
+                          留白跟「這一列沒有憑證欄」長得一樣。
+                      */}
+                      {!d.shared_voucher && (() => {
+                        const st = resolveVoucher(d, i);
+                        return (
+                          <div className={`text-xs mt-0.5 ${st.kind === 'blank' ? 'text-amber-600' : 'text-gray-500'}`}>
+                            {st.kind === 'blank' ? '憑證未填' : `憑證 ${voucherText(st)}`}
+                          </div>
+                        );
+                      })()}
                     </div>
                   ))}
                 </div>
@@ -2046,6 +2138,38 @@ export default function PurchasesPage() {
                           <input disabled={readOnly} value={it.note ?? ''} placeholder="備註"
                             onChange={(e) => setItems(items.map((x, i) => i === idx ? { ...x, note: e.target.value } : x))}
                             className="w-full md:w-auto md:flex-1 h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50" />
+                        </div>
+
+                        {/*
+                          這個項目自己的憑證（migration_155）。
+
+                          ★ 勾了共同憑證就整排灰掉,但**內容留著也不清空** ——
+                            使用者指定「留著但不使用」。取消勾選之後號碼要還在,
+                            不然他不會知道是自己勾那一下弄掉的。
+
+                          ★「無憑證」與留空白是兩件事:
+                            前者是查過了確定沒單據,後者是還沒填。
+                            只有一個空白欄的話,三個月後沒有人知道該不該去追。
+                        */}
+                        <div className={`mt-2 flex flex-col md:flex-row md:items-center gap-2
+                          ${edit.shared_voucher ? 'opacity-40' : ''}`}>
+                          <span className="text-xs text-gray-500 md:w-16 shrink-0">憑證</span>
+                          <input
+                            disabled={readOnly || !!edit.shared_voucher || !!it.no_voucher}
+                            value={it.voucher_no ?? ''}
+                            placeholder={edit.shared_voucher ? '使用共同憑證' : it.no_voucher ? '已註記無憑證' : '發票／收據號碼'}
+                            onChange={(e) => setItems(items.map((x, i) => i === idx ? { ...x, voucher_no: e.target.value } : x))}
+                            className="w-full md:w-auto md:flex-1 h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-100 disabled:text-gray-400" />
+                          <label className={`flex items-center gap-2 text-sm shrink-0
+                            ${(it.voucher_no ?? '').trim() || edit.shared_voucher ? 'text-gray-300' : 'text-gray-600'}`}>
+                            <input type="checkbox"
+                              disabled={readOnly || !!edit.shared_voucher || !!(it.voucher_no ?? '').trim()}
+                              checked={!!it.no_voucher}
+                              onChange={(e) => setItems(items.map((x, i) => i === idx
+                                ? { ...x, no_voucher: e.target.checked, voucher_no: e.target.checked ? null : x.voucher_no }
+                                : x))} />
+                            無憑證
+                          </label>
                         </div>
                       </div>
                     ))}
@@ -2194,24 +2318,57 @@ export default function PurchasesPage() {
                   </div>
 
                   {/*
+                    ══════════ 憑證 ══════════
+
                     憑證號碼與「無憑證」互斥。
                     分成兩件事是為了讓「還沒填」和「本來就沒有」在帳上分得出來 ——
                     只留一個空白欄位的話，會計永遠不知道還要不要追這張發票。
+
+                    【共同憑證】（migration_155，2026-08-21）
+                    預設是**每個項目各自填**（欄位在上面的項目列裡）。
+                    這裡的開關只在「真的只有一張發票、拆成多個項目報帳」時勾。
+
+                    原本沒有這個開關,號碼只有單張層級一個欄位 ——
+                    十七張不同的收據沒地方放,填單的人就用頓號串成一串,
+                    而 gen_expenses_from_pr 把整串複製給每一筆支出。
+                    結果計程車那筆的憑證號碼裡混著住宿的發票號。
                   */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-end">
-                    <label className="flex flex-col gap-1">
-                      <span className="text-xs text-gray-500">憑證號碼<span className="text-gray-400">（發票/收據號碼）</span></span>
-                      <input disabled={readOnly || !!edit.no_voucher} value={edit.voucher_no ?? ''}
-                        onChange={(e) => setEdit({ ...edit, voucher_no: e.target.value })}
-                        placeholder={edit.no_voucher ? '已註記無憑證' : ''}
-                        className="w-full h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-100 disabled:text-gray-400" /></label>
-                    <label className={`flex items-center gap-2 text-sm h-12 md:h-auto md:pb-1.5
-                      ${(edit.voucher_no ?? '').trim() ? 'text-gray-300' : 'text-gray-600'}`}>
-                      <input type="checkbox" disabled={readOnly || !!(edit.voucher_no ?? '').trim()}
-                        checked={!!edit.no_voucher}
-                        onChange={(e) => setEdit({ ...edit, no_voucher: e.target.checked, voucher_no: e.target.checked ? null : edit.voucher_no })} />
-                      無憑證
+                  <div className="rounded-lg border border-mor-line bg-mor-sand/20 p-3 space-y-3">
+                    <label className="flex items-start gap-2 text-sm text-gray-700">
+                      <input type="checkbox" disabled={readOnly} className="mt-0.5"
+                        checked={!!edit.shared_voucher}
+                        onChange={(e) => setEdit({ ...edit, shared_voucher: e.target.checked })} />
+                      <span>
+                        共同憑證
+                        <span className="block text-xs text-gray-500 mt-0.5">
+                          {edit.shared_voucher
+                            ? '整張單共用下面這一個號碼。項目各自的憑證欄會灰掉，但內容留著。'
+                            : '每個項目各自填憑證（欄位在上面每一列裡）。只有一張發票時才勾這裡。'}
+                        </span>
+                      </span>
                     </label>
+
+                    {/*
+                      沒勾的時候整區灰掉但**不隱藏**。
+                      藏起來的話,舊單切成逐項之後那個號碼就從畫面上消失了 ——
+                      使用者會以為被刪掉。
+                    */}
+                    <div className={`grid grid-cols-1 md:grid-cols-2 gap-3 items-end
+                      ${edit.shared_voucher ? '' : 'opacity-50'}`}>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-xs text-gray-500">憑證號碼<span className="text-gray-400">（發票/收據號碼）</span></span>
+                        <input disabled={readOnly || !edit.shared_voucher || !!edit.no_voucher} value={edit.voucher_no ?? ''}
+                          onChange={(e) => setEdit({ ...edit, voucher_no: e.target.value })}
+                          placeholder={!edit.shared_voucher ? '未使用（改用逐項憑證）' : edit.no_voucher ? '已註記無憑證' : ''}
+                          className="w-full h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-100 disabled:text-gray-400" /></label>
+                      <label className={`flex items-center gap-2 text-sm h-12 md:h-auto md:pb-1.5
+                        ${(edit.voucher_no ?? '').trim() || !edit.shared_voucher ? 'text-gray-300' : 'text-gray-600'}`}>
+                        <input type="checkbox" disabled={readOnly || !edit.shared_voucher || !!(edit.voucher_no ?? '').trim()}
+                          checked={!!edit.no_voucher}
+                          onChange={(e) => setEdit({ ...edit, no_voucher: e.target.checked, voucher_no: e.target.checked ? null : edit.voucher_no })} />
+                        無憑證
+                      </label>
+                    </div>
                   </div>
                   {/*
                     匯款手續費。
