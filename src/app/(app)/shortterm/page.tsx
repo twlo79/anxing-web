@@ -16,6 +16,8 @@ import { ONEOFF_LABEL } from '@/lib/revenue-report';
 import RecurringPanel from '@/components/RecurringPanel';
 // 角色清單只留一份 —— 散在畫面各處的話，改了一處不會有東西提醒你其他處還是舊的
 import { canEditOrders } from '@/lib/roles';
+// 加費從押金扣、押金退了就鎖住整張單（migration_157）
+import { pickDeposit, orderLockReason, type DepCandidate } from '@/lib/deposit-fee';
 import OrderPayments from '@/components/OrderPayments';
 import MoneyLines from '@/components/MoneyLines';
 import { toLines, fromLines, totalTwd, validateLines, type Line } from '@/lib/money-lines';
@@ -58,7 +60,17 @@ type Estate = { id: string; name: string; sort: number; active: boolean };
  * **不要把「水電瓦斯－電費」合成一個字串塞進 fee_type**:
  * 營收報表會把它當成一個獨立科目,算不出水電瓦斯的合計。
  */
-type Fee = { id?: string; date: string; type: string; amount: number; note: string };
+type Fee = {
+  id?: string; date: string; type: string; amount: number; note: string;
+  /**
+   * 這筆加費從哪筆押金扣（migration_157）。null = 一般的一次性收入。
+   *
+   * 只有查得到**同一張訂單**的未退押金時才給選 —— 走 id，不比房號。
+   * 房號比對的話同房號跨房客、跨期都會中，而扣錯人的押金畫面上看不出來:
+   * 金額對、房號對，只有「是誰的錢」錯了。
+   */
+  deposit_id?: string | null;
+};
 type Stay = { room: string; estateId: string | null; propertyId: string | null; from: string };
 type MoveState = { grp: string; checkin: string; checkout: string; totalNights: number; totalAmount: number; guest: string | null; source: string; account: string | null; stays: Stay[] };
 
@@ -187,7 +199,7 @@ export default function ShortTermPage() {
     setRevLines(toLines(edit?.amount, (edit as any)?.fx_revenue, 'revenue'));
     setDepLines(toLines(edit?.deposit, (edit as any)?.fx_deposit, 'deposit'));
     if (edit?.id) {
-      supabase.from('orders').select('id, checkin, amount, fee_type, item_name, note').eq('parent_order_id', edit.id).eq('source', 'oneoff').then(({ data }) => setFees((data ?? []).map((f: any) => ({ id: f.id, date: f.checkin ?? '', /*
+      supabase.from('orders').select('id, checkin, amount, fee_type, item_name, note, deposit_id').eq('parent_order_id', edit.id).eq('source', 'oneoff').then(({ data }) => setFees((data ?? []).map((f: any) => ({ id: f.id, date: f.checkin ?? '', deposit_id: f.deposit_id ?? null, /*
        * 兩欄還原成選單的 label。找不到對應的預設就用科目當 label ——
        * 舊資料沒有 item_name,直接丟原字串比顯示成空白好。
        */
@@ -198,7 +210,51 @@ export default function ShortTermPage() {
     // formSeq 而不是 edit?.id —— 理由見上面 formSeq 的宣告。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formSeq, supabase]);
-  const addFee = () => setFees((fs) => [...fs, { date: edit?.checkout || edit?.checkin || '', type: '清潔費', amount: 0, note: '' }]);
+  const addFee = () => setFees((fs) => [...fs, { date: edit?.checkout || edit?.checkin || '', type: '清潔費', amount: 0, note: '', deposit_id: null }]);
+
+  /**
+   * 這張訂單的押金（migration_157）。
+   *
+   * 兩個用途:
+   *   1. 加費可不可以選「從押金扣除」—— 要有未退的押金才給選
+   *   2. 押金退了的話整張單鎖住 —— 生意結清了就不能再改
+   *
+   * ★★ 走 deposits.order_id，**不比房號**（2026-08-22 使用者指定
+   *   「一定要確認是同單，用 unique ID 搜」）。
+   *
+   * ★ 撈全部而不是只撈未退的 —— 已退的那筆正是用來判斷鎖定的。
+   *   只撈未退的話，退掉之後這裡會變成空的，鎖定就失效了。
+   */
+  const [orderDeps, setOrderDeps] = useState<DepCandidate[]>([]);
+  useEffect(() => {
+    if (!edit?.id) { setOrderDeps([]); return; }
+    let alive = true;
+    supabase.from('deposits')
+      .select('id, amount, returned_on, order_id, contract_id, room, guest_name')
+      .eq('order_id', edit.id)
+      .then(({ data }) => { if (alive) setOrderDeps((data ?? []) as DepCandidate[]); });
+    return () => { alive = false; };
+  }, [supabase, edit?.id]);
+
+  /** 可以扣的那筆押金。唯一解才給 —— 0 筆或 2 筆以上都不猜。 */
+  const depPick = useMemo(
+    () => (edit?.id
+      // 短租訂單不掛契約 —— 契約那邊的押金加費走契約頁，不從這裡扣
+      ? pickDeposit(orderDeps, { id: edit.id, parent_order_id: null, contract_id: null })
+      : { kind: 'none' as const }),
+    [orderDeps, edit?.id]);
+
+  /**
+   * 這張單鎖了沒。
+   *
+   * ★ 前端擋不是安全機制，資料庫的 trg_orders_lock_guard 才是。
+   *   這裡存在的理由是**講出原因** —— 只把欄位變灰的話，
+   *   使用者只會看到畫面沒反應然後說「壞了」
+   *   （2026-08-19「主管按確認沒反應」查了一整天，就是擋阻不講話）。
+   */
+  const lockReason = useMemo(
+    () => orderLockReason(orderDeps.find((d) => d.returned_on) ?? null, role),
+    [orderDeps, role]);
 
   /*
    * 同房源、過去一年的訂單 —— 拿來算每晚均價。
@@ -494,6 +550,14 @@ export default function ShortTermPage() {
 
   async function save() {
     if (!edit) return;
+    /*
+     * 押金退了就不能改（migration_157）。
+     *
+     * ★ 資料庫的 trg_orders_lock_guard 才是真正的防線 ——
+     *   這裡先擋一次是為了**在按下去之前就講清楚原因**。
+     *   讓它走到資料庫的話，使用者會看到一句 SQL 例外訊息。
+     */
+    if (lockReason) return flash(lockReason);
     setTried(true);
     /*
      * 必填少一個就擋。
@@ -546,7 +610,18 @@ export default function ShortTermPage() {
     if (delIds.length) await supabase.from('orders').delete().in('id', delIds);
     for (const f of fees) {
       if (!f.date || !f.amount) continue;
-      const row = { source: 'oneoff', estate_id: edit.estate_id, property_id: edit.property_id ?? null, property_raw: edit.property_raw, guest_name: edit.guest_name, checkin: f.date, checkout: f.date, nights: 0, amount: f.amount, ...(presetOf(f.type) ?? { fee_type: f.type, item_name: null }), note: f.note || null, parent_order_id: orderId };
+      const row = { source: 'oneoff', estate_id: edit.estate_id, property_id: edit.property_id ?? null, property_raw: edit.property_raw, guest_name: edit.guest_name, checkin: f.date, checkout: f.date, nights: 0, amount: f.amount, ...(presetOf(f.type) ?? { fee_type: f.type, item_name: null }), note: f.note || null, parent_order_id: orderId,
+        /*
+         * 從押金扣（migration_157）。
+         *
+         * ★ paid 跟著一起走:從押金扣的錢**已經在我們手上**（就是押金那筆）。
+         *   留 false 的話這筆會出現在欠款清單裡，而它根本收過了。
+         *   改回「另外收」時要還原成未收 —— 不還原的話會變成一筆
+         *   已標記收款、但實際上沒人收過的收入。
+         */
+        deposit_id: f.deposit_id ?? null,
+        paid: !!f.deposit_id,
+      };
       if (f.id) await supabase.from('orders').update(row).eq('id', f.id);
       else await supabase.from('orders').insert({ ...row, order_key: `FEE_${String(orderId).slice(0, 8)}_${Date.now()}${Math.floor(Math.random() * 1000)}`, imported_via: 'manual' });
     }
@@ -1056,6 +1131,21 @@ export default function ShortTermPage() {
           <div className="absolute inset-0 bg-black/30" />
           <div onClick={(e) => e.stopPropagation()} className="relative bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[85vh] overflow-y-auto">
             <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 font-bold flex items-center justify-between">{edit.id ? '編輯訂單' : '新增訂單(私下/一次性)'}<button onClick={() => setEdit(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button></div>
+            {/*
+              押金退了就鎖住（migration_157）。
+
+              ★ 一定要**講出原因與怎麼辦**，不能只把欄位變灰。
+                欄位變灰而不說話的話，使用者只會看到畫面沒反應然後說「壞了」——
+                2026-08-19「主管按確認沒反應」查了一整天就是這樣。
+
+              ★ 放在最上面而不是存檔按鈕旁邊 —— 他要在**開始改之前**看到，
+                不是填完一整張表按下去才知道白填了。
+            */}
+            {lockReason && (
+              <div className="mx-6 mt-4 rounded-lg bg-mor-sand border border-mor-line px-3 py-2.5 text-sm text-gray-700">
+                🔒 {lockReason}
+              </div>
+            )}
             <div className="px-6 py-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
               <label className="flex flex-col gap-1"><span className="flex items-center">來源<Req /></span>
                 <select value={edit.source} onChange={(e) => setEdit({ ...edit, source: e.target.value })} className={`rounded-lg border px-2 py-1.5 ${err('來源') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}>{Array.from(new Set([...(edit.id ? [edit.source] : []), ...MANUAL_SRC])).map((s) => <option key={s} value={s}>{SRC_LABEL[s] ?? s}</option>)}</select></label>
@@ -1264,6 +1354,43 @@ export default function ShortTermPage() {
                         <MoneyInput value={f.amount || 0} onChange={(n) => updFee(i, { amount: n })} placeholder="費用" className="rounded border border-gray-300 px-2 py-1 text-xs w-24 text-right" />
                         <input value={f.note} onChange={(e) => updFee(i, { note: e.target.value })} placeholder="備註" className="rounded border border-gray-300 px-2 py-1 text-xs flex-1 min-w-[6rem]" />
                         <button type="button" onClick={() => delFee(i)} className="text-xs text-red-500 underline">刪除</button>
+
+                        {/*
+                          收款方式（migration_157）。
+
+                          ★ 做成既有欄位旁邊的一個選項，不是一顆獨立按鈕 ——
+                            按鈕是「多一個地方要記得看」，選項是「本來就要填的東西」。
+
+                          ★ 只在查得到**同一張訂單的未退押金**時才出現。
+                            查不到、或查到兩筆以上就不顯示 —— 不猜。
+                        */}
+                        {depPick.kind === 'one' && (
+                          <label className="w-full flex flex-wrap items-center gap-2 text-xs">
+                            <span className="text-gray-500">收款</span>
+                            <select
+                              value={f.deposit_id ? 'dep' : 'other'}
+                              onChange={(e) => updFee(i, {
+                                deposit_id: e.target.value === 'dep' ? depPick.dep.id : null,
+                              })}
+                              className="rounded border border-gray-300 px-2 py-1 text-xs">
+                              <option value="other">另外收（現金／匯款）</option>
+                              <option value="dep">從押金扣除</option>
+                            </select>
+                            {f.deposit_id && (
+                              <span className="text-gray-500">
+                                {depPick.dep.room ?? ''}
+                                {depPick.dep.guest_name ? `・${depPick.dep.guest_name}` : ''}
+                                ・押金 {fmt(depPick.dep.amount ?? 0)} 未退
+                              </span>
+                            )}
+                          </label>
+                        )}
+                        {depPick.kind === 'many' && (
+                          <div className="w-full text-[11px] text-amber-700">
+                            這張訂單查到 {depPick.n} 筆未退押金，分不出要扣哪一筆 ——
+                            請到押金頁直接加費。
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>

@@ -22,6 +22,8 @@ import {
   transferChip, roleCanTransfer, depName, isTransfer, type TransferDep,
 } from '@/lib/deposit-transfer';
 import DepositPayments from '@/components/DepositPayments';
+// 加費從押金扣（migration_157）—— 應退小計由它算，送審送的是小計不是押金原額
+import DepositFees from '@/components/DepositFees';
 import { depPayStatus, remainingDep, DEP_STATUS_LABEL, DEP_STATUS_CLASS } from '@/lib/deposit-payment';
 import { shareDeposit } from '@/lib/share';
 import { softDelete } from '@/lib/trash';
@@ -55,6 +57,13 @@ type Dep = {
    *   所以「收了一半」跟「一毛沒收」以前在畫面上長得一模一樣。
    */
   received_amount?: number | null;
+  /**
+   * 送審當下的應退金額 = 押金 − 加費合計（migration_157）。
+   *
+   * ★ null = 還沒送審 → 視為全額。回填成 amount 的話，
+   *   「沒送過審」跟「核可全額」就分不出來了。
+   */
+  refund_amount?: number | null;
   returned_on: string | null; returned_method: string | null; returned_account: string | null;
   note: string | null; orphaned: boolean; is_manual?: boolean; created_at: string;
   // 退款審核流程（migration_61）
@@ -150,6 +159,17 @@ export default function DepositsPage() {
   const [moving, setMoving] = useState<{ dep: Dep; side: 'to' | 'from' } | null>(null);
   /** 開著收押金視窗的那一筆。收款明細在那裡增刪（migration_147）。 */
   const [paying, setPaying] = useState<Dep | null>(null);
+  /**
+   * 扣掉加費之後的應退金額（migration_157）。
+   *
+   * ★ 退款審核送的是**這個數字**，不是 deposits.amount。
+   *   送押金原額的話，主管核 10,000、實際該退 9,900 —— 多退 100 出去，
+   *   而兩張單上的數字看起來都很正常。
+   *
+   * null = 加費區塊還沒回報（還沒載入完，或這筆還沒存檔）。
+   * 這時候一律退回 amount，不要拿 0 去算。
+   */
+  const [feeRefund, setFeeRefund] = useState<number | null>(null);
   /*
    * 「確認退款日」的視窗（2026-08-19 使用者指定「比照請款單」）。
    *
@@ -435,6 +455,17 @@ export default function DepositsPage() {
     setSaving(true);
     const { error } = await supabase.from('deposits').update({
       refund_status: 'pending',
+      /*
+       * ★★ 記下這次要退多少（migration_157）。
+       *
+       * 加費從押金扣之後，應退不再等於 amount。
+       * 不記的話主管核完就查不到他核了什麼數字 ——
+       * 而確認退款時只能當場再算一次，算式一改兩邊就對不上。
+       *
+       * feeRefund 還沒回報（加費區塊沒載完）時退回 amount，
+       * 不要拿 0 去寫 —— 寫 0 的話那筆會變成「核可退 0 元」。
+       */
+      refund_amount: feeRefund ?? edit.amount,
       payee_bank_code: edit.payee_bank_code?.trim() || null,
       payee_name: (edit.payee_name ?? '').trim(),
       payee_account: (edit.payee_account ?? '').trim(),
@@ -1341,6 +1372,32 @@ export default function DepositsPage() {
               <div className="text-xs text-gray-500">
                 填了實際退款日這筆才算「已退」。錢匯出去之後就不能再改內容。
               </div>
+
+              {/*
+                ★★ 實際要匯多少，一定要印在按鈕旁邊（migration_157）。
+
+                有加費的時候押金 10,000 但只退 9,900 —— 而這個視窗
+                以前只顯示押金原額。按下去的人看到 10,000 就會匯 10,000。
+
+                refund_amount 是送審當下記下的數字（主管核的就是它）。
+                null = 舊資料或沒走審核 → 全額。
+              */}
+              <div className="rounded-lg bg-mor-sand/40 px-3 py-2">
+                <div className="flex justify-between items-baseline">
+                  <span className="text-xs text-gray-600">實際匯出金額</span>
+                  <span className="font-bold tabular-nums">
+                    NT$ {fmt(settling.refund_amount ?? settling.amount)}
+                  </span>
+                </div>
+                {settling.refund_amount != null
+                  && Math.round(settling.refund_amount) !== Math.round(settling.amount) && (
+                  <div className="text-[11px] text-gray-500 mt-1">
+                    押金 {fmt(settling.amount)} 扣掉加費
+                    {' '}{fmt(Math.round(settling.amount) - Math.round(settling.refund_amount))}。
+                    加費那部分轉成營收，押金這筆會記為全額結清。
+                  </div>
+                )}
+              </div>
               {settling.planned_refund_on && (
                 <div className="text-xs text-mor-blue">
                   預計匯款日 {settling.planned_refund_on} —— 已帶入，實際日期不同請自行修改。
@@ -1679,6 +1736,29 @@ export default function DepositsPage() {
                   );
                 })()}
               </div>
+
+              {/*
+                加費（從押金扣除）。migration_157。
+
+                放在「收押金」與「退押金」中間 —— 那正是它在流程上的位置:
+                錢收進來了、還沒退出去，這段期間才扣得到。
+
+                應退小計會透過 onChanged 回報給母層，
+                送退款審核時送的是**小計**不是押金原額。
+              */}
+              {edit.id && (
+                <DepositFees
+                  dep={{
+                    id: edit.id, amount: edit.amount, returned_on: edit.returned_on,
+                    planned_refund_on: edit.planned_refund_on,
+                    order_id: edit.order_id, contract_id: edit.contract_id,
+                    estate_id: edit.estate_id, property_id: edit.property_id,
+                    room: edit.room, guest_name: edit.guest_name,
+                    approved_amount: edit.refund_amount,
+                  }}
+                  canEdit={canEdit}
+                  onChanged={setFeeRefund} />
+              )}
 
               {/*
                 退押金是一條審核流,不是填個日期就好。

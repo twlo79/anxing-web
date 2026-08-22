@@ -14,6 +14,8 @@ import { softDelete } from '@/lib/trash';
 import TrashLink from '@/components/TrashLink';
 // 憑證是共同還是逐項、這一項最後套用哪個號碼 —— 判斷全在這裡（migration_155）
 import { resolveVoucher, voucherText, voucherSummary, missingVouchers } from '@/lib/voucher';
+// 押金抽屜要看得到「為什麼只退 99,719」—— 加費明細與應退小計（migration_157）
+import DepositFees from '@/components/DepositFees';
 
 type Item = {
   id?: string; request_id?: string; item_name: string; amount: number;
@@ -75,6 +77,10 @@ type Dep = {
   admin_approved_by: string | null; admin_approved_at: string | null;
   refund_requested_by: string | null;
   reject_reason: string | null; note: string | null; created_at: string;
+  /** 送審當下的應退金額 = 押金 − 加費（migration_157）。null = 還沒送審，視為全額。 */
+  refund_amount?: number | null;
+  /** 加費區塊要用 —— 它自己去查 orders where deposit_id。 */
+  order_id?: string | null; contract_id?: string | null; property_id?: string | null;
 };
 /** kind：expense=只用於支出 / income=只用於收入 / both=兩邊都用（migration_90） */
 type AccountCode = { code: string; name: string; kind?: string; active?: boolean };
@@ -162,6 +168,24 @@ export default function PurchasesPage() {
   const [depReason, setDepReason] = useState('');
   /** 押金抽屜。跟請款單一樣:列上只留最高頻的動作,其餘都在抽屜裡。 */
   const [depDetail, setDepDetail] = useState<Dep | null>(null);
+  /**
+   * 押金抽屜在編輯模式嗎（2026-08-22）。
+   *
+   * ★ 預設 false —— 這頁叫「請款審核」，來的人是要投票的。
+   *   而已核可的押金**改任何一個字都會清掉兩張核可票、退回重新送審**。
+   *   直接可編輯的話，一個只想看清楚再按核可的人很可能在捲動時
+   *   洗掉別人的票，而畫面上只會說「已重新送審」。
+   *
+   *   支出頁 8/19 修的是同一件事（使用者:「檢視是直接編輯阿」）。
+   */
+  const [depEditing, setDepEditing] = useState(false);
+  /**
+   * 開／關押金抽屜。**一律走這支，不要直接 setDepDetail。**
+   *
+   * 忘記重設 depEditing 的話，上一筆按過「編輯」之後，
+   * 下一筆會直接開在可編輯狀態 —— 而使用者不會知道自己進了編輯模式。
+   */
+  const openDep = useCallback((d: Dep | null) => { setDepDetail(d); setDepEditing(false); }, []);
   /** 從分享連結進來時要標記哪一筆 */
   const [depHi, setDepHi] = useState<string | null>(null);
   // 新單還沒有 id，憑證要等母單建立後才傳得上去 —— 存檔時呼叫 flush()
@@ -325,7 +349,9 @@ export default function PurchasesPage() {
       // select 一定要寫成單一字串字面量。用 + 串成多行的話 supabase-js 推不出回傳型別
       // （它是靠字面量做型別解析的），會變成 GenericStringError[],型別轉換就過不了。
       const { data: dp } = await supabase.from('deposits')
-        .select('id, estate_id, room, guest_name, currency, amount, refund_status, payee_bank_code, payee_name, payee_account, planned_refund_on, received_on, returned_on, returned_method, returned_account, manager_approved_by, manager_approved_at, admin_approved_by, admin_approved_at, refund_requested_by, reject_reason, note, created_at')
+        // refund_amount / order_id / contract_id / property_id 是加費那套要的（migration_157）——
+        // 少撈任何一個，抽屜的應退金額或加費清單就會是空的，而且不會報錯
+        .select('id, estate_id, room, guest_name, currency, amount, refund_status, payee_bank_code, payee_name, payee_account, planned_refund_on, received_on, returned_on, returned_method, returned_account, manager_approved_by, manager_approved_at, admin_approved_by, admin_approved_at, refund_requested_by, reject_reason, note, created_at, refund_amount, order_id, contract_id, property_id')
         .in('refund_status', ['pending', 'approved'])
         // 跟請款單同一條規則:還沒退的全部,加上本月已退的
         .or(`returned_on.is.null,returned_on.gte.${mStart}`)
@@ -560,7 +586,7 @@ export default function PurchasesPage() {
   useEffect(() => {
     if (!depHi || loading || !deps.length) return;
     const hit = deps.find((d) => d.id === depHi);
-    if (hit) setDepDetail(hit);
+    if (hit) openDep(hit);
     else flash('這筆押金退款已經結案或找不到');
     setDepHi(null);   // 只做一次,否則關掉抽屜又會被打開
   }, [depHi, loading, deps]);
@@ -951,7 +977,7 @@ export default function PurchasesPage() {
     }).eq('id', d.id);
     setSaving(false);
     if (error) return flash('儲存失敗:' + error.message);
-    setDepDetail(null);
+    openDep(null);
     flash(hadVotes ? '已更新並重新送審' : '已更新'); load();
   }
 
@@ -1323,7 +1349,7 @@ export default function PurchasesPage() {
                     p.mine ? 'border-amber-300 bg-white'
                       : p.paid ? 'border-mor-line bg-gray-50/70' : 'border-mor-line bg-white'}`}>
                   {/* 兩種單都點得開抽屜,各自走各自的 —— 使用者不該記得哪一種才能點 */}
-                  <div onClick={() => (p.kind === 'pr' ? setDetail(p.pr!) : setDepDetail(p.dep!))}>
+                  <div onClick={() => (p.kind === 'pr' ? setDetail(p.pr!) : openDep(p.dep!))}>
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
@@ -1400,7 +1426,7 @@ export default function PurchasesPage() {
                       className={`border-b border-mor-line/60 last:border-0 ${
                         p.mine ? 'bg-amber-50/40' : p.paid ? 'bg-gray-50/70 text-gray-500' : ''
                       } cursor-pointer hover:bg-mor-sand/30`}
-                      onClick={() => (p.kind === 'pr' ? setDetail(p.pr!) : setDepDetail(p.dep!))}>
+                      onClick={() => (p.kind === 'pr' ? setDetail(p.pr!) : openDep(p.dep!))}>
                       <td className="px-3 py-2.5 whitespace-nowrap">
                         <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
                           p.kind === 'pr' ? 'bg-mor-bluelight text-mor-slate' : 'bg-purple-50 text-purple-700'}`}>
@@ -1744,14 +1770,32 @@ export default function PurchasesPage() {
                   <span className="rounded px-1.5 py-0.5 text-[11px] font-medium bg-purple-50 text-purple-700 shrink-0">押金</span>
                   <span className="truncate">{d.room ?? '—'}・{d.guest_name ?? '—'}</span>
                 </span>
-                <button onClick={() => setDepDetail(null)} aria-label="關閉"
+                <button onClick={() => openDep(null)} aria-label="關閉"
                   className="w-10 h-10 -mr-2 flex items-center justify-center text-gray-400 hover:text-gray-600 text-xl">✕</button>
               </div>
 
               <div className="p-4 md:p-6 space-y-4 text-sm">
+                {/*
+                  ★★ 頭一行印的是**實際要退多少**，不是押金原額（migration_157）。
+
+                  有加費時押金 100,000 但只退 99,719。核可的人看到 100,000
+                  就會以為要匯 100,000 —— 而他核的其實是 99,719。
+                  refund_amount 是送審當下記下來的數字，null = 舊資料或沒走審核。
+                */}
                 <div className="rounded-lg bg-mor-sand/60 px-3 py-2 text-xs text-gray-600">
-                  押金 <span className="font-bold text-base">{d.currency === 'TWD' ? 'NT$' : d.currency} {fmt(d.amount)}</span>
-                  <span className="text-gray-400 ml-1">(金額與房源請到押金管理頁修改)</span>
+                  {d.refund_amount != null && Math.round(d.refund_amount) !== Math.round(d.amount) ? (
+                    <>
+                      應退 <span className="font-bold text-base">{d.currency === 'TWD' ? 'NT$' : d.currency} {fmt(d.refund_amount)}</span>
+                      <div className="text-gray-500 mt-0.5">
+                        押金 {fmt(d.amount)}，加費扣除 {fmt(Math.round(d.amount) - Math.round(d.refund_amount))}（轉一次性收入）
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      押金 <span className="font-bold text-base">{d.currency === 'TWD' ? 'NT$' : d.currency} {fmt(d.amount)}</span>
+                      <span className="text-gray-400 ml-1">(金額與房源請到押金管理頁修改)</span>
+                    </>
+                  )}
                 </div>
 
                 <div>
@@ -1802,27 +1846,88 @@ export default function PurchasesPage() {
                   </div>
                 )}
 
+                {/*
+                  加費（從押金扣除，migration_157）。
+                  唯讀 —— 這裡是審核的地方，改加費要按「編輯」進去。
+                  審的人要看得到「為什麼只退 99,719 而不是 100,000」。
+                */}
+                <DepositFees
+                  dep={{
+                    id: d.id, amount: d.amount, returned_on: d.returned_on,
+                    planned_refund_on: d.planned_refund_on,
+                    order_id: d.order_id, contract_id: d.contract_id,
+                    estate_id: d.estate_id, property_id: d.property_id,
+                    room: d.room, guest_name: d.guest_name,
+                    approved_amount: d.refund_amount,
+                  }}
+                  canEdit={false} />
+
+                {/*
+                  ══════════ 唯讀優先 ══════════
+                  （2026-08-22 使用者:「押金也造請款設計」）
+
+                  原本這一段是**直接可編輯的表單**。問題是這頁叫「請款審核」——
+                  來的人是要投票的，不是要改內容的。而這筆已核可的話，
+                  改任何一個字都會清掉兩張核可票、退回重新送審。
+
+                  也就是說:一個只想看清楚再按核可的人，很可能在捲動時
+                  不小心改掉一個欄位，把別人的票洗掉 —— 而畫面上只會說「已重新送審」。
+
+                  支出頁 8/19 修的是同一件事（「檢視是直接編輯阿」）。
+                  這裡照請款單抽屜的樣子:預設唯讀，編輯是一個要按下去的動作。
+                */}
                 <div className="border-t border-mor-line pt-3">
-                  <div className="text-xs font-semibold text-gray-500 mb-2">退押金</div>
-                  {editable ? (
-                    /* 跟押金管理頁共用同一支元件 —— 兩邊的欄位永遠一樣 */
-                    <RefundFields v={d} payAccounts={payAccounts.map((a) => ({ ...a }))} currency={d.currency}
-                      onChange={(patch) => setDepDetail({ ...d, ...patch })} />
-                  ) : (
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-semibold text-gray-500">退押金</span>
+                    {editable && !depEditing && (
+                      <button onClick={() => setDepEditing(true)}
+                        className="text-xs text-mor-blue underline">編輯</button>
+                    )}
+                  </div>
+
+                  {!editable ? (
                     <div className="text-xs text-gray-500">
                       已於 {d.returned_on} 退還・{d.returned_method ? DEP_METHOD[d.returned_method] : ''}
                       {d.returned_account ? `・${acctName[d.returned_account] ?? d.returned_account}` : ''}
                     </div>
+                  ) : depEditing ? (
+                    <>
+                      {/* 跟押金管理頁共用同一支元件 —— 兩邊的欄位永遠一樣 */}
+                      <RefundFields v={d} payAccounts={payAccounts.map((a) => ({ ...a }))} currency={d.currency}
+                        onChange={(patch) => setDepDetail({ ...d, ...patch })} />
+                      <label className="flex flex-col gap-1 mt-3"><span className="text-xs text-gray-500">備註</span>
+                        <textarea value={d.note ?? ''} onChange={(e) => setDepDetail({ ...d, note: e.target.value })}
+                          className="bg-white rounded-lg border border-mor-line px-2 py-2 h-20" /></label>
+                    </>
+                  ) : (
+                    <div>
+                      {row('房客收款帳號', d.payee_account
+                        ? <span className="text-xs">
+                          {d.payee_name ?? ''}　{d.payee_bank_code ?? ''}
+                          <div className="tabular-nums">{d.payee_account}</div>
+                        </span>
+                        : <span className="text-gray-400">—</span>)}
+                      {row('預計匯款日', d.planned_refund_on ?? <span className="text-gray-400">—</span>)}
+                      {row('安幸付款', d.returned_method
+                        ? <span>
+                          {DEP_METHOD[d.returned_method] ?? d.returned_method}
+                          {d.returned_account && (
+                            <span className="text-gray-500 ml-1">・{acctName[d.returned_account] ?? d.returned_account}</span>
+                          )}
+                        </span>
+                        : <span className="text-gray-400">—</span>)}
+                      {row('備註', d.note
+                        ? <span className="whitespace-pre-wrap">{d.note}</span>
+                        : <span className="text-gray-400">—</span>)}
+                    </div>
                   )}
                 </div>
 
-                <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">備註</span>
-                  <textarea value={d.note ?? ''} onChange={(e) => setDepDetail({ ...d, note: e.target.value })}
-                    disabled={!editable}
-                    className="bg-white rounded-lg border border-mor-line px-2 py-2 h-20 disabled:bg-gray-50" /></label>
-
-                {/* 匯款水單、房客提供的帳戶截圖 */}
-                <Receipts kind="dep" parentId={d.id} canEdit={editable} label="憑證圖片" />
+                {/*
+                  匯款水單、房客提供的帳戶截圖。
+                  唯讀模式下也不給上傳 —— 審核的人不該在投票的畫面裡改附件。
+                */}
+                <Receipts kind="dep" parentId={d.id} canEdit={editable && depEditing} label="憑證圖片" />
               </div>
 
               <div className="sticky bottom-0 md:static bg-white border-t border-mor-line px-4 md:px-6 py-3 md:py-4 flex flex-wrap gap-2 md:justify-end"
@@ -1830,16 +1935,29 @@ export default function PurchasesPage() {
                 <button onClick={() => shareDep(d)}
                   className="h-12 md:h-auto rounded-lg border border-mor-line px-4 md:py-1.5 text-sm">↗ 分享</button>
                 {(isManager || isAdmin) && d.refund_status === 'pending' && (
-                  <button onClick={() => { setDepDetail(null); setDepRejecting(d); }}
+                  <button onClick={() => { openDep(null); setDepRejecting(d); }}
                     className="h-12 md:h-auto rounded-lg border border-red-300 text-red-500 px-4 md:py-1.5 text-sm">駁回</button>
                 )}
-                {editable && (
-                  <button onClick={depSaveResubmit} disabled={saving}
-                    className="h-12 md:h-auto flex-1 md:flex-none rounded-lg border border-mor-line px-4 md:py-1.5 text-sm hover:bg-mor-sand/60 disabled:opacity-40">
-                    {saving ? '儲存中…' : '儲存並重新送審'}</button>
+                {/*
+                  ★ 「儲存並重新送審」只在**編輯模式**出現。
+                    唯讀時放著的話，等於那顆會清掉核可票的按鈕一直在旁邊，
+                    而按下去的人未必知道自己什麼都沒改也會退回重審。
+                */}
+                {editable && depEditing && (
+                  <>
+                    <button onClick={() => { setDepEditing(false); load(); }} disabled={saving}
+                      className="h-12 md:h-auto rounded-lg border border-gray-300 px-4 md:py-1.5 text-sm">取消編輯</button>
+                    <button onClick={depSaveResubmit} disabled={saving}
+                      className="h-12 md:h-auto flex-1 md:flex-none rounded-lg border border-mor-line px-4 md:py-1.5 text-sm hover:bg-mor-sand/60 disabled:opacity-40">
+                      {saving ? '儲存中…' : '儲存並重新送審'}</button>
+                  </>
                 )}
-                {canVote && (
-                  <button onClick={() => { depVote(d); setDepDetail(null); }}
+                {/*
+                  核可只在唯讀模式出現 —— 一邊改內容一邊投票，
+                  投的是改前還是改後的版本沒有人說得準。
+                */}
+                {canVote && !depEditing && (
+                  <button onClick={() => { depVote(d); openDep(null); }}
                     className="h-12 md:h-auto flex-1 md:flex-none rounded-lg bg-mor-green text-white px-4 md:py-1.5 text-sm font-medium active:opacity-80">
                     核可</button>
                 )}
