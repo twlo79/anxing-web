@@ -1761,9 +1761,21 @@ export default function PurchasesPage() {
           </div>
         );
         return (
-          <div className="fixed inset-0 bg-black/30 flex items-stretch md:items-start justify-center overflow-auto md:py-10 z-50">
-            <div className="bg-white w-full md:w-[560px] md:max-w-[95vw] md:rounded-xl shadow-xl min-h-full md:min-h-0"
-              onClick={(e) => e.stopPropagation()}>
+          /*
+           * 右側抽屜 —— 跟請款單的詳細抽屜一模一樣的容器
+           * （2026-08-22 使用者:「不能做得像一樣右邊抽屜嗎」）。
+           *
+           * 原本是置中的視窗。同一份清單裡點請款單從右邊滑出、
+           * 點押金卻從中間跳出來 —— 同一個動作兩種反應，
+           * 看的人每次都要重新定位「關閉鍵在哪、按鈕在哪」。
+           *
+           * 這幾個 class 是從下面那個請款抽屜抄的，不要各改各的:
+           * 兩邊哪天要調寬度或動畫，改一個忘一個就又不一樣了。
+           */
+          <div className="fixed inset-0 z-50" onClick={() => openDep(null)}>
+            <div className="absolute inset-0 bg-black/30" />
+            <div onClick={(e) => e.stopPropagation()}
+              className="absolute right-0 top-0 h-full w-full max-w-lg bg-white shadow-xl overflow-y-auto">
               <div className="sticky top-0 bg-white border-b border-mor-line px-4 md:px-6 py-4 font-bold flex items-center justify-between z-10"
                 style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
                 <span className="flex items-center gap-2 min-w-0">
@@ -1930,7 +1942,8 @@ export default function PurchasesPage() {
                 <Receipts kind="dep" parentId={d.id} canEdit={editable && depEditing} label="憑證圖片" />
               </div>
 
-              <div className="sticky bottom-0 md:static bg-white border-t border-mor-line px-4 md:px-6 py-3 md:py-4 flex flex-wrap gap-2 md:justify-end"
+              {/* 底部按鈕列 —— 同樣抄請款抽屜，兩邊的按鈕位置要在同一個地方 */}
+              <div className="sticky bottom-0 bg-white border-t border-mor-line px-4 md:px-6 py-3 flex flex-wrap gap-2"
                 style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
                 <button onClick={() => shareDep(d)}
                   className="h-12 md:h-auto rounded-lg border border-mor-line px-4 md:py-1.5 text-sm">↗ 分享</button>
