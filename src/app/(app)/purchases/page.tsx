@@ -16,6 +16,9 @@ import TrashLink from '@/components/TrashLink';
 import { resolveVoucher, voucherText, voucherSummary, missingVouchers } from '@/lib/voucher';
 // 押金抽屜要看得到「為什麼只退 99,719」—— 加費明細與應退小計（migration_157）
 import DepositFees from '@/components/DepositFees';
+// 排匯款／確認退款日 —— 押金管理頁用同一支，兩邊的規則不會漂走
+import DepositRefundStep, { type StepMode } from '@/components/DepositRefundStep';
+import { refundPerms as depPerms, cancelPatch } from '@/lib/deposit-refund';
 
 type Item = {
   id?: string; request_id?: string; item_name: string; amount: number;
@@ -186,6 +189,8 @@ export default function PurchasesPage() {
    * 下一筆會直接開在可編輯狀態 —— 而使用者不會知道自己進了編輯模式。
    */
   const openDep = useCallback((d: Dep | null) => { setDepDetail(d); setDepEditing(false); }, []);
+  /** 排匯款／確認退款日的視窗。跟押金管理頁共用同一支元件。 */
+  const [depStep, setDepStep] = useState<{ mode: StepMode; dep: Dep } | null>(null);
   /** 從分享連結進來時要標記哪一筆 */
   const [depHi, setDepHi] = useState<string | null>(null);
   // 新單還沒有 id，憑證要等母單建立後才傳得上去 —— 存檔時呼叫 flush()
@@ -982,6 +987,36 @@ export default function PurchasesPage() {
   }
 
   /**
+   * 撤銷押金退款申請（2026-08-22 使用者指定，跟請款單一致）。
+   *
+   * ★ 跟請款單的「撤銷」不一樣的地方:請款單是把**整張單**移到回收桶，
+   *   押金這邊只是把退款申請退回未送審 —— 押金那一列本身留著，
+   *   因為它是訂單/契約同步過來的，刪掉隔天又會長回來。
+   *
+   * ★ 要清掉的欄位寫在 lib/deposit-refund 的 cancelPatch() ——
+   *   兩票一定要清，不清的話下次重新送審會帶著舊的兩票進來:
+   *   看起來已經核可，而根本沒有人重新看過。
+   */
+  async function depCancel(d: Dep) {
+    if (!confirm(
+      `撤銷這筆退款申請？\n\n${d.room ?? ''} ${d.guest_name ?? ''}・NT$ ${fmt(d.refund_amount ?? d.amount)}\n\n`
+      + `會退回「未送審」，已投的核可票會一起清掉。\n`
+      + `押金本身不會刪除，房客的收款帳號也留著。`
+    )) return;
+    /*
+     * ★★ 要看改到幾列。RLS 擋下的 UPDATE 回成功且影響 0 列 ——
+     * 只看 error 的話畫面會說「已撤銷」而那筆一動也沒動。
+     */
+    const { data, error } = await supabase.from('deposits')
+      .update(cancelPatch()).eq('id', d.id).select('id');
+    if (error) return flash('撤銷失敗:' + error.message);
+    if (!data || data.length === 0) {
+      return flash('沒有任何一列被更新，通常是權限或這筆的狀態已經變了。請重新整理後再試。');
+    }
+    openDep(null); flash('已撤銷退款申請'); load();
+  }
+
+  /**
    * 分享押金退款。實作在 @/lib/share —— 押金管理頁用同一支,訊息格式永遠一致。
    *
    * 請款單的連結帶單號(?req=),押金沒有單號,所以帶 id(?dep=)。
@@ -1754,6 +1789,9 @@ export default function PurchasesPage() {
         const canVote = d.refund_status === 'pending'
           && ((isManager && !d.manager_approved_at) || (isAdmin && !d.admin_approved_at));
         const editable = !d.returned_on;
+        // 排匯款／確認退款／撤銷的權限。跟押金管理頁共用同一支判斷 ——
+        // 各寫一份的話，一定會有一頁按得到、另一頁按不到
+        const dp = depPerms(d, { isManager, isAdmin, isAccountant });
         const row = (label: string, value: React.ReactNode) => (
           <div className="flex gap-3 py-1.5 border-b border-mor-line/40 last:border-0">
             <div className="w-24 shrink-0 text-xs text-gray-500 pt-0.5">{label}</div>
@@ -1974,11 +2012,53 @@ export default function PurchasesPage() {
                     className="h-12 md:h-auto flex-1 md:flex-none rounded-lg bg-mor-green text-white px-4 md:py-1.5 text-sm font-medium active:opacity-80">
                     核可</button>
                 )}
+
+                {/*
+                  ══════════ 補齊與請款單一致的動作 ══════════
+                  （2026-08-22 使用者:「確認押金與請款都有一樣的流程與版面設計」）
+
+                  以前押金在這一頁只有分享／核可／駁回。會計核完之後
+                  得**換一頁**才按得到確認退款，而請款單就在同一頁按完了 ——
+                  同一份清單裡兩種走法，每次都要先想「這筆是哪一種」。
+
+                  按鈕順序也跟請款單抽屜對齊:排款 → 確認 → 撤銷。
+                */}
+                {!depEditing && dp.canPlan && (
+                  <button onClick={() => setDepStep({ mode: 'plan', dep: d })}
+                    className="h-12 md:h-auto rounded-lg border border-mor-slate text-mor-slate px-4 md:py-1.5 text-sm">
+                    {d.planned_refund_on ? '改匯款計畫' : '排匯款'}</button>
+                )}
+                {!depEditing && dp.canSettle && (
+                  <button onClick={() => setDepStep({ mode: 'settle', dep: d })}
+                    className="h-12 md:h-auto rounded-lg border border-mor-blue text-mor-blue px-4 md:py-1.5 text-sm">
+                    確認退款</button>
+                )}
+                {!depEditing && dp.canCancel && (
+                  <button onClick={() => depCancel(d)}
+                    className="h-12 md:h-auto rounded-lg border border-red-300 text-red-500 px-4 md:py-1.5 text-sm">
+                    撤銷</button>
+                )}
               </div>
             </div>
           </div>
         );
       })()}
+
+      {/*
+        排匯款／確認退款日。**跟押金管理頁共用同一支元件** ——
+        各寫一份的話，下次改規則一定會漏改一邊，
+        而漏改不會報錯，只會有一頁的行為跟另一頁不同。
+
+        z-index 比抽屜高:它是從抽屜裡叫出來的，蓋在後面就等於按了沒反應。
+      */}
+      {depStep && (
+        <DepositRefundStep
+          mode={depStep.mode}
+          dep={depStep.dep}
+          accounts={payAccounts.map((a) => ({ code: a.code, name: a.name }))}
+          onClose={() => setDepStep(null)}
+          onDone={(msg) => { setDepStep(null); openDep(null); flash(msg); load(); }} />
+      )}
 
       {/* 押金駁回 */}
       {depRejecting && (

@@ -1,6 +1,8 @@
 'use client';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase';
+// 每一筆加費各自的憑證（migration_158）—— 掛在那一列，不是掛在押金底下
+import Receipts, { type ReceiptsHandle } from '@/components/Receipts';
 import { ONEOFF_PRESETS, presetOf, feeLabel } from '@/lib/fee-types';
 import {
   feesTotal, refundable, checkFee, defaultFeeDate, approvalDrift,
@@ -76,6 +78,8 @@ export default function DepositFees({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [draft, setDraft] = useState<(DepFee & { label: string }) | null>(null);
+  /** 新增時照片先暫存在這裡 —— 那時候還沒有 id 可以掛。 */
+  const receiptsRef = useRef<ReceiptsHandle>(null);
 
   const locked = !!dep.returned_on;
 
@@ -152,6 +156,14 @@ export default function DepositFees({
     if (!res.data || res.data.length === 0) {
       return setErr('沒有任何一列被寫入，通常是權限或這筆押金的狀態已經變了。請重新整理後再試。');
     }
+    /*
+     * 加費已經寫進去了 —— 照片上傳失敗不該讓整筆消失，只提示。
+     * 反過來（先傳照片再寫資料）的話，寫入失敗會留下一張沒有主人的圖。
+     */
+    if (!draft.id) {
+      const upErr = await receiptsRef.current?.flush(res.data[0].id);
+      if (upErr) setErr('加費已存，但照片上傳失敗：' + upErr);
+    }
     setDraft(null);
     await load();
   }
@@ -205,6 +217,20 @@ export default function DepositFees({
           <div className="text-[11px] text-gray-400 mt-0.5">
             {r.date}{r.note ? `・${r.note}` : ''}・已建立訂單子單
           </div>
+
+          {/*
+            這一筆加費的憑證:收據、壞掉的東西的照片（migration_158）。
+
+            ★ 掛在**這一筆**（attachments.order_id），不是掛在押金底下。
+              一筆押金可以扣好幾筆加費 —— 都掛在押金上的話分不出
+              哪張對哪筆，而房客問「憑什麼扣 800」時那是唯一能拿出來的東西。
+
+            ★ 押金退掉之後改成唯讀（canEdit=false）——
+              錢都匯出去了，證據不該再被換掉。
+          */}
+          <div className="mt-2">
+            <Receipts kind="of" parentId={r.id} canEdit={canEdit && !locked} label="憑證" />
+          </div>
         </div>
       ))}
 
@@ -229,6 +255,13 @@ export default function DepositFees({
           </div>
           <input value={draft.note ?? ''} placeholder="備註（選填）"
             onChange={(e) => setDraft({ ...draft, note: e.target.value })} className={CTRL} />
+          {/*
+            新增時還沒有 id 可以掛照片 —— 先暫存在瀏覽器裡，
+            insert 拿到 id 之後才 flush() 真的上傳。跟收款視窗同一套。
+          */}
+          {!draft.id && (
+            <Receipts ref={receiptsRef} kind="of" parentId={null} canEdit label="憑證（選填）" />
+          )}
           <div className="flex gap-2">
             <button onClick={save} disabled={busy}
               className="flex-1 h-11 md:h-9 rounded-lg bg-mor-slate text-white text-sm font-medium">儲存</button>
@@ -246,11 +279,19 @@ export default function DepositFees({
         <div className="flex justify-between text-gray-600">
           <span>押金</span><span className="tabular-nums">{fmt(dep.amount)}</span>
         </div>
-        {total > 0 && (
-          <div className="flex justify-between text-red-600 mt-1">
-            <span>加費 {rows.length} 筆</span><span className="tabular-nums">−{fmt(total)}</span>
+        {/*
+          ★ 一筆一列，印出**科目名稱**（2026-08-22 使用者:「明細要看得出麼費用」）。
+
+          原本印的是「加費 1 筆 −1,100」—— 數字對，但看的人不知道
+          那 1,100 是管理費還是賠償金。而這張小計正是房客會問的那張:
+          「為什麼只退我 308,900」。答不出來的摘要等於沒有摘要。
+        */}
+        {rows.map((r) => (
+          <div key={r.id} className="flex justify-between text-red-600 mt-1 gap-2">
+            <span className="truncate">{feeLabel(r.fee_type ?? null, r.item_name ?? null)}</span>
+            <span className="tabular-nums shrink-0">−{fmt(r.amount)}</span>
           </div>
-        )}
+        ))}
         <div className="flex justify-between font-medium mt-1.5 pt-1.5 border-t border-mor-line">
           <span>應退</span>
           <span className={`tabular-nums ${refund < 0 ? 'text-red-600' : ''}`}>{fmt(refund)}</span>

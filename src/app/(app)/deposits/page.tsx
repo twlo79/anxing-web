@@ -24,6 +24,9 @@ import {
 import DepositPayments from '@/components/DepositPayments';
 // 加費從押金扣（migration_157）—— 應退小計由它算，送審送的是小計不是押金原額
 import DepositFees from '@/components/DepositFees';
+// 排匯款／確認退款日 —— 請款審核頁用同一支，兩邊的規則不會漂走
+import DepositRefundStep, { type StepMode } from '@/components/DepositRefundStep';
+import { cancelPatch } from '@/lib/deposit-refund';
 import { depPayStatus, remainingDep, DEP_STATUS_LABEL, DEP_STATUS_CLASS } from '@/lib/deposit-payment';
 import { shareDeposit } from '@/lib/share';
 import { softDelete } from '@/lib/trash';
@@ -181,11 +184,7 @@ export default function DepositsPage() {
    * 請款單的「確認付款日」早就是正式的視窗（日期＋我方帳號＋擋門訊息），
    * 這裡照抄同一套 —— 兩個流程長得一樣，做帳的人不用學兩種。
    */
-  const [settling, setSettling] = useState<Dep | null>(null);
-  const [settleDate, setSettleDate] = useState('');
-  const [settleAcct, setSettleAcct] = useState('');
-  /** ★ 訊息一定要印在**視窗裡**。印在頁面上會被視窗蓋住 → 使用者看到「按了沒反應」。 */
-  const [settleErr, setSettleErr] = useState('');
+  const [depStep, setDepStep] = useState<{ mode: StepMode; dep: Dep } | null>(null);
   const [moveKw, setMoveKw] = useState('');
   const [moveOn, setMoveOn] = useState('');
   /** 要不要連「條件不符」的也列出來。預設不列 —— 見移轉視窗裡的說明。 */
@@ -421,7 +420,52 @@ export default function DepositsPage() {
       canReject: (isManager || isAdmin) && st === 'pending',
       // 核可後才填實際退款日。這條也寫在 CHECK 約束裡,不是只靠前端。
       canSettle: canRequest && st === 'approved' && !d.returned_on,
+      /*
+       * 排匯款（2026-08-22，比照請款單）。
+       * 跟 canSettle 同樣的條件 —— 兩顆並排，一顆按得到一顆按不到會很怪。
+       */
+      canPlan: canRequest && st === 'approved' && !d.returned_on,
+      /*
+       * 撤銷退款申請。送錯了以前只能請人下 SQL，或放著卡在待核可裡 ——
+       * 而卡著的那幾筆會一直出現在每個人的待辦清單上。
+       *
+       * ★ 錢匯出去之後不能撤 —— 那不是「取消申請」，是「退款沒發生過」，
+       *   而錢已經在對方帳戶裡了。
+       */
+      canCancel: canRequest && !d.returned_on && ['pending', 'approved'].includes(st),
     };
+  }
+
+  /**
+   * 撤銷退款申請。
+   *
+   * ★ 只把退款申請退回未送審，**押金那一列留著** ——
+   *   它是訂單/契約同步過來的，刪掉隔天又會長回來。
+   *
+   * ★ 要清哪些欄位寫在 lib/deposit-refund 的 cancelPatch()，
+   *   請款審核頁用同一份。兩票一定要清 ——
+   *   不清的話下次重新送審會帶著舊的兩票進來:看起來已經核可，
+   *   而根本沒有人重新看過。
+   */
+  async function cancelRefund(d: Dep) {
+    if (!confirm(
+      `撤銷這筆退款申請？\n\n${depName(d)}・NT$ ${fmt(d.refund_amount ?? d.amount)}\n\n`
+      + `會退回「未送審」，已投的核可票會一起清掉。\n`
+      + `押金本身不會刪除，房客的收款帳號也留著。`
+    )) return;
+    setSaving(true);
+    /*
+     * ★★ 要看改到幾列。RLS 擋下的 UPDATE 回成功且影響 0 列 ——
+     * 只看 error 的話畫面會說「已撤銷」而那筆一動也沒動。
+     */
+    const { data, error } = await supabase.from('deposits')
+      .update(cancelPatch()).eq('id', d.id).select('id');
+    setSaving(false);
+    if (error) return flash('撤銷失敗:' + error.message);
+    if (!data || data.length === 0) {
+      return flash('沒有任何一列被更新，通常是權限或這筆的狀態已經變了。請重新整理後再試。');
+    }
+    setDetail(null); setEdit(null); flash('已撤銷退款申請'); load();
   }
 
   /**
@@ -434,10 +478,18 @@ export default function DepositsPage() {
   /** 按過「送出退款申請」了沒 —— 紅框只在他表達「我填完了」之後才出現 */
   const [triedRefund, setTriedRefund] = useState(false);
   /** 退款申請缺哪些欄位。訊息與紅框用同一份答案 */
+  /*
+   * ★ 預計匯款日與安幸付款帳號**不在送審必填裡**（2026-08-22，比照請款單）。
+   *
+   * 送審當下常常還不知道會從哪個戶頭出、哪天出。以前是必填，
+   * 所以大家隨便填一個再回來改 —— 而改動會清掉核可票、退回重審。
+   * 那兩個移到核可後的「排匯款」那一步。
+   *
+   * 審核者要看的是「錢退給誰」，不是「我方哪天從哪個戶頭出」。
+   */
   const refundMissing = edit ? missingFields([
     { label: '戶名', value: edit.payee_name },
     { label: '房客收款帳號', value: edit.payee_account },
-    { label: '預計匯款日', value: edit.planned_refund_on },
     { label: '安幸付款方式', value: edit.returned_method },
   ]) : [];
 
@@ -505,49 +557,6 @@ export default function DepositsPage() {
     setRejecting(null); setRejectReason(''); flash('已駁回'); load();
   }
 
-  /**
-   * 實際匯出後填退款日。填了才算「已退款」。
-   *
-   * 【比照請款單的「確認付款日」】（2026-08-19）
-   * 日期 ＋ 安幸付款帳號一起確認 —— 實務上真正匯出去的帳戶
-   * 常常跟送審時預定的不同，而那一欄是之後跟銀行對帳的依據。
-   */
-  async function doSettle() {
-    if (!settling) return;
-    setSettleErr('');
-    if (settling.returned_on) {
-      return setSettleErr('這筆已經填過退款日了。要調整請到⋯⋯先重新整理確認狀態。');
-    }
-    if (!settleDate) return setSettleErr('請選擇實際退款日');
-    /*
-     * 現金沒有帳戶可言（見 lib/pay-method）。其餘方式一定要記錄
-     * 錢從哪個戶頭出去 —— 少了它，明年對元大帳戶時那筆匯出對不到任何單。
-     */
-    const needAcct = settling.returned_method && settling.returned_method !== 'cash';
-    if (needAcct && !settleAcct) {
-      return setSettleErr('請選擇安幸付款帳號（我方）—— 沒有它就不知道錢從哪個戶頭出去。');
-    }
-
-    setSaving(true);
-    const patch: Record<string, unknown> = { returned_on: settleDate };
-    if (needAcct) patch.returned_account = settleAcct;
-    /*
-     * ★★ 要看改到幾列。RLS 擋下的 UPDATE 回成功且影響 0 列 ——
-     * 只看 error 的話畫面會說「已完成退款」而那筆押金一動也沒動
-     * （2026-08-19 請款單那邊就是這樣卡了一整天）。
-     */
-    const { data: upd, error } = await supabase.from('deposits')
-      .update(patch).eq('id', settling.id).select('id');
-    setSaving(false);
-    if (error) return setSettleErr('儲存失敗：' + error.message);
-    if (!upd || upd.length === 0) {
-      return setSettleErr('沒有任何一列被更新，通常是權限或這筆的狀態已經變了。'
-        + '請關掉重新整理後再試一次。');
-    }
-    setSettling(null); setDetail(null);
-    flash('已完成退款');
-    load();
-  }
 
   /* ══════════════ 押金移房（migration_146）══════════════ */
 
@@ -1152,13 +1161,8 @@ export default function DepositsPage() {
                     會計每天要匯的那幾筆，不該每一筆都先點進詳情才按得到。
                   */}
                   {refundPerms(r).canSettle && !isTransfer(r) && (
-                    <button onClick={(e) => {
-                      e.stopPropagation();
-                      setSettling(r);
-                      setSettleDate(r.planned_refund_on ?? todayStr());
-                      setSettleAcct(r.returned_account ?? '');
-                      setSettleErr('');
-                    }} className="text-xs text-mor-blue underline hover:text-mor-slate">確認退款</button>
+                    <button onClick={(e) => { e.stopPropagation(); setDepStep({ mode: 'settle', dep: r }); }}
+                      className="text-xs text-mor-blue underline hover:text-mor-slate">確認退款</button>
                   )}
                 </td>
               </tr>
@@ -1328,14 +1332,28 @@ export default function DepositsPage() {
                     )}
                     {/* 移轉來的那筆不給「確認已退款」—— 那是移轉，不是退給房客,
                         真的要退錢請先撤銷移轉,回到正常的退款流程 */}
+                    {/*
+                      排匯款 → 確認退款，兩步。比照請款單
+                      （2026-08-22 使用者:「完全比照請款單」）。
+
+                      以前預計匯款日在**送審**就必填，但送審當下常常還不知道
+                      會從哪個戶頭出、哪天出 —— 於是大家隨便填一個再回來改，
+                      而改動會清掉核可票、退回重審。移到這一步就沒有這個問題。
+                    */}
+                    {p.canPlan && !isTransfer(d) && (
+                      <button onClick={() => setDepStep({ mode: 'plan', dep: d })}
+                        className={`${btn} border border-mor-slate text-mor-slate`}>
+                        {d.planned_refund_on ? '改匯款計畫' : '排匯款'}</button>
+                    )}
+                    {/* 移轉來的那筆不給「確認已退款」—— 那是移轉，不是退給房客,
+                        真的要退錢請先撤銷移轉,回到正常的退款流程 */}
                     {p.canSettle && !isTransfer(d) && (
-                      <button onClick={() => {
-                        setSettling(d);
-                        setSettleDate(d.planned_refund_on ?? todayStr());
-                        setSettleAcct(d.returned_account ?? '');
-                        setSettleErr('');
-                        setDetail(null);
-                      }} className={`${btn} bg-mor-slate text-white`}>確認退款日</button>
+                      <button onClick={() => setDepStep({ mode: 'settle', dep: d })}
+                        className={`${btn} bg-mor-slate text-white`}>確認退款日</button>
+                    )}
+                    {p.canCancel && !isTransfer(d) && (
+                      <button onClick={() => cancelRefund(d)} disabled={saving}
+                        className={`${btn} border border-red-300 text-red-500 disabled:opacity-50`}>撤銷</button>
                     )}
                     <button onClick={() => setDetail(null)}
                       className={`${btn} border border-gray-300`}>關閉</button>
@@ -1356,94 +1374,21 @@ export default function DepositsPage() {
         ★ 擋門訊息印在**視窗裡**。印在頁面上會被這個視窗蓋住，
           使用者看到的是「按了沒反應」（2026-08-19 在請款單那邊卡了一整天）。
       */}
-      {settling && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50"
-          onClick={() => setSettling(null)}>
-          <div className="bg-white rounded-xl w-[420px] max-w-[92vw] shadow-xl"
-            onClick={(e) => e.stopPropagation()}>
-            <div className="border-b border-mor-line px-6 py-4">
-              <div className="font-bold">確認退款日</div>
-              <div className="text-xs text-gray-500 mt-0.5">
-                {depName(settling)}・{settling.guest_name ?? ''}　{primaryText(settling)}
-              </div>
-            </div>
+      {/*
+        排匯款／確認退款日。**跟請款審核頁共用同一支元件**
+        （2026-08-22 使用者選「抽成共用元件」）。
 
-            <div className="p-6 text-sm space-y-2">
-              <div className="text-xs text-gray-500">
-                填了實際退款日這筆才算「已退」。錢匯出去之後就不能再改內容。
-              </div>
-
-              {/*
-                ★★ 實際要匯多少，一定要印在按鈕旁邊（migration_157）。
-
-                有加費的時候押金 10,000 但只退 9,900 —— 而這個視窗
-                以前只顯示押金原額。按下去的人看到 10,000 就會匯 10,000。
-
-                refund_amount 是送審當下記下的數字（主管核的就是它）。
-                null = 舊資料或沒走審核 → 全額。
-              */}
-              <div className="rounded-lg bg-mor-sand/40 px-3 py-2">
-                <div className="flex justify-between items-baseline">
-                  <span className="text-xs text-gray-600">實際匯出金額</span>
-                  <span className="font-bold tabular-nums">
-                    NT$ {fmt(settling.refund_amount ?? settling.amount)}
-                  </span>
-                </div>
-                {settling.refund_amount != null
-                  && Math.round(settling.refund_amount) !== Math.round(settling.amount) && (
-                  <div className="text-[11px] text-gray-500 mt-1">
-                    押金 {fmt(settling.amount)} 扣掉加費
-                    {' '}{fmt(Math.round(settling.amount) - Math.round(settling.refund_amount))}。
-                    加費那部分轉成營收，押金這筆會記為全額結清。
-                  </div>
-                )}
-              </div>
-              {settling.planned_refund_on && (
-                <div className="text-xs text-mor-blue">
-                  預計匯款日 {settling.planned_refund_on} —— 已帶入，實際日期不同請自行修改。
-                </div>
-              )}
-
-              <label className="block text-xs text-gray-500 pt-1">實際退款日<Req /></label>
-              <input type="date" value={settleDate} onChange={(e) => setSettleDate(e.target.value)}
-                className="w-full rounded-lg border border-mor-line px-2 py-1.5" />
-
-              {settleErr && (
-                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 whitespace-pre-wrap">
-                  {settleErr}
-                </div>
-              )}
-
-              {/* 現金沒有帳戶可言 —— 其餘方式一定要記錄錢從哪個戶頭出去 */}
-              {settling.returned_method && settling.returned_method !== 'cash' && (
-                <>
-                  <label className="block text-xs text-gray-500 pt-1">安幸付款帳號(我方)<Req /></label>
-                  <select value={settleAcct} onChange={(e) => setSettleAcct(e.target.value)}
-                    className="w-full rounded-lg border border-mor-line px-2 py-1.5">
-                    <option value="">請選擇</option>
-                    {payAccounts.filter((a) => a.method === settling.returned_method)
-                      .map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
-                  </select>
-                </>
-              )}
-
-              <div className="text-[11px] text-gray-400 pt-1">
-                退款方式：{settling.returned_method
-                  ? METHOD_LABEL[settling.returned_method] ?? settling.returned_method
-                  : '（未指定）'}
-                　退到：{settling.payee_name ?? ''} {settling.payee_account ?? '—'}
-              </div>
-            </div>
-
-            <div className="border-t border-mor-line px-6 py-4 flex justify-end gap-2">
-              <button onClick={() => setSettling(null)}
-                className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>
-              <button onClick={doSettle} disabled={saving}
-                className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium
-                  hover:bg-mor-slatedark disabled:opacity-50">確認</button>
-            </div>
-          </div>
-        </div>
+        以前這裡自己寫一份、請款審核頁根本沒有 —— 於是會計核完押金
+        得換一頁才按得到確認退款。各寫一份的話下次改規則一定漏改一邊，
+        而漏改不會報錯，只會有一頁的行為跟另一頁不同。
+      */}
+      {depStep && (
+        <DepositRefundStep
+          mode={depStep.mode}
+          dep={depStep.dep}
+          accounts={payAccounts.map((a) => ({ code: a.code, name: a.name }))}
+          onClose={() => setDepStep(null)}
+          onDone={(msg) => { setDepStep(null); setDetail(null); flash(msg); load(); }} />
       )}
 
       {/* 收押金：一筆一列（migration_147） */}
