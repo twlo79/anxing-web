@@ -136,6 +136,25 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
     () => Object.fromEntries(estates.map((e) => [e.id, e.name])), [estates]);
 
   // ── 新增 ───────────────────────────────────────────
+  /*
+   * `/housekeeping?tab=demand&new=1` 直接開新增視窗（2026-08-22）。
+   *
+   * 請款頁的「＋ 採購單」以前是外部 Google 表單 —— 填完的東西
+   * **不會進系統**，要有人手動看信再轉成採購需求。
+   * 現在那顆按鈕導到這裡，同一份資料、同一張表。
+   *
+   * 只認一次 —— 開完就把參數從網址拿掉，不然重新整理會一直跳出來。
+   */
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const u = new URL(window.location.href);
+    if (u.searchParams.get('new') !== '1') return;
+    u.searchParams.delete('new');
+    window.history.replaceState(null, '', u.toString());
+    startNew();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function startNew() {
     setEdit({ note: '', ship_to: '', ship_floor: '', items: [blankItem()] });
   }

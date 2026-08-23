@@ -54,7 +54,15 @@ const TAB_LABEL = { calendar: '行事曆', stats: '排班統計', demand: '採�
 type TabKey = keyof typeof TAB_LABEL;
 
 export default function HousekeepingPage() {
-  const [tab, setTab] = useState<TabKey>('calendar');
+  /*
+   * 預設行事曆，但 `?tab=demand` 可以直接開採購需求 ——
+   * 請款頁的「＋ 採購單」靠它導過來（2026-08-22）。
+   */
+  const [tab, setTab] = useState<TabKey>(() => {
+    if (typeof window === 'undefined') return 'calendar';
+    const t = new URLSearchParams(window.location.search).get('tab');
+    return t === 'demand' || t === 'stats' ? (t as TabKey) : 'calendar';
+  });
   const [msg, setMsg] = useState<{ t: string; err?: boolean } | null>(null);
 
   /*

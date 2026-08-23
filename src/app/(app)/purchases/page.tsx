@@ -101,7 +101,17 @@ const PAY_OPTS = ['cash', 'transfer', 'credit_card'];
 const dateWord = (m?: string | null) => (m === 'credit_card' ? '刷卡日' : '付款日');
 const acctWord = (m?: string | null) => (m === 'credit_card' ? '刷卡卡片' : '安幸付款帳號');
 const CURRENCIES = ['TWD', 'USD', 'JPY', 'CNY', 'EUR'];
-const PURCHASE_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSc3ZE8jE6dIDTzrrDDeYYL6EcMKUniPRhhhKXCRbWddGt4bbw/viewform';
+/*
+ * 採購單 = 房務管理底下的「採購需求」（2026-08-22 使用者指定）。
+ *
+ * 以前這裡是一個外部 Google 表單。填完的東西**不會進系統** ——
+ * 要有人去看信、再手動轉成採購需求或請款單，
+ * 而漏看一封信沒有任何跡象，只有提需求的人在等。
+ *
+ * 現在導到站內同一張表（`purchase_demands`，migration_140 / 141），
+ * `?new=1` 會直接把新增視窗打開，少一次點擊。
+ */
+const PURCHASE_FORM_URL = '/housekeeping?tab=demand&new=1';
 const ST_LABEL: Record<string, string> = { draft: '草稿', pending: '待核可', approved: '已核可', rejected: '已駁回' };
 const ST_COLOR: Record<string, string> = {
   draft: 'bg-gray-100 text-gray-600', pending: 'bg-amber-50 text-amber-700',
@@ -1312,7 +1322,7 @@ export default function PurchasesPage() {
           className="flex-1 h-12 rounded-xl bg-mor-slate text-white font-medium active:bg-mor-slatedark">
           + 填寫請款
         </button>
-        <a href={PURCHASE_FORM_URL} target="_blank" rel="noreferrer"
+        <a href={PURCHASE_FORM_URL}
           className="flex-1 h-12 rounded-xl border border-mor-line bg-white/85 font-medium flex items-center justify-center active:bg-mor-sand/60">
           + 採購單
         </a>
@@ -1642,8 +1652,8 @@ export default function PurchasesPage() {
         <div className="ml-auto flex items-end gap-2">
           <div className="text-xs text-gray-400 pb-1.5">共 {sorted.length.toLocaleString()} 筆</div>
           <AddButton onClick={openNew}>填寫請款</AddButton>
-          {/* 採購單是外部表單,不是本站的新增 —— 用次要樣式,不跟「填寫請款」搶 */}
-          <a href={PURCHASE_FORM_URL} target="_blank" rel="noreferrer"
+          {/* 採購單 = 房務管理的「採購需求」。用次要樣式,不跟「填寫請款」搶 */}
+          <a href={PURCHASE_FORM_URL}
             className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 whitespace-nowrap">+ 採購單</a>
           <ExportButton onClick={exportXlsx} disabled={!rows.length && !deps.length} />
           <TrashLink table="purchase_requests" label="請款單" />
