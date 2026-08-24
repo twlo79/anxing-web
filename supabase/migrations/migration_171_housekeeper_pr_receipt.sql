@@ -106,7 +106,7 @@ as $function$
     /*
      * ★ 管家:請款單的憑證圖（migration_171）。
      *   他在請款單控管本來就看得到那張單的全部欄位 —— 藏圖擋不住任何東西。
-     *   **只有 pr/** —— exp/ dep/ dp/ 不在裡面，那些他沒有頁面可以進去。
+     *   只有 `pr/` 這一個前綴 —— exp、dep、dp 不在裡面，那些他沒有頁面可以進去。
      */
     when current_role_of() = 'housekeeper' and p_path like 'pr/%' then true
     -- 其他人只看得到自己送的請款單底下的附件

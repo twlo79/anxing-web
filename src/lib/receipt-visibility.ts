@@ -52,14 +52,25 @@
  */
 
 /**
- * 不管單是誰送的，都看得到憑證圖的角色。
+ * 不管單是誰送的，都看得到請款單憑證圖的角色。
  *
- * ★ 必須跟 `can_see_receipt()` 第一個 when 分支一模一樣。
- *   `housekeeper` **不在裡面** —— 它在 SQL 裡另有一條
- *   `p_path like 'op/%'` 的分支，那是**訂單的收款證明**，
- *   跟請款單的 `pr/` 沒有關係（migration_154）。
+ * ★ 必須跟 `can_see_receipt()` 對 `pr/` 開放的角色一致:
+ *
+ *     when current_role_of() in ('accountant','manager','super_admin') then true
+ *     when current_role_of() = 'housekeeper' and p_path like 'pr/%' then true
+ *                                                             ^^^ migration_171
+ *
+ *   `housekeeper` 是 **migration_171 才加的**（2026-08-24 使用者指定）——
+ *   他在請款單控管本來就看得到那張單的金額、項目、憑證號碼、收款方帳號，
+ *   只有圖看不到。藏圖擋不住任何東西。
+ *
+ * ★ `cleaner` **不在裡面**。資料庫的 RLS 分不出 cleaner 與管家
+ *   （`current_role_of()` 回的是各自的字串，這裡分得出來），
+ *   而 171 只放行了 `housekeeper` 這個字串。前端要跟上。
  */
-export const RECEIPT_ALL_ROLES = ['accountant', 'manager', 'super_admin'] as const;
+export const RECEIPT_ALL_ROLES = [
+  'housekeeper', 'accountant', 'manager', 'super_admin',
+] as const;
 
 /**
  * 這個人看不看得到這張請款單的憑證圖。
@@ -92,5 +103,6 @@ export function receiptHint(
   if (imageCount > 0) return null;
   return canSeeRequestReceipt(role, isMine)
     ? '還沒上傳共同憑證圖片'
-    : '憑證圖片只有會計以上、或送單的人看得到。';
+    // ★ 這句要跟 RECEIPT_ALL_ROLES 一起維護 —— 171 之後管家也在裡面了
+    : '憑證圖片只有管家、會計以上、或送單的人看得到。';
 }
