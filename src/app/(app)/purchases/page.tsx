@@ -14,6 +14,7 @@ import { softDelete } from '@/lib/trash';
 import TrashLink from '@/components/TrashLink';
 // 憑證是共同還是逐項、這一項最後套用哪個號碼 —— 判斷全在這裡（migration_155）
 import { resolveVoucher, voucherText, voucherSummary, missingVouchers } from '@/lib/voucher';
+import { canSeeRequestReceipt, receiptHint } from '@/lib/receipt-visibility';
 // 押金抽屜要看得到「為什麼只退 99,719」—— 加費明細與應退小計（migration_157）
 import DepositFees from '@/components/DepositFees';
 /*
@@ -2301,12 +2302,21 @@ export default function PurchasesPage() {
                           ★ 共同憑證但一張圖都沒傳 —— 講出來。
                             號碼填了、圖沒傳,審核的人只看到號碼會以為憑證齊了。
                             用 amber 不是 red:這不是錯誤,是還沒做完。
+
+                          ★★ 但**「沒有圖」與「你看不到圖」是兩件事**
+                             （migration_170 實測:管家看別人送的單是 0 / 1）。
+                             一律說「還沒上傳」的話，管家會去催一個
+                             已經把發票傳好的人。判斷在 lib/receipt-visibility.ts。
                       */}
-                      {d.shared_voucher && sharedImgs.length === 0 && (
-                        <span className="block text-xs text-amber-600 mt-0.5">
-                          還沒上傳共同憑證圖片
-                        </span>
-                      )}
+                      {d.shared_voucher && (() => {
+                        const hint = receiptHint(role, p.mine, sharedImgs.length);
+                        return hint ? (
+                          <span className={`block text-xs mt-0.5 ${
+                            canSeeRequestReceipt(role, p.mine) ? 'text-amber-600' : 'text-gray-400'}`}>
+                            {hint}
+                          </span>
+                        ) : null;
+                      })()}
                     </span>
                   );
                 })())}
