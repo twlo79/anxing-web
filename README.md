@@ -848,6 +848,61 @@ useEffect(() => {
 4. **要能重跑** —— 「已完成」要跳過而不是中止（`migration_63` 的教訓）
 5. **覆寫整支函式時，逐段對照線上定義** —— 不要照 `schema-baseline.sql`（見下）
 6. **既有行為要有一項自檢守著** —— 「N / N 全等」比「✅」有用
+7. **★★ SQL Editor 沒有登入身分 —— 凡是看 `auth.uid()` 的東西都測不到** 🔴 **（2026-08-22，migration_167）**
+
+   `current_role_of()` 的定義是 `select role from profiles where id = auth.uid() and active`。
+   SQL Editor 是 `postgres` 連線，`auth.uid()` 是 **null**。所以：
+
+   | 寫在自檢裡的東西 | 在 SQL Editor 跑出來 |
+   |---|---|
+   | `trash_can_delete('orders')` | **永遠 false** |
+   | 任何 RLS 政策的 `using` | 永遠不成立 |
+   | `soft_delete(...)` | **第一行就回 NO_PERM，一列都沒動** |
+
+   167 把 `case when trash_can_delete('orders') then '✅' else '❌' end` 寫成驗收標準，
+   **那一項每次都會是 ❌，跟這支 migration 改了什麼完全無關。**
+   更糟的是同一支還有一個「真的刪一筆」的 `do` 區塊 —— 它也走到 NO_PERM 就結束，
+   而結果印在 `raise notice`，**SQL Editor 看不到**。
+   兩個問題剛好互相遮蓋：沒測到東西，也沒有人知道沒測到。
+
+   **要測角色相關的行為，必須假扮身分**：
+
+   ```sql
+   -- true = local，交易結束自動還原
+   perform set_config('request.jwt.claims',
+                      json_build_object('sub', 某人的_uuid::text)::text, true);
+   -- 現在 auth.uid() 就是那個人，current_role_of() 查得到角色
+   ```
+
+   - **不要 `set role authenticated`** —— 切了之後自檢自己查 `profiles` 會被 RLS 擋。
+     `current_role_of()` 是 SECURITY DEFINER，只看 `auth.uid()`，不需要切。
+   - **假扮失敗時要顯示「⚠ 測不出來」，不能顯示 ❌。**
+     把「沒測到」報成「壞掉」比不報還糟 —— 會有人去修一個沒壞的東西。
+   - 完整範例：`migration_168_verify_delete_perm.sql`（純驗證，一個字都沒改）。
+
+8. **★ 「函式定義裡有沒有這段字串」不等於「行為對不對」** 🟠
+
+   `pg_get_functiondef(...) like '%housekeeper%'` 只證明**字打對了**。
+   跟 9.1② 是同一種錯覺：索引存在、名字對、形狀都好，而 `ON CONFLICT` 就是對不到。
+   比字串可以當**輔助**，不能當唯一的驗收。
+
+9. **★ 自檢的 exception handler 要抓 `others`，不要只抓自己丟的那一種** 🟠
+
+   用 `raise exception … errcode='restrict_violation'` 回滾測試資料時，
+   若只寫 `exception when restrict_violation`，被測的觸發器丟出來的
+   `check_violation` 會**炸掉整份腳本**，症狀是「跑 migration 出現一句看不懂的錯」。
+   自檢不該比被檢查的東西還脆弱。
+
+10. **★ plpgsql 內層 `begin/exception` 是隱式 savepoint —— 資料回滾，變數留著**
+
+    這是「真的寫入 ＋ 回滾 ＋ 結果看得到」唯一乾淨的做法：
+    在內層把結果存進變數 → `raise` 回滾 → 出了內層再 `insert into` temp table。
+    直接在最外層 raise 的話，連 temp table 的內容都會一起消失。
+
+11. **★ 不要把 `set_config` 跟被測的函式放在同一個 SELECT 的不同欄位**
+
+    Postgres **不保證欄位的求值順序**。可能先問完權限才換身分，
+    那樣每一列都是上一個人的答案，而且看起來完全正常。用 plpgsql 迴圈逐筆做。
 
 ---
 

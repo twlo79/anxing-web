@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AddButton, ExportButton, ActionBar } from '@/components/Actions';
 import { AuditButton, AuditBadges, AuditSummary } from '@/components/Audit';
 import { auditOrders, type AuditOrder } from '@/lib/audit-orders';
@@ -11,6 +11,7 @@ import { SortTh, type SortState } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
 import { useOpenFromUrl } from '@/lib/open-from-url';
 import { useProfile } from '@/lib/profile';
+import { savedState, pinnedHint, hasAnyFilter, SAVED_TTL_MS, type SavedMark } from '@/lib/just-saved';
 import { FEE_TYPES, ONEOFF_FEE_TYPES, ONEOFF_PRESETS, presetOf } from '@/lib/fee-types';
 import { ONEOFF_LABEL } from '@/lib/revenue-report';
 import RecurringPanel from '@/components/RecurringPanel';
@@ -186,6 +187,40 @@ export default function ShortTermPage() {
   // 定期收費的設定只有會計/主管/總經理能改 —— 跟 recurring_charges 的 RLS 一致。
   // 前端擋只是少讓人白按一次,真正的把關在資料庫。
   const role = useProfile().role ?? '';
+
+  /*
+   * 剛剛存好的那一筆（2026-08-22 使用者:「輸入完先出現在第一列，或是有標記」）。
+   *
+   * ★ 兩個 state 是刻意的:
+   *     saved    = { id, at }  → 判斷要不要標、有沒有過期（lib/just-saved.ts）
+   *     savedRow = 完整的一列  → 它不在這一頁時,要拿它來畫置頂那一列
+   *
+   *   只留 id 的話，「不在這一頁」就畫不出東西來 ——
+   *   而那正是最需要看到它的情況。
+   */
+  const [saved, setSaved] = useState<SavedMark>(null);
+  const [savedRow, setSavedRow] = useState<Order | null>(null);
+  const savedRef = useRef<HTMLTableRowElement | null>(null);
+
+  // 45 秒後自己收掉。不收的話隔天打開還寫著「剛剛儲存」,那句話會變成謊話
+  useEffect(() => {
+    if (!saved) return;
+    const t = setTimeout(() => { setSaved(null); setSavedRow(null); }, SAVED_TTL_MS);
+    return () => clearTimeout(t);
+  }, [saved]);
+
+  /*
+   * 捲到那一列。只在它真的出現在這一頁時做 ——
+   * 置頂那一列本來就在最上面,不需要捲。
+   *
+   * ★ 依賴要有 rows:標記是在 load() **之前**設好的,
+   *   這個 effect 第一次跑時清單還是舊的,那一列根本還沒畫出來。
+   *   要等 rows 換過來才捲得到。
+   */
+  useEffect(() => {
+    if (!saved || !savedRef.current) return;
+    savedRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [saved, rows]);
 
   useEffect(() => { supabase.from('estates').select('id, name, sort, active').order('sort').then(({ data }) => setEstates(data ?? [])); }, [supabase]);
   // 安幸收款帳號改讀主檔,不再寫死。現金與加密貨幣沒有帳號,直接列在選單上。
@@ -730,6 +765,29 @@ export default function ShortTermPage() {
     flash(savedBook
       ? `已存入${BOOK_LABEL[savedBook]}的帳 —— 在「其他收支帳」查看`
       : '已儲存');
+
+    /*
+     * ★★ 記下剛存的那一筆，讓它在清單上找得到
+     *    （2026-08-22 使用者:「輸入完先出現在第一列，或是有標記」）。
+     *
+     *    這一頁按 `checkin desc` 排、而且是**伺服器端分頁**。所以補登一筆
+     *    去年的訂單，存完之後它落在第 5 頁 —— 畫面上一筆都沒變。
+     *    只跳一句「已儲存」的話，第一個反應一定是「沒存進去」,然後再存一次。
+     *
+     *    ★ 重新查一次完整的列，不是直接用 payload:
+     *      觸發器會改東西（account_code 由 sync_order_account 算、
+     *      nights 可能被重算），拿 payload 畫的話畫面上那一列
+     *      跟資料庫裡的**不一樣**，而使用者不會知道哪一個才是真的。
+     *
+     *    ★ 其他事業體的收入不在這一頁（SRC 排除了）—— 不標，
+     *      上面那句 flash 已經講清楚它去哪了。標了反而是騙人。
+     */
+    if (!savedBook && orderId) {
+      const { data: fresh } = await supabase.from('orders')
+        .select('*, properties(name)').eq('id', orderId).maybeSingle();
+      if (fresh) { setSavedRow(fresh as any); setSaved({ id: String(orderId), at: Date.now() }); }
+    }
+
     setEdit(null); setFees([]); setTried(false); load();
   }
   /**
@@ -861,6 +919,24 @@ export default function ShortTermPage() {
   const bySource = useMemo(() => { const m: Record<string, number> = {}; for (const o of agg) m[o.source] = (m[o.source] || 0) + Number(o.amount || 0); return m; }, [agg]);
   const byEstate = useMemo(() => { const m: Record<string, number> = {}; for (const o of agg) { const k = o.estate_id ? (estateName[o.estate_id] ?? '—') : '—'; m[k] = (m[k] || 0) + Number(o.amount || 0); } return Object.entries(m).sort((a, b) => b[1] - a[1]); }, [agg, estateName]);
   const pages = Math.max(1, Math.ceil(total / PAGE));
+
+  /*
+   * 剛存那一筆現在該怎麼呈現（lib/just-saved.ts）:
+   *   inline  = 它就在這一頁 → 那一列標黃 ＋ 捲過去
+   *   pinned  = 不在這一頁   → 清單最上面另外畫一列
+   *   none    = 沒有／已過期
+   *
+   * ★ 篩選改變時**不清掉標記** —— 使用者清掉篩選常常正是為了找那一筆，
+   *   清掉的話他剛達成目的、標記卻不見了。
+   *   savedState 會自己從 pinned 換成 inline。
+   */
+  const savedMode = savedRow
+    ? savedState(saved, rows.map((r: any) => String(r.id)), Date.now())
+    : 'none';
+  const filtered = hasAnyFilter({ src, estF, fromD, toD, kw, payF, feeF });
+
+  /** 剛存那一筆的黃底。表格與手機卡片共用 —— 兩邊長不一樣才是 bug */
+  const SAVED_HL = 'bg-amber-50 ring-1 ring-inset ring-amber-300';
 
   return (
     <div>
@@ -1049,6 +1125,23 @@ export default function ShortTermPage() {
           手機上撈全部會慢，而且捲不完。
       */}
       <div className="md:hidden space-y-2">
+        {/* ★★ 手機也要有，而且要跟桌機同一套判斷（lib/just-saved.ts）——
+               只做桌機的話，管家在手機上存完照樣找不到那一筆 */}
+        {savedMode === 'pinned' && savedRow && (
+          <div onClick={() => setDetail(savedRow)}
+            className={`rounded-xl px-3 py-2.5 cursor-pointer ${SAVED_HL}`}>
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <span className="inline-block rounded bg-amber-400 px-1.5 py-0.5 text-[11px] font-bold text-white">剛剛儲存</span>
+                <div className="font-medium truncate mt-1">{savedRow.property_raw ?? '—'}</div>
+                <div className="text-[11px] text-gray-600 truncate">{savedRow.guest_name ?? '—'}</div>
+                <div className="text-[11px] text-gray-400 mt-0.5 tabular-nums">{savedRow.checkin} ~ {savedRow.checkout}</div>
+              </div>
+              <div className="shrink-0 font-bold tabular-nums">{fmt(savedRow.amount)}</div>
+            </div>
+            <div className="text-[11px] text-amber-700 mt-1.5">{pinnedHint(filtered)}</div>
+          </div>
+        )}
         {loading ? (
           <div className="text-center text-gray-400 py-10">載入中…</div>
         ) : !rows.length ? (
@@ -1059,7 +1152,9 @@ export default function ShortTermPage() {
           const st = payStatus(o);
           return (
             <div key={`m-${o.id}`} onClick={() => setDetail(o)}
-              className="rounded-xl glass px-3 py-2.5 cursor-pointer active:bg-mor-sand/40">
+              className={`rounded-xl px-3 py-2.5 cursor-pointer ${
+                savedMode === 'inline' && saved?.id === String(o.id)
+                  ? SAVED_HL : 'glass active:bg-mor-sand/40'}`}>
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5">
@@ -1101,6 +1196,26 @@ export default function ShortTermPage() {
             </tr>
           </thead>
           <tbody>
+            {/*
+                ★★ 剛存好、但**不在這一頁**的那一筆（lib/just-saved.ts）。
+                   排序沒有動 —— 這一列不屬於任何一頁,是它的獨立位置。
+                   同時回答了「存進去了嗎」與「它去哪了」。
+            */}
+            {savedMode === 'pinned' && savedRow && (
+              <tr onClick={() => setDetail(savedRow)}
+                className={`border-b-2 border-amber-300 cursor-pointer ${SAVED_HL}`}>
+                <td className="px-3 py-2 whitespace-nowrap">
+                  <span className="inline-block rounded-md bg-amber-400 px-2 py-0.5 text-xs font-bold text-white">剛剛儲存</span>
+                </td>
+                <td className="px-3 py-2 whitespace-nowrap font-medium">{savedRow.property_raw ?? '—'}</td>
+                <td className="px-3 py-2 whitespace-nowrap">{savedRow.guest_name ?? '—'}</td>
+                <td className="px-3 py-2 whitespace-nowrap tabular-nums text-xs">{savedRow.checkin} ~ {savedRow.checkout}</td>
+                <td className="px-3 py-2 text-right tabular-nums font-bold">{fmt(savedRow.amount)}</td>
+                <td className="px-3 py-2 text-xs text-amber-700" colSpan={2}>
+                  {pinnedHint(filtered)}
+                </td>
+              </tr>
+            )}
             {loading ? <tr><td colSpan={7} className="px-4 py-10 text-center text-gray-400">載入中…</td></tr>
             : rows.length === 0 ? <tr><td colSpan={7} className="px-4 py-10 text-center text-gray-400">無訂單</td></tr>
             /*
@@ -1114,8 +1229,12 @@ export default function ShortTermPage() {
               // 整列可點,開啟右側詳細抽屜。
               // 刪除與移房移進抽屜:1,900 多筆的列表上,刪除只差 8px 就在編輯旁邊,
               // 點錯就是一張真實訂單消失。要先開抽屜看到完整內容才刪得掉,那本身就是一道確認。
+              // ★ 剛存的那一筆標黃 ＋ 掛 ref 讓畫面捲過去（lib/just-saved.ts）
               <tr key={o.id} onClick={() => setDetail(o)}
-                className="border-b border-mor-line/60 hover:bg-mor-bluelight/30 cursor-pointer">
+                ref={savedMode === 'inline' && saved?.id === String(o.id) ? savedRef : undefined}
+                className={`border-b border-mor-line/60 cursor-pointer ${
+                  savedMode === 'inline' && saved?.id === String(o.id)
+                    ? SAVED_HL : 'hover:bg-mor-bluelight/30'}`}>
                 <td className="px-3 py-2 whitespace-nowrap"><span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${SRC_COLOR[o.source]}`}>{SRC_LABEL[o.source] ?? o.source}</span></td>
                 <td className="px-3 py-2 whitespace-nowrap">
                   <div>{o.property_raw ?? o.properties?.name ?? '—'}</div>

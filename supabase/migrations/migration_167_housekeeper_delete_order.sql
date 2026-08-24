@@ -301,12 +301,23 @@ select "檢查項目", "結果", "說明" from (
 
   union all
   /*
-   * ★★ 這一項才是真的在測函式 —— 白名單對、case 分支漏掉的話這裡會是 ❌。
+   * ★★ 這一項原本寫成 `case when public.trash_can_delete('orders')`，
+   *    說明是「以目前連線的角色實測」—— **那是錯的，而且必然是 ❌**。
+   *
+   *    current_role_of() 讀的是 `auth.uid()`，
+   *    而 SQL Editor 是 postgres 連線，沒有登入身分 → null → 第一行就 false。
+   *    我把一個必然為假的條件寫成了驗收標準。
+   *
+   *    這裡改成只檢查 case 分支有沒有寫進去。
+   *    ★ 但「比字串」不等於「測行為」（164 的教訓）——
+   *      真的要逐角色實測請跑 **migration_168**，
+   *      它會假扮身分（設 request.jwt.claims）再問一次。
    */
-  select 2, '★★ trash_can_delete 認得新層級',
-         case when public.trash_can_delete('orders') then '✅ super_admin 可刪'
-              else '❌ 連總管理員都刪不了,case 分支漏了' end,
-         '以目前連線的角色實測'
+  select 2, '★★ trash_can_delete 有 housekeeper 分支',
+         case when pg_get_functiondef('public.trash_can_delete(text)'::regprocedure)
+                   like '%when ''housekeeper'' then%'
+              then '✅（行為請跑 168 實測）' else '❌ case 分支漏了' end,
+         'SQL Editor 沒有登入身分,這裡不能直接呼叫函式驗收'
 
   union all
   /*
