@@ -819,6 +819,19 @@ useEffect(() => {
 | enum 的 `ALTER TYPE ... ADD VALUE` **不能在交易裡跑** | 那支腳本整份失敗 | 用 `text` ＋ CHECK |
 | `CREATE OR REPLACE FUNCTION` **不能改參數名** | | 換名字要先 DROP |
 | BEFORE 觸發器**按名字字母序**跑 | 順序依賴時會靜默失效 | 依賴順序要寫進註解（`trg_orders_account` < `trg_orders_book_code` 是巧合） |
+| **欄位有 FK、有索引、前端在讀，但從來沒有人寫過它** 🔴 | `expenses.request_id` 一直是 null，支出頁的憑證圖片永遠寫「尚未上傳」（migration_169，2026-08-24） | 見下 |
+
+**★ 關於最後一條**：`gen_expenses_from_pr()` 的 insert 欄位清單裡沒有 `request_id`，
+而 `expenses_request_id_fkey` 與 `exp_request_idx` 都在、前端 `inheritFromRequestId={d.request_id}` 也在。
+**每一個零件單獨看都正確**，串起來就是一句「尚未上傳」—— 沒有紅字、沒有錯誤，
+而那句話看起來完全合理。查了才知道那條路從來沒有走通過。
+
+判斷方法：**看到「空的但合理」的畫面，先去查那個欄位有幾筆非 null**，
+不要先查前端。`select count(*) from t where col is not null` 回 0 就是答案。
+
+補救用**觸發器**而不是改產生資料的函式 —— 往 `expenses` 塞資料的函式有兩支，
+其中「匯款手續費」那支的定義不在 repo 裡（見 README 9.5）。
+觸發器只寫一個欄位，兩支都涵蓋，而且不必重寫任何手上定義可能過時的東西。
 
 ---
 

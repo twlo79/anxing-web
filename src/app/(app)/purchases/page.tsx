@@ -177,6 +177,30 @@ export default function PurchasesPage() {
   // 上個月建的單可能排在這個月付,混在同一個查詢裡會漏掉。
   const [schedule, setSchedule] = useState<Req[]>([]);
   const [detail, setDetail] = useState<Req | null>(null);
+
+  /*
+   * 共同憑證的圖（2026-08-22 使用者:「共同憑證的也要有共同上傳，
+   * 因此可以看到共同的圖片」）。
+   *
+   * 【原本哪裡不對】
+   * 憑證**號碼**有兩層:勾了共同憑證就用請款單那一個，沒勾就每項各自填。
+   * 但憑證**圖片只有請款單一層** —— 項目底下什麼都沒有。
+   * 所以勾了共同憑證的人，號碼共用得好好的，看項目時卻看不到那張發票，
+   * 要往上捲到「憑證圖片」區才找得到。
+   *
+   * ★ 不複製檔案。圖只存一份（掛在請款單上），項目底下顯示的是**同一組網址**。
+   *   每項各存一張的話，storage 裡同一張發票會出現十七份，
+   *   而刪掉其中一份之後沒有人知道剩下的是不是同一張。
+   *
+   * ★ 網址由 <Receipts> 回報（onImages）,不自己再查一次 ——
+   *   簽名網址是跟 storage 換來的、一小時過期。兩邊各換一次的話
+   *   會出現「上面看得到、下面過期了」這種對不起來的狀況。
+   */
+  const [sharedImgs, setSharedImgs] = useState<{ path: string; url: string; name: string | null }[]>([]);
+  // ★ 一定要 useCallback —— 每次 render 給新函式的話 Receipts 那邊會無限重跑
+  const takeSharedImgs = useCallback((imgs: typeof sharedImgs) => setSharedImgs(imgs), []);
+  // 換一張單就先清掉,不然會看到上一張單的發票掛在這一張的項目底下
+  useEffect(() => { setSharedImgs([]); }, [detail?.id]);
   /*
    * 分頁。這一頁原本把三件事疊在同一個畫面上:
    *   審核（主管、總經理）／管理與對帳（會計）／送單（管家）
@@ -2273,6 +2297,16 @@ export default function PurchasesPage() {
                       <span className="block text-xs text-gray-400 mt-0.5">
                         {d.shared_voucher ? '整張單共用一個憑證' : '每個項目各自的憑證，見下方清單'}
                       </span>
+                      {/*
+                          ★ 共同憑證但一張圖都沒傳 —— 講出來。
+                            號碼填了、圖沒傳,審核的人只看到號碼會以為憑證齊了。
+                            用 amber 不是 red:這不是錯誤,是還沒做完。
+                      */}
+                      {d.shared_voucher && sharedImgs.length === 0 && (
+                        <span className="block text-xs text-amber-600 mt-0.5">
+                          還沒上傳共同憑證圖片
+                        </span>
+                      )}
                     </span>
                   );
                 })())}
@@ -2287,8 +2321,18 @@ export default function PurchasesPage() {
                 {row(`確認${dateWord(d.payment_method)}`, d.purchased_on ?? '—')}
                 {row('備註', d.note ? <span className="whitespace-pre-wrap">{d.note}</span> : '—')}
 
-                {/* 審核者最需要的就是看發票,放在項目上方 */}
-                <div className="mt-3"><Receipts kind="pr" parentId={d.id} canEdit={p.canEdit} label="憑證圖片" /></div>
+                {/*
+                    審核者最需要的就是看發票,放在項目上方。
+
+                    ★ 勾了共同憑證時把標題講清楚是「整張單共用」——
+                      原本一律叫「憑證圖片」，看不出它跟下面每一項的關係，
+                      而那正是「共同憑證看不到圖」這個誤會的來源。
+                */}
+                <div className="mt-3">
+                  <Receipts kind="pr" parentId={d.id} canEdit={p.canEdit}
+                    onImages={takeSharedImgs}
+                    label={d.shared_voucher ? '共同憑證圖片（整張單共用）' : '憑證圖片'} />
+                </div>
 
                 <div className="mt-4 text-xs text-gray-400 mb-1">請款項目（{its.length}）</div>
                 <div className="rounded-lg border border-mor-line divide-y divide-mor-line/40">
@@ -2327,6 +2371,30 @@ export default function PurchasesPage() {
                           </div>
                         );
                       })()}
+                      {/*
+                          ★★ 共同憑證的圖，直接放在項目底下（2026-08-22 使用者要求）。
+                             上面已經有同一組圖了 —— 這裡是**同一份的縮圖**，不是另一份。
+                             號碼不重印（上面有），但圖要在這裡看得到,
+                             因為看項目的人不會為了一張發票往上捲。
+
+                          ★ 沒有圖的時候整段不畫。
+                            畫一個空框寫「無圖」的話，跟「還沒載完」長得一樣。
+                      */}
+                      {d.shared_voucher && sharedImgs.length > 0 && (
+                        <div className="flex items-center gap-1.5 mt-1.5">
+                          <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-800">
+                            使用共同憑證
+                          </span>
+                          {sharedImgs.map((im) => (
+                            // 開新分頁看原圖 —— 私有 bucket 的簽名網址一小時內有效
+                            <a key={im.path} href={im.url} target="_blank" rel="noreferrer"
+                              title={im.name ?? '憑證'} onClick={(e) => e.stopPropagation()}
+                              className="shrink-0 h-7 w-7 rounded border border-amber-300 overflow-hidden hover:ring-2 hover:ring-amber-300">
+                              <img src={im.url} alt={im.name ?? '憑證'} className="h-full w-full object-cover" />
+                            </a>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -2803,7 +2871,14 @@ export default function PurchasesPage() {
                   <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">備註</span>
                     <textarea disabled={readOnly} value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })}
                       className="bg-white rounded-lg border border-mor-line px-2 py-2 h-24 md:h-16 disabled:bg-gray-50" /></label>
-                  <Receipts ref={receiptsRef} kind="pr" parentId={edit.id || null} canEdit={!readOnly} label="憑證圖片" />
+                  {/*
+                      ★ 勾了共同憑證就把標題改成「共同憑證圖片」（2026-08-22）。
+                        一律叫「憑證圖片」的話,填單的人不知道這個上傳區
+                        就是上面那個「共同憑證」要用的圖 ——
+                        然後他會去找一個不存在的「共同憑證上傳」按鈕。
+                  */}
+                  <Receipts ref={receiptsRef} kind="pr" parentId={edit.id || null} canEdit={!readOnly}
+                    label={edit.shared_voucher ? '共同憑證圖片（整張單共用）' : '憑證圖片'} />
                 </div>
               </div>
               {/*

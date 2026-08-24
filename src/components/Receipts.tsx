@@ -91,7 +91,20 @@ const Receipts = forwardRef<ReceiptsHandle, {
    * 檔案不複製 —— 一張請款單常拆成多筆支出，複製會讓同一張發票在 storage 出現好幾份。
    */
   inheritFromRequestId?: string | null;
-}>(function Receipts({ kind, parentId, canEdit = true, label = '憑證', inheritFromRequestId }, ref) {
+  /**
+   * 圖載好之後回報給上層（2026-08-22，請款單的共同憑證）。
+   *
+   * ★ 為什麼要這個 callback，而不是讓上層自己再查一次:
+   *   簽名網址是**跟 storage 換來的**，換一次要一趟 API，而且一小時就過期。
+   *   上層自己查的話，同一張發票會換兩組網址、打兩次 API，
+   *   還會出現「上面那張看得到、下面那張過期了」這種對不起來的狀況。
+   *
+   * ★ 傳進來的函式**必須用 useCallback 包住**。
+   *   每次 render 都給新的函式的話，下面那個 useEffect 會一直重跑 ——
+   *   症狀是整頁不停閃爍，而且沒有任何錯誤訊息。
+   */
+  onImages?: (imgs: { path: string; url: string; name: string | null }[]) => void;
+}>(function Receipts({ kind, parentId, canEdit = true, label = '憑證', inheritFromRequestId, onImages }, ref) {
   const supabase = createClient();
   const [rows, setRows] = useState<Att[]>([]);
   const [inherited, setInherited] = useState<Att[]>([]);
@@ -144,6 +157,20 @@ const Receipts = forwardRef<ReceiptsHandle, {
     // urls 故意不放進相依 —— 放了會因為 setUrls 觸發自己而無限迴圈
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, inherited, supabase]);
+
+  /*
+   * 把「這些是哪幾張圖、網址是什麼」交給上層（見 onImages 的說明）。
+   *
+   * ★ 只回報**自己的** rows，不含 inherited ——
+   *   inherited 是從別張單借來顯示的，不是這一層的東西。
+   *   一起回報的話，支出頁會把請款單的圖當成自己的再往下傳一層。
+   */
+  useEffect(() => {
+    if (!onImages) return;
+    onImages(rows
+      .filter((r) => urls[r.path])
+      .map((r) => ({ path: r.path, url: urls[r.path], name: r.file_name })));
+  }, [rows, urls, onImages]);
 
   /** 傳一個檔案並登記。回傳錯誤訊息，成功為 null。 */
   const putOne = useCallback(async (file: File, pid: string, userId: string): Promise<string | null> => {
