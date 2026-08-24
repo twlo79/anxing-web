@@ -789,6 +789,33 @@ create trigger t_del after delete on orders
 
 ---
 
+### ⑥ 註解裡的一個星號，讓一支 migration 假裝跑過了三天 🔴🔴 **（2026-08-24）**
+
+`migration_171` 貼進 SQL Editor 就報 `unterminated /* comment`。原因是 **Postgres 的區塊註解可以巢狀**，而我在註解裡寫了 Markdown 粗體：
+
+```
+ *   **只有 pr/** —— exp/ dep/ dp/ 不在裡面
+             ^^^
+             pr 後面的斜線，碰上粗體的第一個星號 = /*
+```
+
+那裡開了一層巢狀註解，我的 `*/` 只關掉內層，外層一路吃到檔尾。
+
+**真正的代價不在 171。** 掃過全部 144 份 migration，中招的還有 **`migration_158`（訂單加費憑證）**——而它是三天前「跑過」的。
+
+SQL Editor 把整份腳本包在一個交易裡，**parse 失敗就整份不執行**。所以 158 從來沒跑成功過：
+
+- `can_see_receipt` 一直沒有 `of/` 分支（去查線上定義證實了）
+- 管家傳得上加費憑證，**看不到自己剛傳的照片**
+
+沒有紅字、沒有錯誤紀錄。當時看到的只是「照片好像沒出現」。
+
+**判斷方法**：一支 migration「跑過了」但相關功能怪怪的 → 去查它建的東西**存不存在**（欄位、函式定義、索引），不要相信記憶。
+
+**已自動擋**：`src/lib/sql-comments.test.ts` 每次 `node --test` 掃全部 144 份，不平衡就紅。那支測試自己也有一道 `scanned > 60` 的斷言 —— 少了它，目錄搬家會讓守門員靜靜跳過然後綠燈通過。
+
+---
+
 ### ⑤ 查詢在 mount 時就發了，錯誤被丟掉、不重試 🟠 **一天內三次**
 
 **2026-08-19，同一天三個地方**：房源評價的物業、請款單的請款者、載入旗標。
@@ -814,6 +841,7 @@ useEffect(() => {
 | `information_schema.columns` 沒帶 `table_schema='public'` | `properties`、`attachments` 這種名字在別的 schema 也有，自檢誤報 | 一律帶 `table_schema='public'` |
 | SQL Editor 把整份腳本包在**一個交易**裡 | 任一錯誤全部回滾 | 會失敗的東西（建索引、裝擴充）用 `exception` 包 |
 | SQL Editor **只顯示最後一個 SELECT** | migration 自檢寫兩個 SELECT，前面那個永遠看不到 | 自檢一律**單一 SELECT** ＋ `union all` |
+| **Postgres 的區塊註解可以巢狀** 🔴🔴 | 註解裡寫 `` **只有 pr/** `` → `pr` 後的斜線碰上粗體星號 = `/*` 又開一層 → `unterminated /* comment`，**整份不執行**（2026-08-24） | 前綴後面不要緊接 `**`。用反引號寫成 `` `pr/` ``。已由 `sql-comments.test.ts` 自動擋 |
 | PostgREST 批次 upsert 取**欄位聯集** | 某列少了鍵會被填 null | 必須明寫回舊值 |
 | `min(uuid)` 不存在 | | 用 `(array_agg(id))[1]` |
 | enum 的 `ALTER TYPE ... ADD VALUE` **不能在交易裡跑** | 那支腳本整份失敗 | 用 `text` ＋ CHECK |

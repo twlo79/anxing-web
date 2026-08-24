@@ -279,7 +279,30 @@ select "檢查項目", "結果", "說明" from (
          '要有 op/ 與 of/，不該有 pr/'
 
   union all
-  select 7, '請款單的憑證圖總數', count(*)::text || ' 張',
+  /*
+   * ★★ migration_158 到底有沒有跑成功。
+   *
+   *   158 的檔案裡有一個壞掉的區塊註解:前綴結尾的斜線後面緊接兩個星號，
+   *   被當成巢狀註解的開始（README 9.2 有這一條），
+   *   而 SQL Editor 把整份包在一個交易裡 —— **parse 失敗就整份不執行**。
+   *   線上的 can_see_receipt 沒有 of/ 分支，正是它沒跑成功的證據。
+   *
+   *   `attachments.order_id` 是 158 建的。它不在的話:
+   *     · 訂單加費的憑證**根本存不進去**（欄位不存在）
+   *     · att_one_parent 也沒重建
+   *   那就要重跑修好註解的 158。
+   */
+  select 7, '★★ attachments.order_id 在不在（158 有沒有跑成功）',
+         case when exists (
+           select 1 from information_schema.columns
+            where table_schema = 'public'      -- ★ 不能少,別的 schema 也有 attachments
+              and table_name = 'attachments' and column_name = 'order_id')
+         then '✅ 在 —— 158 的建表部分有跑到'
+         else '❌ 不在 —— 請重跑修好註解的 migration_158' end,
+         '加費憑證存不存得進去看這一列'
+
+  union all
+  select 8, '請款單的憑證圖總數', count(*)::text || ' 張',
          '這支只改規則,一個檔案都沒動'
     from public.attachments where request_id is not null
 
