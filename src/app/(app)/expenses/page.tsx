@@ -512,8 +512,58 @@ export default function ExpensesPage() {
         </div>
       </div>
 
-      {/* 列表 */}
-      <div className="rounded-xl glass overflow-x-auto">
+      {/*
+        ══════════ 手機卡片（2026-08-22）══════════
+
+        九欄的表在 390px 寬只能橫向滑 —— 看得到但用不了
+        （docs/UI體檢-2026-08-19.md 的 P0）。
+
+        ★ 卡片放什麼:日期、項目、金額、科目、用途。
+          憑證號碼、支付方式、備註**不放** —— 那三個是對帳時才看的，
+          而對帳不會在手機上做。要看就點進抽屜。
+
+        ★ 整張卡片可點開抽屜。星星單獨一顆在右上角，
+          `stopPropagation` 讓它不會順便開抽屜。
+      */}
+      <div className="md:hidden space-y-2">
+        {loading ? (
+          <div className="text-center text-gray-400 py-10">載入中…</div>
+        ) : !sorted.length ? (
+          <div className="rounded-xl glass px-6 py-10 text-center text-gray-400">無支出紀錄</div>
+        ) : sorted.map((r) => (
+          <div key={`m-${r.id}`} onClick={() => setDetail(r)}
+            className="rounded-xl glass px-3 py-2.5 cursor-pointer active:bg-mor-sand/40">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="font-medium truncate">{r.item_name}</div>
+                <div className="text-[11px] text-gray-500 mt-1">
+                  {r.spent_on}・{r.account_code ? codeName[r.account_code] ?? r.account_code : '未分類'}
+                </div>
+                <div className="text-[11px] text-gray-400 mt-0.5 truncate">
+                  {r.purpose_type === 'office' ? '安幸辦公室'
+                    : r.purpose_type === 'other_biz' ? '其他事業體'
+                      : (r.estate_id ? estateName[r.estate_id] ?? '' : '')}
+                  {r.property_id ? `／${properties.find((pp) => pp.id === r.property_id)?.name ?? ''}` : ''}
+                  {r.deferred ? '・遞延母單' : ''}
+                  {r.parent_expense_id ? '・遞延子單' : ''}
+                </div>
+              </div>
+              <div className="shrink-0 text-right">
+                <div className="font-bold tabular-nums">{fmt(r.amount)}</div>
+                <button onClick={(e) => { e.stopPropagation(); toggleStar(r); }}
+                  title={r.starred ? '取消關注' : '關注這筆支出'}
+                  className={`mt-1 text-lg leading-none ${
+                    r.starred ? 'text-amber-500' : 'text-gray-300'}`}>
+                  {r.starred ? '★' : '☆'}
+                </button>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* 列表（桌機） */}
+      <div className="hidden md:block rounded-xl glass overflow-x-auto">
         <table className="w-full min-w-[900px] text-sm">
           <thead>
             <tr className="border-b border-mor-line bg-white/45 text-left">

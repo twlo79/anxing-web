@@ -575,7 +575,57 @@ export default function ReviewsPage() {
       </div>
 
       {/* ===== 表格 ===== */}
-      <div className="rounded-xl glass overflow-x-auto">
+      {/*
+        ══════════ 手機卡片（2026-08-22）══════════
+
+        七欄的表在 390px 只能橫向滑（docs/UI體檢-2026-08-19.md 的 P0）。
+
+        ★ 這一頁**今天真的踩到過** —— 使用者在手機上看，
+          第一個反應是「讀不出來」。那次的根因是載入時序，
+          但「會用手機看這一頁」這件事已經被證實了。
+
+        ★ 卡片以**留言**為主體 —— 那是這一頁真正要讀的東西。
+          日期、房源、負責人縮成第二行。
+        ★ 需關注的紅點與星等放在同一行，一眼掃得到。
+      */}
+      <div className="md:hidden space-y-2">
+        {rows.length === 0 ? (
+          <div className="rounded-xl glass px-6 py-10 text-center text-gray-400">沒有符合條件的評價。</div>
+        ) : rows.map((r) => {
+          const p = r.property_id ? propById[r.property_id] : null;
+          const e = p?.estate_id ? estateById[p.estate_id] : null;
+          return (
+            <div key={`m-${r.id}`} onClick={() => setSelected(r)}
+              className="rounded-xl glass px-3 py-2.5 cursor-pointer active:bg-mor-sand/40">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  {hasNegative(r) && (
+                    <span className="shrink-0 w-2 h-2 rounded-full bg-red-500" title="需關注" />
+                  )}
+                  <span className="shrink-0 rounded-md bg-mor-sand px-2 py-0.5 text-xs font-medium">
+                    {p?.name ?? (mastersLoaded ? '未對應' : '⋯')}
+                  </span>
+                  <span className="truncate text-sm">{r.guest_name}</span>
+                </div>
+                <span className={`shrink-0 text-xs font-medium ${
+                  r.overall_rating >= 5 ? 'text-mor-ink' : starColor(r.overall_rating)}`}>
+                  {r.overall_rating} 星
+                </span>
+              </div>
+              <div className="text-sm text-gray-700 mt-1.5 line-clamp-3">
+                {displayComment(r) ?? <span className="text-gray-300">（無留言）</span>}
+              </div>
+              <div className="text-[11px] text-gray-400 mt-1">
+                {r.checkin_date ?? '—'} ~ {r.checkout_date ?? '—'}
+                {e?.name && !(p?.name ?? '').includes(e.name) ? `・${e.name}` : ''}
+                {mgrOf(r) ? `・${mgrOf(r)}` : ''}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="hidden md:block rounded-xl glass overflow-x-auto">
         {/*
           物業載不到要講出來。
 

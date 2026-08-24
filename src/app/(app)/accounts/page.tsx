@@ -66,6 +66,16 @@ type Txn = {
   seq: number | null;
 };
 
+/**
+ * 摘要編輯（2026-08-22 使用者指定）。
+ *
+ * ★ **只有摘要能改。** 金額、日期、餘額、交易帳號是銀行給的事實 ——
+ *   改了之後這一頁就不再是對帳單的鏡像，而是一份看起來像對帳單的
+ *   自由文字，那比沒有這一頁更危險（對帳的人會相信它）。
+ *
+ * 資料庫也擋（migration_166 的 trg_bank_txn_memo_only）——
+ * 前端擋不住重新整理後的舊畫面，也擋不住直接打 API。
+ */
 const money = (n: number | null | undefined) =>
   n == null ? '—' : '$' + Math.round(n).toLocaleString('en-US');
 /*
@@ -94,6 +104,33 @@ export default function AccountsPage() {
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
+  /** 正在編輯摘要的那一筆（id → 草稿文字）。null = 沒有在編輯。 */
+  const [memoEdit, setMemoEdit] = useState<{ id: string; text: string } | null>(null);
+  const [memoBusy, setMemoBusy] = useState(false);
+
+  /**
+   * 存摘要。
+   *
+   * ★★ 要看改到幾列 —— RLS 或觸發器擋下的 UPDATE 回成功且影響 0 列，
+   *   只看 error 的話畫面會說存好了而那一列一動也沒動。
+   */
+  async function saveMemo() {
+    if (!memoEdit) return;
+    setMemoBusy(true);
+    const { data, error } = await supabase.from('bank_transactions')
+      .update({ memo: memoEdit.text.trim() || null })
+      .eq('id', memoEdit.id).select('id');
+    setMemoBusy(false);
+    if (error) { setMsg('存不進去：' + error.message); setErr(true); return; }
+    if (!data?.length) {
+      setMsg('沒有任何一列被更新，通常是權限問題。請重新整理後再試。'); setErr(true); return;
+    }
+    // 就地更新，不用重載整頁 —— 這一頁動輒幾百列
+    setTxns((prev) => prev.map((t) => (t.id === memoEdit.id
+      ? { ...t, memo: memoEdit.text.trim() || null } : t)));
+    setMemoEdit(null);
+    setMsg('摘要已更新'); setErr(false);
+  }
   // 流水 ／ 匯入紀錄。匯入紀錄是「哪一批可以撤銷」的地方
   const [view, setView] = useState<'txn' | 'stmt'>('txn');
 
@@ -496,7 +533,69 @@ export default function AccountsPage() {
             onError={(text) => { setMsg(text); setErr(true); }}
           />
         ) : (
-        <div className="overflow-x-auto">
+        <>
+        {/*
+          ══════════ 手機卡片（2026-08-22）══════════
+
+          七欄的表在 390px 只能橫向滑。而這一頁的用途是**對帳** ——
+          橫向滑最糟的地方是「眼睛從日期掃到餘額時跳到隔壁列」，
+          而跳錯一列在對帳時就是對到別筆交易。
+
+          ★ 卡片一列一筆，金額用顏色分方向:
+            存入綠色、支出紅色。餘額印在下面一行。
+          ★ 交易帳號的末五碼要看得到 —— 那是對帳唯一的鑰匙。
+        */}
+        <div className="md:hidden space-y-2 px-1">
+          {!shown.length ? (
+            <div className="rounded-xl border border-dashed border-mor-line bg-white px-6 py-10 text-center text-gray-400">
+              沒有符合條件的交易。
+            </div>
+          ) : shown.map((t) => (
+            <div key={`m-${t.id}`} className="rounded-xl border border-mor-line bg-white px-3 py-2.5">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-xs text-gray-500 tabular-nums">
+                    {ymd(t.txn_date ?? t.post_date)}
+                    {t.txn_date && t.txn_date !== t.post_date && (
+                      <span className="text-gray-400">・入帳 {ymd(t.post_date)}</span>
+                    )}
+                  </div>
+                  <div className="font-medium mt-0.5 truncate">{t.description ?? ''}</div>
+                  {/* 摘要可編輯 —— 手機上也是對帳會用到的（同桌機規則） */}
+                  {memoEdit?.id === t.id ? (
+                    <div className="flex items-center gap-1 mt-1">
+                      <input autoFocus value={memoEdit.text}
+                        onChange={(e) => setMemoEdit({ id: t.id, text: e.target.value })}
+                        className="flex-1 min-w-0 h-9 rounded border border-mor-slate px-2 text-sm" />
+                      <button onClick={saveMemo} disabled={memoBusy}
+                        className="shrink-0 text-xs text-mor-green underline px-1">存</button>
+                      <button onClick={() => setMemoEdit(null)}
+                        className="shrink-0 text-xs text-gray-400 underline px-1">取消</button>
+                    </div>
+                  ) : (
+                    <button onClick={() => setMemoEdit({ id: t.id, text: t.memo ?? '' })}
+                      className="text-[11px] text-gray-600 mt-0.5 break-words text-left">
+                      {t.memo || <span className="text-gray-300">✎ 加摘要</span>}
+                    </button>
+                  )}
+                </div>
+                <div className="shrink-0 text-right">
+                  {Number(t.credit) > 0 && (
+                    <div className="font-bold tabular-nums text-mor-green">＋{money(t.credit)}</div>
+                  )}
+                  {Number(t.debit) > 0 && (
+                    <div className="font-bold tabular-nums text-red-600">−{money(t.debit)}</div>
+                  )}
+                  <div className="text-[11px] text-gray-400 tabular-nums mt-0.5">
+                    餘 {money(t.balance)}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="hidden md:block overflow-x-auto">
           {/*
             ══════════ 欄寬 ══════════
 
@@ -603,11 +702,43 @@ export default function AccountsPage() {
                     那樣「摘要」這一欄排序時排的其實是交易型態,
                     而點下去看起來沒反應。
                   */}
+                  {/*
+                    摘要是**唯一可編輯的欄位**（2026-08-22 使用者指定）。
+
+                    全形字原樣顯示（１２月房租、南５）—— 轉半形之後跟 PDF 對不起來。
+                    折行:摘要是自由文字，斷在哪裡都讀得懂，
+                    而它擠掉帳號的代價比多佔一行高度大得多。
+
+                    ★ 點一下就變輸入框，不用另開視窗 ——
+                      對帳時是一筆接一筆地補註記，每筆都開關一次視窗太慢。
+                    ★ 空的也要能點。只讓有值的可點的話，
+                      「加一筆新註記」就沒有入口了 —— 所以空的顯示一個淡淡的 ✎。
+                  */}
                   <td className="px-3 py-1.5 text-gray-600 break-words">
-                    {/* 全形字原樣顯示（１２月房租、南５）—— 轉半形之後跟 PDF 對不起來 */}
-                    {/* 折行:摘要是自由文字，斷在哪裡都讀得懂，
-                        而它擠掉帳號的代價比多佔一行高度大得多 */}
-                    {t.memo ?? ''}
+                    {memoEdit?.id === t.id ? (
+                      <div className="flex items-center gap-1">
+                        <input autoFocus value={memoEdit.text}
+                          onChange={(e) => setMemoEdit({ id: t.id, text: e.target.value })}
+                          onKeyDown={(e) => {
+                            // Enter 存、Esc 取消 —— 對帳時手不用離開鍵盤
+                            if (e.key === 'Enter') saveMemo();
+                            if (e.key === 'Escape') setMemoEdit(null);
+                          }}
+                          className="flex-1 min-w-0 h-8 rounded border border-mor-slate px-1.5 text-sm" />
+                        <button onClick={saveMemo} disabled={memoBusy}
+                          className="shrink-0 text-xs text-mor-green underline">存</button>
+                        <button onClick={() => setMemoEdit(null)}
+                          className="shrink-0 text-xs text-gray-400 underline">取消</button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setMemoEdit({ id: t.id, text: t.memo ?? '' })}
+                        title="點一下編輯摘要（其他欄位是銀行給的，不能改）"
+                        className="w-full text-left hover:bg-mor-sand/60 rounded px-1 -mx-1 min-h-6">
+                        {t.memo
+                          ? t.memo
+                          : <span className="text-gray-300 text-xs">✎</span>}
+                      </button>
+                    )}
                   </td>
                   <td className="px-3 py-1.5">
                     {/*
@@ -676,6 +807,7 @@ export default function AccountsPage() {
             )}
           </table>
         </div>
+        </>
         )}
       </div>
 

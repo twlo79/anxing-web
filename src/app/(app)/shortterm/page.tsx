@@ -1037,7 +1037,57 @@ export default function ShortTermPage() {
           onToggleOnly={() => setOnlyBad((v) => !v)} />
       )}
 
-      <div className="rounded-xl glass overflow-x-auto">
+      {/*
+        ══════════ 手機卡片（2026-08-22）══════════
+
+        七欄的表在 390px 只能橫向滑（docs/UI體檢-2026-08-19.md 的 P0）。
+
+        ★ 卡片放:房源 ＋ 房客、來源標籤、日期與晚數、金額與收款狀態。
+          押金、收款方式、備註**不放** —— 那些點進抽屜看。
+
+        ★ 只列當前這一頁（`rows`），跟桌機一致 ——
+          手機上撈全部會慢，而且捲不完。
+      */}
+      <div className="md:hidden space-y-2">
+        {loading ? (
+          <div className="text-center text-gray-400 py-10">載入中…</div>
+        ) : !rows.length ? (
+          <div className="rounded-xl glass px-6 py-10 text-center text-gray-400">無訂單</div>
+        ) : (audit && onlyBad && auditResult && auditRows
+          ? auditRows.filter((o) => auditResult.byId[o.id])
+          : rows).map((o) => {
+          const st = payStatus(o);
+          return (
+            <div key={`m-${o.id}`} onClick={() => setDetail(o)}
+              className="rounded-xl glass px-3 py-2.5 cursor-pointer active:bg-mor-sand/40">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${
+                      SRC_COLOR[o.source] ?? 'bg-gray-100 text-gray-600'}`}>
+                      {SRC_LABEL[o.source] ?? o.source}
+                    </span>
+                    <span className="font-medium truncate">{o.property_raw ?? '—'}</span>
+                  </div>
+                  <div className="text-[11px] text-gray-600 mt-1 truncate">{o.guest_name ?? '—'}</div>
+                  <div className="text-[11px] text-gray-400 mt-0.5 tabular-nums">
+                    {o.checkin} ~ {o.checkout}
+                    {o.nights ? `　${o.nights} 晚` : ''}
+                  </div>
+                </div>
+                <div className="shrink-0 text-right">
+                  <div className="font-bold tabular-nums">{fmt(o.amount)}</div>
+                  <span className={`inline-block mt-1 rounded px-1.5 py-0.5 text-[11px] font-medium ${STATUS_CLASS[st]}`}>
+                    {STATUS_LABEL[st]}
+                  </span>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="hidden md:block rounded-xl glass overflow-x-auto">
         <table className="w-full min-w-[720px] text-sm">
           <thead>
             <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-white/45">
