@@ -82,7 +82,7 @@ const Receipts = forwardRef<ReceiptsHandle, {
    *   都掛在押金底下的話分不出哪張對哪筆 ——
    *   而金額對不上時，那正是唯一能查的東西。
    */
-  kind: 'pr' | 'exp' | 'dep' | 'op' | 'dp' | 'of';
+  kind: 'pr' | 'pri' | 'exp' | 'dep' | 'op' | 'dp' | 'of';
   parentId: string | null | undefined;
   canEdit?: boolean;
   label?: string;
@@ -115,6 +115,14 @@ const Receipts = forwardRef<ReceiptsHandle, {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const col = kind === 'pr' ? 'request_id'
+    /*
+     * 請款**項目**的憑證（migration_172）。
+     *
+     * ★ 前綴是 `pri/` 不是 `pr/` —— 兩者分得開:
+     *   `pri/…` 不符合 `like 'pr/%'`（那要求第三個字是斜線）。
+     *   can_see_receipt 就是靠這個區分單頭與項目的權限。
+     */
+    : kind === 'pri' ? 'request_item_id'
     : kind === 'dep' ? 'deposit_id'
     : kind === 'op' ? 'order_payment_id'   // 短租收款的證明照片（migration_85）
     : kind === 'dp' ? 'deposit_payment_id' // 押金某一筆收款的證明（migration_147）

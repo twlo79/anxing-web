@@ -15,6 +15,7 @@ import TrashLink from '@/components/TrashLink';
 // 憑證是共同還是逐項、這一項最後套用哪個號碼 —— 判斷全在這裡（migration_155）
 import { resolveVoucher, voucherText, voucherSummary, missingVouchers } from '@/lib/voucher';
 import { canSeeRequestReceipt, receiptHint } from '@/lib/receipt-visibility';
+import { planItemSave, receiptsAtRisk } from '@/lib/pr-items-save';
 // 押金抽屜要看得到「為什麼只退 99,719」—— 加費明細與應退小計（migration_157）
 import DepositFees from '@/components/DepositFees';
 /*
@@ -180,6 +181,14 @@ export default function PurchasesPage() {
   const [detail, setDetail] = useState<Req | null>(null);
 
   /*
+   * 逐項憑證的 handle（migration_172）。
+   *
+   * ★ 用 sort（畫面上的第幾列）當 key，不是用項目 id ——
+   *   新增的列還沒有 id，而**正是那些列需要 flush**。
+   */
+  const itemReceiptRefs = useRef<Map<number, ReceiptsHandle | null>>(new Map());
+
+  /*
    * 共同憑證的圖（2026-08-22 使用者:「共同憑證的也要有共同上傳，
    * 因此可以看到共同的圖片」）。
    *
@@ -202,6 +211,47 @@ export default function PurchasesPage() {
   const takeSharedImgs = useCallback((imgs: typeof sharedImgs) => setSharedImgs(imgs), []);
   // 換一張單就先清掉,不然會看到上一張單的發票掛在這一張的項目底下
   useEffect(() => { setSharedImgs([]); }, [detail?.id]);
+
+  /*
+   * 逐項憑證的圖（migration_172）—— 審核抽屜用。
+   *
+   * ★ 一次查整張單的，不是每一項各查一次:
+   *   十七個項目就是十七趟 API ＋ 十七次換簽名網址。
+   *   而簽名網址是跟 storage 換來的，換一次要一趟。
+   *
+   * ★ 只在**沒勾共同憑證**時查。勾了的話那些圖是灰掉不使用的，
+   *   顯示出來會讓審核的人以為這一項有自己的發票。
+   */
+  const [itemImgs, setItemImgs] = useState<Record<string, { url: string; name: string | null }[]>>({});
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setItemImgs({});
+      const ids = (detail?.purchase_request_items ?? []).map((i) => i.id).filter(Boolean) as string[];
+      if (!detail || detail.shared_voucher || !ids.length) return;
+
+      const { data } = await supabase.from('attachments')
+        .select('path, file_name, request_item_id')
+        .in('request_item_id', ids).order('created_at');
+      if (!alive || !data?.length) return;
+
+      const { data: signed } = await supabase.storage.from('receipts')
+        .createSignedUrls(data.map((a: any) => a.path), 3600);
+      if (!alive) return;
+
+      const urlByPath: Record<string, string> = {};
+      for (const s of signed ?? []) if (s.signedUrl && s.path) urlByPath[s.path] = s.signedUrl;
+
+      const out: Record<string, { url: string; name: string | null }[]> = {};
+      for (const a of data as any[]) {
+        const u = urlByPath[a.path];
+        if (!u) continue;
+        (out[a.request_item_id] ??= []).push({ url: u, name: a.file_name });
+      }
+      setItemImgs(out);
+    })();
+    return () => { alive = false; };
+  }, [supabase, detail]);
   /*
    * 分頁。這一頁原本把三件事疊在同一個畫面上:
    *   審核（主管、總經理）／管理與對帳（會計）／送單（管家）
@@ -940,9 +990,6 @@ export default function PurchasesPage() {
             + '或請總管理員處理。');
           return;
         }
-        // 硬刪除,不進回收桶 —— 這是「項目重存」（全刪再全寫）,每次存檔都會跑。
-        // 撤銷整張請款單才是使用者的刪除動作,那條走 soft_delete。
-        await supabase.from('purchase_request_items').delete().eq('request_id', reqId);
       }
       // amount 一律存台幣,amount_original 存使用者輸入的原幣別金額。
       // 換算在這裡一次做完,資料庫不會有「一半換過一半沒換」的中間狀態。
@@ -968,9 +1015,88 @@ export default function PurchasesPage() {
          */
         voucher_no: (i.voucher_no ?? '').trim() || null,
         no_voucher: (i.voucher_no ?? '').trim() ? false : !!i.no_voucher,
+        // ★ 帶著 id —— planItemSave 靠它分辨「既有的要改」與「新的要插」
+        id: i.id ?? null,
       }));
-      const { error: ie } = await supabase.from('purchase_request_items').insert(payload);
-      if (ie) { flash('項目儲存失敗:' + ie.message); return; }
+
+      /*
+       * ★★ 存檔改成 update ＋ insert，**不再全刪重建**（2026-08-24）。
+       *
+       * 原本是 `delete where request_id` 再 `insert` 整批，
+       * 所以 purchase_request_items.id **每存一次就換一批新的**。
+       *
+       * 一直沒出事，是因為唯一指向那些 id 的 `expenses.source_item_id`
+       * 只在「填出款日」之後才產生，而出款日一填就不能再編輯 ——
+       * **那是僥倖，不是設計**。
+       *
+       * 而逐項憑證（migration_172）把圖掛在 request_item_id 上，
+       * on delete cascade —— 全刪重建的話，每按一次存檔
+       * 剛傳的發票就全部消失，而且沒有任何錯誤訊息。
+       *
+       * 算哪些要刪／改／增在 lib/pr-items-save.ts（13 個測試）。
+       */
+      const { data: exRows } = await supabase.from('purchase_request_items')
+        .select('id').eq('request_id', reqId);
+      const plan = planItemSave(payload, (exRows ?? []).map((x: any) => String(x.id)));
+
+      /*
+       * ★ 刪掉的項目如果有憑證圖，要先講出來。
+       *   attachments 是 on delete cascade —— 圖會跟著消失而且不進回收桶。
+       *   不講的話就是無聲地不見了。
+       */
+      if (plan.deleteIds.length) {
+        const { data: imgs } = await supabase.from('attachments')
+          .select('request_item_id').in('request_item_id', plan.deleteIds);
+        const cnt: Record<string, number> = {};
+        for (const a of imgs ?? []) {
+          const k = String((a as any).request_item_id);
+          cnt[k] = (cnt[k] ?? 0) + 1;
+        }
+        const risk = receiptsAtRisk(plan.deleteIds, cnt);
+        if (risk.length) {
+          const n = risk.reduce((a, id) => a + cnt[id], 0);
+          if (!confirm(`你刪掉的項目底下有 ${n} 張憑證圖，會一起刪除。\n\n`
+            + `憑證圖不會進回收桶 —— 刪掉就要重新拍一次。\n\n確定要存檔嗎？`)) return;
+        }
+        const { error: de } = await supabase.from('purchase_request_items')
+          .delete().in('id', plan.deleteIds);
+        if (de) { flash('項目刪除失敗:' + de.message); return; }
+      }
+
+      /*
+       * ★ update 用 upsert 是安全的 —— 這一批**每一列都有 id 而且欄位一致**。
+       *   PostgREST 批次 upsert 取欄位聯集（CLAUDE.md 的坑），
+       *   把有 id 的跟沒 id 的混在一起送才會出事。這裡沒有混。
+       */
+      if (plan.update.length) {
+        const { error: ue } = await supabase.from('purchase_request_items').upsert(plan.update);
+        if (ue) { flash('項目更新失敗:' + ue.message); return; }
+      }
+
+      /*
+       * 新項目。**要把新 id 拿回來** —— 填表時選的逐項憑證還留在瀏覽器裡，
+       * 沒有 id 就上傳不了（跟單頭那個 flush 同一套機制）。
+       * 用 sort 對應回畫面上的第幾列。
+       */
+      const newIdBySort: Record<number, string> = {};
+      if (plan.insert.length) {
+        const { data: ins, error: ie } = await supabase.from('purchase_request_items')
+          .insert(plan.insert).select('id, sort');
+        if (ie) { flash('項目儲存失敗:' + ie.message); return; }
+        for (const row of ins ?? []) newIdBySort[Number((row as any).sort)] = String((row as any).id);
+      }
+
+      /*
+       * 逐項憑證:新項目要等 id 出來才傳得上去。
+       *
+       * ★ 既有的項目不用 flush —— 它們的 Receipts 一開始就有 parentId，
+       *   選檔案的當下就直接上傳了，不會進 staged。
+       */
+      for (const [sortStr, newId] of Object.entries(newIdBySort)) {
+        const h = itemReceiptRefs.current.get(Number(sortStr));
+        const fe = await h?.flush(newId);
+        if (fe) { flash(`第 ${Number(sortStr) + 1} 項的憑證` + fe); return; }
+      }
 
       // 填表時選的憑證留在瀏覽器裡，母單有 id 了才真正上傳
       const fe = await receiptsRef.current?.flush(reqId);
@@ -2341,7 +2467,12 @@ export default function PurchasesPage() {
                 <div className="mt-3">
                   <Receipts kind="pr" parentId={d.id} canEdit={p.canEdit}
                     onImages={takeSharedImgs}
-                    label={d.shared_voucher ? '共同憑證圖片（整張單共用）' : '憑證圖片'} />
+                    label={d.shared_voucher
+                      ? '共同憑證圖片（整張單共用）'
+                      // ★ 沒勾共同憑證時，這一區是舊的／不使用的。
+                      //   還叫「憑證圖片」的話，審核的人會以為整張單的發票就這幾張，
+                      //   而真正的發票在下面每一項底下（migration_172）
+                      : '單頭的憑證圖片（未使用 —— 這張單走逐項憑證，圖在下面每一項裡）'} />
                 </div>
 
                 <div className="mt-4 text-xs text-gray-400 mb-1">請款項目（{its.length}）</div>
@@ -2381,6 +2512,26 @@ export default function PurchasesPage() {
                           </div>
                         );
                       })()}
+                      {/*
+                          ★★ 這一項自己的憑證圖（migration_172）。
+                             審核的人最需要的就是看發票 —— 傳了卻沒地方看,
+                             等於這個功能只做一半。
+
+                          ★ 沒有圖時整段不畫。空框寫「無圖」的話,
+                            跟「還沒載完」長得一樣。
+                      */}
+                      {!d.shared_voucher && (itemImgs[i.id ?? ''] ?? []).length > 0 && (
+                        <div className="flex items-center gap-1.5 mt-1.5">
+                          {itemImgs[i.id!].map((im, k) => (
+                            <a key={k} href={im.url} target="_blank" rel="noreferrer"
+                              title={im.name ?? '憑證'} onClick={(e) => e.stopPropagation()}
+                              className="shrink-0 h-8 w-8 rounded border border-mor-line overflow-hidden hover:ring-2 hover:ring-mor-blue">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={im.url} alt={im.name ?? '憑證'} className="h-full w-full object-cover" />
+                            </a>
+                          ))}
+                        </div>
+                      )}
                       {/*
                           ★★ 共同憑證的圖，直接放在項目底下（2026-08-22 使用者要求）。
                              上面已經有同一組圖了 —— 這裡是**同一份的縮圖**，不是另一份。
@@ -2636,6 +2787,28 @@ export default function PurchasesPage() {
                             無憑證
                           </label>
                         </div>
+
+                        {/*
+                            ★★ 逐項憑證圖片（migration_172，2026-08-24 使用者指定
+                               「單項可上傳憑證。開共用憑證後關掉，反之一樣。」）。
+
+                            ★ 勾了共同憑證就**灰掉但不拿掉**，跟上面的號碼欄同一個做法
+                              —— 已經傳的圖留著，取消勾選就回來。
+                              資料庫**不擋**這件事:使用者可能先傳了逐項的圖、
+                              才發現其實只有一張發票。圖在勾選的當下被刪掉的話，
+                              他不會知道是自己勾那一下弄掉的。
+
+                            ★ 新增的列還沒有 id —— parentId 是 null，
+                              Receipts 會把檔案先留在瀏覽器，存檔拿到 id 之後
+                              由 save() 逐一 flush（用 sort 對應回這一列）。
+                        */}
+                        <div className={`mt-2 md:pl-[4.5rem] ${edit.shared_voucher ? 'opacity-40' : ''}`}>
+                          <Receipts
+                            ref={(h) => { itemReceiptRefs.current.set(idx, h); }}
+                            kind="pri" parentId={it.id || null}
+                            canEdit={!readOnly && !edit.shared_voucher}
+                            label={edit.shared_voucher ? '這一項的憑證圖片（改用共同憑證）' : '這一項的憑證圖片'} />
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -2805,10 +2978,17 @@ export default function PurchasesPage() {
                         onChange={(e) => setEdit({ ...edit, shared_voucher: e.target.checked })} />
                       <span>
                         共同憑證
+                        {/*
+                            ★ 說明要把**號碼與圖片兩件事**都講到（migration_172）。
+                              原本只講號碼 —— 而使用者傳完逐項的圖之後勾這裡，
+                              會以為圖也一起換掉了。實際上圖只是灰掉、還留著。
+                        */}
                         <span className="block text-xs text-gray-500 mt-0.5">
                           {edit.shared_voucher
-                            ? '整張單共用下面這一個號碼。項目各自的憑證欄會灰掉，但內容留著。'
-                            : '每個項目各自填憑證（欄位在上面每一列裡）。只有一張發票時才勾這裡。'}
+                            ? '整張單共用下面這一個號碼與下方的憑證圖片。'
+                              + '項目各自的憑證欄與圖片會灰掉，但內容留著 —— 取消勾選就回來。'
+                            : '每個項目各自填憑證號碼、各自上傳圖片（都在上面每一列裡）。'
+                              + '只有一張發票時才勾這裡。'}
                         </span>
                       </span>
                     </label>
@@ -2887,8 +3067,21 @@ export default function PurchasesPage() {
                         就是上面那個「共同憑證」要用的圖 ——
                         然後他會去找一個不存在的「共同憑證上傳」按鈕。
                   */}
-                  <Receipts ref={receiptsRef} kind="pr" parentId={edit.id || null} canEdit={!readOnly}
-                    label={edit.shared_voucher ? '共同憑證圖片（整張單共用）' : '憑證圖片'} />
+                  {/*
+                      ★★ 反過來也要關:沒勾共同憑證時，這一區灰掉（migration_172）。
+                         使用者的話是「開共用憑證後關掉，反之一樣」。
+
+                         ★ 一樣是**灰掉不隱藏**。藏起來的話，從共同切成逐項之後
+                           那些圖就從畫面上消失了 —— 使用者會以為被刪掉，
+                           然後再傳一次，storage 裡就有兩份一樣的發票。
+                  */}
+                  <div className={edit.shared_voucher ? '' : 'opacity-50'}>
+                    <Receipts ref={receiptsRef} kind="pr" parentId={edit.id || null}
+                      canEdit={!readOnly && !!edit.shared_voucher}
+                      label={edit.shared_voucher
+                        ? '共同憑證圖片（整張單共用）'
+                        : '共同憑證圖片（未使用 —— 改用每一項自己的圖片）'} />
+                  </div>
                 </div>
               </div>
               {/*
