@@ -2,6 +2,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { useProfile } from '@/lib/profile';
+/*
+ * 財務儀錶板只看安幸（migration_159）。
+ *
+ * ★★ 每一支收入／支出查詢都必須帶 book —— 漏掉一支的話，
+ *   愛皮洪鯊的錢會混進安幸的數字裡，而**金額看起來完全正常**。
+ *   營收那半邊不用改:它讀的是 revenue_recognitions，
+ *   而非安幸的訂單根本不會產生認列（migration_161）。
+ */
+import { DEFAULT_BOOK } from '@/lib/book';
 import { ymOf, ymShow, ymMonth, monthsAgo, todayStr, fmtRange } from '@/lib/period';
 // Supabase 一次只回 1000 列且不報錯 —— 這一頁全部是加總,一定要撈完
 import { fetchAll } from '@/lib/fetch-all';
@@ -249,10 +258,13 @@ export default function DashboardPage() {
     const cmpExp = (f: string, t: string) =>
       fetchAll<CmpRaw['exp'][number]>((a, b) => supabase.from('expenses')
         .select('amount, estate_id, property_id')
+        // 只算安幸（migration_159）—— 少了它，愛皮洪鯊的錢會混進安幸的數字裡
+        .eq('book', DEFAULT_BOOK)
         .gte('spent_on', f).lte('spent_on', t).range(a, b));
     const cmpOrd = (f: string, t: string) =>
       fetchAll<CmpRaw['ord'][number]>((a, b) => supabase.from('orders')
         .select('estate_id, property_id')
+        .eq('book', DEFAULT_BOOK)
         .gte('checkin', f).lte('checkin', t).range(a, b));
 
     /*
@@ -276,6 +288,7 @@ export default function DashboardPage() {
       // 待付款是側欄的一張小卡，晚幾百毫秒沒有人會發現
       fetchAll<Pending>((f, t) => supabase.from('purchase_requests')
         .select('total_amount, planned_transfer_on')
+        .eq('book', DEFAULT_BOOK)
         .eq('status', 'approved').is('purchased_on', null).range(f, t)),
     ]);
 
@@ -287,9 +300,11 @@ export default function DashboardPage() {
         .gte('ym', ymOf(fromD)).lte('ym', ymOf(toD)).range(f, t)),
       fetchAll<Exp>((f, t) => supabase.from('expenses')
         .select('id, spent_on, amount, account_code, estate_id, property_id, purpose_type, item_name, starred, deferred, gross_amount, parent_expense_id')
+        .eq('book', DEFAULT_BOOK)
         .gte('spent_on', fromD).lte('spent_on', toD).range(f, t)),
       fetchAll<Ord>((f, t) => supabase.from('orders')
         .select('source, checkin, estate_id, property_id, amount, paid')
+        .eq('book', DEFAULT_BOOK)
         .gte('checkin', fromD).lte('checkin', toD).range(f, t)),
       fetchAll<Rev5>((f, t) => supabase.from('reviews')
         .select('checkout_date, property_id, overall_rating')

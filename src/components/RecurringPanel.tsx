@@ -5,6 +5,7 @@ import MoneyInput from '@/components/MoneyInput';
 import { missingFields, missingMessage } from '@/lib/required';
 import { createClient } from '@/lib/supabase';
 import { fetchAll } from '@/lib/fetch-all';
+import { DEFAULT_BOOK } from '@/lib/book';
 import { FEE_TYPES } from '@/lib/fee-types';
 import { ymShow } from '@/lib/period';
 import { softDelete } from '@/lib/trash';
@@ -80,6 +81,9 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
        */
       const { rows: od } = await fetchAll<Ord>((f, t) => supabase.from('orders')
         .select('id, order_key, checkin, amount, paid')
+        // 只看安幸。`imported_via='recurring'` 目前不可能是別的帳本
+        // （愛皮洪鯊沒有房源、沒有定期收費），這一行是保險（migration_159）
+        .eq('book', DEFAULT_BOOK)
         .eq('imported_via', 'recurring').order('checkin').range(f, t));
       const m: Record<string, Ord[]> = {};
       for (const o of od) {

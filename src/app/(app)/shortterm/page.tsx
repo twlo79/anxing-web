@@ -74,6 +74,15 @@ type Fee = {
 type Stay = { room: string; estateId: string | null; propertyId: string | null; from: string };
 type MoveState = { grp: string; checkin: string; checkout: string; totalNights: number; totalAmount: number; guest: string | null; source: string; account: string | null; stays: Stay[] };
 
+/*
+ * 這一頁列哪些來源。
+ *
+ * ★★ **不含 `other_biz`** —— 那是愛皮洪鯊的收入（migration_159），
+ *   在「其他收支帳」那一頁看。
+ *
+ *   加進來的話這一頁的合計會多算兩家公司的錢，
+ *   而金額看起來完全正常。真的要加之前先想清楚。
+ */
 const SRC = ['airbnb', 'agoda', 'private', 'oneoff', 'partner', 'airbnb_cancelled'];
 const MANUAL_SRC = ['private', 'oneoff'];  // 可手動新增的來源
 /*

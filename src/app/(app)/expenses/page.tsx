@@ -15,6 +15,7 @@ import DeferralPanel from '@/components/DeferralPanel';
 import { deferralLabel, childLabel, recognizedTotal, paidTotal, paidCell } from '@/lib/deferral';
 import { softDelete } from '@/lib/trash';
 import { voucherBrief, isMultiVoucher } from '@/lib/voucher';
+import { DEFAULT_BOOK } from '@/lib/book';
 import TrashLink from '@/components/TrashLink';
 
 type Expense = {
@@ -114,7 +115,18 @@ export default function ExpensesPage() {
     let all: Expense[] = [];
     let from = 0;
     while (true) {
-      let q = supabase.from('expenses').select('*').order('spent_on', { ascending: false });
+      /*
+       * ★★ 只看安幸（migration_159）。
+       *
+       * 三家公司的支出住在同一張 expenses 裡，靠 book 分。
+       * 少了這一行，愛皮洪鯊的錢會混進這一頁的合計 ——
+       * 而**金額看起來完全正常**，只有月底跟銀行對不起來。
+       *
+       * 愛皮洪鯊的支出在「其他收支帳」那一頁看。
+       */
+      let q = supabase.from('expenses').select('*')
+        .eq('book', DEFAULT_BOOK)
+        .order('spent_on', { ascending: false });
       if (fromD) q = q.gte('spent_on', fromD);
       if (toD) q = q.lte('spent_on', toD);
       if (codeF) q = q.eq('account_code', codeF);
