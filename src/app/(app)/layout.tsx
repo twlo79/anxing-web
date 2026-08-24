@@ -109,6 +109,16 @@ const NAV: { href: string; label: string; icon: string; roles: string[] }[] = [
    *                        錢袋比帳本直接。原本佔著 💰 的營收表改用 🤑。
    */
   { href: '/accounts', label: '帳戶明細', icon: '💰', roles: ['accountant', 'manager', 'super_admin'] },
+  /*
+   * 其他收支帳 —— 愛皮（旅行社）與洪鯊（投資公司）的收支（migration_159）。
+   *
+   * 只給會計與總經理（使用者指定）。放在「帳戶明細」之後、
+   * 「財務儀錶板」之前 —— 跟錢的那一組在一起。
+   *
+   * 🗂️ 是「另一本帳」的意思。跟 🏦 押金、🤑 營收、💸 支出、💰 帳戶
+   * 都不撞 —— 側邊欄收合成只剩圖示時要分得出來。
+   */
+  { href: '/otherbooks', label: '其他收支帳', icon: '🗂️', roles: ['accountant', 'super_admin'] },
   { href: '/dashboard', label: '財務儀錶板', icon: '📊', roles: ['accountant', 'manager', 'super_admin'] },
   // 客戶管理跟房務、評價、清潔是同一組:都是「人在現場會用到的」。
   // 上面那半段是錢(訂單、契約、營收、請款、押金、支出、儀表板)。
