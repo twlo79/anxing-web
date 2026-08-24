@@ -3,7 +3,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
-import { ProfileProvider, useProfile } from '@/lib/profile';
+import { ProfileProvider, useProfile, clearProfileCache } from '@/lib/profile';
+import { visibleNav, currentNav } from '@/lib/nav';
 
 
 const ROLE_LABEL: Record<string, string> = {
@@ -152,7 +153,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   // 身分與角色由 ProfileProvider 提供 —— 全站只查一次（lib/profile.tsx）
-  const { profile } = useProfile();
+  const { profile, loading } = useProfile();
   const [navOpen, setNavOpen] = useState(false);
   /*
    * ============================================================
@@ -262,16 +263,26 @@ function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => { setNavOpen(false); }, [pathname]);
 
   async function logout() {
+    // 先清快取再登出 —— 反過來的話 signOut 期間換頁，
+    // 下一個畫面還會拿到上一個人的角色（lib/profile.tsx）
+    clearProfileCache();
     await createClient().auth.signOut();
     router.push('/login');
     router.refresh();
   }
 
-  // role 可能是 null（還在查，或這個帳號沒設角色）。
-  // 那時先顯示全部選單項 —— 少顯示會讓人以為功能不見了，
-  // 而點進去照樣被 RLS 擋，不會看到不該看的資料。
-  const items = NAV.filter((n) => !profile?.role || n.roles.includes(profile.role));
-  const current = items.find((n) => pathname.startsWith(n.href));
+  /*
+   * ★★ 載入中一項都不顯示（2026-08-22 改，見 lib/nav.ts 檔頭）。
+   *
+   * 舊版是 `!profile?.role || …` —— 還在查的那 300～600ms **整份選單全開**，
+   * 管家會看到營收表、帳戶明細、權限管理。使用者的回報就是這個:
+   * 「每次都會讀權限，很不穩，容易有時不小心開放」。
+   *
+   * 現在那段空白由 sessionStorage 的角色快取補掉（lib/profile.tsx），
+   * 一般情況下第一畫格就有選單，不會真的閃。
+   */
+  const items = visibleNav(NAV, profile?.role ?? null, loading);
+  const current = currentNav(items, pathname);
 
   /*
    * 選單。
@@ -287,6 +298,20 @@ function AppShell({ children }: { children: React.ReactNode }) {
    */
   const navList = (mini = false) => (
     <nav className="flex-1 py-2 overflow-y-auto">
+      {/*
+        * ★ 還在查角色 —— 放灰條，不要放「沒有權限」四個字。
+        *
+        *   那四個字會讓人以為自己被降權了，然後來問。
+        *   灰條的意思是「還在載入」，全世界都看得懂,而且不會誤導。
+        *
+        *   一般情況下這幾條根本不會出現 —— sessionStorage 有上次的角色，
+        *   第一畫格就直接畫真的選單（lib/profile.tsx）。
+        *   會看到的是「這個分頁第一次進站」的那一次。
+        */}
+      {loading && Array.from({ length: 8 }).map((_, i) => (
+        <div key={i} className={`mx-2 my-0.5 h-10 rounded-[10px] bg-gray-100 animate-pulse
+          ${mini ? 'w-10' : ''}`} />
+      ))}
       {items.map((n) => {
         const on = pathname.startsWith(n.href);
         if (mini) {

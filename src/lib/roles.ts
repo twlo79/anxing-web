@@ -50,3 +50,61 @@ export const ORDER_EDIT_ROLES = [
 export function canEditOrders(role: string | null | undefined): boolean {
   return !!role && (ORDER_EDIT_ROLES as readonly string[]).includes(role);
 }
+
+/**
+ * 能刪除訂單的角色（2026-08-22 使用者指定「開放管家可以刪除訂單」）。
+ *
+ * ★ 必須與 `trash_deletable_tables()` 的 `('orders', 'housekeeper')`
+ *   ＋ `trash_can_delete()` 的 housekeeper 分支一致（migration_167）。
+ *
+ *   **cleaner 不在裡面** —— 資料庫的 RLS 分不出 cleaner 與管家，
+ *   但 trash_can_delete 看的是角色字串，那裡分得出來也真的擋得住。
+ *   前端這份要跟得上，否則房務會看到一顆按下去只會跳
+ *   「你的帳號沒有刪除「訂單」的權限」的按鈕。
+ */
+export const ORDER_DELETE_ROLES = [
+  'housekeeper', 'accountant', 'manager', 'super_admin',
+] as const;
+
+/**
+ * 這個角色、這一筆訂單，刪得掉嗎？
+ *
+ * 回 null 表示可以刪；回字串表示不能刪，**而那個字串就是要顯示給人看的原因**。
+ *
+ * ★ 為什麼回原因而不是 boolean:
+ *   直接把按鈕藏掉的話，管家會問「為什麼這一筆沒有刪除鈕」，
+ *   而答案（押金已退）畫面上一個字都沒有。
+ *   按鈕留著、變灰、hover 看得到原因 —— 跟押金那邊同一個做法
+ *   （2026-08-22「押金鎖住就好，不用拿掉」）。
+ *
+ * @param role         profiles.role
+ * @param book         orders.book。null／undefined 當作 anxing（舊資料）
+ * @param lockedReason order_locked_reason() 的結果,沒有就傳 null
+ */
+export function orderDeleteBlockedReason(
+  role: string | null | undefined,
+  book: string | null | undefined,
+  lockedReason: string | null | undefined,
+): string | null {
+  // 角色還沒載入 —— 先當作不能刪。寧可晚半秒,不要閃一下又消失
+  if (!role) return '正在確認權限…';
+  if (!(ORDER_DELETE_ROLES as readonly string[]).includes(role)) {
+    return '你的帳號沒有刪除訂單的權限。';
+  }
+  /*
+   * 其他帳本（愛皮／洪鯊）的收入也存在 orders 表裡。
+   * 管家在選單上看不到那一頁 —— 看不到就不該刪得掉。
+   * 這一條跟 soft_delete 裡的 row 層檢查同一個述詞（migration_167）。
+   */
+  if (role === 'housekeeper' && (book ?? 'anxing') !== 'anxing') {
+    return '這筆是「其他收支帳」的收入,不在你的權限範圍。請洽會計。';
+  }
+  /*
+   * 已退押金／已掛加費 —— 資料庫的 trg_orders_lock_guard 會擋（migration_157），
+   * 而且只放行會計與總管理員。前端先講，免得按下去才看到例外訊息。
+   */
+  if (lockedReason && !['accountant', 'super_admin'].includes(role)) {
+    return `${lockedReason}。要刪除請洽會計或總管理員。`;
+  }
+  return null;
+}

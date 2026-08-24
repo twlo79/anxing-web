@@ -15,7 +15,7 @@ import { FEE_TYPES, ONEOFF_FEE_TYPES, ONEOFF_PRESETS, presetOf } from '@/lib/fee
 import { ONEOFF_LABEL } from '@/lib/revenue-report';
 import RecurringPanel from '@/components/RecurringPanel';
 // 角色清單只留一份 —— 散在畫面各處的話，改了一處不會有東西提醒你其他處還是舊的
-import { canEditOrders } from '@/lib/roles';
+import { canEditOrders, orderDeleteBlockedReason } from '@/lib/roles';
 // 加費從押金扣、押金退了就鎖住整張單（migration_157）
 import { pickDeposit, orderLockReason, type DepCandidate } from '@/lib/deposit-fee';
 /*
@@ -1276,8 +1276,26 @@ export default function ShortTermPage() {
                     <span className="text-[10px]">平台代收</span>
                   </span>
                 )}
-                <button onClick={() => { del(d); setDetail(null); }}
-                  className="flex-1 min-w-[6rem] h-11 rounded-lg border border-red-300 text-red-500 text-sm font-medium hover:bg-red-50">刪除</button>
+                {/*
+                    刪除:管家以上（2026-08-22 使用者指定,migration_167）。
+                    原本這顆**沒有任何角色判斷** —— 房務按下去只會跳
+                    「你的帳號沒有刪除「訂單」的權限」。
+
+                    ★ 擋住時不藏起來,變灰 ＋ 寫出原因 —— 跟旁邊的押金同一個做法。
+                      藏掉的話使用者會問「刪除鈕去哪了」,而答案畫面上一個字都沒有。
+                */}
+                {(() => {
+                  const blocked = orderDeleteBlockedReason(role, d.book, lockReason);
+                  return blocked ? (
+                    <span title={blocked}
+                      className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-line bg-gray-50 text-gray-400 text-sm flex items-center justify-center cursor-not-allowed">
+                      🔒 刪除
+                    </span>
+                  ) : (
+                    <button onClick={() => { del(d); setDetail(null); }}
+                      className="flex-1 min-w-[6rem] h-11 rounded-lg border border-red-300 text-red-500 text-sm font-medium hover:bg-red-50">刪除</button>
+                  );
+                })()}
               </div>
             </div>
           </div>
