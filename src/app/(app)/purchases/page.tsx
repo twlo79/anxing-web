@@ -102,7 +102,7 @@ type Dep = {
   order_id?: string | null; contract_id?: string | null; property_id?: string | null;
 };
 /** kind：expense=只用於支出 / income=只用於收入 / both=兩邊都用（migration_90） */
-type AccountCode = { code: string; name: string; kind?: string; active?: boolean };
+type AccountCode = { code: string; name: string; kind?: string; active?: boolean; book?: string };
 /** 常用收款對象（migration_96）。請款單不掛外鍵 —— 填完就脫鉤,見該 migration 的說明。 */
 type Payee = { id: string; label: string; bank_code: string | null; account: string;
                company: string | null; tax_id: string | null };
@@ -241,7 +241,8 @@ export default function PurchasesPage() {
   function flashErr(t: string) { setMsg({ t, err: true }); }
 
   useEffect(() => {
-    supabase.from('account_codes').select('code, name, kind, active').order('sort').then(({ data }) => setCodes(data ?? []));
+    // book 一定要撈 —— 沒有它就分不出這個科目是哪一家的（migration_159）
+    supabase.from('account_codes').select('code, name, kind, active, book').order('sort').then(({ data }) => setCodes(data ?? []));
     supabase.from('payee_presets').select('id, label, bank_code, account, company, tax_id')
       .eq('active', true).order('sort').order('label')
       .then(({ data }) => setPayees((data ?? []) as Payee[]));
@@ -284,9 +285,29 @@ export default function PurchasesPage() {
    * 請款是花錢，下拉不該出現收入科目。
    * codeName 保留全部 —— 過濾只影響「可以選什麼」，不影響「怎麼顯示」。
    */
-  const expenseCodes = useMemo(
-    // 停用的科目也濾掉（migration_91 停用了「水電瓦斯」）
-    () => codes.filter((c) => c.kind !== 'income' && c.active !== false), [codes]);
+  /**
+   * 可以選的支出科目。
+   *
+   * ★★ 依**這張單的帳本**篩（migration_159）。
+   *
+   *   安幸      修繕維護、清潔費、水電瓦斯…
+   *   愛皮      機票款、住宿款、地接費…
+   *   洪鯊      證券交易稅、交易手續費、保管費…
+   *
+   * 不篩的話，選了洪鯊卻列著「修繕維護」—— 而那個科目
+   * 屬於安幸，存下去會被 trg_expenses_book_code 擋掉，
+   * 使用者看到的是一句看不懂的「科目不屬於這一本帳」。
+   *
+   * codeName 保留全部 —— 過濾只影響「可以選什麼」，不影響「怎麼顯示」。
+   */
+  const expenseCodes = useMemo(() => {
+    const b = edit?.book && edit.book !== DEFAULT_BOOK ? edit.book : DEFAULT_BOOK;
+    return codes.filter((c) =>
+      c.kind !== 'income' && c.active !== false
+      // 舊資料的 book 可能是 null —— 當成安幸（跟 toBook 同一條規則）
+      && toBook(c.book) === b);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [codes, edit?.book]);
   const estateName = useMemo(() => Object.fromEntries(estates.map((e) => [e.id, e.name])), [estates]);
   const personName = useMemo(() => Object.fromEntries(people.map((p) => [p.id, p.name])), [people]);
   // 資料庫存的是 code（如 8088），畫面上要顯示可讀的名稱（如 元大 8088）
@@ -2439,6 +2460,16 @@ export default function PurchasesPage() {
                               } else if (edit.book && edit.book !== DEFAULT_BOOK) {
                                 setEdit({ ...edit, book: DEFAULT_BOOK });
                               }
+                              /*
+                               * ★ 換帳本時**每一項的科目都要清**。
+                               *   留著的話會是「洪鯊的單掛著安幸的修繕維護」，
+                               *   而觸發器擋下來的訊息使用者看不懂。
+                               */
+                              const bookChanged = (v === OTHER_BIZ_PURPOSE)
+                                !== (edit.book != null && edit.book !== DEFAULT_BOOK);
+                              if (bookChanged) {
+                                setItems(items.map((x) => ({ ...x, account_code: null })));
+                              }
                               setItems(items.map((x, i) => i === idx
                                 // 換用途時一定要清掉房源 —— 否則會留著上一個物業的房間
                                 ? (v === 'office'
@@ -2468,7 +2499,11 @@ export default function PurchasesPage() {
                             <div className="relative w-full md:w-auto">
                               {!readOnly && <ReqMark />}
                               <select disabled={readOnly} value={edit.book && edit.book !== DEFAULT_BOOK ? edit.book : ''}
-                                onChange={(e) => setEdit({ ...edit, book: (e.target.value || null) as Book | null })}
+                                onChange={(e) => {
+                                  // 換事業體要清掉所有項目的科目 —— 兩家的科目不重疊
+                                  setEdit({ ...edit, book: (e.target.value || null) as Book | null });
+                                  setItems(items.map((x) => ({ ...x, account_code: null })));
+                                }}
                                 className={`w-full h-12 md:h-auto bg-white rounded-lg border px-2 md:py-1.5 disabled:bg-gray-50 ${
                                   edit.book && edit.book !== DEFAULT_BOOK ? 'border-mor-line' : 'border-red-400 bg-red-50'}`}>
                                 <option value="">事業體</option>

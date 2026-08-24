@@ -60,6 +60,13 @@ type Order = {
    *   存完會跳到「其他收支帳」。
    */
   book?: Book | null;
+  /**
+   * 會計科目（migration_162）。**只有其他事業體用**。
+   *
+   * 安幸的訂單一律 null —— 它的科目由 order_account_code(source, fee_type)
+   * 算出來，而 sync_order_account 會覆寫（migration_163 讓它跳過非安幸）。
+   */
+  account_code?: string | null;
   /** 一次性收入的項目(洗衣機/垃圾代收費…)。科目底下再細一層。 */
   item_name?: string | null;
   // 【已淘汰】押金收退改由 deposits 表管理(migration_56),這裡不再讀寫
@@ -291,6 +298,26 @@ export default function ShortTermPage() {
    * （例如愛皮的收入掛著正隆的物業）在報表上看不出來。
    */
   const hideFields = useMemo(() => incomeFieldsHidden(edit?.source), [edit?.source]);
+
+  /**
+   * 其他事業體的收入科目（migration_159）。
+   *
+   * ★ 依**選到的帳本**查，切換事業體要重查 ——
+   *   愛皮與洪鯊的科目完全不重疊，共用一份清單的話
+   *   旅行社的人會在選單裡看到「證券交易稅」。
+   *
+   * ★ 只列 kind ≠ expense 的 —— 這是收入表單。
+   */
+  const [bizCodes, setBizCodes] = useState<{ code: string; name: string }[]>([]);
+  useEffect(() => {
+    const b = edit?.source === OTHER_BIZ_SOURCE ? edit?.book : null;
+    if (!b || b === DEFAULT_BOOK) { setBizCodes([]); return; }
+    let alive = true;
+    supabase.from('account_codes').select('code, name, kind')
+      .eq('book', b).eq('active', true).neq('kind', 'expense').order('sort')
+      .then(({ data }) => { if (alive) setBizCodes((data ?? []) as { code: string; name: string }[]); });
+    return () => { alive = false; };
+  }, [supabase, edit?.source, edit?.book]);
 
   const lockReason = useMemo(
     () => orderLockReason(orderDeps.find((d) => d.returned_on) ?? null, role),
@@ -607,6 +634,9 @@ export default function ShortTermPage() {
     {
       const chk = checkIncomeBook(edit.source, edit.book);
       if (!chk.ok) return flash(chk.error);
+      if (edit.source === OTHER_BIZ_SOURCE && !edit.account_code) {
+        return flash('請選會計科目');
+      }
     }
     setTried(true);
     /*
@@ -645,6 +675,12 @@ export default function ShortTermPage() {
        *   而那筆錢從此在兩張報表上都找不到合理的解釋。
        */
       book: edit.source === OTHER_BIZ_SOURCE ? (edit.book ?? null) : DEFAULT_BOOK,
+      /*
+       * 會計科目。**只有其他事業體寫值**（migration_162 / 163）——
+       * 安幸的由 sync_order_account 觸發器算，寫進來會被覆寫，
+       * 而寫一個馬上被蓋掉的值只會讓下一個人以為那裡有作用。
+       */
+      account_code: edit.source === OTHER_BIZ_SOURCE ? (edit.account_code ?? null) : null,
       // 不需開發票就把抬頭與統編清掉 —— 留著的話取消勾選之後那些值還在資料庫裡,
       // 畫面上看不到卻會被 Excel 匯出帶走。
       invoice_required: !!edit.invoice_required,
@@ -1246,6 +1282,12 @@ export default function ShortTermPage() {
                   const other = src === OTHER_BIZ_SOURCE;
                   setEdit({
                     ...edit, source: src,
+                    /*
+                     * ★ 科目一定要清。留著的話「愛皮的收入掛著安幸的租金收入」
+                     *   會被 trg_orders_book_code 擋下來，
+                     *   而使用者看到的是一句看不懂的「科目不屬於這一本帳」。
+                     */
+                    account_code: null,
                     ...(other
                       ? { estate_id: null, property_raw: null, property_id: null, deposit: 0, fx_deposit: [] }
                       : { book: DEFAULT_BOOK }),
@@ -1264,7 +1306,8 @@ export default function ShortTermPage() {
                 <span className="flex items-center">{incomePartyLabel(edit.source)}<Req /></span>
                 {edit.source === OTHER_BIZ_SOURCE ? (
                   <select value={edit.book ?? ''}
-                    onChange={(e) => setEdit({ ...edit, book: (e.target.value || null) as Book | null })}
+                    // 換事業體要清科目 —— 兩家的科目不重疊
+                    onChange={(e) => setEdit({ ...edit, book: (e.target.value || null) as Book | null, account_code: null })}
                     className={`rounded-lg border px-2 py-1.5 ${
                       !edit.book || edit.book === DEFAULT_BOOK ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}>
                     <option value="">—</option>
@@ -1328,11 +1371,12 @@ export default function ShortTermPage() {
                   className={`rounded-lg border px-2 py-1.5 ${
                     err('房客') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} />
               </label>
-              <label className="flex flex-col gap-1"><span className="flex items-center">{edit.source === 'oneoff' ? '日期(認列月份)' : '起日'}<Req /></span>
+              <label className="flex flex-col gap-1"><span className="flex items-center">{edit.source === 'oneoff' || hideFields.dateRange ? '日期(認列月份)' : '起日'}<Req /></span>
                 <input type="date" value={edit.checkin} onChange={(e) => setEdit({ ...edit, checkin: e.target.value })}
                   className={`rounded-lg border px-2 py-1.5 ${
                     err('起日') || err('日期') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} /></label>
-              {edit.source !== 'oneoff' && <label className="flex flex-col gap-1"><span className="flex items-center">迄日<Req /></span>
+              {/* 其他事業體是一次性收入，只要一個日期（migration_159） */}
+              {edit.source !== 'oneoff' && !hideFields.dateRange && <label className="flex flex-col gap-1"><span className="flex items-center">迄日<Req /></span>
                 <input type="date" value={edit.checkout} onChange={(e) => setEdit({ ...edit, checkout: e.target.value })} className={`rounded-lg border px-2 py-1.5 ${
                 (edit.checkin && edit.checkout && edit.checkout <= edit.checkin) || err('迄日')
                   ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} /></label>}
@@ -1349,7 +1393,7 @@ export default function ShortTermPage() {
                 多一個「+ 新增幣別」只是讓最常用的路徑多一個看不懂的東西。
                 它一樣寫進 revLines 的台幣列,所以存檔那段不用分兩套。
               */}
-              {edit.source === 'oneoff' && (
+              {(edit.source === 'oneoff' || edit.source === OTHER_BIZ_SOURCE) && (
                 <label className="flex flex-col gap-1"><span className="flex items-center">金額<Req /></span>
                   <MoneyInput value={revLines[0]?.amt ?? 0} invalid={err('金額')}
                     onChange={(n) => setRevLines([{ cur: 'TWD', amt: n, rate: 1 }])}
@@ -1361,6 +1405,34 @@ export default function ShortTermPage() {
                 這一欄以前不存在 —— 取消預定之類的只能記成「其他」再把說明寫進備註,
                 營收報表按 fee_type 分組時全部擠在同一格,看不出組成。
               */}
+              {/*
+                其他事業體的會計科目（migration_159 / 162）。
+                
+                ★ 用 `account_code` 而不是 `fee_type` —— 兩家的科目是
+                  **代號制**（ap_tour / hs_dividend），跟安幸那份中文名目清單
+                  是兩套東西。混用的話同一欄會有一半中文一半代號。
+                
+                ★ 下拉只列**同一本帳**的收入科目。旅行社的人不該在
+                  清單裡看到「證券交易稅」。而且科目跟帳本對不起來時
+                  資料庫會擋（trg_orders_book_code）。
+              */}
+              {edit.source === OTHER_BIZ_SOURCE && (
+                <label className="flex flex-col gap-1">
+                  <span className="flex items-center">會計科目<Req /></span>
+                  <select value={edit.account_code ?? ''}
+                    onChange={(e) => setEdit({ ...edit, account_code: e.target.value || null })}
+                    className={`rounded-lg border px-2 py-1.5 ${
+                      edit.account_code ? 'border-gray-300' : 'border-red-400 bg-red-50'}`}>
+                    <option value="">—</option>
+                    {bizCodes.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
+                  </select>
+                  {!bizCodes.length && (
+                    <span className="text-[11px] text-amber-700">
+                      {edit.book ? '這本帳還沒有收入科目 —— 請先選事業體' : '請先選事業體'}
+                    </span>
+                  )}
+                </label>
+              )}
               {edit.source === 'oneoff' && (
                 <label className="flex flex-col gap-1">會計科目
                   <select value={edit.fee_type ?? ''} onChange={(e) => setEdit({ ...edit, fee_type: e.target.value || null })}
