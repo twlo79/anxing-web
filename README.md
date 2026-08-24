@@ -58,6 +58,14 @@ Next.js 14 (App Router) + Supabase(Auth + PostgreSQL + RLS)。
 **部署**：`.\deploy.ps1 "commit 訊息"` —— 它會跑測試與 build，再 push 觸發 GitHub Actions。
 **migration 不在 CI 裡**，要手動貼進 Supabase SQL Editor（見〈Migration 索引〉）。
 
+> ### 🩹 先讀〈九、踩過的坑〉
+>
+> 那一節是**真實事故簿** —— 每一條都發生過、而且花了時間才找到。
+> 共同點是**它們幾乎都不報錯**:系統回成功、畫面正常，
+> 只有數字悄悄不對或按鈕悄悄失效。
+>
+> 動資料庫或寫新表單之前掃一遍，會省下好幾個小時。
+
 ---
 
 # 二、選單、頁面權限與 RLS
@@ -685,6 +693,199 @@ draft ──送審──► pending ──主管✓＋總經理✓──► appr
 | **押金加費** | 加費從押金扣除，應退 = 押金 − 加費。押金退掉後整張訂單鎖住 | 157 |
 | **加費憑證** | 每筆加費各自可附照片（`attachments.order_id`） | 158 |
 | **押金退款** | 改成三段式（送審 → 排匯款 → 確認退款），與請款單完全對齊，補上撤銷 | — |
+| **帳本分家** | 愛皮（旅行社）／洪鯊（投資）獨立收支帳，兩家各一套會計科目，請款免主管票 | 159–163 |
+| **收款手續費** | 匯款被銀行扣的手續費自動轉一筆郵電費支出（冪等） | 164、165 |
+| **平台代收** | Airbnb / Agoda 的押金欄與按鈕鎖住 ＋ 寫出原因 | — |
+| **手機版** | 其他收支帳改成卡片版面（表格在 390px 只能橫向滑） | — |
+| **README** | 新增〈九、踩過的坑〉—— 全部是真的發生過、而且**不報錯**的 | — |
+
+---
+
+# 九、踩過的坑（真實事故簿）
+
+> **這一節是給三個月後的自己看的。**
+>
+> 每一條都是**真的發生過、而且花了時間才找到**的。共同點只有一個：
+> **它們幾乎都不報錯。** 系統回一個成功、畫面顯示正常，只有數字悄悄不對，
+> 或某個按鈕悄悄失效。
+>
+> 寫新功能前掃一遍 —— 這裡每一條都至少被踩過一次，有兩條被踩過兩次。
+
+---
+
+## 9.1 最貴的五個（都跟「不報錯」有關）
+
+### ① RLS 擋下的寫入 → 回成功且影響 0 列 🔴🔴
+
+**2026-08-19，賠掉一整天。**
+
+PostgREST 遇到 RLS 擋下的 `UPDATE` / `DELETE` **不會報錯**，只回一個空陣列。
+
+```ts
+// ❌ 錯的
+const { error } = await supabase.from('x').update(patch).eq('id', id);
+if (error) return flash('失敗');
+flash('已儲存');          // ← 一列都沒改，而畫面說成功了
+
+// ✅ 對的
+const { data, error } = await supabase.from('x').update(patch).eq('id', id).select('id');
+if (error) return setErr('儲存失敗：' + error.message);
+if (!data?.length) return setErr('沒有任何一列被更新，通常是權限或狀態已經變了。');
+```
+
+**症狀**：使用者說「按了沒反應」或「存了但重整就沒了」。
+**現在的做法**：所有寫入都 `.select('id')` 檢查長度。
+
+---
+
+### ② `ON CONFLICT` 對不到部分索引 🔴🔴 **踩過兩次**
+
+**第一次** 2026-08-19（migration 150/151/152）—— 主管按不動「確認付款日」，查了一整天。
+**第二次** 2026-08-22（migration 164/165）—— 收款手續費存不進去。**同一天內又犯一次。**
+
+```sql
+-- ❌ 部分索引，ON CONFLICT 推不出來
+create unique index x_uidx on t (col) where col is not null;
+
+-- ✅ 完整索引。NULL 之間不算相等，所以效果一樣
+create unique index x_uidx on t (col);
+```
+
+**症狀**：`there is no unique or exclusion constraint matching the ON CONFLICT specification`
+**為什麼會犯第二次**：164 的自檢只用 `select` 確認「索引存在嗎」—— 索引**確實存在**、名字對、一切看起來都好。
+
+> **教訓**：驗證段要有**真的寫入**（見 9.4）。
+
+---
+
+### ③ 觸發器一律覆寫，把手選的值蓋掉 🔴
+
+**2026-08-22。** `sync_order_account()` 每次寫入都 `new.account_code := order_account_code(...)`。
+愛皮的「團費收入」被改成「租金收入」，然後被另一道防線擋下 —— **功能完全存不進去**。
+
+**症狀**：新功能第一天就是壞的，而錯誤訊息是另一件事（「科目不屬於這一本帳」）。
+**修法**：`migration_163` 讓它 `if book <> 'anxing' then return new`。
+**教訓**：加新的資料路徑之前，先查**有沒有觸發器在覆寫那一欄**。
+
+---
+
+### ④ `WHEN (new.…)` 不能用在含 DELETE 的觸發器上 🔴
+
+**2026-08-22。** 我原本要給認列觸發器加條件：
+
+```sql
+-- ❌ DELETE 時 new 是 null，而且會把 DELETE 那條路弄丟
+create trigger t after insert or delete or update on orders
+  for each row when (new.book = 'anxing') execute function f();
+
+-- ✅ 拆成兩支
+create trigger t     after insert or update on orders
+  for each row when (new.book = 'anxing') execute function f();
+create trigger t_del after delete on orders
+  for each row execute function f();      -- 清理無條件跑
+```
+
+**如果當初沒發現**：刪掉訂單後認列紀錄留在表裡，**營收表繼續算那筆錢** —— 不報錯，只有月營收莫名變高。
+
+---
+
+### ⑤ 查詢在 mount 時就發了，錯誤被丟掉、不重試 🟠 **一天內三次**
+
+**2026-08-19，同一天三個地方**：房源評價的物業、請款單的請款者、載入旗標。
+
+```ts
+// ❌ 錯誤被丟掉，而空陣列跟「真的沒資料」長得一樣
+useEffect(() => {
+  supabase.from('x').select('*').then(({ data }) => setRows(data ?? []));
+}, []);
+```
+
+**症狀**：整欄是「—」，看起來像資料缺漏，實際上是查詢在 auth 還沒恢復時就發了、被 RLS 擋掉。
+**修法**：`.then(({ data, error }) => …)` 把 error 顯示出來，並在 `prof.profile` 就緒後才發。
+
+---
+
+## 9.2 資料庫
+
+| 坑 | 症狀 | 對策 |
+|---|---|---|
+| Supabase 預設**最多回 1000 列且不報錯** | 要加總的查詢在第 1001 筆之後安靜消失 | `lib/fetch-all` 的 `fetchAll()` |
+| `now()` 是**交易開始時間** | 同一交易裡呼叫兩次結果相同 | 要真的「現在」用 `clock_timestamp()` |
+| `information_schema.columns` 沒帶 `table_schema='public'` | `properties`、`attachments` 這種名字在別的 schema 也有，自檢誤報 | 一律帶 `table_schema='public'` |
+| SQL Editor 把整份腳本包在**一個交易**裡 | 任一錯誤全部回滾 | 會失敗的東西（建索引、裝擴充）用 `exception` 包 |
+| SQL Editor **只顯示最後一個 SELECT** | migration 自檢寫兩個 SELECT，前面那個永遠看不到 | 自檢一律**單一 SELECT** ＋ `union all` |
+| PostgREST 批次 upsert 取**欄位聯集** | 某列少了鍵會被填 null | 必須明寫回舊值 |
+| `min(uuid)` 不存在 | | 用 `(array_agg(id))[1]` |
+| enum 的 `ALTER TYPE ... ADD VALUE` **不能在交易裡跑** | 那支腳本整份失敗 | 用 `text` ＋ CHECK |
+| `CREATE OR REPLACE FUNCTION` **不能改參數名** | | 換名字要先 DROP |
+| BEFORE 觸發器**按名字字母序**跑 | 順序依賴時會靜默失效 | 依賴順序要寫進註解（`trg_orders_account` < `trg_orders_book_code` 是巧合） |
+
+---
+
+## 9.3 前端
+
+| 坑 | 症狀 |
+|---|---|
+| 外層 `overflow-auto` ＋ 標題 `sticky top-0` | 標題會飄到內容中間（「版面會跑」）。正解：外層固定、**內容自己捲** |
+| `flash` / Toast 渲染在**彈窗後面** | 使用者只看到「按了沒反應」。彈窗裡的錯誤要用**彈窗自己的 state** |
+| 「檢視」直接開編輯表單 | 只想看的人不小心改到東西。檢視要是**唯讀抽屜**，編輯是另一個動作 |
+| 已核可的單可以直接編輯 | 改一個字就清掉兩張核可票，而畫面只說「已重新送審」 |
+| 表格沒有手機版 | 390px 寬只能橫向滑 = 看得到但用不了。要 `md:hidden` 卡片 ＋ `hidden md:block` 表格 |
+| PWA 的 service worker 留舊版 | 推了新版但看到舊畫面。**先 Ctrl+Shift+R** 再懷疑程式 |
+| 藏欄位 vs 鎖欄位 | 藏起來的話使用者問「那個欄位去哪了」。**不適用要鎖住 ＋ 寫出原因** |
+| 下拉清單沒跟著情境篩 | 選了洪鯊卻列著安幸的科目 —— 存下去被觸發器擋，訊息看不懂 |
+
+---
+
+## 9.4 寫 migration 的規矩（都是踩出來的）
+
+1. **結尾補 `select record_migration('編號_名稱')`**
+2. **自檢只能有一個 SELECT** —— SQL Editor 只顯示最後一個
+3. **★ 驗證段要有真的寫入，不能只有 `select`**
+   - `sync_order_deposits()` 的陣列 bug 撐了兩天，因為驗證只讀不寫
+   - migration_164 的部分索引問題也是這樣漏掉的
+   - 做法：包在 `do $$ … $$` 裡寫一次、檢查、再 raise 讓它回滾
+4. **要能重跑** —— 「已完成」要跳過而不是中止（`migration_63` 的教訓）
+5. **覆寫整支函式時，逐段對照線上定義** —— 不要照 `schema-baseline.sql`（見下）
+6. **既有行為要有一項自檢守著** —— 「N / N 全等」比「✅」有用
+
+---
+
+## 9.5 ⚠ `schema-baseline.sql` 不可信
+
+**2026-08-22 一天之內錯了五次**，其中兩次差點寫出錯的 migration：
+
+| # | 錯在哪 |
+|---|---|
+| 1 | 少 `order_payments` 整張表 |
+| 2 | 少 `deposits.lines` |
+| 3 | `gen_expenses_from_pr` 多了一段線上**沒有**的日期連動 |
+| 4 | `att_one_parent` 少兩個 parent 欄位 |
+| 5 | 少 `orders.account_code`（而且它有 4948 筆資料） |
+
+**要動觸發器或函式之前，一律先問線上：**
+
+```sql
+select pg_get_functiondef(p.oid)
+from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public' and p.proname = '<函式名>';
+```
+
+**該做的事**：跑一次 `pg_dump --schema-only` 重生 baseline。十分鐘的事，不做的話下一個人還會再撞。
+
+---
+
+## 9.6 一句話總結
+
+**這個專案的錯誤幾乎都是「安靜」的。**
+
+不是崩潰、不是紅字，而是：
+
+- 一列沒改，而畫面說成功了
+- 一筆錢沒算進去，而總額看起來很合理
+- 一顆按鈕沒反應，而沒有任何訊息
+
+所以**每一個寫入都要問「改到幾列」，每一個擋阻都要說出原因，每一個自檢都要真的寫一次**。
 
 ---
 

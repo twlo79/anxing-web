@@ -269,7 +269,7 @@ export default function OtherBooksPage() {
       <div className="flex gap-1.5 mb-3">
         {OTHER_BOOKS.map((b) => (
           <button key={b} onClick={() => { setBook(b); setF({}); }}
-            className={`px-4 h-9 rounded-full text-sm font-medium transition-colors ${
+            className={`px-5 h-10 md:h-9 rounded-full text-sm font-medium transition-colors ${
               book === b
                 ? 'bg-mor-slate text-white'
                 : 'bg-white border border-mor-line text-gray-600 hover:bg-mor-sand/50'}`}>
@@ -282,7 +282,7 @@ export default function OtherBooksPage() {
       <div className="flex gap-1 border-b border-mor-line mb-4">
         {([['ledger', '收支帳'], ['dash', '儀錶板']] as const).map(([k, label]) => (
           <button key={k} onClick={() => setTab(k)}
-            className={`px-4 py-2 text-sm whitespace-nowrap border-b-2 -mb-px transition-colors ${
+            className={`px-4 py-2.5 md:py-2 text-sm whitespace-nowrap border-b-2 -mb-px transition-colors ${
               tab === k
                 ? 'border-mor-slate text-mor-slate font-medium'
                 : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
@@ -296,16 +296,21 @@ export default function OtherBooksPage() {
       )}
 
       {/* 月份 ＋ 三個新增入口 */}
-      <div className="flex flex-wrap items-center gap-2 mb-4">
+      {/*
+        手機上月份自己一行、三顆新增按鈕平分寬度。
+        用 flex-wrap 讓它們自然折行的話，會變成「兩顆一行、一顆掉下來」——
+        那個落單的按鈕看起來像壞掉。
+      */}
+      <div className="flex flex-wrap items-center gap-2 mb-2 md:mb-4">
         <input type="month" value={ym} onChange={(e) => setYm(e.target.value || thisYm())}
-          className="h-9 rounded-lg border border-mor-line bg-white px-2 text-sm" />
+          className="h-10 md:h-9 rounded-lg border border-mor-line bg-white px-2 text-sm" />
         <div className="mr-auto text-xs text-gray-400">
           {loading ? '載入中…' : `共 ${shown.length} 筆`}
         </div>
         {tab === 'ledger' && (
-          <>
+          <div className="w-full md:w-auto grid grid-cols-3 md:flex gap-2">
             <button onClick={() => { setErr(''); setInc({ date: today(), party: '', code: '', item: '', amount: 0, account: '', paid: true, note: '' }); }}
-              className="h-9 rounded-lg bg-mor-slate text-white px-4 text-sm font-medium hover:bg-mor-slatedark">
+              className="h-11 md:h-9 rounded-lg bg-mor-slate text-white px-2 md:px-4 text-sm font-medium hover:bg-mor-slatedark">
               ＋ 收入
             </button>
             {/*
@@ -313,37 +318,38 @@ export default function OtherBooksPage() {
               不在這裡做一套。兩套審核流程遲早會不一致。
             */}
             <a href="/purchases"
-              className="h-9 flex items-center rounded-lg border border-mor-line bg-white px-4 text-sm font-medium hover:bg-mor-sand/60">
+              className="h-11 md:h-9 flex items-center justify-center rounded-lg border border-mor-line bg-white px-2 md:px-4 text-sm font-medium hover:bg-mor-sand/60">
               ＋ 請款
             </a>
             <button onClick={() => { setErr(''); setExp({ date: today(), item: '', code: '', amount: 0, method: 'cash', account: '', voucher: '', note: '' }); }}
-              className="h-9 rounded-lg border border-mor-line bg-white px-4 text-sm font-medium hover:bg-mor-sand/60">
+              className="h-11 md:h-9 rounded-lg border border-mor-line bg-white px-2 md:px-4 text-sm font-medium hover:bg-mor-sand/60">
               ＋ 支出
             </button>
-          </>
+          </div>
         )}
       </div>
 
       {tab === 'ledger' ? (
         <>
           {/* 篩選 */}
-          <div className="flex flex-wrap gap-2 mb-3">
+          {/* 手機:兩個下拉並排一行、關鍵字自己一行。三個擠一行的話每個只剩 110px */}
+          <div className="grid grid-cols-2 md:flex md:flex-wrap gap-2 mb-3">
             <select value={f.kind ?? ''} onChange={(e) => setF({ ...f, kind: e.target.value as Filters['kind'] })}
-              className="h-9 rounded-lg border border-mor-line bg-white px-2 text-sm">
+              className="h-10 md:h-9 rounded-lg border border-mor-line bg-white px-2 text-sm">
               <option value="">收入與支出</option>
               <option value="income">只看收入</option>
               <option value="expense">只看支出</option>
             </select>
             <select value={f.code ?? ''} onChange={(e) => setF({ ...f, code: e.target.value })}
-              className="h-9 rounded-lg border border-mor-line bg-white px-2 text-sm">
+              className="h-10 md:h-9 rounded-lg border border-mor-line bg-white px-2 text-sm">
               <option value="">全部科目</option>
               {codes.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
             </select>
             <input value={f.kw ?? ''} onChange={(e) => setF({ ...f, kw: e.target.value })}
               placeholder="項目／對象／備註"
-              className="h-9 rounded-lg border border-mor-line bg-white px-2 text-sm flex-1 min-w-[10rem]" />
+              className="col-span-2 md:col-span-1 h-10 md:h-9 rounded-lg border border-mor-line bg-white px-2 text-sm md:flex-1 md:min-w-[10rem]" />
             {(f.kind || f.code || f.kw) && (
-              <button onClick={() => setF({})} className="h-9 px-3 text-sm text-mor-blue underline">清除</button>
+              <button onClick={() => setF({})} className="col-span-2 md:col-span-1 h-10 md:h-9 px-3 text-sm text-mor-blue underline">清除</button>
             )}
           </div>
 
@@ -365,7 +371,49 @@ export default function OtherBooksPage() {
               {cur.length ? '沒有符合篩選的紀錄。' : `${BOOK_LABEL[book]}這個月還沒有收支紀錄。`}
             </div>
           ) : (
-            <div className="rounded-xl border border-mor-line bg-white overflow-x-auto">
+            <>
+            {/*
+              ══════════ 手機卡片 ══════════
+
+              表格在 390px 寬只能橫向滑 —— 看得到但用不了
+              （docs/UI體檢-2026-08-19.md 的 P0 就是這件事）。
+
+              ★ 卡片的排法是「錢在右邊、事在左邊」:
+                金額靠右對齊在同一條垂直線上，用眼睛掃就能比大小。
+                塞在文字中間的話每一列的位置都不一樣，得一個一個讀。
+            */}
+            <div className="md:hidden space-y-2">
+              {shown.map((e) => (
+                <div key={`m-${e.kind}-${e.id}`} className="rounded-xl border border-mor-line bg-white px-3 py-2.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${
+                          e.kind === 'income' ? 'bg-mor-greenlight text-mor-green' : 'bg-red-50 text-red-600'}`}>
+                          {e.kind === 'income' ? '收' : '支'}
+                        </span>
+                        <span className="font-medium truncate">{e.name}</span>
+                        {e.kind === 'income' && !e.settled && (
+                          <span className="shrink-0 rounded bg-amber-50 text-amber-700 px-1.5 py-0.5 text-[11px]">未收</span>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-gray-500 mt-1">
+                        {e.date}・{nameOf(e.account_code)}
+                        {e.party ? `・${e.party}` : ''}
+                      </div>
+                      {e.note && <div className="text-[11px] text-gray-400 mt-0.5 truncate">{e.note}</div>}
+                    </div>
+                    <div className={`shrink-0 text-right font-bold tabular-nums ${
+                      e.kind === 'income' ? '' : 'text-red-600'}`}>
+                      {e.kind === 'income' ? '' : '−'}{fmt(e.amount)}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* 桌機表格 */}
+            <div className="hidden md:block rounded-xl border border-mor-line bg-white overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-mor-sand/40 text-xs text-gray-500">
                   <tr>
@@ -405,6 +453,7 @@ export default function OtherBooksPage() {
                 </tbody>
               </table>
             </div>
+            </>
           )}
         </>
       ) : (
@@ -577,7 +626,7 @@ function Dashboard({
           ['淨額', now.net, prev.net]] as const).map(([l, v, p]) => (
           <div key={l} className="rounded-xl border border-mor-line bg-white px-3 py-3">
             <div className="text-xs text-gray-500">{l}</div>
-            <div className={`text-xl md:text-2xl font-bold tabular-nums ${
+            <div className={`text-base sm:text-xl md:text-2xl font-bold tabular-nums ${
               l === '淨額' && v < 0 ? 'text-red-600' : ''}`}>{fmt(v)}</div>
             <div className="text-[11px] mt-0.5">{delta(pctChange(v, p))} <span className="text-gray-400">vs 上月</span></div>
           </div>
@@ -594,7 +643,13 @@ function Dashboard({
                 <div className="flex-1 bg-mor-green/70 rounded-t" style={{ height: `${(m.income / peak) * 100}%` }} />
                 <div className="flex-1 bg-red-400/70 rounded-t" style={{ height: `${(m.expense / peak) * 100}%` }} />
               </div>
-              <div className="text-[9px] text-gray-400">{m.ym.slice(5)}</div>
+              {/*
+                手機上 12 個標籤擠在 390px 裡會疊在一起 ——
+                只印偶數月（2/4/6…），趨勢還是看得出來。
+                桌機全部印。
+              */}
+              <div className={`text-[9px] text-gray-400 ${
+                Number(m.ym.slice(5)) % 2 ? 'hidden md:block' : ''}`}>{m.ym.slice(5)}</div>
             </div>
           ))}
         </div>
