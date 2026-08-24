@@ -16,6 +16,14 @@ import TrashLink from '@/components/TrashLink';
 import { resolveVoucher, voucherText, voucherSummary, missingVouchers } from '@/lib/voucher';
 // 押金抽屜要看得到「為什麼只退 99,719」—— 加費明細與應退小計（migration_157）
 import DepositFees from '@/components/DepositFees';
+/*
+ * 愛皮／洪鯊的支出（migration_159）。用途多一個「其他事業體」，
+ * 選了之後第二層選哪一家。一張單只能有一本帳 —— 觸發器也擋。
+ */
+import {
+  OTHER_BIZ_PURPOSE, OTHER_BOOKS, BOOK_LABEL, DEFAULT_BOOK,
+  misbookedItems, toBook, isOtherBook, bookLabel, type Book,
+} from '@/lib/book';
 // 排匯款／確認退款日 —— 押金管理頁用同一支，兩邊的規則不會漂走
 import DepositRefundStep, { type StepMode } from '@/components/DepositRefundStep';
 import { refundPerms as depPerms, cancelPatch } from '@/lib/deposit-refund';
@@ -49,6 +57,14 @@ type Req = {
    * 既有的 59 張全部回填成 true，所以舊單的畫面完全沒變。
    */
   shared_voucher?: boolean;
+  /**
+   * 哪一家的帳（migration_159）。預設 anxing。
+   *
+   * ★ 一張單只能有一本帳 —— 項目的用途全部要跟它一致，
+   *   混著的話支出產生時會拆進兩本帳，而總額對不起來時查不到。
+   *   觸發器 `pri_book_guard` 也擋。
+   */
+  book?: Book | null;
   /**
    * 匯款手續費。
    *   included 內扣   受款人吸收 —— 我方支出就是請款金額,帳上不多記
@@ -642,6 +658,7 @@ export default function PurchasesPage() {
       // 新單預設**逐項**憑證（migration_155）。既有的 59 張則回填成 true，
       // 所以舊單打開來還是跟以前一樣的單一欄位。
       shared_voucher: false,
+      book: DEFAULT_BOOK,
       fee_mode: 'included', fee_amount: 0,
       currency: 'TWD', fx_rate: 1,
     });
@@ -668,6 +685,23 @@ export default function PurchasesPage() {
       if (!i.item_name.trim()) return flashErr('每個項目都要填名稱');
       if (!(Number(i.amount_original) > 0)) return flashErr(`「${i.item_name}」請填金額`);
       if (i.purpose_type === 'estate' && !i.estate_id) return flashErr(`「${i.item_name}」請選擇用途`);
+    }
+    /*
+     * 一張單只能有一本帳（migration_159）。
+     *
+     * 資料庫的 pri_book_guard 也擋，但那裡回的是一句 SQL 例外 ——
+     * 這裡先擋是為了講出**是哪幾項**不對。
+     */
+    {
+      const wantOther = clean.some((i) => i.purpose_type === OTHER_BIZ_PURPOSE);
+      if (wantOther && (!edit.book || edit.book === DEFAULT_BOOK)) {
+        return flashErr('請選擇事業體（愛皮或洪鯊）');
+      }
+      const bad = misbookedItems(wantOther ? edit.book : DEFAULT_BOOK, clean);
+      if (bad.length) {
+        return flashErr(
+          `一張請款單只能有一本帳。這 ${bad.length} 項的用途對不起來：${bad.join('、')}`);
+      }
     }
     if (edit.payment_method === 'transfer' && !edit.payee_account) return flashErr('匯款需填廠商收款帳號');
     if (edit.currency !== 'TWD' && !(fxRate > 0)) return flashErr('請填匯率');
@@ -782,6 +816,15 @@ export default function PurchasesPage() {
         // 上面那兩欄不管開關是什麼都照存 —— 跟項目層級同一個道理:
         // 切回來的時候號碼要還在。
         shared_voucher: !!edit.shared_voucher,
+        /*
+         * 哪一家的帳（migration_159）。
+         *
+         * ★ 沒有選其他事業體就一律寫回 anxing ——
+         *   不寫的話，把一張愛皮的單改成物業用途之後 book 還留在 aipi，
+         *   而那筆支出從此在兩張報表上都找不到合理的解釋。
+         */
+        book: clean.some((i) => i.purpose_type === OTHER_BIZ_PURPOSE)
+          ? (edit.book ?? null) : DEFAULT_BOOK,
         // 只有匯款會有手續費。非匯款一律歸零 —— 這裡是最後一道,
         // 因為 payment_method 有可能被別的路徑改掉而沒經過上面那個 onChange。
         // pr_fee_chk 會擋「內扣卻有金額」與「非匯款卻不內扣」,
@@ -1139,7 +1182,9 @@ export default function PurchasesPage() {
           T(i?.item_name ?? '', stCell),
           T(Math.round(Number(i?.amount) || 0), stNum),
           T(i?.account_code ? codeName[i.account_code] ?? i.account_code : '', stCell),
-          T(i ? (i.purpose_type === 'office' ? '安幸辦公室' : (i.estate_id ? estateName[i.estate_id] ?? '' : '')) : '', stCell),
+          T(i ? (i.purpose_type === 'office' ? '安幸辦公室'
+          : i.purpose_type === OTHER_BIZ_PURPOSE ? BOOK_LABEL[toBook(r.book)]
+            : (i.estate_id ? estateName[i.estate_id] ?? '' : '')) : '', stCell),
           T(i?.property_id ? properties.find((pp) => pp.id === i.property_id)?.name ?? '' : '', stCell),
           T(r.payment_method ? PAY_LABEL[r.payment_method] ?? r.payment_method : '', stCell),
           T(r.planned_transfer_on ?? '', stCell),
@@ -1268,11 +1313,23 @@ export default function PurchasesPage() {
     if (r.status === 'approved' && !r.manager_approved_at && !r.admin_approved_at) {
       return <span className="text-gray-400">未達門檻免核</span>;
     }
+    /*
+     * 愛皮洪鯊只要總經理一票（migration_160）。
+     *
+     * ★ 一定要**寫出「主管免核」**，不能只是把那一行拿掉 ——
+     *   拿掉的話看的人會以為畫面壞了，寫「○ 主管」的話會以為那票還沒投，
+     *   然後去催一個根本不用投票的人。
+     */
+    const skipMgr = isOtherBook(r.book);
     return (
       <>
+        {skipMgr ? (
+          <div className="text-gray-400">— 主管<span className="ml-1">（免核）</span></div>
+        ) : (
         <div className={r.manager_approved_at ? 'text-mor-green' : 'text-gray-400'}>
           {r.manager_approved_at ? '✓' : '○'} 主管{r.manager_approved_by ? `・${personName[r.manager_approved_by] ?? ''}` : ''}
         </div>
+        )}
         <div className={r.admin_approved_at ? 'text-mor-green' : 'text-gray-400'}>
           {r.admin_approved_at ? '✓' : '○'} 總經理{r.admin_approved_by ? `・${personName[r.admin_approved_by] ?? ''}` : ''}
         </div>
@@ -1683,6 +1740,16 @@ export default function PurchasesPage() {
                     <span className={`inline-block mt-1 rounded-md px-2 py-0.5 text-xs font-medium ${ST_COLOR[r.status]}`}>
                       {ST_LABEL[r.status] ?? r.status}
                     </span>
+                    {/*
+                      不是安幸的錢要標出來（migration_159）。
+                      這一頁三家的單混在一起（審核流程一樣），
+                      不標的話會計會把愛皮的支出當成安幸的在對帳。
+                    */}
+                    {isOtherBook(r.book) && (
+                      <span className="block mt-1 rounded-md bg-amber-50 text-amber-700 px-2 py-0.5 text-[11px] font-medium">
+                        {bookLabel(r.book)}
+                      </span>
+                    )}
                   </div>
                 </div>
 
@@ -2122,6 +2189,11 @@ export default function PurchasesPage() {
                 {row('狀態', (
                   <span>
                     <span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${ST_COLOR[d.status]}`}>{ST_LABEL[d.status] ?? d.status}</span>
+                    {isOtherBook(d.book) && (
+                      <span className="ml-1.5 inline-block rounded-md bg-amber-50 text-amber-700 px-2 py-0.5 text-xs font-medium">
+                        {bookLabel(d.book)}
+                      </span>
+                    )}
                     <div className="text-xs mt-1">{voteLine(d)}</div>
                     {d.status === 'rejected' && d.reject_reason && <div className="text-xs text-red-500 mt-1">駁回原因:{d.reject_reason}</div>}
                   </span>
@@ -2191,7 +2263,9 @@ export default function PurchasesPage() {
                       </div>
                       <div className="text-xs text-gray-500 mt-0.5">
                         {i.account_code ? codeName[i.account_code] ?? i.account_code : '未分類'}
-                        ・{i.purpose_type === 'office' ? '安幸辦公室' : (i.estate_id ? estateName[i.estate_id] ?? '' : '')}
+                        ・{i.purpose_type === 'office' ? '安幸辦公室'
+                          : i.purpose_type === OTHER_BIZ_PURPOSE ? BOOK_LABEL[toBook(d.book)]
+                            : (i.estate_id ? estateName[i.estate_id] ?? '' : '')}
                         {i.property_id && `／${properties.find((pp) => pp.id === i.property_id)?.name ?? ''}`}
                         {i.note ? `・${i.note}` : ''}
                       </div>
@@ -2329,22 +2403,60 @@ export default function PurchasesPage() {
                           <div className="relative w-full md:w-auto md:flex-1">
                           {!readOnly && <ReqMark />}
                           <select disabled={readOnly}
-                            value={it.purpose_type === 'office' ? 'office' : (it.estate_id ?? '')}
+                            value={it.purpose_type === 'office' ? 'office'
+                              : it.purpose_type === OTHER_BIZ_PURPOSE ? OTHER_BIZ_PURPOSE
+                                : (it.estate_id ?? '')}
                             onChange={(e) => {
                               const v = e.target.value;
+                              /*
+                               * 選了「其他事業體」要連母單的 book 一起設（migration_159）——
+                               * 只設項目的 purpose_type 的話，觸發器會擋下來說
+                               * 「這張單是安幸的帳」，而使用者不知道還要去哪裡改。
+                               *
+                               * 反過來從其他事業體改回物業/辦公室時，book 要清回安幸。
+                               */
+                              if (v === OTHER_BIZ_PURPOSE) {
+                                setEdit({ ...edit, book: edit.book && edit.book !== DEFAULT_BOOK ? edit.book : null });
+                              } else if (edit.book && edit.book !== DEFAULT_BOOK) {
+                                setEdit({ ...edit, book: DEFAULT_BOOK });
+                              }
                               setItems(items.map((x, i) => i === idx
                                 // 換用途時一定要清掉房源 —— 否則會留著上一個物業的房間
                                 ? (v === 'office'
                                     ? { ...x, purpose_type: 'office', estate_id: null, property_id: null }
-                                    : { ...x, purpose_type: 'estate', estate_id: v || null, property_id: null })
+                                    : v === OTHER_BIZ_PURPOSE
+                                      ? { ...x, purpose_type: OTHER_BIZ_PURPOSE, estate_id: null, property_id: null }
+                                      : { ...x, purpose_type: 'estate', estate_id: v || null, property_id: null })
                                 : x));
                             }}
                             className="w-full h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50">
                             <option value="">用途</option>
                             <option value="office">安幸辦公室</option>
                             {estates.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+                            {/*
+                              其他事業體排在最後、跟物業隔開 ——
+                              它跟上面那些不是同一種東西（那些是房子，這個是別家公司）。
+                            */}
+                            <option value={OTHER_BIZ_PURPOSE}>─ 其他事業體 ─</option>
                           </select>
                           </div>
+                          {/*
+                            第二層:哪一家（migration_159）。
+                            只在第一項顯示 —— book 是**整張單**的屬性，
+                            每一項都問一次的話會讓人以為可以各項不同。
+                          */}
+                          {it.purpose_type === OTHER_BIZ_PURPOSE && idx === 0 && (
+                            <div className="relative w-full md:w-auto">
+                              {!readOnly && <ReqMark />}
+                              <select disabled={readOnly} value={edit.book && edit.book !== DEFAULT_BOOK ? edit.book : ''}
+                                onChange={(e) => setEdit({ ...edit, book: (e.target.value || null) as Book | null })}
+                                className={`w-full h-12 md:h-auto bg-white rounded-lg border px-2 md:py-1.5 disabled:bg-gray-50 ${
+                                  edit.book && edit.book !== DEFAULT_BOOK ? 'border-mor-line' : 'border-red-400 bg-red-50'}`}>
+                                <option value="">事業體</option>
+                                {OTHER_BOOKS.map((b) => <option key={b} value={b}>{BOOK_LABEL[b]}</option>)}
+                              </select>
+                            </div>
+                          )}
                           {/* 房源選填。跟支出頁同一套:選了物業才出現 ——
                               沒有物業就篩不出房源清單。 */}
                           {it.purpose_type === 'estate' && it.estate_id && (

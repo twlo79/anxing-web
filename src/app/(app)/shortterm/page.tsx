@@ -18,6 +18,17 @@ import RecurringPanel from '@/components/RecurringPanel';
 import { canEditOrders } from '@/lib/roles';
 // 加費從押金扣、押金退了就鎖住整張單（migration_157）
 import { pickDeposit, orderLockReason, type DepCandidate } from '@/lib/deposit-fee';
+/*
+ * 愛皮／洪鯊的收入（migration_159）。
+ *
+ * 選了「其他事業體收入」之後右邊那欄從「物業」變成「事業體」，
+ * 房源、押金、起訖日整組藏起來 —— 兩家沒有房子、不收押金、
+ * 都是一次性收入。
+ */
+import {
+  OTHER_BIZ_SOURCE, OTHER_BOOKS, BOOK_LABEL, DEFAULT_BOOK,
+  incomeFieldsHidden, incomePartyLabel, checkIncomeBook, type Book,
+} from '@/lib/book';
 import OrderPayments from '@/components/OrderPayments';
 import MoneyLines from '@/components/MoneyLines';
 import { toLines, fromLines, totalTwd, validateLines, type Line } from '@/lib/money-lines';
@@ -41,6 +52,14 @@ type Order = {
   invoice_required?: boolean; invoice_title?: string | null; invoice_tax_id?: string | null;
   /** 一次性收入的會計科目。只有 source='oneoff' 用得到,其餘一律 null。 */
   fee_type?: string | null;
+  /**
+   * 哪一家的錢（migration_159）。預設 anxing。
+   *
+   * ★ 只有 source='other_biz' 時才會是 aipi / hongsha，
+   *   而那兩種**不會出現在這一頁的清單裡**（SRC 排除了）——
+   *   存完會跳到「其他收支帳」。
+   */
+  book?: Book | null;
   /** 一次性收入的項目(洗衣機/垃圾代收費…)。科目底下再細一層。 */
   item_name?: string | null;
   // 【已淘汰】押金收退改由 deposits 表管理(migration_56),這裡不再讀寫
@@ -84,7 +103,8 @@ type MoveState = { grp: string; checkin: string; checkout: string; totalNights: 
  *   而金額看起來完全正常。真的要加之前先想清楚。
  */
 const SRC = ['airbnb', 'agoda', 'private', 'oneoff', 'partner', 'airbnb_cancelled'];
-const MANUAL_SRC = ['private', 'oneoff'];  // 可手動新增的來源
+// 可手動新增的來源。other_biz = 愛皮／洪鯊的收入（migration_159）
+const MANUAL_SRC = ['private', 'oneoff', OTHER_BIZ_SOURCE];
 /*
  * 來源篩選下拉。**不放 oneoff（其他收入）**（2026-08-17 使用者指定）。
  *
@@ -105,10 +125,12 @@ const MANUAL_SRC = ['private', 'oneoff'];  // 可手動新增的來源
  * 互斥的提示仍然留著 —— 網址帶參數、或之後有人把 oneoff 加回來時還擋得住。
  */
 const FILTER_SRC = ['airbnb', 'agoda', 'private'];
-const SRC_LABEL: Record<string, string> = { airbnb: 'Airbnb', agoda: 'Agoda', private: '私下', oneoff: ONEOFF_LABEL, partner: '搭檔收款', airbnb_cancelled: 'Airbnb取消' };
+const SRC_LABEL: Record<string, string> = { airbnb: 'Airbnb', agoda: 'Agoda', private: '私下', oneoff: ONEOFF_LABEL, partner: '搭檔收款', airbnb_cancelled: 'Airbnb取消', [OTHER_BIZ_SOURCE]: '其他事業體收入' };
 const SRC_COLOR: Record<string, string> = {
   airbnb: 'bg-mor-bluelight text-mor-slate', agoda: 'bg-purple-50 text-purple-700',
   private: 'bg-mor-greenlight text-mor-green', oneoff: 'bg-rose-50 text-rose-600', partner: 'bg-teal-50 text-teal-700', airbnb_cancelled: 'bg-red-50 text-red-600',
+  // 其他事業體用中性的琥珀色 —— 跟安幸那幾種分得開，一眼看得出不是本業
+  [OTHER_BIZ_SOURCE]: 'bg-amber-50 text-amber-700',
 };
 const fmt = (n: number | null) => (n == null ? '' : Math.round(n).toLocaleString());
 const PAGE = 50;
@@ -261,6 +283,15 @@ export default function ShortTermPage() {
    *   使用者只會看到畫面沒反應然後說「壞了」
    *   （2026-08-19「主管按確認沒反應」查了一整天，就是擋阻不講話）。
    */
+  /**
+   * 選了「其他事業體收入」時要藏起來的欄位（migration_159）。
+   *
+   * 兩家沒有房子、不收押金、都是一次性收入 —— 規則在 lib/book.ts，
+   * 這裡只是取用。留在畫面上的話會有人誤填，而誤填的資料
+   * （例如愛皮的收入掛著正隆的物業）在報表上看不出來。
+   */
+  const hideFields = useMemo(() => incomeFieldsHidden(edit?.source), [edit?.source]);
+
   const lockReason = useMemo(
     () => orderLockReason(orderDeps.find((d) => d.returned_on) ?? null, role),
     [orderDeps, role]);
@@ -567,6 +598,16 @@ export default function ShortTermPage() {
      *   讓它走到資料庫的話，使用者會看到一句 SQL 例外訊息。
      */
     if (lockReason) return flash(lockReason);
+    /*
+     * 其他事業體收入一定要選是哪一家（migration_159）。
+     *
+     * 資料庫也擋，但那裡回的是一句 SQL 例外 ——
+     * 這裡先擋是為了在按下去之前就講清楚。
+     */
+    {
+      const chk = checkIncomeBook(edit.source, edit.book);
+      if (!chk.ok) return flash(chk.error);
+    }
     setTried(true);
     /*
      * 必填少一個就擋。
@@ -596,6 +637,14 @@ export default function ShortTermPage() {
       fee_type: edit.source === 'oneoff' ? (edit.fee_type || null) : null,
       item_name: edit.source === 'oneoff' ? (edit.item_name?.trim() || null) : null,
       fx_revenue: rev.fx, fx_deposit: dep.fx,
+      /*
+       * 哪一家的錢（migration_159）。
+       *
+       * ★ 不是「其他事業體收入」就一律寫回 anxing ——
+       *   不寫的話，把一筆愛皮的單改成「私下」之後 book 還留在 aipi，
+       *   而那筆錢從此在兩張報表上都找不到合理的解釋。
+       */
+      book: edit.source === OTHER_BIZ_SOURCE ? (edit.book ?? null) : DEFAULT_BOOK,
       // 不需開發票就把抬頭與統編清掉 —— 留著的話取消勾選之後那些值還在資料庫裡,
       // 畫面上看不到卻會被 Excel 匯出帶走。
       invoice_required: !!edit.invoice_required,
@@ -634,7 +683,18 @@ export default function ShortTermPage() {
       if (f.id) await supabase.from('orders').update(row).eq('id', f.id);
       else await supabase.from('orders').insert({ ...row, order_key: `FEE_${String(orderId).slice(0, 8)}_${Date.now()}${Math.floor(Math.random() * 1000)}`, imported_via: 'manual' });
     }
-    flash('已儲存'); setEdit(null); setFees([]); setTried(false); load();
+    /*
+     * ★★ 其他事業體的收入**不會出現在這一頁的清單裡**（SRC 排除了）。
+     *
+     * 只說「已儲存」的話，使用者存完看不到那一筆，
+     * 第一個反應一定是「沒存進去」—— 而它其實好好地在另一頁。
+     * 所以訊息要講出它去了哪裡。
+     */
+    const savedBook = edit.source === OTHER_BIZ_SOURCE ? edit.book : null;
+    flash(savedBook
+      ? `已存入${BOOK_LABEL[savedBook]}的帳 —— 在「其他收支帳」查看`
+      : '已儲存');
+    setEdit(null); setFees([]); setTried(false); load();
   }
   /**
    * 刪除訂單。
@@ -1157,9 +1217,46 @@ export default function ShortTermPage() {
             )}
             <div className="px-6 py-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
               <label className="flex flex-col gap-1"><span className="flex items-center">來源<Req /></span>
-                <select value={edit.source} onChange={(e) => setEdit({ ...edit, source: e.target.value })} className={`rounded-lg border px-2 py-1.5 ${err('來源') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}>{Array.from(new Set([...(edit.id ? [edit.source] : []), ...MANUAL_SRC])).map((s) => <option key={s} value={s}>{SRC_LABEL[s] ?? s}</option>)}</select></label>
-              <label className="flex flex-col gap-1"><span className="flex items-center">物業<Req /></span>
-                <select value={edit.estate_id ?? ''} onChange={(e) => setEdit({ ...edit, estate_id: e.target.value || null, property_raw: null, property_id: null })} className={`rounded-lg border px-2 py-1.5 ${err('物業') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}><option value="">—</option>{estates.map((es) => <option key={es.id} value={es.id}>{es.name}{es.active ? '' : '(停用)'}</option>)}</select></label>
+                <select value={edit.source} onChange={(e) => {
+                  const src = e.target.value;
+                  /*
+                   * 換來源時把不適用的欄位一起清掉。
+                   *
+                   * 不清的話會留下「愛皮的收入身上掛著正隆的物業 id」這種資料 ——
+                   * 畫面上看不出來（那一欄已經藏起來了），
+                   * 但按物業分組的報表會把它算進正隆。
+                   */
+                  const other = src === OTHER_BIZ_SOURCE;
+                  setEdit({
+                    ...edit, source: src,
+                    ...(other
+                      ? { estate_id: null, property_raw: null, property_id: null, deposit: 0, fx_deposit: [] }
+                      : { book: DEFAULT_BOOK }),
+                  });
+                }} className={`rounded-lg border px-2 py-1.5 ${err('來源') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}>{Array.from(new Set([...(edit.id ? [edit.source] : []), ...MANUAL_SRC])).map((s) => <option key={s} value={s}>{SRC_LABEL[s] ?? s}</option>)}</select></label>
+              {/*
+                右邊這一欄有兩個身分（migration_159）:
+                  一般來源      「物業」—— 選正隆、時兆…
+                  其他事業體    「事業體」—— 選洪鯊、愛皮
+
+                ★ 為什麼共用同一格而不是多一個欄位:
+                  兩者是互斥的（一筆收入不可能既屬於某棟樓又屬於愛皮），
+                  分成兩格的話畫面上永遠有一格是空的、而且沒有人知道該填哪一個。
+              */}
+              <label className="flex flex-col gap-1">
+                <span className="flex items-center">{incomePartyLabel(edit.source)}<Req /></span>
+                {edit.source === OTHER_BIZ_SOURCE ? (
+                  <select value={edit.book ?? ''}
+                    onChange={(e) => setEdit({ ...edit, book: (e.target.value || null) as Book | null })}
+                    className={`rounded-lg border px-2 py-1.5 ${
+                      !edit.book || edit.book === DEFAULT_BOOK ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}>
+                    <option value="">—</option>
+                    {OTHER_BOOKS.map((b) => <option key={b} value={b}>{BOOK_LABEL[b]}</option>)}
+                  </select>
+                ) : (
+                  <select value={edit.estate_id ?? ''} onChange={(e) => setEdit({ ...edit, estate_id: e.target.value || null, property_raw: null, property_id: null })} className={`rounded-lg border px-2 py-1.5 ${err('物業') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}><option value="">—</option>{estates.map((es) => <option key={es.id} value={es.id}>{es.name}{es.active ? '' : '(停用)'}</option>)}</select>
+                )}
+              </label>
               {/*
                 房源非必填。
 
@@ -1175,6 +1272,7 @@ export default function ShortTermPage() {
                 所以空的那個選項寫「整棟」而不是「—」—— 寫「—」的話,
                 看的人分不出是刻意留白還是漏填,報表上也解讀不了。
               */}
+              {!hideFields.property && (
               <label className="flex flex-col gap-1">
                 房源<span className="text-xs text-gray-400 ml-1">(非必填)</span>
                 <select value={edit.property_raw ?? ''}
@@ -1197,6 +1295,7 @@ export default function ShortTermPage() {
                     ))}
                 </select>
               </label>
+              )}
               {/*
                 【為什麼從「客戶」改叫「房客」】
                 表格欄位叫房客、篩選叫「關鍵字(房客/房源)」、Excel 表頭也叫房客 ——
@@ -1301,7 +1400,12 @@ export default function ShortTermPage() {
                   押金的收退日期與入款帳戶請到「押金管理」頁維護,填了金額就會自動出現在那裡。
                 </div>
               )}
-              {edit.source !== 'oneoff' && (
+              {/*
+                ★ 其他事業體也不顯示押金（migration_159）。
+                  兩家不收押金 —— 留著會有人誤填，而誤填的押金會跑進
+                  押金管理頁變成一筆「要退給誰」的錢，而根本沒有人收過。
+              */}
+              {edit.source !== 'oneoff' && !hideFields.deposit && (
                 <MoneyLines mode="deposit" label="押金" lines={depLines} onChange={setDepLines}
                   /*
                     新單還沒有 id，押金也還沒產生，這時給連結會連到空的清單，
