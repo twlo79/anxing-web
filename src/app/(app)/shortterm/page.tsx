@@ -1170,9 +1170,26 @@ export default function ShortTermPage() {
                   <button onClick={() => { setDetail(null); openMove(d); }}
                     className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-green text-mor-green text-sm font-medium hover:bg-mor-greenlight">移房</button>
                 )}
-                {/* 帶訂單 id 而不是押金 id —— 一張訂單可能有台幣與多種外幣好幾筆押金 */}
-                <a href={`/deposits?order=${d.id}`}
-                  className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-blue text-mor-blue text-sm font-medium hover:bg-mor-bluelight flex items-center justify-center">押金</a>
+                {/*
+                  帶訂單 id 而不是押金 id —— 一張訂單可能有台幣與多種外幣好幾筆押金。
+
+                  ★ 平台代收的訂單**鎖住這顆**（2026-08-22 使用者指定）。
+                    Airbnb / Agoda 的錢是平台收的，押金不經過我們手上 ——
+                    點進去只會看到一個空的押金清單。
+
+                    不拿掉而是鎖住:拿掉的話使用者會問「押金那顆去哪了」，
+                    而鎖住 ＋ 寫出原因就回答得了。
+                */}
+                {hasDeposit(d.source) ? (
+                  <a href={`/deposits?order=${d.id}`}
+                    className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-blue text-mor-blue text-sm font-medium hover:bg-mor-bluelight flex items-center justify-center">押金</a>
+                ) : (
+                  <span title="平台代收的訂單沒有押金 —— 錢是平台收的，不經過我們的帳戶"
+                    className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-line bg-gray-50 text-gray-400 text-sm flex flex-col items-center justify-center cursor-not-allowed leading-tight">
+                    <span>押金</span>
+                    <span className="text-[10px]">平台代收</span>
+                  </span>
+                )}
                 <button onClick={() => { del(d); setDetail(null); }}
                   className="flex-1 min-w-[6rem] h-11 rounded-lg border border-red-300 text-red-500 text-sm font-medium hover:bg-red-50">刪除</button>
               </div>
