@@ -76,6 +76,16 @@ export default function OrderPayments({
   const [draftMethod, setDraftMethod] = useState('transfer');
   const [draftAcct, setDraftAcct] = useState('');
   const [draftNote, setDraftNote] = useState('');
+  /**
+   * 匯款手續費（migration_164）。
+   *
+   * ★ 用一個勾選而不是「金額填 0 就當沒有」——
+   *   0 與「沒有這回事」是兩件事，而勾選讓使用者明確表態。
+   *   預設不勾:大部分收款沒有手續費，預設勾起來會有人忘記取消。
+   */
+  const [feeOn, setFeeOn] = useState(false);
+  const [draftFee, setDraftFee] = useState('');
+  const [draftFeeDate, setDraftFeeDate] = useState('');
   const receiptsRef = useRef<ReceiptsHandle>(null);
 
   /*
@@ -98,7 +108,7 @@ export default function OrderPayments({
   const load = useCallback(async () => {
     const [{ data: ps }, { data: od }] = await Promise.all([
       supabase.from('order_payments')
-        .select('id, paid_on, amount, method, account, note')
+        .select('id, paid_on, amount, method, account, note, fee_amount')
         .eq('order_id', order.id).order('paid_on').order('created_at'),
       supabase.from('orders').select('paid_amount').eq('id', order.id).single(),
     ]);
@@ -132,9 +142,20 @@ export default function OrderPayments({
     // 非匯款一律不帶帳號 —— 資料庫的 op_account_chk 也會擋,
     // 但約束擋下來的訊息是約束名稱,沒人看得懂,所以前端先對齊。
     const { method, account } = normalizeMethod(draftMethod, draftAcct);
+    /*
+     * 匯款手續費（migration_164）。
+     *
+     * ★ 非匯款一律歸零 —— 不歸零的話，把收款方式從匯款改成現金之後
+     *   那個金額還留在資料庫裡，而觸發器看到 method 不是 transfer
+     *   會把郵電費支出刪掉。於是「有金額但沒有支出」，
+     *   下一個人查半天不知道那個數字是什麼。
+     */
+    const fee = method === 'transfer' && feeOn ? Math.round(Number(draftFee) || 0) : 0;
     const { data, error } = await supabase.from('order_payments').insert({
       order_id: order.id, paid_on: draftOn, amount: Math.round(amt),
       method, account, note: draftNote.trim() || null,
+      fee_amount: fee,
+      fee_on: fee > 0 ? (draftFeeDate || draftOn) : null,
       created_by: user?.id ?? null,
     }).select('id').single();
 
@@ -146,6 +167,8 @@ export default function OrderPayments({
     if (upErr) flash('收款已存,但照片上傳失敗:' + upErr);
 
     setDraftNote('');
+    // 手續費的欄位也要清 —— 不清的話下一筆會帶著上一筆的金額
+    setFeeOn(false); setDraftFee(''); setDraftFeeDate('');
     await load();
     onChanged();
   }
@@ -341,6 +364,16 @@ export default function OrderPayments({
                             <div className="text-[11px] text-gray-500 truncate">
                               {r.paid_on}・{methodText(r.method, r.account, acctName)}
                               {r.note ? `・${r.note}` : ''}
+                              {/*
+                                手續費要印在明細上（migration_164）。
+                                只印金額的話，對銀行帳時會發現「這筆記 10,000
+                                但只進 9,970」而不知道差額是什麼。
+                              */}
+                              {Number(r.fee_amount) > 0 && (
+                                <span className="text-amber-700">
+                                  ・手續費 {fmt(r.fee_amount)}（實收 {fmt(Number(r.amount) - Number(r.fee_amount))}）
+                                </span>
+                              )}
                             </div>
                           </div>
                           {canEdit && (
@@ -401,6 +434,64 @@ export default function OrderPayments({
                       </label>
                     )}
                   </div>
+
+                  {/*
+                    ══════════ 匯款手續費（migration_164）══════════
+
+                    房客匯 10,000、銀行扣 30，我們實收 9,970。
+                    那 30 元是我方的成本 —— 帳上要有一筆郵電費支出，
+                    不然「營收 10,000、銀行只進 9,970」永遠對不起來。
+
+                    ★ 金額欄填的是**房客付的**（使用者拍板）。
+                      會計上比較對，但填單的人看銀行入帳是 9,970 ——
+                      所以下面即時算出「實際進帳」給他核對。
+                      不印那一行的話，他會懷疑自己填錯。
+
+                    ★ 只有匯款才出現。現金當面收、信用卡走收單行，
+                      那些沒有匯費可言。
+                  */}
+                  {draftMethod === 'transfer' && (
+                    <div className="rounded-lg border border-mor-line bg-mor-sand/20 p-2.5 space-y-2">
+                      <label className="flex items-center gap-2 text-sm">
+                        <input type="checkbox" checked={feeOn}
+                          onChange={(e) => {
+                            setFeeOn(e.target.checked);
+                            if (!e.target.checked) { setDraftFee(''); setDraftFeeDate(''); }
+                          }} />
+                        銀行扣了手續費
+                      </label>
+                      {feeOn && (
+                        <>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <label className="flex flex-col gap-1">
+                              <span className="text-[11px] text-gray-400">手續費金額</span>
+                              <input type="number" inputMode="numeric" min="0" placeholder="例 30"
+                                value={draftFee} onChange={(e) => setDraftFee(e.target.value)}
+                                className={CTRL + ' text-right'} />
+                            </label>
+                            <label className="flex flex-col gap-1">
+                              <span className="text-[11px] text-gray-400">
+                                扣款日<span className="ml-1">（不填＝收款日）</span>
+                              </span>
+                              <input type="date" value={draftFeeDate}
+                                onChange={(e) => setDraftFeeDate(e.target.value)} className={CTRL} />
+                            </label>
+                          </div>
+                          {/*
+                            ★ 即時算出實際進帳。填單的人手上是銀行對帳單，
+                              上面的數字是這個 —— 對得起來他才敢按下去。
+                          */}
+                          <div className="text-[11px] text-gray-600 flex justify-between">
+                            <span>房客付 {fmt(Number(draftAmt) || 0)} − 手續費 {fmt(Number(draftFee) || 0)}</span>
+                            <span className="font-medium">實際進帳 {fmt((Number(draftAmt) || 0) - (Number(draftFee) || 0))}</span>
+                          </div>
+                          <div className="text-[11px] text-gray-400">
+                            會自動產生一筆「郵電費」支出。改成現金收款或金額歸零時那筆會自己消失。
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
 
                   <label className="flex flex-col gap-1">
                     <span className="text-[11px] text-gray-400">備註（選填）</span>

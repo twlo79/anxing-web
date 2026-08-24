@@ -27,7 +27,7 @@ import { pickDeposit, orderLockReason, type DepCandidate } from '@/lib/deposit-f
  */
 import {
   OTHER_BIZ_SOURCE, OTHER_BOOKS, BOOK_LABEL, DEFAULT_BOOK,
-  incomeFieldsHidden, incomePartyLabel, checkIncomeBook, type Book,
+  incomeFieldsHidden, incomePartyLabel, checkIncomeBook, hasDeposit, type Book,
 } from '@/lib/book';
 import OrderPayments from '@/components/OrderPayments';
 import MoneyLines from '@/components/MoneyLines';
@@ -1405,8 +1405,25 @@ export default function ShortTermPage() {
                   兩家不收押金 —— 留著會有人誤填，而誤填的押金會跑進
                   押金管理頁變成一筆「要退給誰」的錢，而根本沒有人收過。
               */}
+              {/*
+                ★ 平台代收的押金**鎖住，不拿掉**（2026-08-22 使用者指定）。
+                
+                Airbnb / Agoda 的錢是平台收的，押金不經過我們手上 ——
+                所以不該填。但「藏起來」與「鎖住」的差別很重要:
+                
+                  藏起來   使用者不知道有這個欄位，也不知道為什麼沒有
+                  鎖住     看得到、改不動，旁邊寫著為什麼
+                
+                後者才回答得了「為什麼我不能填押金」。
+                而且移房之類的情況真的可能要動它 —— 那時候
+                至少有個東西可以指著問，不是憑空消失。
+                
+                其他事業體照舊整個藏掉（hideFields.deposit）——
+                那兩家連「押金」這個概念都沒有。
+              */}
               {edit.source !== 'oneoff' && !hideFields.deposit && (
                 <MoneyLines mode="deposit" label="押金" lines={depLines} onChange={setDepLines}
+                  disabled={!hasDeposit(edit.source)}
                   /*
                     新單還沒有 id，押金也還沒產生，這時給連結會連到空的清單，
                     所以只有已存檔的訂單才顯示。
@@ -1415,7 +1432,9 @@ export default function ShortTermPage() {
                     <a href={`/deposits?order=${edit.id}`} target="_blank" rel="noreferrer"
                       className="text-xs text-mor-blue underline hover:text-mor-slate">收退狀態 →</a>
                   ) : null}
-                  hint="押金原幣退還,不換匯,所以沒有匯率欄。填了金額就會自動出現在押金管理頁,收退日期與帳戶在那裡維護。" />
+                  hint={hasDeposit(edit.source)
+                    ? '押金原幣退還,不換匯,所以沒有匯率欄。填了金額就會自動出現在押金管理頁,收退日期與帳戶在那裡維護。'
+                    : '這是平台代收的訂單 —— 押金由平台收，不經過我們的帳戶，所以這裡鎖住。'} />
               )}
               <label className="flex flex-col gap-1">收款方式<select value={edit.account ?? ''} onChange={(e) => setEdit({ ...edit, account: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option><option value="現金">現金</option>{payAccounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}<option value="加密貨幣">加密貨幣</option></select></label>
               {/*

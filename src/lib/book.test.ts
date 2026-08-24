@@ -4,7 +4,7 @@ import {
   BOOKS, OTHER_BOOKS, DEFAULT_BOOK, BOOK_LABEL, toBook, isOtherBook, bookLabel,
   OTHER_BIZ_SOURCE, OTHER_BIZ_PURPOSE,
   incomeFieldsHidden, incomePartyLabel,
-  checkIncomeBook, misbookedItems, allowedPurposes, withBook,
+  checkIncomeBook, misbookedItems, allowedPurposes, withBook, hasDeposit,
 } from './book.ts';
 
 /**
@@ -154,5 +154,27 @@ describe('查詢加帳本條件', () => {
     const q = { eq(c: string, v: string) { calls.push([c, v]); return this; } };
     withBook(q, 'hongsha');
     assert.deepEqual(calls, [['book', 'hongsha']]);
+  });
+});
+
+describe('押金這一欄該不該顯示', () => {
+  test('★★ 平台代收沒有押金 —— 錢是平台收的，不經過我們手上', () => {
+    for (const s of ['airbnb', 'agoda', 'airbnb_cancelled']) {
+      assert.equal(hasDeposit(s), false, s);
+    }
+  });
+
+  test('★ 其他事業體也沒有', () => {
+    assert.equal(hasDeposit(OTHER_BIZ_SOURCE), false);
+  });
+
+  test('私下與一次性收入有', () => {
+    assert.equal(hasDeposit('private'), true);
+    assert.equal(hasDeposit('oneoff'), true);
+  });
+
+  test('★ 認不出來的來源預設「有」—— 藏掉一個該填的欄位比多一行空白糟', () => {
+    assert.equal(hasDeposit(null), true);
+    assert.equal(hasDeposit('未來的新來源'), true);
   });
 });

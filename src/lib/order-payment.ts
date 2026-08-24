@@ -150,6 +150,17 @@ export type PaymentRow = {
   /** 安幸收款帳號。只有 method='transfer' 會有值（migration_85 的 op_account_chk）。 */
   account: string | null;
   note: string | null;
+  /**
+   * 銀行從這筆匯款裡扣掉的手續費（migration_164）。
+   *
+   * ★ `amount` 填的是**房客付的**，所以實際進帳 = amount − fee_amount。
+   *   填實際進帳的話，訂單會永遠顯示「尚欠 30」，
+   *   然後有人去追一個已經付清的房客。
+   *
+   * ★ 收款狀態與合計**一律看 amount**，不扣手續費 ——
+   *   手續費是我方的成本（郵電費支出），不是房客欠的錢。
+   */
+  fee_amount?: number | null;
 };
 
 /** 收款合計。畫面上要跟 orders.paid_amount 對得起來,所以取整方式必須一致。 */

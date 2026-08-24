@@ -91,6 +91,23 @@ export function incomeFieldsHidden(source: string | null | undefined) {
 export const incomePartyLabel = (source: string | null | undefined) =>
   (source === OTHER_BIZ_SOURCE ? '事業體' : '物業');
 
+/**
+ * 押金這一欄該不該顯示（2026-08-22 使用者指定）。
+ *
+ * 兩種情況沒有押金:
+ *
+ *   平台代收   Airbnb / Agoda 的錢是平台收的，押金不經過我們手上
+ *   其他事業體 投資公司與旅行社不收押金
+ *
+ * ★ 不顯示而不是顯示「—」。「—」那一行**永遠是空的**，
+ *   而每一行永遠是空的欄位都在教使用者「這一頁有些東西不用看」。
+ */
+const PLATFORM_SOURCES = ['airbnb', 'agoda', 'airbnb_cancelled'] as const;
+
+export const hasDeposit = (source: string | null | undefined) =>
+  !(PLATFORM_SOURCES as readonly string[]).includes(source ?? '')
+  && source !== OTHER_BIZ_SOURCE;
+
 /* ══════════════ 支出側 ══════════════ */
 
 /** 請款項目的用途多一個值。`estate_id` / `property_id` 一律 null。 */
