@@ -497,6 +497,13 @@ export default function PurchasesPage() {
     freePass: boolean;
     /** 錢已經出去了。已核可那一段裡混著待付與已付,不標的話分不出來。 */
     paid: boolean;
+    /**
+     * 哪一本帳（migration_159）。押金一律安幸。
+     *
+     * ★ 這份清單三家的單混在一起（審核流程一樣），
+     *   **不標的話會計會把愛皮的支出當成安幸的在對帳**。
+     */
+    book: Book;
     pr?: Req; dep?: Dep;
   };
 
@@ -506,7 +513,7 @@ export default function PurchasesPage() {
     for (const r of pendRows) {
       const its = r.purchase_request_items ?? [];
       out.push({
-        kind: 'pr', id: r.id,
+        kind: 'pr', id: r.id, book: toBook(r.book),
         stage: r.status === 'approved' ? 'approved' : 'pending',
         who: personName[r.requester_id] ?? '—',
         what: its.map((i) => i.item_name).filter(Boolean).join('、') || '—',
@@ -532,7 +539,8 @@ export default function PurchasesPage() {
     // deps 撈的就是未結案的(pending + approved 且尚未匯出),不用再篩
     for (const d of deps) {
       out.push({
-        kind: 'dep', id: d.id,
+        // 押金一律安幸 —— 兩家沒有押金（使用者確認）
+        kind: 'dep', id: d.id, book: DEFAULT_BOOK,
         stage: d.refund_status === 'approved' ? 'approved' : 'pending',
         // 送審的人,跟請款單的「申請人」是同一個意思。
         // 房客改放到 what —— 他是錢要退去的人,不是請款者
@@ -1537,13 +1545,24 @@ export default function PurchasesPage() {
                       </td>
                       <td className="px-3 py-2.5 whitespace-nowrap font-medium">{p.who}</td>
                       <td className="px-3 py-2.5">
-                        <div className="max-w-md truncate">{p.what}</div>
+                        <div className="max-w-md truncate flex items-center gap-1.5">
+                          {isOtherBook(p.book) && (
+                            <span className="shrink-0 rounded bg-amber-50 text-amber-700 px-1.5 py-0.5 text-[11px] font-medium">
+                              {bookLabel(p.book)}
+                            </span>
+                          )}
+                          <span className="truncate">{p.what}</span>
+                        </div>
                         <div className="text-[11px] text-gray-400">{p.meta}</div>
                       </td>
                       <td className="px-3 py-2.5 text-right font-medium whitespace-nowrap">${fmt(p.amount)}</td>
                       <td className="px-3 py-2.5 text-[11px] whitespace-nowrap">
                         {p.freePass ? <span className="text-gray-400">未達門檻免核</span> : (<>
-                          <div className={p.mgrAt ? 'text-mor-green' : 'text-gray-400'}>{p.mgrAt ? '✓' : '○'} 主管</div>
+                          {/* 愛皮洪鯊免主管票（migration_160）—— 要寫出來,
+                              不然主管會去追一張根本不用他簽的單 */}
+                          {isOtherBook(p.book)
+                            ? <div className="text-gray-400">— 主管（免核）</div>
+                            : <div className={p.mgrAt ? 'text-mor-green' : 'text-gray-400'}>{p.mgrAt ? '✓' : '○'} 主管</div>}
                           <div className={p.admAt ? 'text-mor-green' : 'text-gray-400'}>{p.admAt ? '✓' : '○'} 總經理</div>
                         </>)}
                       </td>
