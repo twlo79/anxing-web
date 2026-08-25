@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   type RevRow, sum, classOf, skeleton, roomLines, reconcile,
   inEstateBlock, isOffice, isCompany, estateOf, ROOM_NONE, itemLabel, oneoffItems, ONEOFF_LABEL,
+  isOneoffSource, rentOnly,
 } from './revenue-report.ts';
 
 /**
@@ -179,4 +180,42 @@ describe('房源分類', () => {
     assert.deepEqual(lines, [{ room: ROOM_NONE, cls: '短租' }]);
     assert.equal(ROOM_NONE, '—', '表格裡空值一律破折號');
   });
+});
+
+/*
+ * ── 去除一次性收入（2026-08-25）──────────────────────
+ */
+test('isOneoffSource：oneoff 與 airbnb_cancelled 都算', () => {
+  assert.equal(isOneoffSource('oneoff'), true);
+  assert.equal(isOneoffSource('airbnb_cancelled'), true);
+});
+
+test('★ other 不算 —— 那是會計科目，不是來源', () => {
+  assert.equal(isOneoffSource('other'), false);
+});
+
+test('房租那幾種都不算', () => {
+  for (const s of ['longterm', 'airbnb', 'agoda', 'private', 'office', 'company']) {
+    assert.equal(isOneoffSource(s), false, s);
+  }
+});
+
+test('null / undefined / 空字串不算（不要把認不出來的當成一次性扣掉）', () => {
+  assert.equal(isOneoffSource(null), false);
+  assert.equal(isOneoffSource(undefined), false);
+  assert.equal(isOneoffSource(''), false);
+});
+
+test('rentOnly：關閉時原封不動', () => {
+  const rows = [{ source: 'oneoff' }, { source: 'longterm' }];
+  assert.equal(rentOnly(rows, false), rows);
+});
+
+test('rentOnly：打開時濾掉一次性', () => {
+  const rows = [{ source: 'oneoff' }, { source: 'longterm' }, { source: 'airbnb_cancelled' }];
+  assert.deepEqual(rentOnly(rows, true), [{ source: 'longterm' }]);
+});
+
+test('rentOnly：全部都是一次性時回空陣列，不是 undefined', () => {
+  assert.deepEqual(rentOnly([{ source: 'oneoff' }], true), []);
 });

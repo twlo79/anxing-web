@@ -15,7 +15,7 @@ import { ymOf, ymShow, ymMonth, monthsAgo, todayStr, fmtRange } from '@/lib/peri
 // Supabase 一次只回 1000 列且不報錯 —— 這一頁全部是加總,一定要撈完
 import { fetchAll } from '@/lib/fetch-all';
 import { FilterBar, FilterSelect, FilterDateRange, FilterClear } from '@/lib/filters';
-import { srcLabel } from '@/lib/revenue-report';
+import { srcLabel, rentOnly } from '@/lib/revenue-report';
 import {
   type PeriodMode, yearRange, monthRange, prevPeriod, lastYearPeriod,
   yoySameAsPrev, growth, partialMonth, sameMonthRange,
@@ -169,6 +169,17 @@ export default function DashboardPage() {
   });
   /** 比較用的兩組數字。環比=上一期,同比=去年同期。 */
   const [cmpRaw, setCmpRaw] = useState<{ prev: CmpRaw; yoy: CmpRaw } | null>(null);
+  /*
+   * 「只看房租」（2026-08-25 使用者指定）。
+   *
+   * ★ 只影響**期間比較**這一張表 —— 勾選框就在那張表上，
+   *   跑去改整頁其他區塊的話，使用者會看到自己沒動過的數字也變了。
+   *
+   * ★ 不寫進網址也不記憶:這是「我現在想換個角度看」，不是設定。
+   *   記住的話下次打開會看到一個少了一次性收入的營收，
+   *   而勾選框在畫面下方，第一眼看不到。
+   */
+  const [rentOnlyF, setRentOnlyF] = useState(false);
   /** 載入編號。比較期是背景補的，回來時要確認自己還是最新那一次 */
   const runRef = useRef(0);
 
@@ -401,7 +412,13 @@ export default function DashboardPage() {
   const cmp = useMemo(() => {
     if (!cmpRaw) return null;
     const roll = (c: CmpRaw): Cmp => {
-      const rr = c.rev.filter((x) => matchScope(x.estate_id, x.property_id));
+      /*
+       * ★★ 「只看房租」要**同時**套在本期與比較期。
+       *
+       *   只濾本期的話，比較的是「本期房租」對「上期房租＋一次性」——
+       *   分母憑空變大，成長率一律偏低，而畫面上完全看不出來。
+       */
+      const rr = rentOnly(c.rev.filter((x) => matchScope(x.estate_id, x.property_id)), rentOnlyF);
       const bySource: Record<string, number> = {};
       const byEstate: Record<string, number> = {};
       /*
@@ -439,7 +456,7 @@ export default function DashboardPage() {
       };
     };
     return { prev: roll(cmpRaw.prev), yoy: roll(cmpRaw.yoy) };
-  }, [cmpRaw, matchScope, estKey]);
+  }, [cmpRaw, matchScope, estKey, rentOnlyF]);
 
   const fRevs = useMemo(() => revs.filter((r) => matchScope(r.estate_id, r.property_id)), [revs, matchScope]);
   const fExps = useMemo(() => exps.filter((e) => matchScope(e.estate_id, e.property_id)), [exps, matchScope]);
@@ -532,14 +549,23 @@ export default function DashboardPage() {
     });
     return Object.fromEntries(Object.entries(seen).map(([k, v]) => [k, v.size]));
   };
-  const cntBySource = useMemo(() => groupCount(fRevs, (r) => r.source), [fRevs]);
+  /*
+   * 期間比較那張表專用的本期資料。★ 跟 `fRevs` 分開 ——
+   * 其他區塊（圖表、明細、待付款）不該受這個勾選框影響。
+   */
+  const cRevs = useMemo(() => rentOnly(fRevs, rentOnlyF), [fRevs, rentOnlyF]);
+  const cTotalRev = useMemo(
+    () => cRevs.reduce((s, r) => s + Number(r.month_amount || 0), 0), [cRevs]);
+  const cNet = cTotalRev - totalExp;
+
+  const cntBySource = useMemo(() => groupCount(cRevs, (r) => r.source), [cRevs]);
   const cntByEstate = useMemo(
-    () => groupCount(fRevs, (r) => estKey(r.estate_id, r.property_id)), [fRevs, estKey]);
+    () => groupCount(cRevs, (r) => estKey(r.estate_id, r.property_id)), [cRevs, estKey]);
 
   const revBySource = useMemo(
-    () => groupSum(fRevs, (r) => r.source, (r) => Number(r.month_amount || 0)), [fRevs]);
+    () => groupSum(cRevs, (r) => r.source, (r) => Number(r.month_amount || 0)), [cRevs]);
   const revByEstate = useMemo(
-    () => groupSum(fRevs, (r) => estKey(r.estate_id, r.property_id), (r) => Number(r.month_amount || 0)), [fRevs, estKey]);
+    () => groupSum(cRevs, (r) => estKey(r.estate_id, r.property_id), (r) => Number(r.month_amount || 0)), [cRevs, estKey]);
 
   /**
    * 期間比較用的「依物業」。
@@ -804,12 +830,46 @@ export default function DashboardPage() {
 
         return (
           <div className="rounded-xl glass p-4 md:p-5 mb-4">
-            <div className="flex flex-wrap items-baseline justify-between gap-2 mb-1">
-              <h2 className="font-bold">期間比較</h2>
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+              <div className="flex flex-wrap items-center gap-3">
+                <h2 className="font-bold">期間比較</h2>
+                {/*
+                  ★ 「只看房租」（2026-08-25 使用者指定）。
+
+                    一次性收入是清潔費、修繕費、取消費那一類 —— 金額跳很大，
+                    而且**跟這個月租得好不好無關**:
+
+                      8 月營收掉 15%，其中一次性從 110 萬掉到 4 萬
+                      → 房租根本沒動,是上個月有一筆大修繕費入帳
+
+                    混在一起時這兩件事分不出來，而每個數字單看都正確。
+
+                  ★ 放在標題旁邊,不放在最上面的篩選列 ——
+                    它**只影響這一張表**。放在共用的篩選列會讓人以為
+                    整頁的數字都跟著變。
+                */}
+                <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer select-none">
+                  <input type="checkbox" checked={rentOnlyF}
+                    onChange={(e) => setRentOnlyF(e.target.checked)} />
+                  只看房租
+                </label>
+              </div>
               <span className="text-xs text-gray-400">
                 {sameYoY ? '年度模式下環比與同比是同一段,只顯示一組' : '環比看動能,同比避開季節性'}
               </span>
             </div>
+            {/*
+              ★ 勾選後要**明講扣掉了什麼**。
+                只是數字變小的話，過幾分鐘回頭看會忘記自己勾過 ——
+                然後拿一個扣掉一次性收入的營收去對帳。
+            */}
+            {rentOnlyF && (
+              <div className="rounded-lg bg-mor-bluelight text-mor-slate px-3 py-2 text-xs mb-2">
+                已排除<b>一次性收入</b>（清潔費、修繕費、取消費、垃圾代收…）。
+                下面的營收、淨額、依來源、依物業都是<b>只算房租</b>的版本，
+                本期與比較期都扣。<b>支出沒有扣</b> —— 那一欄本來就不含一次性收入。
+              </div>
+            )}
             {/*
               本月還沒走完的警語。認列表是按月存的,沒有日粒度,
               所以沒辦法真的算「8/1~8/6 的營收」來對比 —— 只能把這件事講出來。
@@ -840,9 +900,9 @@ export default function DashboardPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {row('營收', totalRev, cmp.prev.rev, cmp.yoy.rev, money)}
+                  {row(rentOnlyF ? '房租營收' : '營收', cTotalRev, cmp.prev.rev, cmp.yoy.rev, money)}
                   {row('支出', totalExp, cmp.prev.exp, cmp.yoy.exp, money, false)}
-                  {row('淨額', net, cmp.prev.rev - cmp.prev.exp, cmp.yoy.rev - cmp.yoy.exp, money)}
+                  {row('淨額', cNet, cmp.prev.rev - cmp.prev.exp, cmp.yoy.rev - cmp.yoy.exp, money)}
                   {row('訂單數', fOrds.length, cmp.prev.ordN, cmp.yoy.ordN, cnt)}
                   <tr><td colSpan={sameYoY ? 4 : 6} className="px-3 pt-3 pb-1 text-xs font-semibold text-gray-500">依來源</td></tr>
                   {/* 總營收成長時,要看得出是哪一塊在撐 —— 可能長租在漲而短租在退 */}

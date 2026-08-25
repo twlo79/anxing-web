@@ -185,3 +185,41 @@ export function reconcile(rows: RevRow[]): { total: number; parts: number; diff:
   const parts = sum(rows, inEstateBlock) + sum(rows, isOffice) + sum(rows, isCompany);
   return total === parts ? null : { total, parts, diff: total - parts };
 }
+
+/**
+ * 「一次性收入」有哪些來源（2026-08-25 使用者:「勾選 去除一次性收入 之後就是 比房租」）。
+ *
+ * ============================================================
+ * 【為什麼要能去掉它】
+ *
+ * 一次性收入是清潔費、修繕費、取消費那一類 —— 金額跳動很大，
+ * 而且**跟這個月租得好不好無關**。
+ *
+ *   8 月營收掉 15%，其中一次性收入從 110 萬掉到 4 萬
+ *   → 房租其實沒動，是上個月有一筆大修繕費入帳
+ *
+ * 混在一起的時候這兩件事分不出來，而**每個數字單看都正確**。
+ * 去掉之後那張表問的才是「房租」。
+ *
+ * ============================================================
+ * 【為什麼是一份清單而不是 `s === 'oneoff'`】
+ *
+ * `airbnb_cancelled`（取消收入）在寫入認列表時已經歸到 `oneoff`，
+ * 所以現在只會有一種。但那是**寫入端的行為**，不是這裡的保證 ——
+ * 哪天有人在別的地方直接寫 `airbnb_cancelled` 進來，
+ * 「去除一次性收入」就會漏掉它，而總數只是少扣一點，
+ * 不會有任何跡象。列成清單，兩種都擋。
+ *
+ * ★ `other` **不在**清單裡:那是會計科目「其他」，
+ *   跟來源「其他收入」不是同一個東西（fee-types.ts 的檔頭有說）。
+ */
+export const ONEOFF_SOURCES = ['oneoff', 'airbnb_cancelled'];
+
+/** 這一筆是不是一次性收入。傳來源字串,不是整列 —— 認列與訂單兩邊都用得到。 */
+export const isOneoffSource = (s: string | null | undefined) =>
+  ONEOFF_SOURCES.includes(s ?? '');
+
+/** 只留房租（去掉一次性收入）。`on` 是 false 時原封不動回傳同一個陣列。 */
+export function rentOnly<T extends { source: string }>(rows: T[], on: boolean): T[] {
+  return on ? rows.filter((r) => !isOneoffSource(r.source)) : rows;
+}
