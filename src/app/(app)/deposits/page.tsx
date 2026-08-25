@@ -9,6 +9,7 @@ import FilterToggle from '@/components/FilterToggle';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
+import { titleCaseName } from '@/lib/name-format';
 import { useProfile } from '@/lib/profile';
 import { fetchAll } from '@/lib/fetch-all';
 import Receipts from '@/components/Receipts';
@@ -1603,6 +1604,8 @@ export default function DepositsPage() {
                       className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5" /></label>
                   <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">姓名</span>
                     <input value={edit.guest_name ?? ''} onChange={(e) => setEdit({ ...edit, guest_name: e.target.value })}
+                      /* 離開欄位才正規化 —— 見 shortterm 那邊的說明（migration_173） */
+                      onBlur={(e) => setEdit({ ...edit, guest_name: titleCaseName(e.target.value) })}
                       className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5" /></label>
                   <div className="flex gap-2">
                     <label className="flex flex-col gap-1 w-24"><span className="text-xs text-gray-500">幣別</span>

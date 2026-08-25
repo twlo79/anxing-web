@@ -2,7 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { checkBlockComments, riskyCommentOpeners } from './sql-comments.ts';
+import { checkBlockComments, riskyCommentOpeners, danglingCteComma } from './sql-comments.ts';
 
 describe('checkBlockComments', () => {
   test('平衡的回 null', () => {
@@ -97,5 +97,65 @@ describe('真實的 migration 檔', () => {
 
     assert.deepEqual(bad, [],
       '這幾份貼進 SQL Editor 會整份不執行（unterminated /* comment）：\n' + bad.join('\n'));
+  });
+});
+
+describe('danglingCteComma', () => {
+  test('★★ migration_173 第二次炸掉的那個形狀', () => {
+    const sql = `with a as (select 1),
+b as (select 2),
+insert into t select 1;`;
+    assert.equal(danglingCteComma(sql).length, 1);
+  });
+
+  test('正常的 CTE 不報', () => {
+    assert.deepEqual(danglingCteComma('with a as (select 1) insert into t select 1;'), []);
+    assert.deepEqual(danglingCteComma('with a as (select 1), b as (select 2) select 1;'), []);
+  });
+
+  test('中間隔著註解也要抓得到 —— 那正是它難發現的原因', () => {
+    const sql = `with a as (select 1),
+/*
+ * 十幾行說明
+ */
+insert into t select 1;`;
+    assert.equal(danglingCteComma(sql).length, 1);
+  });
+
+  test('values 的括號逗號不報', () => {
+    assert.deepEqual(danglingCteComma('insert into t values (1,2),\n(3,4);'), []);
+  });
+});
+
+/*
+ * ★★ 守門:活躍的 migration 不能有這個形狀。
+ *
+ *   **只掃 supabase/migrations，不掃 archive**:
+ *
+ *   · archive 是歸檔的，不會再貼進 SQL Editor —— 抓到也沒有動作可做
+ *   · 而且這是**啟發式**檢查，會誤報 `create table` 裡
+ *     「欄位定義 ＋ 逗號 ＋ 註解 ＋ 下一個欄位」的形狀。
+ *     archive 裡就有三處那種誤報（113、121、140）。
+ *
+ *   一個會誤報的守門員最後會被加白名單然後被忽略 ——
+ *   那正是「標記大量出現在正常資料上，真正該看的就被淹掉」。
+ *   所以寧可只守活躍的那 26 份。
+ */
+describe('活躍的 migration', () => {
+  test('★★ CTE 清單不能有多餘的逗號', () => {
+    const dir = 'supabase/migrations';
+    if (!existsSync(dir)) return;
+    const bad: string[] = [];
+    let scanned = 0;
+    for (const f of readdirSync(dir).filter((n) => n.endsWith('.sql'))) {
+      scanned++;
+      const lines = danglingCteComma(readFileSync(join(dir, f), 'utf8'));
+      if (lines.length) bad.push(`${f}:${lines.join('、')}`);
+    }
+    assert.ok(scanned > 10, `只掃到 ${scanned} 份 —— 目錄是不是搬了？`);
+    assert.deepEqual(bad, [],
+      'CTE 後面多了逗號但下一個是 DML，貼進 SQL Editor 會 syntax error。\n'
+      + '（這是啟發式檢查，create table 的欄位定義可能誤報 —— '
+      + '確認不是的話再調整這裡。）\n' + bad.join('\n'));
   });
 });

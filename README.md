@@ -848,6 +848,8 @@ useEffect(() => {
 | `CREATE OR REPLACE FUNCTION` **不能改參數名** | | 換名字要先 DROP |
 | BEFORE 觸發器**按名字字母序**跑 | 順序依賴時會靜默失效 | 依賴順序要寫進註解（`trg_orders_account` < `trg_orders_book_code` 是巧合） |
 | **欄位有 FK、有索引、前端在讀，但從來沒有人寫過它** 🔴 | `expenses.request_id` 一直是 null，支出頁的憑證圖片永遠寫「尚未上傳」（migration_169，2026-08-24） | 見下 |
+| **衍生資料表不能直接改** 🟠 | 回填 `customers.name` 被 `customers_guard()` 擋下，整份 migration 回滾（migration_173，2026-08-24） | 改**源頭**（`orders.guest_name` / `contracts.tenant_name`），再呼叫 `sync_customers()` 重算。衍生表也不要掛正規化觸發器 —— 會跟守衛打架 |
+| **刪掉一個 CTE，忘了刪它前面的逗號** 🟠 | `syntax error at or near "into"`，整份不執行。中間隔著十幾行註解所以看不出來（migration_173，2026-08-24） | 已由 `sql-comments.test.ts` 的 `danglingCteComma` 自動擋（只掃 `supabase/migrations`） |
 
 **★ 關於最後一條**：`gen_expenses_from_pr()` 的 insert 欄位清單裡沒有 `request_id`，
 而 `expenses_request_id_fkey` 與 `exp_request_idx` 都在、前端 `inheritFromRequestId={d.request_id}` 也在。

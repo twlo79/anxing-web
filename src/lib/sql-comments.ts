@@ -95,3 +95,45 @@ export function riskyCommentOpeners(lineText: string): number[] {
   }
   return out;
 }
+
+/**
+ * CTE 清單尾端多了逗號，後面卻直接接 DML。
+ *
+ * ============================================================
+ * 【為什麼加這一支】（2026-08-24，migration_173 第二次貼進去就炸）
+ *
+ *     ERROR: 42601: syntax error at or near "into"
+ *     LINE 148: insert into _chk173
+ *
+ * 我原本寫了三個 CTE:
+ *
+ *     with fix_orders as (…),
+ *          fix_contracts as (…),
+ *          fix_customers as (…)
+ *     insert into _chk173 select …
+ *
+ * 後來拿掉 `fix_customers`（那張表不能直接改），**忘了拿掉前面的逗號**:
+ *
+ *     with fix_orders as (…),
+ *          fix_contracts as (…),      ← 這個逗號說「還有下一個」
+ *     insert into _chk173 select …    ← 但下一個是 DML
+ *
+ * 中間隔著十幾行註解，所以看起來很正常。
+ *
+ * 這跟註解巢狀是同一類問題:**貼進 SQL Editor 才發現，而整份不執行**。
+ * 兩次都是使用者幫我測出來的 —— 那不該是使用者的工作。
+ */
+export function danglingCteComma(sql: string): number[] {
+  const lines: number[] = [];
+  /*
+   * `)` ＋ 逗號 ＋（只有空白與註解）＋ DML 關鍵字。
+   *
+   * ★ 只認 DML 關鍵字，不是「任何東西」——
+   *   `values (1,2),\n(3,4)` 那種 `),` 後面接的是括號，不會誤報。
+   */
+  const re = /\)\s*,(?:\s|--[^\n]*\n|\/\*[\s\S]*?\*\/)*\s*\b(insert|update|delete|select)\b/gi;
+  for (const m of sql.matchAll(re)) {
+    lines.push(sql.slice(0, m.index).split('\n').length);
+  }
+  return lines;
+}

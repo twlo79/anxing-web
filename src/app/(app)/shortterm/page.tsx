@@ -9,6 +9,7 @@ import FilterToggle from '@/components/FilterToggle';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, type SortState } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
+import { titleCaseName } from '@/lib/name-format';
 import { useOpenFromUrl } from '@/lib/open-from-url';
 import { useProfile } from '@/lib/profile';
 import { savedState, pinnedHint, hasAnyFilter, SAVED_TTL_MS, type SavedMark } from '@/lib/just-saved';
@@ -1555,6 +1556,11 @@ export default function ShortTermPage() {
               <label className="flex flex-col gap-1"><span className="flex items-center">房客<Req /></span>
                 <input value={edit.guest_name ?? ''} placeholder="姓名"
                   onChange={(e) => setEdit({ ...edit, guest_name: e.target.value })}
+                  /* ★ 離開欄位才正規化，不是每打一個字就改（migration_173）。
+                     邊打邊改的話,打到一半游標會跳、而且刪不掉自己剛打的大寫字母。
+                     資料庫的 a_norm_name 觸發器會再洗一次 —— 這裡只是讓畫面
+                     顯示的跟存進去的一樣,不然使用者會以為自己打錯了。 */
+                  onBlur={(e) => setEdit({ ...edit, guest_name: titleCaseName(e.target.value) })}
                   className={`rounded-lg border px-2 py-1.5 ${
                     err('房客') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} />
               </label>

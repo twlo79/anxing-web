@@ -7,6 +7,7 @@ import { checkContractRequired } from '@/lib/order-check';
 import Toast from '@/components/Toast';
 import { FilterBar, FilterSelect, FilterDateRange, FilterSearch, FilterClear, FilterCount } from '@/lib/filters';
 import { createClient } from '@/lib/supabase';
+import { titleCaseName } from '@/lib/name-format';
 import { useOpenFromUrl } from '@/lib/open-from-url';
 import { FEE_TYPES, ONEOFF_PRESETS, presetOf, feeLabel } from '@/lib/fee-types';
 import ContractFees, { type Rc } from '@/components/ContractFees';
@@ -928,7 +929,9 @@ const nameOf = (c: Contract) =>
               <label className="flex flex-col gap-1"><span className="flex items-center">房源<Req /></span>
                 <select value={edit.room ?? ''} onChange={(e) => setEdit({ ...edit, room: e.target.value })} className={`rounded-lg border px-2 py-1.5 ${err('房源') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}><option value="">—</option>{properties.filter((x) => x.estate_id === edit.estate_id).map((x) => <option key={x.id} value={x.name}>{x.name}</option>)}</select></label>
               <label className="flex flex-col gap-1"><span className="flex items-center">租戶<Req /></span>
-                <input value={edit.tenant_name ?? ''} onChange={(e) => setEdit({ ...edit, tenant_name: e.target.value })} className={`rounded-lg border px-2 py-1.5 ${err('租戶') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} /></label>
+                <input value={edit.tenant_name ?? ''} onChange={(e) => setEdit({ ...edit, tenant_name: e.target.value })}
+                  /* 離開欄位才正規化 —— 見 shortterm 那邊的說明（migration_173） */
+                  onBlur={(e) => setEdit({ ...edit, tenant_name: titleCaseName(e.target.value) })} className={`rounded-lg border px-2 py-1.5 ${err('租戶') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} /></label>
               <label className="flex flex-col gap-1">電話<input value={edit.phone ?? ''} onChange={(e) => setEdit({ ...edit, phone: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex flex-col gap-1"><span className="flex items-center">繳別<Req /></span>
                 <select value={edit.cadence} onChange={(e) => setEdit({ ...edit, cadence: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="monthly">月繳</option><option value="quarterly">季繳</option><option value="halfyear">半年繳</option><option value="yearly">年繳</option></select></label>

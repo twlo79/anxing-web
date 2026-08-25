@@ -407,3 +407,89 @@ test('★ 移房拆出來的段落不算撞房', () => {
   ], {}, { roomAncestors: KAI });
   assert.equal(r.counts['空間重疊'], 0);
 });
+
+/* ── 房源名稱只差空白／大小寫（2026-08-24）────── */
+
+test('★★ 「B8 」對不到「B8」→ 報「房源名稱」不是「資料缺失」', () => {
+  // 使用者:「B8 這一筆是說資料缺失,但都有啊」——
+  // 每個欄位都填了,真正觸發的是房源對不到,而兩者共用同一個標籤
+  const r = auditOrders([o({ id: 'b8', property_raw: 'B8 ' })],
+    {}, { knownRooms: new Set(['B8', 'B6']) });
+  assert.ok(issues(r, 'b8').includes('房源名稱'));
+  assert.ok(!issues(r, 'b8').includes('資料缺失'), '不能再說是資料缺失');
+});
+
+test('★★ 訊息要講出差在哪、以及該改成什麼', () => {
+  const r = auditOrders([o({ id: 'b8', property_raw: 'b8' })],
+    {}, { knownRooms: new Set(['B8']) });
+  const note = r.byId['b8'].notes.join();
+  assert.match(note, /大小寫/, '要講出差在哪裡');
+  assert.match(note, /改成「B8」/, '要講出該改成什麼');
+});
+
+test('★ 真的不存在的房源仍然是「資料缺失」', () => {
+  const r = auditOrders([o({ id: 'x', property_raw: '舊舊舊A13(7062)' })],
+    {}, { knownRooms: new Set(['A15', 'A13']) });
+  assert.ok(issues(r, 'x').includes('資料缺失'));
+  assert.ok(!issues(r, 'x').includes('房源名稱'));
+});
+
+/* ── 相似的房客姓名（2026-08-24 使用者指定）───── */
+
+test('★★ 寫法不一致又跨房源 → 提示', () => {
+  // 使用者截圖的真實資料
+  const r = auditOrders([
+    o({ id: 'n1', guest_name: 'LILIAN', property_raw: 'B8' }),
+    o({ id: 'n2', guest_name: 'Lilian Hong', property_raw: 'B6' }),
+  ], {}, {});
+  assert.ok(issues(r, 'n1').includes('姓名相似'));
+  assert.ok(issues(r, 'n2').includes('姓名相似'));
+  assert.match(r.byId['n1'].notes.join(), /寫法不一致/);
+  assert.match(r.byId['n1'].notes.join(), /B8|B6/, '要講出是哪幾間房');
+});
+
+test('★★ 同一間房的同一個人 —— 不要吵', () => {
+  // 續住、多次入住本來就會有很多筆。跨房源才值得看一眼
+  const r = auditOrders([
+    o({ id: 'n1', guest_name: 'Lilian', property_raw: 'B8' }),
+    o({ id: 'n2', guest_name: 'LILIAN', property_raw: 'B8' }),
+  ], {}, {});
+  assert.ok(!issues(r, 'n1').includes('姓名相似'));
+});
+
+test('★ 寫法完全一樣但跨房源 → 用不同的講法', () => {
+  const r = auditOrders([
+    o({ id: 'n1', guest_name: 'Lilian', property_raw: 'B8' }),
+    o({ id: 'n2', guest_name: 'Lilian', property_raw: 'B6' }),
+  ], {}, {});
+  const note = r.byId['n1'].notes.join();
+  assert.ok(!note.includes('寫法不一致'), '寫法一樣就不要說寫法不一致');
+  assert.match(note, /同名/, '要提醒可能只是同名');
+});
+
+test('★★ 沒填房客的訂單不能湊成一組', () => {
+  // 空 token 自成一組的話,所有沒填房客的訂單會被湊成一大堆假的「相似姓名」
+  const r = auditOrders([
+    o({ id: 'n1', guest_name: '', property_raw: 'B8' }),
+    o({ id: 'n2', guest_name: null, property_raw: 'B6' }),
+  ], {}, {});
+  assert.ok(!issues(r, 'n1').includes('姓名相似'));
+  assert.ok(!issues(r, 'n2').includes('姓名相似'));
+});
+
+test('★ 作廢的取消單不參與姓名比對', () => {
+  const r = auditOrders([
+    o({ id: 'n1', guest_name: 'Lilian', property_raw: 'B8' }),
+    o({ id: 'n2', guest_name: 'Lilian', property_raw: 'B6', source: 'airbnb_cancelled', amount: 0 }),
+  ], {}, {});
+  assert.ok(!issues(r, 'n1').includes('姓名相似'), '取消掉的單不該把名字湊進多間房');
+});
+
+test('不同的人不會被湊在一起', () => {
+  const r = auditOrders([
+    o({ id: 'n1', guest_name: 'Kevin', property_raw: 'B8' }),
+    o({ id: 'n2', guest_name: 'Lilian', property_raw: 'B6' }),
+  ], {}, {});
+  assert.ok(!issues(r, 'n1').includes('姓名相似'));
+  assert.ok(!issues(r, 'n2').includes('姓名相似'));
+});

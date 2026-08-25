@@ -27,8 +27,14 @@
  * 做成按下去才看的話，它是一個「我現在要對帳」的動作。
  */
 
+import { roomNameDiff, firstNameToken, nameKey } from './name-format.ts';
+
 export type AuditIssue =
-  '重複訂單' | '房源過載' | '資料缺失' | '房價過低' | '日期不合理' | '空間重疊';
+  '重複訂單' | '房源過載' | '資料缺失' | '房價過低' | '日期不合理' | '空間重疊'
+  /** 房源名稱只差空白或大小寫，其實對得到（migration 無關，2026-08-24） */
+  | '房源名稱'
+  /** 相似的房客姓名出現在不同房源 —— 可能是同一人，也可能只是同名 */
+  | '姓名相似';
 
 export type AuditOrder = {
   id: string;
@@ -223,7 +229,107 @@ export function auditOrders(
      * 會自成一格，看起來像一間不存在的房子在賺錢。
      */
     if (opt.knownRooms && o.property_raw && !opt.knownRooms.has(o.property_raw)) {
-      add(o.id, '資料缺失', `房源「${o.property_raw}」不在現有房源清單裡`);
+      /*
+       * ★★ 先看是不是「其實對得到，只差空白或大小寫」（2026-08-24 使用者:
+       *    「B8 這一筆是說資料缺失，但都有啊」）。
+       *
+       *    原本這一條跟「沒填房客／金額」共用 `資料缺失` 這個標籤，
+       *    所以畫面上寫著「資料缺失」而每個欄位都填了 ——
+       *    看的人只會覺得防呆在亂報，然後開始忽略所有標記。
+       *    那比不報還糟。
+       *
+       *    現在分成兩種，而且**講出差在哪裡**:
+       *      房源名稱  只差空白/大小寫 → 可以直接改，不是資料不見了
+       *      資料缺失  真的找不到這間房
+       */
+      let near: string | null = null;
+      let how: ReturnType<typeof roomNameDiff> = null;
+      for (const k of opt.knownRooms) {
+        const d = roomNameDiff(o.property_raw, k);
+        if (d) { near = k; how = d; break; }
+      }
+      if (near) {
+        add(o.id, '房源名稱',
+          `「${o.property_raw}」與現有房源「${near}」只差${how} —— 改成「${near}」就對得上`);
+      } else {
+        add(o.id, '資料缺失', `房源「${o.property_raw}」不在現有房源清單裡`);
+      }
+    }
+  }
+
+  /* ── 1.5 相似的房客姓名 ─────────────────────── */
+  /*
+   * 使用者:「防呆多加一條，人名去重。如果相似名字在多間出現訂單也要通知。」
+   *
+   * 真實的例子（2026-08-24 截圖）:
+   *
+   *     LILIAN        B8   時兆
+   *     Lilian        B6   時兆
+   *     Lilian Hong   B6   時兆
+   *     LILIAN WA     南京5 南京
+   *
+   * 四筆、四種寫法、三間房。是不是同一個人，只有人知道。
+   *
+   *
+   * 【為什麼用「第一個詞」當分組依據】
+   *
+   * 完全相同的 key（LILIAN 與 Lilian）當然是同一組。
+   * 但真正要抓的是 `Lilian` 與 `Lilian Hong` —— 那兩個 key 不同，
+   * 而它們很可能是同一個人只是有時候多寫了姓。
+   *
+   * 用第一個詞分組抓得到，代價是「Lilian」這種常見名字會把
+   * 真正不同的兩個人湊在一起。所以:
+   *
+   *   ★★ 這是**提示**不是錯誤（藍色，不是琥珀色）。
+   *      系統負責看見，人負責決定（CLAUDE.md 的判斷原則）。
+   *
+   *
+   * 【只在「跨房源」時才報】
+   *
+   * 同一間房的同一個人本來就會有很多筆訂單（續住、多次入住），
+   * 那個不用提醒。跨房源才值得看一眼 ——
+   * 而且那正是使用者說的「在多間出現訂單」。
+   */
+  {
+    type Bucket = { names: Set<string>; rooms: Set<string>; ids: string[] };
+    const byToken = new Map<string, Bucket>();
+
+    for (const o of orders) {
+      // 作廢的單不參與 —— 跟上面那個迴圈同一條規則。
+      // 不跳過的話，取消掉的訂單會把一個名字湊進「多間房」裡
+      if (isVoided(o)) continue;
+      const tok = firstNameToken(o.guest_name);
+      // 空 token = 判斷不了。**不能讓它們自成一組** ——
+      // 那會把所有沒填房客的訂單湊成一大堆假的「相似姓名」
+      if (!tok) continue;
+      const b = byToken.get(tok) ?? { names: new Set(), rooms: new Set(), ids: [] };
+      b.names.add((o.guest_name ?? '').trim());
+      if (o.property_raw) b.rooms.add(o.property_raw);
+      b.ids.push(o.id);
+      byToken.set(tok, b);
+    }
+
+    for (const b of byToken.values()) {
+      // 只有一種寫法、又只在一間房 —— 沒什麼好講的
+      if (b.rooms.size < 2) continue;
+
+      /*
+       * ★ 分兩種講法，因為要做的事不一樣:
+       *
+       *   寫法不只一種 → 多半是同一個人打錯字,可以合併
+       *   寫法完全一樣 → 可能是同名的兩個人,也可能真的租了兩間
+       *
+       *   混成一句「姓名相似」的話，第一種的人會去查第二種的東西。
+       */
+      const distinct = new Set([...b.names].map((n) => nameKey(n)));
+      const roomList = [...b.rooms].join('、');
+      const msg = distinct.size > 1
+        ? `「${[...b.names].join('」「')}」寫法不一致，出現在 ${b.rooms.size} 間房（${roomList}）`
+          + ' —— 是同一個人的話請統一寫法'
+        : `「${[...b.names][0]}」在 ${b.rooms.size} 間房都有訂單（${roomList}）`
+          + ' —— 確認是同一個人還是同名';
+
+      for (const id of b.ids) add(id, '姓名相似', msg);
     }
   }
 
@@ -451,6 +557,7 @@ export function auditOrders(
 
   const counts = {
     重複訂單: 0, 房源過載: 0, 資料缺失: 0, 房價過低: 0, 日期不合理: 0, 空間重疊: 0,
+    房源名稱: 0, 姓名相似: 0,
   } as Record<AuditIssue, number>;
   for (const v of Object.values(byId)) for (const i of v.issues) counts[i]++;
 
@@ -463,6 +570,9 @@ export const ISSUE_CLS: Record<AuditIssue, string> = {
   房源過載: 'bg-orange-50 text-orange-700 border-orange-200',
   日期不合理: 'bg-red-50 text-red-700 border-red-200',
   資料缺失: 'bg-amber-50 text-amber-800 border-amber-200',
+  // 這兩個是「提示」不是「錯誤」—— 用藍色，跟需要立刻處理的琥珀色分開
+  房源名稱: 'bg-blue-50 text-blue-800 border-blue-200',
+  姓名相似: 'bg-blue-50 text-blue-800 border-blue-200',
   房價過低: 'bg-mor-bluelight text-mor-slate border-mor-slate/30',
   // 跟重複訂單同一個紅 —— 兩者的後果一樣：客人到現場發現房間有別人
   空間重疊: 'bg-red-50 text-red-700 border-red-200',
