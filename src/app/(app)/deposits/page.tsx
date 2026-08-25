@@ -128,7 +128,15 @@ type PayAccount = { code: string; name: string; method: string };
  */
 type Status = 'all' | 'pending' | 'held' | 'returned' | 'orphan' | 'refund_pending' | 'refund_approved';
 const STATUS_LABEL: Record<Status, string> = {
-  all: '全部', pending: '未收款', held: '已收款(暫收中)', returned: '已退款', orphan: '孤兒',
+  /*
+   * ★ 用詞跟卡片對齊（2026-08-25）。這個下拉**跨兩種暫收**，
+   *   所以不能寫「未付訂金」也不能寫「未付押金」——
+   *   用不帶種類的說法，句型維持一致（未付／已收／已結案）。
+   *
+   *   舊的「已收款(暫收中)」括號裡那三個字是舊名字的殘留，
+   *   現在整頁都叫暫收管理了，寫在這裡反而像另一種狀態。
+   */
+  all: '全部', pending: '未付款', held: '已收款', returned: '已結案', orphan: '孤兒',
   refund_pending: '退款審核中', refund_approved: '已核可待匯款',
 };
 
@@ -376,6 +384,17 @@ export default function DepositsPage() {
    * ★ 標在金額那一格底下，不是房源旁邊:
    *   欄名是「暫收款」，答案就該貼在那個數字下面。
    */
+  /**
+   * 這一列該叫什麼（2026-08-25 使用者:「訂金 不是押金」）。
+   *
+   * ★ 跟頁面上方的 `kindWord` 不一樣 —— 那一個看的是**頁籤**
+   *   （現在在看哪一類），這一個看的是**這一列本身**。
+   *
+   *   檢視面板是從清單點進來的，在「全部」頁籤下 `kindWord` 會是「暫收」，
+   *   而使用者眼前明明是一筆訂金。所以面板裡一律用這一個。
+   */
+  const wordOf = (r: Dep) => (r.kind === 'earnest' ? '訂金' : '押金');
+
   const kindChip = (r: Dep) => {
     const earnest = r.kind === 'earnest';
     return (
@@ -679,12 +698,17 @@ export default function DepositsPage() {
       `把訂金轉成押金？\n\n`
       + `${depName(d)}\n`
       + `訂金 NT$ ${fmt(plan.transfer)} → 押金 NT$ ${fmt(plan.depositAmount)}\n\n`
+      /*
+       * ★ 這裡**不能用 `**粗體**`** —— `confirm()` 是純文字，
+       *   星號會原封不動印出來（「＊＊尚欠 NT$ 125,000＊＊」）。
+       *   想強調就換行、加空格，或用符號。
+       */
       + (plan.settled
-        ? `轉完之後押金**收齊了**。\n`
-        : `轉完之後押金已收 NT$ ${fmt(plan.depositAmount - plan.remaining)}，`
-          + `**尚欠 NT$ ${fmt(plan.remaining)}**（之後用收款明細再收）。\n`)
+        ? `轉完之後押金收齊了。\n`
+        : `轉完之後押金已收 NT$ ${fmt(plan.depositAmount - plan.remaining)}\n`
+          + `　　　　　尚欠 NT$ ${fmt(plan.remaining)}（之後用收款明細再收）\n`)
       + (plan.excess > 0
-        ? `\n⚠ 訂金比押金多 NT$ ${fmt(plan.excess)} —— 多的部分**不會自動退**，要另外處理。\n`
+        ? `\n⚠ 訂金比押金多 NT$ ${fmt(plan.excess)}\n　 多的部分不會自動退，要另外處理。\n`
         : '')
       + `\n訂金那一列會變成「已退｜轉押」。錢沒有離開公司，不算退款也不算收款。`
     )) return;
@@ -1210,7 +1234,7 @@ export default function DepositsPage() {
 
   // 未收款的列沒有任何日期,設了區間必然全空。直接說明,不要讓人以為資料不見了。
   const emptyHint = (statusF === 'pending' || statusF === 'all') && (fromD || toD)
-    ? `未收款的${kindWord}還沒有收退日期,設了日期區間就不會出現。清除日期才看得到。`
+    ? `未付的${kindWord}還沒有收退日期,設了日期區間就不會出現。清除日期才看得到。`
     : `這一類目前沒有${kindWord}紀錄`;
 
   return (
@@ -1262,34 +1286,31 @@ export default function DepositsPage() {
             「訂金還是押金」，總計沒有這個答案。
             做成看起來可點卻篩不出東西的話，比不做更糟。
       */}
-      <div className="mb-3 rounded-lg border border-mor-line bg-white px-3 py-2.5">
-        <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1">
-          <span className="text-xs text-gray-500 shrink-0">暫收款總計</span>
-          {([
-            { k: 'held' as const,     label: '在我們手上', strong: true },
-            { k: 'pending' as const,  label: '尚未收到',   strong: false },
-            { k: 'returned' as const, label: '已結案',     strong: false },
-          ]).map((t) => {
-            const s = allStats[t.k];
-            const fx = fxLine(s.cur);
-            return (
-              <span key={t.k} className="flex items-baseline gap-1.5 min-w-0">
-                <span className="text-[11px] text-gray-500">{t.label}</span>
-                <span className={`tabular-nums ${t.strong ? 'font-bold text-mor-slate' : 'font-medium'}`}>
-                  NT$ {fmt(s.cur['TWD'] ?? 0)}
-                </span>
-                <span className="text-[11px] text-gray-400">
-                  {fx ? `${fx}・` : ''}{s.n} 筆
-                </span>
-              </span>
-            );
-          })}
-        </div>
-        {/* ★ 「已結案」含訂金的沒收與轉押 —— 那些錢沒有退給房客。
-            不寫的話會被當成「退出去了」，而金額看起來完全正常 */}
-        <div className="text-[11px] text-gray-400 mt-1">
-          訂金與押金合計。已結案含退款、沒收、轉押 —— 沒收與轉押的錢並沒有離開公司。
-        </div>
+      {/*
+          ★ 2026-08-25 使用者:「版面太複雜」「上方 總計 ____ 大字就好」。
+
+            原本一行擠了三個數字（在我們手上／尚未收到／已結案）加一行說明 ——
+            而那三個數字底下兩列卡片已經各自寫了一遍。
+            總計要回答的只有一句:**我們手上現在有多少別人的錢**。
+
+          ★★ 標籤寫「錢在我們手上」而不只是「總計」。
+
+            只寫「暫收款總計」的話，這個數字會被讀成「所有暫收款加起來」——
+            而它不含未收的 135 萬、也不含已退的 47 萬。
+            差了一百多萬，而且**兩種讀法看起來都合理**，
+            對不出來的人只會覺得自己算錯。
+      */}
+      <div className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <span className="text-sm text-gray-500">暫收款總計</span>
+        <span className="stat-num-lg font-bold text-mor-slate tabular-nums">
+          NT$ {fmt(allStats.held.cur['TWD'] ?? 0)}
+        </span>
+        {/* ★ 外幣不能省 —— 省掉的話 USD 700 那幾筆從畫面上完全消失，
+            而台幣那個數字看起來完全正確,沒有任何跡象 */}
+        {fxLine(allStats.held.cur) && (
+          <span className="text-sm text-gray-500">{fxLine(allStats.held.cur)}</span>
+        )}
+        <span className="text-sm text-gray-400">{allStats.held.n} 筆・錢在我們手上</span>
       </div>
 
       <div className="mb-3">
@@ -1308,16 +1329,27 @@ export default function DepositsPage() {
           */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
             {([
+              /*
+               * ★ 卡片底下只留筆數（2026-08-25 使用者:「卡片下方只顯示 幾筆」）。
+               *
+               *   原本每一格都有一句解釋（「錢在我們手上，還沒決定去向」…）。
+               *   六格六句，而標題本身已經說完了。
+               *
+               * ★★ 唯一留下的例外是「已結案」的組成（退 n・沒收 n・轉押 n）——
+               *    那三種的**錢去了完全不同的地方**（退給房客／變成收入／
+               *    留在公司變押金），而卡片上只有一個總數。
+               *    不寫的話會被整包當成「都退出去了」。
+               *    只寫筆數不寫金額，維持一行。
+               */
               { k: 'pending',  title: '未付訂金', s: earnStats.pending,  sub: null },
-              { k: 'held',     title: '已收訂金', s: earnStats.held,
-                sub: '錢在我們手上，還沒決定去向' },
+              { k: 'held',     title: '已收訂金', s: earnStats.held,     sub: null },
               { k: 'returned', title: '已結案',   s: earnStats.returned,
                 sub: [
                   earnStats.returned.n - earnStats.forfeited.n - earnStats.converted.n > 0
                     ? `退 ${earnStats.returned.n - earnStats.forfeited.n - earnStats.converted.n}` : '',
                   earnStats.forfeited.n > 0 ? `沒收 ${earnStats.forfeited.n}` : '',
                   earnStats.converted.n > 0 ? `轉押 ${earnStats.converted.n}` : '',
-                ].filter(Boolean).join('・') || '退款／沒收／轉押' },
+                ].filter(Boolean).join('・') || null },
             ] as const).map((t) => {
               const on = kindF === 'earnest' && statusF === t.k;
               return (
@@ -1355,9 +1387,9 @@ export default function DepositsPage() {
            *   兩列並排時只有一列說得出自己是什麼錢，
            *   捲到一半看到「已退款」會不知道退的是訂金還是押金。
            */
-          { k: 'pending', title: '尚未收押金', hint: '已填押金但還沒收到錢', tone: 'amber' },
-          { k: 'held', title: '已收押金', hint: '錢在我們手上,尚未退還', tone: 'slate' },
-          { k: 'returned', title: '已退押金', hint: '押金已退還給房客', tone: 'gray' },
+          { k: 'pending', title: '未付押金', tone: 'amber' },
+          { k: 'held', title: '已收押金', tone: 'slate' },
+          { k: 'returned', title: '已退押金', tone: 'gray' },
         ] as const).map((t) => {
           const s = stats[t.k];
           const on = statusF === t.k && kindF !== 'earnest';
@@ -1372,18 +1404,25 @@ export default function DepositsPage() {
                   : 'bg-white border-mor-line hover:border-gray-300'}`}>
               <div className={`text-xs ${on ? 'opacity-80' : 'text-gray-500'}`}>{t.title}</div>
               <div className="stat-num-lg font-bold mt-1">NT$ {fmt(s.cur['TWD'] ?? 0)}</div>
+              {/*
+                ★ 底下只留筆數（2026-08-25 使用者:「卡片下方只顯示 幾筆」）。
+                  三句解釋（「已填押金但還沒收到錢」…）拿掉了 —— 標題已經說完。
+
+                ★★ 外幣**留著**。省掉的話 CAD 20,000 那幾筆從畫面上整個消失，
+                   而台幣那個數字看起來完全正確，沒有任何跡象說少了東西
+                   （migration_87 就是這樣漏掉的）。所以併進同一行，不佔一列。
+
+                ★★ 移房也留著，但只留筆數不留金額。
+                   已退押金裡混著移房 —— 那幾筆**錢根本沒有出去**。
+                   不寫的話「這段期間退了多少押金」會被灌水，
+                   而每一筆單看都是一筆正常的已退押金。
+              */}
               <div className={`text-xs mt-1 ${on ? 'opacity-90' : 'text-gray-400'}`}>
-                {fx && <span className="mr-2">{fx}</span>}
-                共 {s.n} 筆
+                {s.n} 筆{fx ? `・${fx}` : ''}
+                {t.k === 'returned' && stats.moved.n > 0 && (
+                  <span className={on ? '' : 'text-violet-700'}>　其中移房 {stats.moved.n} 筆</span>
+                )}
               </div>
-              <div className={`text-xs mt-0.5 ${on ? 'opacity-70' : 'text-gray-400'}`}>{t.hint}</div>
-              {/* ★ 已退款裡混著「移房」—— 那幾筆錢沒有出去。不寫出來的話
-                  「這段期間退了多少押金」會被灌水,而每一筆單看都很正常 */}
-              {t.k === 'returned' && stats.moved.n > 0 && (
-                <div className={`text-xs mt-1 ${on ? 'opacity-90' : 'text-violet-700'}`}>
-                  其中移房 {stats.moved.n} 筆・NT$ {fmt(stats.moved.cur['TWD'] ?? 0)}（錢沒有出去）
-                </div>
-              )}
             </button>
           );
         })}
@@ -1676,7 +1715,7 @@ export default function DepositsPage() {
                 <div className="min-w-0">
                   <div className="font-bold">{d.room ?? '—'}・{d.guest_name ?? '—'}</div>
                   <div className="text-xs text-gray-500 mt-0.5">
-                    {d.is_manual ? '手動建立' : d.contract_id ? '契約押金' : '短租押金'}
+                    {d.is_manual ? `手動建立・${wordOf(d)}` : `${d.contract_id ? '契約' : '短租'}${wordOf(d)}`}
                     {d.orphaned && <span className="text-red-600 ml-1">・來源已刪除</span>}
                   </div>
                 </div>
@@ -1686,7 +1725,8 @@ export default function DepositsPage() {
               <div className="px-6 py-4">
                 {row('狀態', statusChip(d))}
                 {row('物業', d.estate_id ? estateName[d.estate_id] ?? '—' : '—')}
-                {row('押金', (
+                {/* ★ 欄名跟著這一列的種類走,不是一律寫「押金」（2026-08-25） */}
+                {row(wordOf(d), (
                   <span>
                     <span className="font-bold">{primaryText(d)}</span>
                     {extraLines(d).map((l) => (
@@ -1694,7 +1734,7 @@ export default function DepositsPage() {
                     ))}
                   </span>
                 ))}
-                {row('收押金', (
+                {row(`收${wordOf(d)}`, (
                   <span className="tabular-nums">
                     {fmt(d.received_amount ?? 0)} / {fmt(d.amount)}
                     {remainingDep(d) > 0 && (
@@ -1757,7 +1797,7 @@ export default function DepositsPage() {
 
                 {!d.is_manual && (
                   <div className="mt-3 rounded-lg bg-mor-sand/60 text-gray-500 px-3 py-2 text-xs">
-                    押金金額不在這裡改 —— 那是契約條件的一部分,請到
+                    {wordOf(d)}金額不在這裡改 —— 那是契約條件的一部分,請到
                     {d.contract_id ? '契約' : '短租訂單'}頁修改,這裡會自動同步。
                   </div>
                 )}
@@ -1772,9 +1812,23 @@ export default function DepositsPage() {
                     {/* 管家只能看 —— 藏起來而不是按了才擋。
                         RLS 擋下的 UPDATE 會回成功且影響 0 列,
                         畫面上看起來像存好了,重整才發現沒變 */}
+                    {/*
+                      ★ 名字要說出**這顆跟隔壁那顆差在哪**
+                        （2026-08-25 使用者:「管理押金 跟 收款明細感覺一樣耶」）。
+
+                        「管理押金」講不出自己做什麼 —— 收款也是管理，退款也是管理。
+                        它實際做的是「錢**出去**那一段」:退款申請、加費扣抵、
+                        備註與憑證；而隔壁那顆是錢**進來**那一段。
+
+                        所以改成「退款・加費」。手動列還多一件事（改物業房源姓名金額），
+                        那種列改叫「編輯內容」——標題本來就會寫「手動新增暫收款」，
+                        兩邊對得起來。
+                    */}
                     {canEdit && (
                       <button onClick={() => { setEdit({ ...d }); setDetail(null); }}
-                        className={`${btn} border border-mor-line`}>管理押金</button>
+                        className={`${btn} border border-mor-line`}>
+                        {d.is_manual ? '編輯內容' : '退款・加費'}
+                      </button>
                     )}
                     {/*
                       收款明細（migration_147）。**沒退款之前都開得起來** ——
@@ -2183,7 +2237,7 @@ export default function DepositsPage() {
                     會讓人以為那是加起來的一個數字。
                     底下的收退款只有一組 —— 錢放在同一個保險箱,一次收、一次退。
                   */}
-                  {edit.guest_name ?? '—'}・押金
+                  {edit.guest_name ?? '—'}・{wordOf(edit)}
                   {isMultiCurrency(edit) ? (
                     <span className="block mt-1 font-bold">
                       {depLines(edit).map((l) => (

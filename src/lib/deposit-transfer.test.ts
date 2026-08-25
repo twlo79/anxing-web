@@ -275,3 +275,41 @@ describe('名稱', () => {
     assert.equal(depName({ room: null, guest_name: null }), '（未填房號）');
   });
 });
+
+/*
+ * ── 訂金不能移房（2026-08-25 使用者:「訂金不用 轉房」）────────
+ *
+ * ★★ 擋在這兩支而不是按鈕上 —— 移轉的候選清單也走同一支，
+ *    只藏按鈕的話訂金還是會出現在挑選視窗裡。
+ *
+ * ★★ 真的讓它移過去的話**不會報錯**:移轉會填掉來源的 returned_on，
+ *    於是那筆訂金變成「已退款」，沒收與轉押從此按不了。
+ */
+test('★ 訂金不能當移轉來源', () => {
+  const r = canBeSource(A({ kind: 'earnest' }));
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /訂金不能移房/);
+});
+
+test('★ 訂金不能當移轉目的', () => {
+  const r = canBeTarget(B({ kind: 'earnest' }));
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /訂金不能移房/);
+});
+
+test('★ 種類擋在最前面 —— 訊息不該說成別的原因', () => {
+  // 這筆訂金同時是孤兒且已退款,三種都能擋。要回「不能移房」，
+  // 不然使用者會去修孤兒狀態，修完還是不能移
+  const r = canBeSource(A({ kind: 'earnest', orphaned: true, returned_on: '2026-08-02' }));
+  assert.match(r.reason, /訂金不能移房/);
+});
+
+test('押金照樣可以移（沒有把功能一起關掉）', () => {
+  assert.equal(canBeSource(A({ kind: 'deposit' })).ok, true);
+  assert.equal(canBeTarget(B({ kind: 'deposit' })).ok, true);
+});
+
+test('沒帶 kind 時當押金 —— 既有呼叫端不會壞', () => {
+  assert.equal(canBeSource(A()).ok, true);
+  assert.equal(canBeTarget(B()).ok, true);
+});

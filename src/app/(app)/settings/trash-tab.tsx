@@ -90,7 +90,8 @@ export default function TrashTab({ initialTable = '' }: { initialTable?: string 
   async function act(kind: 'restore' | 'purge', r: Trash) {
     if (kind === 'purge' && !confirm(
       `永久刪除「${r.label || TABLE_LABEL[r.table_name] || r.table_name}」？\n\n`
-      + `內容會被清空，**救不回來**。\n`
+      /* confirm() 是純文字,`**` 會原封不動印出來 —— 用符號強調 */
+      + `內容會被清空，⚠ 救不回來。\n`
       + (r.child_count ? `連同 ${r.child_count} 筆相關資料一起消失。\n` : '')
       + `\n「誰在什麼時候刪掉了什麼」這筆紀錄會留著。`
     )) return;

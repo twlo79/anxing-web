@@ -40,7 +40,33 @@ export type TransferDep = {
   contract_id?: string | null;
   transfer_to_id?: string | null;
   transfer_from_id?: string | null;
+  /** 押金 / 訂金（migration_174）。沒帶時當押金,既有呼叫端不會壞 */
+  kind?: string | null;
 };
+
+/**
+ * 移房是**押金專屬**（2026-08-25 使用者:「訂金不用 轉房」）。
+ *
+ * ── 為什麼擋在這裡而不是畫面 ────────────────────────
+ *
+ * 移房的語意是「同一筆押金換一間房」—— 它假設 A 房退租、B 房入住，
+ * 錢跟著人走。訂金沒有這回事:訂金綁的是**一張還沒定案的契約**，
+ * 換房就是換一張契約，那不是移轉，是重開一筆。
+ *
+ * ★★ 真的讓訂金移過去的話會怎樣:
+ *
+ *   移房會把來源那筆的 `returned_on` 填掉（那是它標示「已移出」的方式），
+ *   而訂金的三條出路靠 `dep_exit_once_chk` 互斥 ——
+ *   於是那筆訂金會變成「已退款」，沒收與轉押從此按不了。
+ *   **而且完全不報錯**:它看起來就只是一筆退掉的訂金。
+ *
+ * ★ 擋在 `canBeSource` / `canBeTarget` 而不是那兩顆按鈕上 ——
+ *   移轉挑選視窗（`moveCandidates`）也走這兩支，
+ *   只藏按鈕的話訂金還是會出現在候選清單裡讓人挑。
+ */
+export const TRANSFER_IS_DEPOSIT_ONLY = '訂金不能移房 —— 換房請重開一張契約。';
+
+const notDeposit = (d: TransferDep) => (d.kind ?? 'deposit') !== 'deposit';
 
 /**
  * 誰能移。**經理不在內**（2026-08-19 使用者指定：「只有會計 super_admin」）。
@@ -65,6 +91,7 @@ export type Verdict = { ok: boolean; reason: string; hint?: string };
 
 /** 可以當來源（A）嗎 —— 錢真的在我們手上。 */
 export function canBeSource(d: TransferDep): Verdict {
+  if (notDeposit(d)) return { ok: false, reason: TRANSFER_IS_DEPOSIT_ONLY };
   if (d.orphaned) return { ok: false, reason: '孤兒紀錄' };
   if (!d.received_on) return { ok: false, reason: '還沒收到押金' };
   if (d.returned_on) {
@@ -77,6 +104,7 @@ export function canBeSource(d: TransferDep): Verdict {
 
 /** 可以當目的（B）嗎 —— 還沒收。 */
 export function canBeTarget(d: TransferDep): Verdict {
+  if (notDeposit(d)) return { ok: false, reason: TRANSFER_IS_DEPOSIT_ONLY };
   if (d.orphaned) return { ok: false, reason: '孤兒紀錄' };
   if (d.returned_on) return { ok: false, reason: `已退款（${d.returned_on}）` };
   if (d.received_on) {

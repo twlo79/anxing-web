@@ -54,7 +54,17 @@ type Dep = {
   guest_name?: string | null;
   is_manual?: boolean;
   contract_id?: string | null;
+  /** 押金 / 訂金（migration_174）。沒帶時當押金 */
+  kind?: string | null;
 };
+
+/**
+ * 這一筆該叫什麼（2026-08-25 使用者:「訂金 不是押金」）。
+ *
+ * 這個視窗原本整份寫死「押金」—— 對訂金來說每一句都在講另一種錢。
+ * 收訂金的人看到「收押金」「押金金額不在這裡改」會以為自己點錯列了。
+ */
+const wordOf = (d: Dep) => ((d.kind ?? 'deposit') === 'earnest' ? '訂金' : '押金');
 
 const fmt = (n: number | null | undefined) => Math.round(Number(n) || 0).toLocaleString('en-US');
 const today = () => new Date().toISOString().slice(0, 10);
@@ -164,7 +174,7 @@ export default function DepositPayments({
   }
 
   const gap = reconcile(rows, received);
-  const name = (dep.room ?? '').trim() || (dep.guest_name ?? '').trim() || '押金';
+  const name = (dep.room ?? '').trim() || (dep.guest_name ?? '').trim() || wordOf(dep);
 
   return (
     /*
@@ -192,7 +202,7 @@ export default function DepositPayments({
         <div className="shrink-0 bg-white border-b border-mor-line px-4 md:px-6 py-4 flex items-start justify-between"
           style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
           <div className="min-w-0">
-            <div className="font-bold">收押金</div>
+            <div className="font-bold">收{wordOf(dep)}</div>
             <div className="text-xs text-gray-500 mt-0.5 truncate">
               {name}{dep.guest_name && dep.room ? `・${dep.guest_name}` : ''}
             </div>
@@ -244,7 +254,7 @@ export default function DepositPayments({
           */}
           {!dep.is_manual && (
             <div className="rounded-lg bg-mor-sand/60 text-gray-500 px-3 py-2 text-[11px]">
-              押金金額不在這裡改 —— 請到{dep.contract_id ? '契約' : '短租訂單'}頁修改，這裡會自動同步。
+              {wordOf(dep)}金額不在這裡改 —— 請到{dep.contract_id ? '契約' : '短租訂單'}頁修改，這裡會自動同步。
             </div>
           )}
 
@@ -360,7 +370,7 @@ export default function DepositPayments({
             那是兩票審核的地方，搬過來會變成兩個入口各做一半。
           */}
           <div className="pt-3 border-t border-mor-line space-y-2">
-            <div className="text-xs text-gray-500">退押金</div>
+            <div className="text-xs text-gray-500">退{wordOf(dep)}</div>
             {returnedOn ? (
               <div className="rounded-lg bg-mor-sand/60 px-3 py-2 text-xs text-gray-600">
                 已於 {returnedOn} 退款。收款明細保留不動 —— 那是錢曾經進來過的紀錄。
@@ -371,7 +381,7 @@ export default function DepositPayments({
               </div>
             ) : (
               <div className="rounded-lg bg-mor-sand/60 px-3 py-2 text-xs text-gray-500">
-                退款申請在押金詳情裡送出（要主管與總經理各一票）。
+                退款申請在{wordOf(dep)}詳情裡送出（要主管與總經理各一票）。
               </div>
             )}
             <Receipts kind="dep" parentId={dep.id} canEdit={canEdit} label="退款憑證" />
