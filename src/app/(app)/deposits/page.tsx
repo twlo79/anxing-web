@@ -34,16 +34,35 @@ import { softDelete } from '@/lib/trash';
 import TrashLink from '@/components/TrashLink';
 
 /**
- * 押金管理。
+ * 暫收管理（原「押金管理」，2026-08-24 改名，migration_174）。
+ *
+ * 含**兩種**暫收，靠 `deposits.kind` 分：
+ *
+ *   deposit  押金 —— 收了要退，退款走兩票審核
+ *   earnest  訂金 —— 收了之後三選一：**沒收 / 退款 / 轉押金**
+ *
+ * 兩者生命週期一樣，所以共用這一頁與同一套退款流程。
  *
  * 金額不在這裡改 —— 那是契約條件的一部分,來源在 orders / contracts,
- * 由觸發器同步過來(migration_56)。這一頁只管「錢什麼時候收、什麼時候退、走哪個帳戶」。
+ * 由觸發器同步過來(migration_56 押金、migration_176 訂金)。
+ * 這一頁只管「錢什麼時候收、什麼時候退、走哪個帳戶」。
  *
  * 暫收 = 有 received_on 且沒有 returned_on。
  */
 
 type Dep = {
   id: string;
+  /**
+   * 押金 / 訂金（migration_174）。
+   *
+   * ★ 可選 —— 這一頁的 select 是 `*`，所以跑過 migration 就會有值。
+   *   但型別寫成必填的話，任何一個舊的 mock 或測試資料都會編譯不過，
+   *   而那個錯誤跟這次的改動一點關係都沒有。
+   */
+  kind?: 'deposit' | 'earnest' | null;
+  /** 訂金才有的兩種出路（migration_174） */
+  forfeited_on?: string | null;
+  converted_to_deposit_id?: string | null;
   order_id: string | null; contract_id: string | null;
   estate_id: string | null; property_id: string | null;
   room: string | null; guest_name: string | null;
@@ -136,6 +155,14 @@ export default function DepositsPage() {
   const [acctF, setAcctF] = useState('');
   // 分頁籤:一筆押金一定屬於其中一類,不會同時出現在兩個頁籤
   const [statusF, setStatusF] = useState<Status>('held');
+  /*
+   * 訂金 / 押金（migration_174）。
+   *
+   * ★ 預設 'all' —— 大部分時候使用者要看的是「錢在我們手上的所有東西」，
+   *   而不是先決定看哪一種。押金 101 筆、訂金剛開始只有幾筆，
+   *   預設分開的話訂金那一頁會長期是空的。
+   */
+  const [kindF, setKindF] = useState<'all' | 'deposit' | 'earnest'>('all');
   /**
    * 從訂單／契約跳過來時只顯示那一筆的押金。
    *
@@ -313,12 +340,15 @@ export default function DepositsPage() {
     (r.returned_on ? 'done' : (r.refund_status ?? 'none'));
 
   const filtered = useMemo(() => base.filter((r) => {
+    // 訂金 / 押金。★ 篩在這一層而不是 base —— base 要留給卡片當總覽，
+    // 篩在 base 的話切到訂金時押金那一列的數字會全部歸零
+    if (kindF !== 'all' && (r.kind ?? 'deposit') !== kindF) return false;
     if (statusF === 'all') return true;
     if (statusF === 'orphan') return r.orphaned;
     if (statusF === 'refund_pending') return refundStage(r) === 'pending';
     if (statusF === 'refund_approved') return refundStage(r) === 'approved';
     return bucketOf(r) === statusF;
-  }), [base, statusF]);
+  }), [base, statusF, kindF]);
 
   const sorted = useMemo(() => sortRows(filtered, sort, COLS), [filtered, sort]);
 
@@ -329,7 +359,15 @@ export default function DepositsPage() {
    * 外幣全在 lines 裡。只加 amount 的話統計會少掉所有外幣,
    * 而且數字看起來很正常,沒有人會發現少了（migration_87）。
    */
-  const stats = useMemo(() => {
+  /*
+   * ★★ 卡片分兩列:一列訂金、一列押金（2026-08-24 使用者指定）。
+   *
+   *   **不是同一組數字分兩行** —— 訂金有「已沒收」與「轉押」，押金沒有；
+   *   押金有「孤兒」，訂金沒有（契約刪掉時未收的訂金跟著刪）。
+   *   硬做成同一組欄位的話會有一半的格子永遠是 0，
+   *   而永遠是 0 的格子會讓人以為那個功能壞了。
+   */
+  const statsOf = useCallback((kind: 'deposit' | 'earnest') => {
     const mk = () => ({ n: 0, cur: {} as Record<string, number> });
     const s = {
       pending: mk(), held: mk(), returned: mk(), orphan: mk(),
@@ -342,13 +380,18 @@ export default function DepositsPage() {
        * 所以卡片上要把移轉的金額寫出來,讓人自己扣。
        */
       moved: mk(),
+      // 訂金才有的兩種出路（migration_174）
+      forfeited: mk(), converted: mk(),
     };
     const add = (t: { n: number; cur: Record<string, number> }, r: Dep) => {
       t.n++;
       for (const l of depLines(r)) t.cur[l.cur] = (t.cur[l.cur] ?? 0) + l.amt;
     };
     for (const r of base) {
+      if ((r.kind ?? 'deposit') !== kind) continue;
       add(s[bucketOf(r) as 'pending' | 'held' | 'returned'], r);
+      if (r.forfeited_on) add(s.forfeited, r);
+      if (r.converted_to_deposit_id) add(s.converted, r);
       // 以下兩組跟上面三類重疊,是故意的 —— 見 Status 的說明
       if (r.orphaned) add(s.orphan, r);
       if (r.transfer_to_id) add(s.moved, r);
@@ -359,6 +402,11 @@ export default function DepositsPage() {
     }
     return s;
   }, [base]);
+
+  const depStats  = useMemo(() => statsOf('deposit'), [statsOf]);
+  const earnStats = useMemo(() => statsOf('earnest'), [statsOf]);
+  /** 舊的呼叫端還在用 `stats` —— 指到押金那一份，行為跟改之前一樣 */
+  const stats = depStats;
 
   const fxLine = (cur: Record<string, number>) =>
     Object.entries(cur).filter(([c]) => c !== 'TWD').map(([c, v]) => `${c} ${fmt(v)}`).join('・');
@@ -904,9 +952,57 @@ export default function DepositsPage() {
       )}
 
       {/*
+          ★★ 訂金那一列（2026-08-24 使用者:「卡片有兩列」，migration_174）。
+          
+          只在**真的有訂金**時才出現 —— 一列永遠是 0 的卡片會讓人以為功能壞了。
+          押金那一列一直都在，因為它本來就有 101 筆。
+      */}
+      {(earnStats.pending.n + earnStats.held.n + earnStats.returned.n
+        + earnStats.forfeited.n + earnStats.converted.n) > 0 && (
+        <div className="mb-3">
+          <div className="text-xs text-gray-500 mb-1.5">訂金</div>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+            {([
+              { k: 'pending',   title: '未付訂金', s: earnStats.pending },
+              { k: 'held',      title: '已收訂金', s: earnStats.held },
+              { k: 'returned',  title: '已退訂金', s: earnStats.returned },
+              { k: null,        title: '已沒收',   s: earnStats.forfeited },
+              { k: null,        title: '轉押金',   s: earnStats.converted },
+            ] as const).map((t) => {
+              /*
+               * ★ 前三格點得下去（切到那個狀態）；後兩格是純數字。
+               *   「已沒收」與「轉押」在 Status 那個型別裡沒有對應的值 ——
+               *   硬加兩個狀態進去的話，押金那邊也會多出兩個永遠是 0 的頁籤。
+               */
+              const on = t.k !== null && kindF === 'earnest' && statusF === t.k;
+              return (
+                <button key={t.title} type="button"
+                  onClick={() => { if (t.k) { setKindF('earnest'); setStatusF(t.k); } }}
+                  disabled={t.k === null}
+                  className={`text-left rounded-lg px-3 py-2 border transition min-w-0
+                    ${on ? 'bg-mor-slate text-white border-mor-slate'
+                         : 'bg-white border-mor-line'}
+                    ${t.k ? 'hover:border-gray-300' : 'cursor-default'}`}>
+                  <div className={`text-[11px] ${on ? 'opacity-80' : 'text-gray-500'}`}>{t.title}</div>
+                  <div className="font-bold tabular-nums">NT$ {fmt(t.s.cur['TWD'] ?? 0)}</div>
+                  <div className={`text-[11px] ${on ? 'opacity-90' : 'text-gray-400'}`}>{t.s.n} 筆</div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/*
         三張卡片同時是分頁籤。數字算在 base 上(不含分頁籤本身的篩選),
         所以切到哪一類,另外兩類的數字都還在 —— 卡片是總覽,不是當前清單的重複。
+
+        ★ 這一列是**押金**（migration_174 之後）。點下去會一併把
+          訂金/押金切到「押金」—— 不然按了「已收款」卻看到訂金混在裡面。
       */}
+      {earnStats.held.n + earnStats.pending.n > 0 && (
+        <div className="text-xs text-gray-500 mb-1.5">押金</div>
+      )}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
         {([
           { k: 'pending', title: '未收款', hint: '已填押金但還沒收到錢', tone: 'amber' },
@@ -914,10 +1010,10 @@ export default function DepositsPage() {
           { k: 'returned', title: '已退款', hint: '押金已退還給房客', tone: 'gray' },
         ] as const).map((t) => {
           const s = stats[t.k];
-          const on = statusF === t.k;
+          const on = statusF === t.k && kindF !== 'earnest';
           const fx = fxLine(s.cur);
           return (
-            <button key={t.k} onClick={() => setStatusF(t.k)}
+            <button key={t.k} onClick={() => { setKindF('deposit'); setStatusF(t.k); }}
               className={`text-left rounded-xl p-5 min-w-0 border transition
                 ${on
                   ? (t.tone === 'slate' ? 'bg-mor-slate text-white border-mor-slate'
@@ -1074,7 +1170,13 @@ export default function DepositsPage() {
             className="rounded-xl glass p-4 active:bg-white/45">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <div className="font-medium truncate">{r.room ?? '—'}</div>
+                <div className="font-medium truncate">
+                  {/* 手機卡片也要標 —— 只做桌機的話手機上兩種分不出來 */}
+                  {r.kind === 'earnest' && (
+                    <span className="mr-1 rounded bg-mor-bluelight px-1.5 py-0.5 text-[10px] text-mor-slate">訂金</span>
+                  )}
+                  {r.room ?? '—'}
+                </div>
                 <div className="text-xs text-gray-500 truncate">{r.guest_name ?? '—'}</div>
               </div>
               <div className="text-right shrink-0">
@@ -1118,6 +1220,15 @@ export default function DepositsPage() {
               <tr key={r.id} className="border-b border-mor-line/60 last:border-0 hover:bg-mor-sand/30">
                 <td className="px-3 py-2 whitespace-nowrap text-gray-500">{r.estate_id ? estateName[r.estate_id] ?? '—' : '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap font-medium">
+                  {/*
+                      ★ 訂金要標出來（migration_174）。
+                        「全部」頁籤下兩種混在一起,不標的話兩筆看起來一模一樣 ——
+                        而它們的下一步完全不同（訂金可以沒收、可以轉押）。
+                        押金不標:它是多數,標了整欄都是徽章反而看不出差異。
+                  */}
+                  {r.kind === 'earnest' && (
+                    <span className="mr-1 rounded bg-mor-bluelight px-1.5 py-0.5 text-[10px] text-mor-slate">訂金</span>
+                  )}
                   {r.room ?? '—'}
                   {r.is_manual && <span className="ml-1 text-[10px] text-gray-400">手動</span>}
                 </td>
