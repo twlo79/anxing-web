@@ -5,6 +5,7 @@ import {
 } from '@/lib/estate-manager';
 import Toast from '@/components/Toast';
 import { createClient } from '@/lib/supabase';
+import { extraDetails } from '@/lib/sync-extra';
 import { useProfile } from '@/lib/profile';
 import { softDelete } from '@/lib/trash';
 
@@ -1586,6 +1587,47 @@ export default function AdminPage() {
                                   停用:{String(it.extra['停用對照'])}
                                 </span>
                               )}
+                              {/*
+                                  ★★ 爬蟲爬到什麼（2026-08-24 使用者:
+                                     「沒 match 說爬到什麼 —— 名稱、listing id、日期起訖」）。
+
+                                  「對不到房源」那一列原本只有一個八位數字，
+                                  要拿它回 Airbnb 後台查才知道是哪一間房。
+
+                                  ★ **有什麼列什麼**，不寫死鍵名 —— 那筆訂單根本沒進資料庫，
+                                    細節只可能在爬蟲寫的 extra 裡，而爬蟲不在這個 repo。
+                                    猜錯鍵名的症狀是「一片空白而且沒有線索」。
+                              */}
+                              {(() => {
+                                const details = extraDetails(it.extra);
+                                if (details.length) {
+                                  return (
+                                    <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[11px] font-normal max-w-md">
+                                      {details.map((d) => (
+                                        <Fragment key={d.label}>
+                                          <dt className="text-gray-400 whitespace-nowrap">{d.label}</dt>
+                                          <dd className="text-gray-600 break-all">{d.value}</dd>
+                                        </Fragment>
+                                      ))}
+                                    </dl>
+                                  );
+                                }
+                                /*
+                                 * ★ 沒有細節時**說一句話**，不要留白。
+                                 *   留白的話看的人會以為畫面壞了,或以為爬蟲沒抓到東西 ——
+                                 *   而真正的情況是「爬蟲沒有把細節留下來」。
+                                 *   只在對不到房源那一類講,其他類本來就不需要細節。
+                                 */
+                                if (it.code === '對不到房源' || it.kind === '房源') {
+                                  return (
+                                    <div className="mt-1 text-[11px] font-normal text-gray-400 max-w-md">
+                                      爬蟲沒有留下這筆的細節（名稱、日期、房客）——
+                                      目前只能拿 listing 編號回 Airbnb 後台查。
+                                    </div>
+                                  );
+                                }
+                                return null;
+                              })()}
                             </td>
                             {/* 放多久了。同一個問題掛了兩週的話,那不是「還沒處理」,是被忽略了 */}
                             <td className="px-4 py-2 text-xs text-gray-400 whitespace-nowrap">{it.first_seen?.slice(0, 10)}</td>
