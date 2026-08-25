@@ -32,6 +32,8 @@ type Contract = {
   id: string; estate_id: string | null; room: string | null; tenant_name: string | null;
   phone: string | null; cadence: string; type: string | null; monthly_rent: number | null; amount_per_period: number | null; deposit: number | null;
   start_date: string | null; end_date: string | null; pay_day: number | null; first_payment_date: string | null;
+  /** 訂金（migration_174）。earnest_only = 這張契約還在訂金階段,不產生月租單 */
+  earnest_amount?: number | null; earnest_only?: boolean | null;
   paid: boolean; account: string | null; note: string | null; active: boolean; watch?: boolean; display_name?: string | null;
   invoice_required?: boolean; invoice_day?: number | null; invoice_after_paid?: boolean;
   invoice_title?: string | null; invoice_tax_id?: string | null; invoice_note?: string | null;
@@ -337,8 +339,24 @@ export default function ContractsPage() {
 
     const payload = {
       estate_id: edit.estate_id, room: edit.room, tenant_name: edit.tenant_name, phone: edit.phone,
-      cadence: edit.cadence, type: edit.type, amount_per_period: edit.amount_per_period,
-      monthly_rent: Math.round((edit.amount_per_period || 0) / (STEP_OF[edit.cadence] || 1)),
+      cadence: edit.cadence, type: edit.type,
+      /*
+       * ★★ 訂金階段存 **null**，不是 0（migration_174 / 階段 0 的查證）。
+       *
+       *   原本寫 `Math.round((amount_per_period || 0) / step)`，
+       *   所以租金空著時會存成 `monthly_rent = 0`。
+       *   功能上安全（gen_contract_recognitions 對 `<= 0` 一樣 return），
+       *   但語意上「0 元租金」跟「還沒填」不是同一件事 ——
+       *   而三個月後看資料的人只看得到那個 0。
+       *
+       *   `amount_per_period` 同理:資料庫已經放寬成可空,
+       *   存 0 的話 `ct_earnest_fields_chk` 會誤以為填好了。
+       */
+      amount_per_period: (edit.amount_per_period ?? 0) > 0 ? edit.amount_per_period : null,
+      monthly_rent: monthlyRentToSave(edit.amount_per_period, STEP_OF[edit.cadence] || 1),
+      // 訂金（migration_174）
+      earnest_only: !!edit.earnest_only,
+      earnest_amount: edit.earnest_only ? (edit.earnest_amount ?? 0) : 0,
       // 契約押金只有台幣。fx_deposit 一律清空 —— 之前短暫支援過多幣別,
       // 舊資料若留著外幣,押金管理會多出一筆沒人維護的外幣押金。
       deposit: edit.deposit, fx_deposit: [],
@@ -582,7 +600,7 @@ const nameOf = (c: Contract) =>
   const err = (f: string) => tried && missing.includes(f);
 
   function blank(): Contract {
-    return { id: '', estate_id: estates.find((e) => e.name === '正隆')?.id ?? null, room: '', tenant_name: '', phone: '', cadence: 'monthly', type: 'longterm', monthly_rent: 0, amount_per_period: 0, deposit: 0, start_date: '', end_date: '', pay_day: null, first_payment_date: '', paid: false, account: null, note: '', active: true, watch: false, display_name: '',
+    return { id: '', estate_id: estates.find((e) => e.name === '正隆')?.id ?? null, room: '', tenant_name: '', phone: '', cadence: 'monthly', type: 'longterm', monthly_rent: 0, amount_per_period: 0, deposit: 0, start_date: '', end_date: '', pay_day: null, first_payment_date: '', paid: false, account: null, note: '', active: true, watch: false, display_name: '', earnest_only: false, earnest_amount: 0,
       invoice_required: false, invoice_day: null, invoice_after_paid: true, invoice_title: '', invoice_tax_id: '', invoice_note: '', concessions: [] };
   }
 
@@ -988,7 +1006,7 @@ const nameOf = (c: Contract) =>
                       if (!e.target.checked) {
                         const need = earnestOnlyMissing(edit);
                         if (need.length) {
-                          return flashErr(`還不能取消「只收訂金」—— 還沒填：${need.join('、')}`);
+                          return flash(`還不能取消「只收訂金」—— 還沒填：${need.join('、')}`);
                         }
                       }
                       setEdit({ ...edit, earnest_only: e.target.checked });
