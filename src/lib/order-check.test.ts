@@ -236,9 +236,25 @@ test('★ 訂金階段仍然要填物業、房源、租戶', () => {
   assert.deepEqual(m, ['房源', '租戶']);
 });
 
-test('★ 繳別與類別不放寬 —— 它們有預設值,從來不會是空的', () => {
+test('★ 訂金階段連繳別與類別也放寬（2026-08-25 使用者指定）', () => {
   const m = checkContractRequired(CT({ earnest_only: true, cadence: '', type: null }));
-  assert.deepEqual(m, ['繳別', '類別']);
+  assert.deepEqual(m, []);
+});
+
+test('★ 一般契約的繳別與類別照樣必填', () => {
+  const m = checkContractRequired(CT({ earnest_only: false, cadence: '', type: null }));
+  assert.equal(m.includes('繳別'), true);
+  assert.equal(m.includes('類別'), true);
+});
+
+test('★★ 訂金階段唯一擋得住的就是物業、房源、租戶', () => {
+  assert.deepEqual(
+    checkContractRequired({
+      estate_id: null, room: '', tenant_name: '', cadence: '', type: null,
+      amount_per_period: null, start_date: null, end_date: null, earnest_only: true,
+    }),
+    ['物業', '房源', '租戶'],
+  );
 });
 
 test('★★ 前端的規則要跟資料庫的 ct_earnest_fields_chk 一致', () => {
@@ -248,4 +264,26 @@ test('★★ 前端的規則要跟資料庫的 ct_earnest_fields_chk 一致', ()
   assert.equal(checkContractRequired(CT({ earnest_only: true })).length, 0);
   // 沒傳 earnest_only 時當成一般契約（既有呼叫端不會壞）
   assert.equal(checkContractRequired(CT()).length, 3);
+});
+
+/*
+ * ★★ 2026-08-25：contracts/page.tsx 的 save() 漏傳 earnest_only。
+ *
+ *   畫紅框那一份有傳、存檔那一份沒傳 —— 標籤寫「選填」，按儲存說「必填」。
+ *   這裡把「勾了就是這三個都不擋」再釘一次，兩個呼叫點都得靠它。
+ */
+test('★ 勾了訂金：每期租金、租期起、租期迄都不該出現在缺漏清單', () => {
+  const m = checkContractRequired(CT({
+    earnest_only: true, amount_per_period: 0, start_date: null, end_date: null,
+  }));
+  assert.equal(m.includes('每期租金'), false);
+  assert.equal(m.includes('租期起'), false);
+  assert.equal(m.includes('租期迄'), false);
+});
+
+test('★ 沒勾訂金：三個都要擋（避免放寬放過頭）', () => {
+  const m = checkContractRequired(CT({
+    earnest_only: false, amount_per_period: 0, start_date: null, end_date: null,
+  }));
+  assert.deepEqual(m, ['每期租金', '租期起', '租期迄']);
 });

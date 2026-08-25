@@ -94,8 +94,35 @@ export function checkContractDates(
   startDate: string | null | undefined,
   endDate: string | null | undefined,
   firstPaymentDate?: string | null,
+  opts?: {
+    /**
+     * 訂金階段（`earnest_only`）：租期兩欄都空著是合法的（migration_174）。
+     *
+     * ★★ 只有**兩欄都空**才放行。
+     *
+     *   只填一邊的話仍然要擋 —— 那不是「還沒填」，那是填到一半。
+     *   放行的話資料庫的 `ct_earnest_fields_chk` 會收下它
+     *   （那道約束只問 `earnest_only or 三欄都有`），
+     *   然後這張契約永遠帶著一個沒有結束日的租期，
+     *   而月租單產生器只是安靜地跳過它。
+     *
+     * ★ 這一項刻意做成參數而不是「日期空就跳過」——
+     *   一般契約的空日期正是這支函式當初要抓的東西
+     *   （4/31 被日期框清成空字串）。兩者到程式這裡長得一模一樣，
+     *   分得出來的只有呼叫端。
+     */
+    allowEmpty?: boolean;
+  },
 ): DateCheck {
   const ok = (s: string | null | undefined) => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
+
+  if (opts?.allowEmpty && !startDate && !endDate) {
+    // 租期都還沒定。首繳日照樣檢查 —— 它跟租期無關，填了就要是有效日期
+    if (firstPaymentDate && !ok(firstPaymentDate)) {
+      return { ok: false, error: `首繳日沒有填成有效日期${BAD_DATE_HINT}` };
+    }
+    return { ok: true };
+  }
 
   if (!ok(startDate)) return { ok: false, error: `租期起沒有填成有效日期${BAD_DATE_HINT}` };
   if (!ok(endDate)) return { ok: false, error: `租期迄沒有填成有效日期${BAD_DATE_HINT}` };

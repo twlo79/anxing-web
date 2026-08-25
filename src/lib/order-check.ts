@@ -87,8 +87,19 @@ export function checkContractRequired(c: {
    *   （「大概九月一號起租」），只是還沒定案。擋著他填的話，
    *   他得記在別的地方，補的時候再打一次。
    *
-   * ★ 繳別與類別**仍然必填** —— 那兩個有預設值（月繳／長租），
-   *   從來不會是空的，放寬沒有意義。
+   * ★ 繳別與類別**也放寬**（2026-08-25 使用者:「在訂金環節 繳別也非必填」）。
+   *
+   *   原本沒放寬，理由是「那兩個是下拉、有預設值（月繳／長租），
+   *   從來不會是空的，放寬沒有意義」。那個理由對，但**不是使用者在看的東西**——
+   *   他看到的是欄位旁邊那顆紅星。
+   *
+   *   訂金階段的意思是「契約內容還沒確定」，而繳別與類別正是契約內容。
+   *   留著紅星等於在說「這兩個你現在就得決定」，
+   *   而他當下只想記下「收了 Amy 十七萬五」。
+   *
+   *   ★ 實際擋不擋得到本來就無所謂（下拉不會空）——
+   *     這次改的是**畫面說的話要跟規則一致**，
+   *     不是又多擋一道。
    */
   earnest_only?: boolean | null;
 }): string[] {
@@ -96,8 +107,10 @@ export function checkContractRequired(c: {
   if (!c.estate_id) miss.push('物業');
   if (!(c.room ?? '').trim()) miss.push('房源');
   if (!(c.tenant_name ?? '').trim()) miss.push('租戶');
-  if (!c.cadence) miss.push('繳別');
-  if (!c.type) miss.push('類別');
+  if (!c.earnest_only) {
+    if (!c.cadence) miss.push('繳別');
+    if (!c.type) miss.push('類別');
+  }
 
   /*
    * ★★ 訂金階段這三個不檢查。

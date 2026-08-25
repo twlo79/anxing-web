@@ -253,3 +253,37 @@ test('★ 首繳日早了一年以上 → 多半是年份打錯', () => {
 test('首繳日空白不擋 —— 那是選填', () => {
   assert.deepEqual(checkContractDates('2026-05-01', '2027-04-30', null), { ok: true });
 });
+
+/*
+ * ── 訂金階段的租期（migration_174 / 2026-08-25 修）────────
+ *
+ * 使用者勾了「只收訂金」按儲存，被 alert 擋下說「租期起沒有填成有效日期」。
+ * 畫面上那兩格明明寫著「選填」。
+ */
+test('★ allowEmpty：兩欄都空時放行', () => {
+  assert.deepEqual(checkContractDates('', '', null, { allowEmpty: true }), { ok: true });
+  assert.deepEqual(checkContractDates(null, null, null, { allowEmpty: true }), { ok: true });
+});
+
+test('★★ allowEmpty 只放行「都空」—— 填一半照樣擋', () => {
+  assert.equal(checkContractDates('2026-09-01', '', null, { allowEmpty: true }).ok, false);
+  assert.equal(checkContractDates('', '2027-08-31', null, { allowEmpty: true }).ok, false);
+});
+
+test('allowEmpty 時租期填完整還是要檢查前後順序', () => {
+  assert.equal(checkContractDates('2027-01-01', '2026-01-01', null, { allowEmpty: true }).ok, false);
+  assert.deepEqual(checkContractDates('2026-09-01', '2027-08-31', null, { allowEmpty: true }), { ok: true });
+});
+
+test('allowEmpty ＋ 租期空著時，首繳日格式壞掉還是要抓', () => {
+  const r = checkContractDates('', '', '2026/09/01', { allowEmpty: true });
+  assert.equal(r.ok, false);
+  assert.match((r as { error: string }).error, /首繳日/);
+  // 正常的首繳日不擋 —— 訂金階段先講好第一期什麼時候付是合理的
+  assert.deepEqual(checkContractDates('', '', '2026-09-01', { allowEmpty: true }), { ok: true });
+});
+
+test('沒傳 opts 時行為跟以前一模一樣（既有呼叫端不會鬆掉）', () => {
+  assert.equal(checkContractDates('', '', null).ok, false);
+  assert.equal(checkContractDates('', '', null, { allowEmpty: false }).ok, false);
+});

@@ -324,6 +324,18 @@ export default function ContractsPage() {
       cadence: edit.cadence, type: edit.type,
       amount_per_period: edit.amount_per_period,
       start_date: edit.start_date, end_date: edit.end_date,
+      /*
+       * ★★ 2026-08-25 修:這裡原本**漏了 earnest_only**。
+       *
+       *   畫面上的 `missing`（畫紅框那一份，第 591 行）有傳，存檔這一份沒有。
+       *   於是勾了「只收訂金」之後租期與租金的標籤變成「選填」，
+       *   按儲存卻被擋下說「還沒填：每期租金、租期起、租期迄」——
+       *   畫面說選填、存檔說必填，兩邊各說各話。
+       *
+       *   同一個判斷有兩個呼叫點就會發生這種事。
+       *   兩處的參數必須一模一樣。
+       */
+      earnest_only: edit.earnest_only,
     });
     if (miss.length) return flash(`無法儲存,還沒填：${miss.join('、')}`);
     /*
@@ -334,7 +346,18 @@ export default function ContractsPage() {
      * 英文的 `null value in column "end_date"...`，而 flash 只顯示 2.5 秒。
      * 使用者看到的是「按了儲存沒反應」，畫面上那格還顯示著 31/04/2027。
      */
-    const dc = checkContractDates(edit.start_date, edit.end_date, edit.first_payment_date);
+    /*
+     * ★★ 第二道關卡也要放行（2026-08-25，同一個 bug 的另一半）。
+     *
+     *   就算上面的必填改對了，這裡還會擋一次:
+     *   `checkContractDates` 看到空的租期起會回「租期起沒有填成有效日期」，
+     *   而且是 `alert` —— 使用者按了兩次儲存看到兩種不同的錯誤訊息。
+     *
+     * ★ `allowEmpty` **只在兩欄都空時放行**，填一半照樣擋 ——
+     *   理由寫在 due-date.ts。
+     */
+    const dc = checkContractDates(edit.start_date, edit.end_date, edit.first_payment_date,
+      { allowEmpty: !!edit.earnest_only });
     if (!dc.ok) { alert(dc.error); return; }
 
     const payload = {
@@ -954,9 +977,17 @@ const nameOf = (c: Contract) =>
                   /* 離開欄位才正規化 —— 見 shortterm 那邊的說明（migration_173） */
                   onBlur={(e) => setEdit({ ...edit, tenant_name: titleCaseName(e.target.value) })} className={`rounded-lg border px-2 py-1.5 ${err('租戶') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} /></label>
               <label className="flex flex-col gap-1">電話<input value={edit.phone ?? ''} onChange={(e) => setEdit({ ...edit, phone: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
-              <label className="flex flex-col gap-1"><span className="flex items-center">繳別<Req /></span>
+              {/*
+                  ★ 繳別與類別在訂金階段也標「選填」（2026-08-25 使用者指定）。
+
+                    它們是下拉、有預設值，實際上永遠不會空 ——
+                    所以這個改動擋不到任何東西，改的是**畫面說的話**。
+                    訂金階段的意思是「契約內容還沒確定」，
+                    而繳別與類別正是契約內容:留著紅星等於要他現在就決定。
+              */}
+              <label className="flex flex-col gap-1"><span className="flex items-center">繳別{!edit.earnest_only && <Req />}{edit.earnest_only && <span className="text-xs text-gray-400 ml-1">選填</span>}</span>
                 <select value={edit.cadence} onChange={(e) => setEdit({ ...edit, cadence: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="monthly">月繳</option><option value="quarterly">季繳</option><option value="halfyear">半年繳</option><option value="yearly">年繳</option></select></label>
-              <label className="flex flex-col gap-1"><span className="flex items-center">類別<Req /></span>
+              <label className="flex flex-col gap-1"><span className="flex items-center">類別{!edit.earnest_only && <Req />}{edit.earnest_only && <span className="text-xs text-gray-400 ml-1">選填</span>}</span>
                 <select value={edit.type ?? 'longterm'} onChange={(e) => setEdit({ ...edit, type: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="longterm">長租</option><option value="company">公司登記</option><option value="office">辦公室</option></select></label>
               <label className="flex flex-col gap-1"><span className="flex items-center">每期租金({CAD_LABEL[edit.cadence]}){!edit.earnest_only && <Req />}{edit.earnest_only && <span className="text-xs text-gray-400 ml-1">選填</span>}</span>
                 <MoneyInput value={edit.amount_per_period ?? 0} invalid={err('每期租金')}
