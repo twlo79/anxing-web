@@ -10,6 +10,8 @@ import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
 import { titleCaseName } from '@/lib/name-format';
+import { manualDepositError } from '@/lib/manual-deposit';
+import { totalBuckets } from '@/lib/deposit-summary';
 import { exitBlockedReason, forfeitOrder, earnestStatus, convertPlan, type EarnestDep } from '@/lib/earnest';
 import { useProfile } from '@/lib/profile';
 import { fetchAll } from '@/lib/fetch-all';
@@ -460,6 +462,15 @@ export default function DepositsPage() {
   const earnStats = useMemo(() => statsOf('earnest'), [statsOf]);
   /** 舊的呼叫端還在用 `stats` —— 指到押金那一份，行為跟改之前一樣 */
   const stats = depStats;
+
+  /*
+   * 訂金 ＋ 押金的總計（2026-08-25）。
+   *
+   * ★ 從已經算好的兩份合併，不是再掃一次 base ——
+   *   掃兩次的話「什麼算 held」這個判斷會有兩份，
+   *   改了其中一份時總計和卡片就對不起來，而兩邊各自看都合理。
+   */
+  const allStats = useMemo(() => totalBuckets(earnStats, depStats), [earnStats, depStats]);
 
   const fxLine = (cur: Record<string, number>) =>
     Object.entries(cur).filter(([c]) => c !== 'TWD').map(([c, v]) => `${c} ${fmt(v)}`).join('・');
@@ -929,8 +940,8 @@ export default function DepositsPage() {
     if (!edit) return;
     const manual = !!edit.is_manual;
     if (manual) {
-      if (!(Number(edit.amount) > 0)) return flash('請填金額');
-      if (!edit.room?.trim() && !edit.guest_name?.trim()) return flash('房源與姓名至少要填一個');
+      const err = manualDepositError({ ...edit, kind: edit.kind ?? 'deposit' });
+      if (err) return flash(err);
     }
     setSaving(true);
     /*
@@ -957,6 +968,18 @@ export default function DepositsPage() {
         currency: edit.currency || 'TWD',
         amount: Number(edit.amount) || 0,
       });
+      /*
+       * ★★ kind 只在**新增**時寫（2026-08-25 補上，原本整個漏掉）。
+       *
+       *   漏掉的症狀:下拉選了「訂金」，存檔成功，然後那一列是押金 ——
+       *   因為 deposits.kind 的預設值就是 'deposit'（migration_174）。
+       *   不報錯、不提示，只有回頭看列表才發現種類不對。
+       *
+       *   更新時不寫是刻意的:畫面上那個下拉已經 disabled，
+       *   而已經走過的痕跡（forfeited_on / converted_to_deposit_id）
+       *   會跟新種類的規則對不上。要換種類就刪掉重建。
+       */
+      if (!edit.id) payload.kind = edit.kind === 'earnest' ? 'earnest' : 'deposit';
     }
     const { error } = edit.id
       ? await supabase.from('deposits').update(payload).eq('id', edit.id)
@@ -1224,6 +1247,51 @@ export default function DepositsPage() {
 
           0 筆的那一列寫「0 筆」就好,那是資訊不是故障。
       */}
+      {/*
+          ★ 暫收款總計（2026-08-25 使用者:「要有總共 暫收款」）。
+
+          底下兩列各自回答「訂金在哪個階段」「押金在哪個階段」，
+          少的是最上面那一句:**我們手上總共有多少別人的錢**。
+          那正是「暫收管理」這個名字在問的事。
+
+          ★ 做成一條窄的橫幅而不是第三列大卡片 ——
+            三列大卡片會把清單推到第一屏之外，
+            而總計是拿來瞄一眼的，不是拿來點的。
+
+          ★ 不可點。它不是分頁籤:底下每一格點下去都會同時決定
+            「訂金還是押金」，總計沒有這個答案。
+            做成看起來可點卻篩不出東西的話，比不做更糟。
+      */}
+      <div className="mb-3 rounded-lg border border-mor-line bg-white px-3 py-2.5">
+        <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1">
+          <span className="text-xs text-gray-500 shrink-0">暫收款總計</span>
+          {([
+            { k: 'held' as const,     label: '在我們手上', strong: true },
+            { k: 'pending' as const,  label: '尚未收到',   strong: false },
+            { k: 'returned' as const, label: '已結案',     strong: false },
+          ]).map((t) => {
+            const s = allStats[t.k];
+            const fx = fxLine(s.cur);
+            return (
+              <span key={t.k} className="flex items-baseline gap-1.5 min-w-0">
+                <span className="text-[11px] text-gray-500">{t.label}</span>
+                <span className={`tabular-nums ${t.strong ? 'font-bold text-mor-slate' : 'font-medium'}`}>
+                  NT$ {fmt(s.cur['TWD'] ?? 0)}
+                </span>
+                <span className="text-[11px] text-gray-400">
+                  {fx ? `${fx}・` : ''}{s.n} 筆
+                </span>
+              </span>
+            );
+          })}
+        </div>
+        {/* ★ 「已結案」含訂金的沒收與轉押 —— 那些錢沒有退給房客。
+            不寫的話會被當成「退出去了」，而金額看起來完全正常 */}
+        <div className="text-[11px] text-gray-400 mt-1">
+          訂金與押金合計。已結案含退款、沒收、轉押 —— 沒收與轉押的錢並沒有離開公司。
+        </div>
+      </div>
+
       <div className="mb-3">
           <div className="text-xs text-gray-500 mb-1.5">訂金</div>
           {/*
@@ -1279,9 +1347,17 @@ export default function DepositsPage() {
       <div className="text-xs text-gray-500 mb-1.5">押金</div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
         {([
-          { k: 'pending', title: '未收款', hint: '已填押金但還沒收到錢', tone: 'amber' },
-          { k: 'held', title: '已收款(暫收中)', hint: '錢在我們手上,尚未退還', tone: 'slate' },
-          { k: 'returned', title: '已退款', hint: '押金已退還給房客', tone: 'gray' },
+          /*
+           * ★ 三個標題都帶「押金」兩個字（2026-08-25 使用者指定）。
+           *
+           *   舊標題是「未收款／已收款(暫收中)／已退款」——
+           *   而上面那一列訂金的標題是「未付訂金／已收訂金／已結案」。
+           *   兩列並排時只有一列說得出自己是什麼錢，
+           *   捲到一半看到「已退款」會不知道退的是訂金還是押金。
+           */
+          { k: 'pending', title: '尚未收押金', hint: '已填押金但還沒收到錢', tone: 'amber' },
+          { k: 'held', title: '已收押金', hint: '錢在我們手上,尚未退還', tone: 'slate' },
+          { k: 'returned', title: '已退押金', hint: '押金已退還給房客', tone: 'gray' },
         ] as const).map((t) => {
           const s = stats[t.k];
           const on = statusF === t.k && kindF !== 'earnest';
@@ -2044,17 +2120,22 @@ export default function DepositsPage() {
                       手動暫收款不掛在任何訂單或契約下,適合舊約押金、代收、還沒開契約就先收的訂金。
                     </div>
                   )}
-                  <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">物業</span>
+                  {/*
+                      ★ 物業／房源／姓名都是必填（2026-08-25 使用者指定）。
+                        舊規則「房源與姓名至少填一個」會讓帳上長出對不上人的錢 ——
+                        判斷與理由都在 lib/manual-deposit.ts。
+                  */}
+                  <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">物業<Req /></span>
                     <select value={edit.estate_id ?? ''} onChange={(e) => setEdit({ ...edit, estate_id: e.target.value || null })}
                       className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5">
-                      <option value="">未指定</option>
+                      <option value="">請選擇</option>
                       {estates.map((es) => <option key={es.id} value={es.id}>{es.name}</option>)}
                     </select></label>
-                  <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">房源</span>
+                  <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">房源<Req /></span>
                     <input value={edit.room ?? ''} onChange={(e) => setEdit({ ...edit, room: e.target.value })}
                       placeholder="例:14B5"
                       className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5" /></label>
-                  <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">姓名</span>
+                  <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">姓名<Req /></span>
                     <input value={edit.guest_name ?? ''} onChange={(e) => setEdit({ ...edit, guest_name: e.target.value })}
                       /* 離開欄位才正規化 —— 見 shortterm 那邊的說明（migration_173） */
                       onBlur={(e) => setEdit({ ...edit, guest_name: titleCaseName(e.target.value) })}
@@ -2127,6 +2208,14 @@ export default function DepositsPage() {
                 兩個症狀都**不會報錯**，只會讓那筆押金的數字慢慢變得沒人看得懂。
                 所以入口收斂成一個:開收款視窗，一筆一列地記。
               */}
+              {/*
+                ★ 新增時整段不顯示（2026-08-25 使用者:「下面不用顯示吧」）。
+
+                  還沒存檔的那一列 id 是空的,收款與退款都做不了 ——
+                  原本顯示的是「先存檔,才能記收款」這種只能看不能按的東西。
+                  空殼區塊會讓人以為漏填了什麼。
+              */}
+              {edit.id && (
               <div className="border-t border-mor-line pt-3">
                 <div className="text-xs font-semibold text-gray-500 mb-2">收款</div>
                 {(() => {
@@ -2144,22 +2233,18 @@ export default function DepositsPage() {
                         </span>
                       </div>
                       <div className="text-[11px] text-gray-500 mt-1.5">
-                        收押金日與收款方式由收款明細算出來 —— 收兩次就記兩筆。
+                        收款日與收款方式由收款明細算出來 —— 收兩次就記兩筆。
                       </div>
-                      {edit.id && (
-                        <button
-                          onClick={() => { setPaying(edit); setEdit(null); setTriedRefund(false); }}
-                          className="mt-2 h-9 w-full rounded-lg border border-mor-slate text-mor-slate text-sm font-medium">
-                          開啟收款明細
-                        </button>
-                      )}
-                      {!edit.id && (
-                        <div className="text-[11px] text-gray-400 mt-2">先存檔，才能記收款。</div>
-                      )}
+                      <button
+                        onClick={() => { setPaying(edit); setEdit(null); setTriedRefund(false); }}
+                        className="mt-2 h-9 w-full rounded-lg border border-mor-slate text-mor-slate text-sm font-medium">
+                        開啟收款明細
+                      </button>
                     </div>
                   );
                 })()}
               </div>
+              )}
 
               {/*
                 加費（從押金扣除）。migration_157。
@@ -2192,6 +2277,7 @@ export default function DepositsPage() {
                   payee_*          = 房客收款帳號（錢退到哪）
                   returned_account = 安幸付款帳號（錢從哪出）
               */}
+              {edit.id && (
               <div className="border-t border-mor-line pt-3">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs font-semibold text-gray-500">退款</span>
@@ -2204,7 +2290,7 @@ export default function DepositsPage() {
                   不是「還在等」。反過來排的話,一筆早就退完的押金會顯示「等待匯款」。
                 */}
                 {!edit.received_on ? (
-                  <div className="text-xs text-gray-400">還沒收到押金,先填收款資訊。</div>
+                  <div className="text-xs text-gray-400">還沒收到款,先到收款明細記一筆。</div>
                 ) : edit.returned_on ? (
                   <div className="text-xs text-gray-500">
                     已於 {edit.returned_on} 退還・
@@ -2248,6 +2334,7 @@ export default function DepositsPage() {
                   </>
                 )}
               </div>
+              )}
 
               {/* 匯款水單、房客提供的帳戶截圖都放這裡 */}
               {edit.id && <Receipts kind="dep" parentId={edit.id} label="憑證圖片" />}
