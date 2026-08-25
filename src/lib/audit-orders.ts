@@ -33,8 +33,53 @@ export type AuditIssue =
   '重複訂單' | '房源過載' | '資料缺失' | '房價過低' | '日期不合理' | '空間重疊'
   /** 房源名稱只差空白或大小寫，其實對得到（migration 無關，2026-08-24） */
   | '房源名稱'
-  /** 相似的房客姓名出現在不同房源 —— 可能是同一人，也可能只是同名 */
-  | '姓名相似';
+;
+
+/**
+ * 相似的房客姓名 —— **摘要，不逐筆標記**。
+ *
+ * ============================================================
+ * 【為什麼不做成逐筆標記】（2026-08-24，實際跑過資料之後）
+ *
+ * 原本做成跟其他項目一樣的逐筆標籤。實際掃 4949 筆訂單的結果:
+ *
+ *     寫法不一致  187 組　共 673 筆訂單會被標
+ *     寫法一致     40 組　共 227 筆訂單會被標
+ *
+ * 而名單長這樣:
+ *
+ *     Jason、Jason Chung Kan Yip、Jason Gergely、Jason Lim、Jason Liu…
+ *     Simon、Simon Kuong、Simon Martin、Simon Roberts
+ *     William、William Fung、William Huang、William Lie、William Spence…
+ *
+ * **這些是不同的人。** Airbnb 房客大量只填 first name，
+ * 而英文 first name 的重複率極高 —— 用「第一個詞」分組，
+ * 九成以上是誤報。
+ *
+ * 900 筆標記掛在正常訂單上，會直接淹掉真正該看的空間重疊與重複訂單。
+ * 那正是這支檔頭寫的:
+ *
+ *     「標記一旦大量出現在正常資料上，真正該看的那幾筆就被淹掉了。
+ *       那時候這個功能就等於沒有。」
+ *
+ * 所以改成**上方摘要**（跟房源過載同一個位置）:要查的時候查得到，
+ * 不查的時候不擋路。使用者說的「也要通知」——摘要也是通知，
+ * 而 900 筆標記等於沒通知。
+ *
+ * ★ 大小寫那類問題（LILIAN vs Lilian）**已經由 migration_173 從源頭解決**，
+ *   不需要防呆再抓一次。剩下的「Lilian vs Lilian Hong」
+ *   無法從資料判斷是不是同一人 —— 那本來就該是人看的。
+ */
+export type NameGroup = {
+  /** 這一組裡出現過的完整姓名 */
+  names: string[];
+  /** 出現在哪幾間房 */
+  rooms: string[];
+  /** 共幾筆訂單 */
+  orderCount: number;
+  /** 寫法不只一種 —— 這種比較可能是同一個人 */
+  inconsistent: boolean;
+};
 
 export type AuditOrder = {
   id: string;
@@ -126,6 +171,11 @@ export type AuditResult = {
   counts: Record<AuditIssue, number>;
   /** 房源過載的細節，給上方摘要用 */
   overloads: Overload[];
+  /**
+   * 相似姓名 —— **只給上方摘要，不逐筆標記**。見 NameGroup 的說明。
+   * 排序:寫法不一致的在前（比較可能是真的問題），再按訂單數多寡。
+   */
+  nameGroups: NameGroup[];
   /** 掃了幾筆 */
   scanned: number;
 };
@@ -257,80 +307,52 @@ export function auditOrders(
     }
   }
 
-  /* ── 1.5 相似的房客姓名 ─────────────────────── */
+  /* ── 1.5 相似的房客姓名（**摘要，不逐筆標記**）───── */
   /*
    * 使用者:「防呆多加一條，人名去重。如果相似名字在多間出現訂單也要通知。」
    *
-   * 真實的例子（2026-08-24 截圖）:
+   * ★★ 為什麼是摘要而不是標記，見上面 NameGroup 的說明 ——
+   *    實際跑過資料是 900 筆，九成是不同的人。
    *
-   *     LILIAN        B8   時兆
-   *     Lilian        B6   時兆
-   *     Lilian Hong   B6   時兆
-   *     LILIAN WA     南京5 南京
-   *
-   * 四筆、四種寫法、三間房。是不是同一個人，只有人知道。
-   *
-   *
-   * 【為什麼用「第一個詞」當分組依據】
-   *
-   * 完全相同的 key（LILIAN 與 Lilian）當然是同一組。
-   * 但真正要抓的是 `Lilian` 與 `Lilian Hong` —— 那兩個 key 不同，
-   * 而它們很可能是同一個人只是有時候多寫了姓。
-   *
-   * 用第一個詞分組抓得到，代價是「Lilian」這種常見名字會把
-   * 真正不同的兩個人湊在一起。所以:
-   *
-   *   ★★ 這是**提示**不是錯誤（藍色，不是琥珀色）。
-   *      系統負責看見，人負責決定（CLAUDE.md 的判斷原則）。
-   *
-   *
-   * 【只在「跨房源」時才報】
-   *
-   * 同一間房的同一個人本來就會有很多筆訂單（續住、多次入住），
-   * 那個不用提醒。跨房源才值得看一眼 ——
-   * 而且那正是使用者說的「在多間出現訂單」。
+   * 分組規則不變（第一個詞），只是結果不再掛到每一筆訂單上。
    */
+  const nameGroups: NameGroup[] = [];
   {
-    type Bucket = { names: Set<string>; rooms: Set<string>; ids: string[] };
+    type Bucket = { names: Set<string>; rooms: Set<string>; count: number };
     const byToken = new Map<string, Bucket>();
 
     for (const o of orders) {
-      // 作廢的單不參與 —— 跟上面那個迴圈同一條規則。
-      // 不跳過的話，取消掉的訂單會把一個名字湊進「多間房」裡
+      // 作廢的單不參與 —— 取消掉的訂單會把一個名字湊進「多間房」裡
       if (isVoided(o)) continue;
       const tok = firstNameToken(o.guest_name);
       // 空 token = 判斷不了。**不能讓它們自成一組** ——
       // 那會把所有沒填房客的訂單湊成一大堆假的「相似姓名」
       if (!tok) continue;
-      const b = byToken.get(tok) ?? { names: new Set(), rooms: new Set(), ids: [] };
+      const b = byToken.get(tok) ?? { names: new Set(), rooms: new Set(), count: 0 };
       b.names.add((o.guest_name ?? '').trim());
       if (o.property_raw) b.rooms.add(o.property_raw);
-      b.ids.push(o.id);
+      b.count++;
       byToken.set(tok, b);
     }
 
     for (const b of byToken.values()) {
-      // 只有一種寫法、又只在一間房 —— 沒什麼好講的
+      // 只在一間房 —— 同一個人續住很正常，沒什麼好講的
       if (b.rooms.size < 2) continue;
-
-      /*
-       * ★ 分兩種講法，因為要做的事不一樣:
-       *
-       *   寫法不只一種 → 多半是同一個人打錯字,可以合併
-       *   寫法完全一樣 → 可能是同名的兩個人,也可能真的租了兩間
-       *
-       *   混成一句「姓名相似」的話，第一種的人會去查第二種的東西。
-       */
-      const distinct = new Set([...b.names].map((n) => nameKey(n)));
-      const roomList = [...b.rooms].join('、');
-      const msg = distinct.size > 1
-        ? `「${[...b.names].join('」「')}」寫法不一致，出現在 ${b.rooms.size} 間房（${roomList}）`
-          + ' —— 是同一個人的話請統一寫法'
-        : `「${[...b.names][0]}」在 ${b.rooms.size} 間房都有訂單（${roomList}）`
-          + ' —— 確認是同一個人還是同名';
-
-      for (const id of b.ids) add(id, '姓名相似', msg);
+      nameGroups.push({
+        names: [...b.names],
+        rooms: [...b.rooms],
+        orderCount: b.count,
+        // 寫法不只一種 → 比較可能是同一個人打錯字（用 nameKey 比，忽略大小寫與標點）
+        inconsistent: new Set([...b.names].map((n) => nameKey(n))).size > 1,
+      });
     }
+
+    /*
+     * 排序:寫法不一致的在前 —— 那些比較可能是真的問題。
+     * 同類再按訂單數多寡，數量大的先看（影響的營收也大）。
+     */
+    nameGroups.sort((a, b) =>
+      Number(b.inconsistent) - Number(a.inconsistent) || b.orderCount - a.orderCount);
   }
 
   /* ── 2. 重複訂單 ────────────────────────────── */
@@ -557,11 +579,11 @@ export function auditOrders(
 
   const counts = {
     重複訂單: 0, 房源過載: 0, 資料缺失: 0, 房價過低: 0, 日期不合理: 0, 空間重疊: 0,
-    房源名稱: 0, 姓名相似: 0,
+    房源名稱: 0,
   } as Record<AuditIssue, number>;
   for (const v of Object.values(byId)) for (const i of v.issues) counts[i]++;
 
-  return { byId, counts, overloads, scanned: orders.length };
+  return { byId, counts, overloads, nameGroups, scanned: orders.length };
 }
 
 /** 標記的顏色。同一種問題在訂單頁與營收頁要長得一樣。 */
@@ -572,7 +594,6 @@ export const ISSUE_CLS: Record<AuditIssue, string> = {
   資料缺失: 'bg-amber-50 text-amber-800 border-amber-200',
   // 這兩個是「提示」不是「錯誤」—— 用藍色，跟需要立刻處理的琥珀色分開
   房源名稱: 'bg-blue-50 text-blue-800 border-blue-200',
-  姓名相似: 'bg-blue-50 text-blue-800 border-blue-200',
   房價過低: 'bg-mor-bluelight text-mor-slate border-mor-slate/30',
   // 跟重複訂單同一個紅 —— 兩者的後果一樣：客人到現場發現房間有別人
   空間重疊: 'bg-red-50 text-red-700 border-red-200',

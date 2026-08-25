@@ -64,16 +64,17 @@ export function AuditBadges({ entry }: {
 }
 
 /*
- * 排序 = 嚴重程度。前面幾個是「錢算錯了」，後面兩個是「資料不整齊」。
+ * 排序 = 嚴重程度。前面幾個是「錢算錯了」，最後一個是「資料不整齊」。
  *
- * ★ 新的兩類放最後（2026-08-24）:
- *     房源名稱  只差空白/大小寫，改一下就好
- *     姓名相似  可能是同一個人，也可能只是同名 —— 要人判斷
- *   放前面的話，會把真正該處理的重疊與重複往下推。
+ * ★ 房源名稱放最後（2026-08-24）—— 只差空白或大小寫，改一下就好。
+ *   放前面的話會把真正該處理的重疊與重複往下推。
+ *
+ * ★ **相似姓名不在這個清單裡** —— 它不是逐筆標記，是下面的摘要區塊。
+ *   實際資料是 900 筆會被標而九成是不同的人（見 audit-orders.ts 的 NameGroup）。
  */
 const ORDER: AuditIssue[] = [
   '空間重疊', '重複訂單', '房源過載', '日期不合理', '資料缺失', '房價過低',
-  '房源名稱', '姓名相似',
+  '房源名稱',
 ];
 
 /**
@@ -90,7 +91,14 @@ export function AuditSummary({ result, onlyBad, onToggleOnly }: {
   onToggleOnly?: () => void;
 }) {
   const total = Object.values(result.counts).reduce((a, b) => a + b, 0);
-  if (!total) {
+  /*
+   * ★ 相似姓名要一起算進「有沒有問題」。
+   *   只看 counts 的話，其他都乾淨但有 187 組相似姓名時，
+   *   畫面會說「沒有發現問題」而下面那一區塊根本不會被渲染 ——
+   *   通知等於消失。
+   */
+  const badNames = result.nameGroups.filter((g) => g.inconsistent).length;
+  if (!total && !badNames) {
     return (
       <div className="rounded-xl border border-mor-green/30 bg-mor-greenlight px-4 py-2.5 mb-3 text-sm text-mor-green">
         檢查了 {result.scanned.toLocaleString('en-US')} 筆，沒有發現問題。
@@ -101,7 +109,9 @@ export function AuditSummary({ result, onlyBad, onToggleOnly }: {
     <div className="rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 mb-3 text-sm">
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium text-amber-900">
-          檢查了 {result.scanned.toLocaleString('en-US')} 筆，有問題的地方：
+          檢查了 {result.scanned.toLocaleString('en-US')} 筆，
+          {/* 只有相似姓名時不要說「有問題的地方」—— 那不是問題，是待確認 */}
+          {total ? '有問題的地方：' : '沒有發現錯誤，但有幾組姓名要確認：'}
         </span>
         {ORDER.filter((i) => result.counts[i] > 0).map((i) => (
           <span key={i} className={`rounded border px-1.5 py-0.5 text-[11px] font-medium ${ISSUE_CLS[i]}`}>
@@ -133,6 +143,44 @@ export function AuditSummary({ result, onlyBad, onToggleOnly }: {
           )}
         </ul>
       )}
+      {/*
+        ★★ 相似姓名（2026-08-24 使用者:「相似名字在多間出現訂單也要通知」）。
+
+        ★ 用 <details> 收起來，預設不展開。
+          實際資料有 187 組 —— 攤開來會把上面那些真正該處理的東西推到看不見。
+          「通知」的意思是「要看的時候找得到」，不是「一直擋在眼前」。
+
+        ★ 只顯示**寫法不一致**的那幾組。寫法完全一樣的（40 組）
+          純粹是同名的不同人，列出來沒有任何可以做的事。
+      */}
+      {(() => {
+        const bad = result.nameGroups.filter((g) => g.inconsistent);
+        if (!bad.length) return null;
+        return (
+          <details className="mt-2">
+            <summary className="text-xs text-amber-900 cursor-pointer select-none">
+              相似的房客姓名 <b>{bad.length}</b> 組
+              <span className="text-amber-700">
+                　—— 同一個名字的不同寫法出現在多間房。可能是同一個人，也可能只是同名
+              </span>
+            </summary>
+            <ul className="mt-1.5 space-y-0.5 text-xs text-amber-900 max-h-64 overflow-y-auto">
+              {bad.slice(0, 50).map((g) => (
+                <li key={g.names.join('|')}>
+                  <b>{g.names.join('、')}</b>
+                  <span className="text-amber-700">
+                    　{g.rooms.length} 間房 ／ {g.orderCount} 筆訂單
+                  </span>
+                </li>
+              ))}
+              {bad.length > 50 && (
+                <li className="text-amber-700">…還有 {bad.length - 50} 組</li>
+              )}
+            </ul>
+          </details>
+        );
+      })()}
+
       <div className="mt-2 text-xs text-amber-700">
         這些只是提醒,資料沒有被更動。滑到標籤上可以看原因。
       </div>
