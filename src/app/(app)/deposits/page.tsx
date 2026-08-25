@@ -1808,42 +1808,46 @@ export default function DepositsPage() {
                 {(() => {
                   const p = refundPerms(d);
                   const btn = 'flex-1 min-w-[5rem] h-11 rounded-lg text-sm font-medium';
+                  const earnest = d.kind === 'earnest';
                   return <>
-                    {/* 管家只能看 —— 藏起來而不是按了才擋。
-                        RLS 擋下的 UPDATE 會回成功且影響 0 列,
-                        畫面上看起來像存好了,重整才發現沒變 */}
                     {/*
-                      ★ 名字要說出**這顆跟隔壁那顆差在哪**
-                        （2026-08-25 使用者:「管理押金 跟 收款明細感覺一樣耶」）。
+                      ══════════ 按鈕順序（2026-08-25 使用者逐顆指定）══════════
 
-                        「管理押金」講不出自己做什麼 —— 收款也是管理，退款也是管理。
-                        它實際做的是「錢**出去**那一段」:退款申請、加費扣抵、
-                        備註與憑證；而隔壁那顆是錢**進來**那一段。
+                        訂金：收款 → 明細 → 轉押金 → 沒收 → 分享 → 關閉
+                        押金：收款 → 明細 → 押金移房 →         分享 → 關閉
 
-                        所以改成「退款・加費」。手動列還多一件事（改物業房源姓名金額），
-                        那種列改叫「編輯內容」——標題本來就會寫「手動新增暫收款」，
-                        兩邊對得起來。
+                      ★ 順序就是**流程的順序**:先把錢收進來，再看細節，
+                        然後才是「這筆錢最後去哪」。分享與關閉一律墊底 ——
+                        那兩顆跟這筆錢的狀態無關，位置固定才按得順手。
+
+                      ★ 退款流程那幾顆（核可／駁回／排匯款／確認退款日／撤銷）
+                        **不在這份清單裡**，因為它們是條件出現的。
+                        插在「明細」後面 —— 它們是當下最該做的事，
+                        排到分享後面的話會被誤認為次要動作。
+
+                      ★★ 管家只能看:藏起來而不是按了才擋。
+                         RLS 擋下的 UPDATE 會回成功且影響 0 列，
+                         畫面上看起來像存好了，重整才發現沒變。
                     */}
+
+                    {/* ① 收款 —— 一筆一列（migration_147）。
+                           **沒退款之前都開得起來**:已經收滿了還是要看得到
+                           明細與收款證明照片。 */}
+                    {canEdit && !d.returned_on && (
+                      <button onClick={() => { setPaying(d); setDetail(null); }}
+                        className={`${btn} border border-mor-slate text-mor-slate`}>收款</button>
+                    )}
+
+                    {/* ② 明細 —— 退款申請、加費扣抵、備註與憑證。
+                           手動列還多一件事（改物業房源姓名金額），所以那種列叫「編輯內容」。 */}
                     {canEdit && (
                       <button onClick={() => { setEdit({ ...d }); setDetail(null); }}
                         className={`${btn} border border-mor-line`}>
-                        {d.is_manual ? '編輯內容' : '退款・加費'}
+                        {d.is_manual ? '編輯內容' : '明細'}
                       </button>
                     )}
-                    {/*
-                      收款明細（migration_147）。**沒退款之前都開得起來** ——
-                      已經收滿了還是要看得到明細與收款證明照片。
-                    */}
-                    {canEdit && !d.returned_on && (
-                      <button onClick={() => { setPaying(d); setDetail(null); }}
-                        className={`${btn} border border-mor-slate text-mor-slate`}>收款明細</button>
-                    )}
-                    {/*
-                      分享的連結指向請款頁的待核可分頁,不是這一頁 ——
-                      核可統一在那裡做,主管點進去就能直接投票,不用自己找那一筆。
-                    */}
-                    <button onClick={() => shareDep(d)}
-                      className={`${btn} border border-mor-line`}>↗ 分享</button>
+
+                    {/* 退款流程（條件出現）—— 見上面的說明 */}
                     {(p.canVoteMgr || p.canVoteAdm) && (
                       <button onClick={() => vote(d)} className={`${btn} bg-mor-green text-white`}>核可退款</button>
                     )}
@@ -1851,76 +1855,6 @@ export default function DepositsPage() {
                       <button onClick={() => { setDetail(null); setRejecting(d); setRejectReason(''); }}
                         className={`${btn} border border-amber-400 text-amber-700`}>駁回</button>
                     )}
-                    {/*
-                      移轉的入口放在**目的那筆（尚未收）**上,不是來源。
-                      因為人是從「B 房怎麼會有押金未收」開始找的 ——
-                      放在 A 那邊的話,他得先想到「喔要去舊房間按」。
-                    */}
-                    {canMove && canBeTarget(d as TransferDep).ok && (
-                      <button onClick={() => { setMoving({ dep: d, side: 'to' }); setMoveKw(''); setMoveOn(todayStr()); setShowBad(false); }}
-                        className={`${btn} border border-violet-300 text-violet-700`}>從別房移轉押金</button>
-                    )}
-                    {/* ★ 反過來也要有:人手上先有的往往是「要移走的那筆押金」,
-                        點進去卻只有退款按鈕的話,他不會想到要去新房間那邊按 */}
-                    {canMove && canBeSource(d as TransferDep).ok && (
-                      <button onClick={() => { setMoving({ dep: d, side: 'from' }); setMoveKw(''); setMoveOn(todayStr()); setShowBad(false); }}
-                        className={`${btn} border border-violet-300 text-violet-700`}>移轉到別房</button>
-                    )}
-                    {canMove && isTransfer(d) && (
-                      <button onClick={() => undoTransfer(d)} disabled={saving}
-                        className={`${btn} border border-amber-400 text-amber-700 disabled:opacity-50`}>撤銷移轉</button>
-                    )}
-
-                    {/*
-                        ★★ 訂金專屬的兩顆:沒收 / 轉押金（migration_174）。
-                           退款那條路是跟押金共用的，所以這裡只多這兩顆。
-
-                        ★ 走過一條之後**不藏起來，變灰 ＋ 寫出原因**
-                          （hover 看得到）—— 藏掉的話使用者會問「沒收鈕去哪了」，
-                          而答案（已經退款了）畫面上一個字都沒有。
-                          跟押金那邊「鎖住不是拿掉」同一個做法。
-                    */}
-                    {canEdit && d.kind === 'earnest' && (() => {
-                      const noForfeit = exitBlockedReason(d as EarnestDep, 'forfeit');
-                      return noForfeit ? (
-                        <span title={noForfeit}
-                          className={`${btn} border border-mor-line bg-gray-50 text-gray-400
-                                      flex items-center justify-center cursor-not-allowed`}>
-                          🔒 沒收
-                        </span>
-                      ) : (
-                        <button onClick={() => forfeitEarnest(d)} disabled={saving}
-                          className={`${btn} border border-red-300 text-red-600 disabled:opacity-50`}>
-                          沒收
-                        </button>
-                      );
-                    })()}
-
-                    {canEdit && d.kind === 'earnest' && (() => {
-                      const noConvert = exitBlockedReason(d as EarnestDep, 'convert');
-                      return noConvert ? (
-                        <span title={noConvert}
-                          className={`${btn} border border-mor-line bg-gray-50 text-gray-400
-                                      flex items-center justify-center cursor-not-allowed`}>
-                          🔒 轉押金
-                        </span>
-                      ) : (
-                        <button onClick={() => convertEarnest(d)} disabled={saving}
-                          className={`${btn} border border-violet-300 text-violet-700 disabled:opacity-50`}>
-                          轉押金
-                        </button>
-                      );
-                    })()}
-                    {/* 移轉來的那筆不給「確認已退款」—— 那是移轉，不是退給房客,
-                        真的要退錢請先撤銷移轉,回到正常的退款流程 */}
-                    {/*
-                      排匯款 → 確認退款，兩步。比照請款單
-                      （2026-08-22 使用者:「完全比照請款單」）。
-
-                      以前預計匯款日在**送審**就必填，但送審當下常常還不知道
-                      會從哪個戶頭出、哪天出 —— 於是大家隨便填一個再回來改，
-                      而改動會清掉核可票、退回重審。移到這一步就沒有這個問題。
-                    */}
                     {p.canPlan && !isTransfer(d) && (
                       <button onClick={() => setDepStep({ mode: 'plan', dep: d })}
                         className={`${btn} border border-mor-slate text-mor-slate`}>
@@ -1936,6 +1870,75 @@ export default function DepositsPage() {
                       <button onClick={() => cancelRefund(d)} disabled={saving}
                         className={`${btn} border border-red-300 text-red-500 disabled:opacity-50`}>撤銷</button>
                     )}
+
+                    {/*
+                      ③-訂金 轉押金。
+
+                      ★ 走過一條出路之後**不藏起來，變灰 ＋ 寫出原因**（hover 看得到）——
+                        藏掉的話使用者會問「轉押金去哪了」，
+                        而答案（已經沒收了）畫面上一個字都沒有。
+                    */}
+                    {canEdit && earnest && (() => {
+                      const noConvert = exitBlockedReason(d as EarnestDep, 'convert');
+                      return noConvert ? (
+                        <span title={noConvert}
+                          className={`${btn} border border-mor-line bg-gray-50 text-gray-400
+                                      flex items-center justify-center cursor-not-allowed`}>
+                          🔒 轉押金
+                        </span>
+                      ) : (
+                        <button onClick={() => convertEarnest(d)} disabled={saving}
+                          className={`${btn} border border-violet-300 text-violet-700 disabled:opacity-50`}>
+                          轉押金
+                        </button>
+                      );
+                    })()}
+
+                    {/* ④-訂金 沒收 */}
+                    {canEdit && earnest && (() => {
+                      const noForfeit = exitBlockedReason(d as EarnestDep, 'forfeit');
+                      return noForfeit ? (
+                        <span title={noForfeit}
+                          className={`${btn} border border-mor-line bg-gray-50 text-gray-400
+                                      flex items-center justify-center cursor-not-allowed`}>
+                          🔒 沒收
+                        </span>
+                      ) : (
+                        <button onClick={() => forfeitEarnest(d)} disabled={saving}
+                          className={`${btn} border border-red-300 text-red-600 disabled:opacity-50`}>
+                          沒收
+                        </button>
+                      );
+                    })()}
+
+                    {/*
+                      ③-押金 押金移房。**訂金沒有這顆** ——
+                      `canBeTarget` / `canBeSource` 已經先擋掉訂金了（deposit-transfer.ts），
+                      這裡不用再判斷一次。
+
+                      ★ 兩個方向共用「押金移房」這一個名字（2026-08-25 使用者指定）。
+                        方向由打開的視窗說 —— 兩顆不會同時出現:
+                        當目的要「還沒收」，當來源要「已經收了」，互斥。
+                    */}
+                    {canMove && canBeTarget(d as TransferDep).ok && (
+                      <button onClick={() => { setMoving({ dep: d, side: 'to' }); setMoveKw(''); setMoveOn(todayStr()); setShowBad(false); }}
+                        className={`${btn} border border-violet-300 text-violet-700`}>押金移房</button>
+                    )}
+                    {canMove && canBeSource(d as TransferDep).ok && (
+                      <button onClick={() => { setMoving({ dep: d, side: 'from' }); setMoveKw(''); setMoveOn(todayStr()); setShowBad(false); }}
+                        className={`${btn} border border-violet-300 text-violet-700`}>押金移房</button>
+                    )}
+                    {canMove && isTransfer(d) && (
+                      <button onClick={() => undoTransfer(d)} disabled={saving}
+                        className={`${btn} border border-amber-400 text-amber-700 disabled:opacity-50`}>撤銷移轉</button>
+                    )}
+
+                    {/* ⑤ 分享 —— 連結指向請款頁的待核可分頁,不是這一頁。
+                           核可統一在那裡做,主管點進去就能直接投票,不用自己找那一筆。 */}
+                    <button onClick={() => shareDep(d)}
+                      className={`${btn} border border-mor-line`}>↗ 分享</button>
+
+                    {/* ⑥ 關閉 */}
                     <button onClick={() => setDetail(null)}
                       className={`${btn} border border-gray-300`}>關閉</button>
                   </>;

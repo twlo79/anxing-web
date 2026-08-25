@@ -2,6 +2,26 @@ name: Deploy to Vultr
 on:
   push:
     branches: [main]
+
+# ── 一次只准跑一個部署（2026-08-25 加，起因是 #396）──────────
+#
+# #396 的症狀:compile 成功了，下一階段卻說
+#     ENOENT: .next/build-manifest.json
+# 那個檔案是 compile 自己剛剛產生的。
+#
+# 原因是**兩個部署同時在同一台主機上跑**。連續推兩次 commit 就會
+# 開兩個 job，而腳本裡有一行 `rm -rf .next` ——
+# 後面那個 job 把前面那個剛編好的東西刪掉了。
+#
+# ★ `cancel-in-progress: false` —— **不能取消進行中的那個**。
+#   取消的話 SSH 連線斷開，主機上的 next build 變成沒人管的孤兒程序，
+#   而 rollback 那段永遠不會執行:原始碼已經換成新的、.next 只寫了一半、
+#   pm2 還在跑舊程序。那正是 2026-08-04 全站 503 的形狀。
+#   排隊等它跑完才是對的。
+concurrency:
+  group: deploy-vultr
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -17,6 +37,27 @@ jobs:
           script: |
             set -u
             cd /opt/anxing-web
+
+            # ── 主機端也上一道鎖（2026-08-25）────────────────────
+            #
+            # 上面的 `concurrency:` 只管得住 GitHub 這邊排隊。
+            # 「Re-run jobs」、手動 SSH 進來跑、或哪天多一個 workflow，
+            # 都還是會有兩個 build 同時在這台機器上動同一個 .next。
+            #
+            # 症狀不會是「衝突」，是**檔案憑空不見**:
+            # #396 compile 明明成功了，下一步卻說 build-manifest.json 不存在——
+            # 那是另一個 job 的 `rm -rf .next` 幹的。
+            #
+            # ★ 用 `-w` 等而不是 `-n` 直接放棄 —— 排在後面的那次推送
+            #   本來就該部署，放棄的話那個 commit 永遠不會上線，
+            #   而 Actions 只顯示一個看不懂的失敗。
+            # ★ 600 秒要小於 command_timeout（15m），
+            #   不然等到超時是 SSH 斷線，鎖也跟著沒了。
+            exec 9>/tmp/anxing-deploy.lock
+            if ! flock -w 600 9; then
+              echo "!! 另一個部署佔用超過 10 分鐘，這次不動它。稍後重跑。"
+              exit 1
+            fi
 
             # 用 fetch + reset --hard 而不是 git pull。
             # 原因:npm install 會改寫 package-lock.json,主機上一旦有本機修改,
