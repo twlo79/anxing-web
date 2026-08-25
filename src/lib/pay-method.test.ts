@@ -50,3 +50,18 @@ test('methodText:非匯款只顯示方式', () => {
 test('methodText:沒有方式回破折號', () => {
   assert.equal(methodText(null, null, {}), '—');
 });
+
+test('★★ 訂金轉入與押金移轉是兩個值', () => {
+  // 混用一個值的話,對帳時看到「押金移轉」會去找另一間房,
+  // 而訂金轉入是同一張契約內的事,那間房根本不存在
+  assert.equal(METHOD_LABEL.earnest_in, '訂金轉入');
+  assert.equal(METHOD_LABEL.internal, '押金移轉');
+  assert.notEqual(METHOD_LABEL.earnest_in, METHOD_LABEL.internal);
+});
+
+test('★★ 兩個都不能出現在可選清單裡', () => {
+  // 手動選得到的話,早晚有人在一般收款時選它,
+  // 那筆錢就從此不屬於任何銀行帳戶
+  assert.ok(!METHOD_OPTS.includes('internal'));
+  assert.ok(!METHOD_OPTS.includes('earnest_in'));
+});

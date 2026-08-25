@@ -27,9 +27,25 @@ export const METHOD_LABEL: Record<string, string> = {
    *   它只由 transfer_deposit RPC 寫入。
    */
   internal: '押金移轉',
+  /*
+   * 【訂金轉押金】（migration_174，2026-08-24）
+   *
+   * ★ **不沿用 `internal`** —— 那個標籤是「押金移轉」，
+   *   而訂金轉入不是移房。兩者在帳上都是「錢沒有離開公司」，
+   *   但來源完全不同:
+   *
+   *     押金移轉  A 房的押金 → B 房的押金
+   *     訂金轉入  這張契約的**訂金** → 同一張契約的押金
+   *
+   *   混用一個值的話，對帳時看到「押金移轉」會去找另一間房，
+   *   而那間房根本不存在。
+   *
+   * ★ 同樣不放進 METHOD_OPTS:只由轉押那段程式寫入。
+   */
+  earnest_in: '訂金轉入',
 };
 
-/** 人可以選的方式。`internal` 不在內 —— 見上面的註解。 */
+/** 人可以選的方式。`internal` 與 `earnest_in` 不在內 —— 見上面的註解。 */
 export const METHOD_OPTS = ['cash', 'transfer', 'credit_card', 'crypto'];
 
 /** 只有匯款需要（也才允許）指定收款帳號。 */

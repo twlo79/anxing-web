@@ -10,7 +10,7 @@ import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
 import { titleCaseName } from '@/lib/name-format';
-import { exitBlockedReason, forfeitOrder, earnestStatus, type EarnestDep } from '@/lib/earnest';
+import { exitBlockedReason, forfeitOrder, earnestStatus, convertPlan, type EarnestDep } from '@/lib/earnest';
 import { useProfile } from '@/lib/profile';
 import { fetchAll } from '@/lib/fetch-all';
 import Receipts from '@/components/Receipts';
@@ -560,6 +560,119 @@ export default function DepositsPage() {
       return flash('收入建好了，但訂金一列都沒更新 —— 通常是權限。請重新整理後檢查。');
     }
     flash(`已沒收，並產生一筆 NT$ ${fmt(d.amount)} 的「取消入住」收入`);
+    setDetail(null); load();
+  }
+
+  /**
+   * 訂金轉押金（migration_174）。
+   *
+   * ============================================================
+   * 【跟押金移房不同：金額幾乎一定不一樣】
+   *
+   * migration_146 的移房是「金額不同就擋掉」—— 那是對的，
+   * 因為移房前後是**同一筆押金**。
+   *
+   * 訂金轉押金不一樣:訂金 10,000、押金 30,000 是常態。
+   * 照移房那樣擋的話這個功能永遠用不了。
+   *
+   * 所以轉過去當「**已收一部分**」（使用者指定），
+   * 差額用押金既有的分筆收款再收。
+   *
+   * ============================================================
+   * 【★★ 不能改押金的 amount】
+   *
+   * `deposits.amount` 是 `sync_contract_deposits` 從 `contracts.deposit`
+   * 同步過來的 —— 改小的話下次契約一存檔就被蓋回去（migration_146 的教訓）。
+   *
+   * 所以「已收多少」走 `deposit_payments`，
+   * 合計由觸發器寫回 `received_amount`，**前端不自己算**。
+   */
+  async function convertEarnest(d: Dep) {
+    const blocked = exitBlockedReason(d as EarnestDep, 'convert');
+    if (blocked) return flash(blocked);
+    if (!d.contract_id) return flash('這筆訂金沒有掛在契約上，無法轉押金。');
+
+    // 找同一張契約的押金那一列
+    const { data: deps, error: qe } = await supabase.from('deposits')
+      .select('id, amount, received_amount, received_on, currency')
+      .eq('contract_id', d.contract_id).eq('kind', 'deposit')
+      .eq('currency', d.currency).limit(1);
+    if (qe) return flash('查押金失敗:' + qe.message);
+
+    const target = (deps ?? [])[0] as
+      { id: string; amount: number; received_amount: number | null; received_on: string | null } | undefined;
+    if (!target) {
+      return flash('這張契約還沒有押金 —— 請先回契約把押金金額填上，再回來轉。');
+    }
+
+    const plan = convertPlan(d.amount, target.amount, Number(target.received_amount) || 0);
+    const on = todayStr();
+
+    if (!confirm(
+      `把訂金轉成押金？\n\n`
+      + `${depName(d)}\n`
+      + `訂金 NT$ ${fmt(plan.transfer)} → 押金 NT$ ${fmt(plan.depositAmount)}\n\n`
+      + (plan.settled
+        ? `轉完之後押金**收齊了**。\n`
+        : `轉完之後押金已收 NT$ ${fmt(plan.depositAmount - plan.remaining)}，`
+          + `**尚欠 NT$ ${fmt(plan.remaining)}**（之後用收款明細再收）。\n`)
+      + (plan.excess > 0
+        ? `\n⚠ 訂金比押金多 NT$ ${fmt(plan.excess)} —— 多的部分**不會自動退**，要另外處理。\n`
+        : '')
+      + `\n訂金那一列會變成「已退｜轉押」。錢沒有離開公司，不算退款也不算收款。`
+    )) return;
+
+    setSaving(true);
+    const { data: { user } } = await supabase.auth.getUser();
+
+    /*
+     * ① 押金那邊記一筆收款。
+     *
+     *   ★ `method = 'earnest_in'`（訂金轉入），**不是 `internal`**。
+     *     `internal` 的標籤是「押金移轉」——那是 A 房搬到 B 房。
+     *     訂金轉入是同一張契約內的事，混用的話對帳時會去找另一間房，
+     *     而那間房根本不存在。
+     *
+     *   兩者共同點是「錢沒有實際進出」，報表要靠它們把轉入
+     *   排除在「本月收款」之外。
+     */
+    const { error: pe } = await supabase.from('deposit_payments').insert({
+      deposit_id: target.id, paid_on: on, amount: plan.transfer,
+      method: 'earnest_in', note: `訂金轉入（${depName(d)}）`, created_by: user?.id ?? null,
+    });
+    if (pe) { setSaving(false); return flash('轉押失敗:' + pe.message); }
+
+    /*
+     * ② 押金那一列補 received_on。
+     *
+     *   ★ 卡片的分類看的是 `received_on`（`bucketOf`），不是 received_amount。
+     *     不補的話這筆押金會留在「未收款」那一格 —— 而它已經收了一部分。
+     *   ★ 已經有值就不覆蓋:那是真的第一次收款的日期。
+     */
+    if (!target.received_on) {
+      await supabase.from('deposits')
+        .update({ received_on: on }).eq('id', target.id);
+    }
+    await supabase.from('deposits')
+      .update({ converted_from_earnest_id: d.id }).eq('id', target.id);
+
+    // ③ 訂金那一列結案
+    const { data, error } = await supabase.from('deposits')
+      .update({
+        converted_to_deposit_id: target.id,
+        converted_by: user?.id ?? null,
+        converted_at: new Date().toISOString(),
+      })
+      .eq('id', d.id).select('id');
+    setSaving(false);
+
+    if (error) return flash('押金那邊記好了，但訂金狀態沒更新:' + error.message);
+    if (!data || data.length === 0) {
+      return flash('押金那邊記好了，但訂金一列都沒更新 —— 通常是權限。請重新整理後檢查。');
+    }
+    flash(plan.settled
+      ? `已轉押金，押金收齊了`
+      : `已轉押金，押金尚欠 NT$ ${fmt(plan.remaining)}`);
     setDetail(null); load();
   }
 
@@ -1598,17 +1711,17 @@ export default function DepositsPage() {
 
                     {canEdit && d.kind === 'earnest' && (() => {
                       const noConvert = exitBlockedReason(d as EarnestDep, 'convert');
-                      /*
-                       * ★ 轉押金還沒接上（下一輪）。這裡先擋住並說清楚，
-                       *   不要放一顆按了沒反應的按鈕 —— 那是這個專案最常見的壞法。
-                       */
-                      const why = noConvert ?? '轉押金還在做，下一版才會開放。';
-                      return (
-                        <span title={why}
+                      return noConvert ? (
+                        <span title={noConvert}
                           className={`${btn} border border-mor-line bg-gray-50 text-gray-400
                                       flex items-center justify-center cursor-not-allowed`}>
                           🔒 轉押金
                         </span>
+                      ) : (
+                        <button onClick={() => convertEarnest(d)} disabled={saving}
+                          className={`${btn} border border-violet-300 text-violet-700 disabled:opacity-50`}>
+                          轉押金
+                        </button>
                       );
                     })()}
                     {/* 移轉來的那筆不給「確認已退款」—— 那是移轉，不是退給房客,
