@@ -8,6 +8,7 @@ import Toast from '@/components/Toast';
 import { FilterBar, FilterSelect, FilterDateRange, FilterSearch, FilterClear, FilterCount } from '@/lib/filters';
 import { createClient } from '@/lib/supabase';
 import { titleCaseName } from '@/lib/name-format';
+import { earnestOnlyMissing, monthlyRentToSave } from '@/lib/earnest';
 import { useOpenFromUrl } from '@/lib/open-from-url';
 import { FEE_TYPES, ONEOFF_PRESETS, presetOf, feeLabel } from '@/lib/fee-types';
 import ContractFees, { type Rc } from '@/components/ContractFees';
@@ -574,6 +575,8 @@ const nameOf = (c: Contract) =>
     cadence: edit.cadence, type: edit.type,
     amount_per_period: edit.amount_per_period,
     start_date: edit.start_date, end_date: edit.end_date,
+    // 訂金階段:租期與租金放寬成選填（migration_174）
+    earnest_only: edit.earnest_only,
   }) : [];
   /** 這一格要不要畫紅框 */
   const err = (f: string) => tried && missing.includes(f);
@@ -937,7 +940,7 @@ const nameOf = (c: Contract) =>
                 <select value={edit.cadence} onChange={(e) => setEdit({ ...edit, cadence: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="monthly">月繳</option><option value="quarterly">季繳</option><option value="halfyear">半年繳</option><option value="yearly">年繳</option></select></label>
               <label className="flex flex-col gap-1"><span className="flex items-center">類別<Req /></span>
                 <select value={edit.type ?? 'longterm'} onChange={(e) => setEdit({ ...edit, type: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="longterm">長租</option><option value="company">公司登記</option><option value="office">辦公室</option></select></label>
-              <label className="flex flex-col gap-1"><span className="flex items-center">每期租金({CAD_LABEL[edit.cadence]})<Req /></span>
+              <label className="flex flex-col gap-1"><span className="flex items-center">每期租金({CAD_LABEL[edit.cadence]}){!edit.earnest_only && <Req />}{edit.earnest_only && <span className="text-xs text-gray-400 ml-1">選填</span>}</span>
                 <MoneyInput value={edit.amount_per_period ?? 0} invalid={err('每期租金')}
                   onChange={(n) => setEdit({ ...edit, amount_per_period: n })}
                   className="rounded-lg border border-gray-300 px-2 py-1.5 text-right" />
@@ -955,9 +958,71 @@ const nameOf = (c: Contract) =>
                     className="text-xs text-mor-blue underline hover:text-mor-slate mt-0.5">收退狀態 →</a>
                 )}
               </label>
-              <label className="flex flex-col gap-1"><span className="flex items-center">租期起<Req /></span>
+
+              {/*
+                  ★★ 訂金（migration_174，2026-08-24 使用者指定）。
+
+                  「收訂金 → 知道契約內容 → 收押金餘款 → 租約開始收房租」——
+                  勾了之後只要填物業、房源、租戶，租期與租金**放寬成選填**。
+
+                  ★ 是選填不是變灰:收訂金的當下可能已經知道租期了
+                    （「大概九月一號起租」），只是還沒定案。
+                    擋著他填的話他得記在別的地方,補的時候再打一次。
+
+                  ★ 那三個欄位**有填也不會**產生月租單 —— 產不產生只看
+                    `earnest_only` 這個旗標。填了資料跟「這張契約生效了」
+                    是兩回事，中間那一步必須是人明確按下去的。
+              */}
+              <div className="md:col-span-2 rounded-lg border border-mor-line bg-mor-sand/20 p-3">
+                <label className="flex items-start gap-2 text-sm text-gray-700">
+                  <input type="checkbox" className="mt-0.5" checked={!!edit.earnest_only}
+                    onChange={(e) => {
+                      /*
+                       * ★★ 取消勾選 = 這張契約要開始長月租單了。
+                       *   租期或租金是空的話，長出來的單會是「日期 null、金額 null」——
+                       *   而那種單**不會報錯**，只會在營收報表上變成一個看不懂的空格。
+                       *
+                       *   所以沒填完不讓取消，而且**說出缺哪一個**：
+                       *   只說「請填完必填欄位」的話,使用者得自己一格一格找。
+                       */
+                      if (!e.target.checked) {
+                        const need = earnestOnlyMissing(edit);
+                        if (need.length) {
+                          return flashErr(`還不能取消「只收訂金」—— 還沒填：${need.join('、')}`);
+                        }
+                      }
+                      setEdit({ ...edit, earnest_only: e.target.checked });
+                    }} />
+                  <span>
+                    只收訂金（契約內容還沒確定）
+                    <span className="block text-xs text-gray-500 mt-0.5">
+                      {edit.earnest_only
+                        ? '只要填物業、房源、租戶。租期與租金可以之後再補 —— '
+                          + '這張契約還不會產生月租單，補完並取消勾選之後才會。'
+                        : '收了訂金但還不知道租期與租金時勾這裡。'}
+                    </span>
+                  </span>
+                </label>
+
+                {edit.earnest_only && (
+                  <label className="flex flex-col gap-1 mt-3 max-w-xs">
+                    <span className="flex items-center text-sm">訂金(台幣)<Req /></span>
+                    <MoneyInput value={edit.earnest_amount ?? 0}
+                      invalid={tried && !((edit.earnest_amount ?? 0) > 0)}
+                      onChange={(n) => setEdit({ ...edit, earnest_amount: n })}
+                      className="rounded-lg border border-gray-300 px-2 py-1.5 text-right" />
+                    {edit.id && (
+                      <a href={`/deposits?contract=${edit.id}`} target="_blank" rel="noreferrer"
+                        className="text-xs text-mor-blue underline hover:text-mor-slate mt-0.5">
+                        收退狀態 →
+                      </a>
+                    )}
+                  </label>
+                )}
+              </div>
+              <label className="flex flex-col gap-1"><span className="flex items-center">租期起{!edit.earnest_only && <Req />}{edit.earnest_only && <span className="text-xs text-gray-400 ml-1">選填</span>}</span>
                 <input type="date" value={edit.start_date ?? ''} onChange={(e) => setEdit({ ...edit, start_date: e.target.value })} className={`rounded-lg border px-2 py-1.5 ${err('租期起') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} /></label>
-              <label className="flex flex-col gap-1"><span className="flex items-center">租期迄<Req /></span>
+              <label className="flex flex-col gap-1"><span className="flex items-center">租期迄{!edit.earnest_only && <Req />}{edit.earnest_only && <span className="text-xs text-gray-400 ml-1">選填</span>}</span>
                 <input type="date" value={edit.end_date ?? ''} onChange={(e) => setEdit({ ...edit, end_date: e.target.value })} className={`rounded-lg border px-2 py-1.5 ${err('租期迄') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} /></label>
               <label className="flex flex-col gap-1">首繳日<input type="date" value={edit.first_payment_date ?? ''} onChange={(e) => setEdit({ ...edit, first_payment_date: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <div className="col-span-2 -mt-1 text-xs text-gray-500 flex items-center gap-1 flex-wrap">

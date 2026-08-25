@@ -77,6 +77,20 @@ export function checkContractRequired(c: {
   amount_per_period: number | null;
   start_date: string | null;
   end_date: string | null;
+  /**
+   * 這張契約還在訂金階段（migration_174）。
+   *
+   * ★ 勾了之後**只要物業、房源、租戶** —— 租期與租金放寬成選填
+   *   （2026-08-24 使用者指定）。
+   *
+   *   為什麼是「選填」不是「變灰」:收訂金的當下可能已經知道租期了
+   *   （「大概九月一號起租」），只是還沒定案。擋著他填的話，
+   *   他得記在別的地方，補的時候再打一次。
+   *
+   * ★ 繳別與類別**仍然必填** —— 那兩個有預設值（月繳／長租），
+   *   從來不會是空的，放寬沒有意義。
+   */
+  earnest_only?: boolean | null;
 }): string[] {
   const miss: string[] = [];
   if (!c.estate_id) miss.push('物業');
@@ -84,9 +98,20 @@ export function checkContractRequired(c: {
   if (!(c.tenant_name ?? '').trim()) miss.push('租戶');
   if (!c.cadence) miss.push('繳別');
   if (!c.type) miss.push('類別');
-  if (!((c.amount_per_period ?? 0) > 0)) miss.push('每期租金');
-  if (!c.start_date) miss.push('租期起');
-  if (!c.end_date) miss.push('租期迄');
+
+  /*
+   * ★★ 訂金階段這三個不檢查。
+   *
+   *   資料庫那邊由 `ct_earnest_fields_chk` 守著同一條規則:
+   *   `earnest_only or (三欄都不是 null)`。
+   *   兩邊必須一致 —— 前端比資料庫寬的話，使用者會按下存檔
+   *   才看到一句看不懂的 SQL 例外。
+   */
+  if (!c.earnest_only) {
+    if (!((c.amount_per_period ?? 0) > 0)) miss.push('每期租金');
+    if (!c.start_date) miss.push('租期起');
+    if (!c.end_date) miss.push('租期迄');
+  }
   return miss;
 }
 

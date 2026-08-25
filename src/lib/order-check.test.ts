@@ -211,3 +211,41 @@ test('門檻與樣本數是使用者定的那組', () => {
 test('取樣起日是一年前', () => {
   assert.equal(lookbackFrom(new Date('2026-08-12T12:00:00Z')), '2025-08-12');
 });
+
+/* ── 訂金階段的必填放寬（migration_174）──────────── */
+
+const CT = (p: Record<string, unknown> = {}) => ({
+  estate_id: 'e1', room: 'B08', tenant_name: 'Lilian',
+  cadence: 'monthly', type: 'longterm',
+  amount_per_period: null as number | null,
+  start_date: null as string | null, end_date: null as string | null,
+  ...p,
+});
+
+test('★★ 一般契約 —— 租期與租金是必填', () => {
+  assert.deepEqual(checkContractRequired(CT()), ['每期租金', '租期起', '租期迄']);
+});
+
+test('★★ 訂金階段 —— 那三個放寬成選填', () => {
+  // 使用者:「選訂金後 三個欄位放寬成選填」
+  assert.deepEqual(checkContractRequired(CT({ earnest_only: true })), []);
+});
+
+test('★ 訂金階段仍然要填物業、房源、租戶', () => {
+  const m = checkContractRequired(CT({ earnest_only: true, room: '', tenant_name: '' }));
+  assert.deepEqual(m, ['房源', '租戶']);
+});
+
+test('★ 繳別與類別不放寬 —— 它們有預設值,從來不會是空的', () => {
+  const m = checkContractRequired(CT({ earnest_only: true, cadence: '', type: null }));
+  assert.deepEqual(m, ['繳別', '類別']);
+});
+
+test('★★ 前端的規則要跟資料庫的 ct_earnest_fields_chk 一致', () => {
+  // 約束是 `earnest_only or (三欄都不是 null)`。
+  // 前端比資料庫寬的話,使用者會按下存檔才看到一句看不懂的 SQL 例外
+  assert.equal(checkContractRequired(CT({ earnest_only: false })).length, 3);
+  assert.equal(checkContractRequired(CT({ earnest_only: true })).length, 0);
+  // 沒傳 earnest_only 時當成一般契約（既有呼叫端不會壞）
+  assert.equal(checkContractRequired(CT()).length, 3);
+});
