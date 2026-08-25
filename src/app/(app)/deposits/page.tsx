@@ -10,6 +10,7 @@ import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
 import { titleCaseName } from '@/lib/name-format';
+import { exitBlockedReason, forfeitOrder, earnestStatus, type EarnestDep } from '@/lib/earnest';
 import { useProfile } from '@/lib/profile';
 import { fetchAll } from '@/lib/fetch-all';
 import Receipts from '@/components/Receipts';
@@ -62,6 +63,8 @@ type Dep = {
   kind?: 'deposit' | 'earnest' | null;
   /** 訂金才有的兩種出路（migration_174） */
   forfeited_on?: string | null;
+  /** 沒收產生的那筆收入。★ 冪等靠它 —— 有值就不再產生第二筆 */
+  forfeit_order_id?: string | null;
   converted_to_deposit_id?: string | null;
   order_id: string | null; contract_id: string | null;
   estate_id: string | null; property_id: string | null;
@@ -496,6 +499,70 @@ export default function DepositsPage() {
    *   不清的話下次重新送審會帶著舊的兩票進來:看起來已經核可，
    *   而根本沒有人重新看過。
    */
+  /**
+   * 沒收訂金 → 產生一筆「取消入住」的一次性收入（migration_174）。
+   *
+   * ============================================================
+   * 【★★ 這是三條出路裡唯一會產生營收的】
+   *
+   * 退款與轉押都不動營收 —— 錢還他、或換個名目留著。
+   * 沒收不一樣:那筆錢從負債變成**當月收入**。
+   *
+   * 所以確認視窗要說出**金額與科目**，按錯的後果是當月數字多一筆，
+   * 而報表看起來完全正常。
+   *
+   * 【冪等靠 forfeit_order_id】
+   * 先寫訂單、再回寫 deposits。中間斷掉的話會留下一筆孤兒收入 ——
+   * 那比「訂金標成已沒收卻沒有收入」好:前者看得到、查得出來,
+   * 後者是一筆憑空消失的負債。
+   */
+  async function forfeitEarnest(d: Dep) {
+    const blocked = exitBlockedReason(d as EarnestDep, 'forfeit');
+    if (blocked) return flash(blocked);
+
+    // ★ 已經沒收過就不要再產生第二筆 —— 重複按就是重複收入
+    if (d.forfeit_order_id) return flash('這筆訂金已經沒收過了。');
+
+    const on = todayStr();
+    if (!confirm(
+      `沒收這筆訂金？\n\n${depName(d)}・NT$ ${fmt(d.amount)}\n\n`
+      + `會變成一筆「取消入住」的一次性收入（會計科目：其他），計入 ${on.slice(0, 7)} 的營收。\n\n`
+      + `★ 這個動作不能復原 —— 產生的那筆收入之後也改不動、刪不掉。`
+    )) return;
+
+    setSaving(true);
+    const { data: { user } } = await supabase.auth.getUser();
+
+    // ① 先產生收入
+    const payload = forfeitOrder(
+      { id: d.id, amount: d.amount, estate_id: d.estate_id,
+        property_id: d.property_id, room: d.room, guest_name: d.guest_name },
+      on,
+    );
+    const { data: ord, error: oe } = await supabase.from('orders')
+      .insert({
+        ...payload,
+        nights: 0,
+        order_key: `FEIT_${d.id.slice(0, 8)}_${Date.now()}`,
+        imported_via: 'manual',
+      })
+      .select('id').single();
+    if (oe || !ord) { setSaving(false); return flash('沒收失敗:' + (oe?.message ?? '')); }
+
+    // ② 再回寫訂金
+    const { data, error } = await supabase.from('deposits')
+      .update({ forfeited_on: on, forfeit_order_id: (ord as any).id, forfeited_by: user?.id ?? null })
+      .eq('id', d.id).select('id');
+    setSaving(false);
+
+    if (error) return flash('收入建好了，但訂金狀態沒更新:' + error.message);
+    if (!data || data.length === 0) {
+      return flash('收入建好了，但訂金一列都沒更新 —— 通常是權限。請重新整理後檢查。');
+    }
+    flash(`已沒收，並產生一筆 NT$ ${fmt(d.amount)} 的「取消入住」收入`);
+    setDetail(null); load();
+  }
+
   async function cancelRefund(d: Dep) {
     if (!confirm(
       `撤銷這筆退款申請？\n\n${depName(d)}・NT$ ${fmt(d.refund_amount ?? d.amount)}\n\n`
@@ -859,6 +926,30 @@ export default function DepositsPage() {
   /** 退款流程的狀態標籤。跟押金本身的狀態（暫收/已退）是兩回事。 */
   const refundChip = (r: Dep) => {
     const st = r.refund_status ?? 'none';
+    /*
+     * ★★ 訂金的說法跟押金不一樣（migration_174）。
+     *
+     *   訂金有三條出路，其中兩條**錢沒有退給房客**:
+     *     沒收   → 錢留下來變成營收
+     *     轉押金 → 錢換一個名目，還在我們手上
+     *
+     *   共用「已退款」那個灰色標籤的話，看清單的人會以為錢退出去了 ——
+     *   而暫收總額其實一毛都沒少。這跟移房那次是同一個問題
+     *   （同一個欄位兩種意思）。
+     */
+    if (r.kind === 'earnest') {
+      const es = earnestStatus(r as EarnestDep);
+      if (es === '已沒收') {
+        return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-red-50 text-red-700">已沒收</span>;
+      }
+      if (es === '已退｜轉押') {
+        return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-violet-50 text-violet-700">已退｜轉押</span>;
+      }
+      if (es === '已退訂金') {
+        return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-gray-100 text-gray-500">已退訂金</span>;
+      }
+      // 其餘（未付/已收/審核中）跟押金講法一樣,往下走共用的那幾行
+    }
     if (r.returned_on) return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-gray-100 text-gray-500">已退款</span>;
     if (st === 'approved') return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-mor-greenlight text-mor-green">已核可・待匯款</span>;
     if (st === 'pending') return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-amber-50 text-amber-700">退款審核中</span>;
@@ -952,14 +1043,19 @@ export default function DepositsPage() {
       )}
 
       {/*
-          ★★ 訂金那一列（2026-08-24 使用者:「卡片有兩列」，migration_174）。
-          
-          只在**真的有訂金**時才出現 —— 一列永遠是 0 的卡片會讓人以為功能壞了。
-          押金那一列一直都在，因為它本來就有 101 筆。
+          ★★ 訂金那一列（2026-08-24 使用者:「卡片有兩列」「看板要分訂金與押金啊」）。
+
+          【我第一版寫錯了】
+          原本的條件是「只在真的有訂金時才出現」，理由是
+          「一列永遠是 0 的卡片會讓人以為功能壞了」。
+
+          實際跑起來訂金是 0 筆，所以整列不見 —— 而使用者要的正是
+          **一眼看到這裡有兩種錢**。看板的結構要穩定:
+          今天有沒有訂金是資料的事，不該讓版面長得不一樣。
+
+          0 筆的那一列寫「0 筆」就好,那是資訊不是故障。
       */}
-      {(earnStats.pending.n + earnStats.held.n + earnStats.returned.n
-        + earnStats.forfeited.n + earnStats.converted.n) > 0 && (
-        <div className="mb-3">
+      <div className="mb-3">
           <div className="text-xs text-gray-500 mb-1.5">訂金</div>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
             {([
@@ -990,8 +1086,7 @@ export default function DepositsPage() {
               );
             })}
           </div>
-        </div>
-      )}
+      </div>
 
       {/*
         三張卡片同時是分頁籤。數字算在 base 上(不含分頁籤本身的篩選),
@@ -1000,9 +1095,7 @@ export default function DepositsPage() {
         ★ 這一列是**押金**（migration_174 之後）。點下去會一併把
           訂金/押金切到「押金」—— 不然按了「已收款」卻看到訂金混在裡面。
       */}
-      {earnStats.held.n + earnStats.pending.n > 0 && (
-        <div className="text-xs text-gray-500 mb-1.5">押金</div>
-      )}
+      <div className="text-xs text-gray-500 mb-1.5">押金</div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
         {([
           { k: 'pending', title: '未收款', hint: '已填押金但還沒收到錢', tone: 'amber' },
@@ -1085,6 +1178,41 @@ export default function DepositsPage() {
         </button>
       )}
 
+      {/*
+          ★★ 訂金 / 押金分頁籤（2026-08-24 使用者:「表單也分訂金與押金，做兩個 tab」）。
+
+          【為什麼一定要有這個 tab】
+          `kindF` 這個篩選在上面的卡片點下去時會被改到 —— 但那是**副作用**。
+          使用者沒辦法主動說「我只要看訂金」，也看不出自己現在在看哪一種。
+          一個摸不到的篩選等於沒有那個篩選。
+
+          【為什麼是頁籤不是下拉】
+          訂金與押金是兩件不同的錢，會計對帳時是分開對的。
+          下拉選單會讓人以為「預設看到的是全部」，而它確實是 ——
+          但那個「全部」是三個選項之一，不是狀態。頁籤把當前位置畫出來。
+      */}
+      <div className="inline-flex gap-1 p-1 rounded-xl bg-white/45 backdrop-blur border border-white/60 mb-3">
+        {([
+          { k: 'all',      label: '全部' },
+          { k: 'earnest',  label: '訂金' },
+          { k: 'deposit',  label: '押金' },
+        ] as const).map((t) => {
+          const on = kindF === t.k;
+          const n = t.k === 'all' ? base.length
+            : base.filter((r) => (r.kind ?? 'deposit') === t.k).length;
+          return (
+            <button key={t.k} type="button" onClick={() => setKindF(t.k)}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                on ? 'bg-mor-slate text-white' : 'text-gray-600 hover:bg-white/60'}`}>
+              {t.label}
+              {/* ★ 筆數算在 base 上（不含 kind 篩選本身）—— 切到訂金之後
+                  押金那個數字還在，頁籤才是總覽而不是當前清單的重複 */}
+              <span className={`ml-1.5 text-xs ${on ? 'opacity-80' : 'text-gray-400'}`}>{n}</span>
+            </button>
+          );
+        })}
+      </div>
+
       {/* 篩選 */}
       <FilterToggle />
       <div className="filter-bar collapsible-filters rounded-xl glass p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
@@ -1114,7 +1242,7 @@ export default function DepositsPage() {
             <option value="">全部</option>
             {payAccounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
           </select></label>
-        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">押金狀態</span>
+        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">狀態</span>
           {/*
             跟上方的卡片是同一個狀態,點卡片或用這裡都行。
             卡片沒有「全部」—— 它們是三類的總覽,多一張「全部」卡片只是把三個數字再加一次。
@@ -1442,6 +1570,47 @@ export default function DepositsPage() {
                       <button onClick={() => undoTransfer(d)} disabled={saving}
                         className={`${btn} border border-amber-400 text-amber-700 disabled:opacity-50`}>撤銷移轉</button>
                     )}
+
+                    {/*
+                        ★★ 訂金專屬的兩顆:沒收 / 轉押金（migration_174）。
+                           退款那條路是跟押金共用的，所以這裡只多這兩顆。
+
+                        ★ 走過一條之後**不藏起來，變灰 ＋ 寫出原因**
+                          （hover 看得到）—— 藏掉的話使用者會問「沒收鈕去哪了」，
+                          而答案（已經退款了）畫面上一個字都沒有。
+                          跟押金那邊「鎖住不是拿掉」同一個做法。
+                    */}
+                    {canEdit && d.kind === 'earnest' && (() => {
+                      const noForfeit = exitBlockedReason(d as EarnestDep, 'forfeit');
+                      return noForfeit ? (
+                        <span title={noForfeit}
+                          className={`${btn} border border-mor-line bg-gray-50 text-gray-400
+                                      flex items-center justify-center cursor-not-allowed`}>
+                          🔒 沒收
+                        </span>
+                      ) : (
+                        <button onClick={() => forfeitEarnest(d)} disabled={saving}
+                          className={`${btn} border border-red-300 text-red-600 disabled:opacity-50`}>
+                          沒收
+                        </button>
+                      );
+                    })()}
+
+                    {canEdit && d.kind === 'earnest' && (() => {
+                      const noConvert = exitBlockedReason(d as EarnestDep, 'convert');
+                      /*
+                       * ★ 轉押金還沒接上（下一輪）。這裡先擋住並說清楚，
+                       *   不要放一顆按了沒反應的按鈕 —— 那是這個專案最常見的壞法。
+                       */
+                      const why = noConvert ?? '轉押金還在做，下一版才會開放。';
+                      return (
+                        <span title={why}
+                          className={`${btn} border border-mor-line bg-gray-50 text-gray-400
+                                      flex items-center justify-center cursor-not-allowed`}>
+                          🔒 轉押金
+                        </span>
+                      );
+                    })()}
                     {/* 移轉來的那筆不給「確認已退款」—— 那是移轉，不是退給房客,
                         真的要退錢請先撤銷移轉,回到正常的退款流程 */}
                     {/*
