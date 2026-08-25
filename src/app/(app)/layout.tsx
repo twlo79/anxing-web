@@ -81,7 +81,7 @@ const NAV: { href: string; label: string; icon: string; roles: string[] }[] = [
    * `cleaner` 不放進選單 —— 但 RLS 跟 housekeeper 相同（migration_131），
    * 知道網址還是進得去。那是既有的取捨,不是這次新增的。
    */
-  { href: '/deposits', label: '押金管理', icon: '🏦', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/deposits', label: '暫收管理', icon: '🏦', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   /*
    * 【💸 而不是 💰】（2026-08-19 使用者要求「其中一個放錢」）
    *

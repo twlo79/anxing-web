@@ -93,3 +93,47 @@ export function extraDetails(extra: Record<string, unknown> | null | undefined):
 export function hasExtraDetails(extra: Record<string, unknown> | null | undefined): boolean {
   return extraDetails(extra).length > 0;
 }
+
+/**
+ * 這一類差異需不需要「爬蟲爬到什麼」的細節。
+ *
+ * ============================================================
+ * 【為什麼要一支函式，不直接在 JSX 裡比字串】（2026-08-24）
+ *
+ * 我第一版寫的是:
+ *
+ *     if (it.code === '對不到房源' || it.kind === '房源') { … }
+ *
+ * 而畫面上那個紅標籤是 **`it.field`**，不是 `code`。
+ * 條件永遠不成立，所以那句提示一次都沒出現過 ——
+ * 使用者連按三次重新整理，畫面一模一樣。
+ *
+ * 更糟的是我在這個檔案的檔頭寫著:
+ *
+ *     「猜錯了 → 畫面一片空白，而且沒有任何線索說明為什麼」
+ *
+ * 然後在隔壁的條件式裡犯了一模一樣的錯。
+ *
+ * 抽成函式的理由:**寫在 .tsx 裡的判斷式測不到**（測試環境不處理 JSX）。
+ * 抽出來之後，「哪幾種 field 需要細節」這件事至少有測試守著，
+ * 改錯了會紅，不會安靜地什麼都不顯示。
+ *
+ *
+ * ============================================================
+ * 【為什麼只有這幾種】
+ *
+ * 其他類別（金額、住宿起訖）在 `from_val` / `to_val` 就看得到
+ * 「現在是什麼、爬蟲認為是什麼」—— 那已經夠判斷了。
+ *
+ * 只有房源對不到這一類，那筆訂單**根本沒進資料庫**，
+ * 畫面上除了一個八位數字之外什麼都沒有。
+ */
+const NEEDS_DETAIL = new Set(['對不到房源', '房源', '房源名稱查不到']);
+
+/**
+ * @param field `sync_issues.field` —— **畫面上那個紅標籤就是這一欄**
+ *              （admin/page.tsx 的 `ISSUE_ADVICE[field]` 也是用它）
+ */
+export function needsCrawlerDetail(field: string | null | undefined): boolean {
+  return !!field && NEEDS_DETAIL.has(field);
+}

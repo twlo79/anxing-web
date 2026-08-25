@@ -5,7 +5,8 @@ import {
 } from '@/lib/estate-manager';
 import Toast from '@/components/Toast';
 import { createClient } from '@/lib/supabase';
-import { extraDetails } from '@/lib/sync-extra';
+import { extraDetails, needsCrawlerDetail } from '@/lib/sync-extra';
+import { findListingOwner, listingOwnerHint } from '@/lib/listing-owner';
 import { useProfile } from '@/lib/profile';
 import { softDelete } from '@/lib/trash';
 
@@ -1618,11 +1619,34 @@ export default function AdminPage() {
                                  *   而真正的情況是「爬蟲沒有把細節留下來」。
                                  *   只在對不到房源那一類講,其他類本來就不需要細節。
                                  */
-                                if (it.code === '對不到房源' || it.kind === '房源') {
+                                /*
+                                 * ★★ 用 `field` 不是 `code`。
+                                 *   畫面上那個紅標籤就是 field（上面 ISSUE_ADVICE[field] 同一欄）。
+                                 *   第一版寫成 it.code —— 條件永遠不成立，
+                                 *   那句提示一次都沒出現過，而畫面看起來完全正常。
+                                 *   判斷抽到 lib/sync-extra.ts 才測得到。
+                                 */
+                                if (needsCrawlerDetail(it.field)) {
+                                  /*
+                                   * ★★ 前端自己查「這個編號掛在哪一間房」（2026-08-24）。
+                                   *
+                                   *   listing 39687807 的訊息寫「在系統裡沒有任何對照」，
+                                   *   而實際上 properties.airbnb_listing_id 就有 ——
+                                   *   掛在「舊-未知(7807)」上，只是那間房停用了。
+                                   *   使用者為了那句不精確的訊息跑了三輪查詢。
+                                   *
+                                   *   這一頁本來就載入了 properties 與 listings（房源管理要用），
+                                   *   所以算得出來，不必等爬蟲補 extra。
+                                   */
+                                  const owner = findListingOwner(it.listing_id, properties, listings);
                                   return (
-                                    <div className="mt-1 text-[11px] font-normal text-gray-400 max-w-md">
-                                      爬蟲沒有留下這筆的細節（名稱、日期、房客）——
-                                      目前只能拿 listing 編號回 Airbnb 後台查。
+                                    <div className={`mt-1 text-[11px] font-normal max-w-md ${
+                                      owner && !owner.active ? 'text-amber-700' : 'text-gray-500'}`}>
+                                      {listingOwnerHint(owner, it.listing_id ?? '')}
+                                      {/* 爬蟲的細節是另一件事 —— 有沒有對照跟「爬到什麼」要分開講 */}
+                                      <span className="block text-gray-400 mt-0.5">
+                                        爬蟲沒有留下這筆的細節（名稱、日期、房客）。
+                                      </span>
                                     </div>
                                   );
                                 }

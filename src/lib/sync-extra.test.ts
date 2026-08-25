@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { extraDetails, hasExtraDetails } from './sync-extra.ts';
+import { extraDetails, hasExtraDetails, needsCrawlerDetail } from './sync-extra.ts';
 
 describe('extraDetails', () => {
   test('★ 有什麼就列什麼 —— 不寫死鍵名', () => {
@@ -64,5 +64,27 @@ describe('hasExtraDetails', () => {
     assert.equal(hasExtraDetails({ 停用對照: 'A13' }), false, '只有已顯示過的鍵 = 沒有可補的細節');
     assert.equal(hasExtraDetails(null), false);
     assert.equal(hasExtraDetails({}), false);
+  });
+});
+
+describe('needsCrawlerDetail', () => {
+  test('★★ 用 field 不是 code —— 畫面上那個紅標籤就是 field', () => {
+    // 我第一版寫成 it.code === '對不到房源',條件永遠不成立,
+    // 那句提示一次都沒出現過而畫面看起來完全正常
+    assert.equal(needsCrawlerDetail('對不到房源'), true);
+    assert.equal(needsCrawlerDetail('房源'), true);
+    assert.equal(needsCrawlerDetail('房源名稱查不到'), true);
+  });
+
+  test('★ 其他類別不需要 —— from_val / to_val 已經夠判斷', () => {
+    for (const f of ['金額', '住宿起訖', '房客姓名', '待人工判斷', '在 Airbnb 找不到']) {
+      assert.equal(needsCrawlerDetail(f), false, f);
+    }
+  });
+
+  test('空值', () => {
+    assert.equal(needsCrawlerDetail(null), false);
+    assert.equal(needsCrawlerDetail(undefined), false);
+    assert.equal(needsCrawlerDetail(''), false);
   });
 });
