@@ -166,6 +166,24 @@ export default function DepositsPage() {
    *   預設分開的話訂金那一頁會長期是空的。
    */
   const [kindF, setKindF] = useState<'all' | 'deposit' | 'earnest'>('all');
+  /*
+   * 目前這個頁籤在講哪一種錢。**只用在句子裡**，表頭不用。
+   *
+   * ============================================================
+   * 【表頭固定叫「暫收款／收款日／退款日」】（2026-08-24 使用者指定）
+   *
+   * 我第一版讓表頭跟著頁籤換（訂金→「訂金／收訂金日」）。
+   * 使用者的決定更好:**欄名跟著切換會跳動**，
+   * 而人在掃一份清單時是靠「第四欄是金額」這種位置記憶在讀的 ——
+   * 名稱一直變，每次切頁籤都要重新對一次欄位。
+   *
+   * 而且「暫收款」對兩種都成立，不會說謊。
+   * 要知道這一列是訂金還是押金，看房源旁邊那個徽章。
+   *
+   * ★ 句子裡還是要用具體的詞:「這一類目前沒有**訂金**紀錄」
+   *   比「沒有暫收紀錄」精確 —— 那句話是在描述你現在的篩選。
+   */
+  const kindWord = kindF === 'earnest' ? '訂金' : kindF === 'deposit' ? '押金' : '暫收';
   /**
    * 從訂單／契約跳過來時只顯示那一筆的押金。
    *
@@ -336,7 +354,39 @@ export default function DepositsPage() {
   }), [rows, fromD, toD, estateF, roomF, methodF, acctF, kw, focus]);
 
   /** 一筆押金必定落在三類的其中一類,順序不能顛倒:退了就是已退,不管收款日 */
-  const bucketOf = (r: Dep) => (r.returned_on ? 'returned' : r.received_on ? 'held' : 'pending');
+  /*
+   * 三分類。**訂金的「結案」不只 returned_on**（migration_174）。
+   *
+   * ★★ 沒收與轉押的 returned_on 是 null —— 只看 returned_on 的話，
+   *    那些訂金會被算進「已收訂金」，而它們早就處理完了。
+   *    症狀是「已收訂金」那一格的金額一直不會降，
+   *    而每一筆單看都很正常。
+   */
+  /**
+   * 這一列是訂金還是押金（2026-08-24 使用者:「標記暫收款是訂金還是押金」）。
+   *
+   * ★ **兩種都標**，不是只標訂金。
+   *
+   *   我第一版只標訂金，理由是「押金是多數，標了整欄都是徽章」。
+   *   但那一欄現在叫「暫收款」—— 它問的就是「這是什麼款」，
+   *   而只標其中一種的話，沒有徽章的那些等於在說「不知道」。
+   *
+   * ★ 標在金額那一格底下，不是房源旁邊:
+   *   欄名是「暫收款」，答案就該貼在那個數字下面。
+   */
+  const kindChip = (r: Dep) => {
+    const earnest = r.kind === 'earnest';
+    return (
+      <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] ${
+        earnest ? 'bg-mor-bluelight text-mor-slate' : 'bg-gray-100 text-gray-500'}`}>
+        {earnest ? '訂金' : '押金'}
+      </span>
+    );
+  };
+
+  const bucketOf = (r: Dep) =>
+    (r.returned_on || r.forfeited_on || r.converted_to_deposit_id) ? 'returned'
+      : r.received_on ? 'held' : 'pending';
 
   /** 退款流程走到哪。returned_on 有值就是結案了,不再算在流程裡。 */
   const refundStage = (r: Dep) =>
@@ -439,6 +489,12 @@ export default function DepositsPage() {
       note: null, orphaned: false, is_manual: true, created_at: '',
       refund_status: 'none', payee_bank_code: null, payee_name: null, payee_account: null,
       planned_refund_on: null,
+      /*
+       * 手動新增預設是押金 —— 那是多數（101 筆押金 / 訂金從契約來）。
+       * 但可以改成訂金（2026-08-24 使用者:「可選 訂金 押金」）:
+       * 舊約的訂金、還沒開契約就先收的訂金，都得手動記。
+       */
+      kind: 'deposit',
     };
   }
 
@@ -873,7 +929,7 @@ export default function DepositsPage() {
     if (!edit) return;
     const manual = !!edit.is_manual;
     if (manual) {
-      if (!(Number(edit.amount) > 0)) return flash('請填押金金額');
+      if (!(Number(edit.amount) > 0)) return flash('請填金額');
       if (!edit.room?.trim() && !edit.guest_name?.trim()) return flash('房源與姓名至少要填一個');
     }
     setSaving(true);
@@ -1131,8 +1187,8 @@ export default function DepositsPage() {
 
   // 未收款的列沒有任何日期,設了區間必然全空。直接說明,不要讓人以為資料不見了。
   const emptyHint = (statusF === 'pending' || statusF === 'all') && (fromD || toD)
-    ? '未收款的押金還沒有收退日期,設了日期區間就不會出現。清除日期才看得到。'
-    : '這一類目前沒有押金紀錄';
+    ? `未收款的${kindWord}還沒有收退日期,設了日期區間就不會出現。清除日期才看得到。`
+    : `這一類目前沒有${kindWord}紀錄`;
 
   return (
     <div>
@@ -1170,31 +1226,43 @@ export default function DepositsPage() {
       */}
       <div className="mb-3">
           <div className="text-xs text-gray-500 mb-1.5">訂金</div>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+          {/*
+              ★ 三格，不是五格（2026-08-24 使用者:「這三個可以放一起嗎？」）。
+
+              「已退訂金 / 已沒收 / 轉押金」三者的共同點是**這筆處理完了**，
+              差別只在錢去了哪裡。分成三格的話:
+
+                · 每一格都很窄，數字擠在一起
+                · 而使用者在看板上真正要問的是「還有幾筆要處理」——
+                  那是前兩格的事，第三格只要一個總數
+
+              細分寫在第三格的小字裡，要看得到、但不佔一整格。
+          */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
             {([
-              { k: 'pending',   title: '未付訂金', s: earnStats.pending },
-              { k: 'held',      title: '已收訂金', s: earnStats.held },
-              { k: 'returned',  title: '已退訂金', s: earnStats.returned },
-              { k: null,        title: '已沒收',   s: earnStats.forfeited },
-              { k: null,        title: '轉押金',   s: earnStats.converted },
+              { k: 'pending',  title: '未付訂金', s: earnStats.pending,  sub: null },
+              { k: 'held',     title: '已收訂金', s: earnStats.held,
+                sub: '錢在我們手上，還沒決定去向' },
+              { k: 'returned', title: '已結案',   s: earnStats.returned,
+                sub: [
+                  earnStats.returned.n - earnStats.forfeited.n - earnStats.converted.n > 0
+                    ? `退 ${earnStats.returned.n - earnStats.forfeited.n - earnStats.converted.n}` : '',
+                  earnStats.forfeited.n > 0 ? `沒收 ${earnStats.forfeited.n}` : '',
+                  earnStats.converted.n > 0 ? `轉押 ${earnStats.converted.n}` : '',
+                ].filter(Boolean).join('・') || '退款／沒收／轉押' },
             ] as const).map((t) => {
-              /*
-               * ★ 前三格點得下去（切到那個狀態）；後兩格是純數字。
-               *   「已沒收」與「轉押」在 Status 那個型別裡沒有對應的值 ——
-               *   硬加兩個狀態進去的話，押金那邊也會多出兩個永遠是 0 的頁籤。
-               */
-              const on = t.k !== null && kindF === 'earnest' && statusF === t.k;
+              const on = kindF === 'earnest' && statusF === t.k;
               return (
                 <button key={t.title} type="button"
-                  onClick={() => { if (t.k) { setKindF('earnest'); setStatusF(t.k); } }}
-                  disabled={t.k === null}
+                  onClick={() => { setKindF('earnest'); setStatusF(t.k); }}
                   className={`text-left rounded-lg px-3 py-2 border transition min-w-0
                     ${on ? 'bg-mor-slate text-white border-mor-slate'
-                         : 'bg-white border-mor-line'}
-                    ${t.k ? 'hover:border-gray-300' : 'cursor-default'}`}>
+                         : 'bg-white border-mor-line hover:border-gray-300'}`}>
                   <div className={`text-[11px] ${on ? 'opacity-80' : 'text-gray-500'}`}>{t.title}</div>
                   <div className="font-bold tabular-nums">NT$ {fmt(t.s.cur['TWD'] ?? 0)}</div>
-                  <div className={`text-[11px] ${on ? 'opacity-90' : 'text-gray-400'}`}>{t.s.n} 筆</div>
+                  <div className={`text-[11px] ${on ? 'opacity-90' : 'text-gray-400'}`}>
+                    {t.s.n} 筆{t.sub ? `　${t.sub}` : ''}
+                  </div>
                 </button>
               );
             })}
@@ -1397,9 +1465,10 @@ export default function DepositsPage() {
           {!canEdit && <span className="ml-2 text-gray-400">・檢視模式</span>}
         </div>
         {/* 下載留給所有人 —— 看得到就帶得走,藏它只是讓人改用截圖 */}
-        {canEdit && <AddButton onClick={() => setEdit(blankManual())}>新增押金</AddButton>}
+        {/* 新增時可以選訂金或押金,所以按鈕不叫「新增押金」 */}
+        {canEdit && <AddButton onClick={() => setEdit(blankManual())}>新增暫收款</AddButton>}
         <ExportButton onClick={exportXlsx} disabled={!sorted.length} />
-        {canEdit && <TrashLink table="deposits" label="押金" />}
+        {canEdit && <TrashLink table="deposits" label="暫收款" />}
       </div>
 
       {/* 手機卡片 */}
@@ -1411,18 +1480,13 @@ export default function DepositsPage() {
             className="rounded-xl glass p-4 active:bg-white/45">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <div className="font-medium truncate">
-                  {/* 手機卡片也要標 —— 只做桌機的話手機上兩種分不出來 */}
-                  {r.kind === 'earnest' && (
-                    <span className="mr-1 rounded bg-mor-bluelight px-1.5 py-0.5 text-[10px] text-mor-slate">訂金</span>
-                  )}
-                  {r.room ?? '—'}
-                </div>
+                <div className="font-medium truncate">{r.room ?? '—'}</div>
                 <div className="text-xs text-gray-500 truncate">{r.guest_name ?? '—'}</div>
               </div>
               <div className="text-right shrink-0">
                 {/* 多幣別是一起收退的一筆押金,主要金額大字、其餘小字列在下面 */}
                 <div className="stat-num font-bold">{primaryText(r)}</div>
+                <div className="mt-0.5">{kindChip(r)}</div>
                 {extraLines(r).map((l) => (
                   <div key={l.cur} className="text-[11px] text-gray-500">＋{lineText(l)}</div>
                 ))}
@@ -1445,10 +1509,10 @@ export default function DepositsPage() {
               <th className="px-3 py-2.5">物業</th>
               <SortTh label="房源" sortKey="room" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <SortTh label="姓名" sortKey="guest_name" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
-              <SortTh label="押金" sortKey="amount" type="number" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="text-right" align="right" />
-              <SortTh label="收押金日" sortKey="received_on" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
+              <SortTh label="暫收款" sortKey="amount" type="number" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="text-right" align="right" />
+              <SortTh label="收款日" sortKey="received_on" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <th className="px-3 py-2.5">收款方式</th>
-              <SortTh label="退押金日" sortKey="returned_on" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
+              <SortTh label="退款日" sortKey="returned_on" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <th className="px-3 py-2.5">退款方式</th>
               <th className="px-3 py-2.5">狀態</th>
               <th className="px-3 py-2.5 text-right">操作</th>
@@ -1461,21 +1525,14 @@ export default function DepositsPage() {
               <tr key={r.id} className="border-b border-mor-line/60 last:border-0 hover:bg-mor-sand/30">
                 <td className="px-3 py-2 whitespace-nowrap text-gray-500">{r.estate_id ? estateName[r.estate_id] ?? '—' : '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap font-medium">
-                  {/*
-                      ★ 訂金要標出來（migration_174）。
-                        「全部」頁籤下兩種混在一起,不標的話兩筆看起來一模一樣 ——
-                        而它們的下一步完全不同（訂金可以沒收、可以轉押）。
-                        押金不標:它是多數,標了整欄都是徽章反而看不出差異。
-                  */}
-                  {r.kind === 'earnest' && (
-                    <span className="mr-1 rounded bg-mor-bluelight px-1.5 py-0.5 text-[10px] text-mor-slate">訂金</span>
-                  )}
+                  {/* 種類徽章移到「暫收款」那一欄底下了 —— 兩邊都標會重複 */}
                   {r.room ?? '—'}
                   {r.is_manual && <span className="ml-1 text-[10px] text-gray-400">手動</span>}
                 </td>
                 <td className="px-3 py-2 whitespace-nowrap">{r.guest_name ?? '—'}</td>
                 <td className="px-3 py-2 text-right whitespace-nowrap">
                   <div>{primaryText(r)}</div>
+                  <div className="mt-0.5">{kindChip(r)}</div>
                   {extraLines(r).map((l) => (
                     <div key={l.cur} className="text-[11px] text-gray-500 font-normal">＋{lineText(l)}</div>
                   ))}
@@ -1614,7 +1671,7 @@ export default function DepositsPage() {
                   {row('預計匯款日', d.planned_refund_on ?? '—')}
                   {d.reject_reason ? row('駁回原因', <span className="text-red-600 text-xs">{d.reject_reason}</span>) : null}
                 </>}
-                {row('退押金日', d.returned_on ?? '—')}
+                {row('退款日', d.returned_on ?? '—')}
                 {row('退款方式', d.returned_method
                   ? `${METHOD_LABEL[d.returned_method] ?? d.returned_method}${d.returned_account ? `・${acctName[d.returned_account] ?? d.returned_account}` : ''}`
                   : '—')}
@@ -1971,7 +2028,9 @@ export default function DepositsPage() {
             onClick={(e) => e.stopPropagation()}>
             <div className="shrink-0 bg-white border-b border-mor-line px-4 md:px-6 py-4 font-bold flex items-center justify-between"
               style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
-              {edit.id ? `管理押金・${edit.room ?? '—'}` : '手動新增押金'}
+              {edit.id
+                ? `管理${edit.kind === 'earnest' ? '訂金' : '押金'}・${edit.room ?? '—'}`
+                : '手動新增暫收款'}
               <button onClick={() => setEdit(null)} aria-label="關閉"
                 className="w-10 h-10 -mr-2 flex items-center justify-center text-gray-400 hover:text-gray-600 text-xl">✕</button>
             </div>
@@ -1982,7 +2041,7 @@ export default function DepositsPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {!edit.id && (
                     <div className="md:col-span-2 rounded-lg bg-amber-50 text-amber-700 px-3 py-2 text-xs">
-                      手動押金不掛在任何訂單或契約下,適合舊約押金、代收、還沒開單就先收的訂金。
+                      手動暫收款不掛在任何訂單或契約下,適合舊約押金、代收、還沒開契約就先收的訂金。
                     </div>
                   )}
                   <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">物業</span>
@@ -2006,11 +2065,35 @@ export default function DepositsPage() {
                         className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5">
                         {['TWD', 'USD', 'JPY', 'CNY', 'EUR'].map((c) => <option key={c} value={c}>{c}</option>)}
                       </select></label>
-                    <label className="flex flex-col gap-1 flex-1 min-w-0"><span className="text-xs text-gray-500">押金金額<Req /></span>
+                    <label className="flex flex-col gap-1 flex-1 min-w-0"><span className="text-xs text-gray-500">金額<Req /></span>
                       <MoneyInput value={edit.amount || 0}
                         onChange={(n) => setEdit({ ...edit, amount: n })}
                         className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 text-right" /></label>
                   </div>
+
+                  {/*
+                      ★ 種類（2026-08-24 使用者:「可選 訂金 押金」）。
+
+                      ★ **只有新增時能選** —— 已經存在的那一列改種類的話，
+                        訂金的三條出路（沒收/退款/轉押）與押金的規則會對不上，
+                        而已經走過的那些痕跡（forfeited_on…）還留在上面。
+                        真的要換就刪掉重建。
+                  */}
+                  <label className="flex flex-col gap-1 md:col-span-2">
+                    <span className="text-xs text-gray-500">種類<Req /></span>
+                    <select value={edit.kind ?? 'deposit'} disabled={!!edit.id}
+                      onChange={(e) => setEdit({ ...edit, kind: e.target.value as 'deposit' | 'earnest' })}
+                      className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5
+                                 disabled:bg-gray-100 disabled:text-gray-500">
+                      <option value="deposit">押金</option>
+                      <option value="earnest">訂金</option>
+                    </select>
+                    <span className="text-xs text-gray-400">
+                      {edit.id
+                        ? '種類存檔後不能改 —— 兩種的後續流程不一樣。要換請刪掉重建。'
+                        : '訂金收了之後可以沒收、退款；押金只有退款。'}
+                    </span>
+                  </label>
                 </div>
               ) : (
                 <div className="rounded-lg bg-mor-sand/60 px-3 py-2 text-xs text-gray-600">
@@ -2045,7 +2128,7 @@ export default function DepositsPage() {
                 所以入口收斂成一個:開收款視窗，一筆一列地記。
               */}
               <div className="border-t border-mor-line pt-3">
-                <div className="text-xs font-semibold text-gray-500 mb-2">收押金</div>
+                <div className="text-xs font-semibold text-gray-500 mb-2">收款</div>
                 {(() => {
                   const st = depPayStatus(edit);
                   const rest = remainingDep(edit);
@@ -2111,7 +2194,7 @@ export default function DepositsPage() {
               */}
               <div className="border-t border-mor-line pt-3">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-semibold text-gray-500">退押金</span>
+                  <span className="text-xs font-semibold text-gray-500">退款</span>
                   {refundChip(edit)}
                 </div>
 
