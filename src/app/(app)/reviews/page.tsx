@@ -9,6 +9,10 @@ import {
   SUMMARY_HEADER, DETAIL_HEADER, type DetailRow,
 } from '@/lib/manager-xlsx';
 import { fetchAll } from '@/lib/fetch-all';
+import { useProfile } from '@/lib/profile';
+import {
+  canHideReview, isHidden, hideError, hideReasonText, hideImpactText, HIDE_REASONS,
+} from '@/lib/review-hide';
 
 type Estate = { id: string; name: string; manager: string | null; sort: number };
 type Property = { id: string; name: string; active: boolean; estate_id: string | null };
@@ -21,6 +25,8 @@ type Review = {
   rating_checkin: number | null; rating_cleanliness: number | null; rating_accuracy: number | null;
   rating_communication: number | null; rating_location: number | null; rating_value: number | null;
   detail_comments: any; host_reply: string | null; source_url: string | null;
+  /** 人工隱藏（migration_178）。null = 正常顯示 */
+  hidden_at?: string | null; hidden_by?: string | null; hidden_reason?: string | null;
 };
 /**
  * `active` 是 migration_130 加的。
@@ -105,6 +111,15 @@ export default function ReviewsPage() {
   const [rows, setRows] = useState<Review[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
+  /* 只看隱藏的（migration_178）。預設關 —— 隱藏的就是不該出現在日常清單裡 */
+  const [showHidden, setShowHidden] = useState(false);
+  const { profile } = useProfile();
+  const canHide = canHideReview(profile?.role);
+  /** 正在填隱藏原因的那一則 */
+  const [hiding, setHiding] = useState<Review | null>(null);
+  const [hideReason, setHideReason] = useState(HIDE_REASONS[0]);
+  const [hideOther, setHideOther] = useState('');
+  const [hideBusy, setHideBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Review | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -233,6 +248,14 @@ export default function ReviewsPage() {
     let q = supabase.from('reviews')
       .select('*', withCount ? { count: 'exact' } : undefined)
       .order('checkout_date', { ascending: false, nullsFirst: false });
+    /*
+     * ★★ 預設看不到隱藏的（migration_178）。
+     *
+     *   `showHidden` 打開時**改成只看隱藏的**，不是「全部一起顯示」——
+     *   混在一起的話那幾則會夾在幾百列中間，
+     *   而使用者打開這個開關就是為了找它們。
+     */
+    q = showHidden ? q.not('hidden_at', 'is', null) : q.is('hidden_at', null);
     if (propertyId) q = q.eq('property_id', propertyId);
     else if (estateId) {
       const ids = properties.filter((p) => p.estate_id === estateId).map((p) => p.id);
@@ -245,7 +268,32 @@ export default function ReviewsPage() {
     if (ratingFilter === 'low') q = q.lte('overall_rating', 3);
     if (kw) q = q.or(`guest_name.ilike.%${kw}%,comment.ilike.%${kw}%,comment_original.ilike.%${kw}%,listing_name_raw.ilike.%${kw}%`);
     return q;
-  }, [supabase, estateId, propertyId, dateFrom, dateTo, ratingFilter, kw, properties]);
+  }, [supabase, estateId, propertyId, dateFrom, dateTo, ratingFilter, kw, properties, showHidden]);
+
+  /**
+   * 隱藏 / 還原。
+   *
+   * ★★ 一定要看**改到幾列**。RLS 擋下的 UPDATE 會回成功且影響 0 列 ——
+   *    畫面上看起來藏好了，重整才發現還在（README 9.1）。
+   *    這一頁的 reviews_write 只給 manager / super_admin，
+   *    所以權限不足是很可能發生的事，不是理論上的。
+   */
+  const doHide = useCallback(async (r: Review, reason: string | null) => {
+    setHideBusy(true);
+    const { data: { user } } = await supabase.auth.getUser();
+    /* 三欄要嘛都有、要嘛都沒有 —— 資料庫的 rv_hidden_chk 也擋 */
+    const patch = reason
+      ? { hidden_at: new Date().toISOString(), hidden_by: user?.id ?? null, hidden_reason: reason }
+      : { hidden_at: null, hidden_by: null, hidden_reason: null };
+    const { data, error } = await supabase.from('reviews').update(patch).eq('id', r.id).select('id');
+    setHideBusy(false);
+    if (error) { alert((reason ? '隱藏' : '還原') + '失敗：' + error.message); return false; }
+    if (!data || data.length === 0) {
+      alert('一列都沒有更新 —— 通常是權限（只有經理與總管理員可以隱藏評價）。請重新整理後確認。');
+      return false;
+    }
+    return true;
+  }, [supabase]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -256,7 +304,7 @@ export default function ReviewsPage() {
   }, [buildQuery, page]);
 
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { setPage(0); }, [estateId, propertyId, dateFrom, dateTo, ratingFilter, kw]);
+  useEffect(() => { setPage(0); }, [estateId, propertyId, dateFrom, dateTo, ratingFilter, kw, showHidden]);
   useEffect(() => { setPropertyId(''); }, [estateId]);
 
   // CSV 匯出(目前篩選的全部資料)
@@ -323,7 +371,10 @@ export default function ReviewsPage() {
       // 兩者取不同範圍的話總表跟明細對不起來，而那種不一致最難查。
       const { rows: all, error } = await fetchAll<Review>((f, t) => {
         let q = supabase.from('reviews')
+          // 隱藏的不算 —— 要跟 review_stats / manager_stats 一致,
+          // 不一致的話總表跟明細對不起來,而那種不一致最難查
           .select('property_id, guest_name, overall_rating, comment, comment_original, comment_language, checkout_date')
+          .is('hidden_at', null)
           .order('checkout_date', { ascending: false, nullsFirst: false });
         if (statsFrom) q = q.gte('checkout_date', statsFrom);
         if (statsTo) q = q.lte('checkout_date', statsTo);
@@ -566,6 +617,20 @@ export default function ReviewsPage() {
             className="text-gray-500 underline pb-1.5">清除篩選</button>
         )}
         <div className="ml-auto flex items-end gap-3">
+          {/*
+            ★ 只有能隱藏的人看得到這個開關 —— 其他人打開也做不了事,
+              而且會以為系統少了幾則評價。
+            ★ 打開時是「**只看**隱藏的」不是「全部一起看」:
+              混在一起的話那幾則會夾在幾百列中間,
+              而打開這個開關的目的就是要找它們。
+          */}
+          {canHide && (
+            <label className="flex items-center gap-1.5 text-xs text-gray-600 pb-1.5 cursor-pointer select-none">
+              <input type="checkbox" checked={showHidden}
+                onChange={(e) => setShowHidden(e.target.checked)} />
+              只看已隱藏
+            </label>
+          )}
           <div className="text-xs text-gray-400 pb-1.5">共 {total.toLocaleString()} 筆</div>
           <button onClick={exportCsv} disabled={exporting || total === 0}
             className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark disabled:opacity-40">
@@ -697,6 +762,20 @@ export default function ReviewsPage() {
                   </td>
                   <td className="px-3 py-2.5 text-gray-600 min-w-64">
                     <div className="line-clamp-2">{displayComment(r) ?? <span className="text-gray-300">（無留言）</span>}</div>
+                    {/* ★ 理由印出來 —— 「誰藏的」查得到但「為什麼」看不到的話,沒有人敢放回去 */}
+                    {isHidden(r) && (
+                      <div className="mt-1 text-[11px] text-gray-400">
+                        已隱藏{r.hidden_reason ? `・${r.hidden_reason}` : ''}
+                        {canHide && (
+                          <button
+                            onClick={(ev) => { ev.stopPropagation();
+                              if (confirm('把這則評價放回清單?\n\n它會重新算進平均星等與管家排行。')) {
+                                doHide(r, null).then((ok) => { if (ok) load(); });
+                              }}}
+                            className="ml-2 text-mor-blue underline">還原</button>
+                        )}
+                      </div>
+                    )}
                   </td>
                 </tr>
               );
@@ -731,14 +810,88 @@ export default function ReviewsPage() {
         <Drawer review={selected} onClose={() => setSelected(null)}
           property={selected.property_id ? propById[selected.property_id] : null}
           estate={selected.property_id && propById[selected.property_id]?.estate_id ? estateById[propById[selected.property_id].estate_id!] : null}
-          manager={mgrOf(selected)} />
+          manager={mgrOf(selected)}
+          canHide={canHide}
+          onHide={() => { setHiding(selected); setHideReason(HIDE_REASONS[0]); setHideOther(''); setSelected(null); }}
+          onRestore={() => {
+            if (!confirm('把這則評價放回清單?\n\n它會重新算進平均星等與管家排行。')) return;
+            doHide(selected, null).then((ok) => { if (ok) { setSelected(null); load(); } });
+          }} />
+      )}
+
+      {/*
+        ══════════ 隱藏評價 ══════════
+
+        ★★ 這是一個**填理由**的視窗,不是一句 confirm。
+
+          confirm 問不到理由,而理由是這個功能最重要的欄位:
+          三個月後看到一則被藏起來的四星評價,
+          「誰藏的」查得到但「為什麼」查不到的話,沒有人敢把它放回去 ——
+          於是它永遠留在那裡,而那一棟的平均星等永遠比實際高一點點。
+      */}
+      {hiding && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4"
+          onClick={() => setHiding(null)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 space-y-3 text-sm"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="font-bold">隱藏這則評價</div>
+            <div className="rounded-lg bg-mor-sand/60 px-3 py-2 text-xs text-gray-600">
+              {hiding.guest_name}・{hiding.overall_rating} 星・{hiding.checkout_date ?? '—'}
+            </div>
+
+            {/*
+              ★ 說出**影響了哪一棟的平均** —— 不講的話使用者只知道「這則不見了」,
+                下個月看到那一棟平均漲了 0.1 會找不到原因。
+            */}
+            <div className="rounded-lg bg-amber-50 text-amber-800 px-3 py-2 text-xs">
+              {hideImpactText(hiding.overall_rating,
+                hiding.property_id && propById[hiding.property_id]?.estate_id
+                  ? estateById[propById[hiding.property_id].estate_id!]?.name : null)}
+              <div className="mt-1">
+                評價不會被刪掉 —— 爬蟲下次同步還是會帶到它,只是不再顯示也不列入統計。隨時可以還原。
+              </div>
+            </div>
+
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-gray-500">原因<span className="text-red-500 ml-0.5">*</span></span>
+              <select value={hideReason} onChange={(e) => setHideReason(e.target.value)}
+                className="h-11 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5">
+                {HIDE_REASONS.map((r) => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </label>
+            {hideReason === '其他' && (
+              <label className="flex flex-col gap-1">
+                <span className="text-xs text-gray-500">說明<span className="text-red-500 ml-0.5">*</span></span>
+                <input value={hideOther} onChange={(e) => setHideOther(e.target.value)}
+                  placeholder="寫給三個月後的自己看"
+                  className="h-11 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5" />
+              </label>
+            )}
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button onClick={() => setHiding(null)}
+                className="rounded-lg border border-gray-300 px-4 py-1.5">取消</button>
+              <button disabled={hideBusy}
+                onClick={() => {
+                  const err = hideError(hideReason, hideOther);
+                  if (err) { alert(err); return; }
+                  doHide(hiding, hideReasonText(hideReason, hideOther))
+                    .then((ok) => { if (ok) { setHiding(null); load(); } });
+                }}
+                className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium disabled:opacity-40">
+                {hideBusy ? '處理中…' : '確認隱藏'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
 }
 
-function Drawer({ review: r, onClose, property, estate, manager }: {
+function Drawer({ review: r, onClose, property, estate, manager, canHide, onHide, onRestore }: {
   review: Review; onClose: () => void; property: Property | null; estate: Estate | null;
+  canHide: boolean; onHide: () => void; onRestore: () => void;
   /**
    * 這一則該算誰的 —— 由外面依**退房日**查任期算好再傳進來。
    * 不在這裡讀 estate.manager：那一欄沒有時間,顯示的會是「現在是誰」
@@ -835,6 +988,36 @@ function Drawer({ review: r, onClose, property, estate, manager }: {
               在 Airbnb 後台查看
             </a>
           )}
+
+          {/*
+            ★ 按鈕上的字是「隱藏」不是「刪除」。
+
+              評價是爬蟲 upsert 進來的,真的刪掉明天就回來了。
+              寫「刪除」的話使用者對它的期待是「不見了」,而它其實還在 ——
+              然後他會再刪一次,再一次,以為系統壞了。
+          */}
+          {canHide && (
+            <div className="border-t border-mor-line pt-4">
+              {isHidden(r) ? (
+                <div className="space-y-2">
+                  <div className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                    這則已隱藏{r.hidden_reason ? `・${r.hidden_reason}` : ''}
+                    {r.hidden_at ? `・${r.hidden_at.slice(0, 10)}` : ''}
+                    <div className="mt-1 text-gray-400">不列入平均星等與管家排行。</div>
+                  </div>
+                  <button onClick={onRestore}
+                    className="h-11 w-full rounded-lg border border-mor-slate text-mor-slate font-medium">
+                    還原到清單
+                  </button>
+                </div>
+              ) : (
+                <button onClick={onHide}
+                  className="h-11 w-full rounded-lg border border-red-300 text-red-600 font-medium">
+                  隱藏這則評價
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -868,6 +1051,7 @@ function MgrModal({ m, onClose, estates, properties, statsFrom, statsTo, propByI
     fetchAll<any>((f, t) => {
       let q = supabase.from('reviews').select('*')
         .in('property_id', propIds.length ? propIds : ['00000000-0000-0000-0000-000000000000'])
+        .is('hidden_at', null)   // 統計用,要跟 RPC 一致
         .order('checkout_date', { ascending: false, nullsFirst: false });
       if (statsFrom) q = q.gte('checkout_date', statsFrom);
       if (statsTo) q = q.lte('checkout_date', statsTo);
@@ -958,6 +1142,7 @@ function ListModal({ cfg, onClose, statsFrom, statsTo, propById, estateById, onS
     // 一邊改了另一邊沒改，兩個清單就會對不起來而且沒人說得出為什麼。
     fetchAll<any>((f, t) => {
       let q = supabase.from('reviews').select('*')
+        .is('hidden_at', null)   // 統計用,要跟 RPC 一致
         .order('checkout_date', { ascending: false, nullsFirst: false });
       if (cfg.propIds) q = q.in('property_id', cfg.propIds.length ? cfg.propIds : ['00000000-0000-0000-0000-000000000000']);
       if (cfg.rating === 5) q = q.gte('overall_rating', 5);

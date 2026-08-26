@@ -431,6 +431,7 @@ export default function RevenuesPage() {
       const me = new Date(Date.UTC(md.m === 12 ? md.y + 1 : md.y, md.m === 12 ? 0 : md.m, 1)).toISOString().slice(0, 10);
       const { data: revs } = await supabase.from('reviews')
         .select('guest_name, checkout_date, overall_rating, properties(name)')
+        .is('hidden_at', null)   // 人工隱藏的不算（migration_178）
         .gte('checkout_date', ms).lt('checkout_date', me);
       const ratingByKey: Record<string, number> = {};
       const ratingByGuest: Record<string, number> = {};

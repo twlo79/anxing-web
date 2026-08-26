@@ -329,6 +329,9 @@ export default function DashboardPage() {
         .gte('checkin', fromD).lte('checkin', toD).range(f, t)),
       fetchAll<Rev5>((f, t) => supabase.from('reviews')
         .select('checkout_date, property_id, overall_rating')
+        // 人工隱藏的不算（migration_178）—— 要跟評價頁與 review_stats 一致,
+        // 三個地方有一個沒加,同一段期間就會出現兩種平均星等
+        .is('hidden_at', null)
         .gte('checkout_date', fromD).lte('checkout_date', toD).range(f, t)),
       fetchAll<Estate>((f, t) => supabase.from('estates')
         .select('id, name, active').order('sort').order('name').range(f, t)),
