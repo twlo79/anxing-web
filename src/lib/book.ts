@@ -178,3 +178,35 @@ export function withBook<T extends { eq: (col: string, val: string) => T }>(
 ): T {
   return q.eq('book', book);
 }
+
+/**
+ * 「＋ 增加項目」時，新項目的用途要不要先填好（2026-08-25 使用者:
+ * 「不混，但可以多張應該是再填入 —— 開了直接填入一樣的事業體」）。
+ *
+ * ============================================================
+ * 【★★ 只繼承「其他事業體」，不繼承物業】
+ *
+ * 兩者看起來都是「照抄上一項比較快」，但性質完全不同:
+ *
+ *   其他事業體 → 一張單只能有一本帳（misbookedItems ＋ pri_book_guard
+ *                兩邊都擋）。所以新項目**只有這一個合法值**，
+ *                填進去不是猜，是把唯一的答案先寫好。
+ *
+ *   物業       → 一張安幸的單可以一項正隆、一項時兆，那是常態。
+ *                照抄的話會安靜地把第二項算到第一項的物業頭上 ——
+ *                而金額、科目、備註全都對，只有物業錯，
+ *                沒有任何一張報表會報錯。
+ *
+ * CLAUDE.md:「對不上的不猜。少填一個看得到、補得回來；
+ * 填錯一個沒有人會發現。」物業就是「對不上」的那一種。
+ */
+export function newItemPurpose(
+  items: { purpose_type?: string | null }[] | null | undefined,
+): { purpose_type: string; estate_id: null; property_id: null } {
+  const other = (items ?? []).some((i) => i.purpose_type === OTHER_BIZ_PURPOSE);
+  return {
+    purpose_type: other ? OTHER_BIZ_PURPOSE : 'estate',
+    estate_id: null,
+    property_id: null,
+  };
+}

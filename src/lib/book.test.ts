@@ -4,7 +4,7 @@ import {
   BOOKS, OTHER_BOOKS, DEFAULT_BOOK, BOOK_LABEL, toBook, isOtherBook, bookLabel,
   OTHER_BIZ_SOURCE, OTHER_BIZ_PURPOSE,
   incomeFieldsHidden, incomePartyLabel,
-  checkIncomeBook, misbookedItems, allowedPurposes, withBook, hasDeposit,
+  checkIncomeBook, misbookedItems, allowedPurposes, withBook, hasDeposit, newItemPurpose,
 } from './book.ts';
 
 /**
@@ -177,4 +177,36 @@ describe('押金這一欄該不該顯示', () => {
     assert.equal(hasDeposit(null), true);
     assert.equal(hasDeposit('未來的新來源'), true);
   });
+});
+
+/*
+ * ── 新增項目時繼承什麼（2026-08-25）──────────────────
+ */
+test('★ 其他事業體的單：新項目自動也是其他事業體', () => {
+  assert.equal(newItemPurpose([{ purpose_type: OTHER_BIZ_PURPOSE }]).purpose_type, OTHER_BIZ_PURPOSE);
+});
+
+test('★★ 安幸的單：新項目不繼承物業 —— 填錯物業沒有人會發現', () => {
+  const r = newItemPurpose([{ purpose_type: 'estate' }]);
+  assert.equal(r.purpose_type, 'estate');
+  assert.equal(r.estate_id, null);
+  assert.equal(r.property_id, null);
+});
+
+test('辦公室的單：新項目回到未指定，不自動變成辦公室', () => {
+  assert.equal(newItemPurpose([{ purpose_type: 'office' }]).purpose_type, 'estate');
+});
+
+test('第一張空單：跟以前一樣', () => {
+  assert.equal(newItemPurpose([]).purpose_type, 'estate');
+  assert.equal(newItemPurpose(null).purpose_type, 'estate');
+  assert.equal(newItemPurpose(undefined).purpose_type, 'estate');
+});
+
+test('★ 看的是「有沒有任何一項是其他事業體」不是只看第一項', () => {
+  // 第一項可能被刪掉了。一張單只能有一本帳,所以剩下的那些必然同一家
+  assert.equal(
+    newItemPurpose([{ purpose_type: 'estate' }, { purpose_type: OTHER_BIZ_PURPOSE }]).purpose_type,
+    OTHER_BIZ_PURPOSE,
+  );
 });

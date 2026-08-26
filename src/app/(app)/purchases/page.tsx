@@ -23,7 +23,7 @@ import DepositFees from '@/components/DepositFees';
  * 選了之後第二層選哪一家。一張單只能有一本帳 —— 觸發器也擋。
  */
 import {
-  OTHER_BIZ_PURPOSE, OTHER_BOOKS, BOOK_LABEL, DEFAULT_BOOK,
+  OTHER_BIZ_PURPOSE, OTHER_BOOKS, BOOK_LABEL, DEFAULT_BOOK, newItemPurpose,
   misbookedItems, toBook, isOtherBook, bookLabel, type Book,
 } from '@/lib/book';
 // 排匯款／確認退款日 —— 押金管理頁用同一支，兩邊的規則不會漂走
@@ -2632,7 +2632,13 @@ export default function PurchasesPage() {
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <div className="font-medium">請款項目</div>
-                    {!readOnly && <button onClick={() => setItems([...items, blankItem()])} className="text-xs text-mor-blue underline">+ 增加項目</button>}
+                    {/*
+                      ★ 新項目**自動帶上其他事業體**（2026-08-25 使用者指定）。
+                        一張單只能有一本帳，所以那是新項目唯一的合法值 ——
+                        先填好不是猜，是把答案寫上去。
+                        物業**不繼承**，理由在 book.ts 的 newItemPurpose()。
+                    */}
+                    {!readOnly && <button onClick={() => setItems([...items, { ...blankItem(), ...newItemPurpose(items) }])} className="text-xs text-mor-blue underline">+ 增加項目</button>}
                   </div>
                   <div className="space-y-2">
                     {items.map((it, idx) => (
@@ -2724,6 +2730,28 @@ export default function PurchasesPage() {
                             只在第一項顯示 —— book 是**整張單**的屬性，
                             每一項都問一次的話會讓人以為可以各項不同。
                           */}
+                          {/*
+                            ★ 第二項以後改成**唯讀的字**，不是空白
+                              （2026-08-25 使用者:「愛皮可以多張、洪鯊可以多張」——
+                              他看到第二項沒有那顆下拉，不確定這一項有沒有記到愛皮）。
+
+                            原本的做法是整個不顯示，理由是「每一項都問一次會讓人
+                            以為可以各項不同」。那個理由對，但**做過頭了**:
+                            不顯示的結果是第二項看起來沒有事業體，
+                            而畫面上一個字都沒說它跟著整張單走。
+
+                            寫成不能點的灰字，兩件事一次講完:有記到、而且不是這裡改。
+                          */}
+                          {it.purpose_type === OTHER_BIZ_PURPOSE && idx > 0 && (
+                            <div className="w-full md:w-auto md:min-w-[7rem] h-12 md:h-auto
+                                            flex items-center rounded-lg border border-mor-line
+                                            bg-gray-50 text-gray-500 px-2 md:py-1.5 text-sm"
+                              title="事業體是整張單的屬性，要改請到第一項">
+                              {edit.book && edit.book !== DEFAULT_BOOK
+                                ? `${BOOK_LABEL[edit.book]}（同整張單）`
+                                : '─ 未選事業體 ─'}
+                            </div>
+                          )}
                           {it.purpose_type === OTHER_BIZ_PURPOSE && idx === 0 && (
                             <div className="relative w-full md:w-auto">
                               {!readOnly && <ReqMark />}
