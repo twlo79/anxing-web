@@ -24,8 +24,13 @@ import DepositFees from '@/components/DepositFees';
  */
 import {
   OTHER_BIZ_PURPOSE, OTHER_BOOKS, BOOK_LABEL, DEFAULT_BOOK, newItemPurpose,
+
   misbookedItems, toBook, isOtherBook, bookLabel, type Book,
 } from '@/lib/book';
+import {
+  PAY_LABEL, PAY_OPTS, needsPayout as payMethodNeedsPayout, needsPayeeAccount,
+  needsPlan, hasTransferFee, dateWord, acctWord,
+} from '@/lib/purchase-pay';
 // 排匯款／確認退款日 —— 押金管理頁用同一支，兩邊的規則不會漂走
 import DepositRefundStep, { type StepMode } from '@/components/DepositRefundStep';
 import { refundPerms as depPerms, cancelPatch } from '@/lib/deposit-refund';
@@ -113,11 +118,11 @@ type PayAccount = { code: string; name: string; method: string };
 type Profile = { id: string; name: string; role: string };
 
 const FREE_THRESHOLD = 3000;   // 與 migration 的 pr_apply_status() 一致
-const PAY_LABEL: Record<string, string> = { cash: '現金', transfer: '匯款', credit_card: '信用卡' };
-const PAY_OPTS = ['cash', 'transfer', 'credit_card'];
-// 信用卡是「刷」不是「匯」，同一個欄位在兩種付款方式下要用不同說法
-const dateWord = (m?: string | null) => (m === 'credit_card' ? '刷卡日' : '付款日');
-const acctWord = (m?: string | null) => (m === 'credit_card' ? '刷卡卡片' : '安幸付款帳號');
+/*
+ * 支付方式的定義與述詞搬到 @/lib/purchase-pay（2026-08-25 加臨櫃／自動繳款時）。
+ * 原本「要不要選安幸帳號」是散在這一頁各處的字串比較,
+ * 多一種方式就得找齊每一處 —— 而漏掉的那處不會報錯。
+ */
 const CURRENCIES = ['TWD', 'USD', 'JPY', 'CNY', 'EUR'];
 /*
  * 採購單 = 房務管理底下的「採購需求」（2026-08-22 使用者指定）。
@@ -553,11 +558,11 @@ export default function PurchasesPage() {
   // 待排付款:匯款/信用卡且還沒排。現金沒有這個階段,所以排除。
   const waitPlan = useMemo(() => filtered.filter((r) =>
     r.status === 'approved' && !r.purchased_on && !r.planned_transfer_on
-    && (r.payment_method === 'transfer' || r.payment_method === 'credit_card')), [filtered]);
+    && needsPlan(r.payment_method)), [filtered]);
   // 待支付:現金核可後即可付;匯款/信用卡要排過才算
   const waitDate = useMemo(() => filtered.filter((r) =>
     r.status === 'approved' && !r.purchased_on
-    && (r.payment_method === 'cash' || !!r.planned_transfer_on)), [filtered]);
+    && (!needsPlan(r.payment_method) || !!r.planned_transfer_on)), [filtered]);
   const sum = (xs: Req[]) => xs.reduce((a, r) => a + (Number(r.total_amount) || 0), 0);
 
   /* ══════════════════════════════════════════════════════
@@ -732,6 +737,8 @@ export default function PurchasesPage() {
     cash: counted.filter((r) => r.payment_method === 'cash'),
     transfer: counted.filter((r) => r.payment_method === 'transfer'),
     credit_card: counted.filter((r) => r.payment_method === 'credit_card'),
+    counter: counted.filter((r) => r.payment_method === 'counter'),
+    autopay: counted.filter((r) => r.payment_method === 'autopay'),
   }), [counted]);
 
   // 匯款排程:日期 × 帳號 分組
@@ -807,7 +814,12 @@ export default function PurchasesPage() {
           `一張請款單只能有一本帳。這 ${bad.length} 項的用途對不起來：${bad.join('、')}`);
       }
     }
-    if (edit.payment_method === 'transfer' && !edit.payee_account) return flashErr('匯款需填廠商收款帳號');
+    /*
+     * ★ 廠商收款帳號**只有匯款必填**（purchase-pay.ts 有理由）。
+     *   臨櫃拿的是繳費單、自動繳款是銀行對銀行,那兩種沒有匯款對象 ——
+     *   硬性必填只會讓人隨便填一個,那比空著更糟。
+     */
+    if (needsPayeeAccount(edit.payment_method) && !edit.payee_account) return flashErr('匯款需填廠商收款帳號');
     if (edit.currency !== 'TWD' && !(fxRate > 0)) return flashErr('請填匯率');
 
     /*
@@ -833,7 +845,7 @@ export default function PurchasesPage() {
       )) return;
     }
     // 手續費只在匯款時成立。非匯款就算 fee_mode 還留著舊值也一律當成內扣。
-    const feeApplies = edit.payment_method === 'transfer' && edit.fee_mode === 'extra';
+    const feeApplies = hasTransferFee(edit.payment_method) && edit.fee_mode === 'extra';
     /*
      * 草稿可以先不填金額（送單當下未必問得到銀行實收多少），送審就要填。
      * 不內扣卻是 0 等於沒有手續費，那該勾內扣 —— 否則出款後不會產生任何郵電費支出，
@@ -863,7 +875,7 @@ export default function PurchasesPage() {
         + '金額 0 的話那筆支出不會產生，等於這筆錢沒有入帳。');
       return;
     }
-    const needsPayout = edit.payment_method === 'transfer' || edit.payment_method === 'credit_card';
+    const needsPayout = payMethodNeedsPayout(edit.payment_method);
     // 送審中或已核可的單被改動,既有的票就不算數了 —— 有人投過票的話先問一聲。
     // 不清票的話,「核可後改金額」就等於繞過審核,兩票白審。
     const wasSubmitted = !!edit.id && (edit.status === 'pending' || edit.status === 'approved');
@@ -1282,7 +1294,7 @@ export default function PurchasesPage() {
     // 匯款/信用卡一定要記錄從哪個帳戶付出去。
     // 這個檢查放在「匯出」而不是「排匯款」—— 排匯款可以跳過,匯出不行,
     // 把必填綁在可跳過的步驟上,等於沒綁。
-    const needAcct = dating.payment_method === 'transfer' || dating.payment_method === 'credit_card';
+    const needAcct = payMethodNeedsPayout(dating.payment_method);
     if (needAcct && !dateAcct) return setDateErr(`請選擇${acctWord(dating.payment_method)}（我方）—— 沒有它就不知道錢從哪個帳戶出去。`);
     const patch: Record<string, unknown> = { purchased_on: dateVal };
     if (needAcct) patch.payout_account = dateAcct;
@@ -1467,9 +1479,9 @@ export default function PurchasesPage() {
       canRej: (isManager || isAdmin) && r.status === 'pending',
       // 匯款與信用卡一定要先排付款(選日期與帳號/卡別)才能確認支付。
       // 順序不強制的話,可以跳過排付款直接確認,結果是付了錢卻不知道從哪個帳戶出去。
-      needPlan: r.payment_method === 'transfer' || r.payment_method === 'credit_card',
+      needPlan: needsPlan(r.payment_method),
       canPlan: canSetDate && r.status === 'approved' && !r.purchased_on
-               && (r.payment_method === 'transfer' || r.payment_method === 'credit_card'),
+               && needsPlan(r.payment_method),
       /*
        * 出款日填了就鎖住 —— 不再出現「改出款日」。
        *
@@ -1482,7 +1494,7 @@ export default function PurchasesPage() {
        * 支出才是錢的最終紀錄。
        */
       canDate: canSetDate && r.status === 'approved' && !r.purchased_on
-               && (r.payment_method === 'cash' || !!r.planned_transfer_on),
+               && (!needsPlan(r.payment_method) || !!r.planned_transfer_on),
       // 撤銷:提交者本人 / 主管 / 會計 / 總經理,任何狀態皆可,已產生支出除外
       canCancel: (mine || isManager || isAccountant || isAdmin) && !r.expense_generated_at,
     };
@@ -1771,6 +1783,10 @@ export default function PurchasesPage() {
             {card('現金', byMethod.cash, '', () => setMethodF('cash'))}
             {card('匯款', byMethod.transfer, '', () => setMethodF('transfer'))}
             {card('信用卡', byMethod.credit_card, '', () => setMethodF('credit_card'))}
+            {/* ★ 臨櫃與自動繳款只在真的有單時才佔一張卡 ——
+                永遠是 0 的卡會讓人以為那個功能壞了（暫收管理那邊踩過同一個） */}
+            {byMethod.counter.length > 0 && card('臨櫃', byMethod.counter, '', () => setMethodF('counter'))}
+            {byMethod.autopay.length > 0 && card('自動繳款', byMethod.autopay, '', () => setMethodF('autopay'))}
           </div>
 
           {/* 匯款排程:依預定付款日,獨立於上面的篩選 */}
@@ -2446,7 +2462,7 @@ export default function PurchasesPage() {
                     </span>
                   );
                 })())}
-                {d.payment_method === 'transfer' && row('手續費', d.fee_mode === 'extra'
+                {hasTransferFee(d.payment_method) && row('手續費', d.fee_mode === 'extra'
                   ? <span>不內扣 ${fmt(Number(d.fee_amount) || 0)}
                       <span className="text-gray-400 text-xs ml-1">
                         {d.purchased_on ? '・已產生郵電費支出' : '・出款後產生郵電費支出'}
@@ -2883,12 +2899,12 @@ export default function PurchasesPage() {
                     <select disabled={readOnly} value={edit.payment_method ?? 'cash'}
                       onChange={(e) => setEdit({
                         ...edit, payment_method: e.target.value,
-                        ...(e.target.value === 'transfer' ? {} : { fee_mode: 'included', fee_amount: 0 }),
+                        ...(hasTransferFee(e.target.value) ? {} : { fee_mode: 'included', fee_amount: 0 }),
                       })}
                       className="w-full md:w-40 h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50">
                       {PAY_OPTS.map((p) => <option key={p} value={p}>{PAY_LABEL[p]}</option>)}
                     </select></label>
-                  {edit.payment_method === 'transfer' && (
+                  {hasTransferFee(edit.payment_method) && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 [&_input]:h-12 md:[&_input]:h-auto [&_input]:bg-white">
                       {/*
                         常用帳號：選一次自動帶入下面四欄。
@@ -2958,7 +2974,7 @@ export default function PurchasesPage() {
                   */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     {/* 現金沒有帳號可選，但一樣有「打算哪天付」 */}
-                    {(edit.payment_method === 'transfer' || edit.payment_method === 'credit_card') && (
+                    {payMethodNeedsPayout(edit.payment_method) && (
                       <label className="flex flex-col gap-1">
                         <span className="text-xs text-gray-500">
                           {acctWord(edit.payment_method)}<span className="text-gray-400">（選填）</span>
@@ -3054,7 +3070,7 @@ export default function PurchasesPage() {
                     日期用出款日,物業/房源跟這張單走。實際產生的邏輯在 migration_83,
                     這裡只負責讓人把意圖表達清楚。
                   */}
-                  {edit.payment_method === 'transfer' && (
+                  {hasTransferFee(edit.payment_method) && (
                   <div className="rounded-lg border border-mor-line p-3">
                     <div className="text-xs text-gray-500 mb-2">匯款手續費</div>
                     <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
@@ -3184,7 +3200,7 @@ export default function PurchasesPage() {
                 </div>
               )}
               {/* 匯款與信用卡必須記錄從哪個帳戶付出去,現金沒有帳戶所以不問 */}
-              {(dating.payment_method === 'transfer' || dating.payment_method === 'credit_card') && (
+              {payMethodNeedsPayout(dating.payment_method) && (
                 <>
                   <label className="block text-xs text-gray-500 pt-1">{acctWord(dating.payment_method)}(我方)<Req /></label>
                   <select value={dateAcct} onChange={(e) => setDateAcct(e.target.value)}

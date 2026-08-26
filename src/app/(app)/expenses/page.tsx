@@ -43,11 +43,18 @@ type Estate = { id: string; name: string; sort: number; active: boolean };
 type PayAccount = { code: string; name: string; method: string };
 type Property = { id: string; name: string; estate_id: string | null };
 
+import { PAY_LABEL, PAY_OPTS, needsPayout } from '@/lib/purchase-pay';
+
 const CURRENCIES = ['TWD', 'USD', 'JPY', 'CNY', 'EUR'];
 
-const PAY_LABEL: Record<string, string> = { cash: '現金', transfer: '匯款', credit_card: '信用卡' };
-
-const PAY_OPTS = ['cash', 'transfer', 'credit_card'];
+/*
+ * ★ 支付方式改用 @/lib/purchase-pay 那一份（2026-08-25）。
+ *
+ *   這裡原本自己抄一份三種的。支出是請款單產生的 ——
+ *   請款單多了「臨櫃／自動繳款」之後，這一頁會直接把
+ *   `counter` 這個英文鍵印在畫面上，而且**只有那兩種會這樣**，
+ *   其他都正常，沒有人會馬上聯想到是兩份清單不同步。
+ */
 const fmt = (n: number | null | undefined) => (n == null ? '' : Math.round(n).toLocaleString());
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
@@ -294,11 +301,17 @@ export default function ExpensesPage() {
       voucher_no: edit.no_voucher ? null : (edit.voucher_no?.trim() || null),
       no_voucher: !!edit.no_voucher,
       payment_method: edit.payment_method || null,
-      // 匯款與信用卡都要記錄從哪個帳戶/哪張卡付出去;現金沒有帳戶,清成 null。
-      // 這裡的條件必須與畫面上顯示下拉的條件一致 —— 先前只判斷 transfer,
-      // 結果信用卡選了卡片存檔時被清掉,而且沒有任何錯誤訊息。
-      pay_account: (edit.payment_method === 'transfer' || edit.payment_method === 'credit_card')
-        ? (edit.pay_account || null) : null,
+      /*
+       * 現金以外都要記錄錢從哪個帳戶/哪張卡出去;現金沒有帳戶,清成 null。
+       *
+       * ★★ 這裡的條件必須與畫面上顯示下拉的條件**完全一致**。
+       *
+       *   先前只判斷 transfer,結果信用卡選了卡片存檔時被清掉,
+       *   而且沒有任何錯誤訊息 —— 看起來就像「存不進去」。
+       *   2026-08-25 加臨櫃／自動繳款時又差點重演一次,
+       *   所以兩邊都改成呼叫同一支 needsPayout()。
+       */
+      pay_account: needsPayout(edit.payment_method) ? (edit.pay_account || null) : null,
       note: edit.note || null,
     };
     // 新建時要拿回 id —— 填表時選的憑證還留在瀏覽器裡，等這個 id 才傳得上去
@@ -912,7 +925,7 @@ export default function ExpensesPage() {
                     {PAY_OPTS.map((p) => <option key={p} value={p}>{PAY_LABEL[p]}</option>)}
                   </select></label>
                 {/* 現金沒有帳號可選,匯款與信用卡才需要 */}
-                {(edit.payment_method === 'transfer' || edit.payment_method === 'credit_card') && (
+                {needsPayout(edit.payment_method) && (
                   <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">安幸付款帳號</span>
                     <select value={edit.pay_account ?? ''} onChange={(e) => setEdit({ ...edit, pay_account: e.target.value || null })}
                       className="rounded-lg border border-mor-line px-2 py-1.5">
