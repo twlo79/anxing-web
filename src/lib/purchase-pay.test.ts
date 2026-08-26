@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   PAY_LABEL, PAY_OPTS, needsPayout, needsPayeeAccount, needsPlan,
-  hasTransferFee, dateWord, acctWord, payLabel,
+  hasTransferFee, dateWord, acctWord, payLabel, accountMethodFor, payAccountsFor,
 } from './purchase-pay.ts';
 
 /**
@@ -72,4 +72,54 @@ test('payLabel：認不出來回原始值，不要變空白', () => {
 test('★★ needsPayout 與 needsPlan 對每一種的答案一致 —— 兩者都是「現金以外」', () => {
   // 不一致的話會出現「排得進待付款卻沒有帳號可填」這種卡住的狀態
   for (const m of PAY_OPTS) assert.equal(needsPayout(m), needsPlan(m), m);
+});
+
+/*
+ * ── 付款方式 → 可選帳號（2026-08-25）─────────────────
+ *
+ * payment_accounts 只有 transfer / credit_card 兩種 method，
+ * 直接拿 payment_method 去比的話，臨櫃與自動繳款會篩出空清單 ——
+ * 下拉打開只有「請選擇」，畫面上不會說為什麼。
+ */
+const ACCTS = [
+  { code: 'A48088', method: 'transfer' },
+  { code: 'A70564', method: 'transfer' },
+  { code: 'CARD1', method: 'credit_card' },
+];
+
+test('★★ 臨櫃與自動繳款拿得到銀行帳戶（原本是空的）', () => {
+  for (const m of ['counter', 'autopay']) {
+    assert.deepEqual(payAccountsFor(ACCTS, m).map((a) => a.code), ['A48088', 'A70564'], m);
+  }
+});
+
+test('匯款一樣是銀行帳戶', () => {
+  assert.deepEqual(payAccountsFor(ACCTS, 'transfer').map((a) => a.code), ['A48088', 'A70564']);
+});
+
+test('信用卡只挑卡片，不該看到銀行帳戶', () => {
+  assert.deepEqual(payAccountsFor(ACCTS, 'credit_card').map((a) => a.code), ['CARD1']);
+});
+
+test('★ 現金回空陣列，不是全部 —— 回全部會讓現金出現在元大明細裡', () => {
+  assert.deepEqual(payAccountsFor(ACCTS, 'cash'), []);
+  assert.deepEqual(payAccountsFor(ACCTS, null), []);
+});
+
+test('accountMethodFor：只有信用卡對到卡片', () => {
+  assert.equal(accountMethodFor('credit_card'), 'credit_card');
+  for (const m of ['transfer', 'counter', 'autopay']) {
+    assert.equal(accountMethodFor(m), 'transfer', m);
+  }
+});
+
+test('帳號清單是 null / 空的時候不炸', () => {
+  assert.deepEqual(payAccountsFor(null, 'counter'), []);
+  assert.deepEqual(payAccountsFor([], 'counter'), []);
+});
+
+test('★★ needsPayout 為真的每一種都挑得到帳號 —— 不然是選得到卻填不了', () => {
+  for (const m of PAY_OPTS) {
+    if (needsPayout(m)) assert.ok(payAccountsFor(ACCTS, m).length > 0, m);
+  }
 });

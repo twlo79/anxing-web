@@ -43,7 +43,7 @@ type Estate = { id: string; name: string; sort: number; active: boolean };
 type PayAccount = { code: string; name: string; method: string };
 type Property = { id: string; name: string; estate_id: string | null };
 
-import { PAY_LABEL, PAY_OPTS, needsPayout } from '@/lib/purchase-pay';
+import { PAY_LABEL, PAY_OPTS, needsPayout, payAccountsFor } from '@/lib/purchase-pay';
 
 const CURRENCIES = ['TWD', 'USD', 'JPY', 'CNY', 'EUR'];
 
@@ -930,7 +930,7 @@ export default function ExpensesPage() {
                     <select value={edit.pay_account ?? ''} onChange={(e) => setEdit({ ...edit, pay_account: e.target.value || null })}
                       className="rounded-lg border border-mor-line px-2 py-1.5">
                       <option value="">請選擇</option>
-                      {payAccounts.filter((a) => a.method === edit.payment_method)
+                      {payAccountsFor(payAccounts, edit.payment_method)
                         .map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
                     </select></label>
                 )}

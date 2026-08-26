@@ -29,7 +29,7 @@ import {
 } from '@/lib/book';
 import {
   PAY_LABEL, PAY_OPTS, needsPayout as payMethodNeedsPayout, needsPayeeAccount,
-  needsPlan, hasTransferFee, dateWord, acctWord,
+  needsPlan, hasTransferFee, dateWord, acctWord, payAccountsFor,
 } from '@/lib/purchase-pay';
 // 排匯款／確認退款日 —— 押金管理頁用同一支，兩邊的規則不會漂走
 import DepositRefundStep, { type StepMode } from '@/components/DepositRefundStep';
@@ -2983,7 +2983,7 @@ export default function PurchasesPage() {
                           onChange={(e) => setEdit({ ...edit, payout_account: e.target.value || null })}
                           className="w-full h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50">
                           <option value="">未指定</option>
-                          {payAccounts.filter((a) => a.method === edit.payment_method)
+                          {payAccountsFor(payAccounts, edit.payment_method)
                             .map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
                         </select></label>
                     )}
@@ -3206,7 +3206,7 @@ export default function PurchasesPage() {
                   <select value={dateAcct} onChange={(e) => setDateAcct(e.target.value)}
                     className="w-full rounded-lg border border-mor-line px-2 py-1.5">
                     <option value="">請選擇</option>
-                    {payAccounts.filter((a) => a.method === dating.payment_method)
+                    {payAccountsFor(payAccounts, dating.payment_method)
                       .map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
                   </select>
                 </>
@@ -3238,7 +3238,7 @@ export default function PurchasesPage() {
                 <select value={planAcct} onChange={(e) => setPlanAcct(e.target.value)}
                   className="rounded-lg border border-mor-line px-2 py-1.5">
                   <option value="">請選擇</option>
-                  {payAccounts.filter((a) => a.method === planning.payment_method)
+                  {payAccountsFor(payAccounts, planning.payment_method)
                     .map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
                 </select></label>
               <div className="text-xs text-gray-400">

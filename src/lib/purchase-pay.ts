@@ -90,3 +90,45 @@ export const acctWord = (m?: string | null) => (m === 'credit_card' ? '刷卡卡
 
 /** 顯示用。認不出來就回原始值 —— 至少看得出是什麼，不會是空白。 */
 export const payLabel = (m: string | null | undefined) => (m ? PAY_LABEL[m] ?? m : '—');
+
+/**
+ * 這種付款方式要從**哪一類帳號**裡挑（2026-08-25 使用者:「臨櫃、自動 沒出現帳本」）。
+ *
+ * ============================================================
+ * 【為什麼會是空的】
+ *
+ * `payment_accounts` 每一列有自己的 `method`，而畫面是這樣篩的:
+ *
+ *     payAccounts.filter((a) => a.method === edit.payment_method)
+ *
+ * 那張表裡只有 `transfer`（銀行帳戶）與 `credit_card`（卡片）兩種。
+ * 所以選了臨櫃或自動繳款之後，篩出來是**空清單** ——
+ * 下拉打開只有「請選擇」，而畫面上一個字都沒說為什麼。
+ *
+ * ★ 修法**不是**去 payment_accounts 補兩種假的 method。
+ *   臨櫃繳費和自動扣款用的就是同一批元大帳戶 ——
+ *   補假資料的話同一個帳戶會在那張表裡出現三次，
+ *   而「這個月元大 48088 出了多少」要加三列才對得起來。
+ *
+ * 所以是**對應**:付款方式 → 帳號類別。
+ *
+ *   信用卡        → 卡片
+ *   其餘（匯款/臨櫃/自動繳款）→ 銀行帳戶
+ */
+export const accountMethodFor = (m: string | null | undefined) =>
+  m === 'credit_card' ? 'credit_card' : 'transfer';
+
+/**
+ * 這種付款方式可以選的帳號。
+ *
+ * ★ 現金回**空陣列**，不是全部 —— 現金沒有帳戶。
+ *   回全部的話畫面會讓人挑一個，然後那筆現金就出現在元大的明細裡。
+ */
+export function payAccountsFor<T extends { method: string }>(
+  accounts: T[] | null | undefined,
+  m: string | null | undefined,
+): T[] {
+  if (!needsPayout(m)) return [];
+  const want = accountMethodFor(m);
+  return (accounts ?? []).filter((a) => a.method === want);
+}
