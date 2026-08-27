@@ -1557,14 +1557,61 @@ export default function PurchasesPage() {
     });
   }
 
-  const card = (title: string, list: Req[], hint: string, onClick: () => void) => (
-    <button onClick={onClick} className="text-left rounded-xl border border-mor-line bg-white/85 p-2.5 md:p-4 min-w-0 hover:bg-white/45 transition-colors">
-      <div className="text-xs md:text-sm font-medium leading-tight">{title}</div>
-      <div className="stat-num font-bold mt-1">{list.length}<span className="text-xs md:text-sm font-normal text-gray-400 ml-1">筆</span></div>
-      <div className="text-[11px] md:text-xs text-gray-500 mt-0.5 md:mt-1">${fmt(sum(list))}</div>
-      <div className="hidden md:block text-[11px] text-gray-400 mt-1">{hint}</div>
-    </button>
-  );
+  /*
+   * ★★ 空的卡整張變淡（2026-08-25 使用者:「四張卡」）。
+   *
+   *   改版前四張同樣重,而其中三張是 0 —— 「13 筆等你核可」跟
+   *   「0 筆」長得一模一樣,那張真正要你動手的卡沒有被看見。
+   *
+   * ★ **不是把 0 的拿掉**。拿掉的話你不會知道那個階段存在,
+   *   而「待排付款」是不是 0 本身就是資訊。
+   *
+   * @param accent 這張要你動手（例如你有票可以投）—— 加框、上色。
+   *               一個畫面**最多一張** accent,不然又回到「都一樣重」。
+   */
+  /**
+   * 事業體徽章（2026-08-25 使用者:「標示 愛皮 洪鯊」）。
+   *
+   * ★★ **安幸不標**。安幸是多數（六十幾張裡大概六十張）——
+   *   全部標等於沒標,而使用者要找的正是「這一筆不是安幸的」。
+   *
+   * ★ 兩家用不同色系,不是同一個顏色配不同文字 ——
+   *   同色的話還是得逐字讀,徽章就白做了。
+   */
+  const bookChip = (b: string | null | undefined) => {
+    if (!isOtherBook(b)) return null;
+    const label = BOOK_LABEL[toBook(b)] ?? b;
+    const cls = toBook(b) === 'aipi'
+      ? 'bg-pink-50 text-pink-800'
+      : 'bg-emerald-50 text-emerald-800';
+    return (
+      <span className={`inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${cls}`}>
+        {label}
+      </span>
+    );
+  };
+
+  const card = (title: string, list: Req[], hint: string, onClick: () => void, accent = false) => {
+    const empty = list.length === 0;
+    return (
+      <button onClick={onClick}
+        className={`text-left rounded-xl p-2.5 md:p-4 min-w-0 transition-colors ${
+          accent && !empty
+            ? 'border-2 border-mor-slate bg-white hover:bg-mor-sand/40'
+            : 'border border-mor-line bg-white/85 hover:bg-white/45'}`}>
+        <div className={`text-xs md:text-sm font-medium leading-tight ${
+          empty ? 'text-gray-400' : accent ? 'text-mor-slate' : ''}`}>{title}</div>
+        <div className={`stat-num font-bold mt-1 ${
+          empty ? 'text-gray-300' : accent ? 'text-mor-slate' : ''}`}>
+          {list.length}<span className="text-xs md:text-sm font-normal text-gray-400 ml-1">筆</span>
+        </div>
+        <div className={`text-[11px] md:text-xs mt-0.5 md:mt-1 ${empty ? 'text-gray-300' : 'text-gray-500'}`}>
+          ${fmt(sum(list))}
+        </div>
+        <div className="hidden md:block text-[11px] text-gray-400 mt-1">{hint}</div>
+      </button>
+    );
+  };
 
   return (
     <div>
@@ -1721,7 +1768,7 @@ export default function PurchasesPage() {
                     <th className="px-3 py-2.5">內容</th>
                     <th className="px-3 py-2.5 text-right">金額</th>
                     <th className="px-3 py-2.5">核可進度</th>
-                    <th className="px-3 py-2.5 text-right">操作</th>
+                    <th className="px-3 py-2.5 text-right align-middle">操作</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1787,24 +1834,86 @@ export default function PurchasesPage() {
 
       {canSeeAll && tab === 'pr' && (
         <>
-          {/* 上排:該做什麼 */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3 mb-2 md:mb-3">
-            {card('待主管核可', waitManager, isManager ? '你可以核可' : '等待主管投票', () => setStF('pending'))}
-            {card('待總經理核可', waitAdmin, isAdmin ? '你可以核可' : '等待總經理投票', () => setStF('pending'))}
-            {card('待排付款', waitPlan, '選日期與帳號', () => setStF('approved'))}
-            {card('待支付', waitDate, '支付後才會產生支出', () => setStF('approved'))}
-          </div>
+          {/*
+            ══════════ 四張卡（2026-08-25 使用者圈的分組）══════════
 
-          {/* 下排:多少錢。依建立日所屬月份 + 目前篩選,不含草稿與已駁回。 */}
+            改版前是九張,其中四張永遠是 0 —— 佔掉整個第一屏,
+            而「13 筆等你核可」被埋在裡面。
+
+            分組照使用者圈的:
+              ① 待主管核可          ② 待總經理核可
+              ③ 核可後（待排付款＋待支付,同一條路的前後兩步）
+              ④ 申請總額（含各付款方式）
+
+            ★ 數字一個都沒少,也都還點得下去篩選。
+          */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3 mb-4 md:mb-5">
-            {card(`申請總額${month ? `・${month}` : ''}`, counted, '依建立日', () => {})}
-            {card('現金', byMethod.cash, '', () => setMethodF('cash'))}
-            {card('匯款', byMethod.transfer, '', () => setMethodF('transfer'))}
-            {card('信用卡', byMethod.credit_card, '', () => setMethodF('credit_card'))}
-            {/* ★ 臨櫃與自動繳款只在真的有單時才佔一張卡 ——
-                永遠是 0 的卡會讓人以為那個功能壞了（暫收管理那邊踩過同一個） */}
-            {byMethod.counter.length > 0 && card('臨櫃', byMethod.counter, '', () => setMethodF('counter'))}
-            {byMethod.autopay.length > 0 && card('自動繳款', byMethod.autopay, '', () => setMethodF('autopay'))}
+            {/* ★ accent 給「輪到你」的那一張 —— 一個畫面最多一張 */}
+            {card('待主管核可', waitManager, isManager ? '你可以核可' : '等待主管投票',
+              () => setStF('pending'), isManager)}
+            {card('待總經理核可', waitAdmin, isAdmin ? '你可以核可' : '等待總經理投票',
+              () => setStF('pending'), isAdmin && !isManager)}
+
+            {/*
+              ③ 核可後的兩步疊成一張。它們是同一條路:先排日期與帳號,再付。
+              ★ 兩個數字都要在 —— 卡住在哪一步是兩種不同的問題。
+            */}
+            <button onClick={() => setStF('approved')}
+              className="text-left rounded-xl border border-mor-line bg-white/85 p-2.5 md:p-4 min-w-0 hover:bg-white/45 transition-colors">
+              <div className="text-xs md:text-sm font-medium leading-tight">核可後</div>
+              <div className="mt-1 space-y-0.5">
+                {([
+                  { k: '待排付款', list: waitPlan },
+                  { k: '待支付', list: waitDate },
+                ] as const).map((x) => (
+                  <div key={x.k} className="flex items-baseline gap-1.5">
+                    <span className={`text-[11px] md:text-xs w-14 shrink-0 ${
+                      x.list.length ? 'text-gray-500' : 'text-gray-300'}`}>{x.k}</span>
+                    <span className={`text-sm md:text-base font-bold ${
+                      x.list.length ? '' : 'text-gray-300'}`}>{x.list.length}</span>
+                    <span className={`ml-auto text-[11px] tabular-nums ${
+                      x.list.length ? 'text-gray-500' : 'text-gray-300'}`}>${fmt(sum(x.list))}</span>
+                  </div>
+                ))}
+              </div>
+            </button>
+
+            {/*
+              ④ 申請總額 ＋ 各付款方式。
+
+              ★ **每一種都列出來,包含 0 的**（2026-08-25 改）——
+                之前是「有單才顯示那張卡」,結果臨櫃與自動繳款平常看不見,
+                使用者不知道系統有這兩個選項。
+                灰掉但列出來,才同時做到「不佔版面」與「說得出有哪些」。
+            */}
+            <div className="rounded-xl border border-mor-line bg-white/85 p-2.5 md:p-4 min-w-0">
+              <div className="text-xs md:text-sm font-medium leading-tight">
+                申請總額{month ? `・${month}` : ''}
+              </div>
+              <div className="flex items-baseline gap-1.5 mt-1">
+                <span className="stat-num font-bold">{counted.length}</span>
+                <span className="text-xs md:text-sm font-normal text-gray-400">筆</span>
+                <span className="ml-auto text-[11px] md:text-xs text-gray-500 tabular-nums">
+                  ${fmt(sum(counted))}
+                </span>
+              </div>
+              <div className="mt-1.5 pt-1.5 border-t border-mor-line/60 space-y-0.5">
+                {PAY_OPTS.map((m) => {
+                  const list = (byMethod as any)[m] as Req[] | undefined;
+                  const n = list?.length ?? 0;
+                  return (
+                    <button key={m} onClick={() => setMethodF(m)}
+                      className="w-full flex items-baseline gap-1.5 text-[11px] hover:bg-mor-sand/40 rounded px-0.5">
+                      <span className={n ? 'text-gray-600' : 'text-gray-300'}>{PAY_LABEL[m]}</span>
+                      <span className={n ? 'font-medium' : 'text-gray-300'}>{n}</span>
+                      {n > 0 && (
+                        <span className="ml-auto text-gray-400 tabular-nums">${fmt(sum(list ?? []))}</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </div>
 
           {/* 匯款排程:依預定付款日,獨立於上面的篩選 */}
@@ -1954,7 +2063,10 @@ export default function PurchasesPage() {
               <div onClick={() => setDetail(r)}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <div className="font-medium">{personName[r.requester_id] ?? '—'}</div>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      {bookChip(r.book)}
+                      <span className="font-medium truncate">{personName[r.requester_id] ?? '—'}</span>
+                    </div>
                     <div className="text-xs text-gray-500 mt-0.5">
                       {r.created_at ? r.created_at.slice(0, 10) : ''}・{(r.purchase_request_items ?? []).length} 個項目
                       {r.payment_method ? `・${PAY_LABEL[r.payment_method] ?? r.payment_method}` : ''}
@@ -2016,13 +2128,13 @@ export default function PurchasesPage() {
           <thead>
             <tr className="border-b border-mor-line bg-white/45 text-left">
               <SortTh label="建立日" sortKey="created_at" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
-              <th className="px-3 py-2.5">申請人</th>
-              <th className="px-3 py-2.5">項目</th>
+              <th className="px-3 py-2.5 align-middle">申請人</th>
+              <th className="px-3 py-2.5 align-middle">項目</th>
               <SortTh label="總額" sortKey="total_amount" type="number" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="text-right" align="right" />
-              <th className="px-3 py-2.5">支出方式</th>
+              <th className="px-3 py-2.5 align-middle">支出方式</th>
               <SortTh label="狀態" sortKey="status" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <SortTh label="付款日" sortKey="purchased_on" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
-              <th className="px-3 py-2.5 text-right">操作</th>
+              <th className="px-3 py-2.5 text-right align-middle">操作</th>
             </tr>
           </thead>
           <tbody>
@@ -2038,8 +2150,11 @@ export default function PurchasesPage() {
                   <td className="px-3 py-2 whitespace-nowrap text-gray-600">{r.created_at ? r.created_at.slice(0, 10) : '—'}</td>
                   <td className="px-3 py-2 whitespace-nowrap">{personName[r.requester_id] ?? '—'}</td>
                   <td className="px-3 py-2 text-gray-600 max-w-64">
-                    <div className="truncate" title={(r.purchase_request_items ?? []).map((i) => i.item_name).join('、')}>
-                      {(r.purchase_request_items ?? []).map((i) => i.item_name).join('、') || '—'}
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      {bookChip(r.book)}
+                      <span className="truncate" title={(r.purchase_request_items ?? []).map((i) => i.item_name).join('、')}>
+                        {(r.purchase_request_items ?? []).map((i) => i.item_name).join('、') || '—'}
+                      </span>
                     </div>
                     <div className="text-[11px] text-gray-400">{(r.purchase_request_items ?? []).length} 個項目</div>
                   </td>

@@ -104,9 +104,24 @@ export function SortTh({
       </svg>
     </button>
   );
+  /*
+   * ★★ `align-middle` ＋ **block-level flex**（2026-08-25 使用者:「這些字上下對齊」）。
+   *
+   *   原本外層是 `inline-flex`。行內元素靠**基線**對齊,而 inline-flex 的基線
+   *   取自第一個 flex 項目 —— 於是有箭頭的欄位（箭頭疊起來 25px）
+   *   跟純文字的欄位（約 20px）算出來的基線不同,兩種表頭差幾個 pixel。
+   *
+   *   差得很少,所以不會有人說「壞了」,只會覺得「這排看起來怪怪的」。
+   *
+   *   改成 block-level flex:高度由內容撐開,`items-center` 把文字置中,
+   *   而 th 的 `align-middle` 讓它跟純文字欄位在同一個垂直中心。
+   *
+   * ★ 右對齊要一起改 —— block flex 會撐滿整格,不像 inline 會自己靠右。
+   *   `flex-row-reverse` 的主軸起點在右邊,所以 `justify-start` 才是靠右。
+   */
   return (
-    <th className={`px-3 py-2.5 ${className}`}>
-      <span className={`inline-flex items-center gap-1.5 ${align === 'right' ? 'flex-row-reverse' : ''}`}>
+    <th className={`px-3 py-2.5 align-middle ${className}`}>
+      <span className={`flex items-center gap-1.5 ${align === 'right' ? 'flex-row-reverse justify-start' : ''}`}>
         <span className="whitespace-nowrap">{label}</span>
         <span className="inline-flex flex-col shrink-0 gap-px">
           {arrow('asc', activeAsc, hintAsc)}
