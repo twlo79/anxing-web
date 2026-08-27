@@ -533,10 +533,23 @@ export default function PurchasesPage() {
   }), []);
   // 物業與關鍵字要看子項目,做不成 Supabase 的欄位條件,改在前端篩。
   // 請款單數量不大(一個月幾十張),不需要為此改成伺服器端分頁。
-  const filtered = useMemo(() => {
+  /*
+   * ══════════ base = 除了「付款方式」以外都套用 ══════════
+   *
+   * ★★ 2026-08-25 使用者:「點了匯款 臨櫃會變零,臨櫃應該不動的」。
+   *
+   *   付款方式那幾個數字是**總覽**,不是當前清單的重複。
+   *   算在 filtered 上的話,點了匯款之後其他四種全部歸零 ——
+   *   而使用者按那一列的目的正是「在幾種之間切換來比較」,
+   *   一按下去比較對象就消失了。
+   *
+   *   跟暫收管理的卡片同一條規則（那邊的註解寫著
+   *   「否則點進『未收款』之後其他兩張卡片會全部歸零,
+   *   那就不是總覽而是同一個數字抄三遍」）。
+   */
+  const baseNoMethod = useMemo(() => {
     const k = kw.trim().toLowerCase();
     return rows.filter((r) => {
-      if (methodF && r.payment_method !== methodF) return false;
       const its = r.purchase_request_items ?? [];
       if (estateF && !its.some((i) => i.estate_id === estateF)) return false;
       if (k) {
@@ -548,7 +561,12 @@ export default function PurchasesPage() {
       }
       return true;
     });
-  }, [rows, methodF, estateF, kw]);
+  }, [rows, estateF, kw]);
+
+  /** 清單與待辦佇列用這一份 —— 它含付款方式篩選 */
+  const filtered = useMemo(
+    () => (methodF ? baseNoMethod.filter((r) => r.payment_method === methodF) : baseNoMethod),
+    [baseNoMethod, methodF]);
 
   const sorted = useMemo(() => sortRows(filtered, sort, SORT_COLS), [filtered, sort, SORT_COLS]);
 
@@ -744,7 +762,14 @@ export default function PurchasesPage() {
   }, [depHi, loading, deps]);
 
   // 金額卡:依目前篩選結果,排除草稿與已駁回(那些不算數)
-  const counted = useMemo(() => filtered.filter((r) => r.status === 'pending' || r.status === 'approved'), [filtered]);
+  /*
+   * ★ 申請總額與各付款方式都算在 `baseNoMethod` 上 —— 見上面的說明。
+   *   所以點了匯款之後,那張卡還是 13 筆、臨櫃還是 5 —— 只有清單被篩掉。
+   *   目前選中的那一列會**標起來**,不然「總額 13、清單 8」會讓人以為算錯。
+   */
+  const counted = useMemo(
+    () => baseNoMethod.filter((r) => r.status === 'pending' || r.status === 'approved'),
+    [baseNoMethod]);
   const byMethod = useMemo(() => ({
     cash: counted.filter((r) => r.payment_method === 'cash'),
     transfer: counted.filter((r) => r.payment_method === 'transfer'),
@@ -1887,27 +1912,47 @@ export default function PurchasesPage() {
                 灰掉但列出來,才同時做到「不佔版面」與「說得出有哪些」。
             */}
             <div className="rounded-xl border border-mor-line bg-white/85 p-2.5 md:p-4 min-w-0">
-              <div className="text-xs md:text-sm font-medium leading-tight">
-                申請總額{month ? `・${month}` : ''}
-              </div>
-              <div className="flex items-baseline gap-1.5 mt-1">
-                <span className="stat-num font-bold">{counted.length}</span>
-                <span className="text-xs md:text-sm font-normal text-gray-400">筆</span>
-                <span className="ml-auto text-[11px] md:text-xs text-gray-500 tabular-nums">
-                  ${fmt(sum(counted))}
-                </span>
-              </div>
+              {/*
+                ★★ 總額本身要點得到（2026-08-25 使用者:「哪 13 筆 應該也是要看得到」）。
+
+                  點了匯款之後清單只剩 8 筆,而這張卡還是寫 13 ——
+                  那 13 筆去哪裡看?答案應該就是**點這個數字**。
+                  沒有這條路的話,使用者得去上面的下拉把「支出方式」轉回全部,
+                  而他根本不知道自己是從這裡篩掉的。
+              */}
+              <button onClick={() => setMethodF('')}
+                className={`w-full text-left rounded px-0.5 ${methodF ? 'hover:bg-mor-sand/40' : ''}`}>
+                <div className="text-xs md:text-sm font-medium leading-tight">
+                  申請總額{month ? `・${month}` : ''}
+                  {methodF && <span className="ml-1 text-[11px] font-normal text-mor-blue underline">看全部</span>}
+                </div>
+                <div className="flex items-baseline gap-1.5 mt-1">
+                  <span className="stat-num font-bold">{counted.length}</span>
+                  <span className="text-xs md:text-sm font-normal text-gray-400">筆</span>
+                  <span className="ml-auto text-[11px] md:text-xs text-gray-500 tabular-nums">
+                    ${fmt(sum(counted))}
+                  </span>
+                </div>
+              </button>
               <div className="mt-1.5 pt-1.5 border-t border-mor-line/60 space-y-0.5">
                 {PAY_OPTS.map((m) => {
                   const list = (byMethod as any)[m] as Req[] | undefined;
                   const n = list?.length ?? 0;
+                  const on = methodF === m;
                   return (
-                    <button key={m} onClick={() => setMethodF(m)}
-                      className="w-full flex items-baseline gap-1.5 text-[11px] hover:bg-mor-sand/40 rounded px-0.5">
-                      <span className={n ? 'text-gray-600' : 'text-gray-300'}>{PAY_LABEL[m]}</span>
-                      <span className={n ? 'font-medium' : 'text-gray-300'}>{n}</span>
+                    /*
+                      ★ 選中的那一列標起來 —— 不然「總額 13、清單 8」
+                        會讓人以為哪裡算錯了。再點一次取消篩選。
+                    */
+                    <button key={m} onClick={() => setMethodF(on ? '' : m)}
+                      className={`w-full flex items-baseline gap-1.5 text-[11px] rounded px-0.5 ${
+                        on ? 'bg-mor-slate text-white' : 'hover:bg-mor-sand/40'}`}>
+                      <span className={on ? '' : n ? 'text-gray-600' : 'text-gray-300'}>{PAY_LABEL[m]}</span>
+                      <span className={on ? 'font-medium' : n ? 'font-medium' : 'text-gray-300'}>{n}</span>
                       {n > 0 && (
-                        <span className="ml-auto text-gray-400 tabular-nums">${fmt(sum(list ?? []))}</span>
+                        <span className={`ml-auto tabular-nums ${on ? 'opacity-80' : 'text-gray-400'}`}>
+                          ${fmt(sum(list ?? []))}
+                        </span>
                       )}
                     </button>
                   );
