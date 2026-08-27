@@ -19,6 +19,7 @@ import { keyBase, onlyKeyOf } from '@/lib/ltKey';
 import { periodTotal, type PeriodTotal } from '@/lib/period-total';
 import OrderPayments from '@/components/OrderPayments';
 import { autoSettleMessage } from '@/lib/period-settle';
+import { METHOD_LABEL } from '@/lib/pay-method';
 // Supabase 一次只回 1000 列且不報錯 —— 欠款是沒有上界的集合,一定要撈完
 import { fetchAll } from '@/lib/fetch-all';
 import {
@@ -1275,6 +1276,15 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
    */
   const [splitPay, setSplitPay] = useState<
     { order: any; chunk: any[]; due: number; label: string } | null>(null);
+  /**
+   * 這張契約所有月租單的分筆收款，key = order_id。
+   *
+   * ★★ **一次撈完**，不要每張卡各查一次 —— 年繳一張契約就有十幾期，
+   *   一期一支查詢的話畫面會一格一格慢慢跳出數字。
+   */
+  const [payRows, setPayRows] = useState<Record<string, any[]>>({});
+  /** 展開明細的期別（用該期第一張單的 id 當 key）。一次只開一期。 */
+  const [openPays, setOpenPays] = useState<string | null>(null);
 
   const [payAsk, setPayAsk] = useState<
     { chunk: any[]; label: string; paidAt: string; t: PeriodTotal } | null>(null);
@@ -1358,10 +1368,32 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
     // 房號空的契約鍵是 LTC_{契約id}_,不是 LT_{房號}_ —— 一律走 keyBase()
     const base = keyBase(c);
     const { data } = await supabase.from('orders')
-      .select('id, order_key, paid, amount, paid_at, imported_via').like('order_key', `${base}%`);
+      .select('id, order_key, paid, amount, paid_at, imported_via, paid_amount').like('order_key', `${base}%`);
     const m: Record<string, any> = {};
     onlyKeyOf(data as any[], base).forEach((o: any) => { m[o.order_key] = o; });
     setExisting(m);
+
+    /*
+     * 分筆收款的明細（2026-08-25）。
+     *
+     * ★★ 一次撈這張契約全部的收款，前端再依 order_id 分組 ——
+     *   年繳一張契約十幾期,一期一支查詢的話畫面會一格一格慢慢跳數字。
+     *
+     * ★ 沒有月租單就不查:`in()` 傳空陣列在 PostgREST 會變成
+     *   查全部而不是查不到 —— 那會把別張契約的收款也撈進來。
+     */
+    const ids = Object.values(m).map((x: any) => x.id).filter(Boolean);
+    if (ids.length) {
+      const { data: ps } = await supabase.from('order_payments')
+        .select('id, order_id, paid_on, amount, method, account, fee_amount')
+        .in('order_id', ids).order('paid_on');
+      const g: Record<string, any[]> = {};
+      (ps ?? []).forEach((r: any) => { (g[r.order_id] ??= []).push(r); });
+      setPayRows(g);
+    } else {
+      setPayRows({});
+    }
+
     if (showSpinner) setLoading(false);
     // c.id 也要在相依裡 —— 房號空的契約鍵是靠 id 組的,漏了就會沿用上一張契約的結果
   }, [supabase, c.room, c.id]);
@@ -1553,7 +1585,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
     // 固定加費不給在期別列上刪,刪了觸發器下次又會長回來。
     // paid 是「與租金一起收」需要的:確認收款要把該期的加費一併標記。
     const { data } = await supabase.from('orders')
-      .select('id, checkin, amount, fee_type, item_name, note, imported_via, paid, order_key')
+      .select('id, checkin, amount, fee_type, item_name, note, imported_via, paid, order_key, paid_amount')
       .eq('contract_id', c.id).eq('source', 'oneoff').order('checkin');
     setFeeRows(data ?? []);
 
@@ -1850,6 +1882,24 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
               const pt = periodTotal(os, pfees);
               const netAmount = pt.net, feeTotal = pt.fixed + pt.oneoff, discTotal = pt.discount;
               const allPaid = pt.allPaid;
+              /*
+               * 分筆收款的進度（2026-08-25）。
+               *
+               * ★★ 沒有這一段的話，「收了 10 萬還差 5.5 萬」的期別
+               *   在畫面上跟**一毛都沒收**長得一模一樣 ——
+               *   錢記進去了，而看收租的人看不到。
+               *
+               * ★ `paid_amount` 由觸發器維護,前端不自己加 order_payments ——
+               *   兩邊各算一次就會有對不上的一天（元件裡也是這條規則）。
+               *
+               * ★ 加費那幾張單也要算:舊資料可能把收款掛在它們身上。
+               */
+              const periodPaid = [...os, ...pfees]
+                .reduce((a: number, x: any) => a + Number(x?.paid_amount || 0), 0);
+              const periodPays = [...os, ...pfees]
+                .flatMap((x: any) => payRows[x?.id] ?? [])
+                .sort((a: any, b: any) => String(a.paid_on).localeCompare(String(b.paid_on)));
+              const payKey = os[0]?.id ?? `p${i}`;
               return (
                 <div key={i} className={`rounded-xl border px-4 py-2.5 text-sm ${allPaid ? 'border-mor-greenlight bg-mor-greenlight/30' : 'border-mor-line'}`}>
                   <div className="flex items-center justify-between">
@@ -1892,6 +1942,39 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                               </span>
                             </div>
                           ))}
+                        </div>
+                      )}
+                      {/*
+                        ★ 收到一半要看得出來。收滿之後不顯示 ——
+                          那時整張卡已經是綠的,再寫一次「已收 155,000」是雜訊。
+                      */}
+                      {!allPaid && periodPaid > 0 && (
+                        <div className="mt-1 rounded-lg bg-mor-bluelight/60 px-2 py-1 text-[11px] text-mor-slate">
+                          <span className="font-medium">已收 ${fmt(periodPaid)}</span>
+                          <span className="text-red-600 ml-2">尚欠 ${fmt(Math.max(0, netAmount - periodPaid))}</span>
+                          {periodPays.length > 0 && (
+                            <button onClick={() => setOpenPays(openPays === payKey ? null : payKey)}
+                              className="ml-2 underline hover:text-mor-blue">
+                              {openPays === payKey ? '收合' : `明細 ${periodPays.length} 筆`}
+                            </button>
+                          )}
+                          {openPays === payKey && (
+                            <div className="mt-1 space-y-0.5 border-t border-mor-line/50 pt-1">
+                              {periodPays.map((pp: any) => (
+                                <div key={pp.id} className="flex items-center gap-2">
+                                  <span className="text-gray-500">{String(pp.paid_on).slice(5)}</span>
+                                  <span className="tabular-nums">${fmt(pp.amount)}</span>
+                                  <span className="text-gray-500">
+                                    {METHOD_LABEL[pp.method] ?? pp.method ?? '—'}
+                                  </span>
+                                  {/* 內扣的手續費要寫出來 —— 那一筆會變成郵電費支出（migration_164） */}
+                                  {Number(pp.fee_amount) > 0 && (
+                                    <span className="text-orange-600">內扣 ${fmt(pp.fee_amount)}</span>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
                       {(() => {
