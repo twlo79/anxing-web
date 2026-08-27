@@ -2127,6 +2127,24 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                         <input type="date" value={feeDraft.date} onChange={(e) => setFeeDraft({ ...feeDraft, date: e.target.value })} className="rounded border border-gray-300 px-1.5 py-0.5 text-xs" />
                         <button onClick={saveFee} className="rounded bg-mor-slate text-white px-2 py-0.5 text-xs">儲存</button>
                         <button onClick={() => setFeeDraft(null)} className="text-gray-400 underline text-xs">取消</button>
+                        {/*
+                          ★★ 這一期已經收齊了才提醒（2026-08-25 使用者:
+                            「已經按收款了，還可以增加加費嗎？」）。
+
+                            可以加,而且加完系統會自己算出還差多少 ——
+                            但整期會**從綠色退回「未收」**,因為新的那筆還沒收。
+
+                            那是對的行為,問題只在於**按下去之前看不出來**。
+                            使用者上一次遇到狀態變化沒被告知時,
+                            花了三輪才弄懂發生什麼事。
+
+                          ★ 沒收齊的期別不顯示 —— 那時本來就是未收,沒有「退回」可言。
+                        */}
+                        {allPaid && (
+                          <span className="w-full text-[11px] text-amber-700">
+                            這一期已收齊，加了之後會退回「未收」，再按一次「收款」收這筆就好。
+                          </span>
+                        )}
                       </div>
                     ) : concDraft?.pi === i ? (
                       <div className="flex flex-wrap items-center gap-1.5 mt-1">
