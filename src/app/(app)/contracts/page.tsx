@@ -1923,10 +1923,34 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                         改版前是擠在括號裡的一行「（租金 $110,000 ＋ 加費 $3,500）」——
                         兩三筆加費就變成看不完的一串,而且分不出哪些是每期固定、哪些是這次臨時加的。
                       */}
-                      <div className="text-sm font-semibold text-mor-slate">
-                        應收 ${fmt(netAmount)}
+                      {/*
+                        ★★ 一行講完「這期要收多少、收了多少、還差多少」
+                          （2026-08-25 使用者:「版面有點花耶」）。
+
+                          改版前每張卡都攤開三、四行費用明細,
+                          一張契約十二期就是四十幾行 —— 那些明細平常不用看,
+                          需要看的時候才展開（下面的 toggle）。
+                      */}
+                      <div className="flex items-baseline gap-2 flex-wrap">
+                        <span className="text-sm font-semibold text-mor-slate">
+                          應收 ${fmt(netAmount)}
+                        </span>
+                        {!allPaid && periodPaid > 0 && (
+                          <>
+                            <span className="text-xs text-gray-500">已收 ${fmt(periodPaid)}</span>
+                            <span className="text-xs text-red-600">
+                              尚欠 ${fmt(Math.max(0, netAmount - periodPaid))}
+                            </span>
+                          </>
+                        )}
+                        {(pt.lines.length > 1 || periodPays.length > 0) && (
+                          <button onClick={() => setOpenPays(openPays === payKey ? null : payKey)}
+                            className="text-xs text-gray-400 underline hover:text-mor-blue">
+                            明細{openPays === payKey ? ' ▴' : ' ▾'}
+                          </button>
+                        )}
                       </div>
-                      {pt.lines.length > 1 && (
+                      {pt.lines.length > 1 && openPays === payKey && (
                         <div className="mt-1 space-y-0.5">
                           {pt.lines.map((l, li) => (
                             <div key={li} className="flex items-baseline gap-2 text-xs">
@@ -1945,36 +1969,26 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                         </div>
                       )}
                       {/*
-                        ★ 收到一半要看得出來。收滿之後不顯示 ——
-                          那時整張卡已經是綠的,再寫一次「已收 155,000」是雜訊。
+                        收款明細,跟費用明細**同一個 toggle** ——
+                        使用者要的是「所有費用與收款明細 toggle」（2026-08-25）。
+                        分成兩個開關的話,同一件事要點兩次才看得完。
                       */}
-                      {!allPaid && periodPaid > 0 && (
-                        <div className="mt-1 rounded-lg bg-mor-bluelight/60 px-2 py-1 text-[11px] text-mor-slate">
-                          <span className="font-medium">已收 ${fmt(periodPaid)}</span>
-                          <span className="text-red-600 ml-2">尚欠 ${fmt(Math.max(0, netAmount - periodPaid))}</span>
-                          {periodPays.length > 0 && (
-                            <button onClick={() => setOpenPays(openPays === payKey ? null : payKey)}
-                              className="ml-2 underline hover:text-mor-blue">
-                              {openPays === payKey ? '收合' : `明細 ${periodPays.length} 筆`}
-                            </button>
-                          )}
-                          {openPays === payKey && (
-                            <div className="mt-1 space-y-0.5 border-t border-mor-line/50 pt-1">
-                              {periodPays.map((pp: any) => (
-                                <div key={pp.id} className="flex items-center gap-2">
-                                  <span className="text-gray-500">{String(pp.paid_on).slice(5)}</span>
-                                  <span className="tabular-nums">${fmt(pp.amount)}</span>
-                                  <span className="text-gray-500">
-                                    {METHOD_LABEL[pp.method] ?? pp.method ?? '—'}
-                                  </span>
-                                  {/* 內扣的手續費要寫出來 —— 那一筆會變成郵電費支出（migration_164） */}
-                                  {Number(pp.fee_amount) > 0 && (
-                                    <span className="text-orange-600">內扣 ${fmt(pp.fee_amount)}</span>
-                                  )}
-                                </div>
-                              ))}
+                      {openPays === payKey && periodPays.length > 0 && (
+                        <div className="mt-1 space-y-0.5 border-t border-mor-line/40 pt-1">
+                          {periodPays.map((pp: any) => (
+                            <div key={pp.id} className="flex items-baseline gap-2 text-xs">
+                              <span className="w-3 shrink-0 text-mor-green">✓</span>
+                              <span className="text-gray-500">{String(pp.paid_on).slice(5)}</span>
+                              <span className="text-gray-400">
+                                {METHOD_LABEL[pp.method] ?? pp.method ?? '—'}
+                              </span>
+                              {/* 內扣的手續費要寫出來 —— 那一筆會變成郵電費支出（migration_164） */}
+                              {Number(pp.fee_amount) > 0 && (
+                                <span className="text-orange-600">內扣 ${fmt(pp.fee_amount)}</span>
+                              )}
+                              <span className="ml-auto tabular-nums text-gray-700">${fmt(pp.amount)}</span>
                             </div>
-                          )}
+                          ))}
                         </div>
                       )}
                       {(() => {
@@ -1997,13 +2011,18 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                         </div>
                       : <div className="flex items-center gap-1.5">
                           {/*
-                            ★ 分筆收款（2026-08-25）。做成**按鈕**而不是勾選框 ——
-                              勾選框要記狀態（每一期一個?記在哪?），
-                              而不按這顆跟沒勾是一樣的效果。
+                            ══════════ 一顆按鈕（2026-08-25 使用者:「這裡可以合併」）══════════
 
-                            ★ 掛在這一期的**第一張**月租單上。os 已經按月排好,
-                              季繳三張就是最早那一張。整期的錢全記在它底下,
-                              目標金額用 pt.net（整期合計）。
+                            改版前是「分筆收款」＋「確認收款」兩顆並排。
+                            但那是**同一件事的兩個入口** —— 使用者要做的都是
+                            「記一筆收到的錢」,差別只在這一筆夠不夠付清,
+                            而那是金額決定的,不該讓人先選。
+
+                            流程變成:
+                              收款 → 填日期、金額、方式 → 沒收滿就再填一筆
+                                                       → 收滿自動結清
+
+                            ★ 掛在這一期的**第一張**月租單上,目標金額用 pt.net（整期合計）。
                           */}
                           <button
                             onClick={() => setSplitPay({
@@ -2011,10 +2030,23 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                               label: `第 ${i + 1} 期 ${first.label}${STEP > 1 ? `~${last.label}` : ''}`,
                             })}
                             disabled={!!busy}
-                            className="rounded-lg border border-mor-slate text-mor-slate px-3 py-1.5 text-xs font-medium hover:bg-mor-sand/60 disabled:opacity-40">
-                            分筆收款
+                            className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">
+                            收款
                           </button>
-                          <button onClick={() => setPeriodPaid(chunk, true, `第 ${i + 1} 期 ${first.label}${STEP > 1 ? `~${last.label}` : ''}`)} disabled={!!busy} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">{busy === first.ym ? '…' : '確認收款'}</button>
+                          {/*
+                            ★★ 收滿了卻沒自動結清 = **超收**（period-settle.ts 擋的）。
+
+                              那時要有一條出路,不然這一期永遠結不掉 ——
+                              使用者會回頭去刪收款、改金額,把對的資料改壞。
+                              平常不顯示:沒收滿時它只會讓人以為可以跳過收款。
+                          */}
+                          {periodPaid >= netAmount && netAmount > 0 && (
+                            <button onClick={() => setPeriodPaid(chunk, true, `第 ${i + 1} 期 ${first.label}${STEP > 1 ? `~${last.label}` : ''}`)}
+                              disabled={!!busy}
+                              className="rounded-lg border border-mor-slate text-mor-slate px-3 py-1.5 text-xs font-medium disabled:opacity-40">
+                              {busy === first.ym ? '…' : '確認結清'}
+                            </button>
+                          )}
                         </div>)}
                   </div>
                   <div className="mt-2 border-t border-mor-line/50 pt-1.5">
