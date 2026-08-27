@@ -23,7 +23,7 @@ import DepositFees from '@/components/DepositFees';
  * 選了之後第二層選哪一家。一張單只能有一本帳 —— 觸發器也擋。
  */
 import {
-  OTHER_BIZ_PURPOSE, OTHER_BOOKS, BOOK_LABEL, DEFAULT_BOOK, newItemPurpose,
+  OTHER_BIZ_PURPOSE, OTHER_BOOKS, BOOK_LABEL, DEFAULT_BOOK, newItemPurpose, needsManagerVote,
 
   misbookedItems, toBook, isOtherBook, bookLabel, type Book,
 } from '@/lib/book';
@@ -553,7 +553,13 @@ export default function PurchasesPage() {
   const sorted = useMemo(() => sortRows(filtered, sort, SORT_COLS), [filtered, sort, SORT_COLS]);
 
   // 待辦佇列:兩票獨立,各自列出「還缺這一票」的單
-  const waitManager = useMemo(() => filtered.filter((r) => r.status === 'pending' && !r.manager_approved_at), [filtered]);
+  /*
+   * ★ 2026-08-25 修:漏了 `needsManagerVote` —— 愛皮／洪鯊的單不用主管票,
+   *   卻被算進「待主管核可」。那張卡是待辦清單,
+   *   上面永遠掛著幾筆做不掉的事,看的人只會學會忽略它。
+   */
+  const waitManager = useMemo(() => filtered.filter((r) =>
+    r.status === 'pending' && !r.manager_approved_at && needsManagerVote(r.book)), [filtered]);
   const waitAdmin = useMemo(() => filtered.filter((r) => r.status === 'pending' && !r.admin_approved_at), [filtered]);
   // 待排付款:匯款/信用卡且還沒排。現金沒有這個階段,所以排除。
   const waitPlan = useMemo(() => filtered.filter((r) =>
@@ -630,8 +636,14 @@ export default function PurchasesPage() {
         mgrAt: r.manager_approved_at, admAt: r.admin_approved_at,
         // status 一定要一起檢查:未滿 3,000 的單是自動核可的,狀態已經是 approved
         // 但兩張票都是空的。只看票的話,已經通過的單上會冒出「核可」按鈕。
+        /*
+         * ★ 主管那一票要看 `needsManagerVote`（2026-08-25 修）——
+         *   愛皮／洪鯊免主管票,少了它主管會在審核清單上看到
+         *   一張同時寫著「主管（免核）」與「核可」按鈕的單。
+         */
         mine: r.status === 'pending'
-          && ((isManager && !r.manager_approved_at) || (isAdmin && !r.admin_approved_at)),
+          && ((isManager && !r.manager_approved_at && needsManagerVote(r.book))
+              || (isAdmin && !r.admin_approved_at)),
         freePass: r.status === 'approved' && !r.manager_approved_at && !r.admin_approved_at,
         paid: !!r.purchased_on,
         pr: r,
@@ -1474,7 +1486,10 @@ export default function PurchasesPage() {
         && ['draft', 'rejected', 'pending', 'approved'].includes(r.status)
         && !r.purchased_on && !r.expense_generated_at,
       // 開放自核:主管送的單那一票由他自己投,不再要求第二人。
-      canVoteMgr: isManager && r.status === 'pending' && !r.manager_approved_at,
+      // ★ 免主管票的單不給按 —— 同一列寫著「主管（免核）」卻按得下去,
+      //   按了會留下一票沒有意義的紀錄,而畫面上還是寫免核
+      canVoteMgr: isManager && r.status === 'pending' && !r.manager_approved_at
+                  && needsManagerVote(r.book),
       canVoteAdm: isAdmin && r.status === 'pending' && !r.admin_approved_at,
       canRej: (isManager || isAdmin) && r.status === 'pending',
       // 匯款與信用卡一定要先排付款(選日期與帳號/卡別)才能確認支付。
@@ -1512,7 +1527,7 @@ export default function PurchasesPage() {
      *   拿掉的話看的人會以為畫面壞了，寫「○ 主管」的話會以為那票還沒投，
      *   然後去催一個根本不用投票的人。
      */
-    const skipMgr = isOtherBook(r.book);
+    const skipMgr = !needsManagerVote(r.book);
     return (
       <>
         {skipMgr ? (
@@ -1660,7 +1675,10 @@ export default function PurchasesPage() {
                         <div className="font-bold">${fmt(p.amount)}</div>
                         <div className="text-[11px] text-gray-400 mt-1">
                           {p.freePass ? <div>未達門檻免核</div> : (<>
-                            <div className={p.mgrAt ? 'text-mor-green' : ''}>{p.mgrAt ? '✓' : '○'} 主管</div>
+                            {/* ★ 手機這份原本沒有分免主管票,跟桌機那份對不起來 */}
+                            {needsManagerVote(p.book)
+                              ? <div className={p.mgrAt ? 'text-mor-green' : ''}>{p.mgrAt ? '✓' : '○'} 主管</div>
+                              : <div>— 主管（免核）</div>}
                             <div className={p.admAt ? 'text-mor-green' : ''}>{p.admAt ? '✓' : '○'} 總經理</div>
                           </>)}
                         </div>
@@ -1744,7 +1762,7 @@ export default function PurchasesPage() {
                         {p.freePass ? <span className="text-gray-400">未達門檻免核</span> : (<>
                           {/* 愛皮洪鯊免主管票（migration_160）—— 要寫出來,
                               不然主管會去追一張根本不用他簽的單 */}
-                          {isOtherBook(p.book)
+                          {!needsManagerVote(p.book)
                             ? <div className="text-gray-400">— 主管（免核）</div>
                             : <div className={p.mgrAt ? 'text-mor-green' : 'text-gray-400'}>{p.mgrAt ? '✓' : '○'} 主管</div>}
                           <div className={p.admAt ? 'text-mor-green' : 'text-gray-400'}>{p.admAt ? '✓' : '○'} 總經理</div>

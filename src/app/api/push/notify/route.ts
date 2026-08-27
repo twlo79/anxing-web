@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { needsManagerVote } from '@/lib/book';
 import { adminClient, filterByPref, initWebPush, pushConfigured, sendToUsers } from '@/lib/push';
 
 export const dynamic = 'force-dynamic';
@@ -50,7 +51,14 @@ export async function POST(req: Request) {
 
   if (rec.status === 'pending') {
     const needRoles: string[] = [];
-    if (!rec.manager_approved_at) needRoles.push('manager');
+    /*
+     * ★ 愛皮／洪鯊的單免主管票（migration_160）—— 不要叮主管。
+     *
+     *   漏掉的話主管會收到一則推播,點進去看到那一列寫著「主管（免核）」,
+     *   而按鈕按不下去。第三次通知了他一件他做不了的事,
+     *   之後他就不會再點這種通知了 —— 包括真的需要他投票的那些。
+     */
+    if (!rec.manager_approved_at && needsManagerVote(rec.book)) needRoles.push('manager');
     if (!rec.admin_approved_at) needRoles.push('super_admin');
     if (needRoles.length === 0) return NextResponse.json({ ok: true, skipped: 'both voted' });
 

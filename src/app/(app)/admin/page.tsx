@@ -1279,6 +1279,20 @@ export default function AdminPage() {
                         className={`rounded-lg border px-2 py-1 w-52 font-mono text-xs ${
                           p.airbnb_listing_id ? 'border-gray-300' : 'border-amber-300 bg-amber-50/50'}`} />
                       {/*
+                        ★ 直接跳到 Airbnb 後台那個房源（2026-08-25 使用者:
+                          「哪邊可以查 listing 跟我的匿名」）。
+
+                        用 `hosting/listings/editor/{id}` 而**不是** `rooms/{id}` ——
+                        後者是公開頁,房源一下架就 404,而下架的房源正是
+                        最需要查「這編號到底是哪一間」的時候。
+                      */}
+                      {p.airbnb_listing_id && (
+                        <a href={`https://www.airbnb.com/hosting/listings/editor/${p.airbnb_listing_id}/details`}
+                          target="_blank" rel="noreferrer"
+                          title="在 Airbnb 後台開啟這個房源"
+                          className="ml-1 text-xs text-mor-blue underline">↗</a>
+                      )}
+                      {/*
                         舊編號。房源在 Airbnb 上被重建過就會換一個新的，
                         而那些舊編號的訂單還是這間房的 —— 上面那一格只放得下一個，
                         所以多的掛在這裡（migration_127 的 property_listings）。
@@ -1291,6 +1305,10 @@ export default function AdminPage() {
                             {mine.map((l) => (
                               <div key={l.listing_id} className="flex items-center gap-1 text-[11px] text-gray-500">
                                 <span className="font-mono">{l.listing_id}</span>
+                                <a href={`https://www.airbnb.com/hosting/listings/editor/${l.listing_id}/details`}
+                                  target="_blank" rel="noreferrer"
+                                  title="在 Airbnb 後台開啟這個房源"
+                                  className="text-mor-blue underline">↗</a>
                                 <span className="text-gray-400">舊</span>
                                 <button onClick={() => removeListing(l.listing_id, p.name)}
                                   className="text-gray-300 hover:text-red-500">✕</button>
@@ -1550,6 +1568,24 @@ export default function AdminPage() {
                                 <span className="text-gray-500 font-normal ml-1.5">
                                   {o?.guest_name || (it.listing_id ? `listing ${it.listing_id}` : '—')}
                                 </span>
+                                {/*
+                                  ★ 直接跳到 Airbnb 後台看那是哪一間房
+                                    （2026-08-25 使用者:「我找不到是哪間耶」）。
+
+                                    這張卡上最缺的就是這個 —— 它說得出「對不到房源」，
+                                    但接下來要做什麼取決於「那到底是哪一間」，
+                                    而那個答案只有 Airbnb 那邊有:爬蟲沒有留下名稱。
+
+                                  ★ 用 hosting/listings/editor 而不是公開的 rooms/ ——
+                                    會出現在這張卡上的 listing 常常已經下架,
+                                    公開頁那時是 404。
+                                */}
+                                {it.listing_id && (
+                                  <a href={`https://www.airbnb.com/hosting/listings/editor/${it.listing_id}/details`}
+                                    target="_blank" rel="noreferrer"
+                                    title="在 Airbnb 後台看這是哪一間房（會顯示標題與你設的內部名稱）"
+                                    className="ml-1 text-mor-blue underline">↗ 查</a>
+                                )}
                               </div>
                               <div className="text-[11px] text-gray-400">
                                 {o?.checkin ? `${o.checkin.slice(5)}~${(o.checkout ?? '').slice(5)}・` : ''}

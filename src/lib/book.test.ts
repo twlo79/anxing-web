@@ -5,6 +5,7 @@ import {
   OTHER_BIZ_SOURCE, OTHER_BIZ_PURPOSE,
   incomeFieldsHidden, incomePartyLabel,
   checkIncomeBook, misbookedItems, allowedPurposes, withBook, hasDeposit, newItemPurpose,
+  needsManagerVote,
 } from './book.ts';
 
 /**
@@ -209,4 +210,26 @@ test('★ 看的是「有沒有任何一項是其他事業體」不是只看第�
     newItemPurpose([{ purpose_type: 'estate' }, { purpose_type: OTHER_BIZ_PURPOSE }]).purpose_type,
     OTHER_BIZ_PURPOSE,
   );
+});
+
+/*
+ * ── 主管那一票（2026-08-25）──────────────────────────
+ */
+test('★ 愛皮與洪鯊不用主管票（migration_160）', () => {
+  for (const b of OTHER_BOOKS) assert.equal(needsManagerVote(b), false, b);
+});
+
+test('★ 安幸的單照樣要主管票', () => {
+  assert.equal(needsManagerVote(DEFAULT_BOOK), true);
+  assert.equal(needsManagerVote('anxing'), true);
+});
+
+test('★★ 沒帶 book 當成安幸 —— 要主管票（放行錯了等於繞過審核）', () => {
+  assert.equal(needsManagerVote(null), true);
+  assert.equal(needsManagerVote(undefined), true);
+  assert.equal(needsManagerVote(''), true);
+});
+
+test('認不出來的值也當成安幸,寧可多一票', () => {
+  assert.equal(needsManagerVote('不存在的帳本'), true);
 });

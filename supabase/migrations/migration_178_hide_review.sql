@@ -88,49 +88,89 @@ create index if not exists reviews_visible_idx
  *    畫面會變成「列表 12 則、統計寫 13 則」，
  *    而沒有人知道差的那一則在哪裡。
  *
- * ★ 逐段對照線上定義改，只多一個 `and r.hidden_at is null`。
- *   其餘一個字都不動 —— 順手改別的東西的話，
- *   數字變了會分不出是哪一項造成的。
+ *
+ * ============================================================
+ * 【★★ 為什麼不直接把函式重寫一遍】（2026-08-25 第一次跑就撞到）
+ *
+ *     ERROR: 42P13 cannot change return type of existing function
+ *
+ * 線上的 `review_stats` 跟 `supabase/schema-baseline.sql` 裡那份
+ * **回傳欄位不一樣** —— 有人改過（前端的型別註解指向 migration_130，
+ * 而那支不在這個 repo 裡）。baseline 已經過期了。
+ *
+ * 照 baseline 那份 DROP 再建回去的話，等於**用一份過期的定義覆蓋線上的**:
+ * 中間那個人改了什麼就沒了，而且不會有任何錯誤訊息 ——
+ * 評價頁的統計欄位會安靜地少一個。
+ *
+ *
+ * ============================================================
+ * 【所以改成:讀線上的定義，只在 JOIN 上多加一個條件】
+ *
+ * ★ 加在 **JOIN 條件**而不是 WHERE，是因為 WHERE 子句長什麼樣我不知道，
+ *   而 `join ... on r.property_id = p.id` 這一段是兩支都必然有的。
+ *   內連接（inner join）加在 ON 或 WHERE 語意相同。
+ *
+ * ★★ **對不上就整支中止**（raise exception）。
+ *
+ *    這是這一段最重要的一行。找不到錨點卻硬改的話，
+ *    那一行會插在錯的位置 —— 而它**照樣建得起來，只是篩錯**，
+ *    平均星等看起來完全正常。
+ *    寧可整支不跑，也不要跑出一個看起來對的錯數字。
+ *
+ * ★ 已經含 `hidden_at` 就跳過 —— 這支要能重跑。
  */
-CREATE OR REPLACE FUNCTION public.review_stats(p_from date DEFAULT NULL::date, p_to date DEFAULT NULL::date)
- RETURNS TABLE(estate_id uuid, estate_name text, manager text, sort integer, review_count bigint, avg_rating numeric)
- LANGUAGE sql STABLE
-AS $function$
-  select e.id, e.name, e.manager, e.sort, count(r.id), round(avg(r.overall_rating), 2)
-  from estates e
-  join properties p on p.estate_id = e.id
-  join reviews r on r.property_id = p.id
-  where e.active
-    and r.hidden_at is null
-    and (p_from is null or r.checkout_date >= p_from)
-    and (p_to is null or r.checkout_date <= p_to)
-  group by e.id, e.name, e.manager, e.sort
-  order by e.sort;
-$function$;
+do $$
+declare
+  fn text;
+  old_def text;
+  new_def text;
+  anchor text;
+  n int;
+begin
+  foreach fn in array array['review_stats', 'manager_stats'] loop
+    select pg_get_functiondef(p.oid) into old_def
+      from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace
+     where ns.nspname = 'public' and p.proname = fn
+     limit 1;
 
-CREATE OR REPLACE FUNCTION public.manager_stats(p_from date DEFAULT NULL::date, p_to date DEFAULT NULL::date)
- RETURNS TABLE(manager text, avg_rating numeric, s5 bigint, s4 bigint, s3 bigint, s2 bigint, s1 bigint, total bigint)
- LANGUAGE sql STABLE
-AS $function$
-  select
-    coalesce(e.manager, '未指派'),
-    round(avg(r.overall_rating), 2),
-    count(*) filter (where r.overall_rating >= 5),
-    count(*) filter (where r.overall_rating >= 4 and r.overall_rating < 5),
-    count(*) filter (where r.overall_rating >= 3 and r.overall_rating < 4),
-    count(*) filter (where r.overall_rating >= 2 and r.overall_rating < 3),
-    count(*) filter (where r.overall_rating < 2),
-    count(*)
-  from reviews r
-  join properties p on p.id = r.property_id
-  join estates e on e.id = p.estate_id
-  where e.active
-    and r.hidden_at is null
-    and (p_from is null or r.checkout_date >= p_from)
-    and (p_to is null or r.checkout_date <= p_to)
-  group by coalesce(e.manager, '未指派')
-  order by 1;
-$function$;
+    if old_def is null then
+      raise exception '找不到函式 %，這支 migration 的前提不成立', fn;
+    end if;
+
+    -- 已經改過就跳過（重跑安全）
+    if position('hidden_at' in old_def) > 0 then
+      insert into _chk178 values (0, '② ' || fn, '↷ 已含 hidden_at，跳過', '這支 migration 重跑是安全的');
+      continue;
+    end if;
+
+    /*
+     * 兩支的 reviews 與 properties 接法相反,所以錨點也是兩種:
+     *   review_stats   join reviews r on r.property_id = p.id
+     *   manager_stats  join properties p on p.id = r.property_id
+     * 用寬鬆的空白比對,但**只准對到一處**。
+     */
+    if fn = 'review_stats' then
+      anchor := 'join\s+reviews\s+r\s+on\s+r\.property_id\s*=\s*p\.id';
+    else
+      anchor := 'join\s+properties\s+p\s+on\s+p\.id\s*=\s*r\.property_id';
+    end if;
+
+    select count(*) into n
+      from regexp_matches(old_def, anchor, 'gi') ;
+
+    if n <> 1 then
+      raise exception
+        '% 的定義跟預期不同（錨點對到 % 處，預期 1 處）。請把 pg_get_functiondef 的結果貼出來人工處理。',
+        fn, n;
+    end if;
+
+    new_def := regexp_replace(old_def, '(' || anchor || ')', '\1 and r.hidden_at is null', 'i');
+    execute new_def;
+
+    insert into _chk178 values (0, '② ' || fn, '✅ 已加上 and r.hidden_at is null',
+      '在 JOIN 條件上加,其餘定義原封不動');
+  end loop;
+end $$;
 
 /*
  * ★ `cleaning_staff_stats` **不用改** —— 那支算的是 cleaning_records，
@@ -290,13 +330,21 @@ select "檢查項目", "結果", "說明" from (
     from _chk178 c
 
   union all
+  /*
+   * ★ 2026-08-25 修:原本用 `\{(.*?)\}` 去撈角色,結果是 ⚠。
+   *
+   *   `pg_get_expr` 吐的是 `current_role_of() = ANY (ARRAY['manager'::text, ...])`,
+   *   花括號那種寫法是另一種輸出格式 —— 對不到不是因為政策不見了。
+   *
+   *   改成**整條印出來**。與其自作聰明地解析,不如把原文擺出來讓人看一眼:
+   *   解析錯了會回一個看不出對錯的 ⚠,原文不會。
+   */
   select 4, '★ 可以隱藏的角色',
-         coalesce((select array_to_string(regexp_matches(pg_get_expr(polqual, polrelid),
-                                                         '\{(.*?)\}'), '')
+         coalesce((select pg_get_expr(polqual, polrelid)
                      from pg_policy
                     where polrelid = 'public.reviews'::regclass
-                      and polname = 'reviews_write'), '⚠ 找不到那條政策'),
-         '使用者選的是「經理 + 總管理員」—— 現有政策剛好就是,所以這支不改 RLS'
+                      and polname = 'reviews_write'), '❌ 找不到 reviews_write 這條政策'),
+         '要看到 manager 與 super_admin 兩個 —— 使用者選的就是這兩個角色'
 
   union all
   select 5, '目前的評價',
