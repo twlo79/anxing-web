@@ -1970,11 +1970,15 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                       {pt.lines.length > 1 && openPays === payKey && (
                         <div className="mt-1 space-y-0.5">
                           {pt.lines.map((l, li) => (
+                            /*
+                              ★ 拿掉每一行的 ✓／·（2026-08-25 使用者:「上面不用打勾」）。
+
+                                那一欄是為了「一期裡有些收了有些沒收」設計的,
+                                但整期是**一起標記**的（setPeriodPaid 一次改全部）——
+                                所以每一行永遠一模一樣,等於用一整欄重複講
+                                卡片顏色已經講過的事。
+                            */
                             <div key={li} className="flex items-baseline gap-2 text-xs">
-                              {/* 已收的打勾 —— 一期裡有些收了有些沒收時,一眼看得出還差誰 */}
-                              <span className={`w-3 shrink-0 ${l.paid ? 'text-mor-green' : 'text-gray-300'}`}>
-                                {l.paid ? '✓' : '·'}
-                              </span>
                               <span className="text-gray-600">{l.label}</span>
                               {l.kind === 'fixed' && <span className="text-[10px] text-gray-400">每期固定</span>}
                               <span className={`ml-auto tabular-nums ${
@@ -1994,16 +1998,31 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                         <div className="mt-1 space-y-0.5 border-t border-mor-line/40 pt-1">
                           {periodPays.map((pp: any) => (
                             <div key={pp.id} className="flex items-baseline gap-2 text-xs">
-                              <span className="w-3 shrink-0 text-mor-green">✓</span>
                               <span className="text-gray-500">{String(pp.paid_on).slice(5)}</span>
                               <span className="text-gray-400">
                                 {METHOD_LABEL[pp.method] ?? pp.method ?? '—'}
                               </span>
-                              {/* 內扣的手續費要寫出來 —— 那一筆會變成郵電費支出（migration_164） */}
+                              {/*
+                                ★★ 內扣要寫出**實際進帳多少**（2026-08-25 使用者指定）。
+
+                                  記的金額是房客付的 165,000,銀行扣 30,
+                                  我們戶頭真正進的是 164,970 —— 對銀行帳的時候
+                                  看的是後面那個數字。
+                                  只寫「內扣 $30」的話,對帳的人得自己減一次,
+                                  而那是每個月每一筆都要減一次。
+
+                                ★ 兩個數字都留:165,000 是算應收用的,
+                                  164,970 是對銀行用的。少哪一個都會有人自己算。
+                              */}
                               {Number(pp.fee_amount) > 0 && (
                                 <span className="text-orange-600">內扣 ${fmt(pp.fee_amount)}</span>
                               )}
                               <span className="ml-auto tabular-nums text-gray-700">${fmt(pp.amount)}</span>
+                              {Number(pp.fee_amount) > 0 && (
+                                <span className="tabular-nums text-orange-600 whitespace-nowrap">
+                                  實收 ${fmt(Number(pp.amount) - Number(pp.fee_amount))}
+                                </span>
+                              )}
                             </div>
                           ))}
                         </div>
