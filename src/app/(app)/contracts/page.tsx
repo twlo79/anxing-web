@@ -1938,9 +1938,26 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                         {!allPaid && periodPaid > 0 && (
                           <>
                             <span className="text-xs text-gray-500">已收 ${fmt(periodPaid)}</span>
-                            <span className="text-xs text-red-600">
-                              尚欠 ${fmt(Math.max(0, netAmount - periodPaid))}
-                            </span>
+                            {/*
+                              ★★ 收滿了卻沒結清,不能只寫「尚欠 $0」
+                                （2026-08-25 使用者:「我先收租滿租,取消後出現這個」）。
+
+                                他按了「取消」——那一顆只退回**已收的標記**,
+                                收款紀錄留著（錢真的收過,不該被一個取消鍵清掉）。
+                                但畫面寫「尚欠 $0」看起來就像沒事,
+                                而旁邊卻多一顆按鈕 —— 那個矛盾就是他看不懂的地方。
+
+                                所以這種狀態要**講出來**:錢在、標記不在。
+                            */}
+                            {periodPaid >= netAmount ? (
+                              <span className="text-xs text-amber-700">
+                                收款紀錄還在，但這一期是「未收」
+                              </span>
+                            ) : (
+                              <span className="text-xs text-red-600">
+                                尚欠 ${fmt(Math.max(0, netAmount - periodPaid))}
+                              </span>
+                            )}
                           </>
                         )}
                         {(pt.lines.length > 1 || periodPays.length > 0) && (
@@ -2007,7 +2024,30 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                     {os.length > 0 && (allPaid
                       ? <div className="flex items-center gap-1.5">
                           <span className="text-xs text-gray-600">收款日 <input type="date" value={paidAt || ''} onChange={(e) => setPeriodPaidAt(chunk, e.target.value)} className="rounded border border-gray-300 px-1.5 py-0.5 text-xs" /></span>
-                          <button onClick={() => setPeriodPaid(chunk, false)} disabled={!!busy} className="rounded-lg bg-mor-greenlight text-mor-green px-2.5 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">取消</button>
+                          {/*
+                            ★★ 退回未收要先問一聲（2026-08-25 使用者指定）。
+
+                              「取消」只退回**已收的標記**,收款紀錄留著 ——
+                              錢真的收過,不該被一個取消鍵無聲清掉。
+
+                              但不講的話使用者以為這一期歸零了,
+                              下次看到「已收 $165,000、尚欠 $0」卻不是綠的,
+                              會不知道自己做過什麼（他就是這樣問的）。
+
+                            ★ 有收款紀錄才問。沒有紀錄的話這一顆只是把標記拿掉,
+                              沒有什麼要提醒的 —— 每次都跳確認會變成沒有人在看的雜訊。
+                          */}
+                          <button
+                            onClick={() => {
+                              if (periodPaid > 0 && !confirm(
+                                `退回「未收」？\n\n`
+                                + `這一期的 $${fmt(periodPaid)} 收款紀錄會留著，只是不再標記為已收。\n\n`
+                                + `真的要把錢的紀錄拿掉，請到「收款」裡刪那幾筆。`
+                              )) return;
+                              setPeriodPaid(chunk, false);
+                            }}
+                            disabled={!!busy}
+                            className="rounded-lg bg-mor-greenlight text-mor-green px-2.5 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">退回未收</button>
                         </div>
                       : <div className="flex items-center gap-1.5">
                           {/*
@@ -2034,17 +2074,27 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                             收款
                           </button>
                           {/*
-                            ★★ 收滿了卻沒自動結清 = **超收**（period-settle.ts 擋的）。
+                            ★★ 收滿了但這一期還沒標記已收。
 
-                              那時要有一條出路,不然這一期永遠結不掉 ——
+                              正常情況下最後一筆收款會**自動**結清,所以看不到這顆。
+                              看得到它只有兩種原因:
+
+                                ① 超收 —— 自動結清刻意不做（金額可能填錯,要人看一眼）
+                                ② 這些收款是這個功能上線**之前**記的,沒有經過自動結清
+
+                              兩種都需要一條出路,不然那一期永遠結不掉 ——
                               使用者會回頭去刪收款、改金額,把對的資料改壞。
-                              平常不顯示:沒收滿時它只會讓人以為可以跳過收款。
+
+                            ★ 名字要說出**按下去會發生什麼**（2026-08-25 使用者:
+                              「我不懂確認結清是什麼耶」）。
+                              「確認結清」是會計用語,它沒說出「整期會變成已收」。
                           */}
                           {periodPaid >= netAmount && netAmount > 0 && (
                             <button onClick={() => setPeriodPaid(chunk, true, `第 ${i + 1} 期 ${first.label}${STEP > 1 ? `~${last.label}` : ''}`)}
                               disabled={!!busy}
+                              title="這一期的錢已經收齊了，按下去把整期標記為已收"
                               className="rounded-lg border border-mor-slate text-mor-slate px-3 py-1.5 text-xs font-medium disabled:opacity-40">
-                              {busy === first.ym ? '…' : '確認結清'}
+                              {busy === first.ym ? '…' : '標記已收'}
                             </button>
                           )}
                         </div>)}
@@ -2162,7 +2212,32 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                     {o && (paid
                       ? <div className="flex items-center gap-1.5">
                           <span className="text-xs text-gray-600">收款日 <input type="date" value={paidAt || ''} onChange={(e) => setPeriodPaidAt(chunk, e.target.value)} className="rounded border border-gray-300 px-1.5 py-0.5 text-xs" /></span>
-                          <button onClick={() => setPeriodPaid(chunk, false)} disabled={!!busy} className="rounded-lg bg-mor-greenlight text-mor-green px-2.5 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">取消</button>
+                          {/*
+                            ★★ 退回未收要先問一聲（2026-08-25 使用者指定）。
+
+                              「取消」只退回**已收的標記**,收款紀錄留著 ——
+                              錢真的收過,不該被一個取消鍵無聲清掉。
+
+                              但不講的話使用者以為這一期歸零了,
+                              下次看到「已收 $165,000、尚欠 $0」卻不是綠的,
+                              會不知道自己做過什麼（他就是這樣問的）。
+
+                            ★ 有收款紀錄才問。沒有紀錄的話這一顆只是把標記拿掉,
+                              沒有什麼要提醒的 —— 每次都跳確認會變成沒有人在看的雜訊。
+                          */}
+                          <button
+                            onClick={() => {
+                              /* ★ 延展期是**單獨一張**月租單,已收就讀它自己的 —— 這裡沒有「一期多張」的概念 */
+                              const got = Math.round(Number((o as any)?.paid_amount) || 0);
+                              if (got > 0 && !confirm(
+                                `退回「未收」？\n\n`
+                                + `這一期的 $${fmt(got)} 收款紀錄會留著，只是不再標記為已收。\n\n`
+                                + `真的要把錢的紀錄拿掉，請到「收款」裡刪那幾筆。`
+                              )) return;
+                              setPeriodPaid(chunk, false);
+                            }}
+                            disabled={!!busy}
+                            className="rounded-lg bg-mor-greenlight text-mor-green px-2.5 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">退回未收</button>
                         </div>
                       : <button onClick={() => setPeriodPaid(chunk, true, `延展 第 ${j + 1} 期 ${mm.label}`)} disabled={!!busy} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">{busy === mm.ym ? '…' : '確認收款'}</button>)}
                   </div>
