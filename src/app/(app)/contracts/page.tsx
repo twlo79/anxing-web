@@ -17,6 +17,8 @@ import { dueDateOf, resolvePayDay, checkFirstDue, fmtDue, periodRange, fmtPeriod
 import { keyBase, onlyKeyOf } from '@/lib/ltKey';
 // 一期的應收與收齊判斷都走這支 —— 畫面、確認視窗、收款三處共用同一份算式
 import { periodTotal, type PeriodTotal } from '@/lib/period-total';
+import OrderPayments from '@/components/OrderPayments';
+import { autoSettleMessage } from '@/lib/period-settle';
 // Supabase 一次只回 1000 列且不報錯 —— 欠款是沒有上界的集合,一定要撈完
 import { fetchAll } from '@/lib/fetch-all';
 import {
@@ -958,7 +960,8 @@ const nameOf = (c: Contract) =>
         );
       })()}
 
-      {collect && <CollectModal contract={collect} onClose={() => { setCollect(null); load(); }} supabase={supabase} />}
+      {/* ★ payAccounts 由母層傳入 —— CollectModal 自己不撈,少一支查詢也少一份不同步的清單 */}
+      {collect && <CollectModal contract={collect} onClose={() => { setCollect(null); load(); }} supabase={supabase} payAccounts={payAccounts} />}
       {edit && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/30" />
@@ -1238,7 +1241,11 @@ const INVOICE_LOOKBACK = 2;
 // 台灣統一發票號碼:2 碼英文 + 8 碼數字
 const INV_NO_RE = /^[A-Z]{2}[0-9]{8}$/;
 
-function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClose: () => void; supabase: any }) {
+function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
+  contract: any; onClose: () => void; supabase: any;
+  /** 安幸收款帳號。分筆收款的「匯款」要選 —— 見下面的 OrderPayments */
+  payAccounts: { code: string; name: string }[];
+}) {
   const [existing, setExisting] = useState<Record<string, any>>({});
   const [endDate, setEndDate] = useState<string | null>(c.end_date ?? null);
   const [loading, setLoading] = useState(true);
@@ -1260,6 +1267,15 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
    * 收款確認視窗。自己畫而不是用 confirm() —— 見 setPeriodPaid 的註解：
    * confirm() 是比例字型，金額欄永遠對不齊。
    */
+  /*
+   * 分筆收款（2026-08-25，企劃見 docs/企劃-月租單分筆收款.md）。
+   *
+   * ★ 收款掛在**這一期的第一張月租單**上，但目標金額是整期應收合計。
+   *   一期有好幾張單而 order_payments 只掛得上一張 —— 取捨寫在企劃第三節。
+   */
+  const [splitPay, setSplitPay] = useState<
+    { order: any; chunk: any[]; due: number; label: string } | null>(null);
+
   const [payAsk, setPayAsk] = useState<
     { chunk: any[]; label: string; paidAt: string; t: PeriodTotal } | null>(null);
   const [concDraft, setConcDraft] = useState<{ pi: number; date: string; amount: number; note: string; baseAmount: number; priorDisc: number } | null>(null);
@@ -1421,12 +1437,25 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
     if (error) { alert('重算失敗:' + error.message); loadExisting(false); }
   }
 
-  async function setPeriodPaid(chunk: any[], v: boolean, periodLabel = '') {
+  /**
+   * @param auto 分筆收款收滿後的自動結清（2026-08-25）。
+   *
+   * ★★ 兩件事跟人工按不一樣:
+   *
+   *   ① **收款日用最後一筆收款的日期**，不是 today()。
+   *      分筆收款可能今天補登上個月的最後一筆 ——
+   *      用 today() 的話那一期會算成這個月的收入。
+   *
+   *   ② **跳過確認視窗**。那個視窗是給人核對用的,
+   *      而自動結清的前提是金額已經跟應收對上了。
+   *      彈出來的話畫面會卡在一個沒有人要按的對話框。
+   */
+  async function setPeriodPaid(chunk: any[], v: boolean, periodLabel = '', auto?: { paidAt: string }) {
     const keys0 = chunk.map((mm) => kb + mm.ym);
     // 已經有收款日就沿用,不要覆蓋成今天 ——
     // 「重算應收」會把已收的期別退回未收但留著日期,重按確認時要拿得回來。
     const kept = ordersOf(chunk).find((o: any) => o?.paid_at)?.paid_at;
-    const paidAt = v ? (kept ?? today()) : null;
+    const paidAt = v ? (auto?.paidAt ?? kept ?? today()) : null;
 
     /*
      * 確認前把整份算式攤開讓人核對一次。
@@ -1445,7 +1474,8 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
         && chunk.some((mm: any) => (f.checkin.slice(0, 4) + f.checkin.slice(5, 7)) === mm.ym));
       const t = periodTotal(chunk.map((mm) => existing[kb + mm.ym]).filter(Boolean), pf);
       // 只有一行（純房租、沒有任何加費）就不打擾 —— 那種情況畫面上一目了然
-      if (t.lines.length > 1 && !payAsk) {
+      // ★ 自動結清也不打擾:金額已經跟應收對上了,沒有東西要核對
+      if (t.lines.length > 1 && !payAsk && !auto) {
         setPayAsk({ chunk, label: periodLabel || chunk[0]?.label || '', paidAt: paidAt ?? today(), t });
         return;
       }
@@ -1882,7 +1912,27 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
                           <span className="text-xs text-gray-600">收款日 <input type="date" value={paidAt || ''} onChange={(e) => setPeriodPaidAt(chunk, e.target.value)} className="rounded border border-gray-300 px-1.5 py-0.5 text-xs" /></span>
                           <button onClick={() => setPeriodPaid(chunk, false)} disabled={!!busy} className="rounded-lg bg-mor-greenlight text-mor-green px-2.5 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">取消</button>
                         </div>
-                      : <button onClick={() => setPeriodPaid(chunk, true, `第 ${i + 1} 期 ${first.label}${STEP > 1 ? `~${last.label}` : ''}`)} disabled={!!busy} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">{busy === first.ym ? '…' : '確認收款'}</button>)}
+                      : <div className="flex items-center gap-1.5">
+                          {/*
+                            ★ 分筆收款（2026-08-25）。做成**按鈕**而不是勾選框 ——
+                              勾選框要記狀態（每一期一個?記在哪?），
+                              而不按這顆跟沒勾是一樣的效果。
+
+                            ★ 掛在這一期的**第一張**月租單上。os 已經按月排好,
+                              季繳三張就是最早那一張。整期的錢全記在它底下,
+                              目標金額用 pt.net（整期合計）。
+                          */}
+                          <button
+                            onClick={() => setSplitPay({
+                              order: os[0], chunk, due: pt.net,
+                              label: `第 ${i + 1} 期 ${first.label}${STEP > 1 ? `~${last.label}` : ''}`,
+                            })}
+                            disabled={!!busy}
+                            className="rounded-lg border border-mor-slate text-mor-slate px-3 py-1.5 text-xs font-medium hover:bg-mor-sand/60 disabled:opacity-40">
+                            分筆收款
+                          </button>
+                          <button onClick={() => setPeriodPaid(chunk, true, `第 ${i + 1} 期 ${first.label}${STEP > 1 ? `~${last.label}` : ''}`)} disabled={!!busy} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">{busy === first.ym ? '…' : '確認收款'}</button>
+                        </div>)}
                   </div>
                   <div className="mt-2 border-t border-mor-line/50 pt-1.5">
                     {pfees.map((f: any) => {
@@ -2017,6 +2067,51 @@ function CollectModal({ contract: c, onClose, supabase }: { contract: any; onClo
         （「設備費－冰箱」那行一定凸出來）。這裡用表格右對齊 + tabular-nums，
         金額的個位數必定切齊，加總才好用眼睛核對。
       */}
+      {/*
+        ══════════ 分筆收款（2026-08-25）══════════
+
+        跟短租頁**共用同一支元件** —— 日期、金額、方式、帳號、備註、
+        憑證照片、匯款內扣（→ 郵電費支出，migration_164）全部現成。
+        各寫一份的話下次改規則一定漏改一邊,而漏改不會報錯。
+
+        三個 prop 是為了長租才加的,而且都選填:
+          dueOverride  整期應收合計（一期有好幾張單,收款只掛得上一張）
+          methodOpts   長租只收現金與匯款（使用者指定）
+          onSettled    收滿時自動標記整期已收（使用者指定）
+      */}
+      {splitPay && (
+        <OrderPayments
+          order={splitPay.order}
+          accounts={payAccounts}
+          canEdit
+          dueOverride={splitPay.due}
+          methodOpts={['cash', 'transfer']}
+          onClose={() => setSplitPay(null)}
+          onChanged={() => loadExisting(false)}
+          onSettled={(last) => {
+            /*
+             * ★★ 自動結清（使用者指定）。
+             *
+             *   ★ **一定要說話** —— 無聲的話使用者只看到整期突然變綠,
+             *     而他剛剛做的動作是「新增一筆收款」。
+             *     下次金額打錯導致誤結清時,他也不會知道發生過這件事。
+             *
+             *   ★ 超收不會走到這裡（shouldAutoSettle 擋掉,理由在 period-settle.ts）。
+             */
+            const sp = splitPay;
+            setSplitPay(null);
+            /*
+             * ★ 一次呼叫就把收款日一起帶進去。
+             *   先 setPeriodPaid 再 setPeriodPaidAt 的話是兩次寫入,
+             *   而後者有 debounce —— 中間那段時間畫面上的收款日是 today(),
+             *   使用者剛好在那時看一眼就會看到錯的日期。
+             */
+            setPeriodPaid(sp.chunk, true, sp.label, { paidAt: last });
+            alert(autoSettleMessage(sp.due, last));
+          }}
+        />
+      )}
+
       {payAsk && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4"
           onClick={(e) => { e.stopPropagation(); setPayAsk(null); }}>

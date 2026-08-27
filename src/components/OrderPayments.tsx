@@ -7,6 +7,7 @@ import {
   type PaymentRow,
 } from '@/lib/order-payment';
 import { METHOD_LABEL, METHOD_OPTS, needsAccount, normalizeMethod, methodText } from '@/lib/pay-method';
+import { shouldAutoSettle, autoSettleBlockedReason, lastPaidOn } from '@/lib/period-settle';
 import { softDelete } from '@/lib/trash';
 
 /**
@@ -53,6 +54,7 @@ const CTRL = 'h-11 md:h-9 w-full bg-white rounded-lg border border-mor-line px-2
 
 export default function OrderPayments({
   order, accounts, canEdit, onClose, onChanged,
+  dueOverride, methodOpts, onSettled,
 }: {
   order: Order;
   accounts: { code: string; name: string }[];
@@ -60,6 +62,33 @@ export default function OrderPayments({
   onClose: () => void;
   /** 收款有變動時通知母頁重新載入 —— 列表上的狀態標籤要跟著變 */
   onChanged: () => void;
+  /*
+   * ══════════ 以下三個是**選填**（2026-08-25，月租單分筆收款）══════════
+   *
+   * 企劃見 docs/企劃-月租單分筆收款.md。
+   *
+   * ★★ 三個都選填是刻意的:短租頁一行都不用改，行為原封不動。
+   *    改動只加不減，這是能安心把既有元件接到第二個地方的前提。
+   */
+  /**
+   * 目標金額。不給就用 `order.amount`（短租頁維持原狀）。
+   *
+   * 契約頁傳的是**整期應收合計**（房租＋管理費＋一次性－折讓），
+   * 因為一期有好幾張單而收款只掛得上一張。
+   * 不覆蓋的話畫面會拿房租那張的金額當應收，
+   * 於是每一筆都被判成超收 —— 而金額其實是對的。
+   */
+  dueOverride?: number;
+  /** 可選的收款方式。不給就用 pay-method 的四種。長租只收現金與匯款。 */
+  methodOpts?: string[];
+  /**
+   * 收滿時通知母頁（帶最後一筆的收款日）。
+   *
+   * ★ 元件自己**不做**結清 —— 「整期算不算收滿」「要標記哪幾張單」
+   *   是母頁的知識。放進來的話這支元件就得認識「期別」，
+   *   而短租根本沒有期別這回事。
+   */
+  onSettled?: (lastPaidOn: string) => void;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [rows, setRows] = useState<PaymentRow[]>([]);
@@ -98,8 +127,16 @@ export default function OrderPayments({
   const [invNo, setInvNo] = useState('');
   const [invDate, setInvDate] = useState(today());
 
-  const due = Math.round(Number(order.amount) || 0);
-  const cur = { source: order.source, amount: order.amount, paid_amount: paidAmount };
+  /* ★ 有 dueOverride 就用它 —— 見上面 props 的說明 */
+  const due = Math.round(Number(dueOverride ?? order.amount) || 0);
+  /*
+   * ★★ `amount` 要放 `due` 而不是 `order.amount`。
+   *
+   *   漏了的話「尚欠」與收款狀態還是照房租那張單算,
+   *   而畫面上方的應收寫的是整期合計 —— 兩個數字在同一個視窗裡打架,
+   *   且**兩邊都不會報錯**。
+   */
+  const cur = { source: order.source, amount: due, paid_amount: paidAmount };
   const rest = remaining(cur);
   const status = payStatus(cur);
 
@@ -112,8 +149,10 @@ export default function OrderPayments({
         .eq('order_id', order.id).order('paid_on').order('created_at'),
       supabase.from('orders').select('paid_amount').eq('id', order.id).single(),
     ]);
-    setRows((ps ?? []) as PaymentRow[]);
-    setPaidAmount(Number(od?.paid_amount) || 0);
+    const freshRows = (ps ?? []) as PaymentRow[];
+    const freshPaid = Number(od?.paid_amount) || 0;
+    setRows(freshRows);
+    setPaidAmount(freshPaid);
 
     if (order.invoice_required) {
       const { data: iv } = await supabase.from('invoices')
@@ -123,6 +162,13 @@ export default function OrderPayments({
       if (iv) { setInvNo(iv.invoice_no); setInvDate(iv.invoice_date); }
     }
     setLoading(false);
+    /*
+     * ★ 回傳剛讀到的值。
+     *   呼叫端不能在 `await load()` 之後讀 `paidAmount` ——
+     *   那是 state,這一輪還是舊的。存完之後要判斷「收滿了沒」,
+     *   讀到舊值的話永遠差一筆才觸發。
+     */
+    return { rows: freshRows, paid: freshPaid };
   }, [supabase, order.id, order.invoice_required]);
   useEffect(() => { load(); }, [load]);
 
@@ -169,8 +215,24 @@ export default function OrderPayments({
     setDraftNote('');
     // 手續費的欄位也要清 —— 不清的話下一筆會帶著上一筆的金額
     setFeeOn(false); setDraftFee(''); setDraftFeeDate('');
-    await load();
+    const fresh = await load();
     onChanged();
+
+    /*
+     * ★★ 收滿就通知母頁（月租單:自動標記整期已收）。
+     *
+     *   用剛讀回來的 `fresh.paid` 而不是 state 裡的 `paidAmount` —— 見 load() 的說明。
+     *
+     * ★ 超收**不通知**（shouldAutoSettle 擋掉）—— 超收表示金額可能填錯了,
+     *   那正是需要人看一眼的時候。理由與測試在 lib/period-settle.ts。
+     */
+    if (onSettled && fresh && shouldAutoSettle({ due, paid: fresh.paid })) {
+      const last = lastPaidOn(fresh.rows) ?? draftOn;
+      onSettled(last);
+    } else if (onSettled && fresh) {
+      const why = autoSettleBlockedReason({ due, paid: fresh.paid });
+      if (why) flash(why);
+    }
   }
 
   async function del(r: PaymentRow) {
@@ -421,7 +483,7 @@ export default function OrderPayments({
                       <span className="text-[11px] text-gray-400">收款方式</span>
                       <select value={draftMethod}
                         onChange={(e) => setDraftMethod(e.target.value)} className={CTRL}>
-                        {METHOD_OPTS.map((m) => <option key={m} value={m}>{METHOD_LABEL[m]}</option>)}
+                        {(methodOpts ?? METHOD_OPTS).map((m) => <option key={m} value={m}>{METHOD_LABEL[m]}</option>)}
                       </select>
                     </label>
                     {needsAccount(draftMethod) && (
