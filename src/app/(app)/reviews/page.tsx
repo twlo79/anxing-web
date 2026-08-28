@@ -17,6 +17,7 @@ import {
   canHideReview, isHidden, hideError, hideReasonText, hideImpactText, HIDE_REASONS,
 } from '@/lib/review-hide';
 import RangeInput from '@/components/RangeInput';
+import { EXPORT_TONE } from '@/components/Actions';
 
 type Estate = { id: string; name: string; manager: string | null; sort: number };
 type Property = { id: string; name: string; active: boolean; estate_id: string | null };
@@ -590,7 +591,7 @@ export default function ReviewsPage() {
             <div className="px-4 py-2.5 flex items-center justify-between border-b border-mor-line bg-white/45">
               <span className="text-sm font-semibold">管家評分</span>
               <button onClick={exportMgrXlsx} disabled={exportingMgr}
-                className="rounded-lg border border-mor-line bg-white px-2.5 py-0.5 text-xs text-mor-slate hover:bg-mor-bluelight disabled:opacity-40">
+                className={`rounded-lg px-2.5 py-0.5 text-xs disabled:opacity-40 ${EXPORT_TONE}`}>
                 {exportingMgr ? '產生中…' : '⬇ Excel'}
               </button>
             </div>
@@ -686,7 +687,7 @@ export default function ReviewsPage() {
           )}
           <div className="text-xs text-gray-400 pb-1.5">共 {total.toLocaleString()} 筆</div>
           <button onClick={exportCsv} disabled={exporting || total === 0}
-            className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark disabled:opacity-40">
+            className={`rounded-lg px-4 py-1.5 font-medium disabled:opacity-40 ${EXPORT_TONE}`}>
             {exporting ? '匯出中…' : '⬇ 下載 Excel'}
           </button>
         </div>

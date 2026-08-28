@@ -52,22 +52,36 @@ export function AddButton({ onClick, children, disabled }: {
 }
 
 /**
- * 次要動作：下載 Excel。
+ * 匯出鈕的配色。**手刻尺寸的地方也要吃這一條**（手機的滿版鈕、卡片標題裡的小鈕）。
  *
- * 【為什麼不是藍色】
- * 下載不改變任何東西，按錯了最多只是多一個檔案。
- * 用主色會讓它跟「新增」搶注意力 —— 而那兩個的後果差很多。
+ * ============================================================
+ * 【為什麼是綠色外框】（2026-08-28 使用者:「這個好 整站都改」）
+ *
+ * ★ 綠色 = **產出一個檔案**。而 Excel 本身就是綠的 ——
+ *   那是不用教就認得的線索，白撿的。
+ *
+ * ★★ 外框而不是實心:一個畫面只能有一個主要動作。
+ *   實心綠會跟實心藍的「新增」搶,而那兩個的後果差很多 ——
+ *   下載按錯只是多一個檔案，新增按錯是資料庫裡多一列。
+ *
+ * ★★★ 顏色用 `mor-greendark` 不是 `mor-green`。
+ *   `mor-green`（#3FAE7C）當文字只有 **2.78:1** —— 它是給進度條那種「面」用的,
+ *   拿來當細字與 1px 邊框會糊掉。#217346 是 5.82:1。
+ *   有一條測試讀 `tailwind.config.ts` 守著這件事。
  *
  * 【為什麼一律叫「下載 Excel」】
  * 原本有「匯出」「⬇ CSV」「⬇ Excel」三種說法。
  * 「匯出」是系統的視角，「下載」是使用者的視角 —— 他要的是一個檔案在電腦上。
  */
+export const EXPORT_TONE =
+  'border border-mor-greendark/50 bg-white text-mor-greendark hover:bg-mor-greenlight';
+
 export function ExportButton({ onClick, disabled, busy, label = '下載 Excel' }: {
   onClick: () => void; disabled?: boolean; busy?: boolean; label?: string;
 }) {
   return (
     <button type="button" onClick={onClick} disabled={disabled || busy}
-      className={`${BASE} border border-mor-line bg-white hover:bg-mor-sand/60`}>
+      className={`${BASE} ${EXPORT_TONE}`}>
       {busy ? '匯出中…' : <>⬇ {label}</>}
     </button>
   );

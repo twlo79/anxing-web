@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx-js-style';
 import { createClient } from '@/lib/supabase';
 import RangeInput from '@/components/RangeInput';
+import { EXPORT_TONE } from '@/components/Actions';
 
 type Estate = { id: string; name: string; sort: number };
 type StaffStat = { staff_name: string; staff_type: string; active: boolean; total: number; rated: number; avg_rating: number | null; low_count: number };
@@ -249,7 +250,7 @@ export default function CleaningPage() {
                 className="flex-1 h-12 rounded-lg border border-mor-line text-gray-600">清除篩選</button>
             )}
             <button onClick={exportCsv} disabled={exporting || total === 0}
-              className="flex-1 h-12 rounded-lg border border-mor-line disabled:opacity-40">{exporting ? '匯出中…' : '⬇ 下載 Excel'}</button>
+              className={`flex-1 h-12 rounded-lg disabled:opacity-40 ${EXPORT_TONE}`}>{exporting ? '匯出中…' : '⬇ 下載 Excel'}</button>
           </div>
         </div>
       </details>
@@ -298,7 +299,7 @@ export default function CleaningPage() {
             className="rounded-lg border border-mor-line bg-white px-3 py-1.5 font-medium hover:bg-mor-sand/60">📋 管家檢查表</a>
           <a href={FORM_ROOMSERVICE} target="_blank" rel="noreferrer"
             className="rounded-lg border border-mor-line bg-white px-3 py-1.5 font-medium hover:bg-mor-sand/60">🧹 房務清潔表</a>
-          <button onClick={exportCsv} disabled={exporting || total === 0} className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 disabled:opacity-40">{exporting ? '匯出中…' : '⬇ 下載 Excel'}</button>
+          <button onClick={exportCsv} disabled={exporting || total === 0} className={`rounded-lg px-4 py-1.5 font-medium disabled:opacity-40 ${EXPORT_TONE}`}>{exporting ? '匯出中…' : '⬇ 下載 Excel'}</button>
         </div>
       </div>
 

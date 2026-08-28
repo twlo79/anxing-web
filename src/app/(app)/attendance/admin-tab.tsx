@@ -10,6 +10,7 @@ import {
   type Balance, type Estate, type LeaveType, type TabProps,
 } from './types';
 import RangeInput from '@/components/RangeInput';
+import { EXPORT_TONE } from '@/components/Actions';
 
 /**
  * 管理（主管／總經理）：打卡位置 · 個人上下班時間 · 假別額度 · 出勤表匯出。
@@ -592,7 +593,13 @@ function ReportSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
           </div>
         </div>
 
-        <button onClick={exportXlsx} disabled={busy} className={BTN}>
+        {/*
+          ★ 匯出鈕一律綠色外框（2026-08-28「整站都改」）。
+            這一顆是這個分頁**唯一**的動作，所以外框不會被別的按鈕蓋過去 ——
+            它不需要靠實心來搶,沒有東西跟它搶。
+        */}
+        <button onClick={exportXlsx} disabled={busy}
+          className={`rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-40 ${EXPORT_TONE}`}>
           {busy ? '產生中…' : `下載出勤表（${sel.size} 人）`}
         </button>
       </div>

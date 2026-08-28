@@ -1,7 +1,7 @@
 'use client';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import StatCard from '@/components/StatCard';
-import { AddButton, ExportButton, ActionBar } from '@/components/Actions';
+import { AddButton, ExportButton, ActionBar, EXPORT_TONE } from '@/components/Actions';
 import Req, { ReqMark } from '@/components/Req';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
@@ -2043,7 +2043,7 @@ export default function PurchasesPage() {
               <button onClick={() => { setStF(''); setReqF(''); setEstateF(''); setMethodF(''); setKw(''); setKwIn(''); }}
                 className="flex-1 h-12 rounded-lg border border-mor-line text-gray-600">清除篩選</button>}
             <button onClick={exportXlsx} disabled={!sorted.length && !deps.length}
-              className="flex-1 h-12 rounded-lg border border-mor-line disabled:opacity-40">⬇ 下載 Excel</button>
+              className={`flex-1 h-12 rounded-lg disabled:opacity-40 ${EXPORT_TONE}`}>⬇ 下載 Excel</button>
           </div>
         </div>
       </details>

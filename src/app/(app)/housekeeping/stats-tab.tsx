@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase';
 import { cleanCounts, filterItems, type HkStaff, type HkProperty } from '@/lib/hkParse';
 import { payroll, dailyUnits, fmtUnits } from '@/lib/hk-payroll';
 import { softDelete, restoreTrash } from '@/lib/trash';
+import { EXPORT_TONE } from '@/components/Actions';
 
 /**
  * 房務排班統計（「房務管理」的一個分頁）。
@@ -387,7 +388,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
           <Link href="/housekeeping/settings"
             className="rounded-lg border border-mor-line px-3 py-1.5 text-sm text-gray-600 hover:bg-mor-sand/60">⚙ 設定</Link>
           <button onClick={exportXlsx} disabled={!items.length}
-            className="rounded-lg border border-mor-line bg-white px-4 py-1.5 text-sm font-medium hover:bg-mor-sand/60 disabled:opacity-40">⬇ 下載 Excel</button>
+            className={`rounded-lg px-4 py-1.5 text-sm font-medium disabled:opacity-40 ${EXPORT_TONE}`}>⬇ 下載 Excel</button>
         </div>
       </div>
 
