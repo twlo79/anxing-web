@@ -44,6 +44,7 @@ type PayAccount = { code: string; name: string; method: string };
 type Property = { id: string; name: string; estate_id: string | null };
 
 import { PAY_LABEL, PAY_OPTS, needsPayout, payAccountsFor } from '@/lib/purchase-pay';
+import RangeInput from '@/components/RangeInput';
 
 const CURRENCIES = ['TWD', 'USD', 'JPY', 'CNY', 'EUR'];
 
@@ -476,10 +477,9 @@ export default function ExpensesPage() {
       {/* 工具列 */}
       <FilterToggle />
       <div className="filter-bar collapsible-filters flex flex-wrap items-end gap-2 mb-3 text-sm">
-        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">支出日(起)</span>
-          <input type="date" value={fromD} onChange={(e) => setFromD(e.target.value)} className="rounded-lg border border-mor-line px-2 py-1.5" /></label>
-        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">支出日(迄)</span>
-          <input type="date" value={toD} onChange={(e) => setToD(e.target.value)} className="rounded-lg border border-mor-line px-2 py-1.5" /></label>
+        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">支出日</span>
+          <RangeInput from={fromD} to={toD}
+            onChange={(f, t) => { setFromD(f); setToD(t); }} /></label>
         <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">會計科目</span>
           <select value={codeF} onChange={(e) => setCodeF(e.target.value)} className="rounded-lg border border-mor-line px-2 py-1.5">
             <option value="">全部科目</option>

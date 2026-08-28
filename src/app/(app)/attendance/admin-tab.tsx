@@ -9,6 +9,7 @@ import {
   BTN, BTN2, CARD, INPUT, noRowsMsg,
   type Balance, type Estate, type LeaveType, type TabProps,
 } from './types';
+import RangeInput from '@/components/RangeInput';
 
 /**
  * 管理（主管／總經理）：打卡位置 · 個人上下班時間 · 假別額度 · 出勤表匯出。
@@ -563,16 +564,11 @@ function ReportSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
   return (
     <section className="space-y-3">
       <div className={`${CARD} p-4 space-y-3`}>
-        <div className="grid md:grid-cols-2 gap-3">
-          <label className="text-sm">
-            <span className="text-xs text-gray-500 block">起日</span>
-            <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className={INPUT} />
-          </label>
-          <label className="text-sm">
-            <span className="text-xs text-gray-500 block">迄日</span>
-            <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className={INPUT} />
-          </label>
-        </div>
+        <label className="text-sm block">
+          <span className="text-xs text-gray-500 block mb-1">期間</span>
+          <RangeInput inputClass="flex-1" from={from} to={to}
+            onChange={(f, t) => { setFrom(f); setTo(t); }} />
+        </label>
 
         <div>
           <div className="flex items-center gap-2 mb-1.5">

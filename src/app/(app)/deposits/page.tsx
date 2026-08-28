@@ -36,6 +36,7 @@ import { depPayStatus, remainingDep, DEP_STATUS_LABEL, DEP_STATUS_CLASS } from '
 import { shareDeposit } from '@/lib/share';
 import { softDelete } from '@/lib/trash';
 import TrashLink from '@/components/TrashLink';
+import RangeInput from '@/components/RangeInput';
 
 /**
  * 暫收管理（原「押金管理」，2026-08-24 改名，migration_174）。
@@ -1474,11 +1475,8 @@ export default function DepositsPage() {
       <FilterToggle />
       <div className="filter-bar collapsible-filters rounded-xl glass p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
         <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">日期區間(收/退款日)</span>
-          <div className="flex items-center gap-1">
-            <input type="date" value={fromD} onChange={(e) => setFromD(e.target.value)} className={inp} />
-            <span className="text-gray-400">~</span>
-            <input type="date" value={toD} onChange={(e) => setToD(e.target.value)} className={inp} />
-          </div></label>
+          <RangeInput from={fromD} to={toD}
+            onChange={(f, t) => { setFromD(f); setToD(t); }} /></label>
         <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">物業</span>
           <select value={estateF} onChange={(e) => setEstateF(e.target.value)} className={`${inp} min-w-24`}>
             <option value="">全部</option>

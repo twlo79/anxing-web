@@ -20,6 +20,7 @@ import {
   type PeriodMode, yearRange, monthRange, prevPeriod, lastYearPeriod,
   yoySameAsPrev, growth, partialMonth, sameMonthRange,
 } from '@/lib/compare';
+import RangeInput from '@/components/RangeInput';
 
 /**
  * 財務儀表板。
@@ -698,11 +699,8 @@ export default function DashboardPage() {
             )}
             {mode === 'custom' && (
               <>
-                <input type="date" value={fromD} onChange={(e) => setFromD(e.target.value)}
-                  className="rounded-lg border border-gray-300 px-2 py-1.5 ml-1" />
-                <span className="text-gray-400">~</span>
-                <input type="date" value={toD} onChange={(e) => setToD(e.target.value)}
-                  className="rounded-lg border border-gray-300 px-2 py-1.5" />
+                <RangeInput className="ml-1" from={fromD} to={toD}
+                  onChange={(f, t) => { setFromD(f); setToD(t); }} />
                 <button onClick={() => { setFromD(monthsAgo(11)); setToD(todayStr()); }}
                   className="rounded-lg border border-gray-300 px-2 py-1.5 text-xs hover:bg-mor-sand/60">近 12 月</button>
               </>

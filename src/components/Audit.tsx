@@ -1,4 +1,5 @@
 'use client';
+import { useState } from 'react';
 import { ISSUE_CLS, type AuditIssue, type AuditResult } from '@/lib/audit-orders';
 
 /**
@@ -18,29 +19,107 @@ import { ISSUE_CLS, type AuditIssue, type AuditResult } from '@/lib/audit-orders
  * 這是全站唯一一個「進入檢查模式」的入口，跟旁邊的下載、新增不同類 ——
  * 那些是日常操作，這個是「我現在要挑毛病」。顏色是那個區別最快的訊號。
  */
+/**
+ * 它實際上檢查哪七項。
+ *
+ * ★★ 這份清單是**從 `audit-orders.ts` 真的會 `add()` 的那幾種抄下來的**，
+ *    不是憑印象寫的宣傳詞。少寫一項比寫錯一項好 ——
+ *    寫了而實際上沒在檢查的，會讓人以為那件事有人在看。
+ *
+ * ★ 相似姓名不在裡面：它是上方摘要，不逐筆標記（見 audit-orders.ts 的 NameGroup）。
+ */
+const AUDIT_ITEMS: { k: AuditIssue; t: string }[] = [
+  { k: '空間重疊', t: '整棟被訂走的期間，樓層還有訂單 —— 客人到現場才會發現' },
+  { k: '重複訂單', t: '同一間房、同一段日期進了兩筆 —— 營收會多算' },
+  { k: '房源過載', t: '同一天同一間房超過一組客人' },
+  { k: '日期不合理', t: '迄日早於起日、0 晚、年份可能打錯' },
+  { k: '資料缺失', t: '沒填房客或金額，或房源不在現有清單裡' },
+  { k: '房價過低', t: '單價明顯低於同房型 —— 可能是漏打一位數' },
+  { k: '房源名稱', t: '只差空白或大小寫，其實對得到' },
+];
+
 export function AuditButton({ on, onToggle, busy }: {
   on: boolean; onToggle: () => void; busy?: boolean;
 }) {
+  /*
+   * ★★ 說明做成一顆 ⓘ，不是 `title` 提示。
+   *
+   *   原本只有 `title="檢查資料有沒有重複、重疊、缺漏、房價異常"`：
+   *     ① **手機沒有 hover** —— 在手機上那句話等於不存在
+   *     ② 那句話只說了「會檢查」，沒說**檢查什麼**，
+   *        所以看到一排紅標籤的人還是不知道每一個是什麼意思
+   *
+   *   而這顆開關做的事不便宜：它會重掃整批資料、改變整個列表的意義。
+   *   按下去之前應該看得到它要做什麼。
+   */
+  const [info, setInfo] = useState(false);
+
   return (
-    <button type="button" onClick={onToggle} disabled={busy}
-      role="switch" aria-checked={on}
-      title="檢查資料有沒有重複、重疊、缺漏、房價異常"
-      className={`flex items-center gap-2 rounded-lg px-3 py-1.5 font-medium whitespace-nowrap
-                  transition-colors disabled:opacity-50 ${
-        on ? 'bg-red-50 text-red-700 border border-red-200'
-           : 'border border-mor-line bg-white text-gray-600 hover:bg-mor-sand/60'
-      }`}>
-      <span>👀 防呆</span>
-      {/* 滑軌 ＋ 圓鈕。開了是紅的,關了是灰的 —— 顏色與位置兩個訊號,
-          只靠其中一個的話,色弱或縮圖時會分不出狀態 */}
-      <span aria-hidden
-        className={`relative w-9 h-5 rounded-full shrink-0 transition-colors ${
-          busy ? 'bg-gray-300' : on ? 'bg-red-500' : 'bg-gray-300'}`}>
-        <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
-          on ? 'left-[1.125rem]' : 'left-0.5'}`} />
-      </span>
-      {busy && <span className="text-xs text-gray-500">檢查中…</span>}
-    </button>
+    <span className="relative inline-flex items-center gap-1">
+      <button type="button" onClick={onToggle} disabled={busy}
+        role="switch" aria-checked={on}
+        className={`flex items-center gap-2 rounded-lg px-3 py-1.5 font-medium whitespace-nowrap
+                    transition-colors disabled:opacity-50 ${
+          on ? 'bg-red-50 text-red-700 border border-red-200'
+             : 'border border-mor-line bg-white text-gray-600 hover:bg-mor-sand/60'
+        }`}>
+        <span>👀 防呆</span>
+        {/* 滑軌 ＋ 圓鈕。開了是紅的,關了是灰的 —— 顏色與位置兩個訊號,
+            只靠其中一個的話,色弱或縮圖時會分不出狀態 */}
+        <span aria-hidden
+          className={`relative w-9 h-5 rounded-full shrink-0 transition-colors ${
+            busy ? 'bg-gray-300' : on ? 'bg-red-500' : 'bg-gray-300'}`}>
+          <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
+            on ? 'left-[1.125rem]' : 'left-0.5'}`} />
+        </span>
+        {busy && <span className="text-xs text-gray-500">檢查中…</span>}
+      </button>
+
+      {/*
+        ★ ⓘ 是**獨立的按鈕**，不是包在開關裡。
+          包在裡面的話，想看說明就得先把防呆打開 ——
+          而那正是他還不確定要不要打開的時候。
+      */}
+      <button type="button" onClick={() => setInfo((v) => !v)}
+        aria-expanded={info} aria-label="防呆會檢查什麼"
+        className={`w-6 h-6 shrink-0 rounded-full border text-xs leading-none transition-colors ${
+          info ? 'border-mor-slate bg-mor-bluelight text-mor-slate'
+               : 'border-mor-line bg-white text-gray-400 hover:text-mor-slate'}`}>
+        ⓘ
+      </button>
+
+      {info && (
+        <>
+          {/* 點外面關掉。★ 不用 onBlur —— 點面板裡的文字也會觸發 blur */}
+          <span className="fixed inset-0 z-40" onClick={() => setInfo(false)} />
+          <span className="absolute top-full right-0 z-50 mt-1 block w-[min(20rem,calc(100vw-2rem))]
+                           rounded-xl border border-mor-line bg-white p-3 shadow-lg text-left">
+            <span className="block text-xs text-gray-500 mb-2">
+              打開之後會重掃這一批資料，替有問題的訂單加上標籤，
+              並且可以只看有問題的那些。<b>不會改到任何資料。</b>
+            </span>
+            <span className="block space-y-1.5">
+              {AUDIT_ITEMS.map((x) => (
+                <span key={x.k} className="flex gap-2 items-start">
+                  <span className={`inline-block shrink-0 rounded border px-1.5 py-0.5
+                                    text-[11px] font-medium whitespace-nowrap ${ISSUE_CLS[x.k]}`}>
+                    {x.k}
+                  </span>
+                  <span className="text-[11px] text-gray-500 leading-relaxed">{x.t}</span>
+                </span>
+              ))}
+            </span>
+            {/*
+              ★ 顏色的意思也要說 —— 畫面上有紅、橘、琥珀、藍四種標籤,
+                看的人會自己猜，而猜錯的方向通常是「藍色的不用理」。
+            */}
+            <span className="block mt-2 pt-2 border-t border-mor-line text-[11px] text-gray-400">
+              紅＝客人會撞在一起或錢算錯，琥珀＝資料要補，藍＝提示，改不改都行。
+            </span>
+          </span>
+        </>
+      )}
+    </span>
   );
 }
 

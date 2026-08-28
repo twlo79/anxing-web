@@ -40,6 +40,7 @@ import { feeFilterOptions, feeFilterPredicate, feeSourceConflict, ONEOFF_SOURCES
 import TrashLink from '@/components/TrashLink';
 import { checkDates, checkPrice, checkRequired, lookbackFrom, type PastOrder } from '@/lib/order-check';
 import MoneyInput from '@/components/MoneyInput';
+import RangeInput from '@/components/RangeInput';
 
 type Order = {
   id: string; order_key: string; source: string; estate_id: string | null; property_id?: string | null; property_raw: string | null;
@@ -1042,11 +1043,8 @@ export default function ShortTermPage() {
         </div>
         <div>
           <label className="block text-xs text-gray-500 mb-1">訂單日期(期間內有交集)</label>
-          <div className="flex items-center gap-1">
-            <input type="date" value={fromD} onChange={(e) => setFromD(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5" />
-            <span className="text-gray-400">~</span>
-            <input type="date" value={toD} onChange={(e) => setToD(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5" />
-          </div>
+          <RangeInput from={fromD} to={toD}
+            onChange={(f, t) => { setFromD(f); setToD(t); }} />
         </div>
         <div>
           <label className="block text-xs text-gray-500 mb-1">關鍵字(房客/房源)</label>

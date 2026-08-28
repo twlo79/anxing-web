@@ -14,6 +14,7 @@ import {
 } from '@/lib/revenue-report';
 import { roomCell, periodCell, amountCell, nightsText } from '@/lib/revenue-row';
 import RowDrawer from './row-drawer';
+import RangeInput from '@/components/RangeInput';
 
 type Row = {
   /** 這一列的 id（認列列，不是訂單）—— 一筆訂單跨三個月就有三列 */
@@ -670,11 +671,8 @@ export default function RevenuesPage() {
         </div>
         <div>
           <label className="block text-xs text-gray-500 mb-1">期間(認列月份)</label>
-          <div className="flex items-center gap-1">
-            <input type="month" value={fromM} onChange={(e) => setFromM(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5" />
-            <span className="text-gray-400">~</span>
-            <input type="month" value={toM} onChange={(e) => setToM(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5" />
-          </div>
+          <RangeInput kind="month" from={fromM} to={toM}
+            onChange={(f, t) => { setFromM(f); setToM(t); }} />
         </div>
         <div>
           <label className="block text-xs text-gray-500 mb-1">關鍵字(客戶/房源)</label>

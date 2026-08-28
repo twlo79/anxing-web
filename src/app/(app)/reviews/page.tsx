@@ -13,6 +13,7 @@ import { useProfile } from '@/lib/profile';
 import {
   canHideReview, isHidden, hideError, hideReasonText, hideImpactText, HIDE_REASONS,
 } from '@/lib/review-hide';
+import RangeInput from '@/components/RangeInput';
 
 type Estate = { id: string; name: string; manager: string | null; sort: number };
 type Property = { id: string; name: string; active: boolean; estate_id: string | null };
@@ -468,11 +469,8 @@ export default function ReviewsPage() {
           <h1>評價</h1>
           <div className="flex items-center gap-2 text-sm">
             <span className="text-xs text-gray-500">統計區間(退房日)</span>
-            <input type="date" value={statsFrom} onChange={(e) => setStatsFrom(e.target.value)}
-              className="rounded-lg border border-gray-300 px-2 py-1" />
-            <span className="text-gray-400">~</span>
-            <input type="date" value={statsTo} onChange={(e) => setStatsTo(e.target.value)}
-              className="rounded-lg border border-gray-300 px-2 py-1" />
+            <RangeInput inputClass="py-1" from={statsFrom} to={statsTo}
+              onChange={(f, t) => { setStatsFrom(f); setStatsTo(t); }} />
             {(statsFrom || statsTo) && (
               <button onClick={() => { setStatsFrom(''); setStatsTo(''); }} className="text-gray-400 underline">清除</button>
             )}

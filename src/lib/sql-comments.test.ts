@@ -63,6 +63,7 @@ describe('真實的 migration 檔', () => {
    */
   const dirs = [
     'supabase/migrations',
+    'archive/migrations-146-170',
     'archive/migrations-100-145',
     'archive/migrations-30-99',
     'archive/migrations-pre-30',
@@ -139,7 +140,7 @@ insert into t select 1;`;
  *
  *   一個會誤報的守門員最後會被加白名單然後被忽略 ——
  *   那正是「標記大量出現在正常資料上，真正該看的就被淹掉」。
- *   所以寧可只守活躍的那 26 份。
+ *   所以寧可只守活躍的那幾份。
  */
 describe('活躍的 migration', () => {
   test('★★ CTE 清單不能有多餘的逗號', () => {
@@ -152,7 +153,19 @@ describe('活躍的 migration', () => {
       const lines = danglingCteComma(readFileSync(join(dir, f), 'utf8'));
       if (lines.length) bad.push(`${f}:${lines.join('、')}`);
     }
-    assert.ok(scanned > 10, `只掃到 ${scanned} 份 —— 目錄是不是搬了？`);
+    /*
+     * ★★ 這個下限是在問「這個守門員還有沒有在守東西」，不是在數 migration。
+     *
+     *   原本寫 `> 10` —— 那其實是在假設「活躍目錄永遠很多支」，
+     *   而 2026-08-27 封存 146–170 之後只剩 8 支，這一條就紅了。
+     *   **它抓到的是封存動作本身，不是任何一支 SQL 有問題。**
+     *
+     *   下限訂在 1:目錄空了（整批被搬走而沒有人補新的）才報。
+     *   要「檔案沒有憑空消失」那種保證的話，
+     *   上面那支「每一份的區塊註解都要平衡」連 archive 一起掃，
+     *   總數少一大截會在那裡被看見。
+     */
+    assert.ok(scanned >= 1, '活躍目錄一支都沒有 —— 是不是整批搬走了？');
     assert.deepEqual(bad, [],
       'CTE 後面多了逗號但下一個是 DML，貼進 SQL Editor 會 syntax error。\n'
       + '（這是啟發式檢查，create table 的欄位定義可能誤報 —— '

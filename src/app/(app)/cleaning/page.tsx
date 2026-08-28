@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx-js-style';
 import { createClient } from '@/lib/supabase';
+import RangeInput from '@/components/RangeInput';
 
 type Estate = { id: string; name: string; sort: number };
 type StaffStat = { staff_name: string; staff_type: string; active: boolean; total: number; rated: number; avg_rating: number | null; low_count: number };
@@ -171,9 +172,10 @@ export default function CleaningPage() {
           <h1 className="hidden md:block">清潔記錄</h1>
           <div className="flex items-center gap-2 text-sm w-full md:w-auto">
             <span className="text-xs text-gray-500 shrink-0">統計區間</span>
-            <input type="date" value={statsFrom} onChange={(e) => setStatsFrom(e.target.value)} className="flex-1 md:flex-none h-12 md:h-auto min-w-0 rounded-lg border border-gray-300 px-2 md:py-1" />
-            <span className="text-gray-400">~</span>
-            <input type="date" value={statsTo} onChange={(e) => setStatsTo(e.target.value)} className="flex-1 md:flex-none h-12 md:h-auto min-w-0 rounded-lg border border-gray-300 px-2 md:py-1" />
+            <RangeInput className="flex-1 md:flex-none min-w-0"
+              inputClass="flex-1 md:flex-none h-12 md:h-auto md:py-1"
+              from={statsFrom} to={statsTo}
+              onChange={(f, t) => { setStatsFrom(f); setStatsTo(t); }} />
             {(statsFrom || statsTo) && <button onClick={() => { setStatsFrom(''); setStatsTo(''); }} className="text-gray-400 underline shrink-0">清除</button>}
           </div>
         </div>
@@ -223,12 +225,10 @@ export default function CleaningPage() {
                 <option value="roomservice">房務</option>
               </select></label>
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">日期(起)</span>
-              <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="h-12 rounded-lg border border-gray-300 px-2" /></label>
-            <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">日期(迄)</span>
-              <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="h-12 rounded-lg border border-gray-300 px-2" /></label>
-          </div>
+          {/* ★ 兩個獨立欄位併成一組區間 —— 起訖本來就是一件事 */}
+          <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">日期</span>
+            <RangeInput inputClass="h-12 flex-1" from={dateFrom} to={dateTo}
+              onChange={(f, t) => { setDateFrom(f); setDateTo(t); }} /></label>
           <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">關鍵字(備註/房號)</span>
             <div className="flex gap-1">
               <input value={kwInput} onChange={(e) => setKwInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') setKw(kwInput.trim()); }}
@@ -269,12 +269,9 @@ export default function CleaningPage() {
           </select>
         </div>
         <div>
-          <label className="block text-xs text-gray-500 mb-1">日期(起)</label>
-          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5" />
-        </div>
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">日期(迄)</label>
-          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5" />
+          <label className="block text-xs text-gray-500 mb-1">日期</label>
+          <RangeInput from={dateFrom} to={dateTo}
+            onChange={(f, t) => { setDateFrom(f); setDateTo(t); }} />
         </div>
         <div>
           <label className="block text-xs text-gray-500 mb-1">關鍵字(備註/房號)</label>
