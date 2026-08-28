@@ -152,7 +152,15 @@ test('★★ 主色卡 .surf-deep 的每一停，白字都要讀得到', () => {
    */
   assert.ok(!bodyOf('surf-deep').includes('repeating-linear-gradient'), '.surf-deep 有橫線了');
   const stops = stopsOf('surf-deep');
-  assert.ok(stops.length >= 5, '.surf-deep 的色碼太少');
+  /*
+   * ★ 下限只是「有撈到東西」,不是在數色停。
+   *
+   *   第一版寫 `>= 5`,而那是照當時的漸層形狀訂的 ——
+   *   後來簡化成三停（使用者:「一條沉積就好」）就紅了,
+   *   **而紅的原因跟可讀性無關**。跟 sql-comments 那個 `scanned > 10` 同一種錯:
+   *   把「現在剛好長這樣」寫成了規則。
+   */
+  assert.ok(stops.length >= 2, '.surf-deep 撈不到色碼 —— 選擇器或縮排變了?');
   for (const c of stops) {
     const r = contrast('#FFFFFF', c);
     assert.ok(r >= 4.5, `白字對 ${c} 只有 ${r.toFixed(2)}:1（小字要 4.5）`);

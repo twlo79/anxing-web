@@ -134,8 +134,24 @@ export default function ReviewsPage() {
   const [kw, setKw] = useState('');
   const [kwInput, setKwInput] = useState('');
   // Dashboard 獨立篩選
-  const [statsFrom, setStatsFrom] = useState('');
-  const [statsTo, setStatsTo] = useState('');
+  /*
+   * ★★ 統計區間與清單篩選**合而為一**（2026-08-28 使用者:「這個合併就好」）。
+   *
+   *   原本是兩組獨立的退房日期:上面一組餵統計（review_stats / manager_stats），
+   *   下面一組餵清單。而它們問的是同一件事 —— 使用者只會想到「我要看這段期間」。
+   *
+   * ★ 兩組分開的實際症狀:上面設了 7 月、下面沒設,
+   *   於是**平均星等是 7 月的、底下列表是全部的** ——
+   *   兩個數字擺在同一頁而算的不是同一批資料,
+   *   而畫面上沒有任何地方說得出這件事。
+   *
+   *   （原本有一段補丁:點物業卡片時把統計區間複製到篩選。
+   *   那個補丁的存在本身就是在說這兩組應該是一組。）
+   *
+   * ★ 控制項留在**最上面**,不放進篩選列 ——
+   *   篩選列在手機會收起來,而它影響的統計卡就在上方看得見。
+   *   看得見的數字被看不見的控制項決定,是最難查的那種問題。
+   */
   const [stats, setStats] = useState<Stat[]>([]);
   const [mgrStats, setMgrStats] = useState<MgrStat[]>([]);
   const [mgrOpen, setMgrOpen] = useState<MgrStat | null>(null);
@@ -225,11 +241,11 @@ export default function ReviewsPage() {
 
   // Dashboard 統計
   useEffect(() => {
-    supabase.rpc('review_stats', { p_from: statsFrom || null, p_to: statsTo || null })
+    supabase.rpc('review_stats', { p_from: dateFrom || null, p_to: dateTo || null })
       .then(({ data }) => setStats((data as Stat[]) ?? []));
-    supabase.rpc('manager_stats', { p_from: statsFrom || null, p_to: statsTo || null })
+    supabase.rpc('manager_stats', { p_from: dateFrom || null, p_to: dateTo || null })
       .then(({ data }) => setMgrStats((data as MgrStat[]) ?? []));
-  }, [supabase, statsFrom, statsTo]);
+  }, [supabase, dateFrom, dateTo]);
 
   const overall = useMemo(() => {
     const cnt = stats.reduce((s, x) => s + Number(x.review_count), 0);
@@ -377,8 +393,8 @@ export default function ReviewsPage() {
           .select('property_id, guest_name, overall_rating, comment, comment_original, comment_language, checkout_date')
           .is('hidden_at', null)
           .order('checkout_date', { ascending: false, nullsFirst: false });
-        if (statsFrom) q = q.gte('checkout_date', statsFrom);
-        if (statsTo) q = q.lte('checkout_date', statsTo);
+        if (dateFrom) q = q.gte('checkout_date', dateFrom);
+        if (dateTo) q = q.lte('checkout_date', dateTo);
         return q.range(f, t) as any;
       });
       if (error) { alert('讀取評價明細失敗：' + error); return; }
@@ -409,7 +425,7 @@ export default function ReviewsPage() {
       const used = new Set<string>();
 
       // ── 總表 ──────────────────────────────────
-      const sumRows = summarySheet(sorted, statsFrom, statsTo);
+      const sumRows = summarySheet(sorted, dateFrom, dateTo);
       const ws0 = XLSX.utils.aoa_to_sheet(sumRows);
       ws0['!cols'] = [{ wch: 10 }, { wch: 10 },
         ...Array.from({ length: 10 }, () => ({ wch: 9 })), { wch: 11 }];
@@ -436,7 +452,7 @@ export default function ReviewsPage() {
 
       // ── 每位管家一頁 ──────────────────────────
       for (const m of sorted) {
-        const rows = detailSheet(m.manager, byMgr.get(m.manager) ?? [], statsFrom, statsTo);
+        const rows = detailSheet(m.manager, byMgr.get(m.manager) ?? [], dateFrom, dateTo);
         const ws = XLSX.utils.aoa_to_sheet(rows);
         // 留言那欄放寬 —— 不然一則長評會把整列撐到看不完
         ws['!cols'] = [{ wch: 16 }, { wch: 10 }, { wch: 12 }, { wch: 7 }, { wch: 80 }];
@@ -447,15 +463,14 @@ export default function ReviewsPage() {
         XLSX.utils.book_append_sheet(wb, ws, safeSheetName(m.manager, used));
       }
 
-      XLSX.writeFile(wb, xlsxFilename(statsFrom, statsTo));
+      XLSX.writeFile(wb, xlsxFilename(dateFrom, dateTo));
     } finally { setExportingMgr(false); }
   }
 
   function drillTo(estate: string) {
     setEstateId(estate);
     setPropertyId('');
-    if (statsFrom) setDateFrom(statsFrom);
-    if (statsTo) setDateTo(statsTo);
+    /* ★ 原本這裡把統計區間複製到篩選 —— 現在是同一組,不用複製了 */
     setTimeout(() => document.getElementById('review-filters')?.scrollIntoView({ behavior: 'smooth' }), 50);
   }
 
@@ -468,11 +483,11 @@ export default function ReviewsPage() {
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
           <h1>評價</h1>
           <div className="flex items-center gap-2 text-sm">
-            <span className="text-xs text-gray-500">統計區間(退房日)</span>
-            <RangeInput inputClass="py-1" from={statsFrom} to={statsTo}
-              onChange={(f, t) => { setStatsFrom(f); setStatsTo(t); }} />
-            {(statsFrom || statsTo) && (
-              <button onClick={() => { setStatsFrom(''); setStatsTo(''); }} className="text-gray-400 underline">清除</button>
+            <span className="text-xs text-gray-500">退房日期</span>
+            <RangeInput inputClass="py-1" from={dateFrom} to={dateTo}
+              onChange={(f, t) => { setDateFrom(f); setDateTo(t); }} />
+            {(dateFrom || dateTo) && (
+              <button onClick={() => { setDateFrom(''); setDateTo(''); }} className="text-gray-400 underline">清除</button>
             )}
           </div>
         </div>
@@ -592,16 +607,7 @@ export default function ReviewsPage() {
             <option value="low">3 星以下(需關注)</option>
           </select>
         </div>
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">退房日期(起)</label>
-          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
-            className="rounded-lg border border-gray-300 px-2 py-1.5" />
-        </div>
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">退房日期(迄)</label>
-          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
-            className="rounded-lg border border-gray-300 px-2 py-1.5" />
-        </div>
+        {/* ★ 退房日期搬到最上面了 —— 它同時決定統計與清單,不再是「篩選之一」 */}
         <div>
           <label className="block text-xs text-gray-500 mb-1">關鍵字(旅客/留言/房源)</label>
           <div className="flex gap-1">
@@ -793,14 +799,14 @@ export default function ReviewsPage() {
 
       {listModal && (
         <ListModal cfg={listModal} onClose={() => setListModal(null)}
-          statsFrom={statsFrom} statsTo={statsTo}
+          dateFrom={dateFrom} dateTo={dateTo}
           propById={propById} estateById={estateById}
           onSelectReview={(r) => setSelected(r)} />
       )}
       {mgrOpen && (
         <MgrModal m={mgrOpen} onClose={() => setMgrOpen(null)}
           estates={estates} properties={properties}
-          statsFrom={statsFrom} statsTo={statsTo}
+          dateFrom={dateFrom} dateTo={dateTo}
           propById={propById} estateById={estateById}
           onSelectReview={(r) => setSelected(r)} />
       )}
@@ -1023,10 +1029,10 @@ function Drawer({ review: r, onClose, property, estate, manager, canHide, onHide
 }
 
 
-function MgrModal({ m, onClose, estates, properties, statsFrom, statsTo, propById, estateById, onSelectReview }: {
+function MgrModal({ m, onClose, estates, properties, dateFrom, dateTo, propById, estateById, onSelectReview }: {
   m: MgrStat; onClose: () => void;
   estates: Estate[]; properties: Property[];
-  statsFrom: string; statsTo: string;
+  dateFrom: string; dateTo: string;
   propById: Record<string, Property>; estateById: Record<string, Estate>;
   onSelectReview: (r: Review) => void;
 }) {
@@ -1051,11 +1057,11 @@ function MgrModal({ m, onClose, estates, properties, statsFrom, statsTo, propByI
         .in('property_id', propIds.length ? propIds : ['00000000-0000-0000-0000-000000000000'])
         .is('hidden_at', null)   // 統計用,要跟 RPC 一致
         .order('checkout_date', { ascending: false, nullsFirst: false });
-      if (statsFrom) q = q.gte('checkout_date', statsFrom);
-      if (statsTo) q = q.lte('checkout_date', statsTo);
+      if (dateFrom) q = q.gte('checkout_date', dateFrom);
+      if (dateTo) q = q.lte('checkout_date', dateTo);
       return q.range(f, t);
     }).then(({ rows }) => { setList(rows); setLoading(false); });
-  }, [supabase, m, estates, properties, statsFrom, statsTo]);
+  }, [supabase, m, estates, properties, dateFrom, dateTo]);
 
   const total = Number(m.total);
   const dist: [string, number, string][] = [
@@ -1076,7 +1082,7 @@ function MgrModal({ m, onClose, estates, properties, statsFrom, statsTo, propByI
             <div className="font-bold">管家「{m.manager}」的評價</div>
             <div className="text-xs text-gray-500 mt-0.5">
               平均 {Number(m.avg_rating).toFixed(2)} ★・{total.toLocaleString()} 筆
-              {(statsFrom || statsTo) && `・${statsFrom || '…'} ~ ${statsTo || '…'}`}
+              {(dateFrom || dateTo) && `・${dateFrom || '…'} ~ ${dateTo || '…'}`}
             </div>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
@@ -1125,9 +1131,9 @@ function MgrModal({ m, onClose, estates, properties, statsFrom, statsTo, propByI
 }
 
 
-function ListModal({ cfg, onClose, statsFrom, statsTo, propById, estateById, onSelectReview }: {
+function ListModal({ cfg, onClose, dateFrom, dateTo, propById, estateById, onSelectReview }: {
   cfg: { title: string; propIds: string[] | null; rating: number | null };
-  onClose: () => void; statsFrom: string; statsTo: string;
+  onClose: () => void; dateFrom: string; dateTo: string;
   propById: Record<string, Property>; estateById: Record<string, Estate>;
   onSelectReview: (r: Review) => void;
 }) {
@@ -1145,11 +1151,11 @@ function ListModal({ cfg, onClose, statsFrom, statsTo, propById, estateById, onS
       if (cfg.propIds) q = q.in('property_id', cfg.propIds.length ? cfg.propIds : ['00000000-0000-0000-0000-000000000000']);
       if (cfg.rating === 5) q = q.gte('overall_rating', 5);
       else if (cfg.rating != null) q = q.gte('overall_rating', cfg.rating).lt('overall_rating', cfg.rating + 1);
-      if (statsFrom) q = q.gte('checkout_date', statsFrom);
-      if (statsTo) q = q.lte('checkout_date', statsTo);
+      if (dateFrom) q = q.gte('checkout_date', dateFrom);
+      if (dateTo) q = q.lte('checkout_date', dateTo);
       return q.range(f, t);
     }).then(({ rows }) => { setList(rows); setLoading(false); });
-  }, [supabase, cfg, statsFrom, statsTo]);
+  }, [supabase, cfg, dateFrom, dateTo]);
 
   const dist = useMemo(() => {
     const t = [0, 0, 0, 0, 0]; // index 0=5星 … 4=1星
@@ -1174,7 +1180,7 @@ function ListModal({ cfg, onClose, statsFrom, statsTo, propById, estateById, onS
             <div className="font-bold">{cfg.title}</div>
             <div className="text-xs text-gray-500 mt-0.5">
               平均 {avg.toFixed(2)} ★・{total.toLocaleString()} 筆
-              {(statsFrom || statsTo) && `・${statsFrom || '…'} ~ ${statsTo || '…'}`}
+              {(dateFrom || dateTo) && `・${dateFrom || '…'} ~ ${dateTo || '…'}`}
             </div>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
