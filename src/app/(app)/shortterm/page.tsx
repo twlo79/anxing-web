@@ -1011,7 +1011,7 @@ export default function ShortTermPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-4 items-stretch">
-        <div className="rounded-xl bg-mor-slate text-white p-5 flex flex-col justify-center min-w-0">
+        <div className="rounded-xl surf-deep text-white p-5 flex flex-col justify-center min-w-0">
           <div className="text-xs opacity-75">當期營收(訂單總額)</div>
           <div className="stat-num-lg font-bold mt-1">${fmt(totRevenue)}</div>
           {/* 暫收款移到「押金管理」頁 —— 那裡才看得到契約押金,只算短租的數字是不完整的 */}

@@ -547,3 +547,108 @@ input:-webkit-autofill:focus {
   .tbl tbody tr { border-bottom: 1px solid rgba(224,221,213,.6); }
   .tbl tbody tr:last-child { border-bottom: 0; }
 }
+
+/* ══════════════════════════════════════════════════════════
+ * 卡片表面：霧面漸層
+ *
+ * （2026-08-28 使用者提供參考:「不斷藝術 — 沉積層」展覽主視覺。
+ *   低飽和、高亮度,顏色像霧一樣浮在畫面上。）
+ *
+ * ★★ 為什麼寫在 CSS 不用 Tailwind 的 `bg-gradient-to-br`
+ *
+ *   霧感需要**多層背景**:底層的線性漸層 ＋ 兩三顆散開的柔光,
+ *   而 Tailwind 的漸層工具只給得起一層。
+ *
+ * ★ 而且這樣順便避開 `day-phase.ts` 檔頭那個警告 ——
+ *   Tailwind 是靜態掃描原始碼的,`from-[${x}]` 組出來的類別不會被產生,
+ *   **畫面上變成沒有背景,而且編譯不報錯**。這個專案踩過一次。
+ *   類別名稱寫死在 CSS 裡就沒有這個風險。
+ *
+ * ★★ 沒有橫線（2026-08-28 使用者:「不要有橫線」）。
+ *
+ *   前一版有一層極細的水平沉積紋。拿掉的理由不只是不好看 ——
+ *   那些線在卡片上會跟**數字的基線**平行,眼睛會把它們當成表格的分隔線,
+ *   而卡片上並沒有一行一行的東西。剩下純粹的霧,背景就真的退到背景。
+ * ══════════════════════════════════════════════════════════ */
+@layer components {
+
+  /*
+   * 主色卡（營收總額、當期營收、認列支出、評價總覽…）。
+   *
+   * ★ 維持**深底白字** —— 淡底的話這張卡會跟旁邊的白色資料面板
+   *   份量相近,而它本來是整頁視線的第一個落點。
+   *   霧只加在細節裡,不改變階層。
+   */
+  .surf-deep {
+    background-color: #3F6893;   /* 後備:漸層不支援時仍是原本的主色調 */
+    background-image:
+      /* ★ 光暈:兩顆散開的白,讓大面積的色塊看起來像「一張卡」而不是一個 div。
+           用 radial-gradient 疊在背景裡,不用偽元素 ——
+           偽元素要動到 position 與 z-index,而這個類別會套在六個既有的版面上。 */
+      radial-gradient(42% 55% at 26% 14%,  rgba(255,255,255,.20) 0%, rgba(255,255,255,0) 72%),
+      radial-gradient(30% 42% at 82% 78%,  rgba(255,255,255,.11) 0%, rgba(255,255,255,0) 74%),
+      radial-gradient(78% 85% at 20% 4%,   #7FA6C4 0%, rgba(127,166,196,0) 58%),
+      radial-gradient(85% 90% at 92% 26%,  #4E7BA4 0%, rgba(78,123,164,0) 62%),
+      radial-gradient(95% 95% at 55% 110%, #22405F 0%, rgba(34,64,95,0) 72%),
+      linear-gradient(155deg, #5C87AF 0%, #3F6893 50%, #2C4E75 100%);
+  }
+  /* 可點的主色卡（評價頁）—— 整體壓深一點點,不換色 */
+  .surf-deep.is-clickable:hover { filter: brightness(0.93); }
+
+  /*
+   * 打卡卡片的四個時段。
+   *
+   * ★ 分界沿用 `day-phase.ts` 的整點切（05 / 11 / 17 / 20）——
+   *   不算日出日落,那會隨季節漂移,而「為什麼今天卡片顏色不一樣」
+   *   不是任何人想在打卡時思考的問題。
+   *
+   * ★ 白天亮、字用墨色;晚上暗、字轉白。打卡是站在戶外做的事,
+   *   讀不到時間這張卡就沒有存在的意義（理由寫在 day-phase.ts）。
+   */
+  .phase-morning {
+    background-color: #B4D0E2;
+    background-image:
+      radial-gradient(40% 52% at 24% 16%,  rgba(255,255,255,.30) 0%, rgba(255,255,255,0) 72%),
+      radial-gradient(28% 40% at 84% 80%,  rgba(255,255,255,.16) 0%, rgba(255,255,255,0) 74%),
+      radial-gradient(80% 70% at 18% 0%,   #F2F8FC 0%, rgba(242,248,252,0) 62%),
+      radial-gradient(85% 80% at 95% 30%,  #CBE0EE 0%, rgba(203,224,238,0) 60%),
+      radial-gradient(90% 90% at 50% 108%, #7BA3C3 0%, rgba(123,163,195,0) 70%),
+      linear-gradient(168deg, #E4EFF7 0%, #C2D9E8 45%, #93B8D2 100%);
+  }
+  .phase-afternoon {
+    background-color: #EFC894;
+    background-image:
+      radial-gradient(40% 52% at 24% 16%,  rgba(255,255,255,.30) 0%, rgba(255,255,255,0) 72%),
+      radial-gradient(28% 40% at 84% 80%,  rgba(255,255,255,.16) 0%, rgba(255,255,255,0) 74%),
+      radial-gradient(80% 70% at 16% 0%,   #FEF6EA 0%, rgba(254,246,234,0) 60%),
+      radial-gradient(85% 80% at 95% 32%,  #F7DFBE 0%, rgba(247,223,190,0) 60%),
+      radial-gradient(90% 90% at 50% 108%, #CF8942 0%, rgba(207,137,66,0) 70%),
+      linear-gradient(168deg, #FCF0DE 0%, #F2D3A2 45%, #DFA463 100%);
+  }
+  /*
+   * 午後過渡。★ 帶著一點**紫**。
+   *
+   *   橘直接跳到深藍會像換了一張卡。而傍晚與晚上要分得開:
+   *   一個是天還沒黑,一個是天黑了 —— 那點紫就是差別。
+   */
+  .phase-evening {
+    background-color: #C3AEBA;
+    background-image:
+      radial-gradient(40% 52% at 24% 16%,  rgba(255,255,255,.30) 0%, rgba(255,255,255,0) 72%),
+      radial-gradient(28% 40% at 84% 80%,  rgba(255,255,255,.16) 0%, rgba(255,255,255,0) 74%),
+      radial-gradient(80% 70% at 16% 0%,   #F4E2CE 0%, rgba(244,226,206,0) 60%),
+      radial-gradient(85% 80% at 95% 34%,  #D3BCC0 0%, rgba(211,188,192,0) 60%),
+      radial-gradient(92% 92% at 50% 108%, #7383AB 0%, rgba(115,131,171,0) 70%),
+      linear-gradient(168deg, #EFD8BE 0%, #C6B1BB 48%, #8390B4 100%);
+  }
+  .phase-night {
+    background-color: #2A4266;
+    background-image:
+      radial-gradient(42% 55% at 24% 14%,  rgba(255,255,255,.16) 0%, rgba(255,255,255,0) 72%),
+      radial-gradient(30% 42% at 84% 80%,  rgba(255,255,255,.09) 0%, rgba(255,255,255,0) 74%),
+      radial-gradient(80% 70% at 18% 0%,   #4E7099 0%, rgba(78,112,153,0) 60%),
+      radial-gradient(85% 80% at 95% 30%,  #35527A 0%, rgba(53,82,122,0) 62%),
+      radial-gradient(92% 92% at 50% 108%, #101B2E 0%, rgba(16,27,46,0) 72%),
+      linear-gradient(168deg, #43648F 0%, #2A4266 48%, #131F35 100%);
+  }
+}

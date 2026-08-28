@@ -180,7 +180,7 @@ export default function CleaningPage() {
           </div>
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-stretch">
-          <div className="rounded-xl min-w-0 bg-mor-slate text-white p-5 flex flex-col justify-center">
+          <div className="rounded-xl min-w-0 surf-deep text-white p-5 flex flex-col justify-center">
             <div className="text-xs opacity-75">總清潔次數</div>
             <div className="stat-num-lg font-bold mt-1">{totalCount.toLocaleString()}</div>
             <div className="text-xs opacity-75 mt-2">共 {visibleStats.length} 位・{(statsFrom || statsTo) ? `${statsFrom || minDate || '起始'} ~ ${statsTo || '今'}` : (minDate ? `${minDate} ~ 今` : '全部期間')}</div>

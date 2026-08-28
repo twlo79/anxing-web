@@ -616,7 +616,7 @@ export default function RevenuesPage() {
 
       {/* Dashboard */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-4 items-stretch">
-        <div className="rounded-xl bg-mor-slate text-white p-5 flex flex-col justify-center min-w-0">
+        <div className="rounded-xl surf-deep text-white p-5 flex flex-col justify-center min-w-0">
           <div className="text-xs opacity-75">當期營收總額</div>
           <div className="stat-num-lg font-bold mt-1">${fmt(total)}</div>
           <div className="text-xs opacity-75 mt-2">{fromM} ~ {toM}・{filtered.length} 筆認列</div>

@@ -404,7 +404,7 @@ export default function ExpensesPage() {
 
       {/* 統計 */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
-        <div className="rounded-xl min-w-0 bg-mor-slate text-white p-5">
+        <div className="rounded-xl min-w-0 surf-deep text-white p-5">
           <div className="flex items-baseline justify-between">
             <div className="text-sm opacity-80">認列支出</div>
             <div className="text-xs opacity-60">{rows.length.toLocaleString()} 筆</div>

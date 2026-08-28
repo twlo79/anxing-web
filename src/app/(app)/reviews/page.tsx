@@ -479,7 +479,7 @@ export default function ReviewsPage() {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-stretch">
           {/* 總覽 + 星等分布 */}
-          <div onClick={() => drillTo('')} title="點擊查看全部評價" className="rounded-xl bg-mor-slate text-white p-5 flex flex-col cursor-pointer hover:bg-mor-slatedark transition-colors">
+          <div onClick={() => drillTo('')} title="點擊查看全部評價" className="rounded-xl surf-deep is-clickable text-white p-5 flex flex-col cursor-pointer transition">
             <div className="flex items-center justify-between">
               {/* 「所有」現在是名副其實的 —— migration_130 之前它其實不含停用物業 */}
               <span className="text-xs opacity-75">所有平均評價</span>

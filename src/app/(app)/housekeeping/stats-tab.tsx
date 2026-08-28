@@ -433,7 +433,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
             </div>
           );
         })}
-        <div className="rounded-xl bg-mor-slate text-white p-4 min-w-0">
+        <div className="rounded-xl surf-deep text-white p-4 min-w-0">
           <div className="text-xs opacity-80">床單總計</div>
           <div className="stat-num font-bold mt-1">{totalLinen}</div>
           <div className="text-xs opacity-70 mt-0.5">床數 + 拿床單</div>

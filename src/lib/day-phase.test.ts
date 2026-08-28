@@ -1,6 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { dayPhase, workedText, taipeiHour } from './day-phase.ts';
+
+/*
+ * ★★ 2026-08-28：背景從 Tailwind 的漸層類別搬到 `globals.css`。
+ *
+ *   原本兩個測試是**從類別字串裡挖 `[#RRGGBB]`** 來驗對比度的。
+ *   搬走之後那些色碼不在 `.ts` 裡了 —— 而那兩個測試守的東西沒有消失:
+ *   淺色底配白字,整張卡的時間就看不見。
+ *
+ * ★ 所以改成**去讀真正的 CSS**，不是在 `.ts` 裡抄一份色票。
+ *   抄一份的話兩邊會各自演化,而測試會一直是綠的
+ *   —— 那正是 README 9.4 #12「自檢不能複製被檢查的邏輯」。
+ */
+const CSS = readFileSync('src/app/globals.css', 'utf8');
+
+/** 從 globals.css 撈某個 .phase-* 類別實際用到的所有色碼。 */
+function stopsOf(cls: string): string[] {
+  const i = CSS.indexOf(`.${cls} {`);
+  assert.notEqual(i, -1, `globals.css 裡找不到 .${cls} —— 卡片會沒有背景,而且編譯不報錯`);
+  const body = CSS.slice(i, CSS.indexOf('\n  }', i));
+  return [...body.matchAll(/#[0-9A-Fa-f]{6}/g)].map((m) => m[0]);
+}
 
 test('四個時段的分界', () => {
   assert.equal(dayPhase(5).key, 'morning');
@@ -24,18 +46,29 @@ test('超出範圍的數字要收斂,不要爆掉', () => {
   assert.equal(dayPhase(12.9).key, 'afternoon');
 });
 
-test('★ 漸層是寫死的完整類別字串', () => {
-  // 組出來的類別（from-[${x}]）Tailwind 靜態掃描不到,
-  // 畫面上會沒有背景而且編譯不報錯 —— 這個專案踩過一次。
-  // 寫死的 from-[#41689B] 掃描得到,所以中括號本身沒問題,
-  // 有問題的是中括號裡面出現變數
+test('★★ 每一段的背景類別在 globals.css 裡真的存在', () => {
+  // 打錯一個字的症狀是**卡片沒有背景**,而 tsc 與其他測試都不會有反應。
+  // 這一條問的是「那個類別真的在 CSS 裡嗎」,不是「字串長得對不對」。
   for (let h = 0; h < 24; h += 3) {
     const g = dayPhase(h).gradient;
-    assert.match(g, /^bg-gradient-to-br from-\S+ via-\S+ to-\S+$/);
-    assert.ok(!g.includes('${'), '不能有插值');
-    for (const m of g.matchAll(/\[([^\]]*)\]/g)) {
-      assert.match(m[1], /^#[0-9A-Fa-f]{6}$/, `${m[1]} 不是寫死的色碼`);
-    }
+    assert.match(g, /^phase-[a-z]+$/, `${g} 不是 phase-* 類別`);
+    assert.ok(stopsOf(g).length >= 3, `${g} 在 CSS 裡的色碼太少,可能不是完整的背景`);
+  }
+});
+
+test('★ 不要有橫線（2026-08-28 使用者指定）', () => {
+  /*
+   * 拿掉的理由不只是不好看:那些線跟卡片上數字的基線平行,
+   * 眼睛會把它們當成表格的分隔線,而卡片上並沒有一行一行的東西。
+   *
+   * `repeating-linear-gradient` 是做出那種紋路唯一的方法 ——
+   * 它出現就代表有人把橫線加回來了。
+   */
+  for (let h = 0; h < 24; h += 3) {
+    const cls = dayPhase(h).gradient;
+    const i = CSS.indexOf(`.${cls} {`);
+    const body = CSS.slice(i, CSS.indexOf('\n  }', i));
+    assert.ok(!body.includes('repeating-linear-gradient'), `${cls} 又有橫線了`);
   }
 });
 
@@ -61,23 +94,38 @@ test('★ 每一段的字色對它自己的底色都要讀得清楚', () => {
   for (const h of [7, 13, 18, 22]) {
     const p = dayPhase(h);
     const fg = p.ink.strong === 'text-white' ? '#FFFFFF' : MOR_INK;
-    for (const m of p.gradient.matchAll(/\[(#[0-9A-Fa-f]{6})\]/g)) {
-      const r = contrast(fg, m[1]);
-      assert.ok(r >= 3, `${p.key}:${fg} 對 ${m[1]} 只有 ${r.toFixed(1)}:1`);
+    for (const stop of stopsOf(p.gradient)) {
+      const r = contrast(fg, stop);
+      assert.ok(r >= 3, `${p.key}:${fg} 對 ${stop} 只有 ${r.toFixed(1)}:1`);
     }
   }
 });
 
-test('★ 淺色底不能配白字', () => {
-  // 「早上淡藍、中午黃色」—— 那兩塊底色上的白字對比約 1.2:1,
-  // 等於整張卡上的時間看不見。加深色底時很容易忘記這件事
+test('★★ 兩種字色裡要挑比較讀得到的那一個', () => {
+  /*
+   * 原本這一條是「看最深的那個色停,白字撐得住就用白字」。
+   *
+   * ★★ 2026-08-28 降飽和之後那個規則壞了。
+   *
+   *   新的午後過渡最深的一停是 #7383AB —— 白字對它有 3.4:1,規則說「用白字」。
+   *   但那一停只是卡片右下角的一小塊,**字實際上坐在左上角的 #F4E2CE 上**,
+   *   白字對它只有 1.3:1。規則看的是一個字根本不會出現的地方。
+   *
+   * ★ 改成問**最糟的情況**:兩種字色各自算出它在整張卡上最難讀的一處,
+   *   選中的那個必須比較好。這樣不管漸層長什麼樣、深色在哪一角都成立。
+   */
+  const MOR_INK = '#2E3840';
   for (const h of [7, 13, 18, 22]) {
     const p = dayPhase(h);
-    const stops = [...p.gradient.matchAll(/\[(#[0-9A-Fa-f]{6})\]/g)].map((m) => m[1]);
-    const darkest = stops.reduce((a, b) => (lum(a) < lum(b) ? a : b));
-    const whiteWorks = contrast('#FFFFFF', darkest) >= 3;
-    assert.equal(p.ink.strong === 'text-white', whiteWorks,
-      `${p.key} 的底色(${darkest})與字色搭錯了`);
+    const stops = stopsOf(p.gradient);
+    assert.ok(stops.length, `${p.key} 撈不到色碼`);
+    const worst = (fg: string) => Math.min(...stops.map((c) => contrast(fg, c)));
+    const w = worst('#FFFFFF');
+    const k = worst(MOR_INK);
+    const chose = p.ink.strong === 'text-white';
+    assert.equal(chose, w > k,
+      `${p.key} 挑錯字色:白字最糟 ${w.toFixed(1)}:1、墨色最糟 ${k.toFixed(1)}:1，`
+      + `而現在用的是${chose ? '白字' : '墨色字'}`);
   }
 });
 
