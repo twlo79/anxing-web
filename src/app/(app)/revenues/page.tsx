@@ -607,8 +607,11 @@ export default function RevenuesPage() {
         標題列本來只有「營收」兩個字和一大片空白,搬過來不佔任何垂直高度。
       */}
       {/* 標題列只放標題。動作鈕在篩選列下方自成一列 —— 跟訂單頁同一個排法 */}
-      <div className="mb-4">
-        <h1>營收</h1>
+      {/* ★ 防呆在標題列右上，跟訂單頁同一個位置（2026-08-27）—— 理由見訂單頁 */}
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <h1 className="mr-auto">營收</h1>
+        <AuditButton on={audit}
+          onToggle={() => { setAudit((v) => !v); setOnlyBad(false); }} />
       </div>
 
       {/* Dashboard */}
@@ -683,25 +686,6 @@ export default function RevenuesPage() {
           </div>
         </div>
         {(estateFilter || roomFilter || sourceFilter || kw) && <button onClick={() => { setEstateFilter(''); setRoomFilter(''); setSourceFilter(''); setKw(''); setKwInput(''); }} className="text-gray-500 underline pb-1.5">清除</button>}
-        {/*
-          【防呆只在手機收起來】（2026-08-16 使用者指定，修正前一版）
-
-          前一版把它收進「⋯」選單,兩邊都收。錯在**桌機根本不缺那塊寬度** ——
-          收起來只換到一顆按鈕的空間,卻讓每次要用都多一次點擊。
-
-          手機不一樣:篩選列在手機是直的一欄,六個下拉疊起來超過一個螢幕高,
-          所以本來就有「篩選」收合。防呆放進那一組,跟著一起收 ——
-          不是為了省寬度,是為了**跟其他篩選條件放在一起**。
-
-          實作:同一顆按鈕寫兩次,用 md 斷點決定哪一顆出現。
-          條件渲染（useMediaQuery）會在第一次繪製時閃一下,而這一列在畫面最上方。
-
-          這一顆是手機版,放在 .collapsible-filters 的欄位區 ——
-          globals.css 收起時會把非 .ml-auto 的子元素藏掉,它就跟著收了。
-        */}
-        {/* 防呆跟篩選條件同一組 —— 它問的是「這批資料有沒有問題」 */}
-        <AuditButton on={audit}
-          onToggle={() => { setAudit((v) => !v); setOnlyBad(false); }} />
       </div>
 
       {/* 動作列。自成一行,不跟篩選欄位搶寬度 */}

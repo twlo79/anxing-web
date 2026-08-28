@@ -56,12 +56,21 @@ export function AuditButton({ on, onToggle, busy }: {
 
   return (
     <span className="relative inline-flex items-center gap-1">
+      {/*
+        ★★ 沒有外框（2026-08-27 使用者:「防呆統一在右上角好了 不要有外框」）。
+
+          它現在跟標題同一列,而**標題列不該有按鈕的框**:
+          那一列只有「這是哪一頁」跟這一顆,加了框就變成兩個東西在搶注意力。
+
+        ★ 拿掉框之後,「開了沒」全靠**滑軌的顏色與位置** ——
+          所以那顆滑軌不能再簡化,它現在是唯一的狀態訊號。
+          開啟時文字也轉紅,兩個訊號一起走。
+      */}
       <button type="button" onClick={onToggle} disabled={busy}
         role="switch" aria-checked={on}
-        className={`flex items-center gap-2 rounded-lg px-3 py-1.5 font-medium whitespace-nowrap
+        className={`flex items-center gap-2 rounded-lg px-2 py-1.5 font-medium whitespace-nowrap
                     transition-colors disabled:opacity-50 ${
-          on ? 'bg-red-50 text-red-700 border border-red-200'
-             : 'border border-mor-line bg-white text-gray-600 hover:bg-mor-sand/60'
+          on ? 'text-red-700 hover:bg-red-50' : 'text-gray-500 hover:bg-mor-sand/60'
         }`}>
         <span>👀 防呆</span>
         {/* 滑軌 ＋ 圓鈕。開了是紅的,關了是灰的 —— 顏色與位置兩個訊號,
@@ -82,9 +91,9 @@ export function AuditButton({ on, onToggle, busy }: {
       */}
       <button type="button" onClick={() => setInfo((v) => !v)}
         aria-expanded={info} aria-label="防呆會檢查什麼"
-        className={`w-6 h-6 shrink-0 rounded-full border text-xs leading-none transition-colors ${
-          info ? 'border-mor-slate bg-mor-bluelight text-mor-slate'
-               : 'border-mor-line bg-white text-gray-400 hover:text-mor-slate'}`}>
+        /* ★ 也拿掉外框，跟旁邊那顆一致。保留 w-6 h-6 —— 手指點得到 */
+        className={`w-6 h-6 shrink-0 rounded-full text-xs leading-none transition-colors ${
+          info ? 'bg-mor-bluelight text-mor-slate' : 'text-gray-400 hover:text-mor-slate'}`}>
         ⓘ
       </button>
 

@@ -992,6 +992,19 @@ export default function ShortTermPage() {
       */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <h1 className="mr-auto">短租訂單與收款 <span className="text-sm font-normal text-gray-400">Airbnb・Agoda・私下・一次性</span></h1>
+        {/*
+          ★★ 防呆搬到標題列右上（2026-08-27 使用者:「防呆統一在右上角好了」）。
+              訂單與營收兩頁**同一個位置**。
+
+          ★ 這推翻了 2026-08-16 的「手機收進篩選」。理由變了:
+            當時的想法是「防呆問的是這批資料有沒有問題,跟篩選同一類」。
+            但實際用起來,它更像**一個模式開關** —— 打開之後整個列表的意義
+            都變了（多出標記、可以只看有問題的）。模式開關不該跟著篩選一起收,
+            那會讓人以為它是條件之一。
+
+          ★ 固定在右上角的第二個好處:兩頁位置一樣,肌肉記憶帶得過去。
+        */}
+        <AuditButton on={audit} onToggle={toggleAudit} busy={auditBusy} />
         {/* 訊息改成浮在最上層 —— 原本畫在這裡，會被 z-50 的編輯視窗蓋掉，
             存檔失敗時使用者看到的是「按了沒反應」 */}
         <Toast msg={msg} error={msgErr} onClose={() => setMsg('')} />
@@ -1095,19 +1108,6 @@ export default function ShortTermPage() {
           <button onClick={() => { setSrc(''); setKw(''); setKwIn(''); setEstF(''); setFromD(''); setToD(''); setFeeF(FEE_F_RENT); setPayF(''); setInvF(''); }}
             className="text-gray-500 underline pb-1.5">清除</button>
         )}
-        {/*
-          防呆只在手機收進篩選（2026-08-16 使用者指定）——
-          跟營收頁完全一樣的做法。桌機不缺那塊寬度,收起來只換到一顆按鈕的空間,
-          卻讓每次要用都多一次點擊。
-
-          手機這一顆放在欄位區,跟著「篩選」一起收。
-        */}
-        {/*
-          防呆跟篩選條件放在一起 —— 它問的是「這批資料有沒有問題」，
-          跟「我要看哪些」是同一類；而新增、下載是「我要做什麼」，另一類。
-          手機收起篩選時它跟著收，那是對的:兩者本來就同一組。
-        */}
-        <AuditButton on={audit} onToggle={toggleAudit} busy={auditBusy} />
       </div>
 
       {/* 動作列。自成一行,不跟篩選欄位搶寬度 —— 1280px 下七個篩選加五顆鈕放不進同一行 */}
