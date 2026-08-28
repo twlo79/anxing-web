@@ -179,20 +179,85 @@ do $$ begin
 end $$;
 
 /*
- * ★★ `att_one_parent` **整條重建**，把新欄位加進 num_nonnulls。
+ * ★★ `att_one_parent` 整條重建 —— 欄位清單**去問線上**，不寫死。
  *
- *   漏掉的話一筆附件可以同時掛兩個地方,而刪掉其中一邊時
- *   另一邊會看到一張連不到東西的圖（README 的 attachments 那一節）。
+ * ============================================================
+ * 【前兩版都在這裡爆】（2026-08-28）
  *
- *   所以不能用 `add constraint ... not valid` 之類的偷懶做法 ——
- *   舊資料本來就合規（tender_id 全是 null）,重建是安全的。
+ *   第一版　寫死六個欄位名（照 README 那張表）
+ *           → ERROR 42703: column "order_id" does not exist
+ *
+ *   第二版　改成讀線上定義，但只認得 `num_nonnulls(...)` 這一種寫法
+ *           → 線上其實是「一堆 IS NOT NULL 轉 integer 相加」的形狀，
+ *             於是自己 raise 中止
+ *
+ * 線上此刻真正的定義是:
+ *
+ *     CHECK ((((((deposit_id IS NOT NULL)::int + (deposit_payment_id IS NOT NULL)::int
+ *              + (expense_id IS NOT NULL)::int + (order_payment_id IS NOT NULL)::int
+ *              + (request_id IS NOT NULL)::int + (request_item_id IS NOT NULL)::int) = 1))
+ *
+ * ★★ 六欄，而且**跟 README 那張表對不起來**:
+ *    多了 `request_item_id`，而且**沒有 `order_id`**（見下面的 ⚠）。
+ *
+ *
+ * ============================================================
+ * 【所以改成:不管它長什麼形狀，只認欄位名】
+ *
+ * 兩種寫法都認:
+ *   ① `num_nonnulls(a, b, c)`      → 直接挖括號裡的清單
+ *   ② `(a IS NOT NULL)::int + …`   → 把每一個 `X IS NOT NULL` 的 X 撈出來
+ *
+ * 撈到之後一律重建成 `num_nonnulls(...) = 1` —— 兩種寫法語意相同，
+ * 而 num_nonnulls 讀得懂，下一個人要加第八個 parent 時不用再猜。
+ *
+ * ★ 一個都撈不到就中止。硬建一個猜的清單上去的話，
+ *   **它照樣建得起來，只是擋錯東西** —— 而那不會有任何錯誤訊息。
  */
-do $$ begin
-  alter table public.attachments drop constraint if exists att_one_parent;
-  alter table public.attachments add constraint att_one_parent
-    check (num_nonnulls(request_id, expense_id, deposit_id,
-                        order_payment_id, deposit_payment_id, order_id,
-                        tender_id) = 1);
+do $$
+declare def text; cols text; n int;
+begin
+  select pg_get_constraintdef(oid) into def
+    from pg_constraint
+   where conrelid = 'public.attachments'::regclass and conname = 'att_one_parent';
+
+  if def is null then
+    raise exception 'attachments 上找不到 att_one_parent —— 這支 migration 的前提不成立';
+  end if;
+
+  if position('tender_id' in def) > 0 then
+    insert into _chk179 values (0, '④ att_one_parent', '↷ 已含 tender_id，跳過',
+      '這支 migration 重跑是安全的');
+  else
+    -- ① num_nonnulls(...) 的寫法
+    cols := btrim(substring(def from 'num_nonnulls\(([^)]*)\)'));
+
+    -- ② 一堆 IS NOT NULL 相加的寫法（線上目前是這種）
+    if cols is null or cols = '' then
+      select string_agg(m[1], ', ' order by m[1]) into cols
+        from regexp_matches(def, '([a-z_][a-z0-9_]*)\s+IS\s+NOT\s+NULL', 'gi') as m;
+    end if;
+
+    if cols is null or cols = '' then
+      raise exception
+        'att_one_parent 認不出欄位清單，請人工處理：%', def;
+    end if;
+
+    n := length(cols) - length(replace(cols, ',', '')) + 1;
+    -- ★ 少於 3 欄一定是解析錯了 —— 這張表最少也有請款、支出、押金三個 parent
+    if n < 3 then
+      raise exception 'att_one_parent 只解析出 % 欄（%），不合理，請人工確認：%', n, cols, def;
+    end if;
+
+    execute 'alter table public.attachments drop constraint att_one_parent';
+    execute format(
+      'alter table public.attachments add constraint att_one_parent check (num_nonnulls(%s, tender_id) = 1)',
+      cols);
+
+    insert into _chk179 values (0, '④ att_one_parent',
+      '✅ 原有 ' || n || ' 欄 ＋ tender_id',
+      '線上原本是：' || cols);
+  end if;
 end $$;
 
 create index if not exists att_tender_idx on public.attachments (tender_id)
@@ -369,29 +434,53 @@ begin
 end $$;
 
 -- ② att_one_parent 真的把 tender_id 算進去了
+/*
+ * ★★ 「兩個 parent 都給」這一項要拿一個**真的** request_id。
+ *
+ *   第一版隨手把 tenders 的 id 塞進 request_id —— 那上面有外鍵,
+ *   會先撞 foreign_key_violation 而不是 check_violation。
+ *   結果是這一項回 ❌，而**理由跟 att_one_parent 完全無關**。
+ *
+ *   自檢報一個假的失敗，比不報還糟:會有人去修一個沒壞的東西。
+ *   所以拿不到真的 request_id 時要說「⚠ 測不出來」。
+ */
 do $$
-declare v text; tid uuid;
+declare v text; v2 text; tid uuid; rid uuid;
 begin
+  select id into rid from public.purchase_requests limit 1;
   begin
     insert into public.tenders (name) values ('__t179 測試') returning id into tid;
+
+    -- ⓐ 只給 tender_id → 要進得去
     begin
-      -- 兩個 parent 都給 → 要被 CHECK 擋下
-      insert into public.attachments (path, tender_id, request_id)
-        values ('td/x/y.jpg', tid, tid);
-      v := '❌ 兩個 parent 都有值卻插得進去';
-    exception when check_violation then
-      v := '✅ 兩個 parent 被擋下';
-    end;
-    -- 只給 tender_id → 要進得去
-    if v like '✅%' then
       insert into public.attachments (path, tender_id) values ('td/x/y.jpg', tid);
-      v := v || '，只給一個進得去';
+      v := '✅ 只給 tender_id 進得去';
+    exception when others then
+      v := '❌ 只給 tender_id 卻進不去：' || sqlerrm;
+    end;
+
+    -- ⓑ 兩個 parent → 要被 CHECK 擋下
+    if rid is null then
+      v2 := '⚠ 沒有請款單可借用，測不出來';
+    else
+      begin
+        insert into public.attachments (path, tender_id, request_id)
+          values ('td/x/z.jpg', tid, rid);
+        v2 := '❌ 兩個 parent 都有值卻插得進去';
+      exception when check_violation then
+        v2 := '✅ 兩個被擋下';
+      when others then
+        v2 := '⚠ 撞到別的錯，測不出來：' || sqlerrm;
+      end;
     end if;
+
     raise exception using errcode = 'restrict_violation', message = '__rollback__';
   exception when others then
+    -- ★ 抓 others 不是只抓自己丟的那一種（規矩 9）
     if sqlerrm <> '__rollback__' then v := '❌ ' || sqlerrm; end if;
   end;
-  insert into _chk179 values (3, '★★ att_one_parent 含 tender_id', coalesce(v, '⚠ 測不出來'),
+  insert into _chk179 values (3, '★★ att_one_parent 含 tender_id',
+    coalesce(v, '⚠ 測不出來') || '；' || coalesce(v2, '⚠ 測不出來'),
     '漏掉的話一筆附件可以同時掛兩個地方,刪一邊另一邊看到連不到的圖');
 end $$;
 
@@ -436,12 +525,19 @@ declare uid_ac uuid; ok int := 0; tot int := 0; k text; v text;
 begin
   select id into uid_ac from public.profiles where role = 'accountant' and active limit 1;
   if uid_ac is null then
-    insert into _chk179 values (5, '★ 既有六種 prefix 沒被弄壞', '⚠ 測不出來', '找不到會計帳號');
+    insert into _chk179 values (5, '★ 既有 prefix 沒被弄壞', '⚠ 測不出來', '找不到會計帳號');
     return;
   end if;
   perform set_config('request.jwt.claims',
     json_build_object('sub', uid_ac::text)::text, true);
-  foreach k in array array['pr','exp','dep','op','dp','of'] loop
+  /*
+   * ★ 只測五種,不含 `of`。
+   *
+   *   `attachments.order_id` **線上不存在**（見下面的 ⑨）——
+   *   把它列進來的話這一項會回 5/6,而理由跟這支 migration 完全無關。
+   *   自檢報一個假的失敗比不報還糟。
+   */
+  foreach k in array array['pr','pri','exp','dep','op','dp'] loop
     tot := tot + 1;
     if public.can_see_receipt(k || '/00000000-0000-0000-0000-000000000000/x.jpg') then
       ok := ok + 1;
@@ -451,8 +547,8 @@ begin
   -- ★ 「N / N 全等」比「✅」有用（規矩 6）
   v := case when ok = tot then '✅ ' || ok || ' / ' || tot || ' 會計仍看得到'
             else '❌ 只剩 ' || ok || ' / ' || tot end;
-  insert into _chk179 values (5, '★ 既有六種 prefix 沒被弄壞', v,
-    '注入位置錯了的話它照樣建得起來,只是把別的 prefix 一起擋掉');
+  insert into _chk179 values (5, '★ 既有 prefix 沒被弄壞', v,
+    'pr/pri/exp/dep/op/dp。注入位置錯了的話它照樣建得起來,只是把別的 prefix 一起擋掉');
 end $$;
 
 -- ⑤ 狀態約束
@@ -482,12 +578,44 @@ from (
 ) x;
 
 /*
+ * ★ 把線上此刻的 att_one_parent 原文印出來。
+ *
+ *   我照 README 那張表寫死六個欄位名,而線上不是那樣 —— 第一次跑就爆了。
+ *   印出來的話,下一個要加第八個 parent 的人不用再猜一次。
+ */
+insert into _chk179
+select 8, 'att_one_parent 現在長這樣', '📋',
+  coalesce(pg_get_constraintdef(oid), '(找不到)')
+from pg_constraint
+where conrelid = 'public.attachments'::regclass and conname = 'att_one_parent';
+
+/*
  * ★★ 自檢要問**結果**不要問過程（README 9.4 #12）。
  *
  *   「唯一索引建好了嗎」用建索引時同一個條件去查,永遠會是 ✅。
  *   上面 ① 是**真的插兩筆看會不會被擋** —— 不管索引叫什麼名字、
  *   欄位怎麼組合，都逃不掉。
  */
+
+/*
+ * ⑨ ★★ 順手抓到的:`attachments.order_id` 到底在不在。
+ *
+ *   `Receipts.tsx` 有 `kind='of' → order_id`（加費憑證,migration_158）,
+ *   而線上的 att_one_parent 裡**沒有這一欄**。
+ *
+ *   這一項不是這支 migration 造成的,也不歸它修 —— 但既然查到了就報出來,
+ *   不然下一個人又要從頭查一次。
+ *
+ *   ★ 症狀會是**安靜的**:Receipts 的 load() 沒有檢查 error,
+ *     `setRows(data ?? [])` 直接把錯誤當成「沒有附件」——
+ *     畫面永遠是空的,而且合理。
+ */
+insert into _chk179
+select 9, '⚠ attachments.order_id（加費憑證用的）',
+  case when count(*) > 0 then '✅ 存在' else '❌ 不存在 —— 加費憑證是壞的' end,
+  '這不是 179 造成的。Receipts.tsx 的 kind=''of'' 對到這一欄；migration_158 應該建過'
+from information_schema.columns
+where table_schema = 'public' and table_name = 'attachments' and column_name = 'order_id';
 
 -- ── 單一 SELECT（SQL Editor 只顯示最後一個）──────────
 select item as "檢查項目", result as "結果", note as "說明"

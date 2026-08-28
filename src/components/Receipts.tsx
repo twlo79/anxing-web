@@ -141,9 +141,26 @@ const Receipts = forwardRef<ReceiptsHandle, {
 
   const load = useCallback(async () => {
     if (!parentId) { setRows([]); return; }
-    const { data } = await supabase.from('attachments')
+    const { data, error } = await supabase.from('attachments')
       .select('id, path, file_name, mime_type, size_bytes, created_at')
       .eq(col, parentId).order('created_at');
+    /*
+     * ★★ 查詢失敗要**說話**，不能當成「沒有附件」（2026-08-28）。
+     *
+     *   原本是 `const { data } = await …; setRows(data ?? [])` ——
+     *   error 被丟掉,而 data 是 null,於是畫面顯示一片空白。
+     *   **跟真的沒有附件長得一模一樣。**
+     *
+     * ★ 這不是假設性的:`attachments.order_id` 從 2026-08-22 起就不存在
+     *   （migration_158 沒建成,由 180 補回）。整整六天,
+     *   每一次打開加費的憑證區都是這條路 —— 而畫面只是空的,
+     *   沒有紅字、沒有任何線索。README 9.2 那條「空的但合理」。
+     *
+     * ★ 而且 172 的自檢當時就印出「應為 7 個」而實際是 6 —— 報告出來了,
+     *   沒有人讀。前端這一行是最後一道防線:它會**在使用者面前**說話。
+     */
+    if (error) { setErr('讀不到附件：' + error.message); setRows([]); return; }
+    setErr('');
     setRows(data ?? []);
   }, [supabase, parentId, col]);
 
@@ -153,9 +170,11 @@ const Receipts = forwardRef<ReceiptsHandle, {
   useEffect(() => {
     (async () => {
       if (!inheritFromRequestId) { setInherited([]); return; }
-      const { data } = await supabase.from('attachments')
+      const { data, error } = await supabase.from('attachments')
         .select('id, path, file_name, mime_type, size_bytes, created_at')
         .eq('request_id', inheritFromRequestId).order('created_at');
+      // ★ 同上:失敗要說話,不要當成「母單沒有憑證」
+      if (error) { setErr('讀不到母單的憑證：' + error.message); setInherited([]); return; }
       setInherited(data ?? []);
     })();
   }, [supabase, inheritFromRequestId]);

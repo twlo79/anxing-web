@@ -575,7 +575,7 @@ draft ──送審──► pending ──主管✓＋總經理✓──► appr
 
 勾了 `shared_voucher` 時這兩欄**留著但不使用**（前端灰掉）。
 
-### `attachments` 七個 parent 欄位
+### `attachments` 八個 parent 欄位
 
 | 欄位 | 路徑前綴 | 掛什麼 |
 |---|---|---|
@@ -584,8 +584,18 @@ draft ──送審──► pending ──主管✓＋總經理✓──► appr
 | `deposit_id` | `dep/` | 押金憑證（匯款水單、房客帳戶截圖） |
 | `order_payment_id` | `op/` | 訂單收款證明（`migration_85`） |
 | `deposit_payment_id` | `dp/` | 押金某一筆收款的證明（`migration_147`） |
-| `order_id` | `of/` | 加費憑證（`migration_158`） |
+| `request_item_id` | `pri/` | 請款**項目**的憑證（`migration_172`） |
+| `order_id` | `of/` | 加費憑證（`migration_158` 沒建成，`migration_180` 補回） |
 | `tender_id` | `td/` | 標案的文件與照片（`migration_179`） |
+
+★★ **這張表 2026-08-28 之前是錯的** —— 列了 `order_id`（線上根本沒有）、
+漏了 `request_item_id`。而我照它寫 `migration_179` 的第一版，當場報錯。
+**要動 `attachments` 之前一律問線上**：
+
+```sql
+select pg_get_constraintdef(oid) from pg_constraint
+where conrelid = 'public.attachments'::regclass and conname = 'att_one_parent';
+```
 
 ★ `td/` **只有 `super_admin` 看得到** —— `can_see_receipt()` / `can_edit_receipt()`
 在最前面多一個分支擋掉。不擋的話會計與主管會從 attachments 那邊看到標案文件，
@@ -881,6 +891,42 @@ SQL Editor 把整份腳本包在一個交易裡，**parse 失敗就整份不執�
 **判斷方法**：一支 migration「跑過了」但相關功能怪怪的 → 去查它建的東西**存不存在**（欄位、函式定義、索引），不要相信記憶。
 
 **已自動擋**：`src/lib/sql-comments.test.ts` 每次 `node --test` 掃全部 144 份，不平衡就紅。那支測試自己也有一道 `scanned > 60` 的斷言 —— 少了它，目錄搬家會讓守門員靜靜跳過然後綠燈通過。
+
+---
+
+### ⑦ 自檢報告印出了答案，而沒有人讀 🔴🔴 **（2026-08-28）**
+
+`migration_172` 的自檢裡有這一項：
+
+> `'應為 7 個。是 6 的話表示 migration_158 的 order_id 還沒建'`
+
+**它跑出來就是 6。** 報告印在畫面上，沒有人動作。
+
+從那天（2026-08-22）起到 08-28，`attachments.order_id` 一直不存在 ——
+加費憑證上傳與檢視整整壞了六天。
+
+**為什麼沒有人發現**：`Receipts.tsx` 的 `load()` 是
+
+```ts
+const { data } = await supabase.from('attachments').select(...).eq(col, parentId);
+setRows(data ?? []);       // ← error 沒有被檢查
+```
+
+查詢報錯 → `data` 是 null → 畫面顯示「沒有附件」。
+**跟真的沒有附件長得一模一樣。**
+
+**怎麼被抓到的**：寫 `migration_179` 時要在 `attachments` 加第七個 parent，
+我照 README 那張表寫死六個欄位名 → `ERROR 42703: column "order_id" does not exist`。
+**是 SQL 當場報錯才發現的，不是有人回頭看 172 的報告。**
+
+| 教訓 | |
+|---|---|
+| 🔴 | **自檢寫得再好，出來的東西沒有人讀就等於沒有。** 守門員盡責了，報告沒人看 |
+| 🔴 | 每一個 `select` 都要檢查 `error` —— 丟掉 error 的地方，錯誤會偽裝成「沒有資料」 |
+| 🟠 | README 那張 parent 欄位表本身就是錯的（列了不存在的、漏了存在的）。**要動之前問線上，不要問文件** |
+
+**補救**：`migration_180` 補回欄位；`Receipts` 的兩支 `load` 都加上 error 檢查
+—— 只補資料庫的話，下一次同樣的事還是會安靜地發生。
 
 ---
 
