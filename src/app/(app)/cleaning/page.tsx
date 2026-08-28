@@ -41,8 +41,18 @@ export default function CleaningPage() {
   const [kw, setKw] = useState('');
   const [kwInput, setKwInput] = useState('');
   // stats
-  const [statsFrom, setStatsFrom] = useState('');
-  const [statsTo, setStatsTo] = useState('');
+  /*
+   * ★★ 統計區間與清單篩選**合而為一**（2026-08-28 使用者:「日期統一在 filter」）。
+   *
+   *   原本是兩組獨立的日期:上面一組餵 cleaning_staff_stats,
+   *   下面一組餵清單。而它們問的是同一件事 ——
+   *   使用者只會想到「我要看這段期間」。
+   *
+   * ★ 兩組分開的實際症狀:上面設了 7 月、下面沒設,
+   *   於是**統計是 7 月的、底下列表是全部的** —— 兩個數字擺在同一頁
+   *   而算的不是同一批資料,畫面上沒有任何地方說得出這件事。
+   *   跟評價頁那次是同一個病。
+   */
   const [stats, setStats] = useState<StaffStat[]>([]);
   const [minDate, setMinDate] = useState('');
 
@@ -52,9 +62,9 @@ export default function CleaningPage() {
       .then(({ data }) => { if (data && data[0]) setMinDate(data[0].record_date); });
   }, [supabase]);
   useEffect(() => {
-    supabase.rpc('cleaning_staff_stats', { p_from: statsFrom || null, p_to: statsTo || null })
+    supabase.rpc('cleaning_staff_stats', { p_from: dateFrom || null, p_to: dateTo || null })
       .then(({ data }) => setStats((data as StaffStat[]) ?? []));
-  }, [supabase, statsFrom, statsTo]);
+  }, [supabase, dateFrom, dateTo]);
 
   const visibleStats = useMemo(() => stats.filter((s) => s.active).sort((a, b) => Number(b.total) - Number(a.total)), [stats]);
   const totalCount = useMemo(() => stats.reduce((s, x) => s + Number(x.total), 0), [stats]);
@@ -168,22 +178,20 @@ export default function CleaningPage() {
 
       {/* Dashboard */}
       <div className="mb-4 md:mb-6">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+        {/*
+          ★ 日期控制項在下面的篩選列。這裡不放輸入框 ——
+            同一件事有兩個地方可以改的話,使用者不確定改哪個才算數。
+
+          ★ 現在在看哪一段,寫在下面那張卡的第三行（「共 N 位・區間」）。
+        */}
+        <div className="mb-3">
           <h1 className="hidden md:block">清潔記錄</h1>
-          <div className="flex items-center gap-2 text-sm w-full md:w-auto">
-            <span className="text-xs text-gray-500 shrink-0">統計區間</span>
-            <RangeInput className="flex-1 md:flex-none min-w-0"
-              inputClass="flex-1 md:flex-none h-12 md:h-auto md:py-1"
-              from={statsFrom} to={statsTo}
-              onChange={(f, t) => { setStatsFrom(f); setStatsTo(t); }} />
-            {(statsFrom || statsTo) && <button onClick={() => { setStatsFrom(''); setStatsTo(''); }} className="text-gray-400 underline shrink-0">清除</button>}
-          </div>
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-stretch">
           <div className="rounded-xl min-w-0 surf-deep text-white p-5 flex flex-col justify-center">
             <div className="text-xs opacity-75">總清潔次數</div>
             <div className="stat-num-lg font-bold mt-1">{totalCount.toLocaleString()}</div>
-            <div className="text-xs opacity-75 mt-2">共 {visibleStats.length} 位・{(statsFrom || statsTo) ? `${statsFrom || minDate || '起始'} ~ ${statsTo || '今'}` : (minDate ? `${minDate} ~ 今` : '全部期間')}</div>
+            <div className="text-xs opacity-75 mt-2">共 {visibleStats.length} 位・{(dateFrom || dateTo) ? `${dateFrom || minDate || '起始'} ~ ${dateTo || '今'}` : (minDate ? `${minDate} ~ 今` : '全部期間')}</div>
           </div>
           <div className="lg:col-span-2 rounded-xl bg-white border border-mor-line overflow-hidden">
             <div className="px-4 py-2.5 text-sm font-semibold border-b border-mor-line bg-white/45">依填寫人統計</div>

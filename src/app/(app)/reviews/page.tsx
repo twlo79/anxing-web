@@ -480,16 +480,17 @@ export default function ReviewsPage() {
     <div>
       {/* ===== Dashboard ===== */}
       <div className="mb-6">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+        {/*
+          ★★ 標題列只放標題（2026-08-28 使用者:「右上角都不用有字」）。
+
+            日期控制項在下面的篩選列,而**現在在看哪一段**寫在左邊那張
+            深藍色總覽卡裡（「1,594 筆・區間」那一行）—— 跟數字擺在一起,
+            比擺在標題旁邊更接近它在說明的東西。
+
+          ★ 標題列擠著一行灰字,眼睛得先讀完才知道那不是可以點的東西。
+        */}
+        <div className="mb-3">
           <h1>評價</h1>
-          <div className="flex items-center gap-2 text-sm">
-            <span className="text-xs text-gray-500">退房日期</span>
-            <RangeInput inputClass="py-1" from={dateFrom} to={dateTo}
-              onChange={(f, t) => { setDateFrom(f); setDateTo(t); }} />
-            {(dateFrom || dateTo) && (
-              <button onClick={() => { setDateFrom(''); setDateTo(''); }} className="text-gray-400 underline">清除</button>
-            )}
-          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-stretch">
@@ -499,6 +500,16 @@ export default function ReviewsPage() {
               {/* 「所有」現在是名副其實的 —— migration_130 之前它其實不含停用物業 */}
               <span className="text-xs opacity-75">所有平均評價</span>
               <span className="text-xs opacity-75">{overall.cnt.toLocaleString()} 筆</span>
+            </div>
+            {/*
+              ★ 現在在看哪一段,跟數字擺在一起（2026-08-28）。
+                原本在標題列旁邊 —— 那裡離它在說明的東西太遠,
+                而且擠著一行灰字會讓人先讀完才知道那不是可以點的。
+
+              ★ 沒設區間時寫「全部期間」,不留白:留白跟「載入中」長得一樣。
+            */}
+            <div className="text-[11px] opacity-60 mt-0.5">
+              退房日 {dateFrom || dateTo ? `${dateFrom || '起始'} ~ ${dateTo || '今'}` : '全部期間'}
             </div>
             <div className="flex items-baseline gap-1.5 mt-1">
               <span className="text-4xl font-bold tracking-tight">{overall.cnt ? overall.avg.toFixed(2) : '—'}</span>
@@ -608,6 +619,15 @@ export default function ReviewsPage() {
           </select>
         </div>
         {/* ★ 退房日期搬到最上面了 —— 它同時決定統計與清單,不再是「篩選之一」 */}
+        <div>
+          {/*
+            ★ 標籤寫「退房日期」而不是「日期」—— 評價本身沒有日期,
+              是按房客退房的那一天歸期的。不寫清楚的話會被當成評論日期。
+          */}
+          <label className="block text-xs text-gray-500 mb-1">退房日期</label>
+          <RangeInput from={dateFrom} to={dateTo}
+            onChange={(f, t) => { setDateFrom(f); setDateTo(t); }} />
+        </div>
         <div>
           <label className="block text-xs text-gray-500 mb-1">關鍵字(旅客/留言/房源)</label>
           <div className="flex gap-1">

@@ -506,7 +506,16 @@ input:-webkit-autofill:focus {
     border-top: 1px solid #E0DDD5;
     padding: 0.75rem 1.25rem;
     padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
-    display: flex; gap: .5rem;
+    /*
+     * ★ 主要動作靠右（2026-08-28）。
+     *
+     *   原本沒設 justify-content,按鈕全部靠左 —— 而「儲存」在左下角
+     *   跟大多數視窗的習慣相反,滑鼠要多跑一趟。
+     *
+     * ★ 破壞性的動作（刪除）用 `mr-auto` 推到最左,跟另外兩顆分開 ——
+     *   不可逆的東西不該挨著「編輯」或「儲存」。
+     */
+    display: flex; gap: .5rem; justify-content: flex-end;
   }
 
 
