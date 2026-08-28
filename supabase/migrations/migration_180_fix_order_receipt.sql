@@ -200,20 +200,35 @@ begin
     '這就是加費憑證上傳走的路');
 end $$;
 
--- ② 七個 parent 一個都沒少
+-- ② parent 欄位一個都沒少
 /*
  * ★★ 問的是**互斥的欄位有幾個**，不是「order_id 加好了嗎」。
  *
- *   問後者的話等於用「我剛剛做的那件事」檢查自己,永遠會過（9.4 #12）。
- *   問前者的話,不管哪一欄被解析漏掉都逃不掉。
+ *   問後者的話等於用「我剛剛做的那件事」檢查自己,永遠會過（README 9.4 #12）。
+ *
+ * ★★★ 但第一版把它寫成 `= 7`，而實際是 8（六個舊的 ＋ tender_id ＋ order_id）——
+ *     於是印出「❌ 只有 8 / 7」這種**看不懂的句子**。
+ *
+ *     這是同一天第三次犯同一種錯:
+ *       ① sql-comments 的 `scanned > 10`     ← 封存 migration 之後紅了
+ *       ② day-phase 的 `stops.length >= 5`   ← 漸層簡化之後紅了
+ *       ③ 這一條的 `= 7`                      ← 多加一欄之後紅了
+ *
+ *     每一次都是**把「現在剛好是幾個」寫成了規則**。
+ *     而三次紅燈的原因都跟被檢查的東西無關 —— 那是假警報，
+ *     假警報比漏報更傷:下次真的紅時就沒有人相信了。
+ *
+ * ★ 所以改成**下限 ＋ 印出實際值**。少了才是問題;多了是有人加了新的 parent,
+ *   那是好事。
  */
 insert into _chk180
-select 2, '★★ att_one_parent 涵蓋 7 個 parent',
-  case when n = 7 then '✅ 7 / 7' else '❌ 只有 ' || n || ' / 7' end,
-  '應為 request_id, request_item_id, expense_id, deposit_id, order_payment_id, deposit_payment_id, order_id, tender_id 之中的七個以上'
+select 2, '★★ att_one_parent 涵蓋的 parent 欄位',
+  case when n >= 8 then '✅ ' || n || ' 個' else '❌ 只有 ' || n || ' 個，少了' end,
+  '至少要有 request_id、request_item_id、expense_id、deposit_id、'
+  || 'order_payment_id、deposit_payment_id、order_id、tender_id 這八個'
 from (
   select (select count(*) from regexp_matches(
-            pg_get_constraintdef(oid), '[a-z_][a-z0-9_]*_id', 'g')) - 0 as n
+            pg_get_constraintdef(oid), '[a-z_][a-z0-9_]*_id', 'g')) as n
   from pg_constraint
   where conrelid = 'public.attachments'::regclass and conname = 'att_one_parent'
 ) x;
