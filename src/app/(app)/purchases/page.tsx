@@ -1,5 +1,6 @@
 'use client';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import StatCard from '@/components/StatCard';
 import { AddButton, ExportButton, ActionBar } from '@/components/Actions';
 import Req, { ReqMark } from '@/components/Req';
 import * as XLSX from 'xlsx-js-style';
@@ -1616,27 +1617,25 @@ export default function PurchasesPage() {
     );
   };
 
-  const card = (title: string, list: Req[], hint: string, onClick: () => void, accent = false) => {
-    const empty = list.length === 0;
-    return (
-      <button onClick={onClick}
-        className={`text-left rounded-xl p-2.5 md:p-4 min-w-0 transition-colors ${
-          accent && !empty
-            ? 'border-2 border-mor-slate bg-white hover:bg-mor-sand/40'
-            : 'border border-mor-line bg-white/85 hover:bg-white/45'}`}>
-        <div className={`text-xs md:text-sm font-medium leading-tight ${
-          empty ? 'text-gray-400' : accent ? 'text-mor-slate' : ''}`}>{title}</div>
-        <div className={`stat-num font-bold mt-1 ${
-          empty ? 'text-gray-300' : accent ? 'text-mor-slate' : ''}`}>
-          {list.length}<span className="text-xs md:text-sm font-normal text-gray-400 ml-1">筆</span>
-        </div>
-        <div className={`text-[11px] md:text-xs mt-0.5 md:mt-1 ${empty ? 'text-gray-300' : 'text-gray-500'}`}>
-          ${fmt(sum(list))}
-        </div>
-        <div className="hidden md:block text-[11px] text-gray-400 mt-1">{hint}</div>
-      </button>
-    );
-  };
+  /*
+   * ★★ 改用共用的 StatCard（2026-08-25）—— 原本這裡自己刻了一份。
+   *
+   *   「輪到你」那個加粗外框搬進 StatCard 的 `accent` 了,
+   *   所以請款單以外的頁面也用得到（押金退款那條路遲早要）。
+   *
+   * ★ `hint`（「你可以核可」／「等待主管投票」）**拿掉了**。
+   *
+   *   那一行本來就只在桌機顯示 —— 手機看不到而功能照樣運作,
+   *   等於自己證明了它不是必要的。而且它說的事情
+   *   **加粗外框已經說完了**:框起來就是輪到你,沒框就是等別人。
+   *   兩個訊號講同一件事,其中一個還是灰色小字。
+   */
+  const card = (title: string, list: Req[], onClick: () => void, accent = false) => (
+    <StatCard label={title} onClick={onClick}
+      accent={accent && list.length > 0} muted={list.length === 0}
+      value={<>{list.length}<span className="text-xs md:text-sm font-normal text-gray-400 ml-1">筆</span></>}
+      sub={`$${fmt(sum(list))}`} />
+  );
 
   return (
     <div>
@@ -1874,10 +1873,8 @@ export default function PurchasesPage() {
           */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3 mb-4 md:mb-5">
             {/* ★ accent 給「輪到你」的那一張 —— 一個畫面最多一張 */}
-            {card('待主管核可', waitManager, isManager ? '你可以核可' : '等待主管投票',
-              () => setStF('pending'), isManager)}
-            {card('待總經理核可', waitAdmin, isAdmin ? '你可以核可' : '等待總經理投票',
-              () => setStF('pending'), isAdmin && !isManager)}
+            {card('待主管核可', waitManager, () => setStF('pending'), isManager)}
+            {card('待總經理核可', waitAdmin, () => setStF('pending'), isAdmin && !isManager)}
 
             {/*
               ③ 核可後的兩步疊成一張。它們是同一條路:先排日期與帳號,再付。

@@ -6,6 +6,7 @@ import { fetchAll } from '@/lib/fetch-all';
 import Req from '@/components/Req';
 import MoneyInput from '@/components/MoneyInput';
 import Toast from '@/components/Toast';
+import StatCard, { StatRow } from '@/components/StatCard';
 import {
   OTHER_BOOKS, BOOK_LABEL, BOOK_BIZ, OTHER_BIZ_SOURCE, OTHER_BIZ_PURPOSE, type Book,
 } from '@/lib/book';
@@ -353,16 +354,22 @@ export default function OtherBooksPage() {
             )}
           </div>
 
-          {/* 小計。篩選之後也要更新 —— 不然篩了半天上面還是全月的數字 */}
-          <div className="grid grid-cols-3 gap-2 mb-3">
+          {/*
+            小計。篩選之後也要更新 —— 不然篩了半天上面還是全月的數字。
+
+            ★★ 改用共用的 StatCard（2026-08-25）。原本是 `bg-mor-sand/30` 的
+              小方塊 —— 全站第 4 種統計卡的長相,而它跟旁邊那些卡是同一種東西。
+
+            ★ 顏色留著:收入綠、支出紅、淨額負數才紅。
+              這裡的紅**不是**警示,是會計上的借貸方向,
+              所以由呼叫端決定,不進 StatCard 的 tone。
+          */}
+          <StatRow cols={3} className="mb-3">
             {([['收入', sum.income, 'text-mor-green'], ['支出', sum.expense, 'text-red-600'],
               ['淨額', sum.net, sum.net < 0 ? 'text-red-600' : '']] as const).map(([l, v, cls]) => (
-              <div key={l} className="rounded-lg bg-mor-sand/30 px-3 py-2">
-                <div className="text-[11px] text-gray-500">{l}</div>
-                <div className={`text-lg font-bold tabular-nums ${cls}`}>{fmt(v)}</div>
-              </div>
+              <StatCard key={l} label={l} value={<span className={cls}>{fmt(v)}</span>} />
             ))}
-          </div>
+          </StatRow>
 
           {loading ? (
             <div className="text-center text-gray-400 py-16">載入中…</div>
@@ -621,17 +628,20 @@ function Dashboard({
         跟安幸營收表的算法不同，兩邊不能互相對照。
       </div>
 
-      <div className="grid grid-cols-3 gap-2">
+      {/*
+        ★★ 改用共用的 StatCard（2026-08-25）。
+
+        ★ 「vs 上月」四個字**拿掉了** —— 這一列只有一個比較基準,
+          三張卡各寫一次等於同一句話印三遍。三角形與百分比自己說得完。
+          （StatCard 的 sub 只放數字,不放句子。）
+      */}
+      <StatRow cols={3}>
         {([['收入', now.income, prev.income], ['支出', now.expense, prev.expense],
           ['淨額', now.net, prev.net]] as const).map(([l, v, p]) => (
-          <div key={l} className="rounded-xl border border-mor-line bg-white px-3 py-3">
-            <div className="text-xs text-gray-500">{l}</div>
-            <div className={`text-base sm:text-xl md:text-2xl font-bold tabular-nums ${
-              l === '淨額' && v < 0 ? 'text-red-600' : ''}`}>{fmt(v)}</div>
-            <div className="text-[11px] mt-0.5">{delta(pctChange(v, p))} <span className="text-gray-400">vs 上月</span></div>
-          </div>
+          <StatCard key={l} label={l} sub={delta(pctChange(v, p))}
+            value={<span className={l === '淨額' && v < 0 ? 'text-red-600' : ''}>{fmt(v)}</span>} />
         ))}
-      </div>
+      </StatRow>
 
       {/* 近 12 個月 */}
       <div className="rounded-xl border border-mor-line bg-white p-3">

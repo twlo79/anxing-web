@@ -64,7 +64,7 @@ const TONE = {
 } as const;
 
 export default function StatCard({
-  label, value, sub, active, muted, tone = 'slate', onClick,
+  label, value, sub, active, accent, muted, tone = 'slate', onClick,
 }: {
   /** 標題。★ 要能單獨看懂 —— 看不懂就改標題,不要加解釋 */
   label: ReactNode;
@@ -73,6 +73,20 @@ export default function StatCard({
   sub?: ReactNode;
   /** 選中（同時是分頁籤時）。★ 一組最多一張 */
   active?: boolean;
+  /**
+   * 「輪到你」（2026-08-25 從請款單搬進來）。外框加粗成主色，底維持白。
+   *
+   * ★★ 這**不是** active 的另一種畫法 —— 兩者是不同的問題:
+   *
+   *     active  「你現在在看這一組」   —— 使用者自己按出來的
+   *     accent  「這一張等你動作」     —— 系統告訴他的
+   *
+   *   同一畫面可能兩個都在（正在看待核可、而待核可正好輪到你）,
+   *   所以不能共用同一個樣式。實心留給 active,accent 只加重外框。
+   *
+   * ★ 一個畫面最多一張。兩張以上就沒有「輪到你」的意思了。
+   */
+  accent?: boolean;
   /** 空的 / 不適用。整張淡化 —— **不拿掉**,拿掉的話看的人不知道那個狀態存在 */
   muted?: boolean;
   tone?: Tone;
@@ -101,12 +115,20 @@ export default function StatCard({
         'text-left border transition-colors min-w-0',
         'rounded-lg px-3 py-2.5 md:rounded-xl md:px-4 md:py-3',
         'flex items-baseline gap-2 md:block',
-        active ? t.fill : 'bg-white/85 border-mor-line',
+        active ? t.fill
+          /*
+           * ★ accent 用 border-2 而不是 ring —— ring 畫在框線外面,
+           *   同一列裡有 accent 的那張會比別張高出 2px,看起來像沒對齊。
+           *   ★ 同時把 muted 讓給 accent:兩個都成立時（輪到你、但是 0 筆）
+           *     淡化會蓋掉「輪到你」,而那正是最需要看見的一張。
+           */
+          : accent ? 'bg-white border-2 border-mor-slate'
+          : 'bg-white/85 border-mor-line',
         onClick && !active ? 'hover:bg-white/45' : '',
-        muted && !active ? 'opacity-55' : '',
+        muted && !active && !accent ? 'opacity-55' : '',
       ].filter(Boolean).join(' ')}>
       <span className={`text-xs leading-tight shrink-0 md:block ${
-        active ? 'text-white/80' : 'text-gray-500'}`}>
+        active ? 'text-white/80' : accent ? 'text-mor-slate font-medium' : 'text-gray-500'}`}>
         {label}
       </span>
       {/*
@@ -114,7 +136,7 @@ export default function StatCard({
         ★ 手機 ml-auto 把金額推到最右 —— 三列的數字才上下切齊,而它們本來就該比大小。
       */}
       <span className={`stat-num font-bold ml-auto md:ml-0 md:block md:mt-0.5 ${
-        active ? 'text-white' : ''}`}>
+        active ? 'text-white' : accent ? 'text-mor-slate' : ''}`}>
         {value}
       </span>
       {sub != null && sub !== '' && (
