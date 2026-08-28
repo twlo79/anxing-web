@@ -11,6 +11,7 @@ import {
 import { fetchAll } from '@/lib/fetch-all';
 import {
   STAR_BAR_DARK, STAR_BAR_LIGHT, STAR_TRACK_DARK, STAR_TRACK_LIGHT,
+  STAR_GLYPH, STAR_GLYPH_EMPTY,
 } from '@/lib/star-bar';
 import { useProfile } from '@/lib/profile';
 import {
@@ -68,17 +69,33 @@ function mgrOrder(name: string) {
  * ★★ 用 style 而不是 Tailwind class:類別是**組出來**的話 Tailwind
  *   靜態掃描不到，畫面會沒有顏色而且不報錯（README 9.3）。
  */
-function starColor(n: number) {
-  const r = Math.min(5, Math.max(1, Math.round(n)));
-  return STAR_BAR_LIGHT[5 - r];   // 5 星 → index 0
-}
+/** 星等 → 索引。5 星是 0、1 星是 4。超出範圍的夾住,不要回 undefined。 */
+const starIdx = (n: number) => 5 - Math.min(5, Math.max(1, Math.round(n)));
+
+/**
+ * 「N 星」那行**文字**的顏色。要讀，所以用壓深的那組。
+ *
+ * ★★ 回的是**色碼**，只能放進 `style`。
+ *   放進 className 的話會變成一個沒人認得的 class ——
+ *   而症狀是那行字沒有顏色、tsc 過、畫面不報錯（README 9.3）。
+ *   這個坑我 2026-08-28 當天就踩了一次。
+ */
+const starTextColor = (n: number) => STAR_BAR_LIGHT[starIdx(n)];
+
+/**
+ * 那排 ★。
+ *
+ * ★★ 星星用鮮豔的 `STAR_GLYPH`，旁邊的「N 星」用壓深的 `STAR_BAR_LIGHT` ——
+ *   兩者是同一個色相的深淺,不是兩種顏色。理由見 lib/star-bar.ts:
+ *   星星是裝飾（旁邊那行字才是意思），文字要讀。
+ */
 function Stars({ n }: { n: number }) {
   const filled = Math.round(n);
   return (
-    <span className="font-semibold" style={{ color: starColor(n) }}>
+    <span className="font-semibold" style={{ color: STAR_GLYPH[starIdx(n)] }}>
       {'\u2605'.repeat(filled)}
       {/* 沒拿到的星星留一個淡痕 —— 全部拿掉的話「3 星」跟「3 顆星滿分」分不出來 */}
-      <span className="text-gray-300">{'\u2605'.repeat(Math.max(0, 5 - filled))}</span>
+      <span style={{ color: STAR_GLYPH_EMPTY }}>{'\u2605'.repeat(Math.max(0, 5 - filled))}</span>
     </span>
   );
 }
@@ -726,8 +743,9 @@ export default function ReviewsPage() {
                   </span>
                   <span className="truncate text-sm">{r.guest_name}</span>
                 </div>
-                <span className={`shrink-0 text-xs font-medium ${
-                  r.overall_rating >= 5 ? 'text-mor-ink' : starColor(r.overall_rating)}`}>
+                {/* ★ 色碼要放 style。放進 className 會變成沒人認得的 class,而且不報錯 */}
+                <span className="shrink-0 text-xs font-medium"
+                  style={{ color: r.overall_rating >= 5 ? undefined : starTextColor(r.overall_rating) }}>
                   {r.overall_rating} 星
                 </span>
               </div>
@@ -812,7 +830,8 @@ export default function ReviewsPage() {
                   <td className="px-3 py-2.5 whitespace-nowrap">
                     {hasNegative(r) && <span className="mr-1 inline-block w-2 h-2 rounded-full bg-red-500" title="需關注" />}
                     <Stars n={r.overall_rating} />
-                    <span className={`ml-1 text-xs font-medium ${r.overall_rating >= 5 ? 'text-mor-ink' : starColor(r.overall_rating)}`}>{r.overall_rating} 星</span>
+                    <span className="ml-1 text-xs font-medium"
+                      style={{ color: r.overall_rating >= 5 ? undefined : starTextColor(r.overall_rating) }}>{r.overall_rating} 星</span>
                   </td>
                   <td className="px-3 py-2.5 text-gray-600 min-w-64">
                     <div className="line-clamp-2">{displayComment(r) ?? <span className="text-gray-300">（無留言）</span>}</div>

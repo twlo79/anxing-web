@@ -425,13 +425,26 @@ function AppShell({ children }: { children: React.ReactNode }) {
              * ★ 顏色用主色而不是黑 —— 黑色 12px 粗體會比 15px 的灰項目更重，
              *   層次整個反過來。主色有存在感但飽和度不高，剛好停在上一層。
              */
-            <div className={`px-2 ${gi > 0 ? 'pt-3' : 'pt-0.5'}`}>
+            <>
+              {/*
+                ★★ 群與群之間是一條細線，**標題本身沒有底色**（2026-08-28 改）。
+
+                  第一版給標題加了灰膠囊 —— 四個群就是四塊灰底,
+                  比「選取中」那顆淺藍膠囊還重。
+                  側邊欄只需要回答一個問題:**我在哪一頁**,
+                  而那個答案應該是畫面上**唯一**的色塊。
+                  四塊灰底等於在跟答案搶。
+
+                ★ 第一群不畫線 —— 最上面那條會跟使用者名字底下的分隔線疊成兩條。
+              */}
+              {gi > 0 && <div aria-hidden className="mx-4 mt-2.5 h-px bg-mor-line" />}
               <button type="button" onClick={() => flipGroup(g.label)}
                 aria-expanded={open}
                 title={open ? `收起「${g.label}」` : `展開「${g.label}」`}
-                className="w-full flex items-center gap-1.5 px-2.5 py-1.5 rounded-[7px]
-                           text-xs font-bold tracking-[0.08em] text-mor-slate
-                           bg-mor-line/60 hover:bg-mor-line transition-colors">
+                className={`w-full flex items-center gap-1.5 px-4 pb-1
+                           text-xs font-bold tracking-[0.08em]
+                           text-mor-slate hover:text-mor-slatedark transition-colors
+                           ${gi > 0 ? 'pt-2.5' : 'pt-2'}`}>
                 <span>{g.label}</span>
                 {/*
                   ★★ 收起來的時候要說裡面有幾項。
@@ -455,9 +468,9 @@ function AppShell({ children }: { children: React.ReactNode }) {
                   className={`text-[9px] leading-none opacity-55 transition-transform duration-150
                               ${open ? 'ml-auto rotate-90' : ''}`}>▶</span>
               </button>
-            </div>
+            </>
           ) : (
-            gi > 0 && <div aria-hidden className="mx-4 my-2 h-px bg-mor-line" />
+            gi > 0 && <div aria-hidden className="mx-4 mt-2.5 mb-1.5 h-px bg-mor-line" />
           )}
           {open && g.items.map((n) => {
         const on = pathname.startsWith(n.href);

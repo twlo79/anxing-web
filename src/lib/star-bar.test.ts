@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   STAR_BAR_DARK, STAR_BAR_LIGHT, STAR_TRACK_LIGHT, DEEP_BLUE, ROW_Y,
+  STAR_GLYPH, STAR_GLYPH_EMPTY,
   UI_CONTRAST_MIN, contrast, flatten, luminance, deepAt,
 } from './star-bar.ts';
 
@@ -172,4 +173,72 @@ test('★ 兩組不能互換 —— 深底那組印在白底上是看不見的',
   const onWhite = STAR_BAR_DARK.map((c) => contrast(c, STAR_TRACK_LIGHT));
   assert.ok(Math.min(...onWhite) < UI_CONTRAST_MIN,
     '深色卡那組如果在白底也過得了，代表其中一組挑錯了');
+});
+
+/* ══════════════ ★ 字符（2026-08-28「顏色好髒 都鮮豔些」）══════════════ */
+
+/** HSL 的飽和度（0–100）。 */
+function sat(hex: string): number {
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(hex.slice(1 + i, 3 + i), 16) / 255);
+  const mx = Math.max(r, g, b); const mn = Math.min(r, g, b);
+  const l = (mx + mn) / 2;
+  if (mx === mn) return 0;
+  return ((mx - mn) / (l > 0.5 ? 2 - mx - mn : mx + mn)) * 100;
+}
+
+/*
+ * ★★★ 這一條就是「髒」的定義 —— 而我第一版**量錯了東西**。
+ *
+ *   第一版寫「飽和度要比壓深那組高」，結果紅了:
+ *
+ *       5 星 的 ★ #FFC107（100%）沒有比文字色 #B87D00（100%）鮮豔
+ *
+ *   ★★ HSL 的飽和度**只看純不純，不看亮不亮**。把黃色一路壓暗成芥末色,
+ *      它的 S 還是 100% —— 因為它仍然是「純黃」,只是很暗的純黃。
+ *      所以 S 量不出使用者說的「髒」。
+ *
+ *   ★★★ 髒 = **暗的彩色**。同一個色相下,鮮豔就是**亮**。
+ *      所以正確的問法是「★ 有沒有比旁邊那行字亮」,不是「純不純」。
+ *
+ *   ★ S 還是留著當下限（≥ 60%）—— 它擋的是另一種毛病:
+ *     顏色被調成灰灰的。兩個指標各擋一半。
+ */
+test('★★ ★ 字符要夠鮮豔:飽和度 ≥ 60%，而且比旁邊的文字亮', () => {
+  STAR_GLYPH.forEach((c, i) => {
+    assert.ok(sat(c) >= 60,
+      `${LABELS[i]} 的 ★ ${c} 飽和度只有 ${sat(c).toFixed(0)}% —— 顏色被調灰了`);
+    assert.ok(luminance(c) > luminance(STAR_BAR_LIGHT[i]),
+      `${LABELS[i]} 的 ★ ${c}（亮度 ${(luminance(c) * 100).toFixed(1)}%）`
+      + ` 沒有比文字色 ${STAR_BAR_LIGHT[i]}（${(luminance(STAR_BAR_LIGHT[i]) * 100).toFixed(1)}%）亮`
+      + ` —— 暗的彩色就是「髒」`);
+  });
+});
+
+test('★ ★ 字符跟文字色是同一個色相（同色深淺，不是兩種顏色）', () => {
+  STAR_GLYPH.forEach((c, i) => {
+    const d = Math.abs(hue(c) - hue(STAR_BAR_LIGHT[i]));
+    assert.ok(Math.min(d, 360 - d) <= 20,
+      `${LABELS[i]} 的 ★ ${c} 跟文字 ${STAR_BAR_LIGHT[i]} 色相差太多，會像兩種顏色`);
+  });
+});
+
+test('★ 字符也是由亮到暗', () => {
+  const ls = STAR_GLYPH.map(luminance);
+  for (let i = 1; i < ls.length; i++) {
+    assert.ok(ls[i] < ls[i - 1], `★ 字符 ${LABELS[i]} 沒有比 ${LABELS[i - 1]} 暗`);
+  }
+});
+
+/*
+ * ★★ 空星星要比**最暗的那顆實星**還淡。
+ *
+ *   原本用 `gray-300`(#D1D5DB)，它比 1 星的紫還深 ——
+ *   於是「1 星」那一列看起來像拿到了四顆半。
+ */
+test('★★ 空星星要比 1 星的紫更淡 —— 不然看起來像拿到了', () => {
+  assert.ok(luminance(STAR_GLYPH_EMPTY) > luminance(STAR_GLYPH[4]),
+    `空星 ${STAR_GLYPH_EMPTY} 沒有比 1 星 ${STAR_GLYPH[4]} 淡`);
+  // 但也不能淡到看不見 —— 看不見的話「3 星」跟「3 顆星滿分」就分不出來
+  assert.ok(contrast(STAR_GLYPH_EMPTY, '#FFFFFF') >= 1.1,
+    `空星 ${STAR_GLYPH_EMPTY} 在白底上完全看不見，滿分幾顆就講不清楚了`);
 });
