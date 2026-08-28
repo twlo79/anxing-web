@@ -46,7 +46,51 @@
  * 這裡處理的是**誤會**:讓畫面說的話跟資料庫說的話一致。
  */
 
-export type NavItem = { href: string; roles: string[] };
+export type NavItem = {
+  href: string;
+  roles: string[];
+  /**
+   * 這一項屬於哪一群（2026-08-28，17 項之後）。
+   *
+   * ★ 空字串或沒填 = **只畫一條分隔線，不寫標題**。
+   *   「系統」那一組（設定、權限管理）就是這樣 —— 它是「其餘」,
+   *   而給「其餘」取一個名字反而要人多讀兩個字。
+   */
+  group?: string;
+};
+
+/**
+ * 把選單切成一群一群。
+ *
+ * ============================================================
+ * 【★★ 用「連續相同」分群，不是「收集同名」】
+ *
+ * 收集同名的話,有人在中間插一項 `group: '收入'`,
+ * 它會被抓到上面那一群去 —— 而 NAV 陣列裡它明明在下面。
+ * 順序應該完全由陣列決定,那是唯一一份可讀的真相。
+ *
+ *
+ * ============================================================
+ * 【★★ 整群被權限篩空時，標題也要跟著不見】
+ *
+ * `visibleNav` 會先照角色濾掉項目。管家看不到「支出與帳務」那五項,
+ * 若標題還留著,他會看到一個**底下什麼都沒有的標題** ——
+ * 那比不顯示更糟:它明說有這個東西,只是不給你。
+ *
+ * 所以這支只對**已經濾過**的清單分群,空的群自然不會產生。
+ */
+export function groupNav<T extends NavItem>(
+  items: readonly T[],
+): { label: string; items: T[] }[] {
+  const out: { label: string; items: T[] }[] = [];
+  for (const it of items) {
+    const label = it.group ?? '';
+    const last = out[out.length - 1];
+    if (last && last.label === label) last.items.push(it);
+    else out.push({ label, items: [it] });
+  }
+  return out;
+}
 
 /**
  * @param role    profiles.role。查完了但沒設角色是 null

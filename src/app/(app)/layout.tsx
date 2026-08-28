@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
 import { ProfileProvider, useProfile, clearProfileCache } from '@/lib/profile';
-import { visibleNav, currentNav } from '@/lib/nav';
+import { visibleNav, currentNav, groupNav } from '@/lib/nav';
 
 
 const ROLE_LABEL: Record<string, string> = {
@@ -50,10 +50,23 @@ const ROLE_LABEL: Record<string, string> = {
  * 不要每次都從十四項裡找那三項，價值已經到手了。
  * 哪天真的需要隔離（例如要防止看到房客電話），再單獨處理。
  */
-const NAV: { href: string; label: string; icon: string; roles: string[] }[] = [
+const NAV: { href: string; label: string; icon: string; roles: string[]; group?: string }[] = [
+  /*
+   * ══════════════════════════════════════════════════════════
+   * ★★ 順序就是分組（2026-08-28，項目長到 17 個之後）
+   *
+   *   `groupNav()` 是用「**連續相同**」切群的,不是「收集同名」——
+   *   所以**陣列順序就是畫面順序**,把一項插錯位置它就會落到別群去。
+   *   加新項目時,放進它該在的那一段裡。
+   *
+   * ★ 最後兩項（設定、權限管理）刻意**不給 group** ——
+   *   空標題 = 只畫一條分隔線。它們是「其餘」,
+   *   而給「其餘」取一個名字反而要人多讀兩個字（使用者指定）。
+   * ══════════════════════════════════════════════════════════
+   */
   // 出勤排第一：全公司每天最少點兩次,而且是「上班第一件事」。
   // 它原本排在清潔記錄後面 —— 每天要用的東西不該讓人往下找。
-  { href: '/attendance', label: '出勤', icon: '🕐', roles: ['cleaner', 'housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/attendance', label: '出勤', icon: '🕐', group: '每天', roles: ['cleaner', 'housekeeper', 'accountant', 'manager', 'super_admin'] },
   /*
    * 房務管理緊接在出勤後面（2026-08-14 使用者指定）。
    *
@@ -65,13 +78,10 @@ const NAV: { href: string; label: string; icon: string; roles: string[] }[] = [
    * 排班是要互相配合的資訊。資料庫對應 migration_110 的唯讀政策,
    * 寫入仍然只有主管以上。
    */
-  { href: '/housekeeping', label: '房務管理', icon: '🛎️', roles: ['cleaner', 'housekeeper', 'accountant', 'manager', 'super_admin'] },
-  { href: '/shortterm', label: '訂單 | 收入', icon: '🛏️', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
-  { href: '/contracts', label: '契約 | 收入', icon: '🤝', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
-  // 🤑 是整份選單裡**唯一的一張臉** —— 收合成只剩 icon 時最好認的就是它。
-  // 💰 讓給帳戶明細（2026-08-19 使用者指定）。
-  { href: '/revenues', label: '營收表', icon: '🤑', roles: ['accountant', 'manager', 'super_admin'] },
-  { href: '/purchases', label: '請款單控管', icon: '🧾', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/housekeeping', label: '房務管理', icon: '🛎️', group: '每天', roles: ['cleaner', 'housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/cleaning', label: '清潔記錄', icon: '🧹', group: '每天', roles: ['cleaner', 'housekeeper', 'manager', 'super_admin'] },
+  { href: '/shortterm', label: '訂單', icon: '🛏️', group: '收入', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/contracts', label: '契約', icon: '🤝', group: '收入', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   /*
    * 管家看得到押金，但**只能檢視**（2026-08-17 使用者指定）——
    * 房客問「押金退了沒」時不用再去找會計。
@@ -81,7 +91,11 @@ const NAV: { href: string; label: string; icon: string; roles: string[] }[] = [
    * `cleaner` 不放進選單 —— 但 RLS 跟 housekeeper 相同（migration_131），
    * 知道網址還是進得去。那是既有的取捨,不是這次新增的。
    */
-  { href: '/deposits', label: '暫收管理', icon: '🏦', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/deposits', label: '暫收管理', icon: '🏦', group: '收入', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  // 🤑 是整份選單裡**唯一的一張臉** —— 收合成只剩 icon 時最好認的就是它。
+  // 💰 讓給帳戶明細（2026-08-19 使用者指定）。
+  { href: '/revenues', label: '營收表', icon: '🤑', group: '收入', roles: ['accountant', 'manager', 'super_admin'] },
+  { href: '/purchases', label: '請款單控管', icon: '🧾', group: '支出與帳務', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   /*
    * 【💸 而不是 💰】（2026-08-19 使用者要求「其中一個放錢」）
    *
@@ -91,7 +105,7 @@ const NAV: { href: string; label: string; icon: string; roles: string[] }[] = [
    * 💸 是「錢長翅膀飛走」,那就是支出的意思本身,
    * 而且外形是長方形紙鈔＋翅膀,跟 💰 那個圓袋子分得開。
    */
-  { href: '/expenses', label: '支出明細', icon: '💸', roles: ['accountant', 'manager', 'super_admin'] },
+  { href: '/expenses', label: '支出明細', icon: '💸', group: '支出與帳務', roles: ['accountant', 'manager', 'super_admin'] },
   /*
    * 帳戶管理（migration_142）。三個銀行帳戶的流水鏡像。
    *
@@ -109,7 +123,7 @@ const NAV: { href: string; label: string; icon: string; roles: string[] }[] = [
    *   📒 → 💰（2026-08-19 使用者指定）這一頁是三個銀行帳戶裡「現在有多少錢」,
    *                        錢袋比帳本直接。原本佔著 💰 的營收表改用 🤑。
    */
-  { href: '/accounts', label: '帳戶明細', icon: '💰', roles: ['accountant', 'manager', 'super_admin'] },
+  { href: '/accounts', label: '帳戶明細', icon: '💰', group: '支出與帳務', roles: ['accountant', 'manager', 'super_admin'] },
   /*
    * 其他收支帳 —— 愛皮（旅行社）與洪鯊（投資公司）的收支（migration_159）。
    *
@@ -119,20 +133,14 @@ const NAV: { href: string; label: string; icon: string; roles: string[] }[] = [
    * 🗂️ 是「另一本帳」的意思。跟 🏦 押金、🤑 營收、💸 支出、💰 帳戶
    * 都不撞 —— 側邊欄收合成只剩圖示時要分得出來。
    */
-  { href: '/otherbooks', label: '其他收支帳', icon: '🗂️', roles: ['accountant', 'super_admin'] },
-  { href: '/dashboard', label: '財務儀錶板', icon: '📊', roles: ['accountant', 'manager', 'super_admin'] },
+  { href: '/otherbooks', label: '其他收支帳', icon: '🗂️', group: '支出與帳務', roles: ['accountant', 'super_admin'] },
+  { href: '/dashboard', label: '財務儀錶板', icon: '📊', group: '支出與帳務', roles: ['accountant', 'manager', 'super_admin'] },
   // 客戶管理跟房務、評價、清潔是同一組:都是「人在現場會用到的」。
   // 上面那半段是錢(訂單、契約、營收、請款、押金、支出、儀表板)。
   // 客戶資料原本散在訂單 guest_name 與契約 tenant_name 兩邊,
   // 要查一位房客的電話得先猜他是長租還是短租。
-  { href: '/customers', label: '客戶管理', icon: '👥', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
-  { href: '/reviews', label: '房源評價', icon: '⭐', roles: ['housekeeper', 'manager', 'super_admin'] },
-  { href: '/cleaning', label: '清潔記錄', icon: '🧹', roles: ['cleaner', 'housekeeper', 'manager', 'super_admin'] },
-  // 設定 = 通知偏好 ＋ 刪除紀錄。兩個都是「偶爾才進來一次」的東西，
-  // 各佔一格會把每天要用的功能往下推。全角色都看得到：
-  // 通知是每個人自己的偏好；刪除紀錄藏起來的話，誤刪的人第一時間
-  // 找不到救回來的地方 —— 而那正是最需要它的時候。
-  { href: '/settings', label: '設定', icon: '🔔', roles: ['cleaner', 'housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/customers', label: '客戶管理', icon: '👥', group: '經營', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/reviews', label: '房源評價', icon: '⭐', group: '經營', roles: ['housekeeper', 'manager', 'super_admin'] },
   // 會計進得去，但只看得到「收付款帳號」與「常用帳號」兩個分頁
   // —— 改人員角色那一頁仍然只有總經理，見 admin 頁的 ACCOUNTANT_TABS
   /*
@@ -147,7 +155,12 @@ const NAV: { href: string; label: string; icon: string; roles: string[] }[] = [
    * 📋 是「清單」的意思。跟 🧾 請款單、🗂️ 其他收支帳都不撞 ——
    * 側邊欄收合成只剩圖示時要分得出來。
    */
-  { href: '/tenders', label: '標案管理', icon: '📋', roles: ['super_admin'] },
+  { href: '/tenders', label: '標案管理', icon: '📋', group: '經營', roles: ['super_admin'] },
+  // 設定 = 通知偏好 ＋ 刪除紀錄。兩個都是「偶爾才進來一次」的東西，
+  // 各佔一格會把每天要用的功能往下推。全角色都看得到：
+  // 通知是每個人自己的偏好；刪除紀錄藏起來的話，誤刪的人第一時間
+  // 找不到救回來的地方 —— 而那正是最需要它的時候。
+  { href: '/settings', label: '設定', icon: '🔔', roles: ['cleaner', 'housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/admin', label: '權限管理', icon: '⚙️', roles: ['accountant', 'super_admin'] },
 ];
 
@@ -295,6 +308,12 @@ function AppShell({ children }: { children: React.ReactNode }) {
    * 一般情況下第一畫格就有選單，不會真的閃。
    */
   const items = visibleNav(NAV, profile?.role ?? null, loading);
+  /*
+   * ★ 先照角色濾，再分群 —— 順序不能反。
+   *   反過來的話,整群被濾空時會留下一個**底下什麼都沒有的標題**,
+   *   那比不顯示更糟:它明說有這個東西,只是不給你。
+   */
+  const groups = groupNav(items);
   const current = currentNav(items, pathname);
 
   /*
@@ -325,7 +344,30 @@ function AppShell({ children }: { children: React.ReactNode }) {
         <div key={i} className={`mx-2 my-0.5 h-10 rounded-[10px] bg-gray-100 animate-pulse
           ${mini ? 'w-10' : ''}`} />
       ))}
-      {items.map((n) => {
+      {groups.map((g, gi) => (
+        <div key={g.label + gi}>
+          {/*
+            ★★ 群組標題是**純文字，不能點**。
+              能點的話使用者會期待它展開／收合,而它不會 ——
+              一個看起來可以按、按了沒反應的東西比沒有更糟。
+
+            ★ 空標題 = 只畫一條分隔線（設定與權限管理那一組）。
+              它們是「其餘」,而給「其餘」取一個名字反而要人多讀兩個字。
+
+            ★ 第一群不畫上緣的間距與線 —— 最上面那條線會跟
+              使用者名字底下的分隔線疊成兩條。
+          */}
+          {mini ? (
+            gi > 0 && <div aria-hidden className="mx-3 my-2 h-px bg-mor-line" />
+          ) : g.label ? (
+            <div className={`px-4 pb-1 text-[10px] font-semibold tracking-[0.1em] text-gray-400
+                             ${gi > 0 ? 'pt-3' : 'pt-1'}`}>
+              {g.label}
+            </div>
+          ) : (
+            gi > 0 && <div aria-hidden className="mx-4 my-2 h-px bg-mor-line" />
+          )}
+          {g.items.map((n) => {
         const on = pathname.startsWith(n.href);
         if (mini) {
           return (
@@ -378,7 +420,9 @@ function AppShell({ children }: { children: React.ReactNode }) {
             )}
           </Link>
         );
-      })}
+          })}
+        </div>
+      ))}
     </nav>
   );
 
