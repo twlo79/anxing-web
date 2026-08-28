@@ -4,7 +4,12 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
 import { ProfileProvider, useProfile, clearProfileCache } from '@/lib/profile';
-import { visibleNav, currentNav, groupNav } from '@/lib/nav';
+import {
+  visibleNav, currentNav, groupNav, groupOpen, toggleGroup, parseCollapsed,
+} from '@/lib/nav';
+
+/** 收合狀態存哪。改這個字串等於把所有人的收合狀態清空。 */
+const COLLAPSE_KEY = 'anxing.nav.collapsed';
 
 
 const ROLE_LABEL: Record<string, string> = {
@@ -317,6 +322,34 @@ function AppShell({ children }: { children: React.ReactNode }) {
   const current = currentNav(items, pathname);
 
   /*
+   * ══════════ 群組收合（2026-08-28 使用者:「不能 toggle 阿」）══════════
+   *
+   * ★★ 初值一定是空陣列，**不能在這裡讀 localStorage**。
+   *
+   *   伺服器端沒有 localStorage,所以第一次畫出來的 HTML 一定是「全開」。
+   *   若這裡直接讀，瀏覽器第一次 render 會畫成「有收合」——
+   *   兩邊對不起來就是 hydration mismatch,React 會把整棵樹丟掉重畫,
+   *   而症狀是**選單閃一下**,不會報錯。
+   *
+   *   所以照規矩來:初值空的 → mount 後在 useEffect 裡補上。
+   *   代價是進站第一畫格是全開的,一格之後才收起來。
+   */
+  const [collapsed, setCollapsed] = useState<string[]>([]);
+  useEffect(() => {
+    try { setCollapsed(parseCollapsed(localStorage.getItem(COLLAPSE_KEY))); } catch { /* 隱私模式會丟 */ }
+  }, []);
+
+  const flipGroup = (label: string) => {
+    setCollapsed((prev) => {
+      const next = toggleGroup(prev, label);
+      // ★ 寫入包 try —— 無痕視窗與滿了的 localStorage 都會丟，
+      //   而為了「記住收合」讓整個側邊欄掛掉不值得。存不起來就只是這次有效。
+      try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify(next)); } catch { /* 存不起來就算了 */ }
+      return next;
+    });
+  };
+
+  /*
    * 選單。
    *
    * 【選取狀態是圓角膠囊，不是整條滿版】
@@ -344,15 +377,21 @@ function AppShell({ children }: { children: React.ReactNode }) {
         <div key={i} className={`mx-2 my-0.5 h-10 rounded-[10px] bg-gray-100 animate-pulse
           ${mini ? 'w-10' : ''}`} />
       ))}
-      {groups.map((g, gi) => (
+      {groups.map((g, gi) => {
+        /*
+         * ★★ 收起來時（mini）一律當作展開。
+         *
+         *   52px 寬放不下標題,沒有標題就沒有地方放那顆三角形 ——
+         *   而看不到三角形卻藏著項目的話,那些項目就是**消失了**,
+         *   使用者不會知道要把側邊欄拉開才找得回來。
+         */
+        const open = mini || groupOpen(g, collapsed, pathname);
+        return (
         <div key={g.label + gi}>
           {/*
-            ★★ 群組標題是**純文字，不能點**。
-              能點的話使用者會期待它展開／收合,而它不會 ——
-              一個看起來可以按、按了沒反應的東西比沒有更糟。
-
-            ★ 空標題 = 只畫一條分隔線（設定與權限管理那一組）。
-              它們是「其餘」,而給「其餘」取一個名字反而要人多讀兩個字。
+            ★ 空標題 = 只畫一條分隔線（設定與權限管理那一組），而且**收不了**。
+              它們是「其餘」,而給「其餘」取一個名字反而要人多讀兩個字;
+              沒有名字也就沒有地方放收合的把手。
 
             ★ 第一群不畫上緣的間距與線 —— 最上面那條線會跟
               使用者名字底下的分隔線疊成兩條。
@@ -360,14 +399,67 @@ function AppShell({ children }: { children: React.ReactNode }) {
           {mini ? (
             gi > 0 && <div aria-hidden className="mx-3 my-2 h-px bg-mor-line" />
           ) : g.label ? (
-            <div className={`px-4 pb-1 text-[10px] font-semibold tracking-[0.1em] text-gray-400
-                             ${gi > 0 ? 'pt-3' : 'pt-1'}`}>
-              {g.label}
+            /*
+             * ★★ 整條都是按鈕，不是只有那顆三角形。
+             *
+             *   三角形是 10px 的東西,要點中它得瞄準;而標題那一行本來
+             *   就沒有別的用途 —— 整行可按的話,隨手一點就開了。
+             *
+             * ★ aria-expanded 讓讀螢幕的人知道這是可以開合的東西。
+             *   少了它,聽到的只是一個叫「收入」的按鈕,不知道按下去會怎樣。
+             */
+            /*
+             * ══════════ 標題的字級與顏色（2026-08-28 使用者指定）══════════
+             *
+             * 使用者的話:「是不是 用跳一點的顏色 然後字大些」。
+             * 原本是 10px 的 `text-gray-400` —— 那是「標籤」的樣子:
+             * 存在感低到讓人以為它只是裝飾，於是**沒有人想去點它**。
+             *
+             * ★ 改成 12px ＋ 主色 `mor-slate`。
+             *
+             * ★★ 但**不能比項目本身還搶眼** —— 項目是 15px。
+             *   標題若也拉到 14、15px，整條側邊欄會變成十幾個同樣大小的東西，
+             *   分組原本要解決的「一眼看出層次」反而消失。
+             *   12px 是「看得見、但明顯是上一層」的位置。
+             *
+             * ★ 顏色用主色而不是黑 —— 黑色 12px 粗體會比 15px 的灰項目更重，
+             *   層次整個反過來。主色有存在感但飽和度不高，剛好停在上一層。
+             */
+            <div className={`px-2 ${gi > 0 ? 'pt-3' : 'pt-0.5'}`}>
+              <button type="button" onClick={() => flipGroup(g.label)}
+                aria-expanded={open}
+                title={open ? `收起「${g.label}」` : `展開「${g.label}」`}
+                className="w-full flex items-center gap-1.5 px-2.5 py-1.5 rounded-[7px]
+                           text-xs font-bold tracking-[0.08em] text-mor-slate
+                           bg-mor-line/60 hover:bg-mor-line transition-colors">
+                <span>{g.label}</span>
+                {/*
+                  ★★ 收起來的時候要說裡面有幾項。
+                    只有一個三角形的話,使用者不知道那底下是 2 項還是 5 項 ——
+                    而「值不值得打開」正是他當下要判斷的事。
+                */}
+                {!open && (
+                  <span className="ml-auto font-normal tracking-normal opacity-45">
+                    {g.items.length}
+                  </span>
+                )}
+                {/*
+                  三角形收在**最右邊**。放左邊的話它會把標題往右推,
+                  於是「每天」的左緣比「出勤」還右邊一格 ——
+                  整條側邊欄變成兩條參差的垂直線。
+
+                  展開時轉 90°。用 transform 而不是換字元 ——
+                  換字元的話兩個 glyph 寬度不同,標題會左右抖一下。
+                */}
+                <span aria-hidden
+                  className={`text-[9px] leading-none opacity-55 transition-transform duration-150
+                              ${open ? 'ml-auto rotate-90' : ''}`}>▶</span>
+              </button>
             </div>
           ) : (
             gi > 0 && <div aria-hidden className="mx-4 my-2 h-px bg-mor-line" />
           )}
-          {g.items.map((n) => {
+          {open && g.items.map((n) => {
         const on = pathname.startsWith(n.href);
         if (mini) {
           return (
@@ -394,7 +486,18 @@ function AppShell({ children }: { children: React.ReactNode }) {
           // 15px 而不是 14px。側邊欄是整天盯著的東西,而且中文在小字級下
           // 筆畫會糊在一起 —— 拉丁字母在 14px 還很清楚,中文不是。
           <Link key={n.href} href={n.href}
-            className={`group relative mx-2 flex items-center gap-2.5 pl-3.5 pr-3 py-2
+            /*
+             * ★ 有標題的群，項目往內縮一格（pl-6 vs pl-3.5）。
+             *
+             *   縮排是「這幾項屬於上面那個標題」唯一不用文字說明的講法。
+             *   膠囊本身還是靠齊標題的膠囊 —— 只縮**文字**不縮框,
+             *   兩個框對齊才看得出它們是同一欄的東西。
+             *
+             * ★ 沒有標題的那一群（設定、權限管理）不縮 ——
+             *   它們不屬於任何標題,縮進去等於謊稱有上一層。
+             */
+            className={`group relative mx-2 flex items-center gap-2.5 pr-3 py-2
+              ${g.label ? 'pl-6' : 'pl-3.5'}
               rounded-[10px] text-[15px] transition-colors ${
               on ? 'bg-mor-slate/[0.12] text-mor-slate font-semibold'
                  : 'text-gray-700 font-medium hover:bg-white/75'
@@ -422,7 +525,8 @@ function AppShell({ children }: { children: React.ReactNode }) {
         );
           })}
         </div>
-      ))}
+        );
+      })}
     </nav>
   );
 

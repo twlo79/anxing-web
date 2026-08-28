@@ -9,6 +9,9 @@ import {
   SUMMARY_HEADER, DETAIL_HEADER, type DetailRow,
 } from '@/lib/manager-xlsx';
 import { fetchAll } from '@/lib/fetch-all';
+import {
+  STAR_BAR_DARK, STAR_BAR_LIGHT, STAR_TRACK_DARK, STAR_TRACK_LIGHT,
+} from '@/lib/star-bar';
 import { useProfile } from '@/lib/profile';
 import {
   canHideReview, isHidden, hideError, hideReasonText, hideImpactText, HIDE_REASONS,
@@ -54,12 +57,29 @@ function mgrOrder(name: string) {
   return i === -1 ? 50 : i;
 }
 
+/**
+ * 表格與卡片裡那排 ★ 的顏色。
+ *
+ * ★ 跟總覽卡的長條**同一條色帶**（使用者:「下面一樣搭配」）——
+ *   只是這裡是白底，所以吃 `STAR_BAR_LIGHT`（整組壓深）。
+ *   淡色印在白紙上等於沒畫。
+ *
+ * ★★ 用 style 而不是 Tailwind class:類別是**組出來**的話 Tailwind
+ *   靜態掃描不到，畫面會沒有顏色而且不報錯（README 9.3）。
+ */
 function starColor(n: number) {
-  const r = Math.round(n);
-  return r >= 5 ? 'text-amber-400' : r === 4 ? 'text-orange-500' : r === 3 ? 'text-red-500' : r === 2 ? 'text-purple-600' : 'text-gray-900';
+  const r = Math.min(5, Math.max(1, Math.round(n)));
+  return STAR_BAR_LIGHT[5 - r];   // 5 星 → index 0
 }
 function Stars({ n }: { n: number }) {
-  return <span className={`font-semibold ${starColor(n)}`}>{'★'.repeat(Math.round(n))}<span className="text-gray-300">{'★'.repeat(Math.max(0, 5 - Math.round(n)))}</span></span>;
+  const filled = Math.round(n);
+  return (
+    <span className="font-semibold" style={{ color: starColor(n) }}>
+      {'\u2605'.repeat(filled)}
+      {/* 沒拿到的星星留一個淡痕 —— 全部拿掉的話「3 星」跟「3 顆星滿分」分不出來 */}
+      <span className="text-gray-300">{'\u2605'.repeat(Math.max(0, 5 - filled))}</span>
+    </span>
+  );
 }
 
 function hasNegative(r: Review) {
@@ -513,16 +533,25 @@ export default function ReviewsPage() {
             </div>
             <div className="flex items-baseline gap-1.5 mt-1">
               <span className="text-4xl font-bold tracking-tight">{overall.cnt ? overall.avg.toFixed(2) : '—'}</span>
-              <span className="text-amber-300 text-xl">★</span>
+              {/* ★ 跟 5 星那條 bar 同一個黃 —— 兩個都在講「滿分」，不該是兩種黃 */}
+              <span className="text-xl" style={{ color: STAR_BAR_DARK[0] }}>★</span>
             </div>
             <div className="mt-4 space-y-1.5">
               {overallDist.rows.map(([label, n]) => (
                 <div key={label} onClick={(e) => { e.stopPropagation(); setListModal({ title: `${label}評價`, propIds: null, rating: parseInt(label) }); }}
                   className="flex items-center gap-2 text-xs cursor-pointer hover:opacity-80" title={`點擊查看${label}評價`}>
                   <span className="w-8 opacity-75">{label}</span>
-                  <div className="flex-1 h-2 rounded-full bg-white/15 overflow-hidden">
-                    <div className={`h-full ${label === '5 星' ? 'bg-amber-400' : label === '4 星' ? 'bg-orange-500' : label === '3 星' ? 'bg-red-500' : label === '2 星' ? 'bg-purple-500' : 'bg-gray-900'}`}
-                      style={{ width: overallDist.total ? `${Math.max((n / overallDist.total) * 100, n ? 1.5 : 0)}%` : '0%' }} />
+                  {/*
+                    ★★ 軌道是**壓黑**不是提白（lib/star-bar.ts）。
+                      舊版 bg-white/15 把軌道推得跟 bar 一樣亮,
+                      五條有五條不到 3:1 —— 而畫面只是有點糊,不會報錯。
+                  */}
+                  <div className="flex-1 h-2 rounded-full overflow-hidden"
+                    style={{ background: STAR_TRACK_DARK }}>
+                    <div className="h-full" style={{
+                      background: STAR_BAR_DARK[overallDist.rows.findIndex(([l]) => l === label)],
+                      width: overallDist.total ? `${Math.max((n / overallDist.total) * 100, n ? 1.5 : 0)}%` : '0%',
+                    }} />
                   </div>
                   <span className="min-w-[5rem] shrink-0 whitespace-nowrap text-right opacity-75">{n.toLocaleString()} ({overallDist.total ? Math.round((n / overallDist.total) * 100) : 0}%)</span>
                 </div>
@@ -1085,11 +1114,11 @@ function MgrModal({ m, onClose, estates, properties, dateFrom, dateTo, propById,
 
   const total = Number(m.total);
   const dist: [string, number, string][] = [
-    ['5 星', Number(m.s5), 'bg-amber-400'],
-    ['4 星', Number(m.s4), 'bg-orange-500'],
-    ['3 星', Number(m.s3), 'bg-red-500'],
-    ['2 星', Number(m.s2), 'bg-purple-500'],
-    ['1 星', Number(m.s1), 'bg-gray-900'],
+    ['5 星', Number(m.s5), STAR_BAR_LIGHT[0]],
+    ['4 星', Number(m.s4), STAR_BAR_LIGHT[1]],
+    ['3 星', Number(m.s3), STAR_BAR_LIGHT[2]],
+    ['2 星', Number(m.s2), STAR_BAR_LIGHT[3]],
+    ['1 星', Number(m.s1), STAR_BAR_LIGHT[4]],
   ];
 
   return (
@@ -1111,8 +1140,12 @@ function MgrModal({ m, onClose, estates, properties, dateFrom, dateTo, propById,
           {dist.map(([label, n, color]) => (
             <div key={label} className="flex items-center gap-3 text-xs">
               <span className="w-8 text-gray-500">{label}</span>
-              <div className="flex-1 h-3 rounded-full bg-mor-sand overflow-hidden">
-                <div className={`h-full ${color}`} style={{ width: total ? `${(n / total) * 100}%` : '0%' }} />
+              <div className="flex-1 h-3 rounded-full overflow-hidden"
+                style={{ background: STAR_TRACK_LIGHT }}>
+                <div className="h-full" style={{
+                  background: color,
+                  width: total ? `${(n / total) * 100}%` : '0%',
+                }} />
               </div>
               <span className="min-w-[5rem] shrink-0 whitespace-nowrap text-right text-gray-600">{n} ({total ? Math.round((n / total) * 100) : 0}%)</span>
             </div>
@@ -1187,7 +1220,7 @@ function ListModal({ cfg, onClose, dateFrom, dateTo, propById, estateById, onSel
   }, [list]);
   const total = list.length;
   const avg = total ? list.reduce((a, r) => a + Number(r.overall_rating), 0) / total : 0;
-  const BAR = ['bg-amber-400', 'bg-orange-500', 'bg-red-500', 'bg-purple-500', 'bg-gray-900'];
+  const BAR = STAR_BAR_LIGHT;   // 白底 —— 深色卡那組印在白紙上是看不見的
   const LABEL = ['5 星', '4 星', '3 星', '2 星', '1 星'];
 
   return (
@@ -1210,8 +1243,12 @@ function ListModal({ cfg, onClose, dateFrom, dateTo, propById, estateById, onSel
             {LABEL.map((label, i) => (
               <div key={label} className="flex items-center gap-3 text-xs">
                 <span className="w-8 text-gray-500">{label}</span>
-                <div className="flex-1 h-3 rounded-full bg-mor-sand overflow-hidden">
-                  <div className={`h-full ${BAR[i]}`} style={{ width: total ? `${(dist[i] / total) * 100}%` : '0%' }} />
+                <div className="flex-1 h-3 rounded-full overflow-hidden"
+                  style={{ background: STAR_TRACK_LIGHT }}>
+                  <div className="h-full" style={{
+                    background: BAR[i],
+                    width: total ? `${(dist[i] / total) * 100}%` : '0%',
+                  }} />
                 </div>
                 <span className="min-w-[5rem] shrink-0 whitespace-nowrap text-right text-gray-600">{dist[i]} ({total ? Math.round((dist[i] / total) * 100) : 0}%)</span>
               </div>

@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { visibleNav, currentNav, groupNav } from './nav.ts';
+import {
+  visibleNav, currentNav, groupNav, groupOpen, toggleGroup, parseCollapsed,
+} from './nav.ts';
 
 const NAV = [
   { href: '/attendance', roles: ['cleaner', 'housekeeper', 'accountant', 'manager', 'super_admin'] },
@@ -116,4 +118,75 @@ test('空清單回空陣列，不要回一個空群', () => {
 test('★ 分群不會弄丟或重複任何一項', () => {
   const flat = groupNav(G).flatMap((x) => x.items);
   assert.deepEqual(flat.map((i) => i.href), G.map((i) => i.href));
+});
+
+/* ══════════════ 群組收合（2026-08-28）══════════════ */
+
+const INCOME = {
+  label: '收入',
+  items: [{ href: '/shortterm', roles: [] }, { href: '/contracts', roles: [] }],
+};
+
+test('沒被收起來就是開的', () => {
+  assert.equal(groupOpen(INCOME, [], '/attendance'), true);
+});
+
+test('被收起來就是關的', () => {
+  assert.equal(groupOpen(INCOME, ['收入'], '/attendance'), false);
+});
+
+test('★★ 收起來了，但目前這一頁在裡面 → 還是要展開', () => {
+  // 從書籤或通知直接進 /shortterm。照收合狀態畫的話,
+  // 側邊欄會完全看不出他在哪一頁 —— 沒有任何一項是選取狀態。
+  assert.equal(groupOpen(INCOME, ['收入'], '/shortterm'), true);
+});
+
+test('★ 子路徑也算在裡面（用 startsWith，跟 currentNav 同一套）', () => {
+  assert.equal(groupOpen(INCOME, ['收入'], '/shortterm/123'), true);
+});
+
+test('★★ 沒有標題的那一群永遠是開的 —— 沒有把手就打不開', () => {
+  // 設定與權限管理那一組只有一條分隔線,沒有地方放三角形。
+  // 若它收得起來,收掉之後那兩項就永遠找不回來了。
+  const tail = { label: '', items: [{ href: '/settings', roles: [] }] };
+  assert.equal(groupOpen(tail, [''], '/attendance'), true);
+});
+
+test('★ groupOpen 不會去改傳進來的收合清單', () => {
+  const c = ['收入'];
+  groupOpen(INCOME, c, '/shortterm');
+  assert.deepEqual(c, ['收入']);
+});
+
+test('toggleGroup 是開關，而且回新陣列', () => {
+  const a: string[] = [];
+  const b = toggleGroup(a, '收入');
+  assert.deepEqual(b, ['收入']);
+  assert.deepEqual(a, []);                     // 原本那個沒被動到
+  assert.deepEqual(toggleGroup(b, '收入'), []); // 再按一次收回去
+});
+
+test('toggleGroup 只動指定的那一群', () => {
+  assert.deepEqual(toggleGroup(['收入', '經營'], '收入'), ['經營']);
+});
+
+test('★★ localStorage 的內容壞掉時要回空陣列，不能丟例外', () => {
+  // 側邊欄掛掉 = 全站白畫面。使用者手動改過、或舊版存了別的形狀,
+  // 都不該讓整個 app 打不開。
+  assert.deepEqual(parseCollapsed(null), []);
+  assert.deepEqual(parseCollapsed(''), []);
+  assert.deepEqual(parseCollapsed('不是 json'), []);
+  assert.deepEqual(parseCollapsed('{"收入":true}'), []);   // 物件不是陣列
+  assert.deepEqual(parseCollapsed('"收入"'), []);          // 字串不是陣列
+  assert.deepEqual(parseCollapsed('123'), []);
+});
+
+test('★ 陣列裡混進非字串的，濾掉而不是整份丟棄', () => {
+  // 全丟的話,一顆壞掉的值會把使用者收好的其他群一起清空。
+  assert.deepEqual(parseCollapsed('["收入",null,3,"經營"]'), ['收入', '經營']);
+});
+
+test('parseCollapsed 讀得回 toggleGroup 存進去的東西', () => {
+  const saved = toggleGroup(toggleGroup([], '收入'), '經營');
+  assert.deepEqual(parseCollapsed(JSON.stringify(saved)), ['收入', '經營']);
 });

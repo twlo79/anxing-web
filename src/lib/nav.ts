@@ -93,6 +93,66 @@ export function groupNav<T extends NavItem>(
 }
 
 /**
+ * 這一群現在該不該把項目畫出來。
+ *
+ * ============================================================
+ * 【★★ 收合狀態不是唯一的依據 —— 「我在哪」優先】
+ *
+ * 使用者收起「收入」，然後從別的地方（書籤、通知、或別頁的連結）
+ * 進到 /shortterm。這時若照收合狀態畫，側邊欄會**完全看不出他在哪一頁** ——
+ * 沒有任何一項是選取狀態，整條選單看起來像是進錯地方了。
+ *
+ * ★ 所以規則是:**目前所在的那一群一律展開**，不管有沒有被收起來。
+ *   收合是「我平常不看這些」，不是「我不想知道自己在哪」。
+ *
+ * ★ 而且不去改存起來的收合狀態 —— 離開那一頁之後它要回到收起來的樣子。
+ *   順手幫使用者「展開並記住」的話，他下次進來會發現自己收好的東西又開了。
+ *
+ * ============================================================
+ * 【沒有標題的那一群不能收】
+ *
+ * 設定與權限管理那一組沒有標題（只有一條分隔線），
+ * 沒有標題就沒有地方放那顆三角形 —— 收起來之後**打不開**。
+ */
+export function groupOpen<T extends NavItem>(
+  group: { label: string; items: readonly T[] },
+  collapsed: readonly string[],
+  pathname: string,
+): boolean {
+  if (!group.label) return true;                       // 沒標題 = 收不了
+  if (!collapsed.includes(group.label)) return true;   // 沒被收起來
+  // 被收起來了，但目前這一頁在裡面 → 還是要開
+  return group.items.some((n) => pathname.startsWith(n.href));
+}
+
+/** 按一下標題:有就拿掉、沒有就加上。回新陣列,不改原本那個。 */
+export function toggleGroup(collapsed: readonly string[], label: string): string[] {
+  return collapsed.includes(label)
+    ? collapsed.filter((l) => l !== label)
+    : [...collapsed, label];
+}
+
+/**
+ * localStorage 讀回來的東西**不能信**。
+ *
+ * ★ 使用者手動改過、或舊版存的是別的形狀（例如物件），
+ *   直接 `JSON.parse` 之後當陣列用，畫面會在 `.includes` 那一行整個掛掉 ——
+ *   而那是側邊欄，掛掉等於**全站白畫面**。
+ *
+ * 所以解析失敗、不是陣列、或裡面有非字串的，一律當作「沒收合任何東西」。
+ */
+export function parseCollapsed(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const v: unknown = JSON.parse(raw);
+    if (!Array.isArray(v)) return [];
+    return v.filter((x): x is string => typeof x === 'string');
+  } catch {
+    return [];
+  }
+}
+
+/**
  * @param role    profiles.role。查完了但沒設角色是 null
  * @param loading 還在查。**不要拿 role === null 當載入中**
  */
