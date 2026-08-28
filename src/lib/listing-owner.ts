@@ -114,7 +114,7 @@ export function listingOwnerHint(owner: ListingOwner | null, listingId: string):
       + `—— 要拿 ${listingId} 回 Airbnb 後台查是哪一間房。`;
   }
   if (!owner.active) {
-    return `★ 這個編號掛在「${owner.name}」上（${owner.via}），但那間房**已停用** ——`
+    return `★ 這個編號掛在「${owner.name}」上（${owner.via}），但那間房已停用 ——`
       + `所以訂單對不到「啟用中的房源」。`
       + `要嘛到房源管理把它啟用，要嘛把這個編號搬到正確的房源上。`;
   }

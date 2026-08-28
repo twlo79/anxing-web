@@ -209,7 +209,7 @@ export default function ContractFees({
     if (!confirm(
       `刪除設定「${feeLabel(r.fee_type, r.item_name)}」?\n\n`
       + (s?.paid
-        ? `⚠ 底下有 ${s.paid} 期已收款（$${fmt(s.paidAmt)}），那些**會留著**。\n`
+        ? `⚠ 底下有 ${s.paid} 期已收款（$${fmt(s.paidAmt)}），那些會留著。\n`
           + `尚未收款的 ${s.n - s.paid} 期會被刪除。\n\n`
           + `若只是要停止收費，請改按「暫停」或「停止收費」——\n`
           + `刪掉設定之後就看不出這筆費用曾經存在過。\n`

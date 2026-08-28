@@ -166,16 +166,36 @@ const AUDIT_SKIP = new Set(['updated_at', 'created_at', 'id']);
  * 「我改的房源會不會被蓋掉」這個問題,不寫出來就只能靠問人 ——
  * 而問到的答案取決於對方記不記得。寫在旁邊,改資料的人自己看得到。
  */
-const SYNC_TIERS: { level: string; tone: string; fields: string; why: string }[] = [
+/*
+ * 爬蟲的三級分類（2026-08-25 簡化）。
+ *
+ * ★★ 原本每一級後面掛著一整段事故經過（誰在幾點改了什麼、多算了多少錢）。
+ *    那些是**為什麼這樣訂**的證據,不是**現在要做什麼**的指示 ——
+ *    而這張表是給每天在看差異的人用的,他要的是後者。
+ *
+ *    長篇的理由沒有刪,收進下面的「為什麼這樣分」摺疊區。
+ *    看過一次就不用再看,但要找得回來。
+ *
+ * ★ `do` 一句話,講**人要做什麼**;`why` 講**為什麼**。
+ *   兩者混在同一段的話,每天看的人得自己從故事裡挑出指示。
+ */
+const SYNC_TIERS: { level: string; tone: string; fields: string; do: string; why: string }[] = [
   { level: '自動做', tone: 'bg-mor-bluelight text-mor-slate',
     fields: '新增訂單、取消（金額歸零、狀態改成取消）',
-    why: '只有這兩件。它們的共同點是**不會蓋掉任何人的判斷**:新增之前沒有這筆,沒有東西可以被蓋掉;取消只會讓營收變小。而少算與多算的成本不對稱 —— 少算有人會發現（錢對不上、有人來問）,多算不會:一筆已取消的訂單躺在營收裡看起來完全正常。' },
-  { level: '只建議，人工對', tone: 'bg-amber-50 text-amber-800',
+    do: '不用管,爬蟲直接做。',
+    why: '只有這兩件,共同點是不會蓋掉任何人的判斷 —— 新增之前沒有這筆,沒有東西可以被蓋掉;'
+      + '取消只會讓營收變小。而少算與多算的成本不對稱:少算有人會發現（錢對不上、有人來問）,'
+      + '多算不會 —— 一筆已取消的訂單躺在營收裡看起來完全正常。' },
+  { level: '只建議', tone: 'bg-amber-50 text-amber-800',
     fields: '金額、住宿起訖、房源、房客姓名',
-    why: '一個字都不自動改。每一個欄位都可能是某個人某天刻意調過的 —— 2026-08-12 有人把一筆從 95,231 改成 124,346,隔天 06:06 同步改回去,中午另一個人又改成 158,720,兩個人都以為是自己沒存到。教訓不是「要判斷得更聰明」,是根本不要自動改。差異全部列在下面,附上差多少、往哪個方向、為什麼。' },
+    do: '差異列在下面,確認過再按 ✓。系統一個字都不自動改。',
+    why: '每一個欄位都可能是某個人某天刻意調過的。2026-08-12 有人把一筆從 95,231 改成 124,346,'
+      + '隔天 06:06 同步改回去,中午另一個人又改成 158,720 —— 兩個人都以為是自己沒存到。'
+      + '教訓不是「要判斷得更聰明」,是根本不要自動改。' },
   { level: '完全不碰', tone: 'bg-mor-greenlight text-mor-green',
     fields: '收款、押金、帳號、備註、發票、移房',
-    why: '這些是人的判斷與金流紀錄,爬蟲沒有任何依據可以動它們 —— 連建議都不出。' },
+    do: '爬蟲不會動,也不會出建議。',
+    why: '這些是人的判斷與金流紀錄,爬蟲沒有任何依據可以動它們。' },
 ];
 
 /** 每一種差異該做什麼。沒有建議的清單只是一份焦慮清單。 */
@@ -189,9 +209,9 @@ const ISSUE_ADVICE: Record<string, string> = {
     + '一間房可以掛好幾個編號,不用去動已經停用的舊房源。',
   房源名稱查不到: '通常是多間房源在 Airbnb 用了同一個標題（開封 2F/3F/4F 就是）。要靠訂單反查,或手動指定。',
   房客姓名: 'Airbnb 顯示名跟我們登記的正式姓名不同。多半不用處理 —— 除非你發現是對到錯的人。',
-  住宿起訖: 'Airbnb 上的日期改了,系統**沒有**跟著改。這一條建議別放太久 —— '
+  住宿起訖: 'Airbnb 上的日期改了,系統沒有跟著改。這一條建議別放太久 —— '
     + '日期會改變營收攤提的月份,而且行事曆沒更新可能會重複出租。訂單頁的「👀防呆」抓得到期間重疊。'
-    + '按 ✓ 會**連金額一起**同步成 Airbnb 目前的值 —— 延住不可能只改日期不改錢。',
+    + '按 ✓ 會連金額一起同步成 Airbnb 目前的值 —— 延住不可能只改日期不改錢。',
   待人工判斷: 'Airbnb 顯示已取消且無收入,但系統裡標記為已收款。錢真的進來過就不能自動歸零 —— 要你判斷。',
   '在 Airbnb 找不到': '系統裡有這筆訂單,但爬蟲在掃描範圍內沒有再看到它。'
     + '可能是退款結案、被 Airbnb 移除,或訂單編號改了 —— 要確認這筆錢還算不算數。'
@@ -1427,13 +1447,13 @@ export default function AdminPage() {
                 <p>
                   <b>{noBeds.length} 間沒填床數</b>：{noBeds.map((p) => p.name).join('、')}。
                   房務的布巾組數 ＝ 床數 × 打掃次數 —— 沒填的話那間房算不出要帶幾組,
-                  而算不出來就是**靜默地少帶**,到現場才發現。公區填 0。
+                  而算不出來就是<b>靜默地少帶</b>,到現場才發現。公區填 0。
                 </p>
               )}
               {noPoints.length > 0 && (
                 <p>
                   <b>{noPoints.length} 間沒設打掃點數</b>：{noPoints.map((p) => p.name).join('、')}。
-                  報酬點數 ＝ 打掃量 × 打掃點數 —— 沒設的話那幾間**算不出報酬**
+                  報酬點數 ＝ 打掃量 × 打掃點數 —— 沒設的話那幾間<b>算不出報酬</b>
                   （不是算成 0,是列進「算不出來」讓人看見）。
                 </p>
               )}
@@ -1468,23 +1488,45 @@ export default function AdminPage() {
           <h2 className="text-sm font-semibold text-gray-700 mb-2">爬蟲會動哪些欄位</h2>
           <div className="rounded-xl glass overflow-hidden">
             {SYNC_TIERS.map((t) => (
-              <div key={t.level} className="border-b border-mor-line/50 last:border-0 px-4 py-3 sm:flex sm:gap-4">
-                <div className="sm:w-36 shrink-0 mb-1 sm:mb-0">
+              <div key={t.level} className="border-b border-mor-line/50 last:border-0 px-4 py-2.5 sm:flex sm:gap-4">
+                <div className="sm:w-24 shrink-0 mb-1 sm:mb-0">
                   <span className={`inline-block rounded px-2 py-0.5 text-[11px] whitespace-nowrap ${t.tone}`}>
                     {t.level}
                   </span>
                 </div>
                 <div className="min-w-0">
                   <div className="text-sm font-medium">{t.fields}</div>
-                  <div className="text-xs text-gray-500 mt-0.5">{t.why}</div>
+                  {/* ★ 一句話,講人要做什麼。理由收在下面的摺疊區 */}
+                  <div className="text-xs text-gray-500 mt-0.5">{t.do}</div>
                 </div>
               </div>
             ))}
           </div>
-          <p className="text-xs text-gray-400 mt-2">
-            比對的鑰匙是 <b>Airbnb 確認碼</b>,不是姓名或日期 —— 那些會變,一變就會產生重複訂單。
-            2026-07 就發生過:同一筆因為房客改名變成兩列,當月營收多算 33,053。
-          </p>
+
+          {/*
+            ★★ 理由收進摺疊區,預設關著。
+
+              這些是「為什麼這樣訂」的證據 —— 看過一次就不用再看,
+              但哪天有人問「為什麼金額不自動改」時要找得回來。
+              刪掉的話,下一個人會覺得這個限制沒道理然後把它改掉。
+          */}
+          <details className="mt-2">
+            <summary className="text-xs text-mor-slate cursor-pointer hover:text-mor-blue select-none">
+              為什麼這樣分
+            </summary>
+            <div className="mt-2 space-y-2 rounded-lg bg-mor-sand/30 px-3 py-2.5">
+              {SYNC_TIERS.map((t) => (
+                <p key={t.level} className="text-xs text-gray-600 leading-relaxed">
+                  <b className="text-gray-700">{t.level}</b>　{t.why}
+                </p>
+              ))}
+              <p className="text-xs text-gray-600 leading-relaxed border-t border-mor-line/60 pt-2">
+                <b className="text-gray-700">比對的鑰匙</b>　用 Airbnb 確認碼,不是姓名或日期 ——
+                那些會變,一變就產生重複訂單。2026-07 發生過:同一筆因為房客改名變成兩列,
+                當月營收多算 33,053。
+              </p>
+            </div>
+          </details>
         </div>
 
         {/* ── 待處理 ───────────────────────────── */}

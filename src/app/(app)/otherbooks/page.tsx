@@ -534,7 +534,7 @@ export default function OtherBooksPage() {
               混成一個入口的話會出現「已經付掉的錢還在等核可」這種卡住的單。
           */}
           <div className="rounded-lg bg-mor-bluelight text-mor-slate px-3 py-2 text-xs mb-3">
-            這裡記的是**已經付掉**的錢。還沒付的請走「＋ 請款」，那條要總經理核可。
+            這裡記的是<b>已經付掉</b>的錢。還沒付的請走「＋ 請款」，那條要總經理核可。
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <label className="flex flex-col gap-1">
@@ -624,7 +624,7 @@ function Dashboard({
           兩個數字不能相加，也不能互相對照。不寫的話遲早有人拿去對銀行。
       */}
       <div className="rounded-lg bg-mor-sand/40 px-3 py-2 text-xs text-gray-600">
-        這裡的數字是**當月實際發生**的收支（不是認列）。
+        這裡的數字是<b>當月實際發生</b>的收支（不是認列）。
         跟安幸營收表的算法不同，兩邊不能互相對照。
       </div>
 

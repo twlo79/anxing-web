@@ -198,7 +198,7 @@ export default function TaskForm({
             */}
             {draft.end_time < draft.start_time && (
               <p className="px-4 pb-2 text-xs text-amber-700">
-                結束比開始早 —— 這會被當成**跨夜**（做到隔天）。
+                結束比開始早 —— 這會被當成<b>跨夜</b>（做到隔天）。
               </p>
             )}
           </>

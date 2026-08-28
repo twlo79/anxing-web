@@ -655,7 +655,7 @@ export function validate(st: Statement): Problem[] {
           `${Math.abs(f.balance - f.bankBalance).toLocaleString()}）` +
           (off.length > 1 ? `，另有 ${off.length - 1} 筆也不一致` : '') +
           '。整份的支出、存入加總與期初期末都對得起來 —— ' +
-          '交易一筆都沒漏，是銀行那一格印得不一致。**餘額以我們算的為準，銀行印的存成備註。**'
+          '交易一筆都沒漏，是銀行那一格印得不一致。餘額以我們算的為準，銀行印的存成備註。'
         : `第 ${f.seq} 筆（${f.postDate}）PDF 印 ${f.bankBalance.toLocaleString()}、` +
           `推算 ${f.balance.toLocaleString()}，而且總計也對不上 —— 代表解析可能有誤`,
     });
