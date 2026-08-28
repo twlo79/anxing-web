@@ -1,6 +1,7 @@
 'use client';
 import { ReactNode } from 'react';
 import FilterToggle from '@/components/FilterToggle';
+import { syncFrom, syncTo } from '@/lib/date-range';
 
 /**
  * 篩選列的共用元件。**版型以短租訂單頁為準**，全站一致。
@@ -90,9 +91,22 @@ export function FilterDateRange({ label, from, to, onFrom, onTo, quick }: {
     <Field label={label}>
       {/* 起訖兩個日期框加上快捷鈕，手機一行放不下 —— flex-wrap 讓它自然折行而不是溢出 */}
       <div className="flex flex-wrap items-center gap-1">
-        <input type="date" value={from} onChange={(e) => onFrom(e.target.value)} className={CTRL} />
+        {/*
+          ★★ 這一支是 2026-08-27 那次「全站起訖連動」**漏掉的**。
+
+            當時是掃 `type="date"` 靠得很近的成對輸入,而這裡包了一層 Field,
+            兩個 input 中間隔著元件邊界 —— 掃不到。
+            契約頁的租期篩選因此還是舊行為:改了起日,迄日留在更早的日期,
+            清單直接空掉而畫面不會說為什麼。
+
+          ★ 教訓跟 README 9.3 那條一樣:**照形狀掃會漏,要照「誰在用」掃**。
+            `grep -rn "FilterDateRange"` 一次就找得到。
+        */}
+        <input type="date" value={from} className={CTRL}
+          onChange={(e) => { const r = syncFrom(e.target.value, to); onFrom(r.from); onTo(r.to); }} />
         <span className="text-gray-400">~</span>
-        <input type="date" value={to} onChange={(e) => onTo(e.target.value)} className={CTRL} />
+        <input type="date" value={to} className={CTRL} min={from || undefined}
+          onChange={(e) => { const r = syncTo(from, e.target.value); onFrom(r.from); onTo(r.to); }} />
         {quick?.map((q) => (
           <button key={q.label} onClick={() => { onFrom(q.from); onTo(q.to); }}
             className="rounded-lg border border-gray-300 px-2 py-1.5 text-xs hover:bg-mor-sand/60">

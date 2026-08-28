@@ -105,6 +105,15 @@ export default function ContractsPage() {
   const [cadFilter, setCadFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  /*
+   * 發票篩選（2026-08-27 使用者指定）。
+   *
+   * ★ 值用 'y' / 'n' 而不是 boolean —— 篩選有**三種**狀態:
+   *   全部（''）、要開（'y'）、不開（'n'）。
+   *   用 boolean 的話「全部」得靠 null 表示,而 `if (invFilter)` 會把 false 一起當成沒篩,
+   *   於是「不開發票」永遠篩不出來 —— 而畫面看起來只是「這個選項沒有資料」。
+   */
+  const [invFilter, setInvFilter] = useState('');
   const [ext, setExt] = useState({ months: '', monthly: '', total: '' });
   const [extBatches, setExtBatches] = useState<any[]>([]);
   const [fromD, setFromD] = useState('');
@@ -223,10 +232,12 @@ export default function ContractsPage() {
     if (cadFilter) out = out.filter((r) => r.cadence === cadFilter);
     if (typeFilter) out = out.filter((r) => (r.type ?? 'longterm') === typeFilter);
     if (statusFilter) out = out.filter((r) => statusOf(r) === statusFilter);
+    // ★ 用 !! 正規化 —— 舊資料的 invoice_required 可能是 null 而不是 false
+    if (invFilter) out = out.filter((r) => !!r.invoice_required === (invFilter === 'y'));
     if (fromD || toD) out = out.filter((r) => { const st = r.start_date || '', en = r.end_date || ''; if (toD && st && st > toD) return false; if (fromD && en && en < fromD) return false; return true; });
     if (kw) { const k = kw.toLowerCase(); out = out.filter((r) => `${r.room ?? ''}${r.tenant_name ?? ''}${r.phone ?? ''}${r.note ?? ''}`.toLowerCase().includes(k)); }
     return sortRows(out, sort, SORT_COLS);
-  }, [rows, estateFilter, cadFilter, typeFilter, statusFilter, fromD, toD, kw, sort]);
+  }, [rows, estateFilter, cadFilter, typeFilter, statusFilter, invFilter, fromD, toD, kw, sort]);
   const activeCount = useMemo(() => filtered.filter((r) => r.active).length, [filtered]);
   const monthAR = useMemo(() => filtered.filter((r) => r.active).reduce((s, r) => s + (curLT[r.id]?.amount ?? 0), 0), [filtered, curLT]);
   const monthPaid = useMemo(() => filtered.filter((r) => r.active).reduce((s, r) => s + (curLT[r.id]?.paid ? curLT[r.id].amount : 0), 0), [filtered, curLT]);
@@ -634,7 +645,12 @@ const nameOf = (c: Contract) =>
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h1>契約訂單與收款</h1>
+        {/*
+          ★ 副標跟短租那頁同一個寫法（`text-sm font-normal text-gray-400`）——
+            兩頁的標題是同一種東西:「這裡管的是哪幾種單」。
+            長得不一樣的話,使用者每換一頁就要重新找那行字在哪。
+        */}
+        <h1>契約訂單與收款 <span className="text-sm font-normal text-gray-400">長租契約・商務中心・辦公室登記</span></h1>
         <Toast msg={msg} />
       </div>
 
@@ -786,7 +802,7 @@ const nameOf = (c: Contract) =>
           原本這裡有三顆清除鈕（日期一顆、關鍵字一顆、全部清除一顆），
           同一個動作三個位置。現在只有一顆，底線文字，在搜尋右邊。 */}
       <FilterBar
-        active={!!(estateFilter || cadFilter || typeFilter || statusFilter || fromD || toD || kw)}
+        active={!!(estateFilter || cadFilter || typeFilter || statusFilter || invFilter || fromD || toD || kw)}
         >
         <FilterSelect label="物業" value={estateFilter} onChange={setEstateFilter}
           options={estates.map((e) => ({ value: e.name, label: e.name }))} />
@@ -799,12 +815,14 @@ const nameOf = (c: Contract) =>
         <FilterSelect label="狀態" value={statusFilter} onChange={setStatusFilter} options={[
           { value: 'active', label: '進行中' }, { value: 'expired', label: '已到期' },
           { value: 'disabled', label: '已停用' }]} />
+        <FilterSelect label="發票" value={invFilter} onChange={setInvFilter} options={[
+          { value: 'y', label: '開發票' }, { value: 'n', label: '不開發票' }]} />
         <FilterDateRange label="租期(期間內有交集)" from={fromD} to={toD} onFrom={setFromD} onTo={setToD} />
         <FilterSearch label="關鍵字(房源/房客/電話)" value={kwIn} onChange={setKwIn}
           onSubmit={() => setKw(kwIn.trim())} />
         <FilterClear
-          active={!!(estateFilter || cadFilter || typeFilter || statusFilter || fromD || toD || kw || kwIn)}
-          onClear={() => { setEstateFilter(''); setCadFilter(''); setTypeFilter(''); setStatusFilter(''); setFromD(''); setToD(''); setKw(''); setKwIn(''); }} />
+          active={!!(estateFilter || cadFilter || typeFilter || statusFilter || invFilter || fromD || toD || kw || kwIn)}
+          onClear={() => { setEstateFilter(''); setCadFilter(''); setTypeFilter(''); setStatusFilter(''); setInvFilter(''); setFromD(''); setToD(''); setKw(''); setKwIn(''); }} />
       </FilterBar>
 
       {/*

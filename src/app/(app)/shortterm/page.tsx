@@ -185,6 +185,15 @@ export default function ShortTermPage() {
   const [sort, setSort] = useState<SortState>({ key: 'checkin', dir: 'desc' });
   const [collect, setCollect] = useState<Order | null>(null);
   const [payF, setPayF] = useState('');   // '' | unpaid | partial | paid
+  /*
+   * 發票（2026-08-27 使用者:「訂單 契約 都要有 filter 發票 可選」）。
+   *
+   * ★ 值是 'y' / 'n' 不是 boolean —— 篩選有**三種**狀態（全部／開／不開）,
+   *   而 boolean 只有兩種。用 boolean 的話 `if (invF)` 會把 false 一起當成沒篩,
+   *   「不開發票」永遠篩不出來,而畫面看起來只是「這個選項沒有資料」。
+   *   跟契約頁同一套。
+   */
+  const [invF, setInvF] = useState('');   // '' | y | n
   const [agg, setAgg] = useState<any[]>([]);
   // 定期收費的設定只有會計/主管/總經理能改 —— 跟 recurring_charges 的 RLS 一致。
   // 前端擋只是少讓人白按一次,真正的把關在資料庫。
@@ -459,6 +468,21 @@ export default function ShortTermPage() {
       else if (payF === 'partial') q = q.eq('paid', false).gt('paid_amount', 0);
       else if (payF === 'unpaid') q = q.eq('paid', false).lte('paid_amount', 0);
     }
+    /*
+     * 發票。
+     *
+     * ★★ 「不開」不能寫成 `.eq('invoice_required', false)`。
+     *
+     *   `contracts.invoice_required` 是 `not null default false`,
+     *   但 `orders` 的**不在 `schema-baseline.sql` 裡**（README 9.5:那份不可信）,
+     *   所以我不知道舊資料是 false 還是 null。
+     *   若有 null,`.eq(..., false)` 會把它們**安靜地漏掉** ——
+     *   使用者篩「不開發票」少了一半,而畫面只是筆數比較少,不會說為什麼。
+     *
+     *   `is.null or eq.false` 兩種都收,兩種情況下都對。
+     */
+    if (invF === 'y') q = q.eq('invoice_required', true);
+    else if (invF === 'n') q = q.or('invoice_required.is.null,invoice_required.eq.false');
     // 費用類別。房租不是靠「fee_type 是空的」判斷,而是照資料庫
     // order_account_code() 的規則看來源 —— 兩邊用同一條規則,
     // 篩出來的筆數才會跟營收報表對得上。
@@ -468,7 +492,7 @@ export default function ShortTermPage() {
     else if (fp.kind === 'oneoffAll') q = q.in('source', ONEOFF_SOURCES);
     else if (fp.kind === 'feeType') q = q.in('source', ONEOFF_SOURCES).eq('fee_type', fp.feeType);
     return q;
-  }, [src, estF, fromD, toD, kw, payF, feeF]);
+  }, [src, estF, fromD, toD, kw, payF, feeF, invF]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -484,7 +508,7 @@ export default function ShortTermPage() {
     setRows((data as any) ?? []); setTotal(count ?? 0); setLoading(false);
   }, [supabase, applyFilters, sort, page]);
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { setPage(0); }, [src, kw, estF, fromD, toD, sort, payF, feeF]);
+  useEffect(() => { setPage(0); }, [src, kw, estF, fromD, toD, sort, payF, feeF, invF]);
 
   const loadAgg = useCallback(async () => {
     let all: any[] = []; let from = 0;
@@ -935,7 +959,7 @@ export default function ShortTermPage() {
   const savedMode = savedRow
     ? savedState(saved, rows.map((r: any) => String(r.id)), Date.now())
     : 'none';
-  const filtered = hasAnyFilter({ src, estF, fromD, toD, kw, payF, feeF });
+  const filtered = hasAnyFilter({ src, estF, fromD, toD, kw, payF, feeF, invF });
 
   /** 剛存那一筆的黃底。表格與手機卡片共用 —— 兩邊長不一樣才是 bug */
   const SAVED_HL = 'bg-amber-50 ring-1 ring-inset ring-amber-300';
@@ -1012,7 +1036,7 @@ export default function ShortTermPage() {
       */}
       <RecurringPanel canEdit={canEditOrders(role)} />
 
-      <FilterToggle active={!!(src || kw || estF || fromD || toD || payF)} />
+      <FilterToggle active={!!(src || kw || estF || fromD || toD || payF || invF)} />
       <div className="filter-bar collapsible-filters rounded-xl glass p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
         <div>
           <label className="block text-xs text-gray-500 mb-1">物業</label>
@@ -1032,6 +1056,15 @@ export default function ShortTermPage() {
           <select value={payF} onChange={(e) => setPayF(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
             <option value="">全部</option>
             {STATUS_FILTER.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+          </select>
+        </div>
+        <div>
+          {/* ★ 排在收款狀態後面 —— 發票跟收款是同一組「這筆錢的手續辦到哪了」 */}
+          <label className="block text-xs text-gray-500 mb-1">發票</label>
+          <select value={invF} onChange={(e) => setInvF(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
+            <option value="">全部</option>
+            <option value="y">開發票</option>
+            <option value="n">不開發票</option>
           </select>
         </div>
         <div>
@@ -1058,8 +1091,8 @@ export default function ShortTermPage() {
           費用類別的預設是房租,清成「全部」的話會變成一個他從來沒選過的狀態,
           而且那顆按鈕會永遠掛在那裡（預設值本身就是有值的）。
         */}
-        {(src || kw || estF || fromD || toD || payF || feeF !== FEE_F_RENT) && (
-          <button onClick={() => { setSrc(''); setKw(''); setKwIn(''); setEstF(''); setFromD(''); setToD(''); setFeeF(FEE_F_RENT); setPayF(''); }}
+        {(src || kw || estF || fromD || toD || payF || invF || feeF !== FEE_F_RENT) && (
+          <button onClick={() => { setSrc(''); setKw(''); setKwIn(''); setEstF(''); setFromD(''); setToD(''); setFeeF(FEE_F_RENT); setPayF(''); setInvF(''); }}
             className="text-gray-500 underline pb-1.5">清除</button>
         )}
         {/*
