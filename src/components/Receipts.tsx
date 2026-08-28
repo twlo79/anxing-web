@@ -82,7 +82,7 @@ const Receipts = forwardRef<ReceiptsHandle, {
    *   都掛在押金底下的話分不出哪張對哪筆 ——
    *   而金額對不上時，那正是唯一能查的東西。
    */
-  kind: 'pr' | 'pri' | 'exp' | 'dep' | 'op' | 'dp' | 'of';
+  kind: 'pr' | 'pri' | 'exp' | 'dep' | 'op' | 'dp' | 'of' | 'td';
   parentId: string | null | undefined;
   canEdit?: boolean;
   label?: string;
@@ -127,6 +127,16 @@ const Receipts = forwardRef<ReceiptsHandle, {
     : kind === 'op' ? 'order_payment_id'   // 短租收款的證明照片（migration_85）
     : kind === 'dp' ? 'deposit_payment_id' // 押金某一筆收款的證明（migration_147）
     : kind === 'of' ? 'order_id'           // 加費的憑證:收據、壞掉的杯子（migration_158）
+    /*
+     * 標案的文件與照片（migration_179）。
+     *
+     * ★ **不分「文件」與「照片」兩種**。兩者都是附件,差別只在 mime type ——
+     *   分成兩個上傳區的話,使用者得先判斷「這張掃描成 PDF 的圖算文件還是照片」,
+     *   而那個判斷對系統一點意義都沒有。畫面上照片顯示縮圖、文件顯示檔名就夠了。
+     *
+     * ★ `td/` 只有 super_admin 看得到（migration_179 在 can_see_receipt 加的分支）。
+     */
+    : kind === 'td' ? 'tender_id'
     : 'expense_id';
 
   const load = useCallback(async () => {

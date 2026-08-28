@@ -135,6 +135,19 @@ const NAV: { href: string; label: string; icon: string; roles: string[] }[] = [
   { href: '/settings', label: '設定', icon: '🔔', roles: ['cleaner', 'housekeeper', 'accountant', 'manager', 'super_admin'] },
   // 會計進得去，但只看得到「收付款帳號」與「常用帳號」兩個分頁
   // —— 改人員角色那一頁仍然只有總經理，見 admin 頁的 ACCOUNTANT_TABS
+  /*
+   * 標案管理（migration_179，2026-08-28）。
+   *
+   * **只有總經理**（使用者指定）。RLS 也是這樣寫的 —— 選單與資料庫一致,
+   * 藏起來不是為了安全,是為了不騙人。
+   *
+   * 放在「權限管理」前面、其他日常功能後面:它不是每天要點的東西,
+   * 但也不是設定 —— 它是一條獨立的業務線。
+   *
+   * 📋 是「清單」的意思。跟 🧾 請款單、🗂️ 其他收支帳都不撞 ——
+   * 側邊欄收合成只剩圖示時要分得出來。
+   */
+  { href: '/tenders', label: '標案管理', icon: '📋', roles: ['super_admin'] },
   { href: '/admin', label: '權限管理', icon: '⚙️', roles: ['accountant', 'super_admin'] },
 ];
 
