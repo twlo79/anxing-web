@@ -12,6 +12,7 @@ import { createClient } from '@/lib/supabase';
 import { titleCaseName } from '@/lib/name-format';
 import { manualDepositError } from '@/lib/manual-deposit';
 import { totalBuckets } from '@/lib/deposit-summary';
+import StatCard, { StatRow, StatTotal, StatGroup } from '@/components/StatCard';
 import { exitBlockedReason, forfeitOrder, earnestStatus, convertPlan, type EarnestDep } from '@/lib/earnest';
 import { useProfile } from '@/lib/profile';
 import { fetchAll } from '@/lib/fetch-all';
@@ -398,8 +399,16 @@ export default function DepositsPage() {
   const kindChip = (r: Dep) => {
     const earnest = r.kind === 'earnest';
     return (
-      <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] ${
-        earnest ? 'bg-mor-bluelight text-mor-slate' : 'bg-gray-100 text-gray-500'}`}>
+      /*
+       * ★ 押金從灰改成藍（2026-08-25）。
+       *
+       *   灰色在這個系統裡是「停用／不適用」的顏色,而押金是**最正常的狀態**——
+       *   用最像失效的顏色標最常見的東西,看久了會覺得那一欄沒有意義。
+       *
+       *   現在卡片、群組標題、列表徽章三個地方講同一件事用同一個顏色。
+       */
+      <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-medium ${
+        earnest ? 'bg-amber-100 text-amber-800' : 'bg-mor-bluelight text-mor-slate'}`}>
         {earnest ? '訂金' : '押金'}
       </span>
     );
@@ -1300,21 +1309,14 @@ export default function DepositsPage() {
             差了一百多萬，而且**兩種讀法看起來都合理**，
             對不出來的人只會覺得自己算錯。
       */}
-      <div className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <span className="text-sm text-gray-500">暫收款總計</span>
-        <span className="stat-num-lg font-bold text-mor-slate tabular-nums">
-          NT$ {fmt(allStats.held.cur['TWD'] ?? 0)}
-        </span>
-        {/* ★ 外幣不能省 —— 省掉的話 USD 700 那幾筆從畫面上完全消失，
-            而台幣那個數字看起來完全正確,沒有任何跡象 */}
-        {fxLine(allStats.held.cur) && (
-          <span className="text-sm text-gray-500">{fxLine(allStats.held.cur)}</span>
-        )}
-        <span className="text-sm text-gray-400">{allStats.held.n} 筆・錢在我們手上</span>
-      </div>
+      <StatTotal
+        label="暫收款總計"
+        value={`NT$ ${fmt(allStats.held.cur['TWD'] ?? 0)}`}
+        sub={`${allStats.held.n} 筆・錢在我們手上${
+          fxLine(allStats.held.cur) ? `・${fxLine(allStats.held.cur)}` : ''}`} />
 
       <div className="mb-3">
-          <div className="text-xs text-gray-500 mb-1.5">訂金</div>
+          <StatGroup label="訂金" tone="amber" />
           {/*
               ★ 三格，不是五格（2026-08-24 使用者:「這三個可以放一起嗎？」）。
 
@@ -1327,46 +1329,29 @@ export default function DepositsPage() {
 
               細分寫在第三格的小字裡，要看得到、但不佔一整格。
           */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+          <StatRow>
             {([
-              /*
-               * ★ 卡片底下只留筆數（2026-08-25 使用者:「卡片下方只顯示 幾筆」）。
-               *
-               *   原本每一格都有一句解釋（「錢在我們手上，還沒決定去向」…）。
-               *   六格六句，而標題本身已經說完了。
-               *
-               * ★★ 唯一留下的例外是「已結案」的組成（退 n・沒收 n・轉押 n）——
-               *    那三種的**錢去了完全不同的地方**（退給房客／變成收入／
-               *    留在公司變押金），而卡片上只有一個總數。
-               *    不寫的話會被整包當成「都退出去了」。
-               *    只寫筆數不寫金額，維持一行。
-               */
-              { k: 'pending',  title: '未付訂金', s: earnStats.pending,  sub: null },
-              { k: 'held',     title: '已收訂金', s: earnStats.held,     sub: null },
-              { k: 'returned', title: '已結案',   s: earnStats.returned,
+              /* ★ 標題不再重複「訂金」—— 群組標題已經說了,每一列再寫一次是三次雜訊 */
+              { k: 'pending',  title: '未付',   s: earnStats.pending,  sub: null },
+              { k: 'held',     title: '已收',   s: earnStats.held,     sub: null },
+              { k: 'returned', title: '已結案', s: earnStats.returned,
                 sub: [
                   earnStats.returned.n - earnStats.forfeited.n - earnStats.converted.n > 0
                     ? `退 ${earnStats.returned.n - earnStats.forfeited.n - earnStats.converted.n}` : '',
                   earnStats.forfeited.n > 0 ? `沒收 ${earnStats.forfeited.n}` : '',
                   earnStats.converted.n > 0 ? `轉押 ${earnStats.converted.n}` : '',
                 ].filter(Boolean).join('・') || null },
-            ] as const).map((t) => {
-              const on = kindF === 'earnest' && statusF === t.k;
-              return (
-                <button key={t.title} type="button"
-                  onClick={() => { setKindF('earnest'); setStatusF(t.k); }}
-                  className={`text-left rounded-lg px-3 py-2 border transition min-w-0
-                    ${on ? 'bg-mor-slate text-white border-mor-slate'
-                         : 'bg-white border-mor-line hover:border-gray-300'}`}>
-                  <div className={`text-[11px] ${on ? 'opacity-80' : 'text-gray-500'}`}>{t.title}</div>
-                  <div className="font-bold tabular-nums">NT$ {fmt(t.s.cur['TWD'] ?? 0)}</div>
-                  <div className={`text-[11px] ${on ? 'opacity-90' : 'text-gray-400'}`}>
-                    {t.s.n} 筆{t.sub ? `　${t.sub}` : ''}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
+            ] as const).map((t) => (
+              <StatCard key={t.k}
+                label={t.title}
+                value={`NT$ ${fmt(t.s.cur['TWD'] ?? 0)}`}
+                sub={`${t.s.n} 筆${t.sub ? `・${t.sub}` : ''}`}
+                tone="amber"
+                active={kindF === 'earnest' && statusF === t.k}
+                muted={t.s.n === 0}
+                onClick={() => { setKindF('earnest'); setStatusF(t.k); }} />
+            ))}
+          </StatRow>
       </div>
 
       {/*
@@ -1376,57 +1361,33 @@ export default function DepositsPage() {
         ★ 這一列是**押金**（migration_174 之後）。點下去會一併把
           訂金/押金切到「押金」—— 不然按了「已收款」卻看到訂金混在裡面。
       */}
-      <div className="text-xs text-gray-500 mb-1.5">押金</div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+      <StatGroup label="押金" tone="slate" />
+      {/*
+        ★ 跟訂金那一列**用同一個元件、同一種尺寸**（2026-08-25）。
+          改版前這一列是 p-5 的大卡、訂金那列是 px-3 py-2 的小卡 ——
+          並排時看起來像兩種不同的東西,其實是同一種。
+      */}
+      <StatRow className="mb-4">
         {([
-          /*
-           * ★ 三個標題都帶「押金」兩個字（2026-08-25 使用者指定）。
-           *
-           *   舊標題是「未收款／已收款(暫收中)／已退款」——
-           *   而上面那一列訂金的標題是「未付訂金／已收訂金／已結案」。
-           *   兩列並排時只有一列說得出自己是什麼錢，
-           *   捲到一半看到「已退款」會不知道退的是訂金還是押金。
-           */
-          { k: 'pending', title: '未付押金', tone: 'amber' },
-          { k: 'held', title: '已收押金', tone: 'slate' },
-          { k: 'returned', title: '已退押金', tone: 'gray' },
+          { k: 'pending',  title: '未付' },
+          { k: 'held',     title: '已收' },
+          { k: 'returned', title: '已退' },
         ] as const).map((t) => {
-          const s = stats[t.k];
-          const on = statusF === t.k && kindF !== 'earnest';
-          const fx = fxLine(s.cur);
+          const st = stats[t.k];
+          const fx = fxLine(st.cur);
+          /* ★ 已退押金裡混著移房 —— 那幾筆錢沒有出去。只留筆數,金額拿掉 */
+          const moved = t.k === 'returned' && stats.moved.n > 0 ? `其中移房 ${stats.moved.n} 筆` : '';
           return (
-            <button key={t.k} onClick={() => { setKindF('deposit'); setStatusF(t.k); }}
-              className={`text-left rounded-xl p-5 min-w-0 border transition
-                ${on
-                  ? (t.tone === 'slate' ? 'bg-mor-slate text-white border-mor-slate'
-                    : t.tone === 'amber' ? 'bg-amber-500 text-white border-amber-500'
-                    : 'bg-gray-600 text-white border-gray-600')
-                  : 'bg-white border-mor-line hover:border-gray-300'}`}>
-              <div className={`text-xs ${on ? 'opacity-80' : 'text-gray-500'}`}>{t.title}</div>
-              <div className="stat-num-lg font-bold mt-1">NT$ {fmt(s.cur['TWD'] ?? 0)}</div>
-              {/*
-                ★ 底下只留筆數（2026-08-25 使用者:「卡片下方只顯示 幾筆」）。
-                  三句解釋（「已填押金但還沒收到錢」…）拿掉了 —— 標題已經說完。
-
-                ★★ 外幣**留著**。省掉的話 CAD 20,000 那幾筆從畫面上整個消失，
-                   而台幣那個數字看起來完全正確，沒有任何跡象說少了東西
-                   （migration_87 就是這樣漏掉的）。所以併進同一行，不佔一列。
-
-                ★★ 移房也留著，但只留筆數不留金額。
-                   已退押金裡混著移房 —— 那幾筆**錢根本沒有出去**。
-                   不寫的話「這段期間退了多少押金」會被灌水，
-                   而每一筆單看都是一筆正常的已退押金。
-              */}
-              <div className={`text-xs mt-1 ${on ? 'opacity-90' : 'text-gray-400'}`}>
-                {s.n} 筆{fx ? `・${fx}` : ''}
-                {t.k === 'returned' && stats.moved.n > 0 && (
-                  <span className={on ? '' : 'text-violet-700'}>　其中移房 {stats.moved.n} 筆</span>
-                )}
-              </div>
-            </button>
+            <StatCard key={t.k}
+              label={t.title}
+              value={`NT$ ${fmt(st.cur['TWD'] ?? 0)}`}
+              sub={[`${st.n} 筆`, fx, moved].filter(Boolean).join('・')}
+              active={statusF === t.k && kindF !== 'earnest'}
+              muted={st.n === 0}
+              onClick={() => { setKindF('deposit'); setStatusF(t.k); }} />
           );
         })}
-      </div>
+      </StatRow>
 
       {/*
         退款流程指標。

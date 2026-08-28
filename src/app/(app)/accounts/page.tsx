@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import StatCard, { StatRow, StatTotal } from '@/components/StatCard';
 import { createClient } from '@/lib/supabase';
 import { fetchAll } from '@/lib/fetch-all';
 import Toast from '@/components/Toast';
@@ -354,61 +355,53 @@ export default function AccountsPage() {
 
         不引進新顏色 —— 這一頁自己配一組色的話，跟其他頁走不在一起。
       */}
-      <div className="mb-3 rounded-lg border border-mor-line bg-mor-bluelight px-4 py-3">
-        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <span className="text-sm text-mor-slate">總計</span>
-          <span className="text-2xl font-semibold tabular-nums">{money(totals.total)}</span>
-          {totals.asOf && <span className="text-sm text-gray-500">至 {totals.asOf}</span>}
+      {/*
+        ★★ 總計改用全站共用的 StatTotal（2026-08-25）。
+
+          原本是一條淺藍橫幅,而暫收那邊是一行大字 ——
+          同一種東西兩種長相。而且做成有底色的框會讓它**看起來可以點**,
+          實際上按下去什麼都不會發生。
+
+        ★ 警語留著,但移到總計下面 —— 那是「這個數字可不可信」,
+          跟數字本身不是同一件事。
+      */}
+      <StatTotal label="總計" value={money(totals.total)}
+        sub={totals.asOf ? `至 ${totals.asOf}` : undefined} />
+      {(totals.stale.length > 0 || totals.missing.length > 0) && (
+        <div className="-mt-2 mb-3 text-xs text-amber-700">
+          {totals.stale.length > 0 && <>⚠ {totals.stale.join('、')} 的對帳單較舊，合計不是最新狀態。</>}
+          {totals.missing.length > 0 && <>⚠ {totals.missing.join('、')} 還沒上傳過對帳單，沒有算進合計。</>}
         </div>
-        {(totals.stale.length > 0 || totals.missing.length > 0) && (
-          <div className="mt-1 text-xs text-amber-700">
-            {totals.stale.length > 0 && <>⚠ {totals.stale.join('、')} 的對帳單較舊，合計不是最新狀態。</>}
-            {totals.missing.length > 0 && <>⚠ {totals.missing.join('、')} 還沒上傳過對帳單，沒有算進合計。</>}
-          </div>
-        )}
-      </div>
+      )}
 
       {/* ── 三張卡片 ────────────────────────────── */}
-      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {accounts.map((a) => {
-          const s = latest[a.id];
-          const on = tab === a.id;
-          return (
-            <button
-              key={a.id}
-              onClick={() => setTab(a.id)}
-              className={`rounded-lg border p-4 text-left transition ${
-                on
-                  ? 'border-mor-slate bg-mor-bluelight ring-1 ring-mor-slate'
-                  : 'border-mor-line bg-white hover:border-gray-400'
-              }`}
-            >
-              <div className={`text-sm ${on ? 'font-medium text-mor-slate' : 'text-gray-600'}`}>{a.name}</div>
-              <div className="mt-1 text-2xl font-semibold tabular-nums">
-                {money(s?.closing_balance)}
-              </div>
-              <div className="mt-1 text-xs text-gray-500">
-                {/*
-                  只給一個數字的話,看的人不知道那是今天的還是三個月前的。
-                  而餘額是「最後一次上傳的對帳單的期末」,不是即時的。
-                */}
-                {s ? `至 ${s.period_to}` : '還沒上傳對帳單'}
-              </div>
-              {/*
-                銀行名縮小、帳號放大（2026-08-19 使用者指定）。
+      {/*
+        ★★ 選中改成**實心主色**,跟契約與暫收一致（2026-08-25）。
 
-                三個帳戶都是同一家銀行 —— 銀行名對「這是哪一個帳戶」
-                完全沒有幫助,佔的視覺重量卻跟帳號一樣。
-                真正要看的是末五碼,所以帳號放大並切出來。
-              */}
-              <div className="mt-2 text-[10px] text-gray-400">{a.bank}</div>
-              <div className="font-mono text-[13px] tracking-tight text-gray-600">
-                {splitTail(a.account_no) || `…${a.account_no_tail}`}
-              </div>
-            </button>
+          原本這一頁是「淺藍底 ＋ 外框 ＋ ring」—— 全站第三種選中樣式。
+          三個頁面三種做法,使用者每換一頁就要重學一次「哪一張是選中的」。
+      */}
+      <StatRow cols={3} className="mb-4">
+        {accounts.map((a) => {
+          const st = latest[a.id];
+          return (
+            <StatCard key={a.id}
+              label={a.name}
+              value={money(st?.closing_balance)}
+              /*
+                ★ 只給一個數字的話,看的人不知道那是今天的還是三個月前的 ——
+                  餘額是「最後一次上傳的對帳單的期末」,不是即時的。
+                ★ 帳號末幾碼也放這裡:三個帳戶同一家銀行,銀行名幫不上忙,
+                  要看的是末五碼。
+              */
+              sub={`${st ? `至 ${st.period_to}` : '還沒上傳對帳單'}・${
+                splitTail(a.account_no) || `…${a.account_no_tail}`}`}
+              active={tab === a.id}
+              muted={!st}
+              onClick={() => setTab(a.id)} />
           );
         })}
-      </div>
+      </StatRow>
 
       {/* ── 流水 ────────────────────────────────── */}
       <div className="rounded-lg border border-mor-line bg-white">

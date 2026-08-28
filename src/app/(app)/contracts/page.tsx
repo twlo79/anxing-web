@@ -20,6 +20,7 @@ import { periodTotal, type PeriodTotal } from '@/lib/period-total';
 import OrderPayments from '@/components/OrderPayments';
 import { autoSettleMessage } from '@/lib/period-settle';
 import { METHOD_LABEL } from '@/lib/pay-method';
+import StatCard, { StatRow, StatTotal } from '@/components/StatCard';
 // Supabase 一次只回 1000 列且不報錯 —— 欠款是沒有上界的集合,一定要撈完
 import { fetchAll } from '@/lib/fetch-all';
 import {
@@ -668,25 +669,24 @@ const nameOf = (c: Contract) =>
         所以把月份抽出來只顯示一次,卡片標籤縮到兩個字。
         數字用 .stat-num（clamp 流體字級）,位數再多也不會撐破。
       */}
-      <div className="text-xs text-gray-500 mb-1.5 md:hidden">本月 {curMon}</div>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 md:gap-3 mb-4">
-        <div className="rounded-xl bg-mor-slate text-white p-3 md:p-4 min-w-0">
-          <div className="text-xs opacity-75 truncate">契約數(啟用)</div>
-          <div className="stat-num font-bold mt-1">{activeCount}</div>
-        </div>
-        <div className="rounded-xl bg-white border border-mor-line p-3 md:p-4 min-w-0">
-          <div className="text-xs text-gray-500 truncate"><span className="hidden md:inline">本月({curMon}) </span>應收</div>
-          <div className="stat-num font-bold mt-1">${fmt(monthAR)}</div>
-        </div>
-        <div className="rounded-xl bg-white border border-mor-line p-3 md:p-4 min-w-0">
-          <div className="text-xs text-gray-500 truncate"><span className="hidden md:inline">本月({curMon}) </span>已收</div>
-          <div className="stat-num font-bold mt-1 text-mor-green">${fmt(monthPaid)}</div>
-        </div>
-        <div className="rounded-xl bg-white border border-mor-line p-3 md:p-4 min-w-0">
-          <div className="text-xs text-gray-500 truncate"><span className="hidden md:inline">本月({curMon}) </span>未收</div>
-          <div className="stat-num font-bold mt-1 text-orange-600">${fmt(monthAR - monthPaid)}</div>
-        </div>
-      </div>
+      {/*
+        ★★ 這四張改用全站共用的 StatCard（2026-08-25）。
+
+          原本是四個手寫的 div,而暫收、帳戶各有自己的一套 ——
+          同一種東西三種長相。共用之後改一個地方全站跟著變。
+
+        ★ 契約數與金額**分成兩組**:
+          契約數是「有幾張約」,三個金額是「這個月的錢」——
+          放同一列的話「108」跟「$8,012,708」並排,
+          看起來像同一種量。
+      */}
+      <StatTotal label="契約數（啟用）" value={activeCount} sub={`本月 ${curMon}`} />
+      <StatRow cols={3} className="mb-4">
+        <StatCard label="應收" value={`$${fmt(monthAR)}`} />
+        <StatCard label="已收" value={`$${fmt(monthPaid)}`} />
+        <StatCard label="未收" value={`$${fmt(monthAR - monthPaid)}`}
+          muted={monthAR - monthPaid === 0} />
+      </StatRow>
 
       <div className="grid grid-cols-2 gap-3 mb-3 text-sm">
         <div className="rounded-xl bg-white border border-mor-line p-3">

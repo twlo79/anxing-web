@@ -365,3 +365,185 @@ input:-webkit-autofill:focus {
   caret-color: #2e3840;
   transition: background-color 9999s ease-in-out 0s;
 }
+
+/* ============================================================
+ * 元件層（2026-08-25 使用者:「整體 UI 優化,有一致性」）
+ *
+ * 【為什麼需要這一層】
+ *
+ * 盤點的結果:
+ *   主色按鈕   45 種寫法
+ *   次要按鈕   82 種
+ *   卡片容器   87 種
+ *   彈窗外框   16 種
+ *
+ * 同一顆「確認」按鈕在七個頁面有七種 padding。不是誰寫錯了 ——
+ * 是**沒有一個地方可以定義「按鈕長什麼樣」**,所以每次都重打一次。
+ *
+ * ★★ 這種不一致 `tsc` 與測試**都抓不到**。
+ *    class 打錯不會報錯,只會變醜或跑版 —— 所以唯一的防線是
+ *    「有一個地方可以改」,而不是「每次都寫對」。
+ *
+ *
+ * 【★ 為什麼放 components layer 而不是 base】
+ *
+ * Tailwind 的優先序是 base < components < utilities。
+ * 放在 components 的話,既有頁面上那些 `px-3 py-2` 之類的 utility
+ * **仍然蓋得過它** —— 所以可以一頁一頁換,沒換到的頁面行為完全不變。
+ *
+ * 放 base 的話反過來:定了就全站生效,而我沒辦法一次確認十六個頁面。
+ *
+ *
+ * 【★ 手機優先:高度分兩段】
+ *
+ * 手機 h-11（44px）是 Apple HIG 的最小可點區域,桌機縮回 h-9。
+ * 既有的 `h-12 md:h-auto` 是同一個意圖的手寫版,這裡把它變成預設。
+ * ============================================================ */
+@layer components {
+
+  /* ── 按鈕 ──────────────────────────────────────────
+   * 用法:<button className="btn btn-primary">確認收款</button>
+   *
+   * ★ `.btn` 只管形狀與大小,顏色由 `.btn-*` 決定 ——
+   *   分開才能有「主色的大按鈕」與「危險的小按鈕」而不用寫兩份。
+   */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    height: 2.75rem;                 /* 手機 44px */
+    padding-inline: 1rem;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    line-height: 1;
+    white-space: nowrap;
+    transition: background-color .15s, border-color .15s, opacity .15s;
+  }
+  @media (min-width: 768px) {
+    .btn { height: 2.25rem; }        /* 桌機 36px */
+  }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+
+  /* 主色。★ 一個畫面**最多一顆** —— 兩顆並排時沒有一顆是主要的 */
+  .btn-primary { background: #41689B; color: #fff; }
+  .btn-primary:not(:disabled):hover { background: #345380; }
+
+  /* 次要:有框的白底。多數按鈕都是這一種 */
+  .btn-ghost { background: #fff; color: #2E3840; border: 1px solid #E0DDD5; }
+  .btn-ghost:not(:disabled):hover { background: rgba(236,232,223,.6); }
+
+  /* 危險:刪除、駁回。★ 用框不用填滿 —— 填滿的紅色比主色還搶眼 */
+  .btn-danger { background: #fff; color: #DC2626; border: 1px solid #FCA5A5; }
+  .btn-danger:not(:disabled):hover { background: #FEF2F2; }
+
+  /* 純文字。表格列內的「核可 / 分享」那種,不該長得像按鈕 */
+  .btn-link {
+    height: auto; padding: 0; font-size: .75rem;
+    text-decoration: underline; color: #41689B; background: none;
+  }
+
+  /* 小一號。表格列內、卡片角落 */
+  .btn-sm { height: 2rem; padding-inline: .75rem; font-size: .75rem; }
+  @media (min-width: 768px) { .btn-sm { height: 1.75rem; } }
+
+  /* 撐滿一列。手機的對話框底部按鈕都該是這種 */
+  .btn-block { width: 100%; }
+
+
+  /* ── 卡片 ──────────────────────────────────────────
+   * `.glass`（上面既有的）是**有背景模糊**的那種,用在整頁的區塊。
+   * `.card` 是純白平面的,用在清單裡的一筆、彈窗裡的一段。
+   */
+  .card {
+    background: #fff;
+    border: 1px solid #E0DDD5;
+    border-radius: 0.75rem;
+    padding: 0.75rem 0.875rem;
+  }
+  @media (min-width: 768px) {
+    .card { padding: 1rem; }
+  }
+  /* 需要你動手的那一張。★ 一個畫面最多一張 */
+  .card-accent { border-width: 2px; border-color: #41689B; }
+  /* 空的 / 不適用的。整張變淡而不是拿掉 —— 拿掉的話看的人不知道它存在 */
+  .card-muted { opacity: .55; }
+
+
+  /* ── 彈窗 ──────────────────────────────────────────
+   * ★★ 手機貼底、桌機置中。
+   *   置中的小視窗在手機上鍵盤一跳出來就被推到看不見 ——
+   *   這是既有 DepositPayments 的註解記著的教訓,這裡變成預設。
+   */
+  .modal-backdrop {
+    position: fixed; inset: 0; z-index: 60;
+    display: flex; align-items: flex-end; justify-content: center;
+    background: rgba(0,0,0,.4);
+  }
+  @media (min-width: 640px) { .modal-backdrop { align-items: center; } }
+
+  .modal-panel {
+    position: relative; background: #fff; width: 100%;
+    border-radius: 1rem 1rem 0 0;
+    max-height: 92vh; overflow-y: auto;
+  }
+  @media (min-width: 640px) {
+    .modal-panel { max-width: 32rem; border-radius: 1rem; max-height: 85vh; }
+  }
+  /* 標題列。sticky 讓長表單捲動時還看得到自己在哪一個視窗 */
+  .modal-head {
+    position: sticky; top: 0; z-index: 10; background: #fff;
+    border-bottom: 1px solid #E0DDD5;
+    padding: 0.875rem 1.25rem;
+    display: flex; align-items: flex-start; justify-content: space-between; gap: .5rem;
+    padding-top: max(0.875rem, env(safe-area-inset-top));
+  }
+  .modal-body { padding: 1rem 1.25rem; }
+  /* 底部按鈕列。★ safe-area 是 iPhone 底部那條橫線,不留的話按鈕會被蓋住 */
+  .modal-foot {
+    position: sticky; bottom: 0; background: #fff;
+    border-top: 1px solid #E0DDD5;
+    padding: 0.75rem 1.25rem;
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+    display: flex; gap: .5rem;
+  }
+
+
+  /* ── 標籤 ──────────────────────────────────────────
+   * 狀態、種類、事業體那些小色塊。現在每個頁面各自寫一份。
+   */
+  .chip {
+    display: inline-block;
+    border-radius: 0.25rem;
+    padding: 0.125rem 0.375rem;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    line-height: 1.4;
+    white-space: nowrap;
+  }
+  .chip-gray  { background: #F3F4F6; color: #4B5563; }
+  .chip-blue  { background: #DFEDFA; color: #345380; }
+  .chip-green { background: #DFF2E8; color: #2F7A57; }
+  .chip-amber { background: #FEF3C7; color: #92400E; }
+  .chip-red   { background: #FEE2E2; color: #B91C1C; }
+
+
+  /* ── 表格 ──────────────────────────────────────────
+   * ★ 表頭一律 align-middle —— 有排序箭頭的欄位跟純文字欄位
+   *   基線才對得齊（2026-08-25 使用者:「這些字上下對齊」）。
+   */
+  .tbl { width: 100%; font-size: 0.875rem; }
+  .tbl thead th {
+    padding: 0.625rem 0.75rem;
+    text-align: left;
+    font-weight: 500;
+    font-size: 0.75rem;
+    color: #6B7280;
+    vertical-align: middle;
+    border-bottom: 1px solid #E0DDD5;
+  }
+  .tbl tbody td { padding: 0.625rem 0.75rem; vertical-align: middle; }
+  .tbl tbody tr { border-bottom: 1px solid rgba(224,221,213,.6); }
+  .tbl tbody tr:last-child { border-bottom: 0; }
+}
