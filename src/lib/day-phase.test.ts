@@ -16,12 +16,26 @@ import { dayPhase, workedText, taipeiHour } from './day-phase.ts';
  */
 const CSS = readFileSync('src/app/globals.css', 'utf8');
 
-/** 從 globals.css 撈某個 .phase-* 類別實際用到的所有色碼。 */
-function stopsOf(cls: string): string[] {
+/**
+ * 撈出某個類別在 globals.css 裡的宣告內容。
+ *
+ * ★★ 一定要先把 `/* *\/` 註解剝掉。
+ *
+ *   第一次寫的時候沒剝,而註解裡剛好記著「第一版寫 #4E7BA4，量出來 4.47:1」——
+ *   測試把那個**被否決掉的顏色**當成實際使用的色停,然後紅了。
+ *
+ *   這種假警報比漏報更傷:它會讓人去改一個沒問題的東西,
+ *   而下次真的紅的時候就沒有人相信了。
+ */
+function bodyOf(cls: string): string {
   const i = CSS.indexOf(`.${cls} {`);
   assert.notEqual(i, -1, `globals.css 裡找不到 .${cls} —— 卡片會沒有背景,而且編譯不報錯`);
-  const body = CSS.slice(i, CSS.indexOf('\n  }', i));
-  return [...body.matchAll(/#[0-9A-Fa-f]{6}/g)].map((m) => m[0]);
+  return CSS.slice(i, CSS.indexOf('\n  }', i)).replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
+/** 某個類別實際用到的所有色碼（不含註解裡提到的）。 */
+function stopsOf(cls: string): string[] {
+  return [...bodyOf(cls).matchAll(/#[0-9A-Fa-f]{6}/g)].map((m) => m[0]);
 }
 
 test('四個時段的分界', () => {
@@ -66,9 +80,7 @@ test('★ 不要有橫線（2026-08-28 使用者指定）', () => {
    */
   for (let h = 0; h < 24; h += 3) {
     const cls = dayPhase(h).gradient;
-    const i = CSS.indexOf(`.${cls} {`);
-    const body = CSS.slice(i, CSS.indexOf('\n  }', i));
-    assert.ok(!body.includes('repeating-linear-gradient'), `${cls} 又有橫線了`);
+    assert.ok(!bodyOf(cls).includes('repeating-linear-gradient'), `${cls} 又有橫線了`);
   }
 });
 
@@ -126,6 +138,24 @@ test('★★ 兩種字色裡要挑比較讀得到的那一個', () => {
     assert.equal(chose, w > k,
       `${p.key} 挑錯字色:白字最糟 ${w.toFixed(1)}:1、墨色最糟 ${k.toFixed(1)}:1，`
       + `而現在用的是${chose ? '白字' : '墨色字'}`);
+  }
+});
+
+test('★★ 主色卡 .surf-deep 的每一停，白字都要讀得到', () => {
+  /*
+   * 這張卡不歸 day-phase 管，但守的是同一件事,而檢查工具在這裡 ——
+   * 與其再開一個檔案,不如放同一支。
+   *
+   * ★★ 第一版最亮的一停是 #4E7BA4 = 4.47:1，差 0.03 沒過。
+   *    肉眼看不出來,但「當期營收總額」那行 10px 小字就是在那個邊界上開始糊。
+   *    **卡片上最小的字決定了整個漸層能多亮** —— 而那件事只有量得出來。
+   */
+  assert.ok(!bodyOf('surf-deep').includes('repeating-linear-gradient'), '.surf-deep 有橫線了');
+  const stops = stopsOf('surf-deep');
+  assert.ok(stops.length >= 5, '.surf-deep 的色碼太少');
+  for (const c of stops) {
+    const r = contrast('#FFFFFF', c);
+    assert.ok(r >= 4.5, `白字對 ${c} 只有 ${r.toFixed(2)}:1（小字要 4.5）`);
   }
 });
 
