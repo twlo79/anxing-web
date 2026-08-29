@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import StatCard, { StatRow, StatTotal } from '@/components/StatCard';
+import StatCard, { StatRow } from '@/components/StatCard';
 import { createClient } from '@/lib/supabase';
 import { fetchAll } from '@/lib/fetch-all';
 import Toast from '@/components/Toast';
@@ -9,8 +9,7 @@ import StatementsPanel from './statements-panel';
 import { totalBalance } from '@/lib/bank-import';
 import { filterTxns, hasFilter, sumRows, amountOf, splitTail, splitRef, type BankFilter } from '@/lib/bank-filter';
 import * as XLSX from 'xlsx-js-style';
-import { syncFrom, syncTo } from '@/lib/date-range';
-import { FilterCount, FieldSpacer, FILTER_BTN_H } from '@/lib/filters';
+import { FilterCount, FieldSpacer, FilterClear, FilterSelect, FilterDateRange, FilterSearch } from '@/lib/filters';
 import { ExportButton } from '@/components/Actions';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import FilterToggle from '@/components/FilterToggle';
@@ -95,9 +94,38 @@ export default function AccountsPage() {
   const supabase = useMemo(() => createClient(), []);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [latest, setLatest] = useState<Record<string, Stmt | undefined>>({});
+  /*
+   * ══════════════════════════════════════════════════════════
+   * ★★★ 每個帳戶最後一筆流水的日期（2026-08-29 使用者:「卡片日期對不上」）。
+   *
+   *   卡片寫「至 2026-08-25」而表格第一列是 2026/08/21 —— 看起來像 bug,
+   *   其實是**兩個不同的日期**:
+   *     · 2026-08-25 = 對帳單的期末（`bank_statements.period_to`）
+   *     · 2026-08-21 = 最後一筆真的有錢動的日子
+   *   中間那四天沒有交易,所以餘額一樣、日期不一樣。
+   *
+   * ★★ 數字沒錯,錯的是**只寫一個「至」**,而那個字兩種都能讀。
+   *   所以兩個日期都印出來,不同的時候才印第二個。
+   *
+   * ★ 代價是每個帳戶多一次 `limit 1` 的查詢（三個帳戶三次）——
+   *   換掉「使用者每次看到都要重新確認一遍」。
+   * ══════════════════════════════════════════════════════════
+   */
+  const [lastTxn, setLastTxn] = useState<Record<string, string | undefined>>({});
   const [txns, setTxns] = useState<Txn[]>([]);
   const [tab, setTab] = useState<string>('');
-  const [f, setF] = useState<BankFilter>({ from: '', to: '', dir: '', min: '', max: '', q: '' });
+  const [f, setF] = useState<BankFilter>({ from: '', to: '', dir: '', q: '' });
+  /*
+   * ★★ 關鍵字**按了搜尋才算數**（2026-08-29 使用者:「1. 沒搜尋鈕」）。
+   *
+   *   這一頁本來是邊打邊篩 —— 資料已經整批在前端了,不花伺服器成本,
+   *   所以當初刻意不放按鈕。但**全站其他頁都有那顆按鈕**,
+   *   使用者在這頁打完字會停下來找它,找不到就以為欄位壞了。
+   *
+   * ★ 一致性贏過那點效能:草稿 `qDraft` 是輸入框的內容,
+   *   `f.q` 才是真的拿去篩的值。Enter 等同按搜尋。
+   */
+  const [qDraft, setQDraft] = useState('');
   const set = <K extends keyof BankFilter>(k: K, v: BankFilter[K]) => setF((o) => ({ ...o, [k]: v }));
   /*
    * 預設帳務日新到舊。**null 不是「沒排序」** ——
@@ -170,6 +198,20 @@ export default function AccountsPage() {
       }),
     );
     setLatest(map);
+
+    const lt: Record<string, string | undefined> = {};
+    await Promise.all(
+      list.map(async (a) => {
+        const { data: t } = await supabase
+          .from('bank_transactions')
+          .select('post_date')
+          .eq('account_id', a.id)
+          .order('post_date', { ascending: false })
+          .limit(1);
+        lt[a.id] = (t?.[0] as { post_date: string } | undefined)?.post_date;
+      }),
+    );
+    setLastTxn(lt);
     return list;
   }, [supabase]);
 
@@ -359,23 +401,31 @@ export default function AccountsPage() {
         不引進新顏色 —— 這一頁自己配一組色的話，跟其他頁走不在一起。
       */}
       {/*
-        ★★ 總計改用全站共用的 StatTotal（2026-08-25）。
+        ══════════════════════════════════════════════════════════
+        ★★★ 總計改成**深藍大卡**（2026-08-29 使用者:「卡片顏色沒有和其他頁統一」）。
 
-          原本是一條淺藍橫幅,而暫收那邊是一行大字 ——
-          同一種東西兩種長相。而且做成有底色的框會讓它**看起來可以點**,
-          實際上按下去什麼都不會發生。
+          訂單、營收、支出、清潔、評價、房務統計 —— 六頁的「這一頁最重要的
+          那個數字」都是 `surf-deep` 的深藍漸層大卡。
+          帳戶用一行大字（`StatTotal`）是**全站唯一的例外**。
 
-        ★ 警語留著,但移到總計下面 —— 那是「這個數字可不可信」,
-          跟數字本身不是同一件事。
+        ★ 而它跟那六頁是同一種東西:整頁的總額。同一種東西兩種長相,
+          使用者每換一頁就要重新找「總數在哪」。
+
+        ★ 警語放在卡片裡面 —— 那是「這個數字可不可信」,
+          跟數字本身分開放的話,會有人只看到數字。
+        ══════════════════════════════════════════════════════════
       */}
-      <StatTotal label="總計" value={money(totals.total)}
-        sub={totals.asOf ? `至 ${totals.asOf}` : undefined} />
-      {(totals.stale.length > 0 || totals.missing.length > 0) && (
-        <div className="-mt-2 mb-3 text-xs text-amber-700">
-          {totals.stale.length > 0 && <>⚠ {totals.stale.join('、')} 的對帳單較舊，合計不是最新狀態。</>}
-          {totals.missing.length > 0 && <>⚠ {totals.missing.join('、')} 還沒上傳過對帳單，沒有算進合計。</>}
-        </div>
-      )}
+      <div className="rounded-xl surf-deep text-white p-5 mb-4 min-w-0">
+        <div className="text-uisub opacity-85">總計</div>
+        <div className="stat-num-lg font-bold mt-1 tabular-nums">{money(totals.total)}</div>
+        {totals.asOf && <div className="text-uisub opacity-75 mt-0.5">至 {totals.asOf}</div>}
+        {(totals.stale.length > 0 || totals.missing.length > 0) && (
+          <div className="mt-2 text-uisub text-amber-200/95">
+            {totals.stale.length > 0 && <div>⚠ {totals.stale.join('、')} 的對帳單較舊，合計不是最新狀態。</div>}
+            {totals.missing.length > 0 && <div>⚠ {totals.missing.join('、')} 還沒上傳過對帳單，沒有算進合計。</div>}
+          </div>
+        )}
+      </div>
 
       {/* ── 三張卡片 ────────────────────────────── */}
       {/*
@@ -397,8 +447,16 @@ export default function AccountsPage() {
                 ★ 帳號末幾碼也放這裡:三個帳戶同一家銀行,銀行名幫不上忙,
                   要看的是末五碼。
               */
-              sub={`${st ? `至 ${st.period_to}` : '還沒上傳對帳單'}・${
-                splitTail(a.account_no) || `…${a.account_no_tail}`}`}
+              /*
+                ★ 「對帳單至」不是「至」—— 見上面 lastTxn 的說明。
+                  最後異動跟期末同一天就不重複印,那是雜訊。
+              */
+              sub={[
+                st ? `對帳單至 ${ymd(st.period_to)}` : '還沒上傳對帳單',
+                lastTxn[a.id] && lastTxn[a.id] !== st?.period_to
+                  ? `最後異動 ${ymd(lastTxn[a.id]!)}` : '',
+                splitTail(a.account_no) || `…${a.account_no_tail}`,
+              ].filter(Boolean).join('・')}
               active={tab === a.id}
               muted={!st}
               onClick={() => setTab(a.id)} />
@@ -472,66 +530,66 @@ export default function AccountsPage() {
                   現在起訖一律走 `syncFrom` / `syncTo`,
                   `grep -rn "syncFrom"` 一次就找得到全部。
             */}
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-gray-500">帳務日(起)</span>
-              <input type="date" value={f.from ?? ''} className="rounded-lg border border-mor-line px-2 py-1.5"
-                onChange={(e) => {
-                  const r = syncFrom(e.target.value, f.to ?? '');
-                  setF({ ...f, from: r.from || undefined, to: r.to || undefined });
-                }} />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-gray-500">帳務日(迄)</span>
-              <input type="date" value={f.to ?? ''} min={f.from || undefined}
-                className="rounded-lg border border-mor-line px-2 py-1.5"
-                onChange={(e) => {
-                  const r = syncTo(f.from ?? '', e.target.value);
-                  setF({ ...f, from: r.from || undefined, to: r.to || undefined });
-                }} />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-gray-500">方向</span>
-              <select value={f.dir ?? ''} onChange={(e) => set('dir', e.target.value as BankFilter['dir'])}
-                className="rounded-lg border border-mor-line px-2 py-1.5">
-                <option value="">全部</option>
-                <option value="debit">只看支出</option>
-                <option value="credit">只看存入</option>
-              </select>
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-gray-500">金額(最少)</span>
-              <input type="number" value={String(f.min ?? '')} onChange={(e) => set('min', e.target.value)}
-                placeholder="不限" className="w-24 rounded-lg border border-mor-line px-2 py-1.5" />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-gray-500">金額(最多)</span>
-              <input type="number" value={String(f.max ?? '')} onChange={(e) => set('max', e.target.value)}
-                placeholder="不限" className="w-24 rounded-lg border border-mor-line px-2 py-1.5" />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-gray-500">關鍵字</span>
-              <input value={f.q ?? ''} onChange={(e) => set('q', e.target.value)}
-                placeholder="摘要、交易帳號、銀行、金額…"
-                className="w-52 rounded-lg border border-mor-line px-2 py-1.5" />
-            </label>
+            {/*
+              ★★★ 改用 `lib/filters` 的共用元件（2026-08-29 使用者:
+                 「2. 沒按照其它頁統一格式」）。
+
+                原本這一段是**手寫的** —— 標題 `text-xs text-gray-500`、
+                欄位 `border-mor-line px-2 py-1.5`,而全站標準是
+                標題 `text-uisub`、欄位 `FILTER_CTRL`（h-12/h-10、17px、gray-300）。
+                差別小到單看這頁看不出來,跟訂單頁擺在一起就很明顯。
+
+              ★ 起訖連動也一併回到共用元件裡（FilterDateRange 內建
+                syncFrom/syncTo），不用再在這裡手接一次。
+            */}
+            <FilterDateRange label="帳務日"
+              from={f.from ?? ''} to={f.to ?? ''}
+              onFrom={(v) => set('from', v || undefined)}
+              onTo={(v) => set('to', v || undefined)} />
+            {/*
+              ★ 「方向」改叫「收支」,選項改成「收入／支出」
+                （2026-08-29 使用者指定）。
+
+                「方向」是資料庫的講法（debit/credit 的方向）;
+                記帳的人腦子裡是「收入」跟「支出」。
+                而且原本寫「只看支出／只看存入」—— 一個叫支出、
+                一個叫存入,兩邊不對稱,唸起來不像同一組選項。
+            */}
+            <FilterSelect label="收支"
+              value={f.dir ?? ''}
+              onChange={(v) => set('dir', v as BankFilter['dir'])}
+              options={[{ value: 'credit', label: '收入' }, { value: 'debit', label: '支出' }]} />
+            {/*
+              ══════════════════════════════════════════════════════
+              ★★★ 金額上下限**拿掉了**（2026-08-29 使用者:
+                   「不用金額 改在查詢裡 打金額查詢 能查到相似的金額」）。
+
+                兩個數字框佔掉篩選列兩格,而實際上要找一筆錢的時候
+                人記得的是「大概七千」不是「6500 到 7500 之間」——
+                填區間要先想兩個數字,而想錯了就查不到。
+
+              ★ 關鍵字本來就會比金額,而且是**包含比對**:
+                打 `7000` 找得到 7,000 也找得到 17,000、70,000 ——
+                那正是「相似的金額」。逗號與錢字號會先去掉,
+                所以直接從畫面上複製 `$7,000` 貼進來也查得到。
+              ══════════════════════════════════════════════════════
+            */}
+            <FilterSearch label="關鍵字"
+              value={qDraft} onChange={setQDraft}
+              onSubmit={() => set('q', qDraft)}
+              placeholder="摘要、交易帳號、銀行、金額…" width="w-52" />
             {/*
               一年可能只出現一次的東西 —— 沒有這個開關就只能一頁一頁翻
             */}
-            <label className="flex items-center gap-1.5 pb-1.5 text-xs text-gray-600">
-              <input type="checkbox" checked={!!f.onlyNoted}
-                onChange={(e) => set('onlyNoted', e.target.checked)} />
-              只看餘額有備註的
-            </label>
             <FieldSpacer>
-              {hasFilter(f) && (
-                <button
-                  onClick={() => setF({ from: '', to: '', dir: '', min: '', max: '', q: '' })}
-                  className={`${FILTER_BTN_H} px-2 text-uisub text-gray-500 underline`}
-                >
-                  清除
-                </button>
-              )}
+              <label className="flex h-12 items-center gap-1.5 text-uisub text-gray-600 md:h-10">
+                <input type="checkbox" checked={!!f.onlyNoted}
+                  onChange={(e) => set('onlyNoted', e.target.checked)} />
+                只看餘額有備註的
+              </label>
             </FieldSpacer>
+            <FilterClear active={hasFilter(f)}
+              onClear={() => { setF({ from: '', to: '', dir: '', q: '' }); setQDraft(''); }} />
           </div>
         )}
 
@@ -660,8 +718,10 @@ export default function AccountsPage() {
               <col className="w-[6.5rem]" />   {/* 存入 */}
               <col className="w-[7.5rem]" />   {/* 餘額（可能有備註第二行） */}
             </colgroup>
-            <thead className="bg-mor-sand/40 text-xs text-gray-600">
-              <tr>
+            {/* ★ 全站標準表頭寫法（14 處都是這個）—— 原本這頁用 bg-mor-sand/40
+                  ＋ text-gray-600,是唯一的例外 */}
+            <thead>
+              <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-white/45">
                 {/*
                   排序鍵是**帳務日**，標題卻寫「交易日」—— 這是刻意的。
 

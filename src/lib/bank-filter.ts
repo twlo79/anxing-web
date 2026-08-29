@@ -8,7 +8,6 @@
  *
  * 而篩選錯了**不會報錯**，只會少幾筆:
  *
- *   · 金額比對比錯邊 → 「10,000 以上」漏掉剛好 10,000 的那筆
  *   · 日期用字串比 → 沒問題（YYYY-MM-DD 字典序＝時間序），但寫成 Date 就會有時區
  *   · 關鍵字漏掉某個欄位 → 「押金」查得到摘要卻查不到對方名稱
  *
@@ -32,13 +31,14 @@ export type BankFilter = {
   from?: string;
   /** 帳務日迄（含）。 */
   to?: string;
-  /** 只看支出／只看存入。 */
+  /** 收支：`debit` 支出、`credit` 收入。 */
   dir?: '' | 'debit' | 'credit';
-  /** 金額下限（含）。比的是「這一筆的金額」，支出或存入都算。 */
-  min?: string | number;
-  /** 金額上限（含）。 */
-  max?: string | number;
-  /** 關鍵字。摘要、說明、對方、票據號碼、餘額備註都會找。 */
+  /**
+   * 關鍵字。摘要、說明、對方、票據號碼、餘額備註、日期、**金額**都會找。
+   *
+   * ★ 金額原本有獨立的上下限兩欄,2026-08-29 拿掉了 ——
+   *   使用者記得的是「大概七千」而不是一個區間。這裡用包含比對代替。
+   */
   q?: string;
   /** 只看有餘額備註的（銀行印的跟我們算的不一樣）。 */
   onlyNoted?: boolean;
@@ -56,8 +56,6 @@ export function amountOf(r: BankRow): number {
 }
 
 export function filterTxns<T extends BankRow>(rows: T[], f: BankFilter): T[] {
-  const min = num(f.min);
-  const max = num(f.max);
   const q = (f.q ?? '').trim().toLowerCase();
 
   return rows.filter((r) => {
@@ -75,10 +73,7 @@ export function filterTxns<T extends BankRow>(rows: T[], f: BankFilter): T[] {
     if (f.dir === 'debit' && !(Number(r.debit) > 0)) return false;
     if (f.dir === 'credit' && !(Number(r.credit) > 0)) return false;
 
-    // 上下限都是**含端點** —— 「10,000 以上」要包含剛好 10,000 那筆
     const amt = amountOf(r);
-    if (min != null && amt < min) return false;
-    if (max != null && amt > max) return false;
 
     if (f.onlyNoted && !r.balance_note) return false;
 
@@ -102,8 +97,21 @@ export function filterTxns<T extends BankRow>(rows: T[], f: BankFilter): T[] {
        * 先比原文（日期那種帶 `-` 的照舊），比不到再兩邊都拿掉分隔號比一次。
        */
       const flat = q.replace(/-/g, '');
+      /*
+       * ★★ 金額是**包含比對**,不是相等（2026-08-29 使用者:
+       *   「打金額查詢 能查到相似的金額」）。
+       *
+       *   打 `7000` → 7,000、17,000、70,000 都會出現。
+       *   要精準到一塊錢的話那本來就該用金額欄位比對,而人在找一筆
+       *   付款的時候記得的通常是位數而不是尾數。
+       *
+       * ★ 逗號與錢字號先去掉 —— 使用者會直接從畫面上複製 `$7,000` 貼進來,
+       *   而資料庫裡是 `7000`。不去掉的話一筆都查不到,
+       *   而那時他會以為那筆不見了。
+       */
+      const qNum = q.replace(/[,$＄]/g, '');
       if (!hay.includes(q) && !hay.replace(/-/g, '').includes(flat)
-        && !String(amt).includes(q.replace(/,/g, ''))) return false;
+        && !(qNum && /^\d+$/.test(qNum) && String(amt).includes(qNum))) return false;
     }
     return true;
   });
@@ -111,10 +119,7 @@ export function filterTxns<T extends BankRow>(rows: T[], f: BankFilter): T[] {
 
 /** 篩選列上有沒有任何條件 —— 收合時要顯示「正在篩」的提示。 */
 export function hasFilter(f: BankFilter): boolean {
-  return Boolean(
-    f.from || f.to || f.dir || f.min !== '' && f.min != null || f.max !== '' && f.max != null ||
-    (f.q ?? '').trim() || f.onlyNoted,
-  );
+  return Boolean(f.from || f.to || f.dir || (f.q ?? '').trim() || f.onlyNoted);
 }
 
 /** 篩出來這幾筆的支出／存入合計。 */

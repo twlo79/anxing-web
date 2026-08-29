@@ -37,8 +37,8 @@ describe('日期', () => {
   });
 });
 
-describe('方向', () => {
-  test('只看支出／只看存入', () => {
+describe('收支', () => {
+  test('收入／支出', () => {
     assert.equal(filterTxns(ROWS, { dir: 'debit' }).length, 2);
     assert.equal(filterTxns(ROWS, { dir: 'credit' }).length, 2);
     assert.equal(filterTxns(ROWS, { dir: '' }).length, 4);
@@ -46,21 +46,20 @@ describe('方向', () => {
 });
 
 describe('金額', () => {
-  test('★★ 上下限含端點', () => {
-    // 「10,000 以上」不含 10,000 的話,人會以為那筆不見了
-    assert.equal(filterTxns(ROWS, { min: 10_000 }).length, 3);
-    assert.equal(filterTxns(ROWS, { max: 10_000 }).length, 2); // 10,000 與 806
-  });
-
   test('★ 比的是這一筆的金額，支出存入都算', () => {
-    // 只比 credit 的話,支出那幾筆會被當成 0 而永遠落在下限之外
+    // 只比 credit 的話,支出那幾筆會被當成 0
     assert.equal(amountOf(r({ debit: 46_000, credit: 0 })), 46_000);
-    assert.equal(filterTxns(ROWS, { min: 46_000, max: 46_000 }).length, 1);
+    assert.equal(amountOf(r({ debit: 0, credit: 46_000 })), 46_000);
   });
 
-  test('空字串不算條件', () => {
-    // 輸入框清空之後是 ''，不可以當成 0 —— 那會把所有東西都篩掉或都留下
-    assert.equal(filterTxns(ROWS, { min: '', max: '' }).length, 4);
+  /*
+   * ★★ 上下限兩個欄位 2026-08-29 拿掉了,改由關鍵字做包含比對。
+   *   這一條釘住「不要再加回來」—— 加回來就會有兩套金額條件互相打架。
+   */
+  test('★★ 上下限已經不是條件了', () => {
+    const legacy = { min: 10_000, max: 10_000 } as unknown as Parameters<typeof hasFilter>[0];
+    assert.equal(hasFilter(legacy), false);
+    assert.equal(filterTxns(ROWS, legacy).length, 4);
   });
 });
 
@@ -74,9 +73,31 @@ describe('關鍵字', () => {
     assert.equal(filterTxns(ROWS, { q: '3,976,587' }).length, 1);  // 餘額備註
   });
 
-  test('★ 金額也搜得到，打不打逗號都行', () => {
+  test('★ 金額也搜得到，逗號與錢字號都不算', () => {
+    // 使用者是直接從畫面上複製 `$46,000` 貼進來的
     assert.equal(filterTxns(ROWS, { q: '46000' }).length, 1);
     assert.equal(filterTxns(ROWS, { q: '46,000' }).length, 1);
+    assert.equal(filterTxns(ROWS, { q: '$46,000' }).length, 1);
+  });
+
+  /*
+   * ══════════════════════════════════════════════════════
+   * ★★★ 金額是**包含比對**（2026-08-29 使用者:
+   *      「打金額查詢 能查到相似的金額」）。
+   *
+   *   打 46000 要找得到 46,000;打 46 也要找得到它 ——
+   *   人記得的是位數不是尾數。改成相等比對就會退回舊行為,
+   *   而那個退化**不會報錯**,只會「查不到」。
+   * ══════════════════════════════════════════════════════
+   */
+  test('★★★ 金額是相似比對，不是相等', () => {
+    assert.equal(filterTxns(ROWS, { q: '4600' }).length, 1);   // 46000 的前四碼
+    assert.equal(filterTxns(ROWS, { q: '000' }).length, 3);    // 46000、10000、100000
+  });
+
+  test('★ 非數字的關鍵字不會誤中金額', () => {
+    // '46a' 去掉逗號還是 '46a' —— 不可以拿去比金額
+    assert.equal(filterTxns(ROWS, { q: '46a' }).length, 0);
   });
 
   test('日期也搜得到', () => {
@@ -99,7 +120,7 @@ describe('只看有餘額備註的', () => {
 
 describe('條件疊加', () => {
   test('★ 多個條件是「而且」不是「或者」', () => {
-    assert.equal(filterTxns(ROWS, { dir: 'debit', min: 1_000 }).length, 1);
+    assert.equal(filterTxns(ROWS, { dir: 'debit', q: '46' }).length, 1);
     assert.equal(filterTxns(ROWS, { from: '2026-07-01', to: '2026-07-31', dir: 'credit' }).length, 2);
   });
 
@@ -111,11 +132,10 @@ describe('條件疊加', () => {
 describe('有沒有在篩', () => {
   test('★ 收合時要看得出來正在篩 —— 不然「為什麼只有 3 筆」查不到原因', () => {
     assert.equal(hasFilter({}), false);
-    assert.equal(hasFilter({ min: '', max: '', q: '  ', dir: '' }), false);
+    assert.equal(hasFilter({ q: '  ', dir: '' }), false);
     assert.equal(hasFilter({ from: '2026-07-01' }), true);
     assert.equal(hasFilter({ q: '房租' }), true);
     assert.equal(hasFilter({ onlyNoted: true }), true);
-    assert.equal(hasFilter({ min: 0 }), true); // 0 是有效條件,不是「沒填」
   });
 });
 
