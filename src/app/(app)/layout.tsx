@@ -581,7 +581,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
              */
             className={`group relative mx-2 flex items-center gap-2.5 pr-3 py-2.5
               ${g.label ? 'pl-6' : 'pl-3.5'}
-              rounded-[10px] text-[16px] transition-colors ${
+              rounded-[10px] text-[17px] transition-colors ${
               on ? 'bg-mor-slate/[0.12] text-mor-slate font-semibold'
                  : 'text-gray-700 font-medium hover:bg-white/75'
             }`}>

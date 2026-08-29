@@ -3,6 +3,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { fetchAll } from '@/lib/fetch-all';
 import { twToday } from '@/lib/attendance-ui';
+import {
+  FilterBar, Field, FilterClear, FilterCount, ActionRow, FILTER_CTRL,
+} from '@/lib/filters';
 
 /**
  * 客戶管理。
@@ -155,16 +158,38 @@ export default function CustomersPage() {
         ))}
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 mb-3">
-        <input placeholder="搜尋姓名、房號、電話、備註…" value={q} onChange={(e) => setQ(e.target.value)}
-          className={`${INPUT} max-w-xs`} />
-        <label className="flex items-center gap-1.5 text-sm">
+      {/*
+        ══════════════════════════════════════════════════════════
+        篩選列（2026-08-29 改用全站共用元件 lib/filters.tsx）
+
+        ★★ 關鍵字**沒有搜尋鈕**，跟其他頁不一樣 —— 這是刻意的。
+
+           其他頁的「搜尋」鈕存在是因為它們**要打資料庫**:
+           訂單一千九百筆、模糊比對,邊打邊查等於每個字掃一次全表。
+           客戶這一頁的資料**已經全部在瀏覽器裡**了（`shown` 是前端算的）,
+           邊打邊篩不花任何成本 —— 硬加一顆按鈕只是多一個動作。
+
+        ★ 所以用 `<Field>` ＋ 原生 input,不用 `<FilterSearch>`。
+        ══════════════════════════════════════════════════════════
+      */}
+      <FilterBar active={!!q || onlyStaying}>
+        <Field label="關鍵字">
+          <input placeholder="姓名、房號、電話、備註…" value={q} onChange={(e) => setQ(e.target.value)}
+            className={`${FILTER_CTRL} w-56`} />
+        </Field>
+        {/* 勾選框沒有「上方小標題」可放 —— 它自己就是一句話。pb-1.5 讓它跟隔壁欄位的基線對齊 */}
+        <label className="flex items-center gap-1.5 text-sm pb-1.5">
           <input type="checkbox" checked={onlyStaying}
             onChange={(e) => setOnlyStaying(e.target.checked)} />
           只看尚未退房
         </label>
-        <span className="text-xs text-gray-400">{shown.length} 位</span>
-      </div>
+        <FilterClear active={!!q || onlyStaying}
+          onClear={() => { setQ(''); setOnlyStaying(false); }} />
+      </FilterBar>
+
+      <ActionRow>
+        <div className="mr-auto md:mr-0"><FilterCount n={shown.length} unit="位" /></div>
+      </ActionRow>
 
       {msg && (
         <div className={`mb-3 rounded-lg px-4 py-3 text-sm flex items-start gap-2 ${
@@ -219,7 +244,7 @@ export default function CustomersPage() {
               className="w-full px-4 py-3 text-left">
               <div className="flex items-center gap-2">
                 <span className="font-medium text-sm flex-1 min-w-0 truncate">{c.name}</span>
-                {c.stale && <span className="text-[12px] text-amber-600 shrink-0">來源已不存在</span>}
+                {c.stale && <span className="text-[10px] text-amber-600 shrink-0">來源已不存在</span>}
                 <span className="text-xs text-gray-400 shrink-0">{c.property_label ?? '—'}</span>
               </div>
               <div className="text-xs text-gray-500 mt-0.5">
@@ -264,7 +289,7 @@ function RowPair({ c, today, open, onToggle, onSave }: {
             {staying && <span className="w-1.5 h-1.5 rounded-full bg-mor-green shrink-0" />}
             <span className="font-medium">{c.name}</span>
             {c.stale && (
-              <span className="text-[12px] text-amber-600 border border-amber-200 rounded px-1">
+              <span className="text-[10px] text-amber-600 border border-amber-200 rounded px-1">
                 來源已不存在
               </span>
             )}

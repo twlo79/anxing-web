@@ -135,7 +135,7 @@ export default function AttendancePage() {
                         : 'text-gray-500 hover:text-gray-700'}`}>
             {TAB_LABEL[k]}
             {k === 'approve' && pending > 0 && (
-              <span className="rounded-full bg-amber-100 text-amber-700 px-1.5 text-[13px]">
+              <span className="rounded-full bg-amber-100 text-amber-700 px-1.5 text-[11px]">
                 {pending}
               </span>
             )}

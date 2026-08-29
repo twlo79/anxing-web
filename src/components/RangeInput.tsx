@@ -68,7 +68,7 @@ export default function RangeInput({
           onChange={(e) => { const r = syncTo(from, e.target.value); onChange(r.from, r.to); }} />
       </div>
       {bad && (
-        <div className="mt-1 text-[13px] text-amber-700">
+        <div className="mt-1 text-[11px] text-amber-700">
           起迄反了（{from} 晚於 {to}），這樣查不到東西。
         </div>
       )}

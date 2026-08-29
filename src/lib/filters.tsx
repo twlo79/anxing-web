@@ -32,8 +32,22 @@ import { syncFrom, syncTo } from '@/lib/date-range';
  * ★ 自己寫一份 `border border-mor-line` 的話，同一排會出現兩種深淺的框，
  *   而那種差異只有把兩頁擺在一起才看得出來。
  */
-export const FILTER_CTRL = 'rounded-lg border border-gray-300 px-2 py-1.5';
+export const FILTER_CTRL =
+  'h-12 md:h-10 rounded-lg border border-gray-300 px-3 text-[17px] leading-none';
 const CTRL = FILTER_CTRL;
+
+/**
+ * 篩選卡裡「跟欄位並排的按鈕」——搜尋、快捷、清除。
+ *
+ * ★★ 高度跟 `FILTER_CTRL` **一模一樣**。這是對齊唯一可靠的做法:
+ *   靠 padding 湊的話,`select`（有下拉箭頭）、`input`、`button`
+ *   算出來的高度天生就不同,而且會隨字級與瀏覽器再變一次 ——
+ *   今天調對了,明天字一放大又歪。
+ *
+ * ★ 手機 48px:`globals.css` 只把 input/select 撐到 3rem，**按鈕沒有** ——
+ *   那就是手機上搜尋鈕比輸入框矮的原因。這裡補起來。
+ */
+export const FILTER_BTN_H = 'h-12 md:h-10';
 
 /**
  * @param active 目前有沒有套用任何條件。手機收起篩選時，
@@ -45,8 +59,12 @@ export function FilterBar({ children, right, active }: {
   return (
     <>
       <FilterToggle active={active} />
-      <div className="filter-bar collapsible-filters bg-white rounded-xl border border-mor-line p-4 mb-4
-                      flex flex-wrap items-end gap-3 text-sm">
+      {/*
+        ★ 用 `glass` 而不是 `bg-white` —— 訂單頁（使用者指定的版型基準）
+          就是 glass。兩種白並排時看得出來其中一張比較「死」。
+      */}
+      <div className="filter-bar collapsible-filters rounded-xl glass p-4 mb-4
+                      flex flex-wrap items-end gap-3">
         {children}
         {right && <div className="ml-auto flex items-end gap-3">{right}</div>}
       </div>
@@ -58,7 +76,29 @@ export function FilterBar({ children, right, active }: {
 export function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div>
-      <label className="block text-xs text-gray-500 mb-1">{label}</label>
+      {/*
+        ★★ 標題那一行**固定高度**（h-5），不是讓內容撐。
+
+          一個字的「狀態」跟六個字的「訂單日期(期間內有交集)」如果換行,
+          那一欄的控制項就會被推低一格 —— 底部靠 items-end 還是齊的,
+          但**上緣歪掉**,而使用者看到的是「這一格比較矮」。
+      */}
+      <label className="block h-5 mb-1 text-[15px] leading-5 text-gray-500 whitespace-nowrap">
+        {label}
+      </label>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * 沒有標題的東西（勾選框、清除）要**補一格看不見的標題**，
+ * 否則它會整個往上跑，跟隔壁欄位的上緣對不齊。
+ */
+export function FieldSpacer({ children }: { children: ReactNode }) {
+  return (
+    <div>
+      <span aria-hidden className="block h-5 mb-1" />
       {children}
     </div>
   );
@@ -117,7 +157,7 @@ export function FilterDateRange({ label, from, to, onFrom, onTo, quick }: {
           onChange={(e) => { const r = syncTo(from, e.target.value); onFrom(r.from); onTo(r.to); }} />
         {quick?.map((q) => (
           <button key={q.label} onClick={() => { onFrom(q.from); onTo(q.to); }}
-            className="rounded-lg border border-gray-300 px-2 py-1.5 text-xs hover:bg-mor-sand/60">
+            className={`${FILTER_BTN_H} rounded-lg border border-gray-300 px-3 text-sm hover:bg-mor-sand/60`}>
             {q.label}
           </button>
         ))}
@@ -146,12 +186,13 @@ export function FilterSearch({ label, value, onChange, onSubmit, placeholder = '
 }) {
   return (
     <Field label={label}>
-      <div className="flex gap-1">
+      <div className="flex gap-1.5">
         <input value={value} onChange={(e) => onChange(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') onSubmit(); }}
           placeholder={placeholder} className={`${CTRL} ${width}`} />
         <button onClick={onSubmit}
-          className="rounded-lg bg-mor-slate text-white px-3 hover:bg-mor-slatedark">搜尋</button>
+          className={`${FILTER_BTN_H} rounded-lg bg-mor-slate text-white px-4
+                      text-[17px] font-medium hover:bg-mor-slatedark`}>搜尋</button>
       </div>
     </Field>
   );
@@ -166,14 +207,17 @@ export function FilterSearch({ label, value, onChange, onSubmit, placeholder = '
 export function FilterClear({ active, onClear }: { active: boolean; onClear: () => void }) {
   if (!active) return null;
   return (
-    <button onClick={onClear} className="text-gray-500 underline pb-1.5">清除</button>
+    <FieldSpacer>
+      <button onClick={onClear}
+        className={`${FILTER_BTN_H} px-2 text-[15px] text-gray-500 underline`}>清除</button>
+    </FieldSpacer>
   );
 }
 
 /** 筆數。跟右側的動作鈕同一組，`pb-1.5` 讓它跟按鈕的基線對齊。 */
 export function FilterCount({ n, unit = '筆' }: { n: number; unit?: string }) {
   return (
-    <div className="text-xs text-gray-400 pb-1.5 whitespace-nowrap">
+    <div className="text-[15px] text-gray-400 whitespace-nowrap">
       共 {n.toLocaleString('en-US')} {unit}
     </div>
   );

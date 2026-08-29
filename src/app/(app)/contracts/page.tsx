@@ -741,7 +741,7 @@ const nameOf = (c: Contract) =>
                   <div className="flex items-center gap-2 min-w-0">
                     <span className="font-medium shrink-0 w-20 truncate">{g.label}</span>
                     <span className="text-gray-600 truncate">{g.tenant ?? ''}</span>
-                    {c && !c.active && <span className="shrink-0 rounded bg-gray-200 text-gray-500 px-1.5 py-0.5 text-[13px]">已結束</span>}
+                    {c && !c.active && <span className="shrink-0 rounded bg-gray-200 text-gray-500 px-1.5 py-0.5 text-[11px]">已結束</span>}
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
                     <span className="text-xs text-red-600 w-14 text-right tabular-nums">欠 {g.periods} 期</span>
@@ -775,12 +775,12 @@ const nameOf = (c: Contract) =>
                 <div className="flex items-center gap-2 min-w-0">
                   {/* 徽章固定寬度 —— 「5 日」「15 日」「—」寬度不同的話，
                       後面的房號整排會歪，而房號正是這份清單第一個要掃的東西 */}
-                  <span className={`shrink-0 w-12 text-center rounded px-1 py-0.5 text-[13px] font-medium tabular-nums ${
+                  <span className={`shrink-0 w-12 text-center rounded px-1 py-0.5 text-[11px] font-medium tabular-nums ${
                     p.status === 'overdue' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>{p.c.invoice_day ? `${p.c.invoice_day} 日` : '—'}</span>
                   <span className="font-medium shrink-0 w-16 truncate">{p.c.display_name || p.c.room}</span>
                   <span className="text-gray-600 truncate">{p.c.invoice_title || p.c.tenant_name || ''}</span>
-                  {p.c.invoice_after_paid === false && <span className="shrink-0 rounded bg-mor-bluelight text-mor-blue px-1.5 py-0.5 text-[13px]">先開</span>}
-                  {p.c.invoice_note && <span className="shrink-0 text-[13px] text-gray-400 truncate">{p.c.invoice_note}</span>}
+                  {p.c.invoice_after_paid === false && <span className="shrink-0 rounded bg-mor-bluelight text-mor-blue px-1.5 py-0.5 text-[11px]">先開</span>}
+                  {p.c.invoice_note && <span className="shrink-0 text-[11px] text-gray-400 truncate">{p.c.invoice_note}</span>}
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
                   <span className="text-xs text-gray-500 w-16 text-right tabular-nums">{fmtYm(p.ym)}</span>
@@ -856,7 +856,7 @@ const nameOf = (c: Contract) =>
               // 刪除契約會連帶影響已產生的月租單,不該在列表上一鍵可及。
               <tr key={c.id} onClick={() => setDetail(c)}
                 className={`border-b border-mor-line/60 hover:bg-mor-bluelight/30 cursor-pointer ${c.active ? '' : 'opacity-50'}`}>
-                <td className="px-3 py-2 font-medium whitespace-nowrap">{c.room}<span className="ml-1 text-xs text-gray-400">{c.estates?.name}</span>{statusOf(c) === 'expired' && <span className="ml-1 rounded px-1.5 py-0.5 text-[12px] bg-amber-50 text-amber-600">已到期</span>}{statusOf(c) === 'disabled' && <span className="ml-1 rounded px-1.5 py-0.5 text-[12px] bg-gray-100 text-gray-500">已停用</span>}</td>
+                <td className="px-3 py-2 font-medium whitespace-nowrap">{c.room}<span className="ml-1 text-xs text-gray-400">{c.estates?.name}</span>{statusOf(c) === 'expired' && <span className="ml-1 rounded px-1.5 py-0.5 text-[10px] bg-amber-50 text-amber-600">已到期</span>}{statusOf(c) === 'disabled' && <span className="ml-1 rounded px-1.5 py-0.5 text-[10px] bg-gray-100 text-gray-500">已停用</span>}</td>
                 <td className="px-3 py-2 whitespace-nowrap">{c.tenant_name}</td>
                 <td className="px-3 py-2 text-right">{(() => { const step = STEP_OF[c.cadence] || 1; const per = c.amount_per_period || (c.monthly_rent || 0) * step; const mo = Math.round(per / step); return (<><div className="font-medium">${fmt(per)}</div><div className="text-xs text-gray-400">{CAD_LABEL[c.cadence] ?? c.cadence}・月 ${fmt(mo)}</div></>); })()}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-500">{c.start_date ?? '—'} ~ {c.end_date ?? '—'}</td>
@@ -925,9 +925,9 @@ const nameOf = (c: Contract) =>
                 {row('電話', c.phone ?? '—')}
                 {row('狀態', (
                   <span className="space-x-1">
-                    <span className={`inline-block rounded px-1.5 py-0.5 text-[13px] ${c.active ? 'bg-mor-greenlight text-mor-green' : 'bg-gray-100 text-gray-500'}`}>{c.active ? '啟用' : '停用'}</span>
-                    {c.watch && <span className="inline-block rounded px-1.5 py-0.5 text-[13px] bg-amber-50 text-amber-600">已關注</span>}
-                    {c.auto_renew && <span className="inline-block rounded px-1.5 py-0.5 text-[13px] bg-mor-bluelight text-mor-slate">自動續約</span>}
+                    <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] ${c.active ? 'bg-mor-greenlight text-mor-green' : 'bg-gray-100 text-gray-500'}`}>{c.active ? '啟用' : '停用'}</span>
+                    {c.watch && <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-amber-50 text-amber-600">已關注</span>}
+                    {c.auto_renew && <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-mor-bluelight text-mor-slate">自動續約</span>}
                   </span>
                 ))}
                 {c.invoice_required ? row('發票', `需開立${c.invoice_day ? `・每月 ${c.invoice_day} 號` : ''}${c.invoice_after_paid ? '・收款後開' : ''}${c.invoice_title ? `\n抬頭 ${c.invoice_title}` : ''}${c.invoice_tax_id ? `・統編 ${c.invoice_tax_id}` : ''}`) : null}
@@ -936,7 +936,7 @@ const nameOf = (c: Contract) =>
                     {((c.concessions ?? []) as Concession[]).map((cn: Concession, i: number) => (
                       <span key={i} className="block">{cn.date || '未定'}・${fmt(cn.amount)}{cn.note ? `・${cn.note}` : ''}</span>
                     ))}
-                    <span className="block text-[13px] text-gray-400">約定紀錄,實際折讓看收租視窗</span>
+                    <span className="block text-[11px] text-gray-400">約定紀錄,實際折讓看收租視窗</span>
                   </span>
                 )) : null}
                 {row('備註', c.note ? <span className="whitespace-pre-wrap">{c.note}</span> : '—')}
@@ -1127,7 +1127,7 @@ const nameOf = (c: Contract) =>
                   新增契約時才是暫存的,所以只在編輯模式顯示。
                 */}
                 {edit.id && (
-                  <div className="text-[13px] text-gray-400 mt-1.5">
+                  <div className="text-[11px] text-gray-400 mt-1.5">
                     固定加費按下「加入／暫停／刪除」就立即生效，不受下方「取消」影響。
                   </div>
                 )}
@@ -1160,7 +1160,7 @@ const nameOf = (c: Contract) =>
                 <button type="button"
                   onClick={() => setEdit({ ...edit, concessions: [...(((edit.concessions as any[]) ?? [])), { date: '', amount: 0, note: '' }] } as any)}
                   className="text-xs text-mor-blue underline mt-1.5">+ 增加折讓約定</button>
-                <p className="text-[13px] text-gray-400 mt-1">
+                <p className="text-[11px] text-gray-400 mt-1">
                   這裡只是備查。實際折讓請在「收租」視窗對該期按「− 折讓」,那才會扣減營收。
                 </p>
               </div>
@@ -1186,7 +1186,7 @@ const nameOf = (c: Contract) =>
                       <label className="flex flex-col gap-1 col-span-2 text-xs text-gray-500">固定備註(每次開票都會顯示,例 PO4701105619)
                         <input value={edit.invoice_note ?? ''} onChange={(e) => setEdit({ ...edit, invoice_note: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm" /></label>
                     </div>
-                    <div className="text-[13px] text-gray-400 mt-1.5">
+                    <div className="text-[11px] text-gray-400 mt-1.5">
                       發票由人員自行在平台開立,系統只負責提醒與記錄號碼。開票操作在「收租」視窗內,每個月一張。
                       {edit.cadence === 'yearly' && <span className="text-mor-blue">此契約為年繳,收款一次確認,但發票仍為每月一張。</span>}
                     </div>
@@ -1197,7 +1197,7 @@ const nameOf = (c: Contract) =>
               {edit.id && (
                 <div className="col-span-2 border-t border-mor-line pt-3 mt-1">
                   <div className="text-xs font-semibold text-gray-500 mb-1.5">展延租期(在現有租期之後追加 N 個月;追加後會多出對應 N 期待收款,可多次展延,持續認列營收直到停用)</div>
-                  <div className="filter-bar flex flex-wrap items-end gap-2 text-sm">
+                  <div className="filter-bar flex flex-wrap items-end gap-3">
                     <label className="flex flex-col gap-0.5 text-xs text-gray-500">追加月數
                       <input type="number" min={1} value={ext.months} onChange={(e) => { const m = e.target.value; const mn = parseInt(m) || 0; const mo = parseFloat(ext.monthly) || 0; setExt({ months: m, monthly: ext.monthly, total: mo && mn ? String(mo * mn) : ext.total }); }} className="w-24 rounded-lg border border-gray-300 px-2 py-1.5" /></label>
                     <label className="flex flex-col gap-0.5 text-xs text-gray-500">月租金
@@ -1211,14 +1211,14 @@ const nameOf = (c: Contract) =>
                         className="w-32 rounded-lg border border-gray-300 px-2 py-1.5 text-right" /></label>
                     <button type="button" onClick={doExtend} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark">展延</button>
                   </div>
-                  <div className="text-[13px] text-gray-400 mt-1">目前租期迄 {edit.end_date || '—'}・月租金與總共租金擇一輸入,另一個自動換算(月租金 × 月數 = 總共租金)。展延後租期迄自動延後。</div>
+                  <div className="text-[11px] text-gray-400 mt-1">目前租期迄 {edit.end_date || '—'}・月租金與總共租金擇一輸入,另一個自動換算(月租金 × 月數 = 總共租金)。展延後租期迄自動延後。</div>
                   {extBatches.length > 0 && (
                     <div className="mt-2 border-t border-mor-line/50 pt-2">
-                      <div className="text-[13px] text-gray-500 mb-1">已加延展(刪除會連同對應收租一併移除,不需再確認):</div>
+                      <div className="text-[11px] text-gray-500 mb-1">已加延展(刪除會連同對應收租一併移除,不需再確認):</div>
                       <div className="space-y-1">
                         {extBatches.map((b, bi) => (
                           <div key={bi} className="flex items-center justify-between text-xs">
-                            <span className="text-gray-700"><span className="rounded bg-mor-bluelight text-mor-blue px-1.5 py-0.5 text-[12px] mr-1">延展</span>{fmtYm(b.startYm)}{b.count > 1 ? ` ~ ${fmtYm(b.endYm)}` : ''} · {b.count} 個月 · 月租 ${fmt(b.amount)}</span>
+                            <span className="text-gray-700"><span className="rounded bg-mor-bluelight text-mor-blue px-1.5 py-0.5 text-[10px] mr-1">延展</span>{fmtYm(b.startYm)}{b.count > 1 ? ` ~ ${fmtYm(b.endYm)}` : ''} · {b.count} 個月 · 月租 ${fmt(b.amount)}</span>
                             <button type="button" onClick={() => delExtBatch(b)} className="text-red-500 underline hover:text-red-700">刪除</button>
                           </div>
                         ))}
@@ -1853,9 +1853,9 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                   className={`flex items-baseline justify-between ${r.active ? '' : 'text-gray-400 line-through decoration-gray-300'}`}>
                   <span>
                     {feeLabel(r.fee_type, r.item_name)}
-                    {!r.active && <span className="ml-1.5 no-underline text-[13px] text-amber-600">暫停中</span>}
+                    {!r.active && <span className="ml-1.5 no-underline text-[11px] text-amber-600">暫停中</span>}
                     {r.end_ym && r.active && (
-                      <span className="ml-1.5 text-[13px] text-gray-400">
+                      <span className="ml-1.5 text-[11px] text-gray-400">
                         收到{periodOf(rcPeriods, r.end_ym)?.label ?? r.end_ym}為止
                       </span>
                     )}
@@ -1998,7 +1998,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                             */
                             <div key={li} className="flex items-baseline gap-2 text-xs">
                               <span className="text-gray-600">{l.label}</span>
-                              {l.kind === 'fixed' && <span className="text-[12px] text-gray-400">每期固定</span>}
+                              {l.kind === 'fixed' && <span className="text-[10px] text-gray-400">每期固定</span>}
                               <span className={`ml-auto tabular-nums ${
                                 l.negative ? 'text-orange-600' : 'text-gray-700'}`}>
                                 {l.negative ? '−' : ''}${fmt(l.amount)}
@@ -2049,7 +2049,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                         const m = periodMismatch(chunk);
                         if (!m) return null;
                         return (
-                          <div className="mt-1 rounded-lg bg-amber-50 text-amber-800 px-2 py-1 text-[13px] leading-relaxed">
+                          <div className="mt-1 rounded-lg bg-amber-50 text-amber-800 px-2 py-1 text-[11px] leading-relaxed">
                             與契約不符：契約現值 {m.months} × ${fmt(m.rent)} = <b>${fmt(m.expect)}</b>，這一期記的是 ${fmt(m.now)}
                             {m.paidCount > 0 && <span className="text-amber-700/70">（{m.paidCount} 個月已收款，所以沒有自動更新）</span>}
                             <button onClick={() => rebuildPeriod(chunk)} disabled={!!busy}
@@ -2147,10 +2147,10 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                           <span>
                             · {auto ? feeLabel(f.fee_type, f.item_name) : f.fee_type} {Number(f.amount) < 0 ? '−' : ''}${fmt(Math.abs(Number(f.amount) || 0))}
                             <span className="text-gray-400"> ({f.checkin})</span>
-                            {auto && <span className="ml-1 text-[12px] text-gray-400">固定</span>}
+                            {auto && <span className="ml-1 text-[10px] text-gray-400">固定</span>}
                           </span>
                           {auto
-                            ? <span className="text-[12px] text-gray-400">於上方「固定加費」調整</span>
+                            ? <span className="text-[10px] text-gray-400">於上方「固定加費」調整</span>
                             : <button onClick={() => delFee(f.id)} className="text-red-400 underline">刪</button>}
                         </div>
                       );
@@ -2178,7 +2178,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                           ★ 沒收齊的期別不顯示 —— 那時本來就是未收,沒有「退回」可言。
                         */}
                         {allPaid && (
-                          <span className="w-full text-[13px] text-amber-700">
+                          <span className="w-full text-[11px] text-amber-700">
                             這一期已收齊，加了之後會退回「未收」，再按一次「收款」收這筆就好。
                           </span>
                         )}
@@ -2213,7 +2213,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                 </div>
               );
             })}
-            {extPeriods.length > 0 && <div className="text-[13px] font-semibold text-mor-blue pt-1 pb-0.5">— 延展期數(每月一期確認)—</div>}
+            {extPeriods.length > 0 && <div className="text-[11px] font-semibold text-mor-blue pt-1 pb-0.5">— 延展期數(每月一期確認)—</div>}
             {extPeriods.map((chunk: any[], j: number) => {
               const mm = chunk[0];
               const o = existing[kb + mm.ym];
@@ -2233,7 +2233,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                 <div key={'ext' + j} className={`rounded-xl border px-4 py-2.5 text-sm ${paid ? 'border-mor-greenlight bg-mor-greenlight/30' : 'border-dashed border-mor-blue/40'}`}>
                   <div className="flex items-center justify-between">
                     <div>
-                      <div className="font-medium"><span className="rounded bg-mor-bluelight text-mor-blue px-1.5 py-0.5 text-[12px]">延展</span> <span className="text-mor-blue">第 {j + 1} 期</span> <span className="text-gray-700">{mm.label}</span></div>
+                      <div className="font-medium"><span className="rounded bg-mor-bluelight text-mor-blue px-1.5 py-0.5 text-[10px]">延展</span> <span className="text-mor-blue">第 {j + 1} 期</span> <span className="text-gray-700">{mm.label}</span></div>
                       <div className="text-sm font-semibold text-mor-slate">應收 ${fmt(amount)}</div>
                       {ept.lines.length > 1 && (
                         <div className="mt-1 space-y-0.5">
@@ -2243,7 +2243,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                                 {l.paid ? '✓' : '·'}
                               </span>
                               <span className="text-gray-600">{l.label}</span>
-                              {l.kind === 'fixed' && <span className="text-[12px] text-gray-400">每期固定</span>}
+                              {l.kind === 'fixed' && <span className="text-[10px] text-gray-400">每期固定</span>}
                               <span className={`ml-auto tabular-nums ${
                                 l.negative ? 'text-orange-600' : 'text-gray-700'}`}>
                                 {l.negative ? '−' : ''}${fmt(l.amount)}
@@ -2256,7 +2256,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                         const m = periodMismatch(chunk);
                         if (!m) return null;
                         return (
-                          <div className="mt-1 rounded-lg bg-amber-50 text-amber-800 px-2 py-1 text-[13px]">
+                          <div className="mt-1 rounded-lg bg-amber-50 text-amber-800 px-2 py-1 text-[11px]">
                             與契約不符：應為 ${fmt(m.expect)}
                             <button onClick={() => rebuildPeriod(chunk)} disabled={!!busy}
                               className="ml-2 underline font-medium disabled:opacity-40">重算應收</button>
@@ -2384,7 +2384,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                     <tr key={li} className="border-b border-mor-line/40 last:border-0">
                       <td className="py-1.5 pr-2 text-gray-600">
                         {l.label}
-                        {l.kind === 'fixed' && <span className="ml-1 text-[12px] text-gray-400">每期固定</span>}
+                        {l.kind === 'fixed' && <span className="ml-1 text-[10px] text-gray-400">每期固定</span>}
                       </td>
                       {/* tabular-nums + text-right：金額的個位數一定切齊 */}
                       <td className={`py-1.5 text-right tabular-nums whitespace-nowrap ${

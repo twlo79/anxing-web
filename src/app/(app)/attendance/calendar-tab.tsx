@@ -126,7 +126,7 @@ export default function CalendarTab({ me, isAdmin, onMsg }: TabProps) {
             回本月
           </button>
         </div>
-        <div className="hidden sm:flex items-center gap-3 text-[13px] text-gray-500">
+        <div className="hidden sm:flex items-center gap-3 text-[11px] text-gray-500">
           <Legend cls="bg-mor-greenlight border-mor-green/30" label="正常" />
           <Legend cls="bg-red-50 border-red-200" label="要處理" />
           <Legend cls="bg-amber-50 border-amber-200" label="請假" />
@@ -135,7 +135,7 @@ export default function CalendarTab({ me, isAdmin, onMsg }: TabProps) {
       </div>
 
       <div className={`${CARD} overflow-hidden`}>
-        <div className="grid grid-cols-7 text-center text-[13px] text-gray-500 border-b border-mor-line">
+        <div className="grid grid-cols-7 text-center text-[11px] text-gray-500 border-b border-mor-line">
           {DOW.map((d, i) => (
             <div key={d} className={`py-1.5 ${i === 0 || i === 6 ? 'text-red-400' : ''}`}>{d}</div>
           ))}
@@ -171,31 +171,31 @@ export default function CalendarTab({ me, isAdmin, onMsg }: TabProps) {
                   狀態徽章 ＋ 上下班時間，一眼掃完一個月。
                 */}
                 {c.inMonth && st && st.tone !== 'none' && st.tone !== 'off' && (
-                  <div className={`mt-0.5 text-[12px] leading-tight rounded px-1 truncate border ${
+                  <div className={`mt-0.5 text-[10px] leading-tight rounded px-1 truncate border ${
                     CELL_TONE[st.tone]}`}>
                     {st.label}
                   </div>
                 )}
                 {c.inMonth && rep && (rep.in_at || rep.out_at) && (
-                  <div className="mt-0.5 text-[12px] leading-tight text-gray-500 tabular-nums truncate">
+                  <div className="mt-0.5 text-[10px] leading-tight text-gray-500 tabular-nums truncate">
                     {rep.in_at ?? '—'} {rep.out_at ?? '—'}
                   </div>
                 )}
 
                 {h && (
-                  <div className={`mt-0.5 text-[12px] leading-tight truncate ${
+                  <div className={`mt-0.5 text-[10px] leading-tight truncate ${
                     h.kind === 'makeup' ? 'text-mor-slate' : 'text-red-500'}`}>
                     {h.kind === 'makeup' ? `補班・${h.name}` : h.name}
                   </div>
                 )}
                 {lv.slice(0, 2).map((l, i) => (
-                  <div key={i} className="mt-0.5 text-[12px] leading-tight truncate
+                  <div key={i} className="mt-0.5 text-[10px] leading-tight truncate
                                           rounded bg-amber-50 text-amber-700 px-1">
                     {isAdmin ? `${l.name} ${l.type_name}` : l.type_name}
                   </div>
                 ))}
                 {lv.length > 2 && (
-                  <div className="text-[12px] text-amber-600">+{lv.length - 2} 人</div>
+                  <div className="text-[10px] text-amber-600">+{lv.length - 2} 人</div>
                 )}
               </button>
             );
@@ -218,7 +218,7 @@ export default function CalendarTab({ me, isAdmin, onMsg }: TabProps) {
                 {r.work_hours > 0 && <span className="text-gray-500">工時 {r.work_hours} 小時</span>}
                 {r.ot_hours > 0 && <span className="text-mor-slate">加班 {r.ot_hours} 小時</span>}
                 {s.tone !== 'none' && (
-                  <span className={`rounded-full border px-2 py-0.5 text-[13px] ${CELL_TONE[s.tone]}`}>
+                  <span className={`rounded-full border px-2 py-0.5 text-[11px] ${CELL_TONE[s.tone]}`}>
                     {s.label}
                   </span>
                 )}

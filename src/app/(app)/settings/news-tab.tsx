@@ -191,7 +191,7 @@ export default function NewsTab() {
                           <span className={`text-sm ${isUnread ? 'font-semibold text-mor-slate' : 'text-gray-700'}`}>
                             {r.title}
                           </span>
-                          <span className="text-[13px] text-gray-400">
+                          <span className="text-[11px] text-gray-400">
                             {NOTIFY_LABEL[r.kind as NotifyKind] ?? r.kind}・{stamp(r.created_at)}
                           </span>
                         </div>

@@ -14,6 +14,9 @@ import {
   totals, byMonth, byCode, unsettled, applyFilters, monthRange, prevMonth, pctChange,
   type Entry, type Filters,
 } from '@/lib/other-book';
+import {
+  FilterBar, Field, FilterSelect, FilterClear, FILTER_CTRL,
+} from '@/lib/filters';
 
 /**
  * 其他收支帳（愛皮 · 洪鯊）。
@@ -332,27 +335,35 @@ export default function OtherBooksPage() {
 
       {tab === 'ledger' ? (
         <>
-          {/* 篩選 */}
-          {/* 手機:兩個下拉並排一行、關鍵字自己一行。三個擠一行的話每個只剩 110px */}
-          <div className="grid grid-cols-2 md:flex md:flex-wrap gap-2 mb-3">
-            <select value={f.kind ?? ''} onChange={(e) => setF({ ...f, kind: e.target.value as Filters['kind'] })}
-              className="h-10 md:h-9 rounded-lg border border-mor-line bg-white px-2 text-sm">
-              <option value="">收入與支出</option>
-              <option value="income">只看收入</option>
-              <option value="expense">只看支出</option>
-            </select>
-            <select value={f.code ?? ''} onChange={(e) => setF({ ...f, code: e.target.value })}
-              className="h-10 md:h-9 rounded-lg border border-mor-line bg-white px-2 text-sm">
-              <option value="">全部科目</option>
-              {codes.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
-            </select>
-            <input value={f.kw ?? ''} onChange={(e) => setF({ ...f, kw: e.target.value })}
-              placeholder="項目／對象／備註"
-              className="col-span-2 md:col-span-1 h-10 md:h-9 rounded-lg border border-mor-line bg-white px-2 text-sm md:flex-1 md:min-w-[10rem]" />
-            {(f.kind || f.code || f.kw) && (
-              <button onClick={() => setF({})} className="col-span-2 md:col-span-1 h-10 md:h-9 px-3 text-sm text-mor-blue underline">清除</button>
-            )}
-          </div>
+          {/*
+            ══════════════════════════════════════════════════════
+            篩選列（2026-08-29 改用全站共用元件 lib/filters.tsx）
+
+            ★ 原本三個欄位**沒有小標題** —— 靠選項自己說話
+              （「收入與支出」「全部科目」）。那在只有三欄時勉強可讀,
+              但跟全站其他頁不一致:別頁是「標題在上、選項寫『全部』」。
+
+            ★ 手機的兩欄網格拿掉了。globals.css 的 `.filter-bar` 會把
+              篩選列在手機轉成直向、每欄滿版 —— 那比兩欄各 110px 好讀。
+
+            ★★ 關鍵字**沒有搜尋鈕**:這一頁的資料已經整批在前端了,
+              邊打邊篩不花成本（跟客戶管理同一個理由）。
+            ══════════════════════════════════════════════════════
+          */}
+          <FilterBar active={!!(f.kind || f.code || f.kw)}>
+            <FilterSelect label="收支" value={f.kind ?? ''}
+              onChange={(v) => setF({ ...f, kind: v as Filters['kind'] })}
+              all="全部"
+              options={[{ value: 'income', label: '只看收入' }, { value: 'expense', label: '只看支出' }]} />
+            <FilterSelect label="科目" value={f.code ?? ''}
+              onChange={(v) => setF({ ...f, code: v })}
+              options={codes.map((c) => ({ value: c.code, label: c.name }))} />
+            <Field label="關鍵字">
+              <input value={f.kw ?? ''} onChange={(e) => setF({ ...f, kw: e.target.value })}
+                placeholder="項目／對象／備註" className={`${FILTER_CTRL} w-48`} />
+            </Field>
+            <FilterClear active={!!(f.kind || f.code || f.kw)} onClear={() => setF({})} />
+          </FilterBar>
 
           {/*
             小計。篩選之後也要更新 —— 不然篩了半天上面還是全月的數字。
@@ -395,20 +406,20 @@ export default function OtherBooksPage() {
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
-                        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[13px] font-medium ${
+                        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${
                           e.kind === 'income' ? 'bg-mor-greenlight text-mor-green' : 'bg-red-50 text-red-600'}`}>
                           {e.kind === 'income' ? '收' : '支'}
                         </span>
                         <span className="font-medium truncate">{e.name}</span>
                         {e.kind === 'income' && !e.settled && (
-                          <span className="shrink-0 rounded bg-amber-50 text-amber-700 px-1.5 py-0.5 text-[13px]">未收</span>
+                          <span className="shrink-0 rounded bg-amber-50 text-amber-700 px-1.5 py-0.5 text-[11px]">未收</span>
                         )}
                       </div>
-                      <div className="text-[13px] text-gray-500 mt-1">
+                      <div className="text-[11px] text-gray-500 mt-1">
                         {e.date}・{nameOf(e.account_code)}
                         {e.party ? `・${e.party}` : ''}
                       </div>
-                      {e.note && <div className="text-[13px] text-gray-400 mt-0.5 truncate">{e.note}</div>}
+                      {e.note && <div className="text-[11px] text-gray-400 mt-0.5 truncate">{e.note}</div>}
                     </div>
                     <div className={`shrink-0 text-right font-bold tabular-nums ${
                       e.kind === 'income' ? '' : 'text-red-600'}`}>
@@ -437,17 +448,17 @@ export default function OtherBooksPage() {
                       <td className="px-3 py-2 whitespace-nowrap text-gray-500">{e.date}</td>
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-1.5">
-                          <span className={`shrink-0 rounded px-1.5 py-0.5 text-[13px] font-medium ${
+                          <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${
                             e.kind === 'income' ? 'bg-mor-greenlight text-mor-green' : 'bg-red-50 text-red-600'}`}>
                             {e.kind === 'income' ? '收' : '支'}
                           </span>
                           <span className="truncate">{e.name}</span>
                           {/* 還沒收的錢要標出來 —— 那是唯一會讓人今天做一件事的資訊 */}
                           {e.kind === 'income' && !e.settled && (
-                            <span className="shrink-0 rounded bg-amber-50 text-amber-700 px-1.5 py-0.5 text-[13px]">未收</span>
+                            <span className="shrink-0 rounded bg-amber-50 text-amber-700 px-1.5 py-0.5 text-[11px]">未收</span>
                           )}
                         </div>
-                        {e.note && <div className="text-[13px] text-gray-400 truncate">{e.note}</div>}
+                        {e.note && <div className="text-[11px] text-gray-400 truncate">{e.note}</div>}
                       </td>
                       <td className="px-3 py-2 whitespace-nowrap text-gray-600">{nameOf(e.account_code)}</td>
                       <td className="px-3 py-2 whitespace-nowrap text-gray-600">{e.party ?? '—'}</td>
@@ -663,7 +674,7 @@ function Dashboard({
             </div>
           ))}
         </div>
-        <div className="flex gap-3 text-[13px] text-gray-500 mt-2">
+        <div className="flex gap-3 text-[11px] text-gray-500 mt-2">
           <span><span className="inline-block w-2 h-2 bg-mor-green/70 rounded-sm mr-1" />收入</span>
           <span><span className="inline-block w-2 h-2 bg-red-400/70 rounded-sm mr-1" />支出</span>
         </div>

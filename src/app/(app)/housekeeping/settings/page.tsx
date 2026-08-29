@@ -274,7 +274,7 @@ export default function HkSettingsPage() {
                               className="w-6 h-6 rounded border border-gray-300 p-0" />
                           ))}
                           {/* WCAG AA 要求 4.5:1。色盲使用者靠左側色條分辨,對比不足只是難讀不是不能用 */}
-                          {ratio < 4.5 && <span className="text-[12px] text-amber-600" title={`對比 ${ratio.toFixed(1)}:1，建議 ≥ 4.5`}>對比不足</span>}
+                          {ratio < 4.5 && <span className="text-[10px] text-amber-600" title={`對比 ${ratio.toFixed(1)}:1，建議 ≥ 4.5`}>對比不足</span>}
                         </div>
                       </td>
                       <td className={td}>
@@ -454,7 +454,7 @@ export default function HkSettingsPage() {
                       <td className={`${td} text-xs text-gray-500`}>{TABLE_LABEL[a.table_name] ?? a.table_name}</td>
                       <td className={`${td} font-medium`}>{a.record_key}</td>
                       <td className={td}>
-                        <span className={`inline-block rounded px-1.5 py-0.5 text-[13px] ${
+                        <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] ${
                           a.action === 'insert' ? 'bg-mor-greenlight text-mor-green'
                           : a.action === 'delete' ? 'bg-red-50 text-red-600'
                           : 'bg-mor-bluelight text-mor-slate'}`}>

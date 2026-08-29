@@ -193,8 +193,8 @@ export default function NoticeTab({ me, isAdmin, onMsg }: TabProps) {
                     <span className={`text-sm flex-1 min-w-0 truncate ${isNew ? 'font-semibold' : ''}`}>
                       {a.title}
                     </span>
-                    {!a.active && <span className="text-[13px] text-gray-400 shrink-0">已下架</span>}
-                    <span className="text-[13px] text-gray-400 shrink-0 tabular-nums">
+                    {!a.active && <span className="text-[11px] text-gray-400 shrink-0">已下架</span>}
+                    <span className="text-[11px] text-gray-400 shrink-0 tabular-nums">
                       {a.created_at.slice(5, 10).replace('-', '/')}
                     </span>
                   </div>
@@ -204,7 +204,7 @@ export default function NoticeTab({ me, isAdmin, onMsg }: TabProps) {
                     <div className="text-sm whitespace-pre-line leading-relaxed text-mor-ink">
                       {a.body}
                     </div>
-                    <div className="text-[13px] text-gray-400 mt-2">
+                    <div className="text-[11px] text-gray-400 mt-2">
                       {names.get(a.created_by ?? '') ?? '—'}　{a.created_at.slice(0, 16).replace('T', ' ')}
                     </div>
                     {isAdmin && (

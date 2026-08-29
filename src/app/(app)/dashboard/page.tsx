@@ -885,7 +885,7 @@ export default function DashboardPage() {
               六欄在手機上一定放不下，而橫向捲軸自己不會說話 ——
               「去年同期」就這樣被藏在畫面外，使用者以為系統沒算同比。
             */}
-            {!sameYoY && <p className="md:hidden text-[13px] text-gray-400 mb-1">← 左右滑動看「去年同期」與「同比」</p>}
+            {!sameYoY && <p className="md:hidden text-[11px] text-gray-400 mb-1">← 左右滑動看「去年同期」與「同比」</p>}
             <div className="overflow-x-auto">
               <table className="w-full min-w-[640px] text-sm">
                 <thead>
@@ -1093,8 +1093,8 @@ export default function DashboardPage() {
                     <td className="py-2 pr-3">
                       {e.item_name ?? '—'}
                       {/* 一組遞延會出現好幾列,標明哪一列是母單、哪些是分攤出去的 */}
-                      {e.deferred && <span className="ml-1.5 text-[12px] text-red-500">遞延母單</span>}
-                      {e.parent_expense_id && <span className="ml-1.5 text-[12px] text-gray-400">遞延分攤</span>}
+                      {e.deferred && <span className="ml-1.5 text-[10px] text-red-500">遞延母單</span>}
+                      {e.parent_expense_id && <span className="ml-1.5 text-[10px] text-gray-400">遞延分攤</span>}
                     </td>
                     {/* 存的是 code（repair），要顯示名稱（修繕維護）—— 對不到才退回印 code */}
                     <td className="py-2 pr-3 text-gray-500 whitespace-nowrap">
@@ -1150,7 +1150,7 @@ function Kpi({ label, value, sub, tone, subTone, hint, bare }: {
   return (
     <div className={bare ? '' : 'rounded-xl border p-3.5 shadow-[0_1px_2px_rgba(46,56,64,0.05)]'}
       style={bare ? undefined : { backgroundColor: t.bg, borderColor: t.border }} title={hint}>
-      <div className="text-[12px] tracking-[0.12em] text-gray-500 flex items-center gap-1">
+      <div className="text-[10px] tracking-[0.12em] text-gray-500 flex items-center gap-1">
         {label}{hint && <span className="text-gray-300">ⓘ</span>}
       </div>
       <div className="text-xl md:text-2xl font-bold tabular-nums mt-1 leading-none"

@@ -196,7 +196,7 @@ export default function DepositFees({
         <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700 mb-2">{err}</div>
       )}
 
-      {!dep.id && <div className="text-[13px] text-gray-400">先存檔，才能加費。</div>}
+      {!dep.id && <div className="text-[11px] text-gray-400">先存檔，才能加費。</div>}
 
       {rows.map((r) => (
         <div key={r.id} className="rounded-lg border border-mor-line px-3 py-2 text-sm mb-1.5">
@@ -214,7 +214,7 @@ export default function DepositFees({
               )}
             </span>
           </div>
-          <div className="text-[13px] text-gray-400 mt-0.5">
+          <div className="text-[11px] text-gray-400 mt-0.5">
             {r.date}{r.note ? `・${r.note}` : ''}・已建立訂單子單
           </div>
 
@@ -297,7 +297,7 @@ export default function DepositFees({
           <span className={`tabular-nums ${refund < 0 ? 'text-red-600' : ''}`}>{fmt(refund)}</span>
         </div>
         {refund < 0 && (
-          <div className="text-[13px] text-red-600 mt-1">
+          <div className="text-[11px] text-red-600 mt-1">
             加費超過押金了。應退不能是負數 —— 請調整加費金額。
           </div>
         )}
@@ -317,7 +317,7 @@ export default function DepositFees({
       )}
 
       {locked && (
-        <div className="text-[13px] text-gray-400 mt-2">
+        <div className="text-[11px] text-gray-400 mt-2">
           押金已於 {dep.returned_on} 退還，加費不能再改。
         </div>
       )}

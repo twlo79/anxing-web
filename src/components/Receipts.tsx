@@ -333,7 +333,7 @@ const Receipts = forwardRef<ReceiptsHandle, {
             <img src={url} alt={a.file_name ?? '憑證'} className="w-full h-full object-cover" />
           )}
         </a>
-        <div className={`mt-0.5 text-[12px] truncate ${fromRequest ? 'text-mor-blue' : 'text-gray-400'}`}>
+        <div className={`mt-0.5 text-[10px] truncate ${fromRequest ? 'text-mor-blue' : 'text-gray-400'}`}>
           {fromRequest ? '來自請款單' : fmtSize(a.size_bytes)}
         </div>
         {removable && (
@@ -377,7 +377,7 @@ const Receipts = forwardRef<ReceiptsHandle, {
                   ? <img src={s.preview} alt={s.file.name} className="w-full h-full object-cover opacity-70" />
                   : <div className="w-full h-full flex items-center justify-center text-xs text-gray-400">PDF</div>}
               </div>
-              <div className="mt-0.5 text-[12px] text-amber-600 truncate">待上傳</div>
+              <div className="mt-0.5 text-[10px] text-amber-600 truncate">待上傳</div>
               <button onClick={() => dropStaged(s.key)} disabled={busy}
                 className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/50 text-white text-xs leading-none flex items-center justify-center"
                 aria-label="移除">✕</button>

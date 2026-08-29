@@ -328,7 +328,7 @@ export default function TendersPage() {
             <StatCard label="得標" value={stat.won} muted={stat.won === 0} />
           </StatRow>
 
-          <div className="filter-bar rounded-xl glass p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
+          <div className="filter-bar rounded-xl glass p-4 mb-4 flex flex-wrap items-end gap-3">
             <div>
               <label className="block text-xs text-gray-500 mb-1">狀態</label>
               <select value={statusF} onChange={(e) => setStatusF(e.target.value)} className={inp}>
@@ -385,7 +385,7 @@ export default function TendersPage() {
                       className="w-full text-left rounded-xl border border-mor-line bg-white p-3">
                       <div className="flex items-start gap-2">
                         <span className="flex-1 text-sm font-medium leading-snug">{r.name}</span>
-                        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[12px] font-medium ${STATUS_CLS[r.status]}`}>
+                        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${STATUS_CLS[r.status]}`}>
                           {STATUS_LABEL[r.status]}
                         </span>
                       </div>
@@ -433,7 +433,7 @@ export default function TendersPage() {
                             {h && <div className={`text-xs ${h.cls}`}>{h.text}</div>}
                           </td>
                           <td className="px-3 py-2.5">
-                            <span className={`inline-block rounded px-1.5 py-0.5 text-[13px] font-medium ${STATUS_CLS[r.status]}`}>
+                            <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] font-medium ${STATUS_CLS[r.status]}`}>
                               {STATUS_LABEL[r.status]}
                             </span>
                           </td>
@@ -463,7 +463,7 @@ export default function TendersPage() {
             這裡是爬蟲的資料，<b>不要在這裡記筆記</b> —— 按 ☆ 建檔之後再寫。
           </div>
 
-          <div className="filter-bar rounded-xl glass p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
+          <div className="filter-bar rounded-xl glass p-4 mb-4 flex flex-wrap items-end gap-3">
             <div>
               <label className="block text-xs text-gray-500 mb-1">進來的日期</label>
               <RangeInput from={fFrom} to={fTo} onChange={(f, t) => { setFFrom(f); setFTo(t); }} />
@@ -543,7 +543,7 @@ export default function TendersPage() {
             </div>
             <div className="modal-body space-y-3 text-sm">
               <div className="flex flex-wrap items-center gap-2">
-                <span className={`rounded px-1.5 py-0.5 text-[13px] font-medium ${STATUS_CLS[detail.status]}`}>
+                <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${STATUS_CLS[detail.status]}`}>
                   {STATUS_LABEL[detail.status]}
                 </span>
                 {(() => { const h = dueHint(detail.due_on, today, detail.status);

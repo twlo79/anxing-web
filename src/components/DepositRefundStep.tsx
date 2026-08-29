@@ -123,7 +123,7 @@ export default function DepositRefundStep({
               <span className="font-bold tabular-nums">NT$ {fmt(payout)}</span>
             </div>
             {hasFee && (
-              <div className="text-[13px] text-gray-500 mt-1">
+              <div className="text-[11px] text-gray-500 mt-1">
                 押金 {fmt(dep.amount)} 扣掉加費 {fmt(Math.round(Number(dep.amount) || 0) - payout)}
                 。加費那部分轉成營收，押金這筆會記為全額結清。
               </div>
@@ -167,7 +167,7 @@ export default function DepositRefundStep({
           )}
 
           {!isPlan && (
-            <div className="text-[13px] text-gray-400">
+            <div className="text-[11px] text-gray-400">
               填了實際退款日這筆就算「已退」，之後不能再改內容。
             </div>
           )}

@@ -111,10 +111,10 @@ export function AuditButton({ on, onToggle, busy }: {
               {AUDIT_ITEMS.map((x) => (
                 <span key={x.k} className="flex gap-2 items-start">
                   <span className={`inline-block shrink-0 rounded border px-1.5 py-0.5
-                                    text-[13px] font-medium whitespace-nowrap ${ISSUE_CLS[x.k]}`}>
+                                    text-[11px] font-medium whitespace-nowrap ${ISSUE_CLS[x.k]}`}>
                     {x.k}
                   </span>
-                  <span className="text-[13px] text-gray-500 leading-relaxed">{x.t}</span>
+                  <span className="text-[11px] text-gray-500 leading-relaxed">{x.t}</span>
                 </span>
               ))}
             </span>
@@ -122,7 +122,7 @@ export function AuditButton({ on, onToggle, busy }: {
               ★ 顏色的意思也要說 —— 畫面上有紅、橘、琥珀、藍四種標籤,
                 看的人會自己猜，而猜錯的方向通常是「藍色的不用理」。
             */}
-            <span className="block mt-2 pt-2 border-t border-mor-line text-[13px] text-gray-400">
+            <span className="block mt-2 pt-2 border-t border-mor-line text-[11px] text-gray-400">
               紅＝客人會撞在一起或錢算錯，琥珀＝資料要補，藍＝提示，改不改都行。
             </span>
           </span>
@@ -143,7 +143,7 @@ export function AuditBadges({ entry }: {
     <span className="inline-flex flex-wrap gap-1 align-middle" title={entry.notes.join('\n')}>
       {entry.issues.map((i) => (
         <span key={i}
-          className={`inline-block rounded border px-1.5 py-0.5 text-[13px] font-medium whitespace-nowrap ${ISSUE_CLS[i]}`}>
+          className={`inline-block rounded border px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap ${ISSUE_CLS[i]}`}>
           {i}
         </span>
       ))}
@@ -202,7 +202,7 @@ export function AuditSummary({ result, onlyBad, onToggleOnly }: {
           {total ? '有問題的地方：' : '沒有發現錯誤，但有幾組姓名要確認：'}
         </span>
         {ORDER.filter((i) => result.counts[i] > 0).map((i) => (
-          <span key={i} className={`rounded border px-1.5 py-0.5 text-[13px] font-medium ${ISSUE_CLS[i]}`}>
+          <span key={i} className={`rounded border px-1.5 py-0.5 text-[11px] font-medium ${ISSUE_CLS[i]}`}>
             {i} {result.counts[i]}
           </span>
         ))}

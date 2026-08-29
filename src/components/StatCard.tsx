@@ -103,18 +103,34 @@ export default function StatCard({
   /*
    * ★★ **同一份 DOM,靠斷點切排法** —— 不是兩份標記各顯示一半。
    *
-   *   手機:一列（label ─ 金額靠右 ─ 筆數）
-   *   桌機:一張卡（label / 金額 / 筆數 三行）
+   *   手機:兩列（label ─ 筆數靠右 ／ 金額自己一列靠右）
+   *   桌機:一張卡（label / 筆數 / 金額 三行）
    *
    *   渲染兩份再各自 hidden 的話,畫面上看不見的那份仍然存在 ——
    *   螢幕閱讀器會唸兩次,而且改了一份忘了另一份不會有任何跡象。
+   *
+   * ============================================================
+   * 【★★★ 手機為什麼要換成兩列】（2026-08-29 使用者回報「錢破版」）
+   *
+   * 原本三個東西擠在同一列:`待總經理核可 18 筆 $2,947,129`。
+   * 在 375px 的手機上,標籤六個字 ＋ 七位數金額放不下 ——
+   * 金額**被切掉**,而畫面只是少了幾個數字,不會有任何錯誤。
+   *
+   * ★★ 用 `flex-wrap` ＋ 金額 `w-full` 讓它折行,
+   *   **不是**改成 `flex-col`:
+   *   flex-col 會讓 label 與筆數各佔一列,變成三列,卡片高一倍。
+   *   要的是「前兩個同列、第三個折下去」,那正是 wrap 的行為。
+   *
+   * ★★ 金額**靠右**不是靠左 —— 三張卡疊在一起時金額要上下切齊,
+   *   那是這排卡片存在的理由（要比大小）。靠左的話每個數字起點都一樣,
+   *   但位數不同,反而看不出誰大。
    */
   return (
     <Tag {...(onClick ? { type: 'button', onClick } : {})}
       className={[
         'text-left border transition-colors min-w-0',
         'rounded-lg px-3 py-2.5 md:rounded-xl md:px-4 md:py-3',
-        'flex items-baseline gap-2 md:block',
+        'flex flex-wrap items-baseline gap-x-2 md:block',
         active ? t.fill
           /*
            * ★ accent 用 border-2 而不是 ring —— ring 畫在框線外面,
@@ -127,7 +143,7 @@ export default function StatCard({
         onClick && !active ? 'hover:bg-white/45' : '',
         muted && !active && !accent ? 'opacity-55' : '',
       ].filter(Boolean).join(' ')}>
-      <span className={`text-xs leading-tight shrink-0 md:block ${
+      <span className={`text-[15px] leading-tight shrink-0 md:block ${
         active ? 'text-white/80' : accent ? 'text-mor-slate font-medium' : 'text-gray-500'}`}>
         {label}
       </span>
@@ -140,7 +156,13 @@ export default function StatCard({
         {value}
       </span>
       {sub != null && sub !== '' && (
-        <span className={`text-[13px] shrink-0 md:block md:mt-0.5 ${
+        /*
+          ★ `w-full` 只在手機生效（桌機是 md:block，寬度本來就是滿的）——
+            它就是「折到下一行」的那個開關。
+          ★ `text-right md:text-left`:手機靠右跟上一列的筆數切齊,
+            桌機回到左邊跟 label 對齊。
+        */
+        <span className={`w-full text-right text-[16px] md:w-auto md:text-left md:block md:mt-0.5 ${
           active ? 'text-white/75' : 'text-gray-400'}`}>
           {sub}
         </span>
@@ -174,7 +196,7 @@ export function StatGroup({ label, tone = 'slate' }: { label: ReactNode; tone?: 
   return (
     <div className="flex items-center gap-1.5 mb-1.5">
       <span className={`w-1.5 h-1.5 rounded-sm shrink-0 ${TONE[tone].dot}`} />
-      <span className="text-xs text-gray-500">{label}</span>
+      <span className="text-[15px] text-gray-500">{label}</span>
     </div>
   );
 }
@@ -190,9 +212,9 @@ export function StatTotal({
 }: { label: ReactNode; value: ReactNode; sub?: ReactNode }) {
   return (
     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 mb-3">
-      <span className="text-sm text-gray-500">{label}</span>
+      <span className="text-[16px] text-gray-500">{label}</span>
       <span className="stat-num-lg font-bold text-mor-slate tabular-nums">{value}</span>
-      {sub != null && sub !== '' && <span className="text-sm text-gray-400">{sub}</span>}
+      {sub != null && sub !== '' && <span className="text-[16px] text-gray-400">{sub}</span>}
     </div>
   );
 }

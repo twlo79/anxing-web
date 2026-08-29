@@ -156,9 +156,9 @@ export default function StatementsPanel({
                 </div>
                 {/* 匯入時放行的警告要一直看得見 —— 它是「當初就知道有這件事」的唯一紀錄 */}
                 {r.warnings?.map((w, i) => (
-                  <div key={i} className="mt-0.5 text-[13px] text-amber-700">⚠ {w}</div>
+                  <div key={i} className="mt-0.5 text-[11px] text-amber-700">⚠ {w}</div>
                 ))}
-                {r.note && <div className="mt-0.5 text-[13px] text-red-600">{r.note}</div>}
+                {r.note && <div className="mt-0.5 text-[11px] text-red-600">{r.note}</div>}
               </td>
               <td className="px-3 py-2 text-right tabular-nums">{r.inserted_count}</td>
               <td className="px-3 py-2 text-right tabular-nums text-gray-500">

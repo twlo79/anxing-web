@@ -281,7 +281,7 @@ export default function CalendarTab({
         放在月曆上方而不是下方:要先知道規則再看內容，
         放下面的話人會先困惑一次再往下找。
       */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 md:px-0 text-[13px] text-gray-500">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 md:px-0 text-[11px] text-gray-500">
         {TYPE_LEGEND.map(({ key, tone }) => (
           <span key={key} className="inline-flex items-center gap-1">
             <span className="w-3 h-3 rounded-[2px] inline-block"
@@ -306,7 +306,7 @@ export default function CalendarTab({
       */}
       {/* 手機滿版:七欄月曆在 390px 上，每欄多 5px 就是多一個字 */}
       <div className="glass overflow-hidden md:rounded-xl">
-        <div className="grid grid-cols-7 text-center text-[13px] md:text-xs text-gray-500 border-b border-mor-line/60">
+        <div className="grid grid-cols-7 text-center text-[11px] md:text-xs text-gray-500 border-b border-mor-line/60">
           {DOW.map((d, i) => (
             <div key={d} className={`py-2 ${i === 0 || i === 6 ? 'text-red-400' : ''}`}>{d}</div>
           ))}
@@ -340,11 +340,11 @@ export default function CalendarTab({
                     還沒決定要不要做的，比「要做但沒人接」更前面一步。
                   */}
                   {cnt.pending > 0 ? (
-                    <span className="ml-auto text-[12px] rounded-full bg-mor-slate/15 text-mor-slate px-1.5">
+                    <span className="ml-auto text-[10px] rounded-full bg-mor-slate/15 text-mor-slate px-1.5">
                       {cnt.pending} 待確認
                     </span>
                   ) : cnt.unassigned > 0 ? (
-                    <span className="ml-auto text-[12px] rounded-full bg-gray-200 text-gray-600 px-1.5">
+                    <span className="ml-auto text-[10px] rounded-full bg-gray-200 text-gray-600 px-1.5">
                       {cnt.unassigned} 未派
                     </span>
                   ) : null}
@@ -381,7 +381,7 @@ export default function CalendarTab({
                         title={pending
                           ? `建議：${t.work_type}${t.room ? '・' + t.room : ''}（點日期展開後打勾接受）`
                           : `${t.work_type}${t.room ? '・' + t.room : ''}${t.staff ? '・' + t.staff : '（未指派）'}`}
-                        className={`px-1 py-[1px] text-[12px] leading-[1.35] truncate rounded-[2px]
+                        className={`px-1 py-[1px] text-[10px] leading-[1.35] truncate rounded-[2px]
                           ${pending || unassigned ? 'border border-dashed' : ''}
                           ${t.done_at ? 'line-through opacity-55' : ''}`}
                         style={pending
@@ -397,7 +397,7 @@ export default function CalendarTab({
                     );
                   })}
                   {list.length > 5 && (
-                    <div className="text-[12px] text-gray-400 px-1 leading-tight">＋{list.length - 5}</div>
+                    <div className="text-[10px] text-gray-400 px-1 leading-tight">＋{list.length - 5}</div>
                   )}
                 </div>
               </button>
@@ -504,7 +504,7 @@ export default function CalendarTab({
                     然後那些沒指派的就這樣一直沒人去做。
                   */}
                   {isAuto(t) && (
-                    <span className="rounded bg-gray-100 text-gray-500 px-1.5 py-0.5 text-[13px] whitespace-nowrap"
+                    <span className="rounded bg-gray-100 text-gray-500 px-1.5 py-0.5 text-[11px] whitespace-nowrap"
                       title="從訂單的進退房日推導出來。改訂單日期時它會自己搬,指派會保留">
                       自動填入
                     </span>

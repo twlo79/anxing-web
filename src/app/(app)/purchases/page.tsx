@@ -1615,7 +1615,7 @@ export default function PurchasesPage() {
       ? 'bg-pink-50 text-pink-800'
       : 'bg-emerald-50 text-emerald-800';
     return (
-      <span className={`inline-block shrink-0 rounded px-1.5 py-0.5 text-[12px] font-medium ${cls}`}>
+      <span className={`inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${cls}`}>
         {label}
       </span>
     );
@@ -1685,7 +1685,7 @@ export default function PurchasesPage() {
                 tab === k ? 'border-mor-slate text-mor-slate' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
               {label}
               {n > 0 && (
-                <span className={`ml-1.5 rounded px-1.5 py-0.5 text-[13px] ${
+                <span className={`ml-1.5 rounded px-1.5 py-0.5 text-[11px] ${
                   k === 'approve' && pendMine.length > 0
                     ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'}`}>
                   {k === 'approve' && pendMine.length > 0 ? pendMine.length : n}
@@ -1737,7 +1737,7 @@ export default function PurchasesPage() {
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
-                          <span className={`rounded px-1.5 py-0.5 text-[13px] font-medium ${
+                          <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
                             p.kind === 'pr' ? 'bg-mor-bluelight text-mor-slate' : 'bg-purple-50 text-purple-700'}`}>
                             {p.kind === 'pr' ? '請款' : '押金'}
                           </span>
@@ -1748,7 +1748,7 @@ export default function PurchasesPage() {
                       </div>
                       <div className="text-right shrink-0">
                         <div className="font-bold">${fmt(p.amount)}</div>
-                        <div className="text-[13px] text-gray-400 mt-1">
+                        <div className="text-[11px] text-gray-400 mt-1">
                           {p.freePass ? <div>未達門檻免核</div> : (<>
                             {/* ★ 手機這份原本沒有分免主管票,跟桌機那份對不起來 */}
                             {needsManagerVote(p.book)
@@ -1815,7 +1815,7 @@ export default function PurchasesPage() {
                       } cursor-pointer hover:bg-mor-sand/30`}
                       onClick={() => (p.kind === 'pr' ? setDetail(p.pr!) : openDep(p.dep!))}>
                       <td className="px-3 py-2.5 whitespace-nowrap">
-                        <span className={`rounded px-1.5 py-0.5 text-[13px] font-medium ${
+                        <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
                           p.kind === 'pr' ? 'bg-mor-bluelight text-mor-slate' : 'bg-purple-50 text-purple-700'}`}>
                           {p.kind === 'pr' ? '請款' : '押金'}
                         </span>
@@ -1824,16 +1824,16 @@ export default function PurchasesPage() {
                       <td className="px-3 py-2.5">
                         <div className="max-w-md truncate flex items-center gap-1.5">
                           {isOtherBook(p.book) && (
-                            <span className="shrink-0 rounded bg-amber-50 text-amber-700 px-1.5 py-0.5 text-[13px] font-medium">
+                            <span className="shrink-0 rounded bg-amber-50 text-amber-700 px-1.5 py-0.5 text-[11px] font-medium">
                               {bookLabel(p.book)}
                             </span>
                           )}
                           <span className="truncate">{p.what}</span>
                         </div>
-                        <div className="text-[13px] text-gray-400">{p.meta}</div>
+                        <div className="text-[11px] text-gray-400">{p.meta}</div>
                       </td>
                       <td className="px-3 py-2.5 text-right font-medium whitespace-nowrap">${fmt(p.amount)}</td>
-                      <td className="px-3 py-2.5 text-[13px] whitespace-nowrap">
+                      <td className="px-3 py-2.5 text-[11px] whitespace-nowrap">
                         {p.freePass ? <span className="text-gray-400">未達門檻免核</span> : (<>
                           {/* 愛皮洪鯊免主管票（migration_160）—— 要寫出來,
                               不然主管會去追一張根本不用他簽的單 */}
@@ -1893,11 +1893,11 @@ export default function PurchasesPage() {
                   { k: '待支付', list: waitDate },
                 ] as const).map((x) => (
                   <div key={x.k} className="flex items-baseline gap-1.5">
-                    <span className={`text-[13px] md:text-xs w-14 shrink-0 ${
+                    <span className={`text-[11px] md:text-xs w-14 shrink-0 ${
                       x.list.length ? 'text-gray-500' : 'text-gray-300'}`}>{x.k}</span>
                     <span className={`text-sm md:text-base font-bold ${
                       x.list.length ? '' : 'text-gray-300'}`}>{x.list.length}</span>
-                    <span className={`ml-auto text-[13px] tabular-nums ${
+                    <span className={`ml-auto text-[11px] tabular-nums ${
                       x.list.length ? 'text-gray-500' : 'text-gray-300'}`}>${fmt(sum(x.list))}</span>
                   </div>
                 ))}
@@ -1925,12 +1925,12 @@ export default function PurchasesPage() {
                 className={`w-full text-left rounded px-0.5 ${methodF ? 'hover:bg-mor-sand/40' : ''}`}>
                 <div className="text-xs md:text-sm font-medium leading-tight">
                   申請總額{month ? `・${month}` : ''}
-                  {methodF && <span className="ml-1 text-[13px] font-normal text-mor-blue underline">看全部</span>}
+                  {methodF && <span className="ml-1 text-[11px] font-normal text-mor-blue underline">看全部</span>}
                 </div>
                 <div className="flex items-baseline gap-1.5 mt-1">
                   <span className="stat-num font-bold">{counted.length}</span>
                   <span className="text-xs md:text-sm font-normal text-gray-400">筆</span>
-                  <span className="ml-auto text-[13px] md:text-xs text-gray-500 tabular-nums">
+                  <span className="ml-auto text-[11px] md:text-xs text-gray-500 tabular-nums">
                     ${fmt(sum(counted))}
                   </span>
                 </div>
@@ -1946,7 +1946,7 @@ export default function PurchasesPage() {
                         會讓人以為哪裡算錯了。再點一次取消篩選。
                     */
                     <button key={m} onClick={() => setMethodF(on ? '' : m)}
-                      className={`w-full flex items-baseline gap-1.5 text-[13px] rounded px-0.5 ${
+                      className={`w-full flex items-baseline gap-1.5 text-[11px] rounded px-0.5 ${
                         on ? 'bg-mor-slate text-white' : 'hover:bg-mor-sand/40'}`}>
                       <span className={on ? '' : n ? 'text-gray-600' : 'text-gray-300'}>{PAY_LABEL[m]}</span>
                       <span className={on ? 'font-medium' : n ? 'font-medium' : 'text-gray-300'}>{n}</span>
@@ -2050,10 +2050,21 @@ export default function PurchasesPage() {
       <ActionRow>
         {/* 手機上筆數頂到最左,桌機跟按鈕靠在一起 */}
         <div className="mr-auto md:mr-0"><FilterCount n={sorted.length} /></div>
-        <AddButton onClick={openNew}>填寫請款</AddButton>
-        {/* 採購單 = 房務管理的「採購需求」。次要樣式,不跟「填寫請款」搶 */}
-        <a href={PURCHASE_FORM_URL}
-          className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 whitespace-nowrap">+ 採購單</a>
+        {/*
+          ★★ 這兩顆**只在桌機出現**（2026-08-29 使用者:「重複了 可以把按鈕刪除」）。
+
+            手機在頁面最上面已經有一組滿版的「＋ 填寫請款／＋ 採購單」——
+            那裡拇指按得到,而且在摺線以上。這裡再出現一次是同一件事說兩遍。
+
+          ★ 為什麼留桌機這一組而不是刪掉:**桌機沒有上面那一組**
+            （那一塊是 `md:hidden`）。兩邊各留一份,剛好一人一次。
+        */}
+        <div className="hidden md:contents">
+          <AddButton onClick={openNew}>填寫請款</AddButton>
+          {/* 採購單 = 房務管理的「採購需求」。次要樣式,不跟「填寫請款」搶 */}
+          <a href={PURCHASE_FORM_URL}
+            className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 whitespace-nowrap">+ 採購單</a>
+        </div>
         <ExportButton onClick={exportXlsx} disabled={!rows.length && !deps.length} />
         <TrashLink table="purchase_requests" label="請款單" />
       </ActionRow>
@@ -2090,7 +2101,7 @@ export default function PurchasesPage() {
                       不標的話會計會把愛皮的支出當成安幸的在對帳。
                     */}
                     {isOtherBook(r.book) && (
-                      <span className="block mt-1 rounded-md bg-amber-50 text-amber-700 px-2 py-0.5 text-[13px] font-medium">
+                      <span className="block mt-1 rounded-md bg-amber-50 text-amber-700 px-2 py-0.5 text-[11px] font-medium">
                         {bookLabel(r.book)}
                       </span>
                     )}
@@ -2163,24 +2174,24 @@ export default function PurchasesPage() {
                         {(r.purchase_request_items ?? []).map((i) => i.item_name).join('、') || '—'}
                       </span>
                     </div>
-                    <div className="text-[13px] text-gray-400">{(r.purchase_request_items ?? []).length} 個項目</div>
+                    <div className="text-[11px] text-gray-400">{(r.purchase_request_items ?? []).length} 個項目</div>
                   </td>
                   <td className="px-3 py-2 text-right font-medium">
                     ${fmt(r.total_amount)}
                     {r.currency && r.currency !== 'TWD' && (
-                      <div className="text-[13px] font-normal text-gray-400">{r.currency} × {r.fx_rate}</div>
+                      <div className="text-[11px] font-normal text-gray-400">{r.currency} × {r.fx_rate}</div>
                     )}
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap text-gray-600">
                     {r.payment_method ? PAY_LABEL[r.payment_method] ?? r.payment_method : '—'}
-                    {r.payout_account && <div className="text-[13px] text-gray-400">{r.payout_account}</div>}
+                    {r.payout_account && <div className="text-[11px] text-gray-400">{r.payout_account}</div>}
                   </td>
                   {/* 狀態與核可進度合併成一欄 */}
                   <td className="px-3 py-2 whitespace-nowrap">
                     <span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${ST_COLOR[r.status]}`}>{ST_LABEL[r.status] ?? r.status}</span>
-                    <div className="text-[13px] mt-1">{voteLine(r)}</div>
+                    <div className="text-[11px] mt-1">{voteLine(r)}</div>
                     {r.status === 'rejected' && r.reject_reason &&
-                      <div className="text-[13px] text-red-500 mt-1 max-w-40 truncate" title={r.reject_reason}>{r.reject_reason}</div>}
+                      <div className="text-[11px] text-red-500 mt-1 max-w-40 truncate" title={r.reject_reason}>{r.reject_reason}</div>}
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap text-gray-600">
                     {r.purchased_on ?? (r.planned_transfer_on
@@ -2241,7 +2252,7 @@ export default function PurchasesPage() {
               <div className="sticky top-0 bg-white border-b border-mor-line px-4 md:px-6 py-4 font-bold flex items-center justify-between z-10"
                 style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
                 <span className="flex items-center gap-2 min-w-0">
-                  <span className="rounded px-1.5 py-0.5 text-[13px] font-medium bg-purple-50 text-purple-700 shrink-0">押金</span>
+                  <span className="rounded px-1.5 py-0.5 text-[11px] font-medium bg-purple-50 text-purple-700 shrink-0">押金</span>
                   <span className="truncate">{d.room ?? '—'}・{d.guest_name ?? '—'}</span>
                 </span>
                 <button onClick={() => openDep(null)} aria-label="關閉"
@@ -2699,7 +2710,7 @@ export default function PurchasesPage() {
                       */}
                       {d.shared_voucher && sharedImgs.length > 0 && (
                         <div className="flex items-center gap-1.5 mt-1.5">
-                          <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[13px] font-medium text-amber-800">
+                          <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-800">
                             使用共同憑證
                           </span>
                           {sharedImgs.map((im) => (
@@ -3086,7 +3097,7 @@ export default function PurchasesPage() {
                             ))}
                           </select>
                           {!payees.length && (
-                            <span className="text-[13px] text-gray-400">
+                            <span className="text-[11px] text-gray-400">
                               到「權限管理 → 常用帳號」新增，之後填匯款單就能一鍵帶入四個欄位。
                             </span>
                           )}

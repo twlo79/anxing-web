@@ -9,6 +9,7 @@ import StatementsPanel from './statements-panel';
 import { totalBalance } from '@/lib/bank-import';
 import { filterTxns, hasFilter, sumRows, amountOf, splitTail, splitRef, type BankFilter } from '@/lib/bank-filter';
 import * as XLSX from 'xlsx-js-style';
+import { syncFrom, syncTo } from '@/lib/date-range';
 import { ExportButton } from '@/components/Actions';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import FilterToggle from '@/components/FilterToggle';
@@ -457,18 +458,47 @@ export default function AccountsPage() {
           </div>
         </div>
 
-        {/* ── 篩選列 ────────────────────────────── */}
+        {/*
+          ── 篩選列 ──────────────────────────────
+
+          ★ 這一列**不套白卡** —— 它長在表格卡的上緣，再包一層會變成「卡中卡」。
+            但它有 `.filter-bar`，所以欄位高度與標題字級仍然吃
+            globals.css 那條全站統一的規則（見「篩選列的統一外觀」）。
+        */}
         {view === 'txn' && (
-          <div className="filter-bar collapsible-filters flex flex-wrap items-end gap-2 border-b px-3 py-2 text-sm">
+          <div className="filter-bar collapsible-filters flex flex-wrap items-end gap-3 border-b border-mor-line px-4 py-3">
+            {/*
+              ★★★ 起訖連動（2026-08-29 補）。
+
+                2026-08-27 那次「全站起訖連動」**漏了這一支**,
+                跟契約頁的 FilterDateRange 是同一種漏法:
+                當時是掃「`type="date"` 靠得很近的成對輸入」,
+                而這兩個各自包在 `<label>` 裡,中間隔著標題文字 —— 掃不到。
+
+                ★★ 漏掉的症狀是**安靜的**:起日改到迄日之後,
+                  區間變成空的 → 清單一筆都不剩 → 畫面顯示「沒有交易」,
+                  跟「這個帳戶這段期間真的沒有交易」長得一模一樣。
+
+                ★ 教訓（README 9.3）:**照形狀掃會漏,要照「誰在用」掃**。
+                  現在起訖一律走 `syncFrom` / `syncTo`,
+                  `grep -rn "syncFrom"` 一次就找得到全部。
+            */}
             <label className="flex flex-col gap-1">
               <span className="text-xs text-gray-500">帳務日(起)</span>
-              <input type="date" value={f.from ?? ''} onChange={(e) => set('from', e.target.value)}
-                className="rounded-lg border border-mor-line px-2 py-1.5" />
+              <input type="date" value={f.from ?? ''} className="rounded-lg border border-mor-line px-2 py-1.5"
+                onChange={(e) => {
+                  const r = syncFrom(e.target.value, f.to ?? '');
+                  setF({ ...f, from: r.from || undefined, to: r.to || undefined });
+                }} />
             </label>
             <label className="flex flex-col gap-1">
               <span className="text-xs text-gray-500">帳務日(迄)</span>
-              <input type="date" value={f.to ?? ''} onChange={(e) => set('to', e.target.value)}
-                className="rounded-lg border border-mor-line px-2 py-1.5" />
+              <input type="date" value={f.to ?? ''} min={f.from || undefined}
+                className="rounded-lg border border-mor-line px-2 py-1.5"
+                onChange={(e) => {
+                  const r = syncTo(f.from ?? '', e.target.value);
+                  setF({ ...f, from: r.from || undefined, to: r.to || undefined });
+                }} />
             </label>
             <label className="flex flex-col gap-1">
               <span className="text-xs text-gray-500">方向</span>
@@ -567,7 +597,7 @@ export default function AccountsPage() {
                     </div>
                   ) : (
                     <button onClick={() => setMemoEdit({ id: t.id, text: t.memo ?? '' })}
-                      className="text-[13px] text-gray-600 mt-0.5 break-words text-left">
+                      className="text-[11px] text-gray-600 mt-0.5 break-words text-left">
                       {t.memo || <span className="text-gray-300">✎ 加摘要</span>}
                     </button>
                   )}
@@ -579,7 +609,7 @@ export default function AccountsPage() {
                   {Number(t.debit) > 0 && (
                     <div className="font-bold tabular-nums text-red-600">−{money(t.debit)}</div>
                   )}
-                  <div className="text-[13px] text-gray-400 tabular-nums mt-0.5">
+                  <div className="text-[11px] text-gray-400 tabular-nums mt-0.5">
                     餘 {money(t.balance)}
                   </div>
                 </div>
@@ -684,7 +714,7 @@ export default function AccountsPage() {
                       卻沒有多給任何資訊。
                     */}
                     {t.txn_date && t.txn_date !== t.post_date && (
-                      <div className="text-[13px] text-gray-400">入帳 {ymd(t.post_date)}</div>
+                      <div className="text-[11px] text-gray-400">入帳 {ymd(t.post_date)}</div>
                     )}
                   </td>
                   <td className="whitespace-nowrap px-3 py-1.5">{t.description ?? ''}</td>
@@ -755,7 +785,7 @@ export default function AccountsPage() {
                       </div>
                     )}
                     {t.counterparty && (
-                      <div className="text-[13px] text-gray-400 mt-0.5 truncate">{t.counterparty}</div>
+                      <div className="text-[11px] text-gray-400 mt-0.5 truncate">{t.counterparty}</div>
                     )}
                   </td>
                   <td className="whitespace-nowrap px-3 py-1.5 text-right tabular-nums text-red-600">
@@ -774,7 +804,7 @@ export default function AccountsPage() {
                     */}
                     {t.balance_note && (
                       <div
-                        className="text-[13px] font-normal text-amber-700"
+                        className="text-[11px] font-normal text-amber-700"
                         title="銀行印的餘額跟依交易金額推算的不一致。餘額以我們算的為準。"
                       >
                         ⚠ {t.balance_note}

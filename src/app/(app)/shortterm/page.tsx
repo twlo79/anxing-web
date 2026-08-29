@@ -1050,7 +1050,7 @@ export default function ShortTermPage() {
       <RecurringPanel canEdit={canEditOrders(role)} />
 
       <FilterToggle active={!!(src || kw || estF || fromD || toD || payF || invF)} />
-      <div className="filter-bar collapsible-filters rounded-xl glass p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
+      <div className="filter-bar collapsible-filters rounded-xl glass p-4 mb-4 flex flex-wrap items-end gap-3">
         <div>
           <label className="block text-xs text-gray-500 mb-1">物業</label>
           <select value={estF} onChange={(e) => setEstF(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
@@ -1164,14 +1164,14 @@ export default function ShortTermPage() {
             className={`rounded-xl px-3 py-2.5 cursor-pointer ${SAVED_HL}`}>
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <span className="inline-block rounded bg-amber-400 px-1.5 py-0.5 text-[13px] font-bold text-white">剛剛儲存</span>
+                <span className="inline-block rounded bg-amber-400 px-1.5 py-0.5 text-[11px] font-bold text-white">剛剛儲存</span>
                 <div className="font-medium truncate mt-1">{savedRow.property_raw ?? '—'}</div>
-                <div className="text-[13px] text-gray-600 truncate">{savedRow.guest_name ?? '—'}</div>
-                <div className="text-[13px] text-gray-400 mt-0.5 tabular-nums">{savedRow.checkin} ~ {savedRow.checkout}</div>
+                <div className="text-[11px] text-gray-600 truncate">{savedRow.guest_name ?? '—'}</div>
+                <div className="text-[11px] text-gray-400 mt-0.5 tabular-nums">{savedRow.checkin} ~ {savedRow.checkout}</div>
               </div>
               <div className="shrink-0 font-bold tabular-nums">{fmt(savedRow.amount)}</div>
             </div>
-            <div className="text-[13px] text-amber-700 mt-1.5">{pinnedHint(filtered)}</div>
+            <div className="text-[11px] text-amber-700 mt-1.5">{pinnedHint(filtered)}</div>
           </div>
         )}
         {loading ? (
@@ -1190,21 +1190,21 @@ export default function ShortTermPage() {
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5">
-                    <span className={`shrink-0 rounded px-1.5 py-0.5 text-[13px] font-medium ${
+                    <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${
                       SRC_COLOR[o.source] ?? 'bg-gray-100 text-gray-600'}`}>
                       {SRC_LABEL[o.source] ?? o.source}
                     </span>
                     <span className="font-medium truncate">{o.property_raw ?? '—'}</span>
                   </div>
-                  <div className="text-[13px] text-gray-600 mt-1 truncate">{o.guest_name ?? '—'}</div>
-                  <div className="text-[13px] text-gray-400 mt-0.5 tabular-nums">
+                  <div className="text-[11px] text-gray-600 mt-1 truncate">{o.guest_name ?? '—'}</div>
+                  <div className="text-[11px] text-gray-400 mt-0.5 tabular-nums">
                     {o.checkin} ~ {o.checkout}
                     {o.nights ? `　${o.nights} 晚` : ''}
                   </div>
                 </div>
                 <div className="shrink-0 text-right">
                   <div className="font-bold tabular-nums">{fmt(o.amount)}</div>
-                  <span className={`inline-block mt-1 rounded px-1.5 py-0.5 text-[13px] font-medium ${STATUS_CLASS[st]}`}>
+                  <span className={`inline-block mt-1 rounded px-1.5 py-0.5 text-[11px] font-medium ${STATUS_CLASS[st]}`}>
                     {STATUS_LABEL[st]}
                   </span>
                 </div>
@@ -1270,7 +1270,7 @@ export default function ShortTermPage() {
                 <td className="px-3 py-2 whitespace-nowrap"><span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${SRC_COLOR[o.source]}`}>{SRC_LABEL[o.source] ?? o.source}</span></td>
                 <td className="px-3 py-2 whitespace-nowrap">
                   <div>{o.property_raw ?? o.properties?.name ?? '—'}</div>
-                  <div className="text-[13px] text-gray-400">{o.estate_id ? estateName[o.estate_id] ?? '' : ''}</div>
+                  <div className="text-[11px] text-gray-400">{o.estate_id ? estateName[o.estate_id] ?? '' : ''}</div>
                 </td>
                 <td className="px-3 py-2 whitespace-nowrap">
                   {o.guest_name ?? '—'}
@@ -1291,7 +1291,7 @@ export default function ShortTermPage() {
                         </span>
                         {/* 部分收款才顯示尚欠 —— 未收款的尚欠就是金額,那一欄已經有了 */}
                         {st === 'partial' && (
-                          <div className="text-[13px] text-gray-400 mt-0.5">尚欠 ${fmt(rest)}</div>
+                          <div className="text-[11px] text-gray-400 mt-0.5">尚欠 ${fmt(rest)}</div>
                         )}
                       </>
                     );
@@ -1385,7 +1385,7 @@ export default function ShortTermPage() {
                   <span>需開立
                     {d.invoice_title ? <span className="text-xs text-gray-500 ml-2">抬頭 {d.invoice_title}</span> : null}
                     {d.invoice_tax_id ? <span className="text-xs text-gray-500 ml-1">・統編 {d.invoice_tax_id}</span> : null}
-                    <span className="block text-[13px] text-gray-400 mt-0.5">號碼在「收款」視窗填寫</span>
+                    <span className="block text-[11px] text-gray-400 mt-0.5">號碼在「收款」視窗填寫</span>
                   </span>) : null}
                 {row('備註', d.note ? <span className="whitespace-pre-wrap">{d.note}</span> : '—')}
                 {row('訂單編號', <span className="text-xs text-gray-500 break-all">{d.order_key}</span>)}
@@ -1424,7 +1424,7 @@ export default function ShortTermPage() {
                   <span title="平台代收的訂單沒有押金 —— 錢是平台收的，不經過我們的帳戶"
                     className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-line bg-gray-50 text-gray-400 text-sm flex flex-col items-center justify-center cursor-not-allowed leading-tight">
                     <span>押金</span>
-                    <span className="text-[12px]">平台代收</span>
+                    <span className="text-[10px]">平台代收</span>
                   </span>
                 )}
                 {/*
@@ -1651,7 +1651,7 @@ export default function ShortTermPage() {
                     {bizCodes.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
                   </select>
                   {!bizCodes.length && (
-                    <span className="text-[13px] text-amber-700">
+                    <span className="text-[11px] text-amber-700">
                       {edit.book ? '這本帳還沒有收入科目 —— 請先選事業體' : '請先選事業體'}
                     </span>
                   )}
@@ -1763,20 +1763,20 @@ export default function ShortTermPage() {
                 {edit.invoice_required && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
                     <label className="flex flex-col gap-1">
-                      <span className="text-[13px] text-gray-400">發票抬頭<span className="ml-1">（留空用客戶名稱）</span></span>
+                      <span className="text-[11px] text-gray-400">發票抬頭<span className="ml-1">（留空用客戶名稱）</span></span>
                       <input value={edit.invoice_title ?? ''} placeholder={edit.guest_name ?? ''}
                         onChange={(e) => setEdit({ ...edit, invoice_title: e.target.value })}
                         className="h-11 md:h-8 rounded-lg border border-gray-300 px-2 text-sm" />
                     </label>
                     <label className="flex flex-col gap-1">
-                      <span className="text-[13px] text-gray-400">統一編號</span>
+                      <span className="text-[11px] text-gray-400">統一編號</span>
                       <input value={edit.invoice_tax_id ?? ''} inputMode="numeric" maxLength={8}
                         onChange={(e) => setEdit({ ...edit, invoice_tax_id: e.target.value.replace(/\D/g, '') })}
                         className="h-11 md:h-8 rounded-lg border border-gray-300 px-2 text-sm" />
                     </label>
                   </div>
                 )}
-                <div className="text-[13px] text-gray-400 mt-2">
+                <div className="text-[11px] text-gray-400 mt-2">
                   {edit.invoice_required
                     ? '發票號碼在「收款」視窗填寫,收到錢的同時記下來。'
                     : '勾選後,收款視窗會出現發票號碼欄位。'}
@@ -1831,7 +1831,7 @@ export default function ShortTermPage() {
                           </label>
                         )}
                         {depPick.kind === 'many' && (
-                          <div className="w-full text-[13px] text-amber-700">
+                          <div className="w-full text-[11px] text-amber-700">
                             這張訂單查到 {depPick.n} 筆未退押金，分不出要扣哪一筆 ——
                             請到押金頁直接加費。
                           </div>

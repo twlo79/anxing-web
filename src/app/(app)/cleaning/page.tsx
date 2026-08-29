@@ -256,7 +256,11 @@ export default function CleaningPage() {
       </details>
 
       {/* Filters —— 桌機 */}
-      <div className="hidden md:flex rounded-xl glass p-4 mb-4 flex-wrap items-end gap-3 text-sm">
+      {/* ★ 加上 `filter-bar` —— 欄位高度與標題字級才吃得到 globals.css
+            那條全站統一的規則（「篩選列的統一外觀」）。
+            這一頁的手機版是另一塊 JSX,所以這裡維持 `hidden md:flex`,
+            不加 `collapsible-filters`。 */}
+      <div className="filter-bar hidden md:flex rounded-xl glass p-4 mb-4 flex-wrap items-end gap-3">
         <div>
           <label className="block text-xs text-gray-500 mb-1">物業</label>
           <select value={estate} onChange={(e) => setEstate(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5 min-w-24">

@@ -114,7 +114,7 @@ export default function ApplyTab({ me, onMsg, prefill }: TabProps & {
                   <span className="text-xs text-gray-500">{t.name}</span>
                   <span className="flex-1" />
                   {b && t.has_quota && (
-                    <span className="text-[13px] text-gray-400 tabular-nums">
+                    <span className="text-[11px] text-gray-400 tabular-nums">
                       {quota} 中用了 {used}
                     </span>
                   )}
@@ -244,7 +244,7 @@ function Row({ title, sub, state, tone, onCancel }: {
         <div className="text-sm font-medium">{title}</div>
         <div className="text-xs text-gray-500 mt-0.5 break-words">{sub}</div>
       </div>
-      <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[13px] ${TONE[tone]}`}>
+      <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] ${TONE[tone]}`}>
         {state}
       </span>
       {onCancel && <button onClick={onCancel} className={`${BTN2} shrink-0`}>取消</button>}

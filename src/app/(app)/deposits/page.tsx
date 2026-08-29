@@ -408,7 +408,7 @@ export default function DepositsPage() {
        *
        *   現在卡片、群組標題、列表徽章三個地方講同一件事用同一個顏色。
        */
-      <span className={`inline-block rounded px-1.5 py-0.5 text-[12px] font-medium ${
+      <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-medium ${
         earnest ? 'bg-amber-100 text-amber-800' : 'bg-mor-bluelight text-mor-slate'}`}>
         {earnest ? '訂金' : '押金'}
       </span>
@@ -1141,7 +1141,7 @@ export default function DepositsPage() {
   const voteLine = (r: Dep) => {
     if (r.refund_status !== 'pending') return null;
     return (
-      <div className="text-[13px] text-gray-400 mt-0.5 whitespace-nowrap">
+      <div className="text-[11px] text-gray-400 mt-0.5 whitespace-nowrap">
         <span className={r.manager_approved_at ? 'text-mor-green' : ''}>{r.manager_approved_at ? '✓' : '○'} 主管</span>
         <span className="mx-1">·</span>
         <span className={r.admin_approved_at ? 'text-mor-green' : ''}>{r.admin_approved_at ? '✓' : '○'} 總經理</span>
@@ -1166,20 +1166,20 @@ export default function DepositsPage() {
     if (r.kind === 'earnest') {
       const es = earnestStatus(r as EarnestDep);
       if (es === '已沒收') {
-        return <span className="inline-block rounded px-1.5 py-0.5 text-[13px] bg-red-50 text-red-700">已沒收</span>;
+        return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-red-50 text-red-700">已沒收</span>;
       }
       if (es === '已退｜轉押') {
-        return <span className="inline-block rounded px-1.5 py-0.5 text-[13px] bg-violet-50 text-violet-700">已退｜轉押</span>;
+        return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-violet-50 text-violet-700">已退｜轉押</span>;
       }
       if (es === '已退訂金') {
-        return <span className="inline-block rounded px-1.5 py-0.5 text-[13px] bg-gray-100 text-gray-500">已退訂金</span>;
+        return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-gray-100 text-gray-500">已退訂金</span>;
       }
       // 其餘（未付/已收/審核中）跟押金講法一樣,往下走共用的那幾行
     }
-    if (r.returned_on) return <span className="inline-block rounded px-1.5 py-0.5 text-[13px] bg-gray-100 text-gray-500">已退款</span>;
-    if (st === 'approved') return <span className="inline-block rounded px-1.5 py-0.5 text-[13px] bg-mor-greenlight text-mor-green">已核可・待匯款</span>;
-    if (st === 'pending') return <span className="inline-block rounded px-1.5 py-0.5 text-[13px] bg-amber-50 text-amber-700">退款審核中</span>;
-    if (st === 'rejected') return <span className="inline-block rounded px-1.5 py-0.5 text-[13px] bg-red-50 text-red-600">已駁回</span>;
+    if (r.returned_on) return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-gray-100 text-gray-500">已退款</span>;
+    if (st === 'approved') return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-mor-greenlight text-mor-green">已核可・待匯款</span>;
+    if (st === 'pending') return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-amber-50 text-amber-700">退款審核中</span>;
+    if (st === 'rejected') return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-red-50 text-red-600">已駁回</span>;
     return null;
   };
 
@@ -1194,7 +1194,7 @@ export default function DepositsPage() {
     const c = transferChip(r, nameOfDep);
     if (!c) return null;
     return (
-      <span className={`inline-block rounded px-1.5 py-0.5 text-[13px] ${
+      <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] ${
         c.dir === 'out' ? 'bg-violet-50 text-violet-700' : 'bg-mor-greenlight text-mor-green'}`}>
         {c.text}
       </span>
@@ -1202,7 +1202,7 @@ export default function DepositsPage() {
   };
 
   const statusChip = (r: Dep) => {
-    if (r.orphaned) return <span className="inline-block rounded px-1.5 py-0.5 text-[13px] bg-red-50 text-red-600">孤兒</span>;
+    if (r.orphaned) return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-red-50 text-red-600">孤兒</span>;
     /*
      * ★ 順序有意義:移轉出去 → 真的退了 → 移轉進來。
      *
@@ -1215,7 +1215,7 @@ export default function DepositsPage() {
      * 而清單上就再也看不出那筆錢已經不在我們手上了。
      */
     if (r.transfer_to_id) return moveChip(r);
-    if (r.returned_on) return <span className="inline-block rounded px-1.5 py-0.5 text-[13px] bg-gray-100 text-gray-500">已退</span>;
+    if (r.returned_on) return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-gray-100 text-gray-500">已退</span>;
     const mc = moveChip(r);
     if (mc) return mc;
     /*
@@ -1226,7 +1226,7 @@ export default function DepositsPage() {
      */
     if (depPayStatus(r) === 'partial') {
       return (
-        <span className="inline-block rounded px-1.5 py-0.5 text-[13px] bg-amber-50 text-amber-700"
+        <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-amber-50 text-amber-700"
           title={`已收 ${fmt(r.received_amount ?? 0)} / ${fmt(r.amount)}`}>
           部分收款
         </span>
@@ -1235,9 +1235,9 @@ export default function DepositsPage() {
     if (r.received_on) {
       // 退款流程進行中的,狀態欄直接顯示流程狀態 —— 「暫收中」看不出有人正在等核可
       const rc = refundChip(r);
-      return rc ?? <span className="inline-block rounded px-1.5 py-0.5 text-[13px] bg-mor-bluelight text-mor-slate">暫收中</span>;
+      return rc ?? <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-mor-bluelight text-mor-slate">暫收中</span>;
     }
-    return <span className="inline-block rounded px-1.5 py-0.5 text-[13px] bg-amber-50 text-amber-600">尚未收</span>;
+    return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-amber-50 text-amber-600">尚未收</span>;
   };
 
   const inp = 'rounded-lg border border-gray-300 px-2 py-1.5';
@@ -1473,7 +1473,7 @@ export default function DepositsPage() {
 
       {/* 篩選 */}
       <FilterToggle />
-      <div className="filter-bar collapsible-filters rounded-xl glass p-4 mb-4 flex flex-wrap items-end gap-3 text-sm">
+      <div className="filter-bar collapsible-filters rounded-xl glass p-4 mb-4 flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">日期區間(收/退款日)</span>
           <RangeInput from={fromD} to={toD}
             onChange={(f, t) => { setFromD(f); setToD(t); }} /></label>
@@ -1562,7 +1562,7 @@ export default function DepositsPage() {
                 <div className="stat-num font-bold">{primaryText(r)}</div>
                 <div className="mt-0.5">{kindChip(r)}</div>
                 {extraLines(r).map((l) => (
-                  <div key={l.cur} className="text-[13px] text-gray-500">＋{lineText(l)}</div>
+                  <div key={l.cur} className="text-[11px] text-gray-500">＋{lineText(l)}</div>
                 ))}
                 <div className="mt-1">{statusChip(r)}{voteLine(r)}</div>
               </div>
@@ -1601,14 +1601,14 @@ export default function DepositsPage() {
                 <td className="px-3 py-2 whitespace-nowrap font-medium">
                   {/* 種類徽章移到「暫收款」那一欄底下了 —— 兩邊都標會重複 */}
                   {r.room ?? '—'}
-                  {r.is_manual && <span className="ml-1 text-[12px] text-gray-400">手動</span>}
+                  {r.is_manual && <span className="ml-1 text-[10px] text-gray-400">手動</span>}
                 </td>
                 <td className="px-3 py-2 whitespace-nowrap">{r.guest_name ?? '—'}</td>
                 <td className="px-3 py-2 text-right whitespace-nowrap">
                   <div>{primaryText(r)}</div>
                   <div className="mt-0.5">{kindChip(r)}</div>
                   {extraLines(r).map((l) => (
-                    <div key={l.cur} className="text-[13px] text-gray-500 font-normal">＋{lineText(l)}</div>
+                    <div key={l.cur} className="text-[11px] text-gray-500 font-normal">＋{lineText(l)}</div>
                   ))}
                 </td>
                 <td className="px-3 py-2 whitespace-nowrap">{r.received_on ?? '—'}</td>
@@ -2240,7 +2240,7 @@ export default function DepositsPage() {
                   return (
                     <div className="rounded-lg border border-mor-line bg-mor-sand/30 px-3 py-2.5">
                       <div className="flex items-center justify-between gap-2">
-                        <span className={`inline-block rounded px-1.5 py-0.5 text-[13px] font-medium ${DEP_STATUS_CLASS[st]}`}>
+                        <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] font-medium ${DEP_STATUS_CLASS[st]}`}>
                           {DEP_STATUS_LABEL[st]}
                         </span>
                         <span className="text-xs text-gray-600 tabular-nums">
@@ -2248,7 +2248,7 @@ export default function DepositsPage() {
                           {rest > 0 && <span className="text-amber-700 ml-1">（尚欠 {fmt(rest)}）</span>}
                         </span>
                       </div>
-                      <div className="text-[13px] text-gray-500 mt-1.5">
+                      <div className="text-[11px] text-gray-500 mt-1.5">
                         收款日與收款方式由收款明細算出來 —— 收兩次就記兩筆。
                       </div>
                       <button

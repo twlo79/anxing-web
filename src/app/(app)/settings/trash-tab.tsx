@@ -155,7 +155,7 @@ export default function TrashTab({ initialTable = '' }: { initialTable?: string 
                              : 'text-gray-500 hover:text-gray-700'}`}>
               {FILTER_LABEL[k]}
               {k === 'open' && openCount > 0 && (
-                <span className="ml-1.5 rounded-full bg-amber-100 text-amber-700 px-1.5 text-[13px]">
+                <span className="ml-1.5 rounded-full bg-amber-100 text-amber-700 px-1.5 text-[11px]">
                   {openCount}
                 </span>
               )}
@@ -198,7 +198,7 @@ export default function TrashTab({ initialTable = '' }: { initialTable?: string 
                 <button onClick={() => setOpen(isOpen ? null : r.id)}
                   className="w-full px-4 py-2.5 text-left hover:bg-white/45">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="shrink-0 w-16 text-center rounded bg-mor-sand/70 px-1.5 py-0.5 text-[13px] text-gray-600">
+                    <span className="shrink-0 w-16 text-center rounded bg-mor-sand/70 px-1.5 py-0.5 text-[11px] text-gray-600">
                       {TABLE_LABEL[r.table_name] ?? r.table_name}
                     </span>
                     <span className={`text-sm flex-1 min-w-0 truncate ${
@@ -206,22 +206,22 @@ export default function TrashTab({ initialTable = '' }: { initialTable?: string 
                       {r.label || <span className="text-gray-400">（沒有可顯示的識別）</span>}
                     </span>
                     {r.child_count > 0 && (
-                      <span className="shrink-0 text-[13px] text-gray-400">＋{r.child_count} 筆相關</span>
+                      <span className="shrink-0 text-[11px] text-gray-400">＋{r.child_count} 筆相關</span>
                     )}
                     {/* 年代標註：不自動刪，但要看得出這是很久以前的東西 */}
                     {age.old && state === 'open' && (
-                      <span className="shrink-0 text-[13px] text-gray-400">{age.text}</span>
+                      <span className="shrink-0 text-[11px] text-gray-400">{age.text}</span>
                     )}
-                    <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[13px] ${
+                    <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] ${
                       state === 'open' ? 'bg-amber-50 text-amber-700 border-amber-200'
                         : state === 'restored' ? 'bg-mor-greenlight text-mor-green border-mor-green/30'
                         : 'bg-gray-100 text-gray-500 border-gray-200'}`}>
                       {state === 'open' ? '在回收桶' : state === 'restored' ? '已復原' : '已永久刪除'}
                     </span>
-                    <span className="shrink-0 w-32 text-right text-[13px] text-gray-400 tabular-nums">
+                    <span className="shrink-0 w-32 text-right text-[11px] text-gray-400 tabular-nums">
                       {fmtAt(r.deleted_at)}
                     </span>
-                    <span className="shrink-0 w-14 text-right text-[13px] text-gray-500 truncate">
+                    <span className="shrink-0 w-14 text-right text-[11px] text-gray-500 truncate">
                       {names.get(r.deleted_by ?? '') ?? '系統'}
                     </span>
                   </div>
@@ -321,7 +321,7 @@ function FieldList({ title, rows }: { title: string; rows: Record<string, unknow
       <div className="px-3 py-1.5 bg-mor-sand/50 text-xs font-medium text-gray-600 flex items-center gap-2">
         <span className="flex-1">{title}</span>
         {rows.length > 3 && (
-          <button onClick={() => setAll(!all)} className="text-[13px] text-mor-slate underline">
+          <button onClick={() => setAll(!all)} className="text-[11px] text-mor-slate underline">
             {all ? '收起' : `展開全部 ${rows.length} 筆`}
           </button>
         )}
