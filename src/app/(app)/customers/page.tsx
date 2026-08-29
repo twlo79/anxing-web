@@ -151,7 +151,7 @@ export default function CustomersPage() {
         物業分頁 —— 用 `solid`（圓膠囊）而不是分段:
         它換的是**哪一份資料**（哪一棟的客戶），不是這一頁的區塊。
       */}
-      <Tabs variant="solid" size="sm" className="mb-3"
+      <Tabs variant="browser" tone="page" className="mb-3"
         value={cur} onChange={(id) => { setTab(id); setOpen(null); }}
         items={tabs.map((t) => ({ key: t.id, label: t.name }))} />
 

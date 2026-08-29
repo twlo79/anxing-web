@@ -75,7 +75,7 @@ export type TabItem<T extends string> = {
 };
 
 export function Tabs<T extends string>({
-  items, value, onChange, variant = 'segment', size = 'md', className = '',
+  items, value, onChange, variant = 'segment', size = 'md', tone = 'paper', className = '',
 }: {
   items: readonly TabItem<T>[];
   value: T;
@@ -88,6 +88,17 @@ export function Tabs<T extends string>({
   variant?: 'segment' | 'solid' | 'browser';
   /** sm 給「分頁裡的分頁」用 —— 兩層一樣大的話看不出誰包誰 */
   size?: 'sm' | 'md';
+  /**
+   * `browser` 專用:底下的面板是什麼顏色。**選中的那頁要跟面板同色**,
+   * 否則接縫會露出一條邊。
+   *
+   *   paper  白面板 —— 內容本身就是一整塊（清單、表格）
+   *   page   頁面底色 —— 內容是**一疊卡片**（統計卡、篩選卡、表格卡）
+   *
+   * ★★★ 為什麼要分（2026-08-29）:白卡放在白面板上**邊界會消失**。
+   *   出勤·打卡那種一連串區塊的頁面，包進白面板會整個糊成一塊。
+   */
+  tone?: 'paper' | 'page';
   className?: string;
 }) {
   const md = size === 'md';
@@ -116,8 +127,28 @@ export function Tabs<T extends string>({
    * ══════════════════════════════════════════════════════════
    */
   if (variant === 'browser') {
+    /*
+     * ★ 分頁列的底色要比面板**深一階**,不然分頁的形狀撐不起來。
+     *   白面板配沙色列、米色面板配線色列 —— 兩組的色差都夠。
+     */
+    const strip = tone === 'page' ? 'bg-mor-line' : 'bg-mor-sand';
+    const active = tone === 'page' ? 'bg-mor-bg' : 'bg-white';
+    /*
+     * ★★★ `tone="page"` **不需要 `<TabShell>`**。
+     *
+     *   選中的那頁跟頁面同色,所以它自己就跟下面的頁面連在一起了 ——
+     *   下面有沒有一個「面板」都一樣。
+     *
+     * ★★ 而且**不能**用 TabShell 包:那個殼有 `overflow-hidden`,
+     *   而 `.glass` 的 `backdrop-blur` 會讓 `position: fixed` 的彈窗
+     *   改以它為定位基準 —— 彈窗會被裁掉。
+     *   那幾頁的編輯視窗全部是 fixed,包進去就打不開了。
+     *
+     * ★ 所以只有 `tone="paper"`（白面板、內容是一整塊）才配 TabShell。
+     */
     return (
-      <div className={`flex gap-[3px] overflow-x-auto bg-mor-sand px-1.5 pt-1.5 ${className}`}
+      <div className={`flex gap-[3px] overflow-x-auto px-1.5 pt-1.5 ${strip}
+                       ${tone === 'page' ? 'rounded-t-xl' : ''} ${className}`}
         role="tablist">
         {items.map((t) => {
           const on = t.key === value;
@@ -126,8 +157,8 @@ export function Tabs<T extends string>({
               onClick={() => onChange(t.key)}
               className={`${md ? 'px-4 py-2 text-ui' : 'px-3 py-1.5 text-uisub'}
                 rounded-t-[9px] font-medium whitespace-nowrap transition-colors ${
-                on ? 'bg-white text-mor-slate'
-                   : 'text-gray-500 hover:bg-white/50'}`}>
+                on ? `${active} text-mor-slate`
+                   : 'text-gray-500 hover:bg-white/40'}`}>
               {t.label}
               <Badge n={t.badge} on={on} />
             </button>
@@ -215,11 +246,15 @@ function Badge({ n, on }: { n?: number; on: boolean }) {
  *     …面板內容…
  *   </TabShell>
  */
-export function TabShell({ tabs, children, className = '' }: {
-  tabs: ReactNode; children: ReactNode; className?: string;
+export function TabShell({ tabs, children, tone = 'paper', className = '' }: {
+  tabs: ReactNode; children: ReactNode;
+  /** ★ 要跟裡面那個 `<Tabs tone>` **填一樣的值** —— 不一樣的話接縫會露邊 */
+  tone?: 'paper' | 'page';
+  className?: string;
 }) {
   return (
-    <div className={`rounded-xl border border-mor-line bg-white overflow-hidden ${className}`}>
+    <div className={`rounded-xl border border-mor-line overflow-hidden
+                     ${tone === 'page' ? 'bg-mor-bg' : 'bg-white'} ${className}`}>
       {tabs}
       {children}
     </div>

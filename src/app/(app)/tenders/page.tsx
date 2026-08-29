@@ -305,7 +305,7 @@ export default function TendersPage() {
           那讓兩個分頁一長一短、寬度跳來跳去。
         ★ 徽章只在 > 0 時出現（見 components/Tabs.tsx）。
       */}
-      <Tabs className="mb-4" value={tab} onChange={setTab}
+      <Tabs variant="browser" tone="page" className="mb-4" value={tab} onChange={setTab}
         items={[
           { key: 'rec' as const, label: '紀錄標案', badge: rows.length },
           { key: 'feed' as const, label: '標案追蹤器',

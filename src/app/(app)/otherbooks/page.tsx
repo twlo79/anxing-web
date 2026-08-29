@@ -7,7 +7,7 @@ import Req from '@/components/Req';
 import MoneyInput from '@/components/MoneyInput';
 import Toast from '@/components/Toast';
 import StatCard, { StatRow } from '@/components/StatCard';
-import { Tabs, TabShell } from '@/components/Tabs';
+import { Tabs } from '@/components/Tabs';
 import {
   OTHER_BOOKS, BOOK_LABEL, BOOK_BIZ, OTHER_BIZ_SOURCE, OTHER_BIZ_PURPOSE, type Book,
 } from '@/lib/book';
@@ -288,7 +288,11 @@ export default function OtherBooksPage() {
           下層用 `browser` 黏在面板上,換的是「這份資料怎麼看」。
           一個浮、一個黏,層級一眼分得出來。
       */}
-      <Tabs variant="segment" className="mb-3"
+      {/*
+        ★ 第一層（換哪一本帳）用 Chrome 式,放在最上面 —— 全站一致。
+          第二層（收支帳／儀錶板）用小分段,見下面的面板。
+      */}
+      <Tabs variant="browser" tone="paper" className="rounded-t-xl"
         value={book} onChange={(b) => { setBook(b); setF({}); }}
         items={OTHER_BOOKS.map((b) => ({ key: b, label: BOOK_LABEL[b] }))} />
 
@@ -303,12 +307,12 @@ export default function OtherBooksPage() {
           分頁掛在半空中接不上。包進同一個殼之後,
           **選第幾個都對**,面板永遠是完整的方框。
       */}
-      <TabShell className="mb-4" tabs={
-        <Tabs variant="browser" value={tab} onChange={setTab}
-          items={[{ key: 'ledger' as const, label: '收支帳' },
-                  { key: 'dash' as const, label: '儀錶板' }]} />
-      }>
+      <div className="rounded-b-xl border border-t-0 border-mor-line bg-white mb-4">
         <div className="p-4">
+          {/* ★ 第二層只有兩項 → 小分段（側欄要吃掉 126px,為兩個選項不划算）*/}
+          <Tabs size="sm" className="mb-3" value={tab} onChange={setTab}
+            items={[{ key: 'ledger' as const, label: '收支帳' },
+                    { key: 'dash' as const, label: '儀錶板' }]} />
         {/* 月份 ＋ 三個新增入口 */}
         {/*
           手機上月份自己一行、三顆新增按鈕平分寬度。
@@ -489,7 +493,7 @@ export default function OtherBooksPage() {
           <Dashboard rows={rows} cur={cur} ym={ym} nameOf={nameOf} loading={loading} book={book} />
         )}
         </div>
-      </TabShell>
+      </div>
 
       {/* ══════════════ 新增收入 ══════════════ */}
       {inc && (

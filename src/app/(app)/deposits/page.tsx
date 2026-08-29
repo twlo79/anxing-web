@@ -1454,7 +1454,7 @@ export default function DepositsPage() {
         ★ 筆數算在 `base` 上（不含 kind 篩選本身）—— 切到訂金之後
           押金那個數字還在，頁籤才是總覽而不是當前清單的重複。
       */}
-      <Tabs className="mb-3" value={kindF} onChange={setKindF}
+      <Tabs variant="browser" tone="page" className="mb-3" value={kindF} onChange={setKindF}
         items={([
           { k: 'all' as const,     label: '全部' },
           { k: 'earnest' as const, label: '訂金' },

@@ -120,7 +120,7 @@ export default function HousekeepingPage() {
       {/* 只有一個分頁時整條不畫 —— 一個孤零零的分頁看起來像壞掉 */}
       {tabs.length > 1 && (
       <div className="mb-4 px-4 md:px-0">
-        <Tabs value={tab} onChange={setTab}
+        <Tabs variant="browser" tone="page" value={tab} onChange={setTab}
           items={tabs.map((k) => ({ key: k, label: TAB_LABEL[k] }))} />
       </div>
       )}

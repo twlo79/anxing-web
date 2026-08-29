@@ -418,8 +418,8 @@ export default function AccountsPage() {
         ★ 包進 `<TabShell>` 之後,分頁列有自己的底色（比面板深一階）,
           選中的那頁是白的、直接連到下面,**選第幾個都對**。
       */}
-      <TabShell tabs={
-        <Tabs variant="browser" value={tab} onChange={setTab}
+      <TabShell tone="paper" tabs={
+        <Tabs variant="browser" tone="paper" value={tab} onChange={setTab}
           items={accounts.map((a) => ({ key: a.id, label: a.name }))} />
       }>
         {/*

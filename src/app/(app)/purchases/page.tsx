@@ -1685,7 +1685,7 @@ export default function PurchasesPage() {
           而且它是「要你去審」的動作清單,名字要講出那是什麼事情。
       */}
       {canSeeAll && (
-        <Tabs className="mb-4" value={tab} onChange={setTab}
+        <Tabs variant="browser" tone="page" className="mb-4" value={tab} onChange={setTab}
           items={[
             { key: 'approve' as const, label: '請款審核',
               badge: pendMine.length > 0 ? pendMine.length : pendWait.length },

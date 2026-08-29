@@ -55,7 +55,7 @@ function SettingsInner() {
     <div>
       <h1 className="mb-3">設定</h1>
 
-      <Tabs className="mb-4" value={tab} onChange={setTab}
+      <Tabs variant="browser" tone="page" className="mb-4" value={tab} onChange={setTab}
         items={TABS.map((t) => ({
           key: t.key,
           label: <><span className="mr-1.5">{t.icon}</span>{t.label}</>,
