@@ -7,7 +7,7 @@ import MoneyInput from '@/components/MoneyInput';
 import { missingFields, missingMessage } from '@/lib/required';
 import Toast from '@/components/Toast';
 import FilterToggle from '@/components/FilterToggle';
-import InfoDot from '@/components/InfoDot';
+import ToggleInfo from '@/components/ToggleInfo';
 import { BarPanel, BarRow, BarEmpty } from '@/components/BarList';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
@@ -403,14 +403,40 @@ export default function ExpensesPage() {
   return (
     <div>
       <Toast msg={msg} />
-      <h1 className="mb-4">支出</h1>
+      {/*
+        ★★★ 「★ 重要支出」在標題列右上，跟訂單／營收的「👀 防呆」同一個位置
+             （2026-08-29 使用者:「參考防呆 ⓘ 然後關注移到右上角」）。
+
+          它原本是篩選卡裡的一顆「☆ 關注」按鈕 —— 跟六個下拉排在一起,
+          看起來像第七個篩選欄位。但它跟那六個不是同一種東西:
+          那六個是「這一批資料要留哪些」,而它是「這一頁用哪個模式在看」。
+
+        ★ 而且篩選列在手機上是收起來的 —— 模式開關被收走就找不到了。
+      */}
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <h1 className="mr-auto mb-0">支出</h1>
+        <ToggleInfo label="★ 重要支出" tone="amber"
+          on={starF} onToggle={() => setStarF(!starF)}
+          infoLabel="重要支出是什麼">
+          <span className="block text-xs text-gray-500 leading-relaxed">
+            打開之後**只留下**標了 ★ 的支出。★ 是每一列最左邊那一欄，
+            點一下就標、再點一下取消 —— 用來把「要追的那幾筆」先挑出來，
+            <b>跟金額大小無關</b>。
+          </span>
+          <span className="block mt-2 pt-2 border-t border-mor-line text-[11px] text-gray-400">
+            遞延的母子單會一起連動：標了母單，拆出去的每一期也會跟著標。
+          </span>
+        </ToggleInfo>
+      </div>
 
       {/* 統計 */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
         <div className="rounded-xl min-w-0 surf-deep text-white p-5">
           <div className="flex items-baseline justify-between">
-            <div className="text-sm opacity-80">認列支出</div>
-            <div className="text-xs opacity-60">{rows.length.toLocaleString()} 筆</div>
+            {/* ★ 跟隔壁三張分項卡的標題同一級（text-ui）—— 四張卡並排時
+                  標題有大有小會看起來像不同層級的東西（2026-08-29 使用者指定） */}
+            <div className="text-ui font-semibold opacity-90">認列支出</div>
+            <div className="text-uisub opacity-70">{rows.length.toLocaleString()} 筆</div>
           </div>
           <div className="stat-num-lg font-bold mt-2">${fmt(total)}</div>
           {/*
@@ -512,51 +538,6 @@ export default function ExpensesPage() {
               className="rounded-lg border border-mor-line px-2 py-1.5 w-40" placeholder="關鍵字" />
             <button onClick={() => setKw(kwIn.trim())} className="rounded-lg bg-mor-slate text-white px-4 hover:bg-mor-slatedark">搜尋</button>
           </div></label>
-        {/*
-          只看關注。做成切換鈕而不是下拉 —— 它只有開/關兩種狀態,而且會常按。
-
-          ★ 它**留在篩選卡裡** —— 它是一個篩選條件（「只看哪些」），
-            不是動作。跟旁邊的下拉是同一類東西,只是長得像按鈕。
-
-          ══════════════════════════════════════════════════════
-          ★★★ 只留星星,「關注」兩個字拿掉,旁邊放一顆 ⓘ
-               （2026-08-29 使用者:「只做星星 旁邊 i 點下去有說明 節省空間」）。
-
-            這一列有八個欄位,在 1440 寬會擠到換行。星星本身就是
-            全站表格裡「關注」的記號（列上那一欄也是 ★/☆），
-            所以文字是重複的。
-
-          ★★ 但**圖示不會自己說話**。只留星星的話,第一次看到的人
-            不知道它在篩什麼 —— 而 `title` 只有滑鼠停留看得到,
-            手機沒有 hover。所以配一顆點得下去的 ⓘ。
-
-          ★ 按鈕本身要 `aria-label` ＋ `aria-pressed`:
-            讀螢幕的人聽到的不能只是「星號」,而且要知道它現在是開還是關。
-          ══════════════════════════════════════════════════════
-        */}
-        <FieldSpacer>
-          <div className="flex items-center gap-1.5">
-            <button onClick={() => setStarF(!starF)}
-              aria-label={starF ? '只看關注（已開啟）' : '只看關注'}
-              aria-pressed={starF}
-              title={starF ? '只看關注（已開啟）' : '只看關注'}
-              className={`${FILTER_BTN_H} w-11 rounded-lg border text-lg leading-none ${
-                starF ? 'border-amber-400 bg-amber-50 text-amber-600' : 'border-mor-line bg-white text-gray-400 hover:bg-mor-sand/60'}`}>
-              {starF ? '★' : '☆'}
-            </button>
-            <InfoDot label="關注是什麼">
-              <b className="text-gray-800">只看關注</b>
-              <br />
-              按下去只留下標了 ★ 的支出。★ 是每一列最左邊那一欄，
-              點一下就標、再點一下取消 —— 用來把「要追的那幾筆」
-              先挑出來，跟金額大小無關。
-              <br />
-              <span className="text-gray-500">
-                遞延的母子單會一起連動：標了母單，拆出去的每一期也會跟著標。
-              </span>
-            </InfoDot>
-          </div>
-        </FieldSpacer>
         <FieldSpacer>
           {(fromD || toD || codeF || payF || purposeF || acctF || kw || starF) && (
             <button onClick={() => { setFromD(''); setToD(''); setCodeF(''); setPayF(''); setPurposeF(''); setAcctF(''); setKw(''); setKwIn(''); setStarF(false); }}

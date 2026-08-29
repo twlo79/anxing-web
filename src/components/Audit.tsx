@@ -1,6 +1,6 @@
 'use client';
-import { useState } from 'react';
 import { ISSUE_CLS, type AuditIssue, type AuditResult } from '@/lib/audit-orders';
+import ToggleInfo from '@/components/ToggleInfo';
 
 /**
  * 防呆模式的畫面零件。訂單頁與營收頁共用 —— 同一種問題在兩頁要長得一樣，
@@ -42,97 +42,46 @@ export function AuditButton({ on, onToggle, busy }: {
   on: boolean; onToggle: () => void; busy?: boolean;
 }) {
   /*
-   * ★★ 說明做成一顆 ⓘ，不是 `title` 提示。
+   * ★★★ 外觀與行為搬到共用的 `<ToggleInfo>`（2026-08-29）——
+   *   支出頁的「★ 重要支出」要長得一模一樣（使用者:「參考防呆」），
+   *   而複製一份就是第二種寫法:改了一邊、另一邊會安靜地留在舊樣子。
    *
-   *   原本只有 `title="檢查資料有沒有重複、重疊、缺漏、房價異常"`：
+   * ★ 這裡只剩「防呆特有的說明內容」。
+   *
+   * ★★ 說明做成一顆 ⓘ，不是 `title` 提示:
    *     ① **手機沒有 hover** —— 在手機上那句話等於不存在
-   *     ② 那句話只說了「會檢查」，沒說**檢查什麼**，
-   *        所以看到一排紅標籤的人還是不知道每一個是什麼意思
-   *
-   *   而這顆開關做的事不便宜：它會重掃整批資料、改變整個列表的意義。
-   *   按下去之前應該看得到它要做什麼。
+   *     ② `title` 只說得下「會檢查」，說不下**檢查什麼**，
+   *        而看到一排紅標籤的人真正要知道的是後者
    */
-  const [info, setInfo] = useState(false);
-
   return (
-    <span className="relative inline-flex items-center gap-1">
-      {/*
-        ★★ 沒有外框（2026-08-27 使用者:「防呆統一在右上角好了 不要有外框」）。
-
-          它現在跟標題同一列,而**標題列不該有按鈕的框**:
-          那一列只有「這是哪一頁」跟這一顆,加了框就變成兩個東西在搶注意力。
-
-        ★ 拿掉框之後,「開了沒」全靠**滑軌的顏色與位置** ——
-          所以那顆滑軌不能再簡化,它現在是唯一的狀態訊號。
-          開啟時文字也轉紅,兩個訊號一起走。
-      */}
-      <button type="button" onClick={onToggle} disabled={busy}
-        role="switch" aria-checked={on}
-        className={`flex items-center gap-2 rounded-lg px-2 py-1.5 font-medium whitespace-nowrap
-                    transition-colors disabled:opacity-50 ${
-          on ? 'text-red-700 hover:bg-red-50' : 'text-gray-500 hover:bg-mor-sand/60'
-        }`}>
-        <span>👀 防呆</span>
-        {/* 滑軌 ＋ 圓鈕。開了是紅的,關了是灰的 —— 顏色與位置兩個訊號,
-            只靠其中一個的話,色弱或縮圖時會分不出狀態 */}
-        <span aria-hidden
-          className={`relative w-9 h-5 rounded-full shrink-0 transition-colors ${
-            busy ? 'bg-gray-300' : on ? 'bg-red-500' : 'bg-gray-300'}`}>
-          <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
-            on ? 'left-[1.125rem]' : 'left-0.5'}`} />
-        </span>
-        {busy && <span className="text-xs text-gray-500">檢查中…</span>}
-      </button>
-
-      {/*
-        ★ ⓘ 是**獨立的按鈕**，不是包在開關裡。
-          包在裡面的話，想看說明就得先把防呆打開 ——
-          而那正是他還不確定要不要打開的時候。
-      */}
-      <button type="button" onClick={() => setInfo((v) => !v)}
-        aria-expanded={info} aria-label="防呆會檢查什麼"
-        /* ★ 也拿掉外框，跟旁邊那顆一致。保留 w-6 h-6 —— 手指點得到 */
-        className={`w-6 h-6 shrink-0 rounded-full text-xs leading-none transition-colors ${
-          info ? 'bg-mor-bluelight text-mor-slate' : 'text-gray-400 hover:text-mor-slate'}`}>
-        ⓘ
-      </button>
-
-      {info && (
-        <>
-          {/* 點外面關掉。★ 不用 onBlur —— 點面板裡的文字也會觸發 blur */}
-          <span className="fixed inset-0 z-40" onClick={() => setInfo(false)} />
-          <span className="absolute top-full right-0 z-50 mt-1 block w-[min(20rem,calc(100vw-2rem))]
-                           rounded-xl border border-mor-line bg-white p-3 shadow-lg text-left">
-            <span className="block text-xs text-gray-500 mb-2">
-              打開之後會重掃這一批資料，替有問題的訂單加上標籤，
-              並且可以只看有問題的那些。<b>不會改到任何資料。</b>
+    <ToggleInfo label="👀 防呆" on={on} onToggle={onToggle} tone="red"
+      busy={busy} busyText="檢查中…" infoLabel="防呆會檢查什麼">
+      <span className="block text-xs text-gray-500 mb-2">
+        打開之後會重掃這一批資料，替有問題的訂單加上標籤，
+        並且可以只看有問題的那些。<b>不會改到任何資料。</b>
+      </span>
+      <span className="block space-y-1.5">
+        {AUDIT_ITEMS.map((x) => (
+          <span key={x.k} className="flex gap-2 items-start">
+            <span className={`inline-block shrink-0 rounded border px-1.5 py-0.5
+                              text-[11px] font-medium whitespace-nowrap ${ISSUE_CLS[x.k]}`}>
+              {x.k}
             </span>
-            <span className="block space-y-1.5">
-              {AUDIT_ITEMS.map((x) => (
-                <span key={x.k} className="flex gap-2 items-start">
-                  <span className={`inline-block shrink-0 rounded border px-1.5 py-0.5
-                                    text-[11px] font-medium whitespace-nowrap ${ISSUE_CLS[x.k]}`}>
-                    {x.k}
-                  </span>
-                  <span className="text-[11px] text-gray-500 leading-relaxed">{x.t}</span>
-                </span>
-              ))}
-            </span>
-            {/*
-              ★ 顏色的意思也要說 —— 畫面上有紅、橘、琥珀、藍四種標籤,
-                看的人會自己猜，而猜錯的方向通常是「藍色的不用理」。
-            */}
-            <span className="block mt-2 pt-2 border-t border-mor-line text-[11px] text-gray-400">
-              紅＝客人會撞在一起或錢算錯，琥珀＝資料要補，藍＝提示，改不改都行。
-            </span>
+            <span className="text-[11px] text-gray-500 leading-relaxed">{x.t}</span>
           </span>
-        </>
-      )}
-    </span>
+        ))}
+      </span>
+      {/*
+        ★ 顏色的意思也要說 —— 畫面上有紅、橘、琥珀、藍四種標籤,
+          看的人會自己猜，而猜錯的方向通常是「藍色的不用理」。
+      */}
+      <span className="block mt-2 pt-2 border-t border-mor-line text-[11px] text-gray-400">
+        紅＝客人會撞在一起或錢算錯，琥珀＝資料要補，藍＝提示，改不改都行。
+      </span>
+    </ToggleInfo>
   );
 }
 
-/** 一列訂單上的問題標籤。 */
 export function AuditBadges({ entry }: {
   entry?: { issues: AuditIssue[]; notes: string[] };
 }) {

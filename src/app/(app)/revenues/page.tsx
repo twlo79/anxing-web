@@ -618,22 +618,23 @@ export default function RevenuesPage() {
       {/* Dashboard */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-4 items-stretch">
         <div className="rounded-xl surf-deep text-white p-5 flex flex-col justify-center min-w-0">
-          <div className="text-xs opacity-75">當期營收總額</div>
+          <div className="text-ui font-semibold opacity-90">當期營收總額</div>
           <div className="stat-num-lg font-bold mt-1">${fmt(total)}</div>
           <div className="text-xs opacity-75 mt-2">{fromM} ~ {toM}・{filtered.length} 筆認列</div>
         </div>
-        <div className="rounded-xl bg-white border border-mor-line overflow-hidden">
-          <div className="px-4 py-2.5 text-sm font-semibold border-b border-mor-line bg-white/45">依來源</div>
-          <div>
-            {bySource.map(([s, v]) => (
-              <div key={s} onClick={() => setSourceFilter(sourceFilter === s ? '' : s)}
-                className={`px-4 py-2 flex items-center justify-between text-sm border-b border-mor-line/50 last:border-0 cursor-pointer hover:bg-mor-bluelight/40 ${sourceFilter === s ? 'bg-mor-bluelight/60' : ''}`}>
-                <span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${SOURCE_COLOR[s]}`}>{SOURCE_LABEL[s] ?? s}</span>
-                <span className="font-semibold">${fmt(v)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
+        {/* ★ 這一張漏了（2026-08-29）—— 標題還是 `text-sm`、也沒有長條,
+              跟旁邊的「依物業」擺在一起看得出來一大一小 */}
+        <BarPanel title="依來源">
+          {bySource.length === 0 ? <BarEmpty /> : bySource.map(([s, v]) => (
+            <BarRow key={s} tone="blue"
+              label={<span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${SOURCE_COLOR[s]}`}>{SOURCE_LABEL[s] ?? s}</span>}
+              title={SOURCE_LABEL[s] ?? s}
+              pct={(v / (bySource[0]?.[1] || 1)) * 100}
+              value={`$${fmt(v)}`}
+              active={sourceFilter === s}
+              onClick={() => setSourceFilter(sourceFilter === s ? '' : s)} />
+          ))}
+        </BarPanel>
         {/* ★ 改用共用的 BarPanel/BarRow（2026-08-29）—— 名稱欄從 w-16 放寬到 w-28,
               物業名稱不再被 truncate 砍掉尾巴 */}
         <BarPanel title="依物業">
