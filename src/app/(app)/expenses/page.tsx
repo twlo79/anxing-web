@@ -39,6 +39,14 @@ type Expense = {
   parent_expense_id?: string | null; gross_amount?: number | null; deferred?: boolean;
   /** 關注支出。遞延母子單會一起連動（migration_89 的觸發器）。 */
   starred?: boolean;
+  /**
+   * 非營運支出（migration_181）—— 跟出租本業無關的花費。
+   *
+   * ★★ **只做記號，不影響這一頁的任何金額。** 這一頁回答的是
+   *   「這段期間花了多少錢」,非營運的錢也是真的花掉了。
+   *   要看營運口徑的人去財務儀表板 —— 一個數字一個地方。
+   */
+  non_operating?: boolean;
 };
 /** kind：expense=只用於支出 / income=只用於收入 / both=兩邊都用（migration_90） */
 type AccountCode = { code: string; name: string; sort: number; active: boolean; kind?: string };
@@ -62,6 +70,22 @@ const CURRENCIES = ['TWD', 'USD', 'JPY', 'CNY', 'EUR'];
 const fmt = (n: number | null | undefined) => (n == null ? '' : Math.round(n).toLocaleString());
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
+/**
+ * 「非營運」標籤。**只有標了才出現** —— 沒標的完全不佔位置。
+ *
+ * ★ 這是使用者在 A（⊘ 圖示）／B（文字標籤）之間選的 B:
+ *   「看清單時一眼就讀得懂，不用猜圖示的意思」。
+ *   代價是標記／取消要進「檢視」抽屜，不能在列上一鍵切換。
+ */
+function NonOpTag() {
+  return (
+    <span className="ml-1.5 inline-block rounded-md bg-violet-50 px-2 py-0.5
+                     text-xs font-medium text-violet-700 align-middle">
+      非營運
+    </span>
+  );
+}
+
 export default function ExpensesPage() {
   const supabase = useMemo(() => createClient(), []);
   const [rows, setRows] = useState<Expense[]>([]);
@@ -72,7 +96,8 @@ export default function ExpensesPage() {
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState('');
   const [edit, setEdit] = useState<Expense | null>(null);
-  const [starF, setStarF] = useState(false);   // 只看關注
+  const [starF, setStarF] = useState(false);     // 只看重要支出
+  const [nonOpF, setNonOpF] = useState(false);   // 只看非營運
   const [saving, setSaving] = useState(false);
   // 新支出還沒有 id，憑證要等這筆建立後才傳得上去 —— 存檔時呼叫 flush()
   const receiptsRef = useRef<ReceiptsHandle>(null);
@@ -148,6 +173,7 @@ export default function ExpensesPage() {
       else if (acctF) q = q.eq('pay_account', acctF);
       if (kw) q = q.or(`item_name.ilike.%${kw}%,note.ilike.%${kw}%,voucher_no.ilike.%${kw}%`);
       if (starF) q = q.eq('starred', true);
+      if (nonOpF) q = q.eq('non_operating', true);
       const { data, error } = await q.range(from, from + 999);
       if (error) { flash('載入失敗:' + error.message); break; }
       const chunk = (data as Expense[]) ?? [];
@@ -157,7 +183,7 @@ export default function ExpensesPage() {
     }
     setRows(all);
     setLoading(false);
-  }, [supabase, fromD, toD, codeF, payF, purposeF, acctF, kw, starF]);
+  }, [supabase, fromD, toD, codeF, payF, purposeF, acctF, kw, starF, nonOpF]);
   useEffect(() => { load(); }, [load]);
 
   const SORT_COLS: SortCols<Expense> = useMemo(() => ({
@@ -217,6 +243,7 @@ export default function ExpensesPage() {
     return {
       id: '', spent_on: todayStr(), item_name: '', amount: 0, account_code: null,
       purpose_type: 'estate', estate_id: null, property_id: null, voucher_no: null, no_voucher: false,
+      non_operating: false,
       payment_method: 'cash', pay_account: null, note: null, source_item_id: null,
       currency: 'TWD', fx_rate: 1, amount_original: 0,
     };
@@ -304,6 +331,7 @@ export default function ExpensesPage() {
       // 互斥,見 exp_voucher_chk
       voucher_no: edit.no_voucher ? null : (edit.voucher_no?.trim() || null),
       no_voucher: !!edit.no_voucher,
+      non_operating: !!edit.non_operating,
       payment_method: edit.payment_method || null,
       /*
        * 現金以外都要記錄錢從哪個帳戶/哪張卡出去;現金沒有帳戶,清成 null。
@@ -362,11 +390,12 @@ export default function ExpensesPage() {
     const T = (v: any, st: any) => ({ v: v ?? '', t: typeof v === 'number' ? 'n' : 's', s: st, z: typeof v === 'number' ? '#,##0' : undefined });
 
     // 用途已是物業層級,原本的「物業」欄與「用途」欄內容重複,合併成一欄
-    const header = ['關注', '支出日期', '支出項目', '認列金額', '實際支出', '遞延', '會計科目', '用途', '憑證號碼', '支付方式', '安幸付款帳號', '備註'];
+    const header = ['關注', '非營運', '支出日期', '支出項目', '認列金額', '實際支出', '遞延', '會計科目', '用途', '憑證號碼', '支付方式', '安幸付款帳號', '備註'];
     const aoa: any[][] = [header.map((h) => T(h, stHead))];
     for (const r of sorted) {
       aoa.push([
         T(r.starred ? '★' : '', stCell),
+        T(r.non_operating ? '非營運' : '', stCell),
         T(r.spent_on ?? '', stCell),
         T(r.item_name ?? '', stCell),
         T(Math.round(Number(r.amount) || 0), stNum),
@@ -382,7 +411,18 @@ export default function ExpensesPage() {
       ]);
     }
     const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws['!cols'] = [{ wch: 5 }, { wch: 12 }, { wch: 24 }, { wch: 12 }, { wch: 12 }, { wch: 7 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 28 }];
+    /*
+     * ★★ 欄寬的數量要**跟 header 一樣長**（現在 13 欄）。
+     *   少一個不會報錯 —— 最後一欄只是拿不到寬度，
+     *   而「備註」正是最需要寬度的那一欄。tsc 也抓不到。
+     */
+    ws['!cols'] = [
+      { wch: 5 },   // 關注
+      { wch: 8 },   // 非營運
+      { wch: 12 }, { wch: 24 }, { wch: 12 }, { wch: 12 }, { wch: 7 },
+      { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 10 }, { wch: 12 },
+      { wch: 28 },  // 備註
+    ];
     ws['!freeze'] = { xSplit: 0, ySplit: 1 };
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, '支出');
@@ -415,16 +455,37 @@ export default function ExpensesPage() {
       */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <h1 className="mr-auto mb-0">支出</h1>
+        {/*
+          ★★ 兩顆開關的說明都是**目的一句 ＋ 用法兩步**（2026-08-29 使用者
+             指定的結構:「說明目的 與用法」）。
+
+          ★★★ 原本 ★ 那段還寫了「遞延的母子單會一起連動」——
+             **拿掉了**。那句話來自程式碼註解引用的 migration_89 觸發器,
+             而那支 migration 不在目前的倉庫裡,我沒有驗證過它存在。
+             說明文字寫錯比沒寫更糟:看的人會照著它去推論資料。
+        */}
         <ToggleInfo label="★ 重要支出" tone="amber"
           on={starF} onToggle={() => setStarF(!starF)}
           infoLabel="重要支出是什麼">
-          <span className="block text-xs text-gray-500 leading-relaxed">
-            打開之後**只留下**標了 ★ 的支出。★ 是每一列最左邊那一欄，
-            點一下就標、再點一下取消 —— 用來把「要追的那幾筆」先挑出來，
-            <b>跟金額大小無關</b>。
+          <span className="block text-sm mb-2">方便檢視重要的支出。</span>
+          <span className="block border-t border-mor-line pt-2 text-uisub text-gray-600 leading-relaxed">
+            <span className="block">1. 點 <span className="text-amber-500">★</span> 標記重要支出</span>
+            <span className="block">2. 打開開關，篩選出標了 <span className="text-amber-500">★</span> 的重要支出</span>
           </span>
-          <span className="block mt-2 pt-2 border-t border-mor-line text-[11px] text-gray-400">
-            遞延的母子單會一起連動：標了母單，拆出去的每一期也會跟著標。
+        </ToggleInfo>
+
+        <ToggleInfo label="非營運" tone="violet"
+          on={nonOpF} onToggle={() => setNonOpF(!nonOpF)}
+          infoLabel="非營運支出是什麼">
+          <span className="block text-sm mb-2">查看非營運資金。</span>
+          <span className="block border-t border-mor-line pt-2 text-uisub text-gray-600 leading-relaxed">
+            <span className="block">1. 在「檢視」裡勾「非營運」，項目後面會出現 <NonOpTag /> 標籤</span>
+            <span className="block">2. 打開開關，篩選出標了非營運的支出</span>
+            <span className="block">3. 財務儀表板可以把它們從支出與淨額裡排除</span>
+          </span>
+          <span className="block mt-2 pt-2 border-t border-mor-line text-xs text-gray-400 leading-relaxed">
+            ★ 這一頁的總額與三張分項卡<b>照舊全部計入</b> ——
+            非營運的錢也是真的花掉了。要看營運口徑請到財務儀表板。
           </span>
         </ToggleInfo>
       </div>
@@ -539,8 +600,8 @@ export default function ExpensesPage() {
             <button onClick={() => setKw(kwIn.trim())} className="rounded-lg bg-mor-slate text-white px-4 hover:bg-mor-slatedark">搜尋</button>
           </div></label>
         <FieldSpacer>
-          {(fromD || toD || codeF || payF || purposeF || acctF || kw || starF) && (
-            <button onClick={() => { setFromD(''); setToD(''); setCodeF(''); setPayF(''); setPurposeF(''); setAcctF(''); setKw(''); setKwIn(''); setStarF(false); }}
+          {(fromD || toD || codeF || payF || purposeF || acctF || kw || starF || nonOpF) && (
+            <button onClick={() => { setFromD(''); setToD(''); setCodeF(''); setPayF(''); setPurposeF(''); setAcctF(''); setKw(''); setKwIn(''); setStarF(false); setNonOpF(false); }}
               className={`${FILTER_BTN_H} px-2 text-uisub text-gray-500 underline`}>清除</button>
           )}
         </FieldSpacer>
@@ -585,7 +646,10 @@ export default function ExpensesPage() {
             className="rounded-xl glass px-3 py-2.5 cursor-pointer active:bg-mor-sand/40">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <div className="font-medium truncate">{r.item_name}</div>
+                <div className="font-medium">
+                  <span className="truncate align-middle">{r.item_name}</span>
+                  {r.non_operating && <NonOpTag />}
+                </div>
                 <div className="text-[11px] text-gray-500 mt-1">
                   {r.spent_on}・{r.account_code ? codeName[r.account_code] ?? r.account_code : '未分類'}
                 </div>
@@ -656,6 +720,7 @@ export default function ExpensesPage() {
                     </button>
                   )}
                   {r.item_name}
+                  {r.non_operating && <NonOpTag />}
                   {r.source_item_id && <span className="ml-2 inline-block rounded-md bg-mor-bluelight text-mor-slate px-1.5 py-0.5 text-[10px]">請款</span>}
                 </td>
                 <td className="px-3 py-2 text-right font-medium">
@@ -753,7 +818,10 @@ export default function ExpensesPage() {
               <div className="shrink-0 bg-white border-b border-mor-line px-6 py-4 flex items-start justify-between"
                 style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
                 <div className="min-w-0">
-                  <div className="font-bold truncate">{d.item_name}</div>
+                  <div className="font-bold">
+                    <span className="align-middle">{d.item_name}</span>
+                    {d.non_operating && <NonOpTag />}
+                  </div>
                   <div className="text-xs text-gray-500 mt-0.5">
                     {d.spent_on}
                     {d.source_item_id && <span className="ml-2 rounded bg-mor-bluelight text-mor-slate px-1.5 py-0.5 text-[10px]">來自請款單</span>}
@@ -975,6 +1043,25 @@ export default function ExpensesPage() {
               <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">備註</span>
                 <textarea value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })}
                   className="rounded-lg border border-mor-line px-2 py-1.5 h-20" /></label>
+              {/*
+                ★★ 非營運（migration_181）。放在備註下面、遞延面板上面 ——
+                  它是「這筆錢的性質」,跟金額、科目那些**事實欄位**是同一類,
+                  不是遞延那種「怎麼攤」的處理方式。
+
+                ★ 勾選框旁邊要寫清楚它會做什麼。只寫「非營運」的話,
+                  勾的人不知道這會不會改到金額 —— 而它不會。
+              */}
+              <label className="flex items-start gap-2 rounded-lg bg-violet-50/60 px-3 py-2.5">
+                <input type="checkbox" className="mt-0.5" checked={!!edit.non_operating}
+                  onChange={(e) => setEdit({ ...edit, non_operating: e.target.checked })} />
+                <span className="text-sm">
+                  <span className="font-medium text-violet-800">非營運支出</span>
+                  <span className="block text-xs text-gray-500 mt-0.5">
+                    跟出租本業無關的花費。<b>不會改到任何金額</b> ——
+                    支出頁照舊全部計入，只有財務儀表板可以把它排除。
+                  </span>
+                </span>
+              </label>
               {/*
                 遞延認列。只有已存檔的支出才能設 —— 新增中的那筆還沒有 id,
                 子單掛不上去。母單金額不可改也是在這裡強制的（見 DeferralPanel）。

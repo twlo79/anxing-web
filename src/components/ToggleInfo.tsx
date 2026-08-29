@@ -39,11 +39,18 @@ import { ReactNode, useState } from 'react';
  *    而那正是他還不確定要不要打開的時候。
  */
 
-export type ToggleTone = 'red' | 'amber';
+export type ToggleTone = 'red' | 'amber' | 'violet';
 
 const TONE: Record<ToggleTone, { text: string; hover: string; track: string }> = {
   red: { text: 'text-red-700', hover: 'hover:bg-red-50', track: 'bg-red-500' },
   amber: { text: 'text-amber-700', hover: 'hover:bg-amber-50', track: 'bg-amber-500' },
+  /*
+   * ★ 紫色給「非營運」——刻意**不用** mor 色盤裡的任何一個。
+   *   綠＝已收、藍＝主色與押金、琥珀＝訂金與重要、紅＝警示或支出方向,
+   *   四個都有語意了（見 anxing-ui skill 的色盤表）。
+   *   非營運是第五種意思,借用任何一個都會讓那個顏色失去原本的意思。
+   */
+  violet: { text: 'text-violet-700', hover: 'hover:bg-violet-50', track: 'bg-violet-500' },
 };
 
 export default function ToggleInfo({

@@ -59,6 +59,8 @@ type Exp = {
   item_name: string | null;
   /** 關注支出。遞延母子單會一起亮（migration_89）。 */
   starred?: boolean;
+  /** 非營運支出（migration_181）—— 跟出租本業無關的花費。 */
+  non_operating?: boolean;
   /** 遞延認列。母單的 amount 是「這一天認列多少」,實付總額在 gross_amount。 */
   deferred?: boolean; gross_amount?: number | null; parent_expense_id?: string | null;
 };
@@ -91,7 +93,7 @@ type CmpRaw = {
    *   而那個數字看起來完全正常，只是跟本期不是同一種東西。
    */
   rev: { source: string; estate_id: string | null; property_id: string | null; month_amount: number; order_id: string | null }[];
-  exp: { estate_id: string | null; property_id: string | null; amount: number }[];
+  exp: { estate_id: string | null; property_id: string | null; amount: number; non_operating?: boolean }[];
   ord: { estate_id: string | null; property_id: string | null }[];
 };
 type Cmp = {
@@ -171,16 +173,31 @@ export default function DashboardPage() {
   /** 比較用的兩組數字。環比=上一期,同比=去年同期。 */
   const [cmpRaw, setCmpRaw] = useState<{ prev: CmpRaw; yoy: CmpRaw } | null>(null);
   /*
-   * 「只看房租」（2026-08-25 使用者指定）。
+   * ══════════════════════════════════════════════════════════
+   * 【只算本業】兩顆排除開關（2026-08-29 使用者:
+   *   「排除一次性收入也放進來」「做完整張表都會影響 可以看不同的分析」）
    *
-   * ★ 只影響**期間比較**這一張表 —— 勾選框就在那張表上，
-   *   跑去改整頁其他區塊的話，使用者會看到自己沒動過的數字也變了。
+   *   exOneoff  排除一次性收入（其他收入、Airbnb 取消）—— 收入側
+   *   exNonOp   排除非營運支出（migration_181）—— 支出側
+   *
+   * ★★★ 作用域是**整頁**，不再只有期間比較那一張表。
+   *
+   *   `exOneoff` 前身是「只看房租」,2026-08-25 刻意限制成只影響那張表,
+   *   理由是「跑去改整頁的話,使用者會看到自己沒動過的數字也變了」。
+   *   2026-08-29 推翻:使用者要的是「可以看不同的分析」——
+   *   一份完整的營運口徑報表,而不是只有一張表換口徑、其他還是總口徑。
+   *
+   * ★★ 同一頁兩種口徑比「整頁一起變」更危險:
+   *   上面的卡說支出 913 萬、下面的表說 870 萬,兩個數字都對,
+   *   而截圖出去的人不知道自己截到哪一種。
+   *   所以改成整頁一起變 ＋ 開著的時候在畫面上明講。
    *
    * ★ 不寫進網址也不記憶:這是「我現在想換個角度看」，不是設定。
-   *   記住的話下次打開會看到一個少了一次性收入的營收，
-   *   而勾選框在畫面下方，第一眼看不到。
+   *   記住的話下次打開會看到一個扣過的數字而不知道為什麼。
+   * ══════════════════════════════════════════════════════════
    */
-  const [rentOnlyF, setRentOnlyF] = useState(false);
+  const [exOneoff, setExOneoff] = useState(false);
+  const [exNonOp, setExNonOp] = useState(false);
   /** 載入編號。比較期是背景補的，回來時要確認自己還是最新那一次 */
   const runRef = useRef(0);
 
@@ -279,7 +296,7 @@ export default function DashboardPage() {
         .gte('ym', ymOf(f)).lte('ym', ymOf(t)).range(a, b));
     const cmpExp = (f: string, t: string) =>
       fetchAll<CmpRaw['exp'][number]>((a, b) => supabase.from('expenses')
-        .select('amount, estate_id, property_id')
+        .select('amount, estate_id, property_id, non_operating')
         // 只算安幸（migration_159）—— 少了它，愛皮洪鯊的錢會混進安幸的數字裡
         .eq('book', DEFAULT_BOOK)
         .gte('spent_on', f).lte('spent_on', t).range(a, b));
@@ -321,7 +338,7 @@ export default function DashboardPage() {
         .select('ym, source, estate_id, property_id, month_amount, fee_type, order_id')
         .gte('ym', ymOf(fromD)).lte('ym', ymOf(toD)).range(f, t)),
       fetchAll<Exp>((f, t) => supabase.from('expenses')
-        .select('id, spent_on, amount, account_code, estate_id, property_id, purpose_type, item_name, starred, deferred, gross_amount, parent_expense_id')
+        .select('id, spent_on, amount, account_code, estate_id, property_id, purpose_type, item_name, starred, non_operating, deferred, gross_amount, parent_expense_id')
         .eq('book', DEFAULT_BOOK)
         .gte('spent_on', fromD).lte('spent_on', toD).range(f, t)),
       fetchAll<Ord>((f, t) => supabase.from('orders')
@@ -422,7 +439,7 @@ export default function DashboardPage() {
        *   只濾本期的話，比較的是「本期房租」對「上期房租＋一次性」——
        *   分母憑空變大，成長率一律偏低，而畫面上完全看不出來。
        */
-      const rr = rentOnly(c.rev.filter((x) => matchScope(x.estate_id, x.property_id)), rentOnlyF);
+      const rr = rentOnly(c.rev.filter((x) => matchScope(x.estate_id, x.property_id)), exOneoff);
       const bySource: Record<string, number> = {};
       const byEstate: Record<string, number> = {};
       /*
@@ -450,7 +467,13 @@ export default function DashboardPage() {
         Object.fromEntries(Object.entries(m).map(([k, v]) => [k, v.size]));
       return {
         rev: rr.reduce((a, x) => a + Number(x.month_amount || 0), 0),
+        /*
+         * ★★ 排除非營運要**同時**套在本期與比較期，跟一次性收入同一個道理:
+         *   只濾本期的話，比較的是「本期營運支出」對「上期全部支出」——
+         *   分母憑空變大，成長率一律偏低，而畫面上完全看不出來。
+         */
         exp: c.exp.filter((x) => matchScope(x.estate_id, x.property_id))
+          .filter((x) => !(exNonOp && x.non_operating))
           .reduce((a, x) => a + Number(x.amount || 0), 0),
         ordN: c.ord.filter((x) => matchScope(x.estate_id, x.property_id)).length,
         bySource,
@@ -460,10 +483,22 @@ export default function DashboardPage() {
       };
     };
     return { prev: roll(cmpRaw.prev), yoy: roll(cmpRaw.yoy) };
-  }, [cmpRaw, matchScope, estKey, rentOnlyF]);
+  }, [cmpRaw, matchScope, estKey, exOneoff, exNonOp]);
 
-  const fRevs = useMemo(() => revs.filter((r) => matchScope(r.estate_id, r.property_id)), [revs, matchScope]);
-  const fExps = useMemo(() => exps.filter((e) => matchScope(e.estate_id, e.property_id)), [exps, matchScope]);
+  /*
+   * ★★★ 兩個排除在**最上游**就套掉。
+   *
+   *   下游有十幾個 useMemo（總額、月趨勢、依科目、依物業、關注支出…）
+   *   全部從這兩個陣列長出來 —— 在這裡濾一次，它們自動都是同一個口徑。
+   *   逐一去改的話，漏掉一個就是「同一頁兩種口徑」，而那不會報錯。
+   */
+  const fRevs = useMemo(
+    () => rentOnly(revs.filter((r) => matchScope(r.estate_id, r.property_id)), exOneoff),
+    [revs, matchScope, exOneoff]);
+  const fExps = useMemo(
+    () => exps.filter((e) => matchScope(e.estate_id, e.property_id))
+      .filter((e) => !(exNonOp && e.non_operating)),
+    [exps, matchScope, exNonOp]);
   const fOrds = useMemo(() => ords.filter((o) => matchScope(o.estate_id, o.property_id)), [ords, matchScope]);
   const fRvs = useMemo(() => rvs.filter((r) => {
     if (propF) return r.property_id === propF;
@@ -557,7 +592,12 @@ export default function DashboardPage() {
    * 期間比較那張表專用的本期資料。★ 跟 `fRevs` 分開 ——
    * 其他區塊（圖表、明細、待付款）不該受這個勾選框影響。
    */
-  const cRevs = useMemo(() => rentOnly(fRevs, rentOnlyF), [fRevs, rentOnlyF]);
+  /*
+   * ★ 期間比較的本期資料。2026-08-29 之後跟 `fRevs` **完全相同** ——
+   *   排除已經在上游套掉了。名字留著是因為下面有十幾處在用，
+   *   改名的 diff 比留一個別名還大。
+   */
+  const cRevs = fRevs;
   const cTotalRev = useMemo(
     () => cRevs.reduce((s, r) => s + Number(r.month_amount || 0), 0), [cRevs]);
   const cNet = cTotalRev - totalExp;
@@ -711,8 +751,61 @@ export default function DashboardPage() {
           options={estates.map((e) => ({ value: e.id, label: e.name }))} />
         <FilterSelect label="房源" value={propF} onChange={setPropF}
           options={propsOfEstate.map((p2) => ({ value: p2.id, label: p2.name }))} />
-        <FilterClear active={!!(estF || propF)} onClear={clearFilters} />
+        {/*
+          ══════════════════════════════════════════════════════
+          ★★★ 「只算本業」的兩顆開關（2026-08-29 使用者選 B 案:
+               放篩選卡、整頁生效、「可以看不同的分析」）。
+
+            它們跟旁邊的物業／房源**是同一類東西**:都在回答
+            「這份報表是怎麼算出來的」。所以放在同一張卡裡,
+            而不是像支出頁那樣放標題列右上 ——
+            那一頁的兩顆是「換個模式看清單」,不改任何金額。
+
+          ★ 分隔線 ＋ 群組標題:它們跟左邊三個欄位都是條件,
+            但一個是「篩掉哪幾列」、一個是「哪些錢算數」。
+            不分開的話「排除非營運支出」看起來像第四個下拉。
+          ══════════════════════════════════════════════════════
+        */}
+        <div className="flex flex-col gap-1 border-l border-mor-line pl-4 ml-1">
+          <span className="block h-5 mb-1 text-uisub leading-5 text-gray-500 whitespace-nowrap">
+            只算本業 <span className="text-gray-400">（整頁生效，比較期一起扣）</span>
+          </span>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 h-12 md:h-10">
+            <label className="flex items-center gap-1.5 text-uisub text-gray-600 cursor-pointer select-none">
+              <input type="checkbox" checked={exNonOp} onChange={(e) => setExNonOp(e.target.checked)} />
+              排除非營運支出
+            </label>
+            <label className="flex items-center gap-1.5 text-uisub text-gray-600 cursor-pointer select-none">
+              <input type="checkbox" checked={exOneoff} onChange={(e) => setExOneoff(e.target.checked)} />
+              排除一次性收入
+            </label>
+          </div>
+        </div>
+        <FilterClear active={!!(estF || propF || exNonOp || exOneoff)}
+          onClear={() => { clearFilters(); setExNonOp(false); setExOneoff(false); }} />
       </FilterBar>
+
+      {/*
+        ★★★ 開著的時候**在畫面上明講**（2026-08-29）。
+
+          不講的話:上面的卡說支出 913 萬、換個人看是 870 萬,兩個數字都對,
+          而截圖出去的人不知道自己截到哪一種口徑。
+          這一條在整頁生效之後比原本只影響一張表時更重要。
+      */}
+      {(exNonOp || exOneoff) && (
+        <div className="rounded-xl bg-violet-50 border border-violet-200 text-violet-900
+                        px-4 py-2.5 mb-4 text-uisub leading-relaxed">
+          <b>這一頁的數字已經排除{[exNonOp && '非營運支出', exOneoff && '一次性收入'].filter(Boolean).join('與')}。</b>
+          {' '}營收、支出、淨額、依來源、依物業、月趨勢<b>全部</b>都是排除後的版本，
+          本期與比較期都扣。
+          {exOneoff && <span className="block mt-0.5 text-xs text-violet-700">
+            一次性收入＝其他收入、Airbnb 取消（清潔費、修繕費、取消費那一類）。
+          </span>}
+          {exNonOp && <span className="block mt-0.5 text-xs text-violet-700">
+            非營運支出＝在支出頁勾了「非營運」的那些。
+          </span>}
+        </div>
+      )}
 
       {truncated && (
         <div className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 mb-4 text-sm text-red-800">
@@ -835,42 +928,27 @@ export default function DashboardPage() {
               <div className="flex flex-wrap items-center gap-3">
                 <h2 className="font-bold">期間比較</h2>
                 {/*
-                  ★ 「只看房租」（2026-08-25 使用者指定）。
+                  ★★★ 「只看房租」搬到最上面的篩選卡了（2026-08-29）,
+                     改名「排除一次性收入」,而且**整頁生效**。
 
-                    一次性收入是清潔費、修繕費、取消費那一類 —— 金額跳很大，
-                    而且**跟這個月租得好不好無關**:
+                    2026-08-25 這裡原本刻意只影響這一張表,理由是
+                    「跑去改整頁的話,使用者會看到自己沒動過的數字也變了」。
+                    推翻的理由:同一頁兩種口徑比整頁一起變更危險 ——
+                    上面的卡跟下面的表講不同的支出,而兩個數字都對。
 
-                      8 月營收掉 15%，其中一次性從 110 萬掉到 4 萬
-                      → 房租根本沒動,是上個月有一筆大修繕費入帳
-
-                    混在一起時這兩件事分不出來，而每個數字單看都正確。
-
-                  ★ 放在標題旁邊,不放在最上面的篩選列 ——
-                    它**只影響這一張表**。放在共用的篩選列會讓人以為
-                    整頁的數字都跟著變。
+                  ★ 一次性收入為什麼要能排除:它是清潔費、修繕費、取消費那一類,
+                    金額跳很大而且**跟這個月租得好不好無關**。
+                    8 月營收掉 15%,其中一次性從 110 萬掉到 4 萬 ——
+                    房租根本沒動,是上個月有一筆大修繕費入帳。
+                    混在一起時這兩件事分不出來,而每個數字單看都正確。
                 */}
-                <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer select-none">
-                  <input type="checkbox" checked={rentOnlyF}
-                    onChange={(e) => setRentOnlyF(e.target.checked)} />
-                  只看房租
-                </label>
               </div>
               <span className="text-xs text-gray-400">
                 {sameYoY ? '年度模式下環比與同比是同一段,只顯示一組' : '環比看動能,同比避開季節性'}
               </span>
             </div>
-            {/*
-              ★ 勾選後要**明講扣掉了什麼**。
-                只是數字變小的話，過幾分鐘回頭看會忘記自己勾過 ——
-                然後拿一個扣掉一次性收入的營收去對帳。
-            */}
-            {rentOnlyF && (
-              <div className="rounded-lg bg-mor-bluelight text-mor-slate px-3 py-2 text-xs mb-2">
-                已排除<b>一次性收入</b>（清潔費、修繕費、取消費、垃圾代收…）。
-                下面的營收、淨額、依來源、依物業都是<b>只算房租</b>的版本，
-                本期與比較期都扣。<b>支出沒有扣</b> —— 那一欄本來就不含一次性收入。
-              </div>
-            )}
+            {/* ★ 「扣掉了什麼」的說明搬到篩選卡下面那條紫色橫幅了 —— 整頁生效，
+                  講在這裡的話上面那幾張卡也扣了卻沒有人說 */}
             {/*
               本月還沒走完的警語。認列表是按月存的,沒有日粒度,
               所以沒辦法真的算「8/1~8/6 的營收」來對比 —— 只能把這件事講出來。
@@ -901,8 +979,9 @@ export default function DashboardPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {row(rentOnlyF ? '房租營收' : '營收', cTotalRev, cmp.prev.rev, cmp.yoy.rev, money)}
-                  {row('支出', totalExp, cmp.prev.exp, cmp.yoy.exp, money, false)}
+                  {row(exOneoff ? '房租營收' : '營收', cTotalRev, cmp.prev.rev, cmp.yoy.rev, money)}
+                  {/* ★ 標題自己說口徑 —— 這一列被截圖出去時，是唯一還在的線索 */}
+                  {row(exNonOp ? '營運支出' : '支出', totalExp, cmp.prev.exp, cmp.yoy.exp, money, false)}
                   {row('淨額', cNet, cmp.prev.rev - cmp.prev.exp, cmp.yoy.rev - cmp.yoy.exp, money)}
                   {row('訂單數', fOrds.length, cmp.prev.ordN, cmp.yoy.ordN, cnt)}
                   <tr><td colSpan={sameYoY ? 4 : 6} className="px-3 pt-3 pb-1 text-xs font-semibold text-gray-500">依來源</td></tr>
