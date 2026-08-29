@@ -793,7 +793,19 @@ function AppShell({ children }: { children: React.ReactNode }) {
       */}
       <main className="flex-1 min-w-0 p-4 md:p-6"
         style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
-        <div className="mx-auto w-full max-w-[1280px]">
+        {/*
+          ★★ 內容寬度 1280 → 1440（2026-08-29 使用者:「filter 不能一行嗎 / 整個版面一起變寬」）。
+
+            篩選欄位與按鈕在這一輪加大之後,訂單頁的七個篩選在 1280px 下
+            **差最後那 50px** 就放得下 —— 關鍵字被擠到第二行。
+
+          ★ 選擇加寬而不是把欄位縮窄:縮窄會讓「訂單日期」那兩個日期框
+            變得難點,而那是為了省一行版面去犧牲每天都要用的東西。
+
+          ★ 1440 是常見筆電（1440／1536）的舒適寬度。再寬的話
+            表格的一列會長到眼睛要橫向掃很久 —— 那比換行更累。
+        */}
+        <div className="mx-auto w-full max-w-[1440px]">
           {children}
         </div>
       </main>

@@ -3,7 +3,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx-js-style';
 import { createClient } from '@/lib/supabase';
 import RangeInput from '@/components/RangeInput';
-import { EXPORT_TONE } from '@/components/Actions';
+import { EXPORT_TONE, ExportButton } from '@/components/Actions';
+import { ActionRow, FilterCount, FieldSpacer, FILTER_BTN_H } from '@/lib/filters';
 
 type Estate = { id: string; name: string; sort: number };
 type StaffStat = { staff_name: string; staff_type: string; active: boolean; total: number; rated: number; avg_rating: number | null; low_count: number };
@@ -294,18 +295,31 @@ export default function CleaningPage() {
             <button onClick={() => setKw(kwInput.trim())} className="rounded-lg bg-mor-slate text-white px-3 hover:bg-mor-slatedark">搜尋</button>
           </div>
         </div>
-        {(estate || staff || staffType || dateFrom || dateTo || kw) && (
-          <button onClick={() => { setEstate(''); setStaff(''); setStaffType(''); setDateFrom(''); setDateTo(''); setKw(''); setKwInput(''); }} className="text-gray-500 underline pb-1.5">清除篩選</button>
-        )}
-        <div className="ml-auto flex flex-wrap items-end gap-2">
-          <div className="text-xs text-gray-400 pb-1.5">共 {total.toLocaleString()} 筆</div>
-          <a href={FORM_HOUSEKEEPER} target="_blank" rel="noreferrer"
-            className="rounded-lg border border-mor-line bg-white px-3 py-1.5 font-medium hover:bg-mor-sand/60">📋 管家檢查表</a>
-          <a href={FORM_ROOMSERVICE} target="_blank" rel="noreferrer"
-            className="rounded-lg border border-mor-line bg-white px-3 py-1.5 font-medium hover:bg-mor-sand/60">🧹 房務清潔表</a>
-          <button onClick={exportCsv} disabled={exporting || total === 0} className={`rounded-lg px-4 py-1.5 font-medium disabled:opacity-40 ${EXPORT_TONE}`}>{exporting ? '匯出中…' : '⬇ 下載 Excel'}</button>
-        </div>
+        {/* 清除的字統一叫「清除」（全站一致）—— 「清除篩選」四個字只有這一頁在用 */}
+        <FieldSpacer>
+          {(estate || staff || staffType || dateFrom || dateTo || kw) && (
+            <button onClick={() => { setEstate(''); setStaff(''); setStaffType(''); setDateFrom(''); setDateTo(''); setKw(''); setKwInput(''); }}
+              className={`${FILTER_BTN_H} px-2 text-[15px] text-gray-500 underline`}>清除</button>
+          )}
+        </FieldSpacer>
       </div>
+
+      {/*
+        ★★ 動作列**在篩選卡外面**（2026-08-29 使用者:「沒改掉阿」）。
+
+          原本這三顆按鈕跟筆數塞在篩選卡裡、靠 `ml-auto` 推到右邊 ——
+          於是它們排在六個下拉的同一行,看起來像第七、八、九個篩選欄位。
+
+        ★ 篩選是「我要看哪些」,動作是「我要做什麼」—— 兩件事,兩行。
+      */}
+      <ActionRow>
+        <div className="mr-auto md:mr-0"><FilterCount n={total} /></div>
+        <a href={FORM_HOUSEKEEPER} target="_blank" rel="noreferrer"
+          className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 whitespace-nowrap">📋 管家檢查表</a>
+        <a href={FORM_ROOMSERVICE} target="_blank" rel="noreferrer"
+          className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 whitespace-nowrap">🧹 房務清潔表</a>
+        <ExportButton onClick={exportCsv} disabled={exporting || total === 0} busy={exporting} />
+      </ActionRow>
 
       {/* 手機卡片版 */}
       <div className="md:hidden space-y-2">

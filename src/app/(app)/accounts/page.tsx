@@ -10,6 +10,7 @@ import { totalBalance } from '@/lib/bank-import';
 import { filterTxns, hasFilter, sumRows, amountOf, splitTail, splitRef, type BankFilter } from '@/lib/bank-filter';
 import * as XLSX from 'xlsx-js-style';
 import { syncFrom, syncTo } from '@/lib/date-range';
+import { FilterCount, FieldSpacer, FILTER_BTN_H } from '@/lib/filters';
 import { ExportButton } from '@/components/Actions';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import FilterToggle from '@/components/FilterToggle';
@@ -324,7 +325,7 @@ export default function AccountsPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1280px] px-4 py-4">
+    <div className="mx-auto w-full max-w-[1440px] px-4 py-4">
       <Toast msg={msg} error={err} onClose={() => setMsg('')} />
 
       {/*
@@ -438,23 +439,13 @@ export default function AccountsPage() {
             </div>
             {view === 'txn' && <FilterToggle active={hasFilter(f)} />}
             {/*
-              下載與上傳搬到這裡（2026-08-19 使用者指定「下載 上傳 向下移」）。
+              ★★ 下載與上傳**不在這一列**（2026-08-29 使用者:「layout 一致耶」）。
 
-              它們本來就是**針對當前這個帳戶**的動作 ——
-              下載的是這個分頁篩出來的流水、上傳也是進這個帳戶。
-              放在頁面標題旁邊時看起來像「整頁」的動作,跟實際行為對不起來。
-
-              分隔線是為了跟左邊的檢視切換分開:那兩組一個是「看什麼」、
-              一個是「做什麼」，擠在一起會被當成同一排選項。
+                這一列留給「看什麼」:帳戶分頁、流水／匯入紀錄、篩選開關。
+                「做什麼」統一搬到篩選列**下面**那一行 —— 全站每一頁都是
+                「篩選卡 → 動作列」這個順序,只有這頁反過來的話,
+                使用者每次進來都要重新找按鈕在哪。
             */}
-            <span className="hidden h-6 w-px bg-mor-line sm:block" />
-            {view === 'txn' && <ExportButton onClick={exportXlsx} disabled={shown.length === 0} />}
-            <button
-              onClick={() => setShowUpload(true)}
-              className="rounded-md bg-mor-slate px-3 py-1.5 text-sm font-medium text-white hover:bg-mor-slatedark"
-            >
-              ⬆ 上傳對帳單
-            </button>
           </div>
         </div>
 
@@ -533,16 +524,38 @@ export default function AccountsPage() {
                 onChange={(e) => set('onlyNoted', e.target.checked)} />
               只看餘額有備註的
             </label>
-            {hasFilter(f) && (
-              <button
-                onClick={() => setF({ from: '', to: '', dir: '', min: '', max: '', q: '' })}
-                className="pb-1.5 text-sm text-gray-500 underline"
-              >
-                清除
-              </button>
-            )}
+            <FieldSpacer>
+              {hasFilter(f) && (
+                <button
+                  onClick={() => setF({ from: '', to: '', dir: '', min: '', max: '', q: '' })}
+                  className={`${FILTER_BTN_H} px-2 text-[15px] text-gray-500 underline`}
+                >
+                  清除
+                </button>
+              )}
+            </FieldSpacer>
           </div>
         )}
+
+        {/*
+          動作列 —— 跟全站一致:篩選在上、動作在下，靠右。
+
+          ★ 這兩顆是**針對當前這個帳戶**的:下載的是這個分頁篩出來的流水、
+            上傳也是進這個帳戶。所以它們留在卡片內、跟著分頁走,
+            不是搬到頁面標題旁邊（那看起來像「整頁」的動作）。
+        */}
+        <div className="flex flex-wrap items-center justify-end gap-3 border-b border-mor-line px-4 py-3">
+          {view === 'txn' && (
+            <div className="mr-auto md:mr-0"><FilterCount n={shown.length} unit="筆" /></div>
+          )}
+          {view === 'txn' && <ExportButton onClick={exportXlsx} disabled={shown.length === 0} />}
+          <button
+            onClick={() => setShowUpload(true)}
+            className="rounded-lg bg-mor-slate px-4 py-1.5 font-medium text-white hover:bg-mor-slatedark whitespace-nowrap"
+          >
+            ⬆ 上傳對帳單
+          </button>
+        </div>
 
         {view === 'stmt' ? (
           <StatementsPanel
