@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase';
 import RangeInput from '@/components/RangeInput';
 import { EXPORT_TONE, ExportButton } from '@/components/Actions';
 import { ActionRow, FilterCount, FieldSpacer, FILTER_BTN_H } from '@/lib/filters';
+import { BarPanel, BarRow, BarEmpty } from '@/components/BarList';
 
 type Estate = { id: string; name: string; sort: number };
 type StaffStat = { staff_name: string; staff_type: string; active: boolean; total: number; rated: number; avg_rating: number | null; low_count: number };
@@ -195,21 +196,23 @@ export default function CleaningPage() {
             <div className="stat-num-lg font-bold mt-1">{totalCount.toLocaleString()}</div>
             <div className="text-xs opacity-75 mt-2">共 {visibleStats.length} 位・{(dateFrom || dateTo) ? `${dateFrom || minDate || '起始'} ~ ${dateTo || '今'}` : (minDate ? `${minDate} ~ 今` : '全部期間')}</div>
           </div>
-          <div className="lg:col-span-2 rounded-xl bg-white border border-mor-line overflow-hidden">
-            <div className="px-4 py-2.5 text-sm font-semibold border-b border-mor-line bg-white/45">依填寫人統計</div>
-            <div className="max-h-56 overflow-y-auto">
-              {visibleStats.map((m) => {
-                const max = Math.max(...visibleStats.map((x) => Number(x.total))) || 1;
-                return (
-                  <div key={m.staff_name} className="px-4 py-2 flex items-center gap-3 text-sm border-b border-mor-line/50 last:border-0">
-                    <span className="w-16 font-medium truncate">{m.staff_name}<span className="ml-1 text-xs text-gray-400">{TYPE_LABEL[m.staff_type]}</span></span>
-                    <div className="flex-1 h-1.5 rounded-full bg-mor-sand overflow-hidden"><div className="h-full bg-mor-green" style={{ width: `${(Number(m.total) / max) * 100}%` }} /></div>
-                    <span className="min-w-[4rem] shrink-0 whitespace-nowrap text-right text-xs text-gray-500">{Number(m.total)} 次</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+          {/*
+            ★★ 改用共用的 BarPanel/BarRow（2026-08-29）。
+              捲軸拿掉 —— 原本 `max-h-56` 一次只露五位填寫人,
+              而這張卡的用途正是「誰做得多」,捲軸裡的人等於沒被看到。
+          */}
+          <BarPanel className="lg:col-span-2" title="依填寫人統計">
+            {visibleStats.length === 0 ? <BarEmpty /> : visibleStats.map((m) => {
+              const max = Math.max(...visibleStats.map((x) => Number(x.total))) || 1;
+              return (
+                <BarRow key={m.staff_name} tone="green"
+                  label={<>{m.staff_name}<span className="ml-1 text-xs text-gray-400">{TYPE_LABEL[m.staff_type]}</span></>}
+                  title={`${m.staff_name}（${TYPE_LABEL[m.staff_type]}）`}
+                  pct={(Number(m.total) / max) * 100}
+                  value={`${Number(m.total)} 次`} />
+              );
+            })}
+          </BarPanel>
         </div>
       </div>
 

@@ -15,6 +15,7 @@ import {
 import { roomCell, periodCell, amountCell, nightsText } from '@/lib/revenue-row';
 import RowDrawer from './row-drawer';
 import RangeInput from '@/components/RangeInput';
+import { BarPanel, BarRow, BarEmpty } from '@/components/BarList';
 
 type Row = {
   /** 這一列的 id（認列列，不是訂單）—— 一筆訂單跨三個月就有三列 */
@@ -633,22 +634,17 @@ export default function RevenuesPage() {
             ))}
           </div>
         </div>
-        <div className="rounded-xl bg-white border border-mor-line overflow-hidden">
-          <div className="px-4 py-2.5 text-sm font-semibold border-b border-mor-line bg-white/45">依物業</div>
-          <div>
-            {byEstate.map(([e, v]) => {
-              const max = byEstate[0]?.[1] || 1;
-              return (
-                <div key={e} onClick={() => setEstateFilter(estateFilter === e ? '' : e)}
-                  className={`px-4 py-2 flex items-center gap-3 text-sm border-b border-mor-line/50 last:border-0 cursor-pointer hover:bg-mor-bluelight/40 ${estateFilter === e ? 'bg-mor-bluelight/60' : ''}`}>
-                  <span className="w-16 truncate">{e}</span>
-                  <div className="flex-1 h-1.5 rounded-full bg-mor-sand overflow-hidden"><div className="h-full bg-mor-blue" style={{ width: `${(v / max) * 100}%` }} /></div>
-                  <span className="min-w-[6rem] shrink-0 whitespace-nowrap text-right font-semibold">${fmt(v)}</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        {/* ★ 改用共用的 BarPanel/BarRow（2026-08-29）—— 名稱欄從 w-16 放寬到 w-28,
+              物業名稱不再被 truncate 砍掉尾巴 */}
+        <BarPanel title="依物業">
+          {byEstate.length === 0 ? <BarEmpty /> : byEstate.map(([e, v]) => (
+            <BarRow key={e} tone="blue" label={e} title={e}
+              pct={(v / (byEstate[0]?.[1] || 1)) * 100}
+              value={`$${fmt(v)}`}
+              active={estateFilter === e}
+              onClick={() => setEstateFilter(estateFilter === e ? '' : e)} />
+          ))}
+        </BarPanel>
       </div>
 
       {/* Filters */}

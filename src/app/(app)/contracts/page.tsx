@@ -706,27 +706,29 @@ const nameOf = (c: Contract) =>
 
       <div className="grid grid-cols-2 gap-3 mb-3 text-sm">
         <div className="rounded-xl bg-white border border-mor-line p-3">
-          <div className="text-xs text-gray-500 mb-1.5">本月({curMon}) 已收房源(關注) <span className="text-mor-green font-medium">{roomLists.paid.length}</span></div>
-          <div className="flex flex-wrap gap-1">{roomLists.paid.map((it) => <span key={it.room} className="inline-block rounded-md bg-mor-greenlight/50 text-mor-green px-1.5 py-0.5 text-xs">{it.label}</span>)}{!roomLists.paid.length && <span className="text-xs text-gray-300">—</span>}</div>
+          <div className="text-uisub text-gray-500 mb-1.5">本月({curMon}) 已收房源(關注) <span className="text-mor-green font-medium">{roomLists.paid.length}</span></div>
+          <div className="flex flex-wrap gap-1">{roomLists.paid.map((it) => <span key={it.room} className="inline-block rounded-md bg-mor-greenlight/50 text-mor-green px-2 py-0.5 text-sm">{it.label}</span>)}{!roomLists.paid.length && <span className="text-xs text-gray-300">—</span>}</div>
         </div>
         <div className="rounded-xl bg-white border border-mor-line p-3">
-          <div className="text-xs text-gray-500 mb-1.5">本月({curMon}) 未收房源(關注) <span className="text-orange-600 font-medium">{roomLists.unpaid.length}</span></div>
-          <div className="flex flex-wrap gap-1">{roomLists.unpaid.map((it) => <span key={it.room} className="inline-block rounded-md bg-orange-50 text-orange-600 px-1.5 py-0.5 text-xs">{it.label}</span>)}{!roomLists.unpaid.length && <span className="text-xs text-gray-300">—</span>}</div>
+          <div className="text-uisub text-gray-500 mb-1.5">本月({curMon}) 未收房源(關注) <span className="text-orange-600 font-medium">{roomLists.unpaid.length}</span></div>
+          <div className="flex flex-wrap gap-1">{roomLists.unpaid.map((it) => <span key={it.room} className="inline-block rounded-md bg-orange-50 text-orange-600 px-2 py-0.5 text-sm">{it.label}</span>)}{!roomLists.unpaid.length && <span className="text-xs text-gray-300">—</span>}</div>
         </div>
       </div>
 
       {arrears.length > 0 && (
         <div className="rounded-xl border border-red-200 bg-red-50/40 mb-3 overflow-hidden">
           <div className="px-4 py-2 border-b border-red-200/70 flex items-center justify-between">
-            <div className="text-sm font-semibold text-red-700">
+            <div className="text-ui font-semibold text-red-700">
               跨月欠款
               <span className="ml-2 text-xs font-normal text-red-500">
                 {arrears.length} 間・共 {arrears.reduce((s, g) => s + g.periods, 0)} 期(不含本月未收)
               </span>
             </div>
-            <div className="text-sm font-semibold text-red-700 tabular-nums">${fmt(arrearsTotal)}</div>
+            <div className="text-ui font-semibold text-red-700 tabular-nums">${fmt(arrearsTotal)}</div>
           </div>
-          <div className="max-h-52 overflow-y-auto">
+          {/* ★ 捲軸拿掉（2026-08-29 全站一致）—— 欠款與待開發票正是
+                「一眼看完有幾筆」的清單,藏在捲軸裡的那幾筆等於沒被看到 */}
+          <div>
             {arrears.map((g) => {
               const c = rows.find((r) => r.room === g.room);
               return (
@@ -758,7 +760,7 @@ const nameOf = (c: Contract) =>
       {invPending.length > 0 && (
         <div className="rounded-xl border border-amber-200 bg-amber-50/40 mb-3 overflow-hidden">
           <div className="px-4 py-2 border-b border-amber-200/70 flex items-center justify-between">
-            <div className="text-sm font-semibold text-amber-700">
+            <div className="text-ui font-semibold text-amber-700">
               待開發票
               <span className="ml-2 text-xs font-normal text-amber-600">
                 {invPending.length} 張
@@ -767,7 +769,9 @@ const nameOf = (c: Contract) =>
             </div>
             <div className="text-xs text-amber-600">近 {INVOICE_LOOKBACK + 1} 個月</div>
           </div>
-          <div className="max-h-52 overflow-y-auto">
+          {/* ★ 捲軸拿掉（2026-08-29 全站一致）—— 欠款與待開發票正是
+                「一眼看完有幾筆」的清單,藏在捲軸裡的那幾筆等於沒被看到 */}
+          <div>
             {invPending.map((p) => (
               <div key={p.c.id + p.ym}
                 onClick={() => setCollect(p.c)}

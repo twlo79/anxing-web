@@ -252,7 +252,7 @@ export function AuditSummary({ result, onlyBad, onToggleOnly }: {
                 　—— 同一個名字的不同寫法出現在多間房。可能是同一個人，也可能只是同名
               </span>
             </summary>
-            <ul className="mt-1.5 space-y-0.5 text-xs text-amber-900 max-h-64 overflow-y-auto">
+            <ul className="mt-1.5 space-y-0.5 text-sm text-amber-900">
               {bad.slice(0, 50).map((g) => (
                 <li key={g.names.join('|')}>
                   <b>{g.names.join('、')}</b>

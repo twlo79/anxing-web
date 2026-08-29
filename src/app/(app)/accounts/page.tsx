@@ -7,7 +7,7 @@ import Toast from '@/components/Toast';
 import UploadPanel from './upload-panel';
 import StatementsPanel from './statements-panel';
 import { totalBalance } from '@/lib/bank-import';
-import { filterTxns, hasFilter, sumRows, amountOf, splitTail, splitRef, type BankFilter } from '@/lib/bank-filter';
+import { filterTxns, hasFilter, sumRows, amountOf, splitRef, type BankFilter } from '@/lib/bank-filter';
 import * as XLSX from 'xlsx-js-style';
 import { FilterCount, FieldSpacer, FilterClear, FilterSelect, FilterDateRange, FilterSearch } from '@/lib/filters';
 import { ExportButton } from '@/components/Actions';
@@ -378,54 +378,62 @@ export default function AccountsPage() {
         （下載是當前分頁的、上傳也是進那個帳戶），放在頁面最上面時
         看起來像是「整頁」的動作，跟實際行為對不起來。
       */}
-      <div className="mb-4">
-        <h1>帳戶明細</h1>
-      </div>
-
-      {/* ── 合計 ────────────────────────────────── */}
-      {/*
-        【為什麼合計要標日期】
-        三份對帳單的截止日可能不一樣。只上傳了兩份新的就顯示一個數字,
-        那是「兩個新的 ＋ 一個舊的」—— 看起來像現在的現金,其實不是。
-      */}
-      {/*
-        【顏色分層】（2026-08-19 使用者要求「做一點區別 可以用顏色」）
-
-        原本從合計、卡片、分頁到表格全是白底配灰框，一整片糊在一起,
-        眼睛找不到「哪裡是哪裡」。用全站既有的 mor 色票分成三層:
-
-          藍（bluelight） 合計與選中的帳戶 —— 錢的數字
-          砂（sand）      面板的頭與腳     —— 操作與小計
-          白             資料本身
-
-        不引進新顏色 —— 這一頁自己配一組色的話，跟其他頁走不在一起。
-      */}
       {/*
         ══════════════════════════════════════════════════════════
-        ★★★ 總計改成**深藍大卡**（2026-08-29 使用者:「卡片顏色沒有和其他頁統一」）。
+        ★★★ 標題列 ＝ 標題 ＋ 總計 ＋ 對帳單日期（2026-08-29 使用者選 D 案）。
 
-          訂單、營收、支出、清潔、評價、房務統計 —— 六頁的「這一頁最重要的
-          那個數字」都是 `surf-deep` 的深藍漸層大卡。
-          帳戶用一行大字（`StatTotal`）是**全站唯一的例外**。
+          之前試過兩版都被否掉:
+            · 全寬的深藍大卡 —— 一個數字撐一整條，中間全是空的
+            · 壓成細橫幅 —— 「一條還是突兀」
+            · 總計跟三個帳戶並排成四張等寬 —— 「四個一起又怪」
+              （總計跟帳戶不是同一種東西,排在一起看起來像第四個帳戶）
 
-        ★ 而它跟那六頁是同一種東西:整頁的總額。同一種東西兩種長相,
-          使用者每換一頁就要重新找「總數在哪」。
+        ★★ 結論是**總計不需要一張卡**。它是這一頁的標題在回答的問題
+          （「帳戶明細 —— 總共多少？」），寫在標題旁邊就好。
 
-        ★ 警語放在卡片裡面 —— 那是「這個數字可不可信」,
-          跟數字本身分開放的話,會有人只看到數字。
+        ★★★ 對帳單日期**整頁只印一次**。
+          三個帳戶的 `period_to` 幾乎永遠是同一天（同一批上傳），
+          印在三張卡上就是同一個日期印三遍 —— 而它擠掉的正是
+          每張卡真正不一樣的那個資訊:最後異動日。
+
+        ★ 日期不一致時（只補傳了其中一份）要說出來,不能只印最舊的那個 ——
+          那會讓人以為三個數字都是那天的。`totals.asOf` 已經取最舊的,
+          這裡再加一句「其中 N 個較舊」。
         ══════════════════════════════════════════════════════════
       */}
-      <div className="rounded-xl surf-deep text-white p-5 mb-4 min-w-0">
-        <div className="text-uisub opacity-85">總計</div>
-        <div className="stat-num-lg font-bold mt-1 tabular-nums">{money(totals.total)}</div>
-        {totals.asOf && <div className="text-uisub opacity-75 mt-0.5">至 {totals.asOf}</div>}
-        {(totals.stale.length > 0 || totals.missing.length > 0) && (
-          <div className="mt-2 text-uisub text-amber-200/95">
-            {totals.stale.length > 0 && <div>⚠ {totals.stale.join('、')} 的對帳單較舊，合計不是最新狀態。</div>}
-            {totals.missing.length > 0 && <div>⚠ {totals.missing.join('、')} 還沒上傳過對帳單，沒有算進合計。</div>}
-          </div>
+      <div className="mb-4 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 min-w-0">
+          <h1 className="mb-0">帳戶明細</h1>
+          <span className="stat-num-lg font-bold tabular-nums">{money(totals.total)}</span>
+        </div>
+        {/*
+          ★★★ 三份對帳單的截止日不一樣時（只補傳了其中一個帳戶）,
+            **不可以只印一個日期**:
+              · 印最新的 → 合計看起來像現在的現金,而其中兩個是幾個月前的
+              · 印最舊的 → 剛上傳完的人會以為自己白傳了
+            所以不一致就印區間 ＋ 標黃色,下面那行再點名是哪幾個落後。
+        */}
+        {totals.asOf && (
+          totals.newestAsOf && totals.newestAsOf !== totals.asOf ? (
+            <span className="text-uisub text-amber-700 whitespace-nowrap">
+              對帳單 {ymd(totals.asOf)} ~ {ymd(totals.newestAsOf)}
+            </span>
+          ) : (
+            <span className="text-uisub text-gray-500 whitespace-nowrap">對帳單至 {ymd(totals.asOf)}</span>
+          )
         )}
       </div>
+
+      {(totals.stale.length > 0 || totals.missing.length > 0) && (
+        /*
+          ★ 警語留在總計附近 —— 它講的是「上面那個數字可不可信」。
+            搬到頁尾的話,看數字的人不會滾到那裡。
+        */
+        <div className="mb-4 text-uisub text-amber-700">
+          {totals.stale.length > 0 && <div>⚠ {totals.stale.join('、')} 未更新</div>}
+          {totals.missing.length > 0 && <div>⚠ {totals.missing.join('、')} 沒有對帳單，未計入</div>}
+        </div>
+      )}
 
       {/* ── 三張卡片 ────────────────────────────── */}
       {/*
@@ -448,15 +456,13 @@ export default function AccountsPage() {
                   要看的是末五碼。
               */
               /*
-                ★ 「對帳單至」不是「至」—— 見上面 lastTxn 的說明。
-                  最後異動跟期末同一天就不重複印,那是雜訊。
+                ★ 只印**最後異動**。對帳單日期已經在標題列印過一次了,
+                  而三個帳戶的對帳單日期是同一天 —— 印在這裡是同一句話講三遍,
+                  還會把這張卡唯一不一樣的資訊擠到第二行。
               */
-              sub={[
-                st ? `對帳單至 ${ymd(st.period_to)}` : '還沒上傳對帳單',
-                lastTxn[a.id] && lastTxn[a.id] !== st?.period_to
-                  ? `最後異動 ${ymd(lastTxn[a.id]!)}` : '',
-                splitTail(a.account_no) || `…${a.account_no_tail}`,
-              ].filter(Boolean).join('・')}
+              sub={!st ? '還沒上傳對帳單'
+                : lastTxn[a.id] ? `最後異動 ${ymd(lastTxn[a.id]!).slice(5)}`
+                : '沒有流水'}
               active={tab === a.id}
               muted={!st}
               onClick={() => setTab(a.id)} />
@@ -473,21 +479,21 @@ export default function AccountsPage() {
           第一版讓分頁浮在卡片上方,接縫怪 —— 選中第二個時
           卡片的左上角是圓的,分頁掛在半空中。
 
-        ★ 包進 `<TabShell>` 之後,分頁列有自己的底色（比面板深一階）,
-          選中的那頁是白的、直接連到下面,**選第幾個都對**。
+        ★ 現在每一頁都有自己的框,選中的那頁是白的 ＋ 主色字 ＋ 下緣一條主色線,
+          **選第幾個都對**,不需要底色條去襯。
       */}
       <TabShell tone="paper" tabs={
         <Tabs variant="browser" tone="paper" value={tab} onChange={setTab}
           items={accounts.map((a) => ({ key: a.id, label: a.name }))} />
       }>
         {/*
-          ★ 這一列接在 Chrome 分頁下面 —— **不畫上緣圓角**，
-            那是分頁接上去的地方，畫了會出現一條白邊。
-
           ★ 這裡只留「換這張卡的檢視」：流水／匯入紀錄 ＋ 篩選開關。
             它們只影響這張卡，所以留在卡上。
+
+          ★ `rounded-t-xl` 跟著 TabShell 的面板圓角 —— 左上角除外
+            （那是第一個分頁接上去的地方）。
         */}
-        <div className="flex flex-wrap items-center gap-2 border-b border-mor-line bg-mor-sand/30 px-3 py-2">
+        <div className="flex flex-wrap items-center gap-2 rounded-t-xl rounded-tl-none border-b border-mor-line bg-mor-sand/30 px-3 py-2">
           <Tabs variant="segment" size="sm"
             value={view} onChange={setView}
             items={[{ key: 'txn' as const, label: '流水' },

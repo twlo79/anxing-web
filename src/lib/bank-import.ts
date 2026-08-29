@@ -155,6 +155,14 @@ export type AccountBalance = { name: string; balance: number | null; asOf: strin
 export function totalBalance(rows: AccountBalance[]): {
   total: number;
   asOf: string | null;
+  /**
+   * 最新的那一份對帳單的截止日。`asOf` 取最舊的（保守），
+   * 兩個一起才說得出「合計只保證到 A，但已經有人更新到 B 了」。
+   *
+   * ★ 只給 `asOf` 的話，標題列印出來的是最舊的那天 ——
+   *   剛上傳完新對帳單的人會以為自己白傳了。
+   */
+  newestAsOf: string | null;
   /** 截止日落後的帳戶名稱。空陣列表示三份都對齊。 */
   stale: string[];
   /** 還沒上傳過對帳單的帳戶。它們沒有算進 total。 */
@@ -163,7 +171,7 @@ export function totalBalance(rows: AccountBalance[]): {
   const withData = rows.filter((r) => r.balance != null && r.asOf);
   const missing = rows.filter((r) => r.balance == null || !r.asOf).map((r) => r.name);
   const total = withData.reduce((a, r) => a + (r.balance as number), 0);
-  if (withData.length === 0) return { total: 0, asOf: null, stale: [], missing };
+  if (withData.length === 0) return { total: 0, asOf: null, newestAsOf: null, stale: [], missing };
 
   const dates = withData.map((r) => r.asOf as string);
   const oldest = dates.reduce((a, b) => (a < b ? a : b));
@@ -171,6 +179,7 @@ export function totalBalance(rows: AccountBalance[]): {
   return {
     total,
     asOf: oldest,
+    newestAsOf: newest,
     stale: oldest === newest ? [] : withData.filter((r) => r.asOf !== newest).map((r) => r.name),
     missing,
   };

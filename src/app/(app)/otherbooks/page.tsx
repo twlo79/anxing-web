@@ -7,7 +7,7 @@ import Req from '@/components/Req';
 import MoneyInput from '@/components/MoneyInput';
 import Toast from '@/components/Toast';
 import StatCard, { StatRow } from '@/components/StatCard';
-import { Tabs } from '@/components/Tabs';
+import { Tabs, TabShell } from '@/components/Tabs';
 import {
   OTHER_BOOKS, BOOK_LABEL, BOOK_BIZ, OTHER_BIZ_SOURCE, OTHER_BIZ_PURPOSE, type Book,
 } from '@/lib/book';
@@ -297,22 +297,16 @@ export default function OtherBooksPage() {
         ★ 第一層（換哪一本帳）用 Chrome 式,放在最上面 —— 全站一致。
           第二層（收支帳／儀錶板）用小分段,見下面的面板。
       */}
-      <Tabs variant="browser" tone="paper" className="rounded-t-xl"
-        value={book} onChange={(b) => { setBook(b); setF({}); setKwDraft(''); }}
-        items={OTHER_BOOKS.map((b) => ({ key: b, label: BOOK_LABEL[b] }))} />
-
       {err && (
         <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700 mb-3">{err}</div>
       )}
 
-      {/*
-        ★★★ 分頁列與面板包在同一個 `<TabShell>` 裡（2026-08-29「銜接怪怪的」）。
-
-          原本分頁浮在面板上方 —— 選中第二個時面板左上角是圓的,
-          分頁掛在半空中接不上。包進同一個殼之後,
-          **選第幾個都對**,面板永遠是完整的方框。
-      */}
-      <div className="rounded-b-xl border border-t-0 border-mor-line bg-white mb-4">
+      {/* ★ 分頁列 ＋ 面板包在同一個 `<TabShell>` 裡 —— 選第幾本帳都對 */}
+      <TabShell tone="paper" className="mb-4" tabs={
+        <Tabs variant="browser" tone="paper"
+          value={book} onChange={(b) => { setBook(b); setF({}); setKwDraft(''); }}
+          items={OTHER_BOOKS.map((b) => ({ key: b, label: BOOK_LABEL[b] }))} />
+      }>
         <div className="p-4">
           {/* ★ 第二層只有兩項 → 小分段（側欄要吃掉 126px,為兩個選項不划算）*/}
           <Tabs size="sm" className="mb-3" value={tab} onChange={setTab}
@@ -509,7 +503,7 @@ export default function OtherBooksPage() {
           <Dashboard rows={rows} cur={cur} ym={ym} nameOf={nameOf} loading={loading} book={book} />
         )}
         </div>
-      </div>
+      </TabShell>
 
       {/* ══════════════ 新增收入 ══════════════ */}
       {inc && (

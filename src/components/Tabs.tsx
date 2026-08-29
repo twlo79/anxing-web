@@ -83,16 +83,16 @@ export function Tabs<T extends string>({
   /**
    * segment = 換這一頁的區塊（浮著）
    * solid   = 換哪一份資料（圓膠囊，浮著）
-   * browser = Chrome 式分頁 —— **必須包在 `<TabShell>` 裡**，見下方
+   * browser = Chrome 式分頁。內容是一整塊時包 `<TabShell>`，
+   *           是一疊卡片時（tone="page"）直接用，不用包
    */
   variant?: 'segment' | 'solid' | 'browser';
   /** sm 給「分頁裡的分頁」用 —— 兩層一樣大的話看不出誰包誰 */
   size?: 'sm' | 'md';
   /**
-   * `browser` 專用:底下的面板是什麼顏色。**選中的那頁要跟面板同色**,
-   * 否則接縫會露出一條邊。
+   * `browser` 專用:選中那一頁要亮成什麼顏色。**跟底下的面板同色**。
    *
-   *   paper  白面板 —— 內容本身就是一整塊（清單、表格）
+   *   paper  白 —— 內容本身就是一整塊（清單、表格）
    *   page   頁面底色 —— 內容是**一疊卡片**（統計卡、篩選卡、表格卡）
    *
    * ★★★ 為什麼要分（2026-08-29）:白卡放在白面板上**邊界會消失**。
@@ -105,60 +105,61 @@ export function Tabs<T extends string>({
 
   /*
    * ══════════════════════════════════════════════════════════
-   * Chrome 式分頁。**只能放在 `<TabShell>` 裡**。
+   * Chrome 式分頁 —— 第一層（換整個頁面在看什麼）。
    *
-   * ★★★ 為什麼一定要有那個殼（2026-08-29 使用者:「銜接怪怪的」）
+   * ★★ 歷史:第一版讓分頁**無邊框地浮在面板上方**,使用者說
+   *   「銜接怪怪的」—— 選中第二個時面板左上角是圓的,分頁掛在半空中。
+   *   第二版改成「分頁列是面板的一部分 ＋ 深一階的底色條」,接縫解決了,
+   *   但那條底色橫跨整頁而且不帶資訊。
    *
-   *   第一版讓分頁**浮在面板上方**,結果三個結構性問題:
-   *
-   *     ① 選中第二個時,面板的左上角是圓的 —— 分頁掛在半空中接不上。
-   *        要配合「選第幾個」去改面板圓角,那是永遠修不完的。
-   *     ② 分頁列與面板是兩個獨立元素,中間**永遠會差一條縫**。
-   *     ③ 外凸圓角用 `::before/::after` 要**寫死背景色**,換底色就露餡。
-   *
-   * ★★ 修法:**分頁列是面板的一部分**。
-   *   分頁列有自己的底色（比面板深一階）,選中的那頁是面板色、
-   *   直接連到下面,中間沒有線。
-   *
-   *   這樣**選第幾個都對** —— 面板永遠是完整的方框。
-   *
-   * ★ 這也是 Chrome 真正的做法:它的分頁列是**視窗的一部分**,
-   *   不是浮在視窗上面的東西。
+   * ★★★ 第三版（現在）:每一頁都有自己的框,不需要底色條,
+   *   也不需要靠「跟面板同色」去藏接縫 —— 選中的那頁自己就有三個訊號。
+   *   詳見底下的註解。
    * ══════════════════════════════════════════════════════════
    */
   if (variant === 'browser') {
     /*
-     * ★ 分頁列的底色要比面板**深一階**,不然分頁的形狀撐不起來。
-     *   白面板配沙色列、米色面板配線色列 —— 兩組的色差都夠。
+     * ══════════════════════════════════════════════════════════
+     * ★★★ 底色的條拿掉了（2026-08-29 使用者:
+     *      「tab UI 不想有底色，想改成都畫出來，但 active 的 tab 亮」
+     *      → 選了 A／B 融合、未選的框線用正常深度
+     *      → 再加「active 換顏色 加底線」）。
+     *
+     *   舊版是「深一階的底色條 ＋ 只有選中的那頁有形狀」。
+     *   問題是那條底色橫跨整頁,而它本身不帶任何資訊 ——
+     *   純粹是為了把選中的那一頁襯出來。
+     *
+     * ★★ 現在改成:**每一頁都畫框**,選中的那頁
+     *      ① 底色亮成面板色（白／頁面底色）
+     *      ② 文字換成主色
+     *      ③ 下緣一條 2px 主色線
+     *
+     *   三個訊號疊在一起,不需要底色條也看得出選中的是誰 ——
+     *   而且**不靠顏色單獨傳達**（框、粗細、位置都有差），
+     *   色弱的人也分得出來。
+     *
+     * ★ 為什麼未選的框線也用 `mor-line` 正常深度（使用者選 2 而不是 1）:
+     *   淡到像影子的話,就退回「只有選中的有形狀」——
+     *   而那正是「其他頁看起來不像分頁」的老問題。
+     *
+     * ★★ 三種狀態的 border 寬度**完全一樣**（上左右 1px、下 2px），
+     *   只有顏色不同。用 `border-b-0` 給未選、`border-b-2` 給選中的話,
+     *   兩者高度差 2px,整排分頁的文字基線會上下跳。
+     * ══════════════════════════════════════════════════════════
      */
-    const strip = tone === 'page' ? 'bg-mor-line' : 'bg-mor-sand';
-    const active = tone === 'page' ? 'bg-mor-bg' : 'bg-white';
-    /*
-     * ★★★ `tone="page"` **不需要 `<TabShell>`**。
-     *
-     *   選中的那頁跟頁面同色,所以它自己就跟下面的頁面連在一起了 ——
-     *   下面有沒有一個「面板」都一樣。
-     *
-     * ★★ 而且**不能**用 TabShell 包:那個殼有 `overflow-hidden`,
-     *   而 `.glass` 的 `backdrop-blur` 會讓 `position: fixed` 的彈窗
-     *   改以它為定位基準 —— 彈窗會被裁掉。
-     *   那幾頁的編輯視窗全部是 fixed,包進去就打不開了。
-     *
-     * ★ 所以只有 `tone="paper"`（白面板、內容是一整塊）才配 TabShell。
-     */
+    const litBg = tone === 'page' ? 'bg-mor-bg' : 'bg-white';
     return (
-      <div className={`flex gap-[3px] overflow-x-auto px-1.5 pt-1.5 ${strip}
-                       ${tone === 'page' ? 'rounded-t-xl' : ''} ${className}`}
-        role="tablist">
+      <div className={`flex gap-1 overflow-x-auto ${className}`} role="tablist">
         {items.map((t) => {
           const on = t.key === value;
           return (
             <button key={t.key} type="button" role="tab" aria-selected={on}
               onClick={() => onChange(t.key)}
               className={`${md ? 'px-4 py-2 text-ui' : 'px-3 py-1.5 text-uisub'}
-                rounded-t-[9px] font-medium whitespace-nowrap transition-colors ${
-                on ? `${active} text-mor-slate`
-                   : 'text-gray-500 hover:bg-white/40'}`}>
+                rounded-t-[10px] border border-b-2 border-mor-line
+                font-medium whitespace-nowrap transition-colors ${
+                on ? `${litBg} border-b-mor-slate text-mor-slate`
+                   : 'border-b-mor-line bg-transparent text-gray-500 hover:bg-white/50'}`}>
               {t.label}
               <Badge n={t.badge} on={on} />
             </button>
@@ -233,13 +234,22 @@ function Badge({ n, on }: { n?: number; on: boolean }) {
 }
 
 /**
- * Chrome 式分頁的外殼:**分頁列 ＋ 面板是同一個容器**。
+ * Chrome 式分頁的外殼:分頁列 ＋ 面板。
  *
- * ★ `overflow-hidden` 讓分頁列的上緣自動吃到容器的圓角 ——
- *   分頁自己不用管圓角要幾度。
+ * ============================================================
+ * 【★★ 改版後這個殼變薄了】（2026-08-29）
  *
- * ★ 面板是實心白（不是 `glass`）—— 分頁列靠「白 vs 沙色」的色差
- *   撐起形狀,半透明會讓那個色差隨背景浮動。
+ * 舊版的殼要處理「接縫」：分頁列是面板的一部分、`overflow-hidden`
+ * 讓上緣吃到圓角、選中的那頁跟面板同色連成一片。
+ *
+ * 現在**沒有接縫可處理**了 —— 分頁不再是無邊框地掛在面板上緣,
+ * 每一頁都有自己的框、選中的那頁下緣是一條主色線。
+ * 所以這個殼只剩「把分頁列跟面板排在一起」這一件事。
+ *
+ * ★★★ `overflow-hidden` **拿掉了**。
+ *   舊版靠它吃圓角,但它同時是一個坑:`.glass` 的 `backdrop-blur`
+ *   會讓裡面 `position: fixed` 的彈窗改以這個殼為定位基準而被裁掉。
+ *   現在不需要它,那個坑也就不存在了 —— `tone="page"` 也可以放心包。
  *
  * 用法:
  *   <TabShell tabs={<Tabs variant="browser" … />}>
@@ -248,15 +258,23 @@ function Badge({ n, on }: { n?: number; on: boolean }) {
  */
 export function TabShell({ tabs, children, tone = 'paper', className = '' }: {
   tabs: ReactNode; children: ReactNode;
-  /** ★ 要跟裡面那個 `<Tabs tone>` **填一樣的值** —— 不一樣的話接縫會露邊 */
+  /** ★ 要跟裡面那個 `<Tabs tone>` **填一樣的值** —— 面板色要跟選中那頁一致 */
   tone?: 'paper' | 'page';
   className?: string;
 }) {
   return (
-    <div className={`rounded-xl border border-mor-line overflow-hidden
-                     ${tone === 'page' ? 'bg-mor-bg' : 'bg-white'} ${className}`}>
+    <div className={className}>
       {tabs}
-      {children}
+      {/*
+        ★ 面板不做左上圓角（`rounded-tl-none`）—— 第一頁選中時
+          分頁的左緣要跟面板的左緣切齊,做圓角會露出一個缺口。
+        ★ `-mt-px` 讓面板的上框線疊在分頁的下緣線底下,
+          不然會出現兩條平行線。
+      */}
+      <div className={`-mt-px rounded-xl rounded-tl-none border border-mor-line
+                       ${tone === 'page' ? 'bg-mor-bg' : 'bg-white'}`}>
+        {children}
+      </div>
     </div>
   );
 }

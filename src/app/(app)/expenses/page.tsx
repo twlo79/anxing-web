@@ -7,6 +7,8 @@ import MoneyInput from '@/components/MoneyInput';
 import { missingFields, missingMessage } from '@/lib/required';
 import Toast from '@/components/Toast';
 import FilterToggle from '@/components/FilterToggle';
+import InfoDot from '@/components/InfoDot';
+import { BarPanel, BarRow, BarEmpty } from '@/components/BarList';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
@@ -427,52 +429,51 @@ export default function ExpensesPage() {
           </div>
         </div>
 
-        <div className="rounded-xl glass p-4">
-          <div className="text-sm font-medium mb-3">會計科目分項</div>
-          <div className="space-y-1.5 max-h-44 overflow-auto pr-1">
-            {byCode.length === 0 ? <div className="text-xs text-gray-400">無資料</div> : byCode.map(([c, v]) => (
-              <div key={c} className="flex items-center gap-2 text-xs">
-                <div className="w-20 shrink-0 truncate">{codeName[c] ?? c}</div>
-                <div className="flex-1 h-2 rounded bg-mor-sand/60 overflow-hidden">
-                  <div className="h-full bg-mor-blue" style={{ width: `${Math.max(2, (v / maxCode) * 100)}%` }} />
-                </div>
-                <div className="min-w-[5rem] shrink-0 whitespace-nowrap text-right tabular-nums">${fmt(v)}</div>
-              </div>
-            ))}
-          </div>
-        </div>
+        {/*
+          ══════════════════════════════════════════════════════
+          ★★★ 三張分項卡改用共用的 `BarPanel` / `BarRow`
+               （2026-08-29 使用者:「卡片裡小字變大 / 不要有滾輪全顯示 /
+                 全版面都優化一致標準 / 字的空間編排優化」）。
 
-        <div className="rounded-xl glass p-4">
-          <div className="text-sm font-medium mb-3">物業分項</div>
-          <div className="space-y-1.5 max-h-44 overflow-auto pr-1">
-            {byPurpose.length === 0 ? <div className="text-xs text-gray-400">無資料</div> : byPurpose.map(([k, v]) => (
-              <div key={k} className="flex items-center gap-2 text-xs">
-                <div className="w-20 shrink-0 truncate">{k === '__office' ? '安幸辦公室' : k === '__none' ? '—' : estateName[k] ?? '—'}</div>
-                <div className="flex-1 h-2 rounded bg-mor-sand/60 overflow-hidden">
-                  <div className="h-full bg-mor-green" style={{ width: `${Math.max(2, (v / maxPurpose) * 100)}%` }} />
-                </div>
-                <div className="min-w-[5rem] shrink-0 whitespace-nowrap text-right tabular-nums">${fmt(v)}</div>
-              </div>
-            ))}
-          </div>
-        </div>
+            這三張原本是 `glass p-4` ＋ `text-xs` ＋ `max-h-44 overflow-auto`,
+            而清潔、收入、評價、短租那四頁的同款面板是
+            「白卡 ＋ 標題列 ＋ text-sm ＋ 不捲」—— 這頁是少數派,改過來。
+
+          ★ 捲軸拿掉之後這三張會變高（科目有十幾個），
+            整排卡片跟著變高。那是刻意的:這種面板的用途是
+            「一眼看完分布」,而捲軸裡的東西等於不存在。
+          ══════════════════════════════════════════════════════
+        */}
+        <BarPanel title="會計科目分項">
+          {byCode.length === 0 ? <BarEmpty /> : byCode.map(([c, v]) => (
+            <BarRow key={c} tone="blue"
+              label={codeName[c] ?? c} title={codeName[c] ?? c}
+              pct={(v / maxCode) * 100} value={`$${fmt(v)}`} />
+          ))}
+        </BarPanel>
+
+        <BarPanel title="物業分項">
+          {byPurpose.length === 0 ? <BarEmpty /> : byPurpose.map(([k, v]) => {
+            const name = k === '__office' ? '安幸辦公室' : k === '__none' ? '—' : estateName[k] ?? '—';
+            return (
+              <BarRow key={k} tone="green" label={name} title={name}
+                pct={(v / maxPurpose) * 100} value={`$${fmt(v)}`} />
+            );
+          })}
+        </BarPanel>
 
         {/* 帳戶分項:點一列可直接篩選成該帳戶 */}
-        <div className="rounded-xl glass p-4">
-          <div className="text-sm font-medium mb-3">帳戶分項</div>
-          <div className="space-y-1.5 max-h-44 overflow-auto pr-1">
-            {byAccount.length === 0 ? <div className="text-xs text-gray-400">無資料</div> : byAccount.map(([k, v]) => (
-              <button key={k} onClick={() => setAcctF(acctF === k ? '' : k)}
-                className={`w-full flex items-center gap-2 text-xs rounded px-1 py-0.5 ${acctF === k ? 'bg-mor-bluelight' : 'hover:bg-white/45'}`}>
-                <div className="w-20 shrink-0 truncate text-left">{k === '__cash' ? '現金/未指定' : acctName[k] ?? k}</div>
-                <div className="flex-1 h-2 rounded bg-mor-sand/60 overflow-hidden">
-                  <div className="h-full bg-mor-slate" style={{ width: `${Math.max(2, (v / maxAccount) * 100)}%` }} />
-                </div>
-                <div className="min-w-[5rem] shrink-0 whitespace-nowrap text-right tabular-nums">${fmt(v)}</div>
-              </button>
-            ))}
-          </div>
-        </div>
+        <BarPanel title="帳戶分項">
+          {byAccount.length === 0 ? <BarEmpty /> : byAccount.map(([k, v]) => {
+            const name = k === '__cash' ? '現金/未指定' : acctName[k] ?? k;
+            return (
+              <BarRow key={k} tone="slate" label={name} title={name}
+                pct={(v / maxAccount) * 100} value={`$${fmt(v)}`}
+                active={acctF === k}
+                onClick={() => setAcctF(acctF === k ? '' : k)} />
+            );
+          })}
+        </BarPanel>
       </div>
 
       {/* 工具列 */}
@@ -516,13 +517,45 @@ export default function ExpensesPage() {
 
           ★ 它**留在篩選卡裡** —— 它是一個篩選條件（「只看哪些」），
             不是動作。跟旁邊的下拉是同一類東西,只是長得像按鈕。
+
+          ══════════════════════════════════════════════════════
+          ★★★ 只留星星,「關注」兩個字拿掉,旁邊放一顆 ⓘ
+               （2026-08-29 使用者:「只做星星 旁邊 i 點下去有說明 節省空間」）。
+
+            這一列有八個欄位,在 1440 寬會擠到換行。星星本身就是
+            全站表格裡「關注」的記號（列上那一欄也是 ★/☆），
+            所以文字是重複的。
+
+          ★★ 但**圖示不會自己說話**。只留星星的話,第一次看到的人
+            不知道它在篩什麼 —— 而 `title` 只有滑鼠停留看得到,
+            手機沒有 hover。所以配一顆點得下去的 ⓘ。
+
+          ★ 按鈕本身要 `aria-label` ＋ `aria-pressed`:
+            讀螢幕的人聽到的不能只是「星號」,而且要知道它現在是開還是關。
+          ══════════════════════════════════════════════════════
         */}
         <FieldSpacer>
-          <button onClick={() => setStarF(!starF)}
-            className={`${FILTER_BTN_H} rounded-lg border px-4 font-medium ${
-              starF ? 'border-amber-400 bg-amber-50 text-amber-700' : 'border-mor-line bg-white text-gray-600 hover:bg-mor-sand/60'}`}>
-            {starF ? '★ 關注' : '☆ 關注'}
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button onClick={() => setStarF(!starF)}
+              aria-label={starF ? '只看關注（已開啟）' : '只看關注'}
+              aria-pressed={starF}
+              title={starF ? '只看關注（已開啟）' : '只看關注'}
+              className={`${FILTER_BTN_H} w-11 rounded-lg border text-lg leading-none ${
+                starF ? 'border-amber-400 bg-amber-50 text-amber-600' : 'border-mor-line bg-white text-gray-400 hover:bg-mor-sand/60'}`}>
+              {starF ? '★' : '☆'}
+            </button>
+            <InfoDot label="關注是什麼">
+              <b className="text-gray-800">只看關注</b>
+              <br />
+              按下去只留下標了 ★ 的支出。★ 是每一列最左邊那一欄，
+              點一下就標、再點一下取消 —— 用來把「要追的那幾筆」
+              先挑出來，跟金額大小無關。
+              <br />
+              <span className="text-gray-500">
+                遞延的母子單會一起連動：標了母單，拆出去的每一期也會跟著標。
+              </span>
+            </InfoDot>
+          </div>
         </FieldSpacer>
         <FieldSpacer>
           {(fromD || toD || codeF || payF || purposeF || acctF || kw || starF) && (

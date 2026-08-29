@@ -41,6 +41,7 @@ import TrashLink from '@/components/TrashLink';
 import { checkDates, checkPrice, checkRequired, lookbackFrom, type PastOrder } from '@/lib/order-check';
 import MoneyInput from '@/components/MoneyInput';
 import RangeInput from '@/components/RangeInput';
+import { BarPanel, BarRow, BarEmpty } from '@/components/BarList';
 
 type Order = {
   id: string; order_key: string; source: string; estate_id: string | null; property_id?: string | null; property_raw: string | null;
@@ -1017,26 +1018,36 @@ export default function ShortTermPage() {
           {/* 暫收款移到「押金管理」頁 —— 那裡才看得到契約押金,只算短租的數字是不完整的 */}
           <div className="text-xs opacity-60 mt-1">{total.toLocaleString()} 筆・押金非營收</div>
         </div>
-        <div className="rounded-xl bg-white border border-mor-line overflow-hidden">
-          <div className="px-4 py-2.5 text-sm font-semibold border-b border-mor-line bg-white/45">依來源</div>
-          <div>
-            {SRC.filter((sc) => bySource[sc]).map((sc) => (
-              <div key={sc} onClick={() => setSrc(src === sc ? '' : sc)} className={`px-4 py-2 flex items-center justify-between text-sm border-b border-mor-line/50 last:border-0 cursor-pointer hover:bg-mor-bluelight/40 ${src === sc ? 'bg-mor-bluelight/60' : ''}`}>
-                <span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${SRC_COLOR[sc]}`}>{SRC_LABEL[sc]}</span>
-                <span className="font-semibold">${fmt(bySource[sc])}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div className="rounded-xl bg-white border border-mor-line overflow-hidden">
-          <div className="px-4 py-2.5 text-sm font-semibold border-b border-mor-line bg-white/45">依物業</div>
-          <div className="max-h-44 overflow-y-auto">
-            {byEstate.map(([e, v]) => { const id = estates.find((x) => x.name === e)?.id || ''; return (
-              <div key={e} onClick={() => setEstF(estF === id ? '' : id)} className={`px-4 py-1.5 flex items-center justify-between text-sm border-b border-mor-line/50 last:border-0 cursor-pointer hover:bg-mor-bluelight/40 ${estF && estF === id ? 'bg-mor-bluelight/60' : ''}`}>
-                <span className="truncate">{e}</span><span className="font-semibold whitespace-nowrap">${fmt(v as number)}</span>
-              </div>); })}
-          </div>
-        </div>
+        {/* ★ 改用共用的 BarPanel/BarRow（2026-08-29）。來源本來沒有長條 ——
+              補上之後才看得出「Airbnb 佔幾成」，而那是這張卡在問的問題 */}
+        <BarPanel title="依來源">
+          {SRC.filter((sc) => bySource[sc]).length === 0 ? <BarEmpty /> : (() => {
+            const list = SRC.filter((sc) => bySource[sc]);
+            const max = Math.max(...list.map((sc) => bySource[sc])) || 1;
+            return list.map((sc) => (
+              <BarRow key={sc} tone="blue"
+                label={<span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${SRC_COLOR[sc]}`}>{SRC_LABEL[sc]}</span>}
+                title={SRC_LABEL[sc]}
+                pct={(bySource[sc] / max) * 100}
+                value={`$${fmt(bySource[sc])}`}
+                active={src === sc}
+                onClick={() => setSrc(src === sc ? '' : sc)} />
+            ));
+          })()}
+        </BarPanel>
+        {/* ★ 捲軸拿掉（原本 max-h-44 只露四個物業）＋ 補上長條 */}
+        <BarPanel title="依物業">
+          {byEstate.length === 0 ? <BarEmpty /> : byEstate.map(([e, v]) => {
+            const id = estates.find((x) => x.name === e)?.id || '';
+            return (
+              <BarRow key={e} tone="green" label={e} title={e}
+                pct={((v as number) / ((byEstate[0]?.[1] as number) || 1)) * 100}
+                value={`$${fmt(v as number)}`}
+                active={!!estF && estF === id}
+                onClick={() => setEstF(estF === id ? '' : id)} />
+            );
+          })}
+        </BarPanel>
       </div>
 
       {/*

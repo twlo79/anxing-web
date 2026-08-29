@@ -184,7 +184,36 @@ describe('三張卡片的合計', () => {
       { name: '48088', balance: 262_433, asOf: '2025-12-31' },
     ]);
     assert.equal(r.asOf, '2025-03-31');
+    assert.equal(r.newestAsOf, '2025-12-31');
     assert.deepEqual(r.stale, ['24145']);
+  });
+
+  /*
+   * ★★★ 只更新其中一個帳戶（2026-08-29 使用者問「對帳單日期會怎麼寫？」）。
+   *
+   *   剛傳完 24145 的新對帳單,另外兩個還停在舊的日期。
+   *   這時候標題列**不能只印一個日期**:
+   *     · 印最新的 → 合計看起來像現在的現金,而其中兩個是三個月前的
+   *     · 印最舊的 → 剛上傳的人會以為自己白傳了
+   *   所以兩個都要拿得到,畫面才寫得出「08/25 ~ 12/31 未對齊」。
+   */
+  test('★★★ 只更新一個帳戶 → 落後的是「另外兩個」,而且兩個日期都要拿得到', () => {
+    const r = totalBalance([
+      { name: '70564', balance: 81_977, asOf: '2025-09-30' },
+      { name: '24145', balance: 6_590, asOf: '2025-12-31' },
+      { name: '48088', balance: 262_433, asOf: '2025-09-30' },
+    ]);
+    assert.equal(r.asOf, '2025-09-30');
+    assert.equal(r.newestAsOf, '2025-12-31');
+    assert.deepEqual(r.stale, ['70564', '48088']);
+  });
+
+  test('★ 三份對齊時 newestAsOf 等於 asOf —— 畫面才知道不用印區間', () => {
+    const r = totalBalance([
+      { name: 'a', balance: 1, asOf: '2025-06-30' },
+      { name: 'b', balance: 2, asOf: '2025-06-30' },
+    ]);
+    assert.equal(r.asOf, r.newestAsOf);
   });
 
   test('★★ 還沒上傳的帳戶不算進合計,但要點名', () => {
@@ -201,6 +230,7 @@ describe('三張卡片的合計', () => {
     const r = totalBalance([{ name: 'x', balance: null, asOf: null }]);
     assert.equal(r.total, 0);
     assert.equal(r.asOf, null);
+    assert.equal(r.newestAsOf, null);
     assert.deepEqual(r.missing, ['x']);
   });
 });

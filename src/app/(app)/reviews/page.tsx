@@ -18,6 +18,7 @@ import {
   canHideReview, isHidden, hideError, hideReasonText, hideImpactText, HIDE_REASONS,
 } from '@/lib/review-hide';
 import RangeInput from '@/components/RangeInput';
+import { BarPanel, BarRow, BarEmpty } from '@/components/BarList';
 import { EXPORT_TONE, ExportButton } from '@/components/Actions';
 import { ActionRow, FilterCount, FieldSpacer, FILTER_BTN_H } from '@/lib/filters';
 
@@ -578,60 +579,63 @@ export default function ReviewsPage() {
             </div>
           </div>
 
-          {/* 物業評分 */}
-          <div className="rounded-xl bg-white border border-mor-line flex flex-col overflow-hidden">
-            <div className="px-4 py-2.5 text-sm font-semibold border-b border-mor-line bg-white/45">物業評分</div>
-            <div className="flex-1">
-              {[...stats].filter((x) => Number(x.review_count) > 0).sort((a, b) => Number(a.sort) - Number(b.sort)).map((x, _, arr) => {
-                const max = Math.max(...arr.map((y) => Number(y.review_count))) || 1;
-                return (
-                  <div key={x.estate_id} onClick={() => setListModal({ title: `物業「${x.estate_name}」的評價`, propIds: properties.filter((pp) => pp.estate_id === x.estate_id).map((pp) => pp.id), rating: null })} title="點擊查看該物業評價"
-                    className="px-4 py-2 flex items-center gap-3 text-sm border-b border-mor-line/50 last:border-0 cursor-pointer hover:bg-mor-bluelight/50">
-                    <span className={`w-14 truncate font-medium ${x.active === false ? 'text-gray-400' : ''}`}
-                      title={x.active === false ? `${x.estate_name}（已停用）` : x.estate_name}>
-                      {x.estate_name}
-                    </span>
-                    <div className="flex-1 h-1.5 rounded-full bg-mor-sand overflow-hidden">
-                      <div className="h-full bg-mor-blue" style={{ width: `${(Number(x.review_count) / max) * 100}%` }} />
-                    </div>
-                    <span className={`min-w-[4rem] shrink-0 whitespace-nowrap text-right font-semibold ${Number(x.avg_rating) < 4.5 ? 'text-orange-600' : 'text-mor-ink'}`}>
-                      {Number(x.avg_rating).toFixed(2)} ★
-                    </span>
-                    <span className="w-14 shrink-0 whitespace-nowrap text-right text-xs text-gray-400">{Number(x.review_count).toLocaleString()} 筆</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+          {/*
+            物業評分。★ 改用共用的 BarPanel/BarRow（2026-08-29）——
+            名稱欄從 `w-14`（56px）放寬到 `w-28`,原本三個字以上的物業名
+            就開始被截斷,而物業名稱正是這張卡在講的東西。
+          */}
+          <BarPanel title="物業評分">
+            {stats.filter((x) => Number(x.review_count) > 0).length === 0 ? <BarEmpty /> : (
+              [...stats].filter((x) => Number(x.review_count) > 0)
+                .sort((a, b) => Number(a.sort) - Number(b.sort))
+                .map((x, _, arr) => {
+                  const max = Math.max(...arr.map((y) => Number(y.review_count))) || 1;
+                  return (
+                    <BarRow key={x.estate_id} tone="blue"
+                      label={<span className={x.active === false ? 'text-gray-400' : ''}>{x.estate_name}</span>}
+                      title={x.active === false ? `${x.estate_name}（已停用）` : x.estate_name}
+                      pct={(Number(x.review_count) / max) * 100}
+                      value={
+                        <span className={Number(x.avg_rating) < 4.5 ? 'text-orange-600' : 'text-mor-ink'}>
+                          {Number(x.avg_rating).toFixed(2)} ★
+                        </span>
+                      }
+                      note={`${Number(x.review_count).toLocaleString()} 筆`}
+                      onClick={() => setListModal({
+                        title: `物業「${x.estate_name}」的評價`,
+                        propIds: properties.filter((pp) => pp.estate_id === x.estate_id).map((pp) => pp.id),
+                        rating: null,
+                      })} />
+                  );
+                })
+            )}
+          </BarPanel>
 
           {/* 管家評分 */}
-          <div className="rounded-xl bg-white border border-mor-line flex flex-col overflow-hidden">
-            <div className="px-4 py-2.5 flex items-center justify-between border-b border-mor-line bg-white/45">
-              <span className="text-sm font-semibold">管家評分</span>
-              <button onClick={exportMgrXlsx} disabled={exportingMgr}
-                className={`rounded-lg px-2.5 py-0.5 text-xs disabled:opacity-40 ${EXPORT_TONE}`}>
-                {exportingMgr ? '產生中…' : '⬇ Excel'}
-              </button>
-            </div>
-            <div className="flex-1">
-              {[...mgrStats].sort((a, b) => mgrOrder(a.manager) - mgrOrder(b.manager)).map((m, _, arr) => {
+          <BarPanel title="管家評分" right={
+            <button onClick={exportMgrXlsx} disabled={exportingMgr}
+              className={`rounded-lg px-2.5 py-0.5 text-xs disabled:opacity-40 ${EXPORT_TONE}`}>
+              {exportingMgr ? '產生中…' : '⬇ Excel'}
+            </button>
+          }>
+            {mgrStats.length === 0 ? <BarEmpty /> : (
+              [...mgrStats].sort((a, b) => mgrOrder(a.manager) - mgrOrder(b.manager)).map((m, _, arr) => {
                 const max = Math.max(...arr.map((y) => Number(y.total))) || 1;
                 return (
-                  <button key={m.manager} onClick={() => setMgrOpen(m)}
-                    className="w-full px-4 py-2 flex items-center gap-3 text-sm border-b border-mor-line/50 last:border-0 hover:bg-mor-bluelight/40 text-left">
-                    <span className="w-14 truncate font-medium">{m.manager}</span>
-                    <div className="flex-1 h-1.5 rounded-full bg-mor-sand overflow-hidden">
-                      <div className="h-full bg-mor-green" style={{ width: `${(Number(m.total) / max) * 100}%` }} />
-                    </div>
-                    <span className={`min-w-[4rem] shrink-0 whitespace-nowrap text-right font-semibold ${Number(m.avg_rating) < 4.5 ? 'text-orange-600' : 'text-mor-ink'}`}>
-                      {Number(m.avg_rating).toFixed(2)} ★
-                    </span>
-                    <span className="min-w-[4rem] shrink-0 whitespace-nowrap text-right text-xs text-gray-400">{Number(m.total).toLocaleString()} 筆 ›</span>
-                  </button>
+                  <BarRow key={m.manager} tone="green"
+                    label={m.manager} title={m.manager}
+                    pct={(Number(m.total) / max) * 100}
+                    value={
+                      <span className={Number(m.avg_rating) < 4.5 ? 'text-orange-600' : 'text-mor-ink'}>
+                        {Number(m.avg_rating).toFixed(2)} ★
+                      </span>
+                    }
+                    note={`${Number(m.total).toLocaleString()} 筆 ›`}
+                    onClick={() => setMgrOpen(m)} />
                 );
-              })}
-            </div>
-          </div>
+              })
+            )}
+          </BarPanel>
         </div>
       </div>
 
