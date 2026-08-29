@@ -80,13 +80,62 @@ export function Tabs<T extends string>({
   items: readonly TabItem<T>[];
   value: T;
   onChange: (k: T) => void;
-  /** segment = 換這一頁的區塊；solid = 換哪一份資料 */
-  variant?: 'segment' | 'solid';
+  /**
+   * segment = 換這一頁的區塊（浮著）
+   * solid   = 換哪一份資料（圓膠囊，浮著）
+   * browser = Chrome 式分頁 —— **必須包在 `<TabShell>` 裡**，見下方
+   */
+  variant?: 'segment' | 'solid' | 'browser';
   /** sm 給「分頁裡的分頁」用 —— 兩層一樣大的話看不出誰包誰 */
   size?: 'sm' | 'md';
   className?: string;
 }) {
   const md = size === 'md';
+
+  /*
+   * ══════════════════════════════════════════════════════════
+   * Chrome 式分頁。**只能放在 `<TabShell>` 裡**。
+   *
+   * ★★★ 為什麼一定要有那個殼（2026-08-29 使用者:「銜接怪怪的」）
+   *
+   *   第一版讓分頁**浮在面板上方**,結果三個結構性問題:
+   *
+   *     ① 選中第二個時,面板的左上角是圓的 —— 分頁掛在半空中接不上。
+   *        要配合「選第幾個」去改面板圓角,那是永遠修不完的。
+   *     ② 分頁列與面板是兩個獨立元素,中間**永遠會差一條縫**。
+   *     ③ 外凸圓角用 `::before/::after` 要**寫死背景色**,換底色就露餡。
+   *
+   * ★★ 修法:**分頁列是面板的一部分**。
+   *   分頁列有自己的底色（比面板深一階）,選中的那頁是面板色、
+   *   直接連到下面,中間沒有線。
+   *
+   *   這樣**選第幾個都對** —— 面板永遠是完整的方框。
+   *
+   * ★ 這也是 Chrome 真正的做法:它的分頁列是**視窗的一部分**,
+   *   不是浮在視窗上面的東西。
+   * ══════════════════════════════════════════════════════════
+   */
+  if (variant === 'browser') {
+    return (
+      <div className={`flex gap-[3px] overflow-x-auto bg-mor-sand px-1.5 pt-1.5 ${className}`}
+        role="tablist">
+        {items.map((t) => {
+          const on = t.key === value;
+          return (
+            <button key={t.key} type="button" role="tab" aria-selected={on}
+              onClick={() => onChange(t.key)}
+              className={`${md ? 'px-4 py-2 text-ui' : 'px-3 py-1.5 text-uisub'}
+                rounded-t-[9px] font-medium whitespace-nowrap transition-colors ${
+                on ? 'bg-white text-mor-slate'
+                   : 'text-gray-500 hover:bg-white/50'}`}>
+              {t.label}
+              <Badge n={t.badge} on={on} />
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
 
   if (variant === 'solid') {
     return (
@@ -149,5 +198,30 @@ function Badge({ n, on }: { n?: number; on: boolean }) {
       on ? 'bg-mor-slate text-white' : 'bg-amber-100 text-amber-800'}`}>
       {n > 99 ? '99+' : n}
     </span>
+  );
+}
+
+/**
+ * Chrome 式分頁的外殼:**分頁列 ＋ 面板是同一個容器**。
+ *
+ * ★ `overflow-hidden` 讓分頁列的上緣自動吃到容器的圓角 ——
+ *   分頁自己不用管圓角要幾度。
+ *
+ * ★ 面板是實心白（不是 `glass`）—— 分頁列靠「白 vs 沙色」的色差
+ *   撐起形狀,半透明會讓那個色差隨背景浮動。
+ *
+ * 用法:
+ *   <TabShell tabs={<Tabs variant="browser" … />}>
+ *     …面板內容…
+ *   </TabShell>
+ */
+export function TabShell({ tabs, children, className = '' }: {
+  tabs: ReactNode; children: ReactNode; className?: string;
+}) {
+  return (
+    <div className={`rounded-xl border border-mor-line bg-white overflow-hidden ${className}`}>
+      {tabs}
+      {children}
+    </div>
   );
 }

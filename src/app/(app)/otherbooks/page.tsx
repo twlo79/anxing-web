@@ -7,7 +7,7 @@ import Req from '@/components/Req';
 import MoneyInput from '@/components/MoneyInput';
 import Toast from '@/components/Toast';
 import StatCard, { StatRow } from '@/components/StatCard';
-import { Tabs } from '@/components/Tabs';
+import { Tabs, TabShell } from '@/components/Tabs';
 import {
   OTHER_BOOKS, BOOK_LABEL, BOOK_BIZ, OTHER_BIZ_SOURCE, OTHER_BIZ_PURPOSE, type Book,
 } from '@/lib/book';
@@ -283,196 +283,213 @@ export default function OtherBooksPage() {
            使用者會以為那是四個平行的選項。
         ══════════════════════════════════════════════════════════
       */}
-      <Tabs variant="solid" className="mb-3"
+      {/*
+        ★ 上層用 `segment`（使用者指定）—— 浮在頁面上,換的是「哪一份資料」。
+          下層用 `browser` 黏在面板上,換的是「這份資料怎麼看」。
+          一個浮、一個黏,層級一眼分得出來。
+      */}
+      <Tabs variant="segment" className="mb-3"
         value={book} onChange={(b) => { setBook(b); setF({}); }}
         items={OTHER_BOOKS.map((b) => ({ key: b, label: BOOK_LABEL[b] }))} />
-
-      <Tabs variant="segment" className="mb-4"
-        value={tab} onChange={setTab}
-        items={[{ key: 'ledger' as const, label: '收支帳' }, { key: 'dash' as const, label: '儀錶板' }]} />
 
       {err && (
         <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700 mb-3">{err}</div>
       )}
 
-      {/* 月份 ＋ 三個新增入口 */}
       {/*
-        手機上月份自己一行、三顆新增按鈕平分寬度。
-        用 flex-wrap 讓它們自然折行的話，會變成「兩顆一行、一顆掉下來」——
-        那個落單的按鈕看起來像壞掉。
+        ★★★ 分頁列與面板包在同一個 `<TabShell>` 裡（2026-08-29「銜接怪怪的」）。
+
+          原本分頁浮在面板上方 —— 選中第二個時面板左上角是圓的,
+          分頁掛在半空中接不上。包進同一個殼之後,
+          **選第幾個都對**,面板永遠是完整的方框。
       */}
-      <div className="flex flex-wrap items-center gap-2 mb-2 md:mb-4">
-        <input type="month" value={ym} onChange={(e) => setYm(e.target.value || thisYm())}
-          className="h-10 md:h-9 rounded-lg border border-mor-line bg-white px-2 text-sm" />
-        <div className="mr-auto text-xs text-gray-400">
-          {loading ? '載入中…' : `共 ${shown.length} 筆`}
-        </div>
-        {tab === 'ledger' && (
-          <div className="w-full md:w-auto grid grid-cols-3 md:flex gap-2">
-            <button onClick={() => { setErr(''); setInc({ date: today(), party: '', code: '', item: '', amount: 0, account: '', paid: true, note: '' }); }}
-              className="h-11 md:h-9 rounded-lg bg-mor-slate text-white px-2 md:px-4 text-sm font-medium hover:bg-mor-slatedark">
-              ＋ 收入
-            </button>
-            {/*
-              請款要走審核（愛皮洪鯊只要總經理一票）—— 導到請款頁，
-              不在這裡做一套。兩套審核流程遲早會不一致。
-            */}
-            <a href="/purchases"
-              className="h-11 md:h-9 flex items-center justify-center rounded-lg border border-mor-line bg-white px-2 md:px-4 text-sm font-medium hover:bg-mor-sand/60">
-              ＋ 請款
-            </a>
-            <button onClick={() => { setErr(''); setExp({ date: today(), item: '', code: '', amount: 0, method: 'cash', account: '', voucher: '', note: '' }); }}
-              className="h-11 md:h-9 rounded-lg border border-mor-line bg-white px-2 md:px-4 text-sm font-medium hover:bg-mor-sand/60">
-              ＋ 支出
-            </button>
+      <TabShell className="mb-4" tabs={
+        <Tabs variant="browser" value={tab} onChange={setTab}
+          items={[{ key: 'ledger' as const, label: '收支帳' },
+                  { key: 'dash' as const, label: '儀錶板' }]} />
+      }>
+        <div className="p-4">
+        {/* 月份 ＋ 三個新增入口 */}
+        {/*
+          手機上月份自己一行、三顆新增按鈕平分寬度。
+          用 flex-wrap 讓它們自然折行的話，會變成「兩顆一行、一顆掉下來」——
+          那個落單的按鈕看起來像壞掉。
+        */}
+        <div className="flex flex-wrap items-center gap-2 mb-2 md:mb-4">
+          <input type="month" value={ym} onChange={(e) => setYm(e.target.value || thisYm())}
+            className="h-10 md:h-9 rounded-lg border border-mor-line bg-white px-2 text-sm" />
+          <div className="mr-auto text-xs text-gray-400">
+            {loading ? '載入中…' : `共 ${shown.length} 筆`}
           </div>
-        )}
-      </div>
-
-      {tab === 'ledger' ? (
-        <>
-          {/*
-            ══════════════════════════════════════════════════════
-            篩選列（2026-08-29 改用全站共用元件 lib/filters.tsx）
-
-            ★ 原本三個欄位**沒有小標題** —— 靠選項自己說話
-              （「收入與支出」「全部科目」）。那在只有三欄時勉強可讀,
-              但跟全站其他頁不一致:別頁是「標題在上、選項寫『全部』」。
-
-            ★ 手機的兩欄網格拿掉了。globals.css 的 `.filter-bar` 會把
-              篩選列在手機轉成直向、每欄滿版 —— 那比兩欄各 110px 好讀。
-
-            ★★ 關鍵字**沒有搜尋鈕**:這一頁的資料已經整批在前端了,
-              邊打邊篩不花成本（跟客戶管理同一個理由）。
-            ══════════════════════════════════════════════════════
-          */}
-          <FilterBar active={!!(f.kind || f.code || f.kw)}>
-            <FilterSelect label="收支" value={f.kind ?? ''}
-              onChange={(v) => setF({ ...f, kind: v as Filters['kind'] })}
-              all="全部"
-              options={[{ value: 'income', label: '只看收入' }, { value: 'expense', label: '只看支出' }]} />
-            <FilterSelect label="科目" value={f.code ?? ''}
-              onChange={(v) => setF({ ...f, code: v })}
-              options={codes.map((c) => ({ value: c.code, label: c.name }))} />
-            <Field label="關鍵字">
-              <input value={f.kw ?? ''} onChange={(e) => setF({ ...f, kw: e.target.value })}
-                placeholder="項目／對象／備註" className={`${FILTER_CTRL} w-48`} />
-            </Field>
-            <FilterClear active={!!(f.kind || f.code || f.kw)} onClear={() => setF({})} />
-          </FilterBar>
-
-          {/*
-            小計。篩選之後也要更新 —— 不然篩了半天上面還是全月的數字。
-
-            ★★ 改用共用的 StatCard（2026-08-25）。原本是 `bg-mor-sand/30` 的
-              小方塊 —— 全站第 4 種統計卡的長相,而它跟旁邊那些卡是同一種東西。
-
-            ★ 顏色留著:收入綠、支出紅、淨額負數才紅。
-              這裡的紅**不是**警示,是會計上的借貸方向,
-              所以由呼叫端決定,不進 StatCard 的 tone。
-          */}
-          <StatRow cols={3} className="mb-3">
-            {([['收入', sum.income, 'text-mor-green'], ['支出', sum.expense, 'text-red-600'],
-              ['淨額', sum.net, sum.net < 0 ? 'text-red-600' : '']] as const).map(([l, v, cls]) => (
-              <StatCard key={l} label={l} value={<span className={cls}>{fmt(v)}</span>} />
-            ))}
-          </StatRow>
-
-          {loading ? (
-            <div className="text-center text-gray-400 py-16">載入中…</div>
-          ) : !shown.length ? (
-            <div className="rounded-xl border border-dashed border-mor-line bg-white px-6 py-16 text-center text-gray-400">
-              {cur.length ? '沒有符合篩選的紀錄。' : `${BOOK_LABEL[book]}這個月還沒有收支紀錄。`}
+          {tab === 'ledger' && (
+            <div className="w-full md:w-auto grid grid-cols-3 md:flex gap-2">
+              <button onClick={() => { setErr(''); setInc({ date: today(), party: '', code: '', item: '', amount: 0, account: '', paid: true, note: '' }); }}
+                className="h-11 md:h-9 rounded-lg bg-mor-slate text-white px-2 md:px-4 text-sm font-medium hover:bg-mor-slatedark">
+                ＋ 收入
+              </button>
+              {/*
+                請款要走審核（愛皮洪鯊只要總經理一票）—— 導到請款頁，
+                不在這裡做一套。兩套審核流程遲早會不一致。
+              */}
+              <a href="/purchases"
+                className="h-11 md:h-9 flex items-center justify-center rounded-lg border border-mor-line bg-white px-2 md:px-4 text-sm font-medium hover:bg-mor-sand/60">
+                ＋ 請款
+              </a>
+              <button onClick={() => { setErr(''); setExp({ date: today(), item: '', code: '', amount: 0, method: 'cash', account: '', voucher: '', note: '' }); }}
+                className="h-11 md:h-9 rounded-lg border border-mor-line bg-white px-2 md:px-4 text-sm font-medium hover:bg-mor-sand/60">
+                ＋ 支出
+              </button>
             </div>
-          ) : (
-            <>
+          )}
+        </div>
+
+
+        {tab === 'ledger' ? (
+          <>
             {/*
-              ══════════ 手機卡片 ══════════
+              ══════════════════════════════════════════════════════
+              篩選列（2026-08-29 改用全站共用元件 lib/filters.tsx）
 
-              表格在 390px 寬只能橫向滑 —— 看得到但用不了
-              （docs/UI體檢-2026-08-19.md 的 P0 就是這件事）。
+              ★ 原本三個欄位**沒有小標題** —— 靠選項自己說話
+                （「收入與支出」「全部科目」）。那在只有三欄時勉強可讀,
+                但跟全站其他頁不一致:別頁是「標題在上、選項寫『全部』」。
 
-              ★ 卡片的排法是「錢在右邊、事在左邊」:
-                金額靠右對齊在同一條垂直線上，用眼睛掃就能比大小。
-                塞在文字中間的話每一列的位置都不一樣，得一個一個讀。
+              ★ 手機的兩欄網格拿掉了。globals.css 的 `.filter-bar` 會把
+                篩選列在手機轉成直向、每欄滿版 —— 那比兩欄各 110px 好讀。
+
+              ★★ 關鍵字**沒有搜尋鈕**:這一頁的資料已經整批在前端了,
+                邊打邊篩不花成本（跟客戶管理同一個理由）。
+              ══════════════════════════════════════════════════════
             */}
-            <div className="md:hidden space-y-2">
-              {shown.map((e) => (
-                <div key={`m-${e.kind}-${e.id}`} className="rounded-xl border border-mor-line bg-white px-3 py-2.5">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${
-                          e.kind === 'income' ? 'bg-mor-greenlight text-mor-green' : 'bg-red-50 text-red-600'}`}>
-                          {e.kind === 'income' ? '收' : '支'}
-                        </span>
-                        <span className="font-medium truncate">{e.name}</span>
-                        {e.kind === 'income' && !e.settled && (
-                          <span className="shrink-0 rounded bg-amber-50 text-amber-700 px-1.5 py-0.5 text-[11px]">未收</span>
-                        )}
-                      </div>
-                      <div className="text-[11px] text-gray-500 mt-1">
-                        {e.date}・{nameOf(e.account_code)}
-                        {e.party ? `・${e.party}` : ''}
-                      </div>
-                      {e.note && <div className="text-[11px] text-gray-400 mt-0.5 truncate">{e.note}</div>}
-                    </div>
-                    <div className={`shrink-0 text-right font-bold tabular-nums ${
-                      e.kind === 'income' ? '' : 'text-red-600'}`}>
-                      {e.kind === 'income' ? '' : '−'}{fmt(e.amount)}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <FilterBar active={!!(f.kind || f.code || f.kw)}>
+              <FilterSelect label="收支" value={f.kind ?? ''}
+                onChange={(v) => setF({ ...f, kind: v as Filters['kind'] })}
+                all="全部"
+                options={[{ value: 'income', label: '只看收入' }, { value: 'expense', label: '只看支出' }]} />
+              <FilterSelect label="科目" value={f.code ?? ''}
+                onChange={(v) => setF({ ...f, code: v })}
+                options={codes.map((c) => ({ value: c.code, label: c.name }))} />
+              <Field label="關鍵字">
+                <input value={f.kw ?? ''} onChange={(e) => setF({ ...f, kw: e.target.value })}
+                  placeholder="項目／對象／備註" className={`${FILTER_CTRL} w-48`} />
+              </Field>
+              <FilterClear active={!!(f.kind || f.code || f.kw)} onClear={() => setF({})} />
+            </FilterBar>
 
-            {/* 桌機表格 */}
-            <div className="hidden md:block rounded-xl border border-mor-line bg-white overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-mor-sand/40 text-xs text-gray-500">
-                  <tr>
-                    <th className="px-3 py-2 text-left whitespace-nowrap">日期</th>
-                    <th className="px-3 py-2 text-left">項目</th>
-                    <th className="px-3 py-2 text-left whitespace-nowrap">會計科目</th>
-                    <th className="px-3 py-2 text-left whitespace-nowrap">對象</th>
-                    <th className="px-3 py-2 text-right whitespace-nowrap">金額</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-mor-line/40">
-                  {shown.map((e) => (
-                    <tr key={`${e.kind}-${e.id}`} className="even:bg-mor-sand/20 hover:bg-mor-sand/60">
-                      <td className="px-3 py-2 whitespace-nowrap text-gray-500">{e.date}</td>
-                      <td className="px-3 py-2">
+            {/*
+              小計。篩選之後也要更新 —— 不然篩了半天上面還是全月的數字。
+
+              ★★ 改用共用的 StatCard（2026-08-25）。原本是 `bg-mor-sand/30` 的
+                小方塊 —— 全站第 4 種統計卡的長相,而它跟旁邊那些卡是同一種東西。
+
+              ★ 顏色留著:收入綠、支出紅、淨額負數才紅。
+                這裡的紅**不是**警示,是會計上的借貸方向,
+                所以由呼叫端決定,不進 StatCard 的 tone。
+            */}
+            <StatRow cols={3} className="mb-3">
+              {([['收入', sum.income, 'text-mor-green'], ['支出', sum.expense, 'text-red-600'],
+                ['淨額', sum.net, sum.net < 0 ? 'text-red-600' : '']] as const).map(([l, v, cls]) => (
+                <StatCard key={l} label={l} value={<span className={cls}>{fmt(v)}</span>} />
+              ))}
+            </StatRow>
+
+            {loading ? (
+              <div className="text-center text-gray-400 py-16">載入中…</div>
+            ) : !shown.length ? (
+              <div className="rounded-xl border border-dashed border-mor-line bg-white px-6 py-16 text-center text-gray-400">
+                {cur.length ? '沒有符合篩選的紀錄。' : `${BOOK_LABEL[book]}這個月還沒有收支紀錄。`}
+              </div>
+            ) : (
+              <>
+              {/*
+                ══════════ 手機卡片 ══════════
+
+                表格在 390px 寬只能橫向滑 —— 看得到但用不了
+                （docs/UI體檢-2026-08-19.md 的 P0 就是這件事）。
+
+                ★ 卡片的排法是「錢在右邊、事在左邊」:
+                  金額靠右對齊在同一條垂直線上，用眼睛掃就能比大小。
+                  塞在文字中間的話每一列的位置都不一樣，得一個一個讀。
+              */}
+              <div className="md:hidden space-y-2">
+                {shown.map((e) => (
+                  <div key={`m-${e.kind}-${e.id}`} className="rounded-xl border border-mor-line bg-white px-3 py-2.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
                           <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${
                             e.kind === 'income' ? 'bg-mor-greenlight text-mor-green' : 'bg-red-50 text-red-600'}`}>
                             {e.kind === 'income' ? '收' : '支'}
                           </span>
-                          <span className="truncate">{e.name}</span>
-                          {/* 還沒收的錢要標出來 —— 那是唯一會讓人今天做一件事的資訊 */}
+                          <span className="font-medium truncate">{e.name}</span>
                           {e.kind === 'income' && !e.settled && (
                             <span className="shrink-0 rounded bg-amber-50 text-amber-700 px-1.5 py-0.5 text-[11px]">未收</span>
                           )}
                         </div>
-                        {e.note && <div className="text-[11px] text-gray-400 truncate">{e.note}</div>}
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap text-gray-600">{nameOf(e.account_code)}</td>
-                      <td className="px-3 py-2 whitespace-nowrap text-gray-600">{e.party ?? '—'}</td>
-                      <td className={`px-3 py-2 text-right tabular-nums whitespace-nowrap ${
+                        <div className="text-[11px] text-gray-500 mt-1">
+                          {e.date}・{nameOf(e.account_code)}
+                          {e.party ? `・${e.party}` : ''}
+                        </div>
+                        {e.note && <div className="text-[11px] text-gray-400 mt-0.5 truncate">{e.note}</div>}
+                      </div>
+                      <div className={`shrink-0 text-right font-bold tabular-nums ${
                         e.kind === 'income' ? '' : 'text-red-600'}`}>
                         {e.kind === 'income' ? '' : '−'}{fmt(e.amount)}
-                      </td>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* 桌機表格 */}
+              <div className="hidden md:block rounded-xl border border-mor-line bg-white overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-mor-sand/40 text-xs text-gray-500">
+                    <tr>
+                      <th className="px-3 py-2 text-left whitespace-nowrap">日期</th>
+                      <th className="px-3 py-2 text-left">項目</th>
+                      <th className="px-3 py-2 text-left whitespace-nowrap">會計科目</th>
+                      <th className="px-3 py-2 text-left whitespace-nowrap">對象</th>
+                      <th className="px-3 py-2 text-right whitespace-nowrap">金額</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            </>
-          )}
-        </>
-      ) : (
-        <Dashboard rows={rows} cur={cur} ym={ym} nameOf={nameOf} loading={loading} book={book} />
-      )}
+                  </thead>
+                  <tbody className="divide-y divide-mor-line/40">
+                    {shown.map((e) => (
+                      <tr key={`${e.kind}-${e.id}`} className="even:bg-mor-sand/20 hover:bg-mor-sand/60">
+                        <td className="px-3 py-2 whitespace-nowrap text-gray-500">{e.date}</td>
+                        <td className="px-3 py-2">
+                          <div className="flex items-center gap-1.5">
+                            <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${
+                              e.kind === 'income' ? 'bg-mor-greenlight text-mor-green' : 'bg-red-50 text-red-600'}`}>
+                              {e.kind === 'income' ? '收' : '支'}
+                            </span>
+                            <span className="truncate">{e.name}</span>
+                            {/* 還沒收的錢要標出來 —— 那是唯一會讓人今天做一件事的資訊 */}
+                            {e.kind === 'income' && !e.settled && (
+                              <span className="shrink-0 rounded bg-amber-50 text-amber-700 px-1.5 py-0.5 text-[11px]">未收</span>
+                            )}
+                          </div>
+                          {e.note && <div className="text-[11px] text-gray-400 truncate">{e.note}</div>}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap text-gray-600">{nameOf(e.account_code)}</td>
+                        <td className="px-3 py-2 whitespace-nowrap text-gray-600">{e.party ?? '—'}</td>
+                        <td className={`px-3 py-2 text-right tabular-nums whitespace-nowrap ${
+                          e.kind === 'income' ? '' : 'text-red-600'}`}>
+                          {e.kind === 'income' ? '' : '−'}{fmt(e.amount)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              </>
+            )}
+          </>
+        ) : (
+          <Dashboard rows={rows} cur={cur} ym={ym} nameOf={nameOf} loading={loading} book={book} />
+        )}
+        </div>
+      </TabShell>
 
       {/* ══════════════ 新增收入 ══════════════ */}
       {inc && (

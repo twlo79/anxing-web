@@ -14,7 +14,7 @@ import { FilterCount, FieldSpacer, FILTER_BTN_H } from '@/lib/filters';
 import { ExportButton } from '@/components/Actions';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import FilterToggle from '@/components/FilterToggle';
-import { Tabs } from '@/components/Tabs';
+import { Tabs, TabShell } from '@/components/Tabs';
 
 /**
  * 帳戶明細 —— 三個銀行帳戶的流水鏡像。
@@ -407,27 +407,29 @@ export default function AccountsPage() {
       </StatRow>
 
       {/*
-        帳戶分頁 —— **層級 1:換哪一份資料**（圓膠囊，沒有容器）。
+        ── 流水 ──────────────────────────────────
 
-        ★ 跟卡片裡那組分段膠囊（流水／匯入紀錄）形狀不同、有沒有容器不同,
-          所以放在同一頁也不會混淆:圓的換資料、有框的換檢視。
+        ★★★ 帳戶分頁做成 **Chrome 式分頁,而且是這張卡的一部分**
+             （2026-08-29 使用者:「帳號也是 改用 google chrome 的 tab 形式」）。
+
+          第一版讓分頁浮在卡片上方,接縫怪 —— 選中第二個時
+          卡片的左上角是圓的,分頁掛在半空中。
+
+        ★ 包進 `<TabShell>` 之後,分頁列有自己的底色（比面板深一階）,
+          選中的那頁是白的、直接連到下面,**選第幾個都對**。
       */}
-      <Tabs variant="solid" className="mb-3"
-        value={tab} onChange={setTab}
-        items={accounts.map((a) => ({ key: a.id, label: a.name }))} />
+      <TabShell tabs={
+        <Tabs variant="browser" value={tab} onChange={setTab}
+          items={accounts.map((a) => ({ key: a.id, label: a.name }))} />
+      }>
+        {/*
+          ★ 這一列接在 Chrome 分頁下面 —— **不畫上緣圓角**，
+            那是分頁接上去的地方，畫了會出現一條白邊。
 
-      {/* ── 流水 ────────────────────────────────── */}
-      <div className="rounded-lg border border-mor-line bg-white">
-        <div className="flex flex-wrap items-center gap-2 rounded-t-lg border-b border-mor-line bg-mor-sand/30 px-3 py-2">
-          {/*
-            ★★★ 帳戶分頁**搬到頁面標題下面了**（2026-08-29）。
-
-              換帳戶會換掉整批交易 —— 那是「換哪一份資料」,是最高的層級。
-              擠在卡片標題列的角落等於說「這只是個小選項」。
-
-            ★ 這一列現在只留「換這張卡的檢視」:流水／匯入紀錄 ＋ 篩選開關。
-              它們只影響這張卡,所以留在卡上。
-          */}
+          ★ 這裡只留「換這張卡的檢視」：流水／匯入紀錄 ＋ 篩選開關。
+            它們只影響這張卡，所以留在卡上。
+        */}
+        <div className="flex flex-wrap items-center gap-2 border-b border-mor-line bg-mor-sand/30 px-3 py-2">
           <Tabs variant="segment" size="sm"
             value={view} onChange={setView}
             items={[{ key: 'txn' as const, label: '流水' },
@@ -841,7 +843,7 @@ export default function AccountsPage() {
         </div>
         </>
         )}
-      </div>
+      </TabShell>
 
       {showUpload && (
         <UploadPanel
