@@ -94,7 +94,6 @@ type CmpRaw = {
    */
   rev: { source: string; estate_id: string | null; property_id: string | null; month_amount: number; order_id: string | null }[];
   exp: { estate_id: string | null; property_id: string | null; amount: number; non_operating?: boolean }[];
-  ord: { estate_id: string | null; property_id: string | null }[];
 };
 type Cmp = {
   rev: number; exp: number; ordN: number;
@@ -300,11 +299,13 @@ export default function DashboardPage() {
         // 只算安幸（migration_159）—— 少了它，愛皮洪鯊的錢會混進安幸的數字裡
         .eq('book', DEFAULT_BOOK)
         .gte('spent_on', f).lte('spent_on', t).range(a, b));
-    const cmpOrd = (f: string, t: string) =>
-      fetchAll<CmpRaw['ord'][number]>((a, b) => supabase.from('orders')
-        .select('estate_id, property_id')
-        .eq('book', DEFAULT_BOOK)
-        .gte('checkin', f).lte('checkin', t).range(a, b));
+    /*
+     * ★★ 比較期不再撈 `orders`（2026-08-29）。
+     *
+     *   訂單數改成從認列去重之後，這兩支查詢（環比 ＋ 同比）就沒有人用了。
+     *   留著不會壞，但**留一個撈了卻沒用的欄位比刪掉更危險** ——
+     *   下一個人會以為訂單數是從它算的，然後照著它去 debug。
+     */
 
     /*
      * 【兩批：先畫得出來的，後補的】（2026-08-16）
@@ -320,10 +321,10 @@ export default function DashboardPage() {
      * 數字自己變動比慢一點更讓人不信任。
      */
     const later = Promise.all([
-      cmpRev(pf, pt), cmpExp(pf, pt), cmpOrd(pf, pt),
+      cmpRev(pf, pt), cmpExp(pf, pt),
       // 同一段月份的話不重發，下面直接沿用環比的結果
       revSameSpan ? Promise.resolve(null) : cmpRev(yf, yt),
-      cmpExp(yf, yt), cmpOrd(yf, yt),
+      cmpExp(yf, yt),
       // 待付款是側欄的一張小卡，晚幾百毫秒沒有人會發現
       fetchAll<Pending>((f, t) => supabase.from('purchase_requests')
         .select('total_amount, planned_transfer_on')
@@ -390,16 +391,22 @@ export default function DashboardPage() {
      * 分頁一樣不能省 —— 少了的話「去年同期」會偏低,成長率跟著假,
      * 而那個假的百分比看起來完全正常,不會有人懷疑。
      */
-    const [pRev, pExp, pOrd, yRevMaybe, yExp, yOrd, pd] = await later;
+    /*
+     * ★★ 解構的順序要跟 `later` 那個陣列**一字不差**。
+     *   拿掉 cmpOrd 之後少了兩個位置 —— 忘了同步的話,
+     *   `pd`（待付款）會接到 `yExp`（去年支出），
+     *   而型別如果剛好相容的話 tsc 也不會抱怨,畫面只是數字不對。
+     */
+    const [pRev, pExp, yRevMaybe, yExp, pd] = await later;
     if (myRun !== runRef.current) return;
-    const badLater = [pRev, pExp, pOrd, yExp, yOrd, pd].find((r) => r?.error);
+    const badLater = [pRev, pExp, yExp, pd].find((r) => r?.error);
     if (badLater?.error) setTruncated(badLater.error);
 
     setPending(pd.rows);
     setCmpRaw({
-      prev: { rev: pRev.rows, exp: pExp.rows, ord: pOrd.rows },
+      prev: { rev: pRev.rows, exp: pExp.rows },
       // 同一段月份時沿用環比的認列 —— 上面已經確認過那兩段的 ym 完全相同
-      yoy: { rev: (yRevMaybe ?? pRev).rows, exp: yExp.rows, ord: yOrd.rows },
+      yoy: { rev: (yRevMaybe ?? pRev).rows, exp: yExp.rows },
     });
     // matchScope 不能放進來 —— 見 CmpRaw 的說明,會變成無限迴圈
   }, [supabase, fromD, toD, mode]);
@@ -452,6 +459,20 @@ export default function DashboardPage() {
        */
       const seenSrc: Record<string, Set<string>> = {};
       const seenEst: Record<string, Set<string>> = {};
+      /*
+       * ★★★ 訂單數改成「這一期有營收認列的訂單」（2026-08-29 使用者:「都算阿」）。
+       *
+       *   舊做法是數 `orders` 表裡 **checkin 落在這一期**的訂單 ——
+       *   一張 8/1~10/30 的長租只會算在 8 月,9、10 月都不算。
+       *   而使用者要的是「這個月有幾張訂單在跑」:三個月都算 1 筆。
+       *
+       * ★★ 而且舊做法跟正下方「依來源／依物業」的筆數**不是同一套**:
+       *   那幾列數的是「該月有認列的訂單」。截圖那一期是
+       *   訂單數 142 對上依來源合計 162 —— 差的 20 筆就是
+       *   7 月以前入住、8 月還在認列的長租。
+       *   **兩個數字都對，但同一張表上「筆」是兩個意思。**
+       */
+      const seenAll = new Set<string>();
       rr.forEach((x, i) => {
         const amt = Number(x.month_amount || 0);
         const ek = estKey(x.estate_id, x.property_id);
@@ -462,6 +483,7 @@ export default function DashboardPage() {
         const oid = x.order_id ?? `__row${i}`;
         (seenSrc[x.source] ??= new Set()).add(oid);
         (seenEst[ek] ??= new Set()).add(oid);
+        seenAll.add(oid);
       });
       const sizes = (m: Record<string, Set<string>>) =>
         Object.fromEntries(Object.entries(m).map(([k, v]) => [k, v.size]));
@@ -475,7 +497,7 @@ export default function DashboardPage() {
         exp: c.exp.filter((x) => matchScope(x.estate_id, x.property_id))
           .filter((x) => !(exNonOp && x.non_operating))
           .reduce((a, x) => a + Number(x.amount || 0), 0),
-        ordN: c.ord.filter((x) => matchScope(x.estate_id, x.property_id)).length,
+        ordN: seenAll.size,
         bySource,
         byEstate,
         cntBySource: sizes(seenSrc),
@@ -603,6 +625,12 @@ export default function DashboardPage() {
   const cNet = cTotalRev - totalExp;
 
   const cntBySource = useMemo(() => groupCount(cRevs, (r) => r.source), [cRevs]);
+  /*
+   * ★ 本期的訂單數。用 `groupCount` 分成同一組 —— **刻意重用那一支**,
+   *   而不是自己寫一次 Set。兩邊的去重規則（含 order_id 為空時的退路）
+   *   一定要一模一樣,不然「訂單數」跟「依來源合計」又會對不起來。
+   */
+  const cntOrders = useMemo(() => groupCount(cRevs, () => 'all').all ?? 0, [cRevs]);
   const cntByEstate = useMemo(
     () => groupCount(cRevs, (r) => estKey(r.estate_id, r.property_id)), [cRevs, estKey]);
 
@@ -641,11 +669,18 @@ export default function DashboardPage() {
       // 本期金額大的排前面 —— 佔比大的物業動一點,對總數的影響就比小的動很多還大
       .sort((a, b) => b.cur - a.cur);
   }, [cmp, revByEstate, estates]);
-  const ordBySource = useMemo(() => {
-    const m: Record<string, number> = {};
-    fOrds.forEach((o) => { m[o.source] = (m[o.source] ?? 0) + 1; });
-    return Object.entries(m).sort((a, b) => b[1] - a[1]);
-  }, [fOrds]);
+  /*
+   * ★★★ 「訂單數分布」也改成跟依來源同一套（2026-08-29 使用者:「都算阿」）。
+   *
+   *   舊做法數 `orders` 表裡 checkin 落在本期的訂單 —— 那是這一頁的
+   *   **第三種**筆數口徑,而它就在「營收來源分布」旁邊。
+   *   兩張圖並排、一張用 checkin 一張用認列,而標題都只寫「來源」。
+   *
+   * ★ 直接用 `cntBySource`（依來源的去重筆數），不要再算一次 ——
+   *   算兩次就會有兩份規則，而它們遲早會分岔。
+   */
+  const ordBySource = useMemo(
+    () => Object.entries(cntBySource).sort((a, b) => b[1] - a[1]), [cntBySource]);
   const expByCode = useMemo(
     () => groupSum(fExps, (e) => e.account_code ?? '(未分類)', (e) => Number(e.amount || 0)), [fExps]);
   const expByEstate = useMemo(
@@ -983,7 +1018,7 @@ export default function DashboardPage() {
                   {/* ★ 標題自己說口徑 —— 這一列被截圖出去時，是唯一還在的線索 */}
                   {row(exNonOp ? '營運支出' : '支出', totalExp, cmp.prev.exp, cmp.yoy.exp, money, false)}
                   {row('淨額', cNet, cmp.prev.rev - cmp.prev.exp, cmp.yoy.rev - cmp.yoy.exp, money)}
-                  {row('訂單數', fOrds.length, cmp.prev.ordN, cmp.yoy.ordN, cnt)}
+                  {row('訂單數', cntOrders, cmp.prev.ordN, cmp.yoy.ordN, cnt)}
                   <tr><td colSpan={sameYoY ? 4 : 6} className="px-3 pt-3 pb-1 text-xs font-semibold text-gray-500">依來源</td></tr>
                   {/* 總營收成長時,要看得出是哪一塊在撐 —— 可能長租在漲而短租在退 */}
                   {revBySource.map(([k, v]) => sub(

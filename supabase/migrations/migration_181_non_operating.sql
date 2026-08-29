@@ -58,19 +58,30 @@ end $$;
 -- ══════════════════════════════════════════════════════════
 -- 自檢。★ `raise notice` 在 SQL Editor 看不到，所以回一張表。
 -- ══════════════════════════════════════════════════════════
-select "檢查項目", "結果", "說明" from (
+/*
+ * ★★ 排序欄位要**留在子查詢裡**（`v.ord`），不能只寫 `order by 1`。
+ *
+ *   `order by 1` 排的是**輸出的第一欄**，而輸出的第一欄是「檢查項目」——
+ *   那是文字，所以四列會照「★ / ★★ / ★★★ / 部分索引」的字典序排，
+ *   跟我寫的 1、2、3、4 完全無關。
+ *
+ *   2026-08-29 這支跑出來就是亂序的。**四列都對，只是順序不是我排的** ——
+ *   而最重要的那一條（欄位建好了沒）掉到第三行。
+ *   下一支 migration 照 migration_177 的寫法：ord 放進子查詢，最後 order by v.ord。
+ */
+select v."檢查項目", v."結果", v."說明" from (
 
   /*
    * ★★ `table_schema = 'public'` 一定要帶。
    *   `expenses` 這種名字在其他 schema 也可能有，不帶的話
    *   自檢會抓到別人的表而誤報成功。
    */
-  select 1, '★★★ 欄位建好了' as "檢查項目",
+  select 1, '★★★ 欄位建好了',
          coalesce((select data_type || ' / ' || is_nullable || ' / ' || coalesce(column_default, '(無預設)')
                      from information_schema.columns
                     where table_schema = 'public' and table_name = 'expenses'
-                      and column_name = 'non_operating'), '⚠ 沒有這個欄位') as "結果",
-         '要看到 boolean / NO / false —— 允許 null 的話「還沒判斷」跟「是營運」會長得一樣' as "說明"
+                      and column_name = 'non_operating'), '⚠ 沒有這個欄位'),
+         '要看到 boolean / NO / false —— 允許 null 的話「還沒判斷」跟「是營運」會長得一樣'
 
   union all
   /*
@@ -97,4 +108,4 @@ select "檢查項目", "結果", "說明" from (
                   '⚠ 沒建起來（不影響功能）'),
          '只索引 non_operating = true 的那幾筆，索引小得多'
 
-) v order by 1;
+) v(ord, "檢查項目", "結果", "說明") order by v.ord;
