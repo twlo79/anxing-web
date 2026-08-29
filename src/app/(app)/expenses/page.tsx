@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AddButton, ExportButton, ActionBar } from '@/components/Actions';
+import { AddButton, ExportButton } from '@/components/Actions';
+import { ActionRow, FilterCount, FieldSpacer, FILTER_BTN_H } from '@/lib/filters';
 import Req from '@/components/Req';
 import MoneyInput from '@/components/MoneyInput';
 import { missingFields, missingMessage } from '@/lib/required';
@@ -508,22 +509,42 @@ export default function ExpensesPage() {
               className="rounded-l-lg border border-mor-line px-2 py-1.5 w-44" placeholder="含否關鍵字" />
             <button onClick={() => setKw(kwIn.trim())} className="rounded-r-lg bg-mor-slate text-white px-3 hover:bg-mor-slatedark">搜尋</button>
           </div></label>
-        {/* 只看關注。做成切換鈕而不是下拉 —— 它只有開/關兩種狀態,而且會常按。 */}
-        <button onClick={() => setStarF(!starF)}
-          className={`rounded-lg border px-3 py-1.5 font-medium ${
-            starF ? 'border-amber-400 bg-amber-50 text-amber-700' : 'border-mor-line bg-white text-gray-600 hover:bg-mor-sand/60'}`}>
-          {starF ? '★ 只看關注' : '☆ 只看關注'}
-        </button>
-        {(fromD || toD || codeF || payF || purposeF || acctF || kw || starF) &&
-          <button onClick={() => { setFromD(''); setToD(''); setCodeF(''); setPayF(''); setPurposeF(''); setAcctF(''); setKw(''); setKwIn(''); setStarF(false); }}
-            className="text-gray-500 underline pb-1.5">清除</button>}
-        <div className="ml-auto flex items-end gap-2">
-          <div className="text-xs text-gray-400 pb-1.5">共 {rows.length.toLocaleString()} 筆</div>
-          <AddButton onClick={() => setEdit(blank())}>新增支出</AddButton>
-          <ExportButton onClick={exportXlsx} disabled={!rows.length} />
-          <TrashLink table="expenses" label="支出" />
-        </div>
+        {/*
+          只看關注。做成切換鈕而不是下拉 —— 它只有開/關兩種狀態,而且會常按。
+
+          ★ 它**留在篩選卡裡** —— 它是一個篩選條件（「只看哪些」），
+            不是動作。跟旁邊的下拉是同一類東西,只是長得像按鈕。
+        */}
+        <FieldSpacer>
+          <button onClick={() => setStarF(!starF)}
+            className={`${FILTER_BTN_H} rounded-lg border px-4 font-medium ${
+              starF ? 'border-amber-400 bg-amber-50 text-amber-700' : 'border-mor-line bg-white text-gray-600 hover:bg-mor-sand/60'}`}>
+            {starF ? '★ 只看關注' : '☆ 只看關注'}
+          </button>
+        </FieldSpacer>
+        <FieldSpacer>
+          {(fromD || toD || codeF || payF || purposeF || acctF || kw || starF) && (
+            <button onClick={() => { setFromD(''); setToD(''); setCodeF(''); setPayF(''); setPurposeF(''); setAcctF(''); setKw(''); setKwIn(''); setStarF(false); }}
+              className={`${FILTER_BTN_H} px-2 text-uisub text-gray-500 underline`}>清除</button>
+          )}
+        </FieldSpacer>
       </div>
+
+      {/*
+        ★★ 動作列在篩選卡**外面**（2026-08-29 使用者:「放外面不是白卡裡」）。
+
+          原本靠 `ml-auto` 塞在篩選卡的同一行右邊 —— 於是「+ 新增支出」
+          跟六個下拉排在一起,看起來像第七個篩選欄位。
+
+        ★ 篩選是「我要看哪些」,動作是「我要做什麼」—— 兩件事,兩行。
+          全站每一頁都是這個順序。
+      */}
+      <ActionRow>
+        <div className="mr-auto md:mr-0"><FilterCount n={rows.length} /></div>
+        <AddButton onClick={() => setEdit(blank())}>新增支出</AddButton>
+        <ExportButton onClick={exportXlsx} disabled={!rows.length} />
+        <TrashLink table="expenses" label="支出" />
+      </ActionRow>
 
       {/*
         ══════════ 手機卡片（2026-08-22）══════════

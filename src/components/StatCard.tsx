@@ -143,7 +143,7 @@ export default function StatCard({
         onClick && !active ? 'hover:bg-white/45' : '',
         muted && !active && !accent ? 'opacity-55' : '',
       ].filter(Boolean).join(' ')}>
-      <span className={`text-[15px] leading-tight shrink-0 md:block ${
+      <span className={`text-uisub leading-tight shrink-0 md:block ${
         active ? 'text-white/80' : accent ? 'text-mor-slate font-medium' : 'text-gray-500'}`}>
         {label}
       </span>
@@ -162,7 +162,7 @@ export default function StatCard({
           ★ `text-right md:text-left`:手機靠右跟上一列的筆數切齊,
             桌機回到左邊跟 label 對齊。
         */
-        <span className={`w-full text-right text-[16px] md:w-auto md:text-left md:block md:mt-0.5 ${
+        <span className={`w-full text-right text-ui md:w-auto md:text-left md:block md:mt-0.5 ${
           active ? 'text-white/75' : 'text-gray-400'}`}>
           {sub}
         </span>
@@ -196,7 +196,7 @@ export function StatGroup({ label, tone = 'slate' }: { label: ReactNode; tone?: 
   return (
     <div className="flex items-center gap-1.5 mb-1.5">
       <span className={`w-1.5 h-1.5 rounded-sm shrink-0 ${TONE[tone].dot}`} />
-      <span className="text-[15px] text-gray-500">{label}</span>
+      <span className="text-uisub text-gray-500">{label}</span>
     </div>
   );
 }
@@ -212,9 +212,9 @@ export function StatTotal({
 }: { label: ReactNode; value: ReactNode; sub?: ReactNode }) {
   return (
     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 mb-3">
-      <span className="text-[16px] text-gray-500">{label}</span>
+      <span className="text-ui text-gray-500">{label}</span>
       <span className="stat-num-lg font-bold text-mor-slate tabular-nums">{value}</span>
-      {sub != null && sub !== '' && <span className="text-[16px] text-gray-400">{sub}</span>}
+      {sub != null && sub !== '' && <span className="text-ui text-gray-400">{sub}</span>}
     </div>
   );
 }

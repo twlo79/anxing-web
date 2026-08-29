@@ -18,7 +18,8 @@ import {
   canHideReview, isHidden, hideError, hideReasonText, hideImpactText, HIDE_REASONS,
 } from '@/lib/review-hide';
 import RangeInput from '@/components/RangeInput';
-import { EXPORT_TONE } from '@/components/Actions';
+import { EXPORT_TONE, ExportButton } from '@/components/Actions';
+import { ActionRow, FilterCount, FieldSpacer, FILTER_BTN_H } from '@/lib/filters';
 
 type Estate = { id: string; name: string; manager: string | null; sort: number };
 type Property = { id: string; name: string; active: boolean; estate_id: string | null };
@@ -683,32 +684,38 @@ export default function ReviewsPage() {
             <button onClick={() => setKw(kwInput.trim())} className="rounded-lg bg-mor-slate text-white px-3 hover:bg-mor-slatedark">搜尋</button>
           </div>
         </div>
-        {(estateId || propertyId || dateFrom || dateTo || ratingFilter) && (
-          <button onClick={() => { setEstateId(''); setPropertyId(''); setDateFrom(''); setDateTo(''); setRatingFilter(''); }}
-            className="text-gray-500 underline pb-1.5">清除篩選</button>
-        )}
-        <div className="ml-auto flex items-end gap-3">
-          {/*
-            ★ 只有能隱藏的人看得到這個開關 —— 其他人打開也做不了事,
-              而且會以為系統少了幾則評價。
-            ★ 打開時是「**只看**隱藏的」不是「全部一起看」:
-              混在一起的話那幾則會夾在幾百列中間,
-              而打開這個開關的目的就是要找它們。
-          */}
-          {canHide && (
-            <label className="flex items-center gap-1.5 text-xs text-gray-600 pb-1.5 cursor-pointer select-none">
+        {/*
+          ★ 「只看已隱藏」**留在篩選卡裡** —— 它是一個篩選條件,
+            跟旁邊的下拉是同一類東西,只是長得像勾選框。
+
+          ★ 只有能隱藏的人看得到 —— 其他人打開也做不了事,
+            而且會以為系統少了幾則評價。
+          ★ 打開時是「**只看**隱藏的」不是「全部一起看」:
+            混在一起的話那幾則會夾在幾百列中間,
+            而打開這個開關的目的就是要找它們。
+        */}
+        {canHide && (
+          <FieldSpacer>
+            <label className={`${FILTER_BTN_H} flex items-center gap-1.5 text-uisub text-gray-600 cursor-pointer select-none`}>
               <input type="checkbox" checked={showHidden}
                 onChange={(e) => setShowHidden(e.target.checked)} />
               只看已隱藏
             </label>
+          </FieldSpacer>
+        )}
+        <FieldSpacer>
+          {(estateId || propertyId || dateFrom || dateTo || ratingFilter) && (
+            <button onClick={() => { setEstateId(''); setPropertyId(''); setDateFrom(''); setDateTo(''); setRatingFilter(''); }}
+              className={`${FILTER_BTN_H} px-2 text-uisub text-gray-500 underline`}>清除</button>
           )}
-          <div className="text-xs text-gray-400 pb-1.5">共 {total.toLocaleString()} 筆</div>
-          <button onClick={exportCsv} disabled={exporting || total === 0}
-            className={`rounded-lg px-4 py-1.5 font-medium disabled:opacity-40 ${EXPORT_TONE}`}>
-            {exporting ? '匯出中…' : '⬇ 下載 Excel'}
-          </button>
-        </div>
+        </FieldSpacer>
       </div>
+
+      {/* ★★ 動作列在篩選卡外面 —— 全站一致（篩選在上、動作在下，靠右）*/}
+      <ActionRow>
+        <div className="mr-auto md:mr-0"><FilterCount n={total} /></div>
+        <ExportButton onClick={exportCsv} disabled={exporting || total === 0} busy={exporting} />
+      </ActionRow>
 
       {/* ===== 表格 ===== */}
       {/*

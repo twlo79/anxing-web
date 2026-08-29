@@ -504,7 +504,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
                 aria-expanded={open}
                 title={open ? `收起「${g.label}」` : `展開「${g.label}」`}
                 className={`w-full flex items-center gap-[7px] px-4 pb-1.5
-                           text-[15px] font-bold tracking-[-0.01em]
+                           text-uisub font-bold tracking-[-0.01em]
                            text-mor-ink hover:opacity-70 transition-opacity
                            ${gi > 0 ? 'pt-2.5' : 'pt-2'}`}>
                 <span>{g.label}</span>
@@ -581,7 +581,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
              */
             className={`group relative mx-2 flex items-center gap-2.5 pr-3 py-2.5
               ${g.label ? 'pl-6' : 'pl-3.5'}
-              rounded-[10px] text-[17px] transition-colors ${
+              rounded-[10px] text-ui transition-colors ${
               on ? 'bg-mor-slate/[0.12] text-mor-slate font-semibold'
                  : 'text-gray-700 font-medium hover:bg-white/75'
             }`}>

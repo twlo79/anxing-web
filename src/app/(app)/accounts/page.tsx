@@ -336,7 +336,7 @@ export default function AccountsPage() {
         看起來像是「整頁」的動作，跟實際行為對不起來。
       */}
       <div className="mb-4">
-        <h1 className="text-lg font-semibold">帳戶明細</h1>
+        <h1>帳戶明細</h1>
       </div>
 
       {/* ── 合計 ────────────────────────────────── */}
@@ -528,7 +528,7 @@ export default function AccountsPage() {
               {hasFilter(f) && (
                 <button
                   onClick={() => setF({ from: '', to: '', dir: '', min: '', max: '', q: '' })}
-                  className={`${FILTER_BTN_H} px-2 text-[15px] text-gray-500 underline`}
+                  className={`${FILTER_BTN_H} px-2 text-uisub text-gray-500 underline`}
                 >
                   清除
                 </button>

@@ -33,7 +33,7 @@ import { syncFrom, syncTo } from '@/lib/date-range';
  *   而那種差異只有把兩頁擺在一起才看得出來。
  */
 export const FILTER_CTRL =
-  'h-12 md:h-10 rounded-lg border border-gray-300 px-3 text-[17px] leading-none';
+  'h-12 md:h-10 rounded-lg border border-gray-300 px-3 text-ui leading-none';
 const CTRL = FILTER_CTRL;
 
 /**
@@ -83,7 +83,7 @@ export function Field({ label, children }: { label: string; children: ReactNode 
           那一欄的控制項就會被推低一格 —— 底部靠 items-end 還是齊的,
           但**上緣歪掉**,而使用者看到的是「這一格比較矮」。
       */}
-      <label className="block h-5 mb-1 text-[15px] leading-5 text-gray-500 whitespace-nowrap">
+      <label className="block h-5 mb-1 text-uisub leading-5 text-gray-500 whitespace-nowrap">
         {label}
       </label>
       {children}
@@ -192,7 +192,7 @@ export function FilterSearch({ label, value, onChange, onSubmit, placeholder = '
           placeholder={placeholder} className={`${CTRL} ${width}`} />
         <button onClick={onSubmit}
           className={`${FILTER_BTN_H} rounded-lg bg-mor-slate text-white px-4
-                      text-[17px] font-medium hover:bg-mor-slatedark`}>搜尋</button>
+                      text-ui font-medium hover:bg-mor-slatedark`}>搜尋</button>
       </div>
     </Field>
   );
@@ -209,7 +209,7 @@ export function FilterClear({ active, onClear }: { active: boolean; onClear: () 
   return (
     <FieldSpacer>
       <button onClick={onClear}
-        className={`${FILTER_BTN_H} px-2 text-[15px] text-gray-500 underline`}>清除</button>
+        className={`${FILTER_BTN_H} px-2 text-uisub text-gray-500 underline`}>清除</button>
     </FieldSpacer>
   );
 }
@@ -217,7 +217,7 @@ export function FilterClear({ active, onClear }: { active: boolean; onClear: () 
 /** 筆數。跟右側的動作鈕同一組，`pb-1.5` 讓它跟按鈕的基線對齊。 */
 export function FilterCount({ n, unit = '筆' }: { n: number; unit?: string }) {
   return (
-    <div className="text-[15px] text-gray-400 whitespace-nowrap">
+    <div className="text-uisub text-gray-400 whitespace-nowrap">
       共 {n.toLocaleString('en-US')} {unit}
     </div>
   );

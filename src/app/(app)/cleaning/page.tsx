@@ -299,7 +299,7 @@ export default function CleaningPage() {
         <FieldSpacer>
           {(estate || staff || staffType || dateFrom || dateTo || kw) && (
             <button onClick={() => { setEstate(''); setStaff(''); setStaffType(''); setDateFrom(''); setDateTo(''); setKw(''); setKwInput(''); }}
-              className={`${FILTER_BTN_H} px-2 text-[15px] text-gray-500 underline`}>清除</button>
+              className={`${FILTER_BTN_H} px-2 text-uisub text-gray-500 underline`}>清除</button>
           )}
         </FieldSpacer>
       </div>
