@@ -726,9 +726,17 @@ const nameOf = (c: Contract) =>
             </div>
             <div className="text-ui font-semibold text-red-700 tabular-nums">${fmt(arrearsTotal)}</div>
           </div>
-          {/* ★ 捲軸拿掉（2026-08-29 全站一致）—— 欠款與待開發票正是
-                「一眼看完有幾筆」的清單,藏在捲軸裡的那幾筆等於沒被看到 */}
-          <div>
+          {/*
+            ★★ 捲軸留著（2026-08-29 使用者:「這兩個要用滾輪 不要全部顯示」）。
+
+              待開發票有 42 張,全展開的話這一塊就把下面的整份契約清單推出畫面 ——
+              而它是**提醒**不是主體:知道「有 42 張、29 張逾期」＋ 看得到最急的那幾筆
+              就夠了,要全部處理的人會去請款頁。
+
+            ★ 高度用 `max-h-80`（320px ≈ 9 列），跟分項面板的十列門檻同一個量級 ——
+              全站的「長清單摘要」大概都露這麼多。
+          */}
+          <div className="max-h-80 overflow-y-auto overscroll-contain">
             {arrears.map((g) => {
               const c = rows.find((r) => r.room === g.room);
               return (
@@ -769,9 +777,17 @@ const nameOf = (c: Contract) =>
             </div>
             <div className="text-xs text-amber-600">近 {INVOICE_LOOKBACK + 1} 個月</div>
           </div>
-          {/* ★ 捲軸拿掉（2026-08-29 全站一致）—— 欠款與待開發票正是
-                「一眼看完有幾筆」的清單,藏在捲軸裡的那幾筆等於沒被看到 */}
-          <div>
+          {/*
+            ★★ 捲軸留著（2026-08-29 使用者:「這兩個要用滾輪 不要全部顯示」）。
+
+              待開發票有 42 張,全展開的話這一塊就把下面的整份契約清單推出畫面 ——
+              而它是**提醒**不是主體:知道「有 42 張、29 張逾期」＋ 看得到最急的那幾筆
+              就夠了,要全部處理的人會去請款頁。
+
+            ★ 高度用 `max-h-80`（320px ≈ 9 列），跟分項面板的十列門檻同一個量級 ——
+              全站的「長清單摘要」大概都露這麼多。
+          */}
+          <div className="max-h-80 overflow-y-auto overscroll-contain">
             {invPending.map((p) => (
               <div key={p.c.id + p.ym}
                 onClick={() => setCollect(p.c)}
