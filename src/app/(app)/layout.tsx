@@ -488,35 +488,51 @@ function AppShell({ children }: { children: React.ReactNode }) {
                 ★ 第一群不畫線 —— 最上面那條會跟使用者名字底下的分隔線疊成兩條。
               */}
               {gi > 0 && <Rule double={gi === groups.length - 1} />}
+              {/*
+                ══════════ 群組標題（2026-08-28 改版，使用者給了參考圖）══════════
+
+                ★ 標題是**深色粗體**，不是藍色小字。
+                  藍色會跟「選取中」那個藍撞 —— 而選取只有一個、標題有五個,
+                  五個藍色標題會把唯一的那個答案稀釋掉。
+                  深色粗體是「層級」而不是「狀態」,那正是標題該有的身分。
+
+                ★★ 箭頭**貼在標題後面**，不是靠右。
+                  靠右的話它離標題有一整個欄寬,眼睛要跑兩趟才知道
+                  「這個字跟那個箭頭是同一件事」。貼著就是一個東西。
+              */}
               <button type="button" onClick={() => flipGroup(g.label)}
                 aria-expanded={open}
                 title={open ? `收起「${g.label}」` : `展開「${g.label}」`}
-                className={`w-full flex items-center gap-1.5 px-4 pb-1
-                           text-[14px] font-bold tracking-[0.08em]
-                           text-mor-slate hover:text-mor-slatedark transition-colors
+                className={`w-full flex items-center gap-[7px] px-4 pb-1.5
+                           text-[15px] font-bold tracking-[-0.01em]
+                           text-mor-ink hover:opacity-70 transition-opacity
                            ${gi > 0 ? 'pt-2.5' : 'pt-2'}`}>
                 <span>{g.label}</span>
                 {/*
-                  ★★ 收起來的時候要說裡面有幾項。
-                    只有一個三角形的話,使用者不知道那底下是 2 項還是 5 項 ——
-                    而「值不值得打開」正是他當下要判斷的事。
+                  ★★ 用 SVG 畫箭頭，不用 `▶` 或 `▼` 字元。
+                    那些字元在 Windows 與 macOS 的寬度和垂直位置都不一樣,
+                    標題會左右飄一點點 —— 而那種飄移只有在兩台電腦上
+                    並排看才發現得了。SVG 是自己畫的,兩邊一致。
+
+                  ★ 收起時指右（›）、展開時指下（⌄）—— 用旋轉而不是換路徑,
+                    這樣中間的過場是連續的。
+                */}
+                <svg aria-hidden viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"
+                  className={`w-[15px] h-[15px] shrink-0 text-gray-400
+                              transition-transform duration-150 ${open ? '' : '-rotate-90'}`}>
+                  <path d="M6 9l6 6 6-6" />
+                </svg>
+                {/*
+                  ★★ 筆數**只在收起時出現**。
+                    展開時項目就列在下面,數字是多的 ——
+                    而收起時它回答的正是「值不值得打開」。
                 */}
                 {!open && (
-                  <span className="ml-auto font-normal tracking-normal opacity-45">
+                  <span className="ml-auto text-[13px] font-normal tracking-normal text-gray-400">
                     {g.items.length}
                   </span>
                 )}
-                {/*
-                  三角形收在**最右邊**。放左邊的話它會把標題往右推,
-                  於是「每天」的左緣比「出勤」還右邊一格 ——
-                  整條側邊欄變成兩條參差的垂直線。
-
-                  展開時轉 90°。用 transform 而不是換字元 ——
-                  換字元的話兩個 glyph 寬度不同,標題會左右抖一下。
-                */}
-                <span aria-hidden
-                  className={`text-[11px] leading-none opacity-55 transition-transform duration-150
-                              ${open ? 'ml-auto rotate-90' : ''}`}>▶</span>
               </button>
             </>
           ) : (
