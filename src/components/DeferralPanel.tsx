@@ -185,7 +185,7 @@ export default function DeferralPanel({
               <MoneyInput value={l.amount || 0} placeholder="0" disabled={!canEdit}
                 onChange={(n) => upd(i, { amount: n })}
                 className={`${CTRL} w-28 text-right`} />
-              {l.on === paidOn && <span className="text-[11px] text-gray-400">併入本筆</span>}
+              {l.on === paidOn && <span className="text-[13px] text-gray-400">併入本筆</span>}
               {canEdit && lines.length > 1 && (
                 <button type="button" onClick={() => setLines(lines.filter((_, x) => x !== i))}
                   className="text-xs text-red-400 hover:text-red-600">✕</button>
@@ -243,14 +243,14 @@ export default function DeferralPanel({
                 {busy ? '處理中…' : expense.deferred ? '更新遞延明細' : '設定遞延認列'}
               </button>
               {diff !== 0 && (
-                <div className="text-[11px] text-amber-700 text-center">
+                <div className="text-[13px] text-amber-700 text-center">
                   明細合計要剛好等於實付總額才能儲存
                   {diff > 0 ? `（還差 $${fmt(diff)}）` : `（多了 $${fmt(-diff)}）`}
                 </div>
               )}
             </>
           )}
-          <div className="text-[11px] text-gray-400 leading-relaxed">
+          <div className="text-[13px] text-gray-400 leading-relaxed">
             子單會繼承這筆的科目、用途、物業、憑證等欄位。要修改一律回到這張母單 ——
             子單在列表上不能單獨編輯或刪除。
           </div>

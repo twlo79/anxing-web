@@ -136,7 +136,7 @@ export default function ApproveTab({ me, onMsg }: TabProps) {
             {label}
             {/* 數字直接標在分頁上 —— 沒有數字就不用點進去 */}
             {!done && n > 0 && (
-              <span className="rounded-full px-1.5 text-[11px] bg-amber-100 text-amber-700">{n}</span>
+              <span className="rounded-full px-1.5 text-[13px] bg-amber-100 text-amber-700">{n}</span>
             )}
           </button>
         ))}
@@ -160,7 +160,7 @@ export default function ApproveTab({ me, onMsg }: TabProps) {
                       {fmtDT(r.start_at)} → {fmtDT(r.end_at)}{r.reason ? `・${r.reason}` : ''}
                     </div>
                   </div>
-                  <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] ${TONE[v.tone]}`}>
+                  <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[13px] ${TONE[v.tone]}`}>
                     {v.text}
                   </span>
                 </div>
@@ -201,7 +201,7 @@ export default function ApproveTab({ me, onMsg }: TabProps) {
                       {fmtDT(r.start_at)} → {fmtDT(r.end_at)}・{r.reason}
                     </div>
                   </div>
-                  <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] ${TONE[v.tone]}`}>
+                  <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[13px] ${TONE[v.tone]}`}>
                     {v.text}
                   </span>
                 </div>

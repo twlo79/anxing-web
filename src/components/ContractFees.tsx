@@ -279,7 +279,7 @@ export default function ContractFees({
                 </div>
               )}
             </div>
-            <div className="text-[11px] text-gray-400 mt-0.5">
+            <div className="text-[13px] text-gray-400 mt-0.5">
               {toMonthInput(r.start_ym)} 起
               {s ? `・已產生 ${s.n} 期${s.paid ? `，其中 ${s.paid} 期已收款 $${fmt(s.paidAmt)}` : ''}` : ''}
             </div>
@@ -291,7 +291,7 @@ export default function ContractFees({
         <div className="rounded-lg border border-mor-blue bg-mor-bluelight/30 px-3 py-3 space-y-2">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <label className="flex flex-col gap-1">
-              <span className="text-[11px] text-gray-500">項目</span>
+              <span className="text-[13px] text-gray-500">項目</span>
               <select value={presetValue(draft)} className="h-11 md:h-8 rounded-lg border border-mor-line px-2 text-sm bg-white"
                 onChange={(e) => {
                   const p = CONTRACT_FEE_PRESETS[Number(e.target.value)];
@@ -303,13 +303,13 @@ export default function ContractFees({
               </select>
             </label>
             <label className="flex flex-col gap-1">
-              <span className="text-[11px] text-gray-500">每期金額</span>
+              <span className="text-[13px] text-gray-500">每期金額</span>
               <MoneyInput value={draft.amount || 0} placeholder="0"
                 onChange={(n) => setDraft({ ...draft, amount: n })}
                 className="h-11 md:h-8 rounded-lg border border-mor-line px-2 text-sm text-right bg-white" />
             </label>
             <label className="flex flex-col gap-1">
-              <span className="text-[11px] text-gray-500">開始期別</span>
+              <span className="text-[13px] text-gray-500">開始期別</span>
               <select value={periodOf(periods, draft.start_ym)?.ym ?? draft.start_ym}
                 onChange={(e) => setDraft({ ...draft, start_ym: e.target.value })}
                 className="h-11 md:h-8 rounded-lg border border-mor-line px-2 text-sm bg-white">
@@ -322,7 +322,7 @@ export default function ContractFees({
               </select>
             </label>
             <label className="flex flex-col gap-1">
-              <span className="text-[11px] text-gray-500">結束期別<span className="text-gray-400">（不選＝到租期結束）</span></span>
+              <span className="text-[13px] text-gray-500">結束期別<span className="text-gray-400">（不選＝到租期結束）</span></span>
               <select value={draft.end_ym ? (periodOf(periods, draft.end_ym)?.ym ?? draft.end_ym) : ''}
                 onChange={(e) => setDraft({ ...draft, end_ym: e.target.value || null })}
                 className="h-11 md:h-8 rounded-lg border border-mor-line px-2 text-sm bg-white">
@@ -363,7 +363,7 @@ export default function ContractFees({
       )}
 
       {isNew && rows.length > 0 && (
-        <div className="text-[11px] text-gray-400">儲存契約時會一起建立這 {rows.length} 筆設定。</div>
+        <div className="text-[13px] text-gray-400">儲存契約時會一起建立這 {rows.length} 筆設定。</div>
       )}
     </div>
   );

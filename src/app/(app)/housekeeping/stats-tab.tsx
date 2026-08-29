@@ -414,7 +414,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                   那個人會少領,而他要自己對帳才發現。
                 */}
                 {!!line?.unknownPoints && (
-                  <span className="ml-1 text-[11px] text-amber-600 font-normal"
+                  <span className="ml-1 text-[13px] text-amber-600 font-normal"
                     title="這些房源還沒設打掃點數,或還沒對到 ERP 房源">
                     ⚠ {line.unknownPoints} 筆未計
                   </span>
@@ -663,7 +663,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                         <tr key={p.code} className={`border-b border-mor-line/40 last:border-0 ${c === 0 ? 'text-gray-300' : ''}`}>
                           <td className="px-3 py-1.5 whitespace-nowrap">
                             {p.code}
-                            {p.beds == null && <span className="ml-1 text-[10px] text-amber-600">待補床數</span>}
+                            {p.beds == null && <span className="ml-1 text-[12px] text-amber-600">待補床數</span>}
                           </td>
                           <td className="px-3 py-1.5 text-right">
                             <span className="inline-flex items-center gap-1 justify-end">
@@ -679,7 +679,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                               {over && auto !== c && (
                                 <button onClick={() => setMp(p.code, { count_override: null })}
                                   title={`房源格現在算出 ${auto} 次,但這裡被手動改成 ${c}。點一下改回 ${auto}。`}
-                                  className="text-[10px] text-amber-600 underline whitespace-nowrap">≠{auto}</button>
+                                  className="text-[12px] text-amber-600 underline whitespace-nowrap">≠{auto}</button>
                               )}
                             </span>
                           </td>

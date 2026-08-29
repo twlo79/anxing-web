@@ -549,10 +549,10 @@ export default function ExpensesPage() {
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <div className="font-medium truncate">{r.item_name}</div>
-                <div className="text-[11px] text-gray-500 mt-1">
+                <div className="text-[13px] text-gray-500 mt-1">
                   {r.spent_on}・{r.account_code ? codeName[r.account_code] ?? r.account_code : '未分類'}
                 </div>
-                <div className="text-[11px] text-gray-400 mt-0.5 truncate">
+                <div className="text-[13px] text-gray-400 mt-0.5 truncate">
                   {r.purpose_type === 'office' ? '安幸辦公室'
                     : r.purpose_type === 'other_biz' ? '其他事業體'
                       : (r.estate_id ? estateName[r.estate_id] ?? '' : '')}
@@ -613,13 +613,13 @@ export default function ExpensesPage() {
                   {/* 子單縮排並標明來自哪一張母單,點了跳到母單 */}
                   {r.parent_expense_id && (
                     <button onClick={(e) => { e.stopPropagation(); const p = byId[r.parent_expense_id!]; if (p) setEdit(p); }}
-                      className="mr-1 text-[11px] text-mor-blue underline hover:text-mor-slate"
+                      className="mr-1 text-[13px] text-mor-blue underline hover:text-mor-slate"
                       title="回到母單修改">
                       {childLabel(byId[r.parent_expense_id]?.spent_on ?? '', null)}
                     </button>
                   )}
                   {r.item_name}
-                  {r.source_item_id && <span className="ml-2 inline-block rounded-md bg-mor-bluelight text-mor-slate px-1.5 py-0.5 text-[10px]">請款</span>}
+                  {r.source_item_id && <span className="ml-2 inline-block rounded-md bg-mor-bluelight text-mor-slate px-1.5 py-0.5 text-[12px]">請款</span>}
                 </td>
                 <td className="px-3 py-2 text-right font-medium">
                   {fmt(r.amount)}
@@ -629,12 +629,12 @@ export default function ExpensesPage() {
                     會計拿 10,000 的發票會搜不到任何一列。
                   */}
                   {r.deferred && (
-                    <div className="text-[11px] font-normal text-red-500 whitespace-nowrap">
+                    <div className="text-[13px] font-normal text-red-500 whitespace-nowrap">
                       {deferralLabel(Number(r.gross_amount) || 0, Number(r.amount) || 0)}
                     </div>
                   )}
                   {r.currency && r.currency !== 'TWD' && (
-                    <div className="text-[11px] font-normal text-gray-400">
+                    <div className="text-[13px] font-normal text-gray-400">
                       {r.currency} {fmt(r.amount_original)} × {r.fx_rate}
                     </div>
                   )}
@@ -651,7 +651,7 @@ export default function ExpensesPage() {
                       <span title={v.full}>
                         {v.text}
                         {v.more > 0 && (
-                          <span className="ml-1 text-[11px] text-gray-400">＋{v.more} 個</span>
+                          <span className="ml-1 text-[13px] text-gray-400">＋{v.more} 個</span>
                         )}
                       </span>
                     );
@@ -719,8 +719,8 @@ export default function ExpensesPage() {
                   <div className="font-bold truncate">{d.item_name}</div>
                   <div className="text-xs text-gray-500 mt-0.5">
                     {d.spent_on}
-                    {d.source_item_id && <span className="ml-2 rounded bg-mor-bluelight text-mor-slate px-1.5 py-0.5 text-[10px]">來自請款單</span>}
-                    {d.parent_expense_id && <span className="ml-2 rounded bg-mor-sand text-gray-600 px-1.5 py-0.5 text-[10px]">遞延子單</span>}
+                    {d.source_item_id && <span className="ml-2 rounded bg-mor-bluelight text-mor-slate px-1.5 py-0.5 text-[12px]">來自請款單</span>}
+                    {d.parent_expense_id && <span className="ml-2 rounded bg-mor-sand text-gray-600 px-1.5 py-0.5 text-[12px]">遞延子單</span>}
                   </div>
                 </div>
                 <button onClick={() => setDetail(null)}
@@ -746,7 +746,7 @@ export default function ExpensesPage() {
                         而實際上那是整張請款單共用的清單。
                       */}
                       {d.source_item_id && isMultiVoucher(d.voucher_no) && (
-                        <div className="mt-1 text-[11px] text-gray-400">
+                        <div className="mt-1 text-[13px] text-gray-400">
                           這串號碼來自請款單單頭，涵蓋該單的多個項目 —— 不一定全部屬於這一筆。
                         </div>
                       )}
@@ -828,7 +828,7 @@ export default function ExpensesPage() {
                       className="w-full rounded-lg border border-mor-line pl-9 pr-2 py-1.5 text-right disabled:bg-gray-100 disabled:text-gray-400" />
                   </div>
                   {edit.deferred && (
-                    <span className="text-[11px] text-gray-500 mt-0.5">
+                    <span className="text-[13px] text-gray-500 mt-0.5">
                       已設遞延認列,金額不可改。實付總額 ${fmt(edit.gross_amount)}、本期認列 ${fmt(edit.amount)}。
                       要改金額請先在下方取消遞延。
                     </span>

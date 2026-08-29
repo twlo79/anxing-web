@@ -119,7 +119,7 @@ export default function LoginPage() {
     router.refresh();
   }
 
-  const inp = 'w-full rounded-lg border border-gray-300 px-3 py-2.5 text-[15px] '
+  const inp = 'w-full rounded-lg border border-gray-300 px-3 py-2.5 text-[16px] '
     + 'focus:outline-none focus:ring-2 focus:ring-mor-slate focus:border-mor-slate '
     + 'disabled:bg-gray-50 disabled:text-gray-400';
 

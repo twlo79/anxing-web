@@ -233,7 +233,7 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
           */}
           {/* 已工作多久。只在「打了上班、還沒打下班」時出現 ——
               那正是這個數字唯一有意義的時候。固定高度,不然打卡瞬間版面會跳 */}
-          <div className={`h-4 mt-2 text-[13px] font-medium tabular-nums ${ink.soft}`}>
+          <div className={`h-4 mt-2 text-[14px] font-medium tabular-nums ${ink.soft}`}>
             {worked || ' '}
           </div>
 
@@ -244,12 +244,12 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
               // 在漸層上會糊掉,有底色才讀得清楚
               <div key={lb} className={`w-[7rem] shrink-0 rounded-xl px-3 py-2
                                        backdrop-blur-sm text-center md:text-left ${ink.pill}`}>
-                <div className={`text-[11px] leading-none ${ink.dim}`}>{lb}</div>
+                <div className={`text-[13px] leading-none ${ink.dim}`}>{lb}</div>
                 <div className={`text-lg font-semibold tabular-nums leading-tight mt-1 ${
                   at ? ink.strong : ink.faint}`}>
                   {hhmm(at)}
                 </div>
-                <div className={`text-[11px] leading-none h-3 mt-1 truncate ${ink.warn}`}>
+                <div className={`text-[13px] leading-none h-3 mt-1 truncate ${ink.warn}`}>
                   {!!mins && mins > 0 ? `${warn} ${mins} 分` : ' '}
                 </div>
               </div>
@@ -288,7 +288,7 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
             </div>
           )}
           {ui.hint && (
-            <div className={`text-[11px] mt-2 text-center ${ink.dim}`}>{ui.hint}</div>
+            <div className={`text-[13px] mt-2 text-center ${ink.dim}`}>{ui.hint}</div>
           )}
         </div>
       </div>
@@ -349,11 +349,11 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
                   : { borderColor: '#E0DDD5', backgroundColor: '#fff' }}>
                 {/* 標籤字距拉開、字級壓小 —— 標籤跟數字同樣大小時，
                     整張卡看起來就是兩行普通文字，沒有主從 */}
-                <div className="text-[10px] tracking-[0.12em] text-gray-500">{lb}</div>
+                <div className="text-[12px] tracking-[0.12em] text-gray-500">{lb}</div>
                 <div className="mt-1 font-bold tabular-nums leading-none text-2xl"
                   style={{ color: lit ? c : '#C9C6BE' }}>
                   {v}
-                  <span className="text-[11px] font-normal text-gray-400 ml-1">{unit}</span>
+                  <span className="text-[13px] font-normal text-gray-400 ml-1">{unit}</span>
                 </div>
               </div>
             );
@@ -395,7 +395,7 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
         {/* 桌機：表格 */}
         <table className="w-full text-sm hidden sm:table">
           <thead>
-            <tr className="text-left text-[11px] tracking-wider text-gray-500
+            <tr className="text-left text-[13px] tracking-wider text-gray-500
                            border-b border-mor-line bg-white/45">
               <th className="px-4 py-2.5">日期</th>
               <th className="px-4 py-2.5">上班卡</th>
@@ -429,7 +429,7 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
                     {r.ot_hours > 0 && <span className="text-mor-slate">＋{r.ot_hours}</span>}
                   </td>
                   <td className="px-4 py-2">
-                    <span className={`rounded-full border px-2 py-0.5 text-[11px] whitespace-nowrap ${
+                    <span className={`rounded-full border px-2 py-0.5 text-[13px] whitespace-nowrap ${
                       TONE_CLS[s.tone]}`}>{s.label}</span>
                   </td>
                   <td className="px-4 py-2 text-right">
@@ -471,7 +471,7 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
                   <div className="text-base font-semibold tabular-nums leading-none">
                     {Number(r.work_date.slice(8))}
                   </div>
-                  <div className={`text-[10px] mt-0.5 ${weekend ? 'text-red-400' : 'text-gray-400'}`}>
+                  <div className={`text-[12px] mt-0.5 ${weekend ? 'text-red-400' : 'text-gray-400'}`}>
                     週{dow}
                   </div>
                 </div>
@@ -492,7 +492,7 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
                       <span className="text-xs text-mor-slate ml-1">＋{r.ot_hours}</span>
                     )}
                   </div>
-                  <span className={`inline-block mt-1 rounded-full border px-2 py-0.5 text-[11px] ${
+                  <span className={`inline-block mt-1 rounded-full border px-2 py-0.5 text-[13px] ${
                     TONE_CLS[s.tone]}`}>{s.label}</span>
                 </div>
 

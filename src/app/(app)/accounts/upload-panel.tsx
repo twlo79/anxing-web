@@ -209,7 +209,7 @@ export default function UploadPanel({
                   <summary className="cursor-pointer text-xs text-red-500">
                     看 PDF 實際讀到什麼（給工程師）
                   </summary>
-                  <pre className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap rounded bg-white/70 p-2 text-[11px] text-gray-700">
+                  <pre className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap rounded bg-white/70 p-2 text-[13px] text-gray-700">
                     {f.detail}
                   </pre>
                 </details>

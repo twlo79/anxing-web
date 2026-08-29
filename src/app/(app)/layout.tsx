@@ -11,6 +11,41 @@ import {
 /** 收合狀態存哪。改這個字串等於把所有人的收合狀態清空。 */
 const COLLAPSE_KEY = 'anxing.nav.collapsed';
 
+/**
+ * 群與群之間的分隔線。
+ *
+ * ============================================================
+ * 【★★ 為什麼最後一群是雙線】（2026-08-28 使用者:「我要你多畫一條」）
+ *
+ * 「設定」跟上面四群**不是同一種東西**:
+ *
+ *   每日工作 / 收入 / 支出與帳務 / 客戶經營  —— 每天在做的事
+ *   設定                                    —— 設定完就不再碰的東西
+ *
+ * 前四群之間是「換一個主題」,設定之前是「換一個層級」。
+ * 用同一條線畫兩種分界,等於在說它們一樣重要。
+ *
+ * ★ 雙線是印刷排版裡最老的一招:單線分段,雙線分章。
+ *   不需要解釋,看到就知道「下面開始不一樣了」。
+ *
+ * ★★ 判斷用**最後一群**而不是「標籤等於設定」——
+ *   哪天多加一群、或者「設定」改名,寫死字串的話會安靜地失效。
+ *   而「最後一群是收尾」這件事,不管群怎麼加都成立。
+ */
+function Rule({ double = false, tight = false }: { double?: boolean; tight?: boolean }) {
+  return (
+    // tight = 收合成 52px 的窄欄。那裡左右只有 12px 可用
+    <div aria-hidden className={tight ? 'mx-3 mt-2 mb-2' : 'mx-4 mt-2.5'}>
+      <div className="h-px bg-mor-line" />
+      {/*
+        ★ 兩條之間 3px。太近會糊成一條粗線（那看起來像畫錯）,
+          太遠會被當成兩個獨立的分界。3px 剛好讀成「一組」。
+      */}
+      {double && <div className="h-px bg-mor-line mt-[3px]" />}
+    </div>
+  );
+}
+
 
 const ROLE_LABEL: Record<string, string> = {
   cleaner: '房務', housekeeper: '管家', accountant: '會計', manager: '主管', super_admin: '總經理',
@@ -64,14 +99,14 @@ const NAV: { href: string; label: string; icon: string; roles: string[]; group?:
    *   所以**陣列順序就是畫面順序**,把一項插錯位置它就會落到別群去。
    *   加新項目時,放進它該在的那一段裡。
    *
-   * ★ 最後兩項（設定、權限管理）刻意**不給 group** ——
-   *   空標題 = 只畫一條分隔線。它們是「其餘」,
-   *   而給「其餘」取一個名字反而要人多讀兩個字（使用者指定）。
+   * ★ 每一項都要有 group。沒填的話會落進「空標題」那一群 ——
+   *   那一群只畫一條分隔線、而且**收不起來**（沒有標題就沒有把手）。
+   *   2026-08-28 之後五群都有名字,空標題那一群已經沒有成員了。
    * ══════════════════════════════════════════════════════════
    */
   // 出勤排第一：全公司每天最少點兩次,而且是「上班第一件事」。
   // 它原本排在清潔記錄後面 —— 每天要用的東西不該讓人往下找。
-  { href: '/attendance', label: '出勤', icon: '🕐', group: '每天', roles: ['cleaner', 'housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/attendance', label: '出勤', icon: '🕐', group: '每日工作', roles: ['cleaner', 'housekeeper', 'accountant', 'manager', 'super_admin'] },
   /*
    * 房務管理緊接在出勤後面（2026-08-14 使用者指定）。
    *
@@ -83,8 +118,22 @@ const NAV: { href: string; label: string; icon: string; roles: string[]; group?:
    * 排班是要互相配合的資訊。資料庫對應 migration_110 的唯讀政策,
    * 寫入仍然只有主管以上。
    */
-  { href: '/housekeeping', label: '房務管理', icon: '🛎️', group: '每天', roles: ['cleaner', 'housekeeper', 'accountant', 'manager', 'super_admin'] },
-  { href: '/cleaning', label: '清潔記錄', icon: '🧹', group: '每天', roles: ['cleaner', 'housekeeper', 'manager', 'super_admin'] },
+  { href: '/housekeeping', label: '房務管理', icon: '🛎️', group: '每日工作', roles: ['cleaner', 'housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/cleaning', label: '清潔記錄', icon: '🧹', group: '每日工作', roles: ['cleaner', 'housekeeper', 'manager', 'super_admin'] },
+  /*
+   * 標案管理（migration_179，2026-08-28）。
+   *
+   * **只有總經理**（使用者指定）。RLS 也是這樣寫的 —— 選單與資料庫一致,
+   * 藏起來不是為了安全,是為了不騙人。
+   *
+   * ★ 2026-08-28 從「經營」搬到「每日工作」（使用者指定）——
+   *   爬蟲每天推新標案進來,而截標日期在倒數。
+   *   它跟出勤、房務一樣是「今天要看一眼」的東西,不是季度才碰的。
+   *
+   * 📋 是「清單」的意思。跟 🧾 請款單、🗂️ 其他收支帳都不撞 ——
+   * 側邊欄收合成只剩圖示時要分得出來。
+   */
+  { href: '/tenders', label: '標案管理', icon: '📋', group: '每日工作', roles: ['super_admin'] },
   { href: '/shortterm', label: '訂單', icon: '🛏️', group: '收入', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/contracts', label: '契約', icon: '🤝', group: '收入', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   /*
@@ -144,29 +193,26 @@ const NAV: { href: string; label: string; icon: string; roles: string[]; group?:
   // 上面那半段是錢(訂單、契約、營收、請款、押金、支出、儀表板)。
   // 客戶資料原本散在訂單 guest_name 與契約 tenant_name 兩邊,
   // 要查一位房客的電話得先猜他是長租還是短租。
-  { href: '/customers', label: '客戶管理', icon: '👥', group: '經營', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
-  { href: '/reviews', label: '房源評價', icon: '⭐', group: '經營', roles: ['housekeeper', 'manager', 'super_admin'] },
+  { href: '/customers', label: '客戶管理', icon: '👥', group: '客戶經營', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/reviews', label: '房源評價', icon: '⭐', group: '客戶經營', roles: ['housekeeper', 'manager', 'super_admin'] },
   // 會計進得去，但只看得到「收付款帳號」與「常用帳號」兩個分頁
   // —— 改人員角色那一頁仍然只有總經理，見 admin 頁的 ACCOUNTANT_TABS
   /*
-   * 標案管理（migration_179，2026-08-28）。
+   * 底下兩項自成一群「設定」（2026-08-28 使用者指定）。
    *
-   * **只有總經理**（使用者指定）。RLS 也是這樣寫的 —— 選單與資料庫一致,
-   * 藏起來不是為了安全,是為了不騙人。
+   * ★ 原本刻意不給 group（空標題 = 只畫分隔線），理由是
+   *   「給『其餘』取名字反而要人多讀兩個字」。
+   *   使用者後來要了名字 —— 而他是對的:有了標題,這一群才跟其他四群
+   *   長得一樣,也才收得起來。**只有它是特例反而更難記。**
    *
-   * 放在「權限管理」前面、其他日常功能後面:它不是每天要點的東西,
-   * 但也不是設定 —— 它是一條獨立的業務線。
-   *
-   * 📋 是「清單」的意思。跟 🧾 請款單、🗂️ 其他收支帳都不撞 ——
-   * 側邊欄收合成只剩圖示時要分得出來。
+   * ★★ 要知道:`/settings` 底下其實有**三個**分頁 ——
+   *    新訊息、通知設定、**紀錄（回收桶）**。
+   *    叫「通知設定」等於只講了中間那個,
+   *    而誤刪東西的人不會想到要去「通知設定」裡找回收桶。
+   *    回收桶要不要單獨拉一項出來,還沒決定。
    */
-  { href: '/tenders', label: '標案管理', icon: '📋', group: '經營', roles: ['super_admin'] },
-  // 設定 = 通知偏好 ＋ 刪除紀錄。兩個都是「偶爾才進來一次」的東西，
-  // 各佔一格會把每天要用的功能往下推。全角色都看得到：
-  // 通知是每個人自己的偏好；刪除紀錄藏起來的話，誤刪的人第一時間
-  // 找不到救回來的地方 —— 而那正是最需要它的時候。
-  { href: '/settings', label: '設定', icon: '🔔', roles: ['cleaner', 'housekeeper', 'accountant', 'manager', 'super_admin'] },
-  { href: '/admin', label: '權限管理', icon: '⚙️', roles: ['accountant', 'super_admin'] },
+  { href: '/settings', label: '通知設定', icon: '🔔', group: '設定', roles: ['cleaner', 'housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/admin', label: '權限設定', icon: '⚙️', group: '設定', roles: ['accountant', 'super_admin'] },
 ];
 
 /**
@@ -397,7 +443,11 @@ function AppShell({ children }: { children: React.ReactNode }) {
               使用者名字底下的分隔線疊成兩條。
           */}
           {mini ? (
-            gi > 0 && <div aria-hidden className="mx-3 my-2 h-px bg-mor-line" />
+            /*
+              ★ 收合成圖示時沒有標題可讀,分隔線就是**唯一**的分群線索 ——
+                所以「設定」那道雙線在這裡更要畫,不能只在展開時有。
+            */
+            gi > 0 && <Rule double={gi === groups.length - 1} tight />
           ) : g.label ? (
             /*
              * ★★ 整條都是按鈕，不是只有那顆三角形。
@@ -437,12 +487,12 @@ function AppShell({ children }: { children: React.ReactNode }) {
 
                 ★ 第一群不畫線 —— 最上面那條會跟使用者名字底下的分隔線疊成兩條。
               */}
-              {gi > 0 && <div aria-hidden className="mx-4 mt-2.5 h-px bg-mor-line" />}
+              {gi > 0 && <Rule double={gi === groups.length - 1} />}
               <button type="button" onClick={() => flipGroup(g.label)}
                 aria-expanded={open}
                 title={open ? `收起「${g.label}」` : `展開「${g.label}」`}
                 className={`w-full flex items-center gap-1.5 px-4 pb-1
-                           text-xs font-bold tracking-[0.08em]
+                           text-[14px] font-bold tracking-[0.08em]
                            text-mor-slate hover:text-mor-slatedark transition-colors
                            ${gi > 0 ? 'pt-2.5' : 'pt-2'}`}>
                 <span>{g.label}</span>
@@ -465,12 +515,16 @@ function AppShell({ children }: { children: React.ReactNode }) {
                   換字元的話兩個 glyph 寬度不同,標題會左右抖一下。
                 */}
                 <span aria-hidden
-                  className={`text-[9px] leading-none opacity-55 transition-transform duration-150
+                  className={`text-[11px] leading-none opacity-55 transition-transform duration-150
                               ${open ? 'ml-auto rotate-90' : ''}`}>▶</span>
               </button>
             </>
           ) : (
-            gi > 0 && <div aria-hidden className="mx-4 mt-2.5 mb-1.5 h-px bg-mor-line" />
+            gi > 0 && (
+              <div className="mb-1.5">
+                <Rule double={gi === groups.length - 1} />
+              </div>
+            )
           )}
           {open && g.items.map((n) => {
         const on = pathname.startsWith(n.href);
@@ -509,9 +563,9 @@ function AppShell({ children }: { children: React.ReactNode }) {
              * ★ 沒有標題的那一群（設定、權限管理）不縮 ——
              *   它們不屬於任何標題,縮進去等於謊稱有上一層。
              */
-            className={`group relative mx-2 flex items-center gap-2.5 pr-3 py-2
+            className={`group relative mx-2 flex items-center gap-2.5 pr-3 py-2.5
               ${g.label ? 'pl-6' : 'pl-3.5'}
-              rounded-[10px] text-[15px] transition-colors ${
+              rounded-[10px] text-[16px] transition-colors ${
               on ? 'bg-mor-slate/[0.12] text-mor-slate font-semibold'
                  : 'text-gray-700 font-medium hover:bg-white/75'
             }`}>
@@ -523,13 +577,13 @@ function AppShell({ children }: { children: React.ReactNode }) {
             )}
             {/* 未選取壓彩度到 55%,選到的恢復滿彩 —— 對比從這裡來,
                 不需要再替十四個項目各配一個顏色 */}
-            <span className="text-[17px] leading-none w-6 text-center shrink-0 transition-[filter]"
+            <span className="text-[19px] leading-none w-7 text-center shrink-0 transition-[filter]"
               style={{ filter: on ? 'none' : 'saturate(0.55)' }}>
               {n.icon}
             </span>
             {n.label}
             {n.href === '/settings' && unread > 0 && (
-              <span className="ml-auto rounded-full bg-red-500 text-white text-[11px] font-semibold
+              <span className="ml-auto rounded-full bg-red-500 text-white text-[13px] font-semibold
                                min-w-[18px] h-[18px] px-1 flex items-center justify-center tabular-nums">
                 {unread > 99 ? '99+' : unread}
               </span>
@@ -558,7 +612,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
         </button>
         <div className="min-w-0">
           <div className="font-bold leading-tight truncate">{current?.label ?? '安幸上工'}</div>
-          {profile && <div className="text-[11px] text-gray-500 truncate">{profile.name}・{(profile.role && ROLE_LABEL[profile.role]) ?? profile.role ?? ''}</div>}
+          {profile && <div className="text-[13px] text-gray-500 truncate">{profile.name}・{(profile.role && ROLE_LABEL[profile.role]) ?? profile.role ?? ''}</div>}
         </div>
       </header>
 
@@ -592,12 +646,12 @@ function AppShell({ children }: { children: React.ReactNode }) {
         不一致的話內容會被側邊欄蓋住一段，而那一段就是讀不到的字。
       */}
       <div className={`hidden md:block shrink-0 transition-[width] duration-200
-                       ${pinned ? 'w-52' : 'w-14'}`} />
+                       ${pinned ? 'w-60' : 'w-14'}`} />
       <aside
         className={`hidden md:flex fixed inset-y-0 left-0 z-40 flex-col
                     bg-white/95 backdrop-blur-xl border-r border-mor-line
                     transition-[width] duration-200
-                    ${expanded ? 'w-52' : 'w-14'}`}>
+                    ${expanded ? 'w-60' : 'w-14'}`}>
 
         {/* 標題列 ＋ 收合鈕。鈕放這裡而不是最下面 —— 那是視線第一個
             到的地方，也是「這條東西可以動」最直覺的位置 */}
@@ -664,7 +718,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
               aria-pressed={false}
               className="w-full h-full flex items-center justify-center relative
                          text-gray-700 hover:bg-mor-sand/60 transition-colors group">
-              <span className="font-bold text-[15px] tracking-tight
+              <span className="font-bold text-[16px] tracking-tight
                                group-hover:opacity-0 transition-opacity">安幸</span>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3}
                 strokeLinecap="round" strokeLinejoin="round"

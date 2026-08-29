@@ -143,7 +143,7 @@ function GpsSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
                 <tr key={e.id} className="border-b border-mor-line/60 last:border-0">
                   <td className="px-4 py-2 font-medium">
                     {e.name}
-                    {e.gps_lat == null && <span className="ml-2 text-[11px] text-amber-600">尚未設定</span>}
+                    {e.gps_lat == null && <span className="ml-2 text-[13px] text-amber-600">尚未設定</span>}
                   </td>
                   {(['gps_lat', 'gps_lng'] as const).map((k) => (
                     <td key={k} className="px-4 py-2">
@@ -396,7 +396,7 @@ function QuotaSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
                 <tr key={p.id} className="border-b border-mor-line/60 last:border-0">
                   <td className="px-4 py-2 font-medium whitespace-nowrap">
                     {p.name}
-                    {!p.hired_on && <span className="ml-2 text-[11px] text-amber-600">未填到職日</span>}
+                    {!p.hired_on && <span className="ml-2 text-[13px] text-amber-600">未填到職日</span>}
                   </td>
                   {quotaTypes.map((t) => {
                     const b = bals.find((x) => x.user_id === p.id && x.type_code === t.code);
@@ -411,7 +411,7 @@ function QuotaSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
                           }}
                           className="w-24 rounded border border-mor-line px-2 py-1 text-sm tabular-nums" />
                         {b && (
-                          <div className="text-[11px] text-gray-400 mt-0.5">
+                          <div className="text-[13px] text-gray-400 mt-0.5">
                             已用 {b.used_hours}・剩 {Math.max(0, Number(b.quota_hours) - Number(b.used_hours))}
                           </div>
                         )}

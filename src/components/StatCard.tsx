@@ -140,7 +140,7 @@ export default function StatCard({
         {value}
       </span>
       {sub != null && sub !== '' && (
-        <span className={`text-[11px] shrink-0 md:block md:mt-0.5 ${
+        <span className={`text-[13px] shrink-0 md:block md:mt-0.5 ${
           active ? 'text-white/75' : 'text-gray-400'}`}>
           {sub}
         </span>

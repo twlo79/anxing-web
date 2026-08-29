@@ -546,7 +546,7 @@ export default function ReviewsPage() {
 
               ★ 沒設區間時寫「全部期間」,不留白:留白跟「載入中」長得一樣。
             */}
-            <div className="text-[11px] opacity-60 mt-0.5">
+            <div className="text-[13px] opacity-60 mt-0.5">
               退房日 {dateFrom || dateTo ? `${dateFrom || '起始'} ~ ${dateTo || '今'}` : '全部期間'}
             </div>
             <div className="flex items-baseline gap-1.5 mt-1">
@@ -752,7 +752,7 @@ export default function ReviewsPage() {
               <div className="text-sm text-gray-700 mt-1.5 line-clamp-3">
                 {displayComment(r) ?? <span className="text-gray-300">（無留言）</span>}
               </div>
-              <div className="text-[11px] text-gray-400 mt-1">
+              <div className="text-[13px] text-gray-400 mt-1">
                 {r.checkin_date ?? '—'} ~ {r.checkout_date ?? '—'}
                 {e?.name && !(p?.name ?? '').includes(e.name) ? `・${e.name}` : ''}
                 {mgrOf(r) ? `・${mgrOf(r)}` : ''}
@@ -819,10 +819,10 @@ export default function ReviewsPage() {
                       那種時候重複兩次是雜訊 —— 所以名稱裡已經有的就不再印一次。
                     */}
                     {e?.name && !(p?.name ?? '').includes(e.name) && (
-                      <div className="mt-0.5 text-[11px] text-gray-400">{e.name}</div>
+                      <div className="mt-0.5 text-[13px] text-gray-400">{e.name}</div>
                     )}
                     {!e?.name && !mastersLoaded && (
-                      <div className="mt-0.5 text-[11px] text-gray-300">⋯</div>
+                      <div className="mt-0.5 text-[13px] text-gray-300">⋯</div>
                     )}
                   </td>
                   <td className="px-3 py-2.5 whitespace-nowrap">{r.guest_name}</td>
@@ -837,7 +837,7 @@ export default function ReviewsPage() {
                     <div className="line-clamp-2">{displayComment(r) ?? <span className="text-gray-300">（無留言）</span>}</div>
                     {/* ★ 理由印出來 —— 「誰藏的」查得到但「為什麼」看不到的話,沒有人敢放回去 */}
                     {isHidden(r) && (
-                      <div className="mt-1 text-[11px] text-gray-400">
+                      <div className="mt-1 text-[13px] text-gray-400">
                         已隱藏{r.hidden_reason ? `・${r.hidden_reason}` : ''}
                         {canHide && (
                           <button

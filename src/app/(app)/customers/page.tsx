@@ -219,7 +219,7 @@ export default function CustomersPage() {
               className="w-full px-4 py-3 text-left">
               <div className="flex items-center gap-2">
                 <span className="font-medium text-sm flex-1 min-w-0 truncate">{c.name}</span>
-                {c.stale && <span className="text-[10px] text-amber-600 shrink-0">來源已不存在</span>}
+                {c.stale && <span className="text-[12px] text-amber-600 shrink-0">來源已不存在</span>}
                 <span className="text-xs text-gray-400 shrink-0">{c.property_label ?? '—'}</span>
               </div>
               <div className="text-xs text-gray-500 mt-0.5">
@@ -264,7 +264,7 @@ function RowPair({ c, today, open, onToggle, onSave }: {
             {staying && <span className="w-1.5 h-1.5 rounded-full bg-mor-green shrink-0" />}
             <span className="font-medium">{c.name}</span>
             {c.stale && (
-              <span className="text-[10px] text-amber-600 border border-amber-200 rounded px-1">
+              <span className="text-[12px] text-amber-600 border border-amber-200 rounded px-1">
                 來源已不存在
               </span>
             )}

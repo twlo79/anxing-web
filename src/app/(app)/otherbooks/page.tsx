@@ -395,20 +395,20 @@ export default function OtherBooksPage() {
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
-                        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${
+                        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[13px] font-medium ${
                           e.kind === 'income' ? 'bg-mor-greenlight text-mor-green' : 'bg-red-50 text-red-600'}`}>
                           {e.kind === 'income' ? '收' : '支'}
                         </span>
                         <span className="font-medium truncate">{e.name}</span>
                         {e.kind === 'income' && !e.settled && (
-                          <span className="shrink-0 rounded bg-amber-50 text-amber-700 px-1.5 py-0.5 text-[11px]">未收</span>
+                          <span className="shrink-0 rounded bg-amber-50 text-amber-700 px-1.5 py-0.5 text-[13px]">未收</span>
                         )}
                       </div>
-                      <div className="text-[11px] text-gray-500 mt-1">
+                      <div className="text-[13px] text-gray-500 mt-1">
                         {e.date}・{nameOf(e.account_code)}
                         {e.party ? `・${e.party}` : ''}
                       </div>
-                      {e.note && <div className="text-[11px] text-gray-400 mt-0.5 truncate">{e.note}</div>}
+                      {e.note && <div className="text-[13px] text-gray-400 mt-0.5 truncate">{e.note}</div>}
                     </div>
                     <div className={`shrink-0 text-right font-bold tabular-nums ${
                       e.kind === 'income' ? '' : 'text-red-600'}`}>
@@ -437,17 +437,17 @@ export default function OtherBooksPage() {
                       <td className="px-3 py-2 whitespace-nowrap text-gray-500">{e.date}</td>
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-1.5">
-                          <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${
+                          <span className={`shrink-0 rounded px-1.5 py-0.5 text-[13px] font-medium ${
                             e.kind === 'income' ? 'bg-mor-greenlight text-mor-green' : 'bg-red-50 text-red-600'}`}>
                             {e.kind === 'income' ? '收' : '支'}
                           </span>
                           <span className="truncate">{e.name}</span>
                           {/* 還沒收的錢要標出來 —— 那是唯一會讓人今天做一件事的資訊 */}
                           {e.kind === 'income' && !e.settled && (
-                            <span className="shrink-0 rounded bg-amber-50 text-amber-700 px-1.5 py-0.5 text-[11px]">未收</span>
+                            <span className="shrink-0 rounded bg-amber-50 text-amber-700 px-1.5 py-0.5 text-[13px]">未收</span>
                           )}
                         </div>
-                        {e.note && <div className="text-[11px] text-gray-400 truncate">{e.note}</div>}
+                        {e.note && <div className="text-[13px] text-gray-400 truncate">{e.note}</div>}
                       </td>
                       <td className="px-3 py-2 whitespace-nowrap text-gray-600">{nameOf(e.account_code)}</td>
                       <td className="px-3 py-2 whitespace-nowrap text-gray-600">{e.party ?? '—'}</td>
@@ -658,12 +658,12 @@ function Dashboard({
                 只印偶數月（2/4/6…），趨勢還是看得出來。
                 桌機全部印。
               */}
-              <div className={`text-[9px] text-gray-400 ${
+              <div className={`text-[11px] text-gray-400 ${
                 Number(m.ym.slice(5)) % 2 ? 'hidden md:block' : ''}`}>{m.ym.slice(5)}</div>
             </div>
           ))}
         </div>
-        <div className="flex gap-3 text-[11px] text-gray-500 mt-2">
+        <div className="flex gap-3 text-[13px] text-gray-500 mt-2">
           <span><span className="inline-block w-2 h-2 bg-mor-green/70 rounded-sm mr-1" />收入</span>
           <span><span className="inline-block w-2 h-2 bg-red-400/70 rounded-sm mr-1" />支出</span>
         </div>

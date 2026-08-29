@@ -259,7 +259,7 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
                           <div onClick={() => setExpand(isOpen ? null : r.id)}
                             className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 py-2 text-sm cursor-pointer hover:bg-mor-sand/30 border-b border-mor-line/30">
                             <span className="text-gray-400 text-xs">{isOpen ? '▾' : '▸'}</span>
-                            <span className="rounded px-1.5 py-0.5 text-[11px] bg-mor-bluelight text-mor-slate">{r.fee_type}</span>
+                            <span className="rounded px-1.5 py-0.5 text-[13px] bg-mor-bluelight text-mor-slate">{r.fee_type}</span>
                             <span className="font-medium">{r.item_name}</span>
                             <span className="text-xs text-gray-400">
                               {r.property_raw || '整棟'}・{ymShow(r.start_ym)} 起
@@ -289,7 +289,7 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
                                       <div key={o.id} className={`rounded-lg border px-2 py-1 ${
                                         o.paid ? 'border-mor-greenlight bg-mor-greenlight/30'
                                           : Number(o.amount) ? 'border-mor-line bg-white' : 'border-amber-300 bg-amber-50/60'}`}>
-                                        <div className="text-[11px] text-gray-500">{ymShow(ymOfKey(o.order_key))}</div>
+                                        <div className="text-[13px] text-gray-500">{ymShow(ymOfKey(o.order_key))}</div>
                                         <MoneyInput value={Number(o.amount) || 0} placeholder="0"
                                           disabled={!canEdit || o.paid}
                                           onChange={(n) => setAmount(o, n)}
@@ -297,7 +297,7 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
                                       </div>
                                     ))}
                                   </div>}
-                              <p className="text-[11px] text-gray-400 mt-2">
+                              <p className="text-[13px] text-gray-400 mt-2">
                                 已收款的月份不能改金額 —— 錢收了之後金額是既成事實。要改請先取消收款。
                               </p>
                             </div>

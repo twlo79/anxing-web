@@ -993,7 +993,7 @@ export default function AdminPage() {
                                 <span className="font-medium w-20">{staffName(t.staff_id)}</span>
                                 <span className="text-gray-500 tabular-nums">{tenureLabel(t)}</span>
                                 {t.end_date == null && (
-                                  <span className="rounded bg-mor-greenlight text-mor-green px-1.5 py-0.5 text-[11px]">現任</span>
+                                  <span className="rounded bg-mor-greenlight text-mor-green px-1.5 py-0.5 text-[13px]">現任</span>
                                 )}
                                 <span className="flex-1" />
                                 {t.end_date == null && (
@@ -1323,7 +1323,7 @@ export default function AdminPage() {
                         return (
                           <div className="mt-1 space-y-0.5">
                             {mine.map((l) => (
-                              <div key={l.listing_id} className="flex items-center gap-1 text-[11px] text-gray-500">
+                              <div key={l.listing_id} className="flex items-center gap-1 text-[13px] text-gray-500">
                                 <span className="font-mono">{l.listing_id}</span>
                                 <a href={`https://www.airbnb.com/hosting/listings/editor/${l.listing_id}/details`}
                                   target="_blank" rel="noreferrer"
@@ -1335,7 +1335,7 @@ export default function AdminPage() {
                               </div>
                             ))}
                             <button onClick={() => addListing(p.id, p.name)}
-                              className="text-[11px] text-mor-blue underline">＋ 加一個舊編號</button>
+                              className="text-[13px] text-mor-blue underline">＋ 加一個舊編號</button>
                           </div>
                         );
                       })()}
@@ -1490,7 +1490,7 @@ export default function AdminPage() {
             {SYNC_TIERS.map((t) => (
               <div key={t.level} className="border-b border-mor-line/50 last:border-0 px-4 py-2.5 sm:flex sm:gap-4">
                 <div className="sm:w-24 shrink-0 mb-1 sm:mb-0">
-                  <span className={`inline-block rounded px-2 py-0.5 text-[11px] whitespace-nowrap ${t.tone}`}>
+                  <span className={`inline-block rounded px-2 py-0.5 text-[13px] whitespace-nowrap ${t.tone}`}>
                     {t.level}
                   </span>
                 </div>
@@ -1540,7 +1540,7 @@ export default function AdminPage() {
               而新事件混在裡面就跟舊帳長得一模一樣。
             */}
             {changedToday > 0 && (
-              <span className="rounded-full bg-mor-bluelight px-2 py-0.5 text-[11px] font-medium text-mor-slate">
+              <span className="rounded-full bg-mor-bluelight px-2 py-0.5 text-[13px] font-medium text-mor-slate">
                 其中 {changedToday} 筆是 Airbnb 這次才改的
               </span>
             )}
@@ -1569,7 +1569,7 @@ export default function AdminPage() {
                       {(() => {
                         const sev = SEV_LABEL[list[0]?.severity ?? 'mid'] ?? SEV_LABEL.mid;
                         return (
-                          <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap ${sev.tone}`}>
+                          <span className={`rounded px-1.5 py-0.5 text-[13px] font-medium whitespace-nowrap ${sev.tone}`}>
                             {sev.text}
                           </span>
                         );
@@ -1629,18 +1629,18 @@ export default function AdminPage() {
                                     className="ml-1 text-mor-blue underline">↗ 查</a>
                                 )}
                               </div>
-                              <div className="text-[11px] text-gray-400">
+                              <div className="text-[13px] text-gray-400">
                                 {o?.checkin ? `${o.checkin.slice(5)}~${(o.checkout ?? '').slice(5)}・` : ''}
                                 <span className="font-mono">{it.code}</span>
                               </div>
                               {/* 這一筆是 Airbnb 這次才改的 —— 跟一直掛著的舊帳分開 */}
                               {it.airbnb_changed && (
-                                <div className="mt-0.5 inline-block rounded bg-mor-bluelight px-1.5 py-0.5 text-[10px] text-mor-slate whitespace-nowrap">
+                                <div className="mt-0.5 inline-block rounded bg-mor-bluelight px-1.5 py-0.5 text-[12px] text-mor-slate whitespace-nowrap">
                                   這次才改的
                                 </div>
                               )}
                               {it.dismissed_at && (
-                                <div className="mt-0.5 inline-block rounded bg-mor-sand px-1.5 py-0.5 text-[10px] text-gray-600 whitespace-nowrap">
+                                <div className="mt-0.5 inline-block rounded bg-mor-sand px-1.5 py-0.5 text-[12px] text-gray-600 whitespace-nowrap">
                                   已忽略・數字再變會回來
                                 </div>
                               )}
@@ -1656,13 +1656,13 @@ export default function AdminPage() {
                                 那個算式讓他當場就能對起來，不用回 Airbnb 查。
                               */}
                               {it.reason && (
-                                <div className="mt-0.5 text-[11px] font-normal text-gray-500 whitespace-normal max-w-md">
+                                <div className="mt-0.5 text-[13px] font-normal text-gray-500 whitespace-normal max-w-md">
                                   {it.reason}
                                 </div>
                               )}
                               {/* 這個 listing 目前只對到某個停用房源 —— 那通常就是元兇 */}
                               {typeof it.extra?.['停用對照'] === 'string' && (
-                                <span className="ml-1 rounded bg-amber-50 px-1.5 py-0.5 text-[11px] text-amber-800 whitespace-nowrap">
+                                <span className="ml-1 rounded bg-amber-50 px-1.5 py-0.5 text-[13px] text-amber-800 whitespace-nowrap">
                                   停用:{String(it.extra['停用對照'])}
                                 </span>
                               )}
@@ -1681,7 +1681,7 @@ export default function AdminPage() {
                                 const details = extraDetails(it.extra);
                                 if (details.length) {
                                   return (
-                                    <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[11px] font-normal max-w-md">
+                                    <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[13px] font-normal max-w-md">
                                       {details.map((d) => (
                                         <Fragment key={d.label}>
                                           <dt className="text-gray-400 whitespace-nowrap">{d.label}</dt>
@@ -1718,7 +1718,7 @@ export default function AdminPage() {
                                    */
                                   const owner = findListingOwner(it.listing_id, properties, listings);
                                   return (
-                                    <div className={`mt-1 text-[11px] font-normal max-w-md ${
+                                    <div className={`mt-1 text-[13px] font-normal max-w-md ${
                                       owner && !owner.active ? 'text-amber-700' : 'text-gray-500'}`}>
                                       {listingOwnerHint(owner, it.listing_id ?? '')}
                                       {/* 爬蟲的細節是另一件事 —— 有沒有對照跟「爬到什麼」要分開講 */}
@@ -1824,13 +1824,13 @@ export default function AdminPage() {
                       <tr key={g.id} className="border-b border-mor-line/40 last:border-0">
                         <td className="px-4 py-2 text-xs text-gray-500 whitespace-nowrap">{twTime(g.closed_at)}</td>
                         <td className="px-4 py-2 whitespace-nowrap">
-                          <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${tone.tone}`}>
+                          <span className={`rounded px-1.5 py-0.5 text-[13px] font-medium ${tone.tone}`}>
                             {tone.text}
                           </span>
                         </td>
                         <td className="px-4 py-2 whitespace-nowrap">
                           <span className="font-medium">{g.field}</span>
-                          <span className="text-gray-400 font-mono text-[11px] ml-1.5">{g.code}</span>
+                          <span className="text-gray-400 font-mono text-[13px] ml-1.5">{g.code}</span>
                         </td>
                         <td className="px-4 py-2 text-xs">
                           <span className="text-gray-500">{g.from_val ?? '—'}</span>
@@ -1954,14 +1954,14 @@ export default function AdminPage() {
                       <td className="px-4 py-2 whitespace-nowrap">
                         {a.user_id
                           ? (nameOfUser[a.user_id] ?? <span className="text-xs text-gray-400">已刪除的帳號</span>)
-                          : <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-500">爬蟲／系統</span>}
+                          : <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[13px] text-gray-500">爬蟲／系統</span>}
                       </td>
                       <td className="px-4 py-2 text-xs text-gray-500 whitespace-nowrap">
                         {AUDIT_TABLE[a.table_name] ?? a.table_name}
                       </td>
                       <td className="px-4 py-2 font-medium">{a.label ?? '—'}</td>
                       <td className="px-4 py-2">
-                        <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] whitespace-nowrap ${
+                        <span className={`inline-block rounded px-1.5 py-0.5 text-[13px] whitespace-nowrap ${
                           a.action === 'delete' ? 'bg-red-50 text-red-600'
                           : a.action === 'insert' ? 'bg-mor-greenlight text-mor-green'
                           : 'bg-mor-bluelight text-mor-slate'}`}>

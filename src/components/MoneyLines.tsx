@@ -99,7 +99,7 @@ export default function MoneyLines({
                     onChange={(e) => upd(i, { cur: e.target.value.toUpperCase().replace(/[^A-Z]/g, '') })}
                     placeholder="代碼" className={`${CTRL} w-16 uppercase`} />
                   <button type="button" onClick={() => { markCustom(i, false); upd(i, { cur: '' }); }}
-                    className="text-[11px] text-mor-blue underline">選單</button>
+                    className="text-[13px] text-mor-blue underline">選單</button>
                 </span>
               ) : (
                 /*

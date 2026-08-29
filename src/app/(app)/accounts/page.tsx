@@ -567,7 +567,7 @@ export default function AccountsPage() {
                     </div>
                   ) : (
                     <button onClick={() => setMemoEdit({ id: t.id, text: t.memo ?? '' })}
-                      className="text-[11px] text-gray-600 mt-0.5 break-words text-left">
+                      className="text-[13px] text-gray-600 mt-0.5 break-words text-left">
                       {t.memo || <span className="text-gray-300">✎ 加摘要</span>}
                     </button>
                   )}
@@ -579,7 +579,7 @@ export default function AccountsPage() {
                   {Number(t.debit) > 0 && (
                     <div className="font-bold tabular-nums text-red-600">−{money(t.debit)}</div>
                   )}
-                  <div className="text-[11px] text-gray-400 tabular-nums mt-0.5">
+                  <div className="text-[13px] text-gray-400 tabular-nums mt-0.5">
                     餘 {money(t.balance)}
                   </div>
                 </div>
@@ -684,7 +684,7 @@ export default function AccountsPage() {
                       卻沒有多給任何資訊。
                     */}
                     {t.txn_date && t.txn_date !== t.post_date && (
-                      <div className="text-[11px] text-gray-400">入帳 {ymd(t.post_date)}</div>
+                      <div className="text-[13px] text-gray-400">入帳 {ymd(t.post_date)}</div>
                     )}
                   </td>
                   <td className="whitespace-nowrap px-3 py-1.5">{t.description ?? ''}</td>
@@ -750,12 +750,12 @@ export default function AccountsPage() {
                     {/* 13px（2026-08-19 使用者指定放大）—— 這一欄是對帳時真正在讀的東西,
                         原本 12px 的等寬數字在一堆 14px 中文旁邊看起來像註腳 */}
                     {t.ref_no && (
-                      <div className="break-all font-mono text-[13px] font-medium tracking-tight text-gray-800">
+                      <div className="break-all font-mono text-[14px] font-medium tracking-tight text-gray-800">
                         {splitRef(t.ref_no)}
                       </div>
                     )}
                     {t.counterparty && (
-                      <div className="text-[11px] text-gray-400 mt-0.5 truncate">{t.counterparty}</div>
+                      <div className="text-[13px] text-gray-400 mt-0.5 truncate">{t.counterparty}</div>
                     )}
                   </td>
                   <td className="whitespace-nowrap px-3 py-1.5 text-right tabular-nums text-red-600">
@@ -774,7 +774,7 @@ export default function AccountsPage() {
                     */}
                     {t.balance_note && (
                       <div
-                        className="text-[11px] font-normal text-amber-700"
+                        className="text-[13px] font-normal text-amber-700"
                         title="銀行印的餘額跟依交易金額推算的不一致。餘額以我們算的為準。"
                       >
                         ⚠ {t.balance_note}

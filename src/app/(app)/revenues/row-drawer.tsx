@@ -122,7 +122,7 @@ export default function RowDrawer({
                 <span className="text-xs text-gray-400 truncate">{extra.order_key}</span>
               )}
             </div>
-            <div className="text-[15px] font-semibold truncate">
+            <div className="text-[16px] font-semibold truncate">
               {room.main}{row.guest_name ? ` · ${row.guest_name}` : ''}
             </div>
           </div>

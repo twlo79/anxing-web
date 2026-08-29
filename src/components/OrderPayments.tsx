@@ -333,15 +333,15 @@ export default function OrderPayments({
               {/* 三個數字擺最上面 —— 打開視窗第一眼要回答的就是「還差多少」 */}
               <div className="grid grid-cols-3 gap-2 text-center">
                 <div className="rounded-lg bg-mor-sand/60 py-2">
-                  <div className="text-[11px] text-gray-500">應收</div>
+                  <div className="text-[13px] text-gray-500">應收</div>
                   <div className="font-bold text-sm">${fmt(due)}</div>
                 </div>
                 <div className="rounded-lg bg-mor-greenlight py-2">
-                  <div className="text-[11px] text-mor-green">已收</div>
+                  <div className="text-[13px] text-mor-green">已收</div>
                   <div className="font-bold text-sm text-mor-green">${fmt(paidAmount)}</div>
                 </div>
                 <div className={`rounded-lg py-2 ${rest > 0 ? 'bg-red-50' : 'bg-gray-100'}`}>
-                  <div className={`text-[11px] ${rest > 0 ? 'text-red-600' : 'text-gray-400'}`}>尚欠</div>
+                  <div className={`text-[13px] ${rest > 0 ? 'text-red-600' : 'text-gray-400'}`}>尚欠</div>
                   <div className={`font-bold text-sm ${rest > 0 ? 'text-red-600' : 'text-gray-400'}`}>${fmt(rest)}</div>
                 </div>
               </div>
@@ -363,20 +363,20 @@ export default function OrderPayments({
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-xs text-gray-500">發票</span>
                     {inv
-                      ? <span className="text-[11px] rounded bg-mor-greenlight text-mor-green px-1.5 py-0.5">已開立</span>
-                      : <span className="text-[11px] text-amber-700">尚未開立</span>}
+                      ? <span className="text-[13px] rounded bg-mor-greenlight text-mor-green px-1.5 py-0.5">已開立</span>
+                      : <span className="text-[13px] text-amber-700">尚未開立</span>}
                   </div>
                   {canEdit ? (
                     <>
                       <div className="grid grid-cols-2 gap-2">
                         <label className="flex flex-col gap-1">
-                          <span className="text-[11px] text-gray-400">發票號碼</span>
+                          <span className="text-[13px] text-gray-400">發票號碼</span>
                           <input value={invNo} maxLength={10} placeholder="AB12345678"
                             onChange={(e) => setInvNo(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
                             className={`${CTRL} uppercase tracking-wide`} />
                         </label>
                         <label className="flex flex-col gap-1">
-                          <span className="text-[11px] text-gray-400">開票日</span>
+                          <span className="text-[13px] text-gray-400">開票日</span>
                           <input type="date" value={invDate} onChange={(e) => setInvDate(e.target.value)} className={CTRL} />
                         </label>
                       </div>
@@ -390,7 +390,7 @@ export default function OrderPayments({
                             className="h-11 md:h-9 px-3 rounded-lg text-xs text-red-400 hover:text-red-600 disabled:opacity-40">刪除</button>
                         )}
                       </div>
-                      <div className="text-[11px] text-gray-400 mt-1.5">
+                      <div className="text-[13px] text-gray-400 mt-1.5">
                         抬頭 {order.invoice_title || order.guest_name || '—'}
                         {order.invoice_tax_id ? `・統編 ${order.invoice_tax_id}` : ''}
                         ・號碼格式 2 碼英文 + 8 碼數字
@@ -406,13 +406,13 @@ export default function OrderPayments({
               <div>
                 <div className="flex items-baseline justify-between mb-1.5">
                   <span className="text-xs text-gray-500">收款明細</span>
-                  {rows.length > 0 && <span className="text-[11px] text-gray-400">{rows.length} 筆・點一筆可看收款證明</span>}
+                  {rows.length > 0 && <span className="text-[13px] text-gray-400">{rows.length} 筆・點一筆可看收款證明</span>}
                 </div>
                 {loading ? (
                   <div className="text-sm text-gray-400 py-3 text-center">載入中…</div>
                 ) : rows.length === 0 ? (
                   <div className="text-sm text-gray-400 py-4 text-center border border-dashed border-mor-line rounded-lg">
-                    尚未有收款紀錄<div className="text-[11px] mt-1">收款可以分多次記，下面新增一筆就好</div>
+                    尚未有收款紀錄<div className="text-[13px] mt-1">收款可以分多次記，下面新增一筆就好</div>
                   </div>
                 ) : (
                   <div className="border border-mor-line rounded-lg divide-y divide-mor-line/60">
@@ -423,7 +423,7 @@ export default function OrderPayments({
                           <span className="text-gray-300 text-xs w-3 shrink-0">{openId === r.id ? '▾' : '▸'}</span>
                           <div className="min-w-0 flex-1">
                             <div className="font-medium">${fmt(r.amount)}</div>
-                            <div className="text-[11px] text-gray-500 truncate">
+                            <div className="text-[13px] text-gray-500 truncate">
                               {r.paid_on}・{methodText(r.method, r.account, acctName)}
                               {r.note ? `・${r.note}` : ''}
                               {/*
@@ -461,11 +461,11 @@ export default function OrderPayments({
 
                   <div className="grid grid-cols-2 gap-2">
                     <label className="flex flex-col gap-1">
-                      <span className="text-[11px] text-gray-400">收款日</span>
+                      <span className="text-[13px] text-gray-400">收款日</span>
                       <input type="date" value={draftOn} onChange={(e) => setDraftOn(e.target.value)} className={CTRL} />
                     </label>
                     <label className="flex flex-col gap-1">
-                      <span className="text-[11px] text-gray-400">金額（台幣）</span>
+                      <span className="text-[13px] text-gray-400">金額（台幣）</span>
                       {/* inputMode=numeric 讓手機直接跳數字鍵盤 */}
                       <input type="number" inputMode="numeric" min={0}
                         value={draftAmt} onChange={(e) => setDraftAmt(e.target.value)}
@@ -480,7 +480,7 @@ export default function OrderPayments({
                   */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <label className="flex flex-col gap-1">
-                      <span className="text-[11px] text-gray-400">收款方式</span>
+                      <span className="text-[13px] text-gray-400">收款方式</span>
                       <select value={draftMethod}
                         onChange={(e) => setDraftMethod(e.target.value)} className={CTRL}>
                         {(methodOpts ?? METHOD_OPTS).map((m) => <option key={m} value={m}>{METHOD_LABEL[m]}</option>)}
@@ -488,7 +488,7 @@ export default function OrderPayments({
                     </label>
                     {needsAccount(draftMethod) && (
                       <label className="flex flex-col gap-1">
-                        <span className="text-[11px] text-gray-400">安幸收款帳號</span>
+                        <span className="text-[13px] text-gray-400">安幸收款帳號</span>
                         <select value={draftAcct} onChange={(e) => setDraftAcct(e.target.value)} className={CTRL}>
                           <option value="">未指定</option>
                           {accounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
@@ -526,13 +526,13 @@ export default function OrderPayments({
                         <>
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                             <label className="flex flex-col gap-1">
-                              <span className="text-[11px] text-gray-400">手續費金額</span>
+                              <span className="text-[13px] text-gray-400">手續費金額</span>
                               <input type="number" inputMode="numeric" min="0" placeholder="例 30"
                                 value={draftFee} onChange={(e) => setDraftFee(e.target.value)}
                                 className={CTRL + ' text-right'} />
                             </label>
                             <label className="flex flex-col gap-1">
-                              <span className="text-[11px] text-gray-400">
+                              <span className="text-[13px] text-gray-400">
                                 扣款日<span className="ml-1">（不填＝收款日）</span>
                               </span>
                               <input type="date" value={draftFeeDate}
@@ -543,11 +543,11 @@ export default function OrderPayments({
                             ★ 即時算出實際進帳。填單的人手上是銀行對帳單，
                               上面的數字是這個 —— 對得起來他才敢按下去。
                           */}
-                          <div className="text-[11px] text-gray-600 flex justify-between">
+                          <div className="text-[13px] text-gray-600 flex justify-between">
                             <span>房客付 {fmt(Number(draftAmt) || 0)} − 手續費 {fmt(Number(draftFee) || 0)}</span>
                             <span className="font-medium">實際進帳 {fmt((Number(draftAmt) || 0) - (Number(draftFee) || 0))}</span>
                           </div>
-                          <div className="text-[11px] text-gray-400">
+                          <div className="text-[13px] text-gray-400">
                             會自動產生一筆「郵電費」支出。改成現金收款或金額歸零時那筆會自己消失。
                           </div>
                         </>
@@ -556,7 +556,7 @@ export default function OrderPayments({
                   )}
 
                   <label className="flex flex-col gap-1">
-                    <span className="text-[11px] text-gray-400">備註（選填）</span>
+                    <span className="text-[13px] text-gray-400">備註（選填）</span>
                     <input value={draftNote} onChange={(e) => setDraftNote(e.target.value)} className={CTRL} />
                   </label>
 
@@ -571,7 +571,7 @@ export default function OrderPayments({
                     className="w-full h-12 rounded-lg bg-mor-green text-white text-sm font-medium hover:opacity-90 disabled:opacity-40">
                     {busy ? '處理中…' : '確認收款'}
                   </button>
-                  <div className="text-[11px] text-gray-400 text-center">
+                  <div className="text-[13px] text-gray-400 text-center">
                     可以分多次收款，每按一次就多一筆紀錄
                   </div>
                 </div>

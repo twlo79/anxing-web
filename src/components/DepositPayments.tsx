@@ -219,21 +219,21 @@ export default function DepositPayments({
           {/* 應收／已收／尚欠。三格並排 —— 缺一個就得靠人心算 */}
           <div className="grid grid-cols-3 gap-2">
             <div className="rounded-lg bg-mor-sand px-3 py-2">
-              <div className="text-[11px] text-gray-500">應收</div>
+              <div className="text-[13px] text-gray-500">應收</div>
               <div className="text-lg font-semibold tabular-nums">${fmt(due)}</div>
             </div>
             <div className="rounded-lg bg-mor-greenlight px-3 py-2">
-              <div className="text-[11px] text-mor-green">已收</div>
+              <div className="text-[13px] text-mor-green">已收</div>
               <div className="text-lg font-semibold tabular-nums text-mor-green">${fmt(received)}</div>
             </div>
             <div className="rounded-lg bg-amber-50 px-3 py-2">
-              <div className="text-[11px] text-amber-700">尚欠</div>
+              <div className="text-[13px] text-amber-700">尚欠</div>
               <div className="text-lg font-semibold tabular-nums text-amber-700">${fmt(rest)}</div>
             </div>
           </div>
 
           <div className="text-center">
-            <span className={`inline-block rounded-full px-2.5 py-0.5 text-[11px] font-medium ${DEP_STATUS_CLASS[status]}`}>
+            <span className={`inline-block rounded-full px-2.5 py-0.5 text-[13px] font-medium ${DEP_STATUS_CLASS[status]}`}>
               {DEP_STATUS_LABEL[status]}
             </span>
           </div>
@@ -253,7 +253,7 @@ export default function DepositPayments({
             來源在訂單／契約，由觸發器同步過來（migration_56）。
           */}
           {!dep.is_manual && (
-            <div className="rounded-lg bg-mor-sand/60 text-gray-500 px-3 py-2 text-[11px]">
+            <div className="rounded-lg bg-mor-sand/60 text-gray-500 px-3 py-2 text-[13px]">
               {wordOf(dep)}金額不在這裡改 —— 請到{dep.contract_id ? '契約' : '短租訂單'}頁修改，這裡會自動同步。
             </div>
           )}
@@ -267,7 +267,7 @@ export default function DepositPayments({
             ) : rows.length === 0 ? (
               <div className="rounded-lg border border-dashed border-mor-line py-8 text-center text-sm text-gray-400">
                 尚未有收款紀錄
-                <div className="text-[11px] mt-1">收款可以分多次記，下面新增一筆就好</div>
+                <div className="text-[13px] mt-1">收款可以分多次記，下面新增一筆就好</div>
               </div>
             ) : (
               <div className="border border-mor-line rounded-lg divide-y divide-mor-line/60">
@@ -282,7 +282,7 @@ export default function DepositPayments({
                       <span className="text-gray-300 text-xs w-3 shrink-0">{openId === r.id ? '▾' : '▸'}</span>
                       <div className="min-w-0 flex-1">
                         <div className="font-medium tabular-nums">${fmt(r.amount)}</div>
-                        <div className="text-[11px] text-gray-500 truncate">
+                        <div className="text-[13px] text-gray-500 truncate">
                           {r.paid_on}・{methodText(r.method, r.account, acctName)}
                           {r.note ? `・${r.note}` : ''}
                         </div>
@@ -310,12 +310,12 @@ export default function DepositPayments({
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                 <label className="flex flex-col gap-1">
-                  <span className="text-[11px] text-gray-400">收款日</span>
+                  <span className="text-[13px] text-gray-400">收款日</span>
                   <input type="date" value={draftOn} onChange={(e) => setDraftOn(e.target.value)}
                     className={CTRL} />
                 </label>
                 <label className="flex flex-col gap-1">
-                  <span className="text-[11px] text-gray-400">金額（台幣）</span>
+                  <span className="text-[13px] text-gray-400">金額（台幣）</span>
                   {/*
                     不預先帶入尚欠金額。帶了的話最常見的操作變成「直接按送出」,
                     而分次收的第一筆本來就不是全額 —— 預設值會讓人不假思索地記錯。
@@ -327,14 +327,14 @@ export default function DepositPayments({
                     className={`${CTRL} text-right tabular-nums`} />
                 </label>
                 <label className="flex flex-col gap-1">
-                  <span className="text-[11px] text-gray-400">收款方式</span>
+                  <span className="text-[13px] text-gray-400">收款方式</span>
                   <select value={draftMethod} onChange={(e) => setDraftMethod(e.target.value)}
                     className={CTRL}>
                     {METHOD_OPTS.map((m) => <option key={m} value={m}>{METHOD_LABEL[m]}</option>)}
                   </select>
                 </label>
                 <label className="flex flex-col gap-1">
-                  <span className="text-[11px] text-gray-400">安幸收款帳號</span>
+                  <span className="text-[13px] text-gray-400">安幸收款帳號</span>
                   {/* 只有匯款對得到帳戶。現金／信用卡／加密貨幣硬指定一個帳號,
                       只會讓對帳的人以為錢真的進了那個戶頭（見 lib/pay-method） */}
                   <select value={draftAcct} onChange={(e) => setDraftAcct(e.target.value)}
@@ -347,7 +347,7 @@ export default function DepositPayments({
               </div>
 
               <label className="flex flex-col gap-1">
-                <span className="text-[11px] text-gray-400">備註（選填）</span>
+                <span className="text-[13px] text-gray-400">備註（選填）</span>
                 <input value={draftNote} onChange={(e) => setDraftNote(e.target.value)}
                   placeholder="訂金、尾款⋯" className={CTRL} />
               </label>

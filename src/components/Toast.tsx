@@ -45,7 +45,7 @@ export default function Toast({ msg, error, onClose }: {
                      bg-red-50 text-red-700 border border-red-200
                      px-4 py-3 font-medium shadow-lg shadow-black/10">
           {msg}
-          <span className="block text-[11px] font-normal text-red-500/80 mt-0.5">點一下關閉</span>
+          <span className="block text-[13px] font-normal text-red-500/80 mt-0.5">點一下關閉</span>
         </button>
       ) : (
         <div className="pointer-events-none w-full text-sm rounded-xl
