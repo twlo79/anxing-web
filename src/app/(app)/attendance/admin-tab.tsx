@@ -33,20 +33,54 @@ type Person = {
 export default function AdminTab({ onMsg }: TabProps) {
   const [sub, setSub] = useState<Sub>('gps');
   return (
-    <div className="space-y-4">
-      <div className="inline-flex gap-1 p-1 rounded-xl bg-white/45 backdrop-blur border border-white/60">
+    /*
+     * ══════════════════════════════════════════════════════════
+     * ★★★ 第二層放進**卡片左側**，不是浮在第一層下面
+     *     （2026-08-29 使用者:「管理 裡面才有這些」）
+     *
+     * 原本兩層長得一模一樣、左緣對齊、中間沒有邊界 ——
+     * 畫面上就是**九個平行的選項**,完全看不出
+     * 「打卡位置」是「管理」底下的東西。
+     *
+     * ★★ 這兩層是**同一種性質**（都是「換這一頁的哪個區塊」）,
+     *   所以不能靠換形狀來分 —— 只能靠**包覆**:
+     *   把它放進「管理」打開的那個盒子裡,關係就不用解釋了。
+     *
+     *   （其他收支帳那兩層不用包,因為它們性質不同:
+     *     圓膠囊換資料、分段換檢視,形狀本身就說完了。）
+     *
+     * ★ 為什麼是左側垂直清單而不是卡片上緣的橫排:
+     *   這四項是「設定完就不太動」的東西 —— 垂直清單是設定頁的慣例,
+     *   而且**之後再加項目也不會擠**（橫排四項就快滿了）。
+     *
+     * ★ 手機收成上方橫排 —— 132px 的側欄在 375px 上會把內容擠到剩一半。
+     * ══════════════════════════════════════════════════════════
+     */
+    <div className={`${CARD} overflow-hidden md:flex`}>
+      {/* 側欄 —— 底色比卡片深一階,跟右邊的內容再分開一次 */}
+      <nav className="shrink-0 bg-mor-sand/40 p-2
+                      md:w-[9.5rem] md:border-r md:border-mor-line
+                      border-b border-mor-line md:border-b-0
+                      flex md:block gap-1 overflow-x-auto"
+        aria-label="管理項目">
         {(Object.keys(SUB) as Sub[]).map((k) => (
-          <button key={k} onClick={() => setSub(k)}
-            className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
-              sub === k ? 'bg-white text-mor-slate shadow-[0_2px_8px_-2px_rgba(46,56,64,0.25)]' : 'text-gray-500 hover:text-gray-700'}`}>
+          <button key={k} type="button" onClick={() => setSub(k)}
+            aria-current={sub === k ? 'page' : undefined}
+            className={`whitespace-nowrap rounded-lg px-3 py-2 text-uisub font-medium
+                        text-left transition-colors md:w-full md:mb-0.5 ${
+              sub === k ? 'bg-mor-bluelight text-mor-slate' : 'text-gray-600 hover:bg-white/70'}`}>
             {SUB[k]}
           </button>
         ))}
+      </nav>
+
+      {/* ★ min-w-0:不加的話裡面的寬表格會把側欄擠扁（flex 子項預設不縮） */}
+      <div className="min-w-0 flex-1 p-3 md:p-4">
+        {sub === 'gps' && <GpsSection onMsg={onMsg} />}
+        {sub === 'hours' && <HoursSection onMsg={onMsg} />}
+        {sub === 'quota' && <QuotaSection onMsg={onMsg} />}
+        {sub === 'report' && <ReportSection onMsg={onMsg} />}
       </div>
-      {sub === 'gps' && <GpsSection onMsg={onMsg} />}
-      {sub === 'hours' && <HoursSection onMsg={onMsg} />}
-      {sub === 'quota' && <QuotaSection onMsg={onMsg} />}
-      {sub === 'report' && <ReportSection onMsg={onMsg} />}
     </div>
   );
 }
@@ -126,7 +160,8 @@ function GpsSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
 
   return (
     <section>
-      <div className={`${CARD} overflow-hidden`}>
+      {/* ★ 這裡不再包 CARD —— AdminTab 已經是一張卡了，再包一層就是卡中卡 */}
+      <div className="overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[680px] text-sm">
             <thead>
@@ -245,7 +280,7 @@ function HoursSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
     <section className="space-y-4">
       {/* 公司預設 */}
       {ws && (
-        <div className={`${CARD} p-4`}>
+        <div className="rounded-xl border border-mor-line bg-white/60 p-4">
           <div className="text-sm font-medium mb-3">全公司預設</div>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             {([
@@ -270,7 +305,8 @@ function HoursSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
       )}
 
       {/* 個人 */}
-      <div className={`${CARD} overflow-hidden`}>
+      {/* ★ 這裡不再包 CARD —— AdminTab 已經是一張卡了，再包一層就是卡中卡 */}
+      <div className="overflow-hidden">
         <div className="px-4 py-2.5 border-b border-mor-line bg-white/45 text-sm font-medium">
           個人設定（留空 = 沿用上面的公司預設）
         </div>
@@ -380,7 +416,8 @@ function QuotaSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
           className="w-24 rounded border border-mor-line px-2 py-1 text-sm tabular-nums" />
       </div>
 
-      <div className={`${CARD} overflow-hidden`}>
+      {/* ★ 這裡不再包 CARD —— AdminTab 已經是一張卡了，再包一層就是卡中卡 */}
+      <div className="overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[560px] text-sm">
             <thead>
@@ -564,7 +601,7 @@ function ReportSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
 
   return (
     <section className="space-y-3">
-      <div className={`${CARD} p-4 space-y-3`}>
+      <div className="space-y-3">
         <label className="text-sm block">
           <span className="text-xs text-gray-500 block mb-1">期間</span>
           <RangeInput inputClass="flex-1" from={from} to={to}

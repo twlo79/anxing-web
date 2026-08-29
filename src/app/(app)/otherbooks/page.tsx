@@ -7,6 +7,7 @@ import Req from '@/components/Req';
 import MoneyInput from '@/components/MoneyInput';
 import Toast from '@/components/Toast';
 import StatCard, { StatRow } from '@/components/StatCard';
+import { Tabs } from '@/components/Tabs';
 import {
   OTHER_BOOKS, BOOK_LABEL, BOOK_BIZ, OTHER_BIZ_SOURCE, OTHER_BIZ_PURPOSE, type Book,
 } from '@/lib/book';
@@ -270,30 +271,25 @@ export default function OtherBooksPage() {
         帳本切換。用膠囊而不是分頁 ——
         底下還有一層分頁（收支帳／儀錶板），兩層都做成底線式的話分不出階層。
       */}
-      <div className="flex gap-1.5 mb-3">
-        {OTHER_BOOKS.map((b) => (
-          <button key={b} onClick={() => { setBook(b); setF({}); }}
-            className={`px-5 h-10 md:h-9 rounded-full text-sm font-medium transition-colors ${
-              book === b
-                ? 'bg-mor-slate text-white'
-                : 'bg-white border border-mor-line text-gray-600 hover:bg-mor-sand/50'}`}>
-            {BOOK_LABEL[b]}
-          </button>
-        ))}
-      </div>
+      {/*
+        ══════════════════════════════════════════════════════════
+        ★★ 這一頁**同時有兩種分頁籤**，而那不是不一致 ——
+           它們回答的是不同的問題（見 components/Tabs.tsx 檔頭）:
 
-      {/* 分頁樣式以權限管理頁為準（底線式，不是膠囊） */}
-      <div className="flex gap-1 border-b border-mor-line mb-4">
-        {([['ledger', '收支帳'], ['dash', '儀錶板']] as const).map(([k, label]) => (
-          <button key={k} onClick={() => setTab(k)}
-            className={`px-4 py-2.5 md:py-2 text-sm whitespace-nowrap border-b-2 -mb-px transition-colors ${
-              tab === k
-                ? 'border-mor-slate text-mor-slate font-medium'
-                : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
-            {label}
-          </button>
-        ))}
-      </div>
+             solid 膠囊  換「**哪一份資料**」—— 愛皮的帳 vs 洪鯊的帳
+             line  底線  換「**同一份資料的檢視**」—— 收支帳 vs 儀錶板
+
+           先選帳本,再選怎麼看。用同一種樣式畫的話,
+           使用者會以為那是四個平行的選項。
+        ══════════════════════════════════════════════════════════
+      */}
+      <Tabs variant="solid" className="mb-3"
+        value={book} onChange={(b) => { setBook(b); setF({}); }}
+        items={OTHER_BOOKS.map((b) => ({ key: b, label: BOOK_LABEL[b] }))} />
+
+      <Tabs variant="line" className="mb-4"
+        value={tab} onChange={setTab}
+        items={[{ key: 'ledger' as const, label: '收支帳' }, { key: 'dash' as const, label: '儀錶板' }]} />
 
       {err && (
         <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700 mb-3">{err}</div>
