@@ -642,7 +642,7 @@ export default function ReviewsPage() {
           <label className="block text-xs text-gray-500 mb-1">物業</label>
           <select value={estateId} onChange={(e) => setEstateId(e.target.value)}
             className="rounded-lg border border-gray-300 px-2 py-1.5 min-w-28">
-            <option value="">全部物業</option>
+            <option value="">全部</option>
             {estates.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
           </select>
         </div>
@@ -650,7 +650,7 @@ export default function ReviewsPage() {
           <label className="block text-xs text-gray-500 mb-1">房源</label>
           <select value={propertyId} onChange={(e) => setPropertyId(e.target.value)}
             className="rounded-lg border border-gray-300 px-2 py-1.5 min-w-36">
-            <option value="">全部房源</option>
+            <option value="">全部</option>
             {visibleProps.map((p) => (
               <option key={p.id} value={p.id}>{p.active ? '' : '〔停用〕'}{p.name}</option>
             ))}

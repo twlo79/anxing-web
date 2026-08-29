@@ -186,7 +186,9 @@ export function FilterSearch({ label, value, onChange, onSubmit, placeholder = '
 }) {
   return (
     <Field label={label}>
-      <div className="flex gap-1.5">
+      {/* ★ gap-2 不是 gap-1 —— 貼太近時輸入框跟按鈕看起來像同一個東西,
+            而它們一個是「輸入」一個是「送出」 */}
+      <div className="flex gap-2">
         <input value={value} onChange={(e) => onChange(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') onSubmit(); }}
           placeholder={placeholder} className={`${CTRL} ${width}`} />

@@ -1905,7 +1905,7 @@ export default function AdminPage() {
         <div className="flex flex-wrap items-center gap-2 mb-3">
           <select value={auditTable} onChange={(e) => setAuditTable(e.target.value)}
             className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm">
-            <option value="">全部資料</option>
+            <option value="">全部</option>
             {Object.entries(AUDIT_TABLE).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </select>
           {/* 預設只看人工 —— 這張表回答的是「誰改了什麼」,那個問題問的是人 */}

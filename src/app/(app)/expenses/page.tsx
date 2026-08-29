@@ -481,33 +481,35 @@ export default function ExpensesPage() {
         <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">支出日</span>
           <RangeInput from={fromD} to={toD}
             onChange={(f, t) => { setFromD(f); setToD(t); }} /></label>
-        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">會計科目</span>
+        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">科目</span>
           <select value={codeF} onChange={(e) => setCodeF(e.target.value)} className="rounded-lg border border-mor-line px-2 py-1.5">
-            <option value="">全部科目</option>
+            <option value="">全部</option>
             {expenseCodes.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
           </select></label>
         <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">用途</span>
-          <select value={purposeF} onChange={(e) => setPurposeF(e.target.value)} className="rounded-lg border border-mor-line px-2 py-1.5 max-w-44">
-            <option value="">全部用途</option>
+          <select value={purposeF} onChange={(e) => setPurposeF(e.target.value)} className="rounded-lg border border-mor-line px-2 py-1.5 max-w-36">
+            <option value="">全部</option>
             <option value="office">安幸辦公室</option>
             {activeEstates.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
           </select></label>
-        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">支付方式</span>
+        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">方式</span>
           <select value={payF} onChange={(e) => setPayF(e.target.value)} className="rounded-lg border border-mor-line px-2 py-1.5">
             <option value="">全部</option>
             {PAY_OPTS.map((p) => <option key={p} value={p}>{PAY_LABEL[p]}</option>)}
           </select></label>
         <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">帳戶</span>
           <select value={acctF} onChange={(e) => setAcctF(e.target.value)} className="rounded-lg border border-mor-line px-2 py-1.5">
-            <option value="">全部帳戶</option>
+            <option value="">全部</option>
             <option value="__cash">現金/未指定</option>
             {payAccounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
           </select></label>
-        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">關鍵字(項目/備註/憑證)</span>
-          <div className="flex">
+        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500" title="項目／備註／憑證號碼">關鍵字</span>
+          {/* ★ 輸入框與搜尋鈕之間留 gap —— 貼在一起時它們看起來像同一個東西,
+                而一個是「輸入」、一個是「送出」 */}
+          <div className="flex gap-2">
             <input value={kwIn} onChange={(e) => setKwIn(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && setKw(kwIn.trim())}
-              className="rounded-l-lg border border-mor-line px-2 py-1.5 w-44" placeholder="含否關鍵字" />
-            <button onClick={() => setKw(kwIn.trim())} className="rounded-r-lg bg-mor-slate text-white px-3 hover:bg-mor-slatedark">搜尋</button>
+              className="rounded-lg border border-mor-line px-2 py-1.5 w-40" placeholder="關鍵字" />
+            <button onClick={() => setKw(kwIn.trim())} className="rounded-lg bg-mor-slate text-white px-4 hover:bg-mor-slatedark">搜尋</button>
           </div></label>
         {/*
           只看關注。做成切換鈕而不是下拉 —— 它只有開/關兩種狀態,而且會常按。
@@ -519,7 +521,7 @@ export default function ExpensesPage() {
           <button onClick={() => setStarF(!starF)}
             className={`${FILTER_BTN_H} rounded-lg border px-4 font-medium ${
               starF ? 'border-amber-400 bg-amber-50 text-amber-700' : 'border-mor-line bg-white text-gray-600 hover:bg-mor-sand/60'}`}>
-            {starF ? '★ 只看關注' : '☆ 只看關注'}
+            {starF ? '★ 關注' : '☆ 關注'}
           </button>
         </FieldSpacer>
         <FieldSpacer>
@@ -888,7 +890,7 @@ export default function ExpensesPage() {
                 <input value={edit.item_name ?? ''} onChange={(e) => setEdit({ ...edit, item_name: e.target.value })}
                   className={`rounded-lg border px-2 py-1.5 ${err('支出項目') ? 'border-red-400 bg-red-50' : 'border-mor-line'}`} placeholder="例:14B5 冷氣濾網更換" /></label>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">會計科目</span>
+                <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">科目</span>
                   <select value={edit.account_code ?? ''} onChange={(e) => setEdit({ ...edit, account_code: e.target.value || null })}
                     className="rounded-lg border border-mor-line px-2 py-1.5">
                     <option value="">未分類</option>
@@ -940,7 +942,7 @@ export default function ExpensesPage() {
                 </label>
               )}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">支付方式</span>
+                <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">方式</span>
                   <select value={edit.payment_method ?? ''} onChange={(e) => setEdit({ ...edit, payment_method: e.target.value || null })}
                     className="rounded-lg border border-mor-line px-2 py-1.5">
                     {PAY_OPTS.map((p) => <option key={p} value={p}>{PAY_LABEL[p]}</option>)}
