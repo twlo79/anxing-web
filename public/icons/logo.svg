@@ -1,8 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 326 428" width="326" height="428" role="img" aria-label="安幸上工">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="安幸上工">
   <title>安幸上工 標誌</title>
-  <desc>一扇拱形的門，門板右側有一個圓形門把。幾何：外框 326×428、線寬 22、拱中心線半徑 151.5、門把圓心 (240, 305) 半徑 21。門把偏右不置中 —— 門把本來就在門邊，置中會先被讀成「一個點」再被讀成門把。</desc>
-  <g fill="none" stroke="currentColor" stroke-width="22" stroke-linecap="butt">
-    <path d="M11 428 V162.5 A151.5 151.5 0 0 1 315 162.5 V428" />
-  </g>
-  <circle cx="240" cy="305" r="21" fill="currentColor" />
+  <desc>一扇拱形的門，門板填滿紅木色的垂直漸層（上淺下深，像光從上面來），右側有一個挖空的圓形門把。門板佔畫布約 62%，並往上移做視覺置中 —— 門是上輕下重的形狀，幾何置中會看起來偏低。門把偏右不置中：門把本來就在門邊，置中會先被讀成「一個點」再被讀成門把。</desc>
+  <defs>
+    <linearGradient id="anxing-bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FBF8F1"/>
+      <stop offset="1" stop-color="#F0EADC"/>
+    </linearGradient>
+    <linearGradient id="anxing-door" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#A05B44"/>
+      <stop offset="1" stop-color="#54291D"/>
+    </linearGradient>
+    <mask id="anxing-handle">
+      <rect width="512" height="512" fill="#fff"/>
+      <circle cx="331" cy="303" r="18" fill="#000"/>
+    </mask>
+  </defs>
+  <!-- 底色滿版、不透明、無圓角 —— 圓角由系統切（Apple HIG） -->
+  <rect width="512" height="512" fill="url(#anxing-bg)"/>
+  <path d="M136 396 V206 A120 120 0 0 1 376 206 V396 Z"
+        fill="url(#anxing-door)" mask="url(#anxing-handle)"/>
 </svg>
