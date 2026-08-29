@@ -4,6 +4,7 @@ import { useSearchParams } from 'next/navigation';
 import NewsTab from './news-tab';
 import NotifyTab from './notify-tab';
 import TrashTab from './trash-tab';
+import { Tabs } from '@/components/Tabs';
 
 /**
  * 設定。
@@ -54,18 +55,11 @@ function SettingsInner() {
     <div>
       <h1 className="mb-3">設定</h1>
 
-      <div className="inline-flex gap-1 p-1 mb-4 rounded-xl bg-white/45 backdrop-blur border border-white/60">
-        {TABS.map((t) => (
-          <button key={t.key} onClick={() => setTab(t.key)}
-            className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-colors ${
-              tab === t.key
-                ? 'bg-white text-mor-slate shadow-[0_2px_8px_-2px_rgba(46,56,64,0.25)]'
-                : 'text-gray-500 hover:text-mor-slate'
-            }`}>
-            <span className="mr-1.5">{t.icon}</span>{t.label}
-          </button>
-        ))}
-      </div>
+      <Tabs className="mb-4" value={tab} onChange={setTab}
+        items={TABS.map((t) => ({
+          key: t.key,
+          label: <><span className="mr-1.5">{t.icon}</span>{t.label}</>,
+        }))} />
 
       {tab === 'news' ? <NewsTab />
         : tab === 'notify' ? <NotifyTab />

@@ -37,6 +37,7 @@ import { shareDeposit } from '@/lib/share';
 import { softDelete } from '@/lib/trash';
 import TrashLink from '@/components/TrashLink';
 import RangeInput from '@/components/RangeInput';
+import { Tabs } from '@/components/Tabs';
 
 /**
  * 暫收管理（原「押金管理」，2026-08-24 改名，migration_174）。
@@ -1449,27 +1450,21 @@ export default function DepositsPage() {
           下拉選單會讓人以為「預設看到的是全部」，而它確實是 ——
           但那個「全部」是三個選項之一，不是狀態。頁籤把當前位置畫出來。
       */}
-      <div className="inline-flex gap-1 p-1 rounded-xl bg-white/45 backdrop-blur border border-white/60 mb-3">
-        {([
-          { k: 'all',      label: '全部' },
-          { k: 'earnest',  label: '訂金' },
-          { k: 'deposit',  label: '押金' },
-        ] as const).map((t) => {
-          const on = kindF === t.k;
-          const n = t.k === 'all' ? base.length
-            : base.filter((r) => (r.kind ?? 'deposit') === t.k).length;
-          return (
-            <button key={t.k} type="button" onClick={() => setKindF(t.k)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                on ? 'bg-mor-slate text-white' : 'text-gray-600 hover:bg-white/60'}`}>
-              {t.label}
-              {/* ★ 筆數算在 base 上（不含 kind 篩選本身）—— 切到訂金之後
-                  押金那個數字還在，頁籤才是總覽而不是當前清單的重複 */}
-              <span className={`ml-1.5 text-xs ${on ? 'opacity-80' : 'text-gray-400'}`}>{n}</span>
-            </button>
-          );
-        })}
-      </div>
+      {/*
+        ★ 筆數算在 `base` 上（不含 kind 篩選本身）—— 切到訂金之後
+          押金那個數字還在，頁籤才是總覽而不是當前清單的重複。
+      */}
+      <Tabs className="mb-3" value={kindF} onChange={setKindF}
+        items={([
+          { k: 'all' as const,     label: '全部' },
+          { k: 'earnest' as const, label: '訂金' },
+          { k: 'deposit' as const, label: '押金' },
+        ]).map((t) => ({
+          key: t.k,
+          label: t.label,
+          badge: t.k === 'all' ? base.length
+            : base.filter((r) => (r.kind ?? 'deposit') === t.k).length,
+        }))} />
 
       {/* 篩選 */}
       <FilterToggle />

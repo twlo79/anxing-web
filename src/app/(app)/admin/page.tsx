@@ -9,6 +9,7 @@ import { extraDetails, needsCrawlerDetail } from '@/lib/sync-extra';
 import { findListingOwner, listingOwnerHint } from '@/lib/listing-owner';
 import { useProfile } from '@/lib/profile';
 import { softDelete } from '@/lib/trash';
+import { Tabs } from '@/components/Tabs';
 
 type Staff = { id: string; name: string; aliases: string[]; staff_type: string; active: boolean; sort: number; role?: string; email?: string | null; auth_uid?: string | null };
 type Estate = { id: string; name: string; manager: string | null; sort: number; active: boolean };
@@ -824,15 +825,8 @@ export default function AdminPage() {
         <Toast msg={msg} />
       </div>
 
-      <div className="flex flex-wrap gap-1 mb-5 border-b border-mor-line">
-        {canSee.map((k) => (
-          <button key={k} onClick={() => setTab(k)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${
-              tab === k ? 'border-mor-slate text-mor-slate' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
-            {TAB_LABEL[k]}
-          </button>
-        ))}
-      </div>
+      <Tabs className="mb-5" value={tab} onChange={setTab}
+        items={canSee.map((k) => ({ key: k, label: TAB_LABEL[k] }))} />
 
       {/* ===== 人員管理 ===== */}
       {tab === 'people' && (

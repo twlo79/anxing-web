@@ -21,16 +21,42 @@ import type { ReactNode } from 'react';
  * ============================================================
  * 【★★ 兩種樣式，各有各的意思 —— 不是「挑好看的」】
  *
- *   `line`（底線）  **切換同一份資料的檢視**
- *                   行事曆／排班統計、收支帳／儀錶板、請款審核／請款單。
- *                   底線像書籤:內容換了,但還在同一本書裡。
+ *   `segment`（分段膠囊，**有容器**）  切換**這一頁的哪個區塊**
+ *                   打卡／申請／核可、行事曆／排班統計、請款審核／請款單。
+ *                   容器把它們框成一組:一眼看得出「這幾個是一夥的」。
  *
- *   `solid`（膠囊） **切換「哪一份資料」**
+ *   `solid`（圓膠囊，**沒容器**）      切換**哪一份資料**
  *                   愛皮／洪鯊、元大 70564／24145／48088。
- *                   膠囊像檔案夾:換一個就是換一整批東西。
+ *                   換一個就是換一整批東西。
  *
- * ★ 一頁可以同時有兩種（其他收支帳就是:先選帳本，再選檢視）——
+ * ★ 一頁可以同時有兩種（其他收支帳:先選帳本，再選檢視）——
  *   那正是為什麼不能統一成同一種。**它們回答的是不同的問題。**
+ *   兩種放在一起也不會混淆:圓膠囊獨立浮著、分段膠囊有一個容器,
+ *   形狀與有沒有容器都不同。
+ *
+ *
+ * ============================================================
+ * 【★★★ 底線那種退場了】（2026-08-29）
+ *
+ * 第一版留了 `line`（底線）給「換檢視」。實際套下去發現:
+ *
+ *   ① 五個底線 tab 攤在 1440px 寬的頁面上,那條 2px 的線是**很弱的訊號**
+ *   ② 一頁裡出現三種 tab 就是回到原點 —— 而那正是這件事要解決的問題
+ *
+ * 使用者的話:「出勤換了 沒比較好」—— 出勤原本就是分段膠囊,
+ * 那是這幾種裡最好的一種。**所以讓它當標準，其他頁配合它。**
+ *
+ *
+ * ============================================================
+ * 【★★★ 兩層同性質的分頁，只能靠「包覆」表達從屬】
+ *
+ * 出勤的「管理」底下還有四個子項。原本兩層長得一樣、左緣對齊、
+ * 中間沒有邊界 —— 畫面上就是**九個平行選項**。
+ *
+ * ★ 這兩層是**同一種性質**（都是換區塊）,不能靠換形狀分 ——
+ *   所以把第二層放進第一層打開的**卡片裡**（見 attendance/admin-tab.tsx）。
+ *
+ * ★ 對照:其他收支帳那兩層不用包,因為性質不同,形狀本身就說完了。
  *
  *
  * ============================================================
@@ -49,13 +75,13 @@ export type TabItem<T extends string> = {
 };
 
 export function Tabs<T extends string>({
-  items, value, onChange, variant = 'line', size = 'md', className = '',
+  items, value, onChange, variant = 'segment', size = 'md', className = '',
 }: {
   items: readonly TabItem<T>[];
   value: T;
   onChange: (k: T) => void;
-  /** line = 換檢視（同一份資料）；solid = 換資料（哪一本帳、哪個帳戶） */
-  variant?: 'line' | 'solid';
+  /** segment = 換這一頁的區塊；solid = 換哪一份資料 */
+  variant?: 'segment' | 'solid';
   /** sm 給「分頁裡的分頁」用 —— 兩層一樣大的話看不出誰包誰 */
   size?: 'sm' | 'md';
   className?: string;
@@ -84,23 +110,27 @@ export function Tabs<T extends string>({
   }
 
   /*
-   * ★★ 底線畫在**整條的下緣**，每個籤自己蓋掉自己那一段。
+   * ★ 容器用 `inline-flex` 而不是 `flex` —— 它只該有內容那麼寬。
+   *   滿版的話那個淺色框會橫跨整頁,看起來像一條空的工具列。
    *
-   *   只給選中的那個畫底線的話,沒選中的下面是空的 ——
-   *   眼睛會把「有線的那一段」讀成一個獨立的框,而不是一整排的其中一個。
+   * ★ `overflow-x-auto`:項目多的時候（出勤有五個）手機放不下,
+   *   讓它橫向捲而不是折行 —— 折行會讓容器變成兩層樓,
+   *   而那看起來像兩組不同的東西。
    */
   return (
-    <div className={`flex flex-wrap items-end gap-1 border-b border-mor-line ${className}`}
+    <div className={`inline-flex max-w-full gap-1 overflow-x-auto rounded-xl
+                     bg-white/45 backdrop-blur border border-white/60
+                     ${md ? 'p-1' : 'p-[3px]'} ${className}`}
       role="tablist">
       {items.map((t) => {
         const on = t.key === value;
         return (
           <button key={t.key} type="button" role="tab" aria-selected={on}
             onClick={() => onChange(t.key)}
-            className={`${md ? 'h-11 px-4 text-ui' : 'h-9 px-3 text-uisub'}
-              -mb-px border-b-2 font-medium whitespace-nowrap transition-colors ${
-              on ? 'border-mor-slate text-mor-slate'
-                 : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            className={`${md ? 'px-4 py-1.5 text-ui rounded-lg' : 'px-3 py-1 text-uisub rounded-md'}
+              font-medium whitespace-nowrap transition-colors ${
+              on ? 'bg-white text-mor-slate shadow-[0_2px_8px_-2px_rgba(46,56,64,0.25)]'
+                 : 'text-gray-500 hover:text-gray-700'}`}>
             {t.label}
             <Badge n={t.badge} on={on} />
           </button>

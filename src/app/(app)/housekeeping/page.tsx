@@ -1,4 +1,5 @@
 'use client';
+import { Tabs } from '@/components/Tabs';
 import { useEffect, useState } from 'react';
 import { useProfile } from '@/lib/profile';
 import CalendarTab from './calendar-tab';
@@ -118,17 +119,9 @@ export default function HousekeepingPage() {
 
       {/* 只有一個分頁時整條不畫 —— 一個孤零零的分頁看起來像壞掉 */}
       {tabs.length > 1 && (
-      <div className="flex gap-1 border-b border-mor-line mb-4 overflow-x-auto px-4 md:px-0">
-        {tabs.map((k) => (
-          <button key={k} onClick={() => setTab(k)}
-            className={`px-4 py-2 text-sm whitespace-nowrap border-b-2 -mb-px transition-colors ${
-              tab === k
-                ? 'border-mor-slate text-mor-slate font-medium'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}>
-            {TAB_LABEL[k]}
-          </button>
-        ))}
+      <div className="mb-4 px-4 md:px-0">
+        <Tabs value={tab} onChange={setTab}
+          items={tabs.map((k) => ({ key: k, label: TAB_LABEL[k] }))} />
       </div>
       )}
 

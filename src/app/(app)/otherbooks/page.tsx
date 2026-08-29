@@ -276,8 +276,8 @@ export default function OtherBooksPage() {
         ★★ 這一頁**同時有兩種分頁籤**，而那不是不一致 ——
            它們回答的是不同的問題（見 components/Tabs.tsx 檔頭）:
 
-             solid 膠囊  換「**哪一份資料**」—— 愛皮的帳 vs 洪鯊的帳
-             line  底線  換「**同一份資料的檢視**」—— 收支帳 vs 儀錶板
+             solid   圓膠囊（沒容器）  換「**哪一份資料**」—— 愛皮 vs 洪鯊
+             segment 分段（有容器）    換「**這一頁的哪個區塊**」—— 收支帳 vs 儀錶板
 
            先選帳本,再選怎麼看。用同一種樣式畫的話,
            使用者會以為那是四個平行的選項。
@@ -287,7 +287,7 @@ export default function OtherBooksPage() {
         value={book} onChange={(b) => { setBook(b); setF({}); }}
         items={OTHER_BOOKS.map((b) => ({ key: b, label: BOOK_LABEL[b] }))} />
 
-      <Tabs variant="line" className="mb-4"
+      <Tabs variant="segment" className="mb-4"
         value={tab} onChange={setTab}
         items={[{ key: 'ledger' as const, label: '收支帳' }, { key: 'dash' as const, label: '儀錶板' }]} />
 

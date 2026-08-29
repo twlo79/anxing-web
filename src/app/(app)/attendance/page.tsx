@@ -7,6 +7,7 @@ import ApproveTab from './approve-tab';
 import CalendarTab from './calendar-tab';
 import AdminTab from './admin-tab';
 import type { Role, TabProps } from './types';
+import { Tabs } from '@/components/Tabs';
 
 /**
  * 出勤：打卡 · 申請 · 核可 · 出勤日曆（含公告）· 管理
@@ -116,32 +117,26 @@ export default function AttendancePage() {
       <h1 className="hidden md:block mb-4">出勤</h1>
 
       {/*
-        手機上六個分頁橫向捲動，不換行。
-        換行的話標題列會變成兩排、把打卡按鈕推到摺線以下 ——
-        打卡是這頁最主要的動作，不該需要先捲動才看得到。
+        ★★★ 這一頁的分段控制**就是全站的標準**（2026-08-29）。
+
+          我一度把它改成底線分頁,使用者的回覆是「出勤換了 沒比較好」——
+          他是對的:底線在淺色底上只有一條 2px 的線在動,
+          整排看起來是五段一樣的灰字;
+          選中的那格做成一張白卡＋淡影,「你現在在這裡」不用瞇著眼找。
+
+        ★ 所以改成**讓它當標準,其他頁配合它** ——
+          房務、請款單、標案、其他收支帳都換成同一支元件了。
+
+        ★ 手機橫向捲動不換行:換行會讓標題列變兩排、
+          把打卡按鈕推到摺線以下,而打卡是這頁最主要的動作。
       */}
-      {/*
-        分段控制（segmented control），不是底線分頁。
-        底線分頁在淺色底上只有一條 2px 的線在動，整排看起來是六段一樣的灰字；
-        選中的那格做成一張白卡＋淡影，「你現在在這裡」不用瞇著眼找。
-      */}
-      <div className="inline-flex gap-1 mb-4 p-1 rounded-xl bg-white/45 backdrop-blur border border-white/60 max-w-full overflow-x-auto
-                      [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        {canSee.map((k) => (
-          <button key={k} onClick={() => { setTab(k); setMsg(null); }}
-            className={`px-3 sm:px-4 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap
-              shrink-0 flex items-center gap-1.5 transition-colors ${
-              cur === k ? 'bg-white text-mor-slate shadow-[0_2px_8px_-2px_rgba(46,56,64,0.25)]'
-                        : 'text-gray-500 hover:text-gray-700'}`}>
-            {TAB_LABEL[k]}
-            {k === 'approve' && pending > 0 && (
-              <span className="rounded-full bg-amber-100 text-amber-700 px-1.5 text-[11px]">
-                {pending}
-              </span>
-            )}
-          </button>
-        ))}
-      </div>
+      <Tabs className="mb-4"
+        value={cur} onChange={(k) => { setTab(k); setMsg(null); }}
+        items={canSee.map((k) => ({
+          key: k,
+          label: TAB_LABEL[k],
+          badge: k === 'approve' ? pending : undefined,
+        }))} />
 
       {msg && (
         <div className={`mb-3 rounded-lg px-4 py-3 text-sm flex items-start gap-2 ${

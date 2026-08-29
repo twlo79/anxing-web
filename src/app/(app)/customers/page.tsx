@@ -6,6 +6,7 @@ import { twToday } from '@/lib/attendance-ui';
 import {
   FilterBar, Field, FilterClear, FilterCount, ActionRow, FILTER_CTRL,
 } from '@/lib/filters';
+import { Tabs } from '@/components/Tabs';
 
 /**
  * 客戶管理。
@@ -146,17 +147,13 @@ export default function CustomersPage() {
         </button>
       </div>
 
-      {/* 物業分頁 */}
-      <div className="flex flex-wrap gap-1 mb-3 border-b border-mor-line">
-        {tabs.map((t) => (
-          <button key={t.id} onClick={() => { setTab(t.id); setOpen(null); }}
-            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px whitespace-nowrap ${
-              cur === t.id ? 'border-mor-slate text-mor-slate'
-                           : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
-            {t.name}
-          </button>
-        ))}
-      </div>
+      {/*
+        物業分頁 —— 用 `solid`（圓膠囊）而不是分段:
+        它換的是**哪一份資料**（哪一棟的客戶），不是這一頁的區塊。
+      */}
+      <Tabs variant="solid" size="sm" className="mb-3"
+        value={cur} onChange={(id) => { setTab(id); setOpen(null); }}
+        items={tabs.map((t) => ({ key: t.id, label: t.name }))} />
 
       {/*
         ══════════════════════════════════════════════════════════

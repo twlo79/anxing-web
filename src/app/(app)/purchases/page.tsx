@@ -2,6 +2,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import StatCard from '@/components/StatCard';
 import { AddButton, ExportButton } from '@/components/Actions';
+import { Tabs } from '@/components/Tabs';
 import {
   FilterBar, Field, FilterSelect, FilterSearch, FilterClear, FilterCount,
   ActionRow, FILTER_CTRL,
@@ -1668,32 +1669,28 @@ export default function PurchasesPage() {
       </div>
 
       {/*
-        分頁。全站的分頁樣式以權限管理頁為準（底線式,不是膠囊）。
-        數字徽章只在「有東西要做」時出現 —— 顯示 0 等於每次都在報告沒事發生。
+        分頁。樣式走全站共用的 `components/Tabs.tsx`（分段膠囊）。
+
+        ★★ 徽章的數字有兩種:
+             `pendMine`  **輪到你投票**的 —— 有的話優先顯示它
+             `pendWait`  所有還沒核可的
+
+           會這樣分是因為「有 13 件待審」跟「有 3 件等你」是不同的急迫度,
+           而使用者要看的是後者。
+
+        ★ 徽章只在 > 0 時出現 —— 顯示 0 等於每次都在報告沒事發生
+          （規則寫在 Tabs 的檔頭）。
+
+        ★ 「請款審核」而不是「待核可」—— 這個分頁裡有請款單也有押金退款,
+          而且它是「要你去審」的動作清單,名字要講出那是什麼事情。
       */}
       {canSeeAll && (
-        <div className="flex flex-wrap gap-1 mb-4 border-b border-mor-line">
-          {/* 徽章只算「未核可」—— 已核可的那一段不是催人投票用的 */}
-          {([
-            // 「請款審核」而不是「待核可」—— 這個分頁裡有請款單也有押金退款，
-            // 而且它是「要你去審」的動作清單，名字要講出那是什麼事情
-            ['approve', '請款審核', pendWait.length],
-            ['pr', '請款單', 0],
-          ] as const).map(([k, label, n]) => (
-            <button key={k} onClick={() => setTab(k)}
-              className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px whitespace-nowrap ${
-                tab === k ? 'border-mor-slate text-mor-slate' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
-              {label}
-              {n > 0 && (
-                <span className={`ml-1.5 rounded px-1.5 py-0.5 text-[11px] ${
-                  k === 'approve' && pendMine.length > 0
-                    ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'}`}>
-                  {k === 'approve' && pendMine.length > 0 ? pendMine.length : n}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
+        <Tabs className="mb-4" value={tab} onChange={setTab}
+          items={[
+            { key: 'approve' as const, label: '請款審核',
+              badge: pendMine.length > 0 ? pendMine.length : pendWait.length },
+            { key: 'pr' as const, label: '請款單' },
+          ]} />
       )}
 
       {/* ══════════ 待核可 ══════════

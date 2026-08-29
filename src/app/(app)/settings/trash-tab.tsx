@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase';
 import { useProfile } from '@/lib/profile';
 import { fetchAll } from '@/lib/fetch-all';
 import { TABLE_LABEL, trashAge, fieldRows, typeOptions } from '@/lib/trash';
+import { Tabs } from '@/components/Tabs';
 
 /**
  * 刪除紀錄（回收桶）。
@@ -147,21 +148,12 @@ export default function TrashTab({ initialTable = '' }: { initialTable?: string 
       </p>
 
       <div className="flex flex-wrap items-center gap-2 mb-3">
-        <div className="inline-flex gap-1 p-1 rounded-xl bg-white/45 backdrop-blur border border-white/60">
-          {(Object.keys(FILTER_LABEL) as Filter[]).map((k) => (
-            <button key={k} onClick={() => setFilter(k)}
-              className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
-                filter === k ? 'bg-white text-mor-slate shadow-[0_2px_8px_-2px_rgba(46,56,64,0.25)]'
-                             : 'text-gray-500 hover:text-gray-700'}`}>
-              {FILTER_LABEL[k]}
-              {k === 'open' && openCount > 0 && (
-                <span className="ml-1.5 rounded-full bg-amber-100 text-amber-700 px-1.5 text-[11px]">
-                  {openCount}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
+        <Tabs size="sm" value={filter} onChange={setFilter}
+          items={(Object.keys(FILTER_LABEL) as Filter[]).map((k) => ({
+            key: k,
+            label: FILTER_LABEL[k],
+            badge: k === 'open' ? openCount : undefined,
+          }))} />
         <select value={table} onChange={(e) => setTable(e.target.value)}
           className="rounded-lg border border-mor-line px-3 py-2 text-sm">
           {/* 0 筆的類型也列出來 —— 這份清單本身就在回答

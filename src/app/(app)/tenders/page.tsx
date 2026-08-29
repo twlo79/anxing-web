@@ -5,6 +5,7 @@ import { useProfile } from '@/lib/profile';
 import { fetchAll } from '@/lib/fetch-all';
 import Toast from '@/components/Toast';
 import { AddButton } from '@/components/Actions';
+import { Tabs } from '@/components/Tabs';
 import Req from '@/components/Req';
 import Receipts, { type ReceiptsHandle } from '@/components/Receipts';
 import RangeInput from '@/components/RangeInput';
@@ -299,17 +300,17 @@ export default function TendersPage() {
       </div>
 
       {/* 分頁 */}
-      <div className="flex gap-1 mb-4 text-sm">
-        {([['rec', `紀錄標案${rows.length ? `（${rows.length}）` : ''}`],
-           ['feed', `標案追蹤器${feed.filter((f) => !f.tender_id).length
-             ? `（${feed.filter((f) => !f.tender_id).length} 未建檔）` : ''}`]] as const).map(([k, label]) => (
-          <button key={k} onClick={() => setTab(k)}
-            className={`rounded-lg px-3 py-1.5 font-medium transition-colors ${
-              tab === k ? 'bg-mor-slate text-white' : 'text-gray-600 hover:bg-mor-sand/60'}`}>
-            {label}
-          </button>
-        ))}
-      </div>
+      {/*
+        ★ 數量從標籤裡搬進**徽章** —— 原本寫成「標案追蹤器（3 未建檔）」，
+          那讓兩個分頁一長一短、寬度跳來跳去。
+        ★ 徽章只在 > 0 時出現（見 components/Tabs.tsx）。
+      */}
+      <Tabs className="mb-4" value={tab} onChange={setTab}
+        items={[
+          { key: 'rec' as const, label: '紀錄標案', badge: rows.length },
+          { key: 'feed' as const, label: '標案追蹤器',
+            badge: feed.filter((f) => !f.tender_id).length },
+        ]} />
 
       {/* ══════════════ Tab 1：紀錄標案 ══════════════ */}
       {tab === 'rec' && (

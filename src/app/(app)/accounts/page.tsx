@@ -14,6 +14,7 @@ import { FilterCount, FieldSpacer, FILTER_BTN_H } from '@/lib/filters';
 import { ExportButton } from '@/components/Actions';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import FilterToggle from '@/components/FilterToggle';
+import { Tabs } from '@/components/Tabs';
 
 /**
  * 帳戶明細 —— 三個銀行帳戶的流水鏡像。
@@ -405,38 +406,33 @@ export default function AccountsPage() {
         })}
       </StatRow>
 
+      {/*
+        帳戶分頁 —— **層級 1:換哪一份資料**（圓膠囊，沒有容器）。
+
+        ★ 跟卡片裡那組分段膠囊（流水／匯入紀錄）形狀不同、有沒有容器不同,
+          所以放在同一頁也不會混淆:圓的換資料、有框的換檢視。
+      */}
+      <Tabs variant="solid" className="mb-3"
+        value={tab} onChange={setTab}
+        items={accounts.map((a) => ({ key: a.id, label: a.name }))} />
+
       {/* ── 流水 ────────────────────────────────── */}
       <div className="rounded-lg border border-mor-line bg-white">
         <div className="flex flex-wrap items-center gap-2 rounded-t-lg border-b border-mor-line bg-mor-sand/30 px-3 py-2">
-          <div className="flex flex-wrap gap-1">
-            {accounts.map((a) => (
-              <button
-                key={a.id}
-                onClick={() => setTab(a.id)}
-                className={`rounded px-2.5 py-1 text-sm ${
-                  tab === a.id ? 'bg-mor-slate text-white' : 'text-gray-600 hover:bg-white'
-                }`}
-              >
-                {a.name}
-              </button>
-            ))}
-          </div>
+          {/*
+            ★★★ 帳戶分頁**搬到頁面標題下面了**（2026-08-29）。
+
+              換帳戶會換掉整批交易 —— 那是「換哪一份資料」,是最高的層級。
+              擠在卡片標題列的角落等於說「這只是個小選項」。
+
+            ★ 這一列現在只留「換這張卡的檢視」:流水／匯入紀錄 ＋ 篩選開關。
+              它們只影響這張卡,所以留在卡上。
+          */}
+          <Tabs variant="segment" size="sm"
+            value={view} onChange={setView}
+            items={[{ key: 'txn' as const, label: '流水' },
+                    { key: 'stmt' as const, label: '匯入紀錄' }]} />
           <div className="ml-auto flex items-center gap-2">
-            {/* 流水 ／ 匯入紀錄 */}
-            <div className="flex rounded-md border border-mor-line bg-white text-sm">
-              <button
-                onClick={() => setView('txn')}
-                className={`rounded-l-md px-2.5 py-1 ${view === 'txn' ? 'bg-mor-bluelight font-medium text-mor-slate' : 'text-gray-500'}`}
-              >
-                流水
-              </button>
-              <button
-                onClick={() => setView('stmt')}
-                className={`rounded-r-md border-l border-mor-line px-2.5 py-1 ${view === 'stmt' ? 'bg-mor-bluelight font-medium text-mor-slate' : 'text-gray-500'}`}
-              >
-                匯入紀錄
-              </button>
-            </div>
             {view === 'txn' && <FilterToggle active={hasFilter(f)} />}
             {/*
               ★★ 下載與上傳**不在這一列**（2026-08-29 使用者:「layout 一致耶」）。
