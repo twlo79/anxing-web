@@ -16,7 +16,7 @@ import {
   type Entry, type Filters,
 } from '@/lib/other-book';
 import {
-  FilterBar, Field, FilterSelect, FilterClear, FILTER_CTRL,
+  FilterBar, FilterSearch, FilterSelect, FilterClear,
 } from '@/lib/filters';
 
 /**
@@ -83,6 +83,11 @@ export default function OtherBooksPage() {
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
   const [f, setF] = useState<Filters>({});
+  /*
+   * ★ 關鍵字輸入框的草稿。`f.kw` 才是真的拿去篩的值
+   *   —— 見篩選列裡「為什麼有搜尋鈕」那段。
+   */
+  const [kwDraft, setKwDraft] = useState('');
   const [inc, setInc] = useState<IncomeDraft | null>(null);
   const [exp, setExp] = useState<ExpenseDraft | null>(null);
   const [busy, setBusy] = useState(false);
@@ -293,7 +298,7 @@ export default function OtherBooksPage() {
           第二層（收支帳／儀錶板）用小分段,見下面的面板。
       */}
       <Tabs variant="browser" tone="paper" className="rounded-t-xl"
-        value={book} onChange={(b) => { setBook(b); setF({}); }}
+        value={book} onChange={(b) => { setBook(b); setF({}); setKwDraft(''); }}
         items={OTHER_BOOKS.map((b) => ({ key: b, label: BOOK_LABEL[b] }))} />
 
       {err && (
@@ -361,23 +366,34 @@ export default function OtherBooksPage() {
               ★ 手機的兩欄網格拿掉了。globals.css 的 `.filter-bar` 會把
                 篩選列在手機轉成直向、每欄滿版 —— 那比兩欄各 110px 好讀。
 
-              ★★ 關鍵字**沒有搜尋鈕**:這一頁的資料已經整批在前端了,
-                邊打邊篩不花成本（跟客戶管理同一個理由）。
+              ★★★ 關鍵字**有搜尋鈕**（2026-08-29 使用者指定）。
+
+                 本來刻意沒有:資料已經整批在前端了,邊打邊篩不花成本。
+                 但**只算了成本、沒算習慣** —— 使用者在其他頁養成
+                 「打完字按搜尋」,到這頁打完會停下來找那顆鈕,
+                 找不到就以為欄位壞了（其實已經篩好了）。
+
+              ★ 前端篩的頁「按了才生效」幾乎零延遲。一致性贏過那點即時性。
               ══════════════════════════════════════════════════════
             */}
             <FilterBar active={!!(f.kind || f.code || f.kw)}>
               <FilterSelect label="收支" value={f.kind ?? ''}
                 onChange={(v) => setF({ ...f, kind: v as Filters['kind'] })}
                 all="全部"
-                options={[{ value: 'income', label: '只看收入' }, { value: 'expense', label: '只看支出' }]} />
+                /*
+                  ★ 選項是「收入／支出」不是「只看收入／只看支出」
+                    （2026-08-29 使用者在帳戶頁指定,全站統一）。
+                    上面的「全部」沒有「只看」兩個字,三個選項要唸起來像同一組。
+                */
+                options={[{ value: 'income', label: '收入' }, { value: 'expense', label: '支出' }]} />
               <FilterSelect label="科目" value={f.code ?? ''}
                 onChange={(v) => setF({ ...f, code: v })}
                 options={codes.map((c) => ({ value: c.code, label: c.name }))} />
-              <Field label="關鍵字">
-                <input value={f.kw ?? ''} onChange={(e) => setF({ ...f, kw: e.target.value })}
-                  placeholder="項目／對象／備註" className={`${FILTER_CTRL} w-48`} />
-              </Field>
-              <FilterClear active={!!(f.kind || f.code || f.kw)} onClear={() => setF({})} />
+              <FilterSearch label="關鍵字" placeholder="項目／對象／備註" width="w-48"
+                value={kwDraft} onChange={setKwDraft}
+                onSubmit={() => setF({ ...f, kw: kwDraft })} />
+              <FilterClear active={!!(f.kind || f.code || f.kw)}
+                onClear={() => { setF({}); setKwDraft(''); }} />
             </FilterBar>
 
             {/*

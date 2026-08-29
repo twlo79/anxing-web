@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase';
 import { fetchAll } from '@/lib/fetch-all';
 import { twToday } from '@/lib/attendance-ui';
 import {
-  FilterBar, Field, FilterClear, FilterCount, ActionRow, FILTER_CTRL,
+  FilterBar, FilterSearch, FilterClear, FilterCount, ActionRow,
 } from '@/lib/filters';
 import { Tabs } from '@/components/Tabs';
 
@@ -56,6 +56,12 @@ export default function CustomersPage() {
   const [tab, setTab] = useState<string>('');
   const [onlyStaying, setOnlyStaying] = useState(true);
   const [q, setQ] = useState('');
+  /*
+   * ★ 輸入框的草稿。`q` 才是真的拿去篩的值 —— 見下面篩選列的說明。
+   *   清除的時候兩個都要歸零,只清 `q` 的話輸入框裡還留著字,
+   *   而清單已經是全部了 —— 那個畫面在說謊。
+   */
+  const [qDraft, setQDraft] = useState('');
   const [open, setOpen] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ t: string; err?: boolean } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -159,21 +165,23 @@ export default function CustomersPage() {
         ══════════════════════════════════════════════════════════
         篩選列（2026-08-29 改用全站共用元件 lib/filters.tsx）
 
-        ★★ 關鍵字**沒有搜尋鈕**，跟其他頁不一樣 —— 這是刻意的。
+        ★★★ 關鍵字**有搜尋鈕**（2026-08-29 使用者指定）。
 
-           其他頁的「搜尋」鈕存在是因為它們**要打資料庫**:
-           訂單一千九百筆、模糊比對,邊打邊查等於每個字掃一次全表。
-           客戶這一頁的資料**已經全部在瀏覽器裡**了（`shown` 是前端算的）,
-           邊打邊篩不花任何成本 —— 硬加一顆按鈕只是多一個動作。
+           這一頁本來刻意沒有:資料已經全部在瀏覽器裡（`shown` 是前端算的），
+           邊打邊篩不花任何成本,加一顆按鈕只是多一個動作。
 
-        ★ 所以用 `<Field>` ＋ 原生 input,不用 `<FilterSearch>`。
+        ★★ 那個推論**只算了成本、沒算習慣**。
+           使用者在訂單／支出／帳戶那些頁養成「打完字按搜尋」,
+           到這一頁打完會停下來找那顆鈕 —— 找不到就以為欄位壞了,
+           而它其實已經篩好了,只是他不相信畫面。
+
+        ★ 前端篩的頁「按了才生效」幾乎零延遲,代價只有一次 setState。
+          一致性贏過那點即時性。
         ══════════════════════════════════════════════════════════
       */}
       <FilterBar active={!!q || onlyStaying}>
-        <Field label="關鍵字">
-          <input placeholder="姓名、房號、電話、備註…" value={q} onChange={(e) => setQ(e.target.value)}
-            className={`${FILTER_CTRL} w-56`} />
-        </Field>
+        <FilterSearch label="關鍵字" placeholder="姓名、房號、電話、備註…" width="w-56"
+          value={qDraft} onChange={setQDraft} onSubmit={() => setQ(qDraft)} />
         {/* 勾選框沒有「上方小標題」可放 —— 它自己就是一句話。pb-1.5 讓它跟隔壁欄位的基線對齊 */}
         <label className="flex items-center gap-1.5 text-sm pb-1.5">
           <input type="checkbox" checked={onlyStaying}
@@ -181,7 +189,7 @@ export default function CustomersPage() {
           只看尚未退房
         </label>
         <FilterClear active={!!q || onlyStaying}
-          onClear={() => { setQ(''); setOnlyStaying(false); }} />
+          onClear={() => { setQ(''); setQDraft(''); setOnlyStaying(false); }} />
       </FilterBar>
 
       <ActionRow>
