@@ -90,10 +90,11 @@ export function Tabs<T extends string>({
   /** sm 給「分頁裡的分頁」用 —— 兩層一樣大的話看不出誰包誰 */
   size?: 'sm' | 'md';
   /**
-   * `browser` 專用:選中那一頁要亮成什麼顏色。**跟底下的面板同色**。
+   * 底下接的是什麼。**選中的分頁一律白底**（2026-08-29「active 變白」），
+   * 所以這個值現在只用來決定 `<TabShell>` 的面板底色。
    *
-   *   paper  白 —— 內容本身就是一整塊（清單、表格）
-   *   page   頁面底色 —— 內容是**一疊卡片**（統計卡、篩選卡、表格卡）
+   *   paper  白面板 —— 內容本身就是一整塊（清單、表格）
+   *   page   不包面板 —— 內容是**一疊卡片**（統計卡、篩選卡、表格卡）
    *
    * ★★★ 為什麼要分（2026-08-29）:白卡放在白面板上**邊界會消失**。
    *   出勤·打卡那種一連串區塊的頁面，包進白面板會整個糊成一塊。
@@ -120,51 +121,63 @@ export function Tabs<T extends string>({
   if (variant === 'browser') {
     /*
      * ══════════════════════════════════════════════════════════
-     * ★★★ 底色的條拿掉了（2026-08-29 使用者:
-     *      「tab UI 不想有底色，想改成都畫出來，但 active 的 tab 亮」
-     *      → 選了 A／B 融合、未選的框線用正常深度
-     *      → 再加「active 換顏色 加底線」）。
+     * ★★★ 長相定案（2026-08-29，來回四輪）:
      *
-     *   舊版是「深一階的底色條 ＋ 只有選中的那頁有形狀」。
-     *   問題是那條底色橫跨整頁,而它本身不帶任何資訊 ——
-     *   純粹是為了把選中的那一頁襯出來。
+     *   「不想有底色，都畫出來，但 active 的 tab 亮」
+     *   → A／B 融合，未選的框線用正常深度
+     *   → 「active 換顏色 加底線」
+     *   → 「橫線等寬」「active 變白」
      *
-     * ★★ 現在改成:**每一頁都畫框**,選中的那頁
-     *      ① 底色亮成面板色（白／頁面底色）
-     *      ② 文字換成主色
-     *      ③ 下緣一條 2px 主色線
+     *   ┌──────┐ ┌──────┐ ┌──────┐
+     *   │ 打卡 │ │ 申請 │ │ 核可 │   ← 三個都有框
+     *   └══════┷═┷──────┷═┷──────┴───────────────  ← 橫線橫跨整個寬度
+     *     藍字白底              灰字透明底
      *
-     *   三個訊號疊在一起,不需要底色條也看得出選中的是誰 ——
-     *   而且**不靠顏色單獨傳達**（框、粗細、位置都有差），
-     *   色弱的人也分得出來。
+     * ★★ 選中的那頁有**三個訊號**:白底 ＋ 主色字 ＋ 下緣 2px 主色線。
+     *   疊三個是刻意的 —— 不靠顏色單獨傳達，色弱的人靠框與底色也分得出來。
      *
-     * ★ 為什麼未選的框線也用 `mor-line` 正常深度（使用者選 2 而不是 1）:
-     *   淡到像影子的話,就退回「只有選中的有形狀」——
-     *   而那正是「其他頁看起來不像分頁」的老問題。
+     * ★★★ 橫線要**等寬**。前一版每個分頁各有各的下緣線，
+     *   五個分頁後面就沒有線了 —— 那排看起來是浮在半空中的五個方塊。
+     *   做法:容器有一條 `border-b`，分頁用 `-mb-px` 往下拉一格，
+     *   讓它們 2px 的下緣線**蓋在那條線上**。整條線是連續的，
+     *   只有選中的那一段是藍的。
+     *
+     * ★★★ `overflow-x-auto` 要放在**外層**，不能跟 `border-b` 同一層。
+     *   CSS 規定 `overflow-x: auto` 會把 `overflow-y` 的 visible 變成 auto ——
+     *   分頁那 `-mb-px` 就會被裁掉，還冒出一條垂直捲軸。
+     *   外層捲、內層畫線，兩件事分開。
+     *
+     * ★★★ 選中的那頁**一律白底**，不跟著 `tone` 走。
+     *   原本 `tone="page"` 時選中的是頁面米色 —— 那跟旁邊未選的透明底
+     *   幾乎一樣，三個訊號少掉一個。白色在米色頁面上才是「亮起來」。
      *
      * ★★ 三種狀態的 border 寬度**完全一樣**（上左右 1px、下 2px），
-     *   只有顏色不同。用 `border-b-0` 給未選、`border-b-2` 給選中的話,
-     *   兩者高度差 2px,整排分頁的文字基線會上下跳。
+     *   只有顏色不同。用 `border-b-0` 給未選、`border-b-2` 給選中的話，
+     *   兩者高度差 2px，整排分頁的文字基線會上下跳。
+     *
+     * ★ 未選的框線用 `mor-line` 正常深度，不要調淡 —— 淡到像影子就退回
+     *   「只有選中的有形狀」，而那正是「其他頁看起來不像分頁」的老問題。
      * ══════════════════════════════════════════════════════════
      */
-    const litBg = tone === 'page' ? 'bg-mor-bg' : 'bg-white';
     return (
-      <div className={`flex gap-1 overflow-x-auto ${className}`} role="tablist">
+      <div className={`overflow-x-auto ${className}`}>
+        <div className="flex gap-1 border-b border-mor-line" role="tablist">
         {items.map((t) => {
           const on = t.key === value;
           return (
             <button key={t.key} type="button" role="tab" aria-selected={on}
               onClick={() => onChange(t.key)}
               className={`${md ? 'px-4 py-2 text-ui' : 'px-3 py-1.5 text-uisub'}
-                rounded-t-[10px] border border-b-2 border-mor-line
+                -mb-px rounded-t-[10px] border border-b-2 border-mor-line
                 font-medium whitespace-nowrap transition-colors ${
-                on ? `${litBg} border-b-mor-slate text-mor-slate`
+                on ? 'bg-white border-b-mor-slate text-mor-slate'
                    : 'border-b-mor-line bg-transparent text-gray-500 hover:bg-white/50'}`}>
               {t.label}
               <Badge n={t.badge} on={on} />
             </button>
           );
         })}
+        </div>
       </div>
     );
   }
@@ -273,6 +286,7 @@ export function TabShell({ tabs, children, tone = 'paper', className = '' }: {
       */}
       <div className={`-mt-px rounded-xl rounded-tl-none border border-mor-line
                        ${tone === 'page' ? 'bg-mor-bg' : 'bg-white'}`}>
+        {/* ★ `-mt-px` 把面板的上框線疊到分頁那條橫線上 —— 不然會有兩條平行線 */}
         {children}
       </div>
     </div>
