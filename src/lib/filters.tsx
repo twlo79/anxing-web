@@ -25,7 +25,15 @@ import { syncFrom, syncTo } from '@/lib/date-range';
  * 表格裡自己畫的日期不受這個限制，一律走 lib/period 的 fmtDate（YYYY/MM/DD）。
  */
 
-const CTRL = 'rounded-lg border border-gray-300 px-2 py-1.5';
+/**
+ * 篩選欄位的外觀。**匯出出去** —— 有些欄位（`type="month"`、多選）
+ * 這裡沒有現成元件，頁面得自己畫，但框線與圓角要跟其他欄位一致。
+ *
+ * ★ 自己寫一份 `border border-mor-line` 的話，同一排會出現兩種深淺的框，
+ *   而那種差異只有把兩頁擺在一起才看得出來。
+ */
+export const FILTER_CTRL = 'rounded-lg border border-gray-300 px-2 py-1.5';
+const CTRL = FILTER_CTRL;
 
 /**
  * @param active 目前有沒有套用任何條件。手機收起篩選時，
@@ -167,6 +175,37 @@ export function FilterCount({ n, unit = '筆' }: { n: number; unit?: string }) {
   return (
     <div className="text-xs text-gray-400 pb-1.5 whitespace-nowrap">
       共 {n.toLocaleString('en-US')} {unit}
+    </div>
+  );
+}
+
+/**
+ * 動作列。篩選卡**下面**獨立一行，靠右。
+ *
+ * ============================================================
+ * 【★★ 為什麼不塞進篩選卡裡】
+ *
+ * 塞進去的話它會跟六個下拉排在同一行 —— 而它們是**兩件不同的事**:
+ * 篩選是「我要看哪些」，動作是「我要做什麼」。
+ * 混在一起的結果是「+ 新增」看起來像第七個篩選欄位。
+ *
+ * ★★ 而且手機上篩選是收起來的。動作在裡面就會跟著被收走 ——
+ *   「新增」是這一頁最常按的按鈕,不該藏在「篩選」後面。
+ *   放外面就永遠看得到,不需要 CSS 去豁免它。
+ *
+ * ============================================================
+ * 【順序:筆數 → 主要 → 次要 → 下載 → 回收桶】
+ *
+ * ★ 筆數在最左（手機用 `mr-auto` 頂到左邊）—— 它是「這批資料」的說明,
+ *   而右邊那些是對這批資料做的事。
+ *
+ * ★★ 主要動作（實心藍）**一頁只有一顆**。多一顆就不再是「主要」了。
+ *   次要動作用白底外框、下載用綠外框（見 components/Actions.tsx）。
+ */
+export function ActionRow({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex flex-wrap items-center justify-end gap-3 mb-4">
+      {children}
     </div>
   );
 }

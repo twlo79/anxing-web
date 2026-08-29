@@ -1,7 +1,11 @@
 'use client';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import StatCard from '@/components/StatCard';
-import { AddButton, ExportButton, ActionBar, EXPORT_TONE } from '@/components/Actions';
+import { AddButton, ExportButton } from '@/components/Actions';
+import {
+  FilterBar, Field, FilterSelect, FilterSearch, FilterClear, FilterCount,
+  ActionRow, FILTER_CTRL,
+} from '@/lib/filters';
 import Req, { ReqMark } from '@/components/Req';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
@@ -2002,96 +2006,57 @@ export default function PurchasesPage() {
       */}
       {(!canSeeAll || tab === 'pr') && (<>
 
-      {/* 工具列 —— 手機只留狀態篩選,其餘收在 details 裡 */}
-      <details className="md:hidden mb-3 rounded-xl glass">
-        <summary className="px-4 py-3 text-sm text-gray-600 cursor-pointer select-none">
-          篩選{(stF || reqF || estateF || methodF || kw) ? '（已套用）' : ''}・共 {sorted.length.toLocaleString()} 筆
-        </summary>
-        <div className="px-4 pb-4 flex flex-col gap-3 text-sm border-t border-mor-line pt-3">
-          <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">狀態</span>
-            <select value={stF} onChange={(e) => setStF(e.target.value)} className="h-12 rounded-lg border border-mor-line px-2">
-              <option value="">全部狀態</option>
-              {Object.entries(ST_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-            </select></label>
-          {canSeeAll && (
-            <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">申請人</span>
-              <select value={reqF} onChange={(e) => setReqF(e.target.value)} className="h-12 rounded-lg border border-mor-line px-2">
-                <option value="">全部</option>
-                {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select></label>
-          )}
-          <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">物業</span>
-            <select value={estateF} onChange={(e) => setEstateF(e.target.value)} className="h-12 rounded-lg border border-mor-line px-2">
-              <option value="">全部物業</option>
-              {estates.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-            </select></label>
-          <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">支出方式</span>
-            <select value={methodF} onChange={(e) => setMethodF(e.target.value)} className="h-12 rounded-lg border border-mor-line px-2">
-              <option value="">全部方式</option>
-              {PAY_OPTS.map((p) => <option key={p} value={p}>{PAY_LABEL[p]}</option>)}
-            </select></label>
-          <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">月份(建立日)</span>
-            <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="h-12 rounded-lg border border-mor-line px-2" /></label>
-          <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">關鍵字</span>
-            <div className="flex gap-1">
-              <input value={kwIn} onChange={(e) => setKwIn(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') setKw(kwIn.trim()); }}
-                placeholder="單號/項目/備註/廠商" className="flex-1 min-w-0 h-12 rounded-lg border border-mor-line px-2" />
-              <button onClick={() => setKw(kwIn.trim())} className="h-12 px-4 rounded-lg bg-mor-slate text-white">搜尋</button>
-            </div></label>
-          <div className="flex gap-2">
-            {(stF || reqF || estateF || methodF || kw) &&
-              <button onClick={() => { setStF(''); setReqF(''); setEstateF(''); setMethodF(''); setKw(''); setKwIn(''); }}
-                className="flex-1 h-12 rounded-lg border border-mor-line text-gray-600">清除篩選</button>}
-            <button onClick={exportXlsx} disabled={!sorted.length && !deps.length}
-              className={`flex-1 h-12 rounded-lg disabled:opacity-40 ${EXPORT_TONE}`}>⬇ 下載 Excel</button>
-          </div>
-        </div>
-      </details>
+      {/*
+        ══════════════════════════════════════════════════════════
+        篩選列（2026-08-28 改用全站共用元件 lib/filters.tsx）
 
-      {/* 工具列 —— 桌機 */}
-      <div className="hidden md:flex flex-wrap items-end gap-2 mb-3 text-sm">
-        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">狀態</span>
-          <select value={stF} onChange={(e) => setStF(e.target.value)} className="rounded-lg border border-mor-line px-2 py-1.5">
-            <option value="">全部狀態</option>
-            {Object.entries(ST_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select></label>
+        ★★★ 這裡原本有**兩份**同樣的六個篩選:
+             一份 `hidden md:flex` 給桌機、一份 `<details>` 給手機。
+
+             改一個篩選要改兩個地方,而漏掉一邊的症狀是
+             「手機上篩不到」—— 桌機測不出來,而回報的人會以為是自己按錯。
+
+        ★ 現在只有一份。手機的收合由 `<FilterToggle>` ＋ globals.css 的
+          `.collapsible-filters` 處理,不需要第二份 JSX。
+
+        ★★ 動作鈕搬到篩選卡**外面**（`<ActionRow>`）——
+           篩選是「我要看哪些」,動作是「我要做什麼」,兩件事。
+           擠在同一行的話「+ 填寫請款」看起來像第七個篩選欄位。
+        ══════════════════════════════════════════════════════════
+      */}
+      <FilterBar active={!!(stF || reqF || estateF || methodF || kw)}>
+        <FilterSelect label="狀態" value={stF} onChange={setStF}
+          options={Object.entries(ST_LABEL).map(([k, v]) => ({ value: k, label: v }))} />
         {canSeeAll && (
-          <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">申請人</span>
-            <select value={reqF} onChange={(e) => setReqF(e.target.value)} className="rounded-lg border border-mor-line px-2 py-1.5">
-              <option value="">全部</option>
-              {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select></label>
+          <FilterSelect label="申請人" value={reqF} onChange={setReqF}
+            options={people.map((x) => ({ value: x.id, label: x.name }))} />
         )}
-        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">物業</span>
-          <select value={estateF} onChange={(e) => setEstateF(e.target.value)} className="rounded-lg border border-mor-line px-2 py-1.5 max-w-32">
-            <option value="">全部物業</option>
-            {estates.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-          </select></label>
-        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">支出方式</span>
-          <select value={methodF} onChange={(e) => setMethodF(e.target.value)} className="rounded-lg border border-mor-line px-2 py-1.5">
-            <option value="">全部方式</option>
-            {PAY_OPTS.map((p) => <option key={p} value={p}>{PAY_LABEL[p]}</option>)}
-          </select></label>
-        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">月份(建立日)</span>
-          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="rounded-lg border border-mor-line px-2 py-1.5" /></label>
-        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">關鍵字</span>
-          <div className="flex">
-            <input value={kwIn} onChange={(e) => setKwIn(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') setKw(kwIn.trim()); }}
-              placeholder="單號/項目/備註/廠商" className="rounded-l-lg border border-mor-line px-2 py-1.5 w-40" />
-            <button onClick={() => setKw(kwIn.trim())} className="rounded-r-lg bg-mor-slate text-white px-3">搜尋</button>
-          </div></label>
-        {(stF || reqF || estateF || methodF || kw) &&
-          <button onClick={() => { setStF(''); setReqF(''); setEstateF(''); setMethodF(''); setKw(''); setKwIn(''); }} className="text-gray-500 underline pb-1.5">清除</button>}
-        <div className="ml-auto flex items-end gap-2">
-          <div className="text-xs text-gray-400 pb-1.5">共 {sorted.length.toLocaleString()} 筆</div>
-          <AddButton onClick={openNew}>填寫請款</AddButton>
-          {/* 採購單 = 房務管理的「採購需求」。用次要樣式,不跟「填寫請款」搶 */}
-          <a href={PURCHASE_FORM_URL}
-            className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 whitespace-nowrap">+ 採購單</a>
-          <ExportButton onClick={exportXlsx} disabled={!rows.length && !deps.length} />
-          <TrashLink table="purchase_requests" label="請款單" />
-        </div>
-      </div>
+        <FilterSelect label="物業" value={estateF} onChange={setEstateF}
+          options={estates.map((e) => ({ value: e.id, label: e.name }))} />
+        <FilterSelect label="支出方式" value={methodF} onChange={setMethodF}
+          options={PAY_OPTS.map((x) => ({ value: x, label: PAY_LABEL[x] }))} />
+        {/* type="month" 沒有現成元件 —— 借 FILTER_CTRL 讓框線跟隔壁一致 */}
+        <Field label="月份（建立日）">
+          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)}
+            className={FILTER_CTRL} />
+        </Field>
+        <FilterSearch label="關鍵字" value={kwIn} onChange={setKwIn}
+          onSubmit={() => setKw(kwIn.trim())}
+          placeholder="單號/項目/備註/廠商" width="w-40" />
+        <FilterClear active={!!(stF || reqF || estateF || methodF || kw)}
+          onClear={() => { setStF(''); setReqF(''); setEstateF(''); setMethodF(''); setKw(''); setKwIn(''); }} />
+      </FilterBar>
+
+      <ActionRow>
+        {/* 手機上筆數頂到最左,桌機跟按鈕靠在一起 */}
+        <div className="mr-auto md:mr-0"><FilterCount n={sorted.length} /></div>
+        <AddButton onClick={openNew}>填寫請款</AddButton>
+        {/* 採購單 = 房務管理的「採購需求」。次要樣式,不跟「填寫請款」搶 */}
+        <a href={PURCHASE_FORM_URL}
+          className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 whitespace-nowrap">+ 採購單</a>
+        <ExportButton onClick={exportXlsx} disabled={!rows.length && !deps.length} />
+        <TrashLink table="purchase_requests" label="請款單" />
+      </ActionRow>
 
       {/* 列表 —— 手機卡片版 */}
       <div className="md:hidden space-y-2">

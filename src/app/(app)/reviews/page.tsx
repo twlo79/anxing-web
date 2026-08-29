@@ -738,7 +738,7 @@ export default function ReviewsPage() {
                   {hasNegative(r) && (
                     <span className="shrink-0 w-2 h-2 rounded-full bg-red-500" title="需關注" />
                   )}
-                  <span className="shrink-0 rounded-md bg-mor-sand px-2 py-0.5 text-xs font-medium">
+                  <span className="shrink-0 rounded-md bg-mor-bluelight text-mor-slate px-2 py-0.5 text-xs font-medium">
                     {p?.name ?? (mastersLoaded ? '未對應' : '⋯')}
                   </span>
                   <span className="truncate text-sm">{r.guest_name}</span>
@@ -811,7 +811,7 @@ export default function ReviewsPage() {
                   <td className="px-3 py-2.5 whitespace-nowrap text-gray-600">{r.checkin_date ?? '—'}</td>
                   <td className="px-3 py-2.5 whitespace-nowrap text-gray-600">{r.checkout_date ?? '—'}</td>
                   <td className="px-3 py-2.5 whitespace-nowrap">
-                    <span className="inline-block rounded-md bg-mor-sand px-2 py-0.5 text-xs font-medium">
+                    <span className="inline-block rounded-md bg-mor-bluelight text-mor-slate px-2 py-0.5 text-xs font-medium">
                       {p?.name ?? (mastersLoaded ? '未對應' : '⋯')}
                     </span>
                     {/*
