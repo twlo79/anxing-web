@@ -50,6 +50,17 @@ const CTRL = FILTER_CTRL;
 export const FILTER_BTN_H = 'h-12 md:h-10';
 
 /**
+ * 關鍵字輸入框的寬度。**全站一個值**（2026-08-29 使用者:「box 寬度」）。
+ *
+ * ★ 原本 w-28 / w-36 / w-40 / w-48 / w-52 / w-56 六種都有,
+ *   而它們就排在同一排篩選的最右邊 —— 換一頁那個框就換一個寬度。
+ *
+ * ★ 13rem（208px）：放得下最長的那個提示「名稱／來源／地址／筆記」,
+ *   而且加上「搜尋」鈕之後,訂單頁七個欄位在 1440 仍然排得下一行。
+ */
+export const KW_W = 'w-52';
+
+/**
  * @param active 目前有沒有套用任何條件。手機收起篩選時，
  *               這是「為什麼只有 3 筆」唯一的線索 —— 傳進來按鈕才會亮。
  */
@@ -176,11 +187,25 @@ export function FilterDateRange({ label, from, to, onFrom, onTo, quick }: {
  * 所以外面維持兩個狀態：`value` 是輸入框的內容,`onSubmit` 才是真的去查。
  * Enter 等同按搜尋 —— 習慣打完就按 Enter 的人不該被迫去點按鈕。
  */
-export function FilterSearch({ label, value, onChange, onSubmit, placeholder = '搜尋', width = 'w-36' }: {
-  label: string;
+export function FilterSearch({
+  label = '關鍵字', value, onChange, onSubmit, placeholder, width = KW_W,
+}: {
+  /**
+   * ★★★ **一律留預設的「關鍵字」**（2026-08-29 使用者:「關鍵字 搜尋請統一」）。
+   *
+   *   原本十三個地方各寫各的:「關鍵字(備註/房號)」「關鍵字(房源/姓名/備註)」
+   *   「關鍵字(名稱/來源/地址/筆記)」…… 標題長度從 3 個字到 13 個字都有,
+   *   而標題那一行是**固定高度**（見 `Field`）—— 長標題把整欄的寬度撐開，
+   *   整排篩選的間距就跟著歪。
+   *
+   * ★ 「可以搜哪些欄位」放 `placeholder`。它在輸入框裡,
+   *   有字的時候自然消失 —— 那正是「只有還沒開始打的人才需要」的資訊。
+   */
+  label?: string;
   value: string;
   onChange: (v: string) => void;
   onSubmit: () => void;
+  /** 可以搜哪些欄位，例如「房源／房客／電話」。 */
   placeholder?: string;
   width?: string;
 }) {

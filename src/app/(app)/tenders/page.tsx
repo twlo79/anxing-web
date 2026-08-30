@@ -16,6 +16,7 @@ import {
   tenderError, fromFeed, afterImportTodo, dueHint,
   type TenderStatus,
 } from '@/lib/tender';
+import { FilterSearch } from '@/lib/filters';
 
 /**
  * 標案管理（migration_179，2026-08-28）。
@@ -338,16 +339,8 @@ export default function TendersPage() {
                 {STATUS_ORDER.map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
               </select>
             </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">關鍵字(名稱/來源/地址/筆記)</label>
-              <div className="flex gap-1">
-                <input value={kwIn} onChange={(e) => setKwIn(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') setKw(kwIn.trim()); }}
-                  placeholder="搜尋" className={`${inp} w-40`} />
-                <button onClick={() => setKw(kwIn.trim())}
-                  className="rounded-lg bg-mor-slate text-white px-3 hover:bg-mor-slatedark">搜尋</button>
-              </div>
-            </div>
+            <FilterSearch value={kwIn} onChange={setKwIn}
+              onSubmit={() => setKw(kwIn.trim())} placeholder="名稱／來源／地址／筆記" />
             {(statusF || kw || kwIn) && (
               <button onClick={() => { setStatusF(''); setKw(''); setKwIn(''); }}
                 className="text-gray-500 underline pb-1.5">清除</button>

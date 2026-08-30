@@ -383,7 +383,7 @@ export default function OtherBooksPage() {
               <FilterSelect label="科目" value={f.code ?? ''}
                 onChange={(v) => setF({ ...f, code: v })}
                 options={codes.map((c) => ({ value: c.code, label: c.name }))} />
-              <FilterSearch label="關鍵字" placeholder="項目／對象／備註" width="w-48"
+              <FilterSearch placeholder="項目／對象／備註"
                 value={kwDraft} onChange={setKwDraft}
                 onSubmit={() => setF({ ...f, kw: kwDraft })} />
               <FilterClear active={!!(f.kind || f.code || f.kw)}

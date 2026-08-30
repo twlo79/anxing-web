@@ -838,8 +838,9 @@ const nameOf = (c: Contract) =>
         <FilterSelect label="發票" value={invFilter} onChange={setInvFilter} options={[
           { value: 'y', label: '開發票' }, { value: 'n', label: '不開發票' }]} />
         <FilterDateRange label="租期(期間內有交集)" from={fromD} to={toD} onFrom={setFromD} onTo={setToD} />
-        <FilterSearch label="關鍵字(房源/房客/電話)" value={kwIn} onChange={setKwIn}
-          onSubmit={() => setKw(kwIn.trim())} />
+        <FilterSearch value={kwIn} onChange={setKwIn}
+          onSubmit={() => setKw(kwIn.trim())}
+          placeholder="房源／房客／電話" />
         <FilterClear
           active={!!(estateFilter || cadFilter || typeFilter || statusFilter || invFilter || fromD || toD || kw || kwIn)}
           onClear={() => { setEstateFilter(''); setCadFilter(''); setTypeFilter(''); setStatusFilter(''); setInvFilter(''); setFromD(''); setToD(''); setKw(''); setKwIn(''); }} />

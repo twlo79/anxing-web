@@ -180,7 +180,7 @@ export default function CustomersPage() {
         ══════════════════════════════════════════════════════════
       */}
       <FilterBar active={!!q || onlyStaying}>
-        <FilterSearch label="關鍵字" placeholder="姓名、房號、電話、備註…" width="w-56"
+        <FilterSearch placeholder="姓名／房號／電話／備註"
           value={qDraft} onChange={setQDraft} onSubmit={() => setQ(qDraft)} />
         {/* 勾選框沒有「上方小標題」可放 —— 它自己就是一句話。pb-1.5 讓它跟隔壁欄位的基線對齊 */}
         <label className="flex items-center gap-1.5 text-sm pb-1.5">

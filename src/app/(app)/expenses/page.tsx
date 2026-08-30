@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AddButton, ExportButton } from '@/components/Actions';
-import { ActionRow, FilterCount, FieldSpacer, FILTER_BTN_H } from '@/lib/filters';
+import { ActionRow, FilterCount, FieldSpacer, FilterSearch, FILTER_BTN_H } from '@/lib/filters';
 import Req from '@/components/Req';
 import MoneyInput from '@/components/MoneyInput';
 import { missingFields, missingMessage } from '@/lib/required';
@@ -56,6 +56,7 @@ type Property = { id: string; name: string; estate_id: string | null };
 
 import { PAY_LABEL, PAY_OPTS, needsPayout, payAccountsFor } from '@/lib/purchase-pay';
 import RangeInput from '@/components/RangeInput';
+import StatHero from '@/components/StatHero';
 
 const CURRENCIES = ['TWD', 'USD', 'JPY', 'CNY', 'EUR'];
 
@@ -492,29 +493,23 @@ export default function ExpensesPage() {
 
       {/* 統計 */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
-        <div className="rounded-xl min-w-0 surf-deep text-white p-5">
-          <div className="flex items-baseline justify-between">
-            {/* ★ 跟隔壁三張分項卡的標題同一級（text-ui）—— 四張卡並排時
-                  標題有大有小會看起來像不同層級的東西（2026-08-29 使用者指定） */}
-            <div className="text-ui font-semibold opacity-90">認列支出</div>
-            <div className="text-uisub opacity-70">{rows.length.toLocaleString()} 筆</div>
-          </div>
-          <div className="stat-num-lg font-bold mt-2">${fmt(total)}</div>
-          {/*
-            有遞延才顯示第二個數字。沒有的話兩者永遠相同,
-            多印一行只是讓每天都在看的人多讀一次一樣的數字。
-          */}
-          {hasDeferral && (
-            <div className="text-sm mt-1.5 pt-1.5 border-t border-white/20 flex items-baseline justify-between">
-              <span className="opacity-80">實際支出</span>
-              <span className="font-semibold">${fmt(paid)}</span>
-            </div>
-          )}
-          <div className="text-xs opacity-60 mt-1">
-            {fromD || toD ? `${fromD || '起始'} ~ ${toD || '至今'}` : '全部期間'}
-            {hasDeferral && <span className="block mt-0.5">認列＝費用發生在哪個月・實際＝錢哪天出去</span>}
-          </div>
-        </div>
+        <StatHero title="認列支出" count={`${rows.length.toLocaleString()} 筆`}
+          value={`$${fmt(total)}`}
+          sub={
+            <>
+              {fromD || toD ? `${fromD || '起始'} ~ ${toD || '至今'}` : '全部期間'}
+              {/*
+                有遞延才顯示第二個數字。沒有的話兩者永遠相同,
+                多印一行只是讓每天都在看的人多讀一次一樣的數字。
+              */}
+              {hasDeferral && (
+                <span className="block mt-2 pt-2 border-t border-white/20 text-uisub opacity-90">
+                  實際支出 <b>${fmt(paid)}</b>
+                  <span className="block opacity-75">認列＝費用發生在哪個月・實際＝錢哪天出去</span>
+                </span>
+              )}
+            </>
+          } />
 
         {/*
           ══════════════════════════════════════════════════════
@@ -591,14 +586,10 @@ export default function ExpensesPage() {
             <option value="__cash">現金/未指定</option>
             {payAccounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
           </select></label>
-        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500" title="項目／備註／憑證號碼">關鍵字</span>
-          {/* ★ 輸入框與搜尋鈕之間留 gap —— 貼在一起時它們看起來像同一個東西,
-                而一個是「輸入」、一個是「送出」 */}
-          <div className="flex gap-2">
-            <input value={kwIn} onChange={(e) => setKwIn(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && setKw(kwIn.trim())}
-              className="rounded-lg border border-mor-line px-2 py-1.5 w-40" placeholder="關鍵字" />
-            <button onClick={() => setKw(kwIn.trim())} className="rounded-lg bg-mor-slate text-white px-4 hover:bg-mor-slatedark">搜尋</button>
-          </div></label>
+        {/* ★ 原本用 `title` 提示可以搜哪些欄位 —— 手機沒有 hover，那句話等於不存在。
+              改放 placeholder（全站一致，2026-08-29） */}
+        <FilterSearch value={kwIn} onChange={setKwIn}
+          onSubmit={() => setKw(kwIn.trim())} placeholder="項目／備註／憑證號碼" />
         <FieldSpacer>
           {(fromD || toD || codeF || payF || purposeF || acctF || kw || starF || nonOpF) && (
             <button onClick={() => { setFromD(''); setToD(''); setCodeF(''); setPayF(''); setPurposeF(''); setAcctF(''); setKw(''); setKwIn(''); setStarF(false); setNonOpF(false); }}

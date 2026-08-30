@@ -2037,9 +2037,9 @@ export default function PurchasesPage() {
           <input type="month" value={month} onChange={(e) => setMonth(e.target.value)}
             className={FILTER_CTRL} />
         </Field>
-        <FilterSearch label="關鍵字" value={kwIn} onChange={setKwIn}
+        <FilterSearch value={kwIn} onChange={setKwIn}
           onSubmit={() => setKw(kwIn.trim())}
-          placeholder="單號/項目/備註/廠商" width="w-40" />
+          placeholder="單號／項目／備註／廠商" />
         <FilterClear active={!!(stF || reqF || estateF || methodF || kw)}
           onClear={() => { setStF(''); setReqF(''); setEstateF(''); setMethodF(''); setKw(''); setKwIn(''); }} />
       </FilterBar>

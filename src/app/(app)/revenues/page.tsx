@@ -16,6 +16,8 @@ import { roomCell, periodCell, amountCell, nightsText } from '@/lib/revenue-row'
 import RowDrawer from './row-drawer';
 import RangeInput from '@/components/RangeInput';
 import { BarPanel, BarRow, BarEmpty } from '@/components/BarList';
+import { FilterSearch } from '@/lib/filters';
+import StatHero from '@/components/StatHero';
 
 type Row = {
   /** 這一列的 id（認列列，不是訂單）—— 一筆訂單跨三個月就有三列 */
@@ -617,11 +619,8 @@ export default function RevenuesPage() {
 
       {/* Dashboard */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-4 items-stretch">
-        <div className="rounded-xl surf-deep text-white p-5 flex flex-col justify-center min-w-0">
-          <div className="text-ui font-semibold opacity-90">當期營收總額</div>
-          <div className="stat-num-lg font-bold mt-1">${fmt(total)}</div>
-          <div className="text-xs opacity-75 mt-2">{fromM} ~ {toM}・{filtered.length} 筆認列</div>
-        </div>
+        <StatHero title="當期營收總額" count={`${filtered.length} 筆認列`}
+          value={`$${fmt(total)}`} sub={`${fromM} ~ ${toM}`} />
         {/* ★ 這一張漏了（2026-08-29）—— 標題還是 `text-sm`、也沒有長條,
               跟旁邊的「依物業」擺在一起看得出來一大一小 */}
         <BarPanel title="依來源">
@@ -674,14 +673,8 @@ export default function RevenuesPage() {
           <RangeInput kind="month" from={fromM} to={toM}
             onChange={(f, t) => { setFromM(f); setToM(t); }} />
         </div>
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">關鍵字(客戶/房源)</label>
-          <div className="flex gap-1">
-            <input value={kwInput} onChange={(e) => setKwInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') setKw(kwInput.trim()); }}
-              placeholder="搜尋" className="rounded-lg border border-gray-300 px-2 py-1.5 w-28" />
-            <button onClick={() => setKw(kwInput.trim())} className="rounded-lg bg-mor-slate text-white px-3 hover:bg-mor-slatedark">搜尋</button>
-          </div>
-        </div>
+        <FilterSearch value={kwInput} onChange={setKwInput}
+          onSubmit={() => setKw(kwInput.trim())} placeholder="客戶／房源" />
         {(estateFilter || roomFilter || sourceFilter || kw) && <button onClick={() => { setEstateFilter(''); setRoomFilter(''); setSourceFilter(''); setKw(''); setKwInput(''); }} className="text-gray-500 underline pb-1.5">清除</button>}
       </div>
 

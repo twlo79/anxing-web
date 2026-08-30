@@ -20,7 +20,10 @@ import {
 import RangeInput from '@/components/RangeInput';
 import { BarPanel, BarRow, BarEmpty } from '@/components/BarList';
 import { EXPORT_TONE, ExportButton } from '@/components/Actions';
-import { ActionRow, FilterCount, FieldSpacer, FILTER_BTN_H } from '@/lib/filters';
+import {
+  ActionRow, FILTER_BTN_H, FieldSpacer, FilterCount, FilterSearch,
+} from '@/lib/filters';
+import StatHero from '@/components/StatHero';
 
 type Estate = { id: string; name: string; manager: string | null; sort: number };
 type Property = { id: string; name: string; active: boolean; estate_id: string | null };
@@ -535,27 +538,16 @@ export default function ReviewsPage() {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-stretch">
           {/* 總覽 + 星等分布 */}
-          <div onClick={() => drillTo('')} title="點擊查看全部評價" className="rounded-xl surf-deep is-clickable text-white p-5 flex flex-col cursor-pointer transition">
-            <div className="flex items-center justify-between">
-              {/* 「所有」現在是名副其實的 —— migration_130 之前它其實不含停用物業 */}
-              <span className="text-ui font-semibold opacity-90">所有平均評價</span>
-              <span className="text-xs opacity-75">{overall.cnt.toLocaleString()} 筆</span>
-            </div>
-            {/*
-              ★ 現在在看哪一段,跟數字擺在一起（2026-08-28）。
-                原本在標題列旁邊 —— 那裡離它在說明的東西太遠,
-                而且擠著一行灰字會讓人先讀完才知道那不是可以點的。
-
-              ★ 沒設區間時寫「全部期間」,不留白:留白跟「載入中」長得一樣。
-            */}
-            <div className="text-[11px] opacity-60 mt-0.5">
-              退房日 {dateFrom || dateTo ? `${dateFrom || '起始'} ~ ${dateTo || '今'}` : '全部期間'}
-            </div>
-            <div className="flex items-baseline gap-1.5 mt-1">
-              <span className="text-4xl font-bold tracking-tight">{overall.cnt ? overall.avg.toFixed(2) : '—'}</span>
-              {/* ★ 跟 5 星那條 bar 同一個黃 —— 兩個都在講「滿分」，不該是兩種黃 */}
-              <span className="text-xl" style={{ color: STAR_BAR_DARK[0] }}>★</span>
-            </div>
+          <StatHero title="所有平均評價" hint="點擊查看全部評價" onClick={() => drillTo('')}
+            count={`${overall.cnt.toLocaleString()} 筆`}
+            value={
+              <span className="flex items-baseline gap-1.5">
+                <span>{overall.cnt ? overall.avg.toFixed(2) : '—'}</span>
+                {/* ★ 跟 5 星那條 bar 同一個黃 —— 兩個都在講「滿分」，不該是兩種黃 */}
+                <span className="text-xl" style={{ color: STAR_BAR_DARK[0] }}>★</span>
+              </span>
+            }
+            sub={`退房日 ${dateFrom || dateTo ? `${dateFrom || '起始'} ~ ${dateTo || '今'}` : '全部期間'}`}>
             <div className="mt-4 space-y-1.5">
               {overallDist.rows.map(([label, n]) => (
                 <div key={label} onClick={(e) => { e.stopPropagation(); setListModal({ title: `${label}評價`, propIds: null, rating: parseInt(label) }); }}
@@ -577,7 +569,7 @@ export default function ReviewsPage() {
                 </div>
               ))}
             </div>
-          </div>
+          </StatHero>
 
           {/*
             物業評分。★ 改用共用的 BarPanel/BarRow（2026-08-29）——
@@ -680,14 +672,8 @@ export default function ReviewsPage() {
           <RangeInput from={dateFrom} to={dateTo}
             onChange={(f, t) => { setDateFrom(f); setDateTo(t); }} />
         </div>
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">關鍵字(旅客/留言/房源)</label>
-          <div className="flex gap-1">
-            <input value={kwInput} onChange={(e) => setKwInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') setKw(kwInput.trim()); }}
-              placeholder="含舊物業" className="rounded-lg border border-gray-300 px-2 py-1.5 w-32" />
-            <button onClick={() => setKw(kwInput.trim())} className="rounded-lg bg-mor-slate text-white px-3 hover:bg-mor-slatedark">搜尋</button>
-          </div>
-        </div>
+        <FilterSearch value={kwInput} onChange={setKwInput}
+          onSubmit={() => setKw(kwInput.trim())} placeholder="旅客／留言／房源" />
         {/*
           ★ 「只看已隱藏」**留在篩選卡裡** —— 它是一個篩選條件,
             跟旁邊的下拉是同一類東西,只是長得像勾選框。

@@ -42,6 +42,8 @@ import { checkDates, checkPrice, checkRequired, lookbackFrom, type PastOrder } f
 import MoneyInput from '@/components/MoneyInput';
 import RangeInput from '@/components/RangeInput';
 import { BarPanel, BarRow, BarEmpty } from '@/components/BarList';
+import { FilterSearch } from '@/lib/filters';
+import StatHero from '@/components/StatHero';
 
 type Order = {
   id: string; order_key: string; source: string; estate_id: string | null; property_id?: string | null; property_raw: string | null;
@@ -1012,12 +1014,10 @@ export default function ShortTermPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-4 items-stretch">
-        <div className="rounded-xl surf-deep text-white p-5 flex flex-col justify-center min-w-0">
-          <div className="text-ui font-semibold opacity-90">當期營收(訂單總額)</div>
-          <div className="stat-num-lg font-bold mt-1">${fmt(totRevenue)}</div>
-          {/* 暫收款移到「押金管理」頁 —— 那裡才看得到契約押金,只算短租的數字是不完整的 */}
-          <div className="text-xs opacity-60 mt-1">{total.toLocaleString()} 筆・押金非營收</div>
-        </div>
+        {/* ★ 標題縮短成「當期營收」，括號那句移到附註 —— 不然標題比其他五張長一截。
+              暫收款在「押金管理」頁：那裡才看得到契約押金，只算短租是不完整的 */}
+        <StatHero title="當期營收" count={`${total.toLocaleString()} 筆`}
+          value={`$${fmt(totRevenue)}`} sub="訂單總額・押金非營收" />
         {/* ★ 改用共用的 BarPanel/BarRow（2026-08-29）。來源本來沒有長條 ——
               補上之後才看得出「Airbnb 佔幾成」，而那是這張卡在問的問題 */}
         <BarPanel title="依來源">
@@ -1103,13 +1103,8 @@ export default function ShortTermPage() {
           <RangeInput from={fromD} to={toD}
             onChange={(f, t) => { setFromD(f); setToD(t); }} />
         </div>
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">關鍵字(房客/房源)</label>
-          <div className="flex gap-1">
-            <input value={kwIn} onChange={(e) => setKwIn(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') setKw(kwIn.trim()); }} placeholder="搜尋" className="rounded-lg border border-gray-300 px-2 py-1.5 w-36" />
-            <button onClick={() => setKw(kwIn.trim())} className="rounded-lg bg-mor-slate text-white px-3 hover:bg-mor-slatedark">搜尋</button>
-          </div>
-        </div>
+        <FilterSearch value={kwIn} onChange={setKwIn}
+          onSubmit={() => setKw(kwIn.trim())} placeholder="房客／房源" />
         {/*
           「清除」回到**預設值**,不是回到「全部」——
           費用類別的預設是房租,清成「全部」的話會變成一個他從來沒選過的狀態,
@@ -1588,7 +1583,7 @@ export default function ShortTermPage() {
               )}
               {/*
                 【為什麼從「客戶」改叫「房客」】
-                表格欄位叫房客、篩選叫「關鍵字(房客/房源)」、Excel 表頭也叫房客 ——
+                表格欄位叫房客、篩選的提示寫「房客／房源」、Excel 表頭也叫房客 ——
                 只有這個輸入框叫客戶。同一個欄位四個地方三個名字。
 
                 2026-08-13 真的出事：一筆訂單存進去了，房客卻是空的，

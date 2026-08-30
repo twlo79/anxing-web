@@ -4,8 +4,11 @@ import * as XLSX from 'xlsx-js-style';
 import { createClient } from '@/lib/supabase';
 import RangeInput from '@/components/RangeInput';
 import { EXPORT_TONE, ExportButton } from '@/components/Actions';
-import { ActionRow, FilterCount, FieldSpacer, FILTER_BTN_H } from '@/lib/filters';
+import {
+  ActionRow, FILTER_BTN_H, FieldSpacer, FilterCount, FilterSearch,
+} from '@/lib/filters';
 import { BarPanel, BarRow, BarEmpty } from '@/components/BarList';
+import StatHero from '@/components/StatHero';
 
 type Estate = { id: string; name: string; sort: number };
 type StaffStat = { staff_name: string; staff_type: string; active: boolean; total: number; rated: number; avg_rating: number | null; low_count: number };
@@ -191,11 +194,11 @@ export default function CleaningPage() {
           <h1 className="hidden md:block">清潔記錄</h1>
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-stretch">
-          <div className="rounded-xl min-w-0 surf-deep text-white p-5 flex flex-col justify-center">
-            <div className="text-ui font-semibold opacity-90">總清潔次數</div>
-            <div className="stat-num-lg font-bold mt-1">{totalCount.toLocaleString()}</div>
-            <div className="text-xs opacity-75 mt-2">共 {visibleStats.length} 位・{(dateFrom || dateTo) ? `${dateFrom || minDate || '起始'} ~ ${dateTo || '今'}` : (minDate ? `${minDate} ~ 今` : '全部期間')}</div>
-          </div>
+          <StatHero title="總清潔次數" count={`共 ${visibleStats.length} 位`}
+            value={totalCount.toLocaleString()}
+            sub={(dateFrom || dateTo)
+              ? `${dateFrom || minDate || '起始'} ~ ${dateTo || '今'}`
+              : (minDate ? `${minDate} ~ 今` : '全部期間')} />
           {/*
             ★★ 改用共用的 BarPanel/BarRow（2026-08-29）。
               捲軸拿掉 —— 原本 `max-h-56` 一次只露五位填寫人,
@@ -242,12 +245,8 @@ export default function CleaningPage() {
           <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">日期</span>
             <RangeInput inputClass="h-12 flex-1" from={dateFrom} to={dateTo}
               onChange={(f, t) => { setDateFrom(f); setDateTo(t); }} /></label>
-          <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">關鍵字(備註/房號)</span>
-            <div className="flex gap-1">
-              <input value={kwInput} onChange={(e) => setKwInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') setKw(kwInput.trim()); }}
-                placeholder="例:冰箱、拖鞋" className="flex-1 min-w-0 h-12 rounded-lg border border-gray-300 px-2" />
-              <button onClick={() => setKw(kwInput.trim())} className="h-12 px-4 rounded-lg bg-mor-slate text-white">搜尋</button>
-            </div></label>
+          <FilterSearch value={kwInput} onChange={setKwInput}
+            onSubmit={() => setKw(kwInput.trim())} placeholder="備註／房號" />
           <div className="flex gap-2">
             {(estate || staff || staffType || dateFrom || dateTo || kw) && (
               <button onClick={() => { setEstate(''); setStaff(''); setStaffType(''); setDateFrom(''); setDateTo(''); setKw(''); setKwInput(''); }}
@@ -290,14 +289,8 @@ export default function CleaningPage() {
           <RangeInput from={dateFrom} to={dateTo}
             onChange={(f, t) => { setDateFrom(f); setDateTo(t); }} />
         </div>
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">關鍵字(備註/房號)</label>
-          <div className="flex gap-1">
-            <input value={kwInput} onChange={(e) => setKwInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') setKw(kwInput.trim()); }}
-              placeholder="例:冰箱、拖鞋" className="rounded-lg border border-gray-300 px-2 py-1.5 w-32" />
-            <button onClick={() => setKw(kwInput.trim())} className="rounded-lg bg-mor-slate text-white px-3 hover:bg-mor-slatedark">搜尋</button>
-          </div>
-        </div>
+        <FilterSearch value={kwInput} onChange={setKwInput}
+          onSubmit={() => setKw(kwInput.trim())} placeholder="備註／房號" />
         {/* 清除的字統一叫「清除」（全站一致）—— 「清除篩選」四個字只有這一頁在用 */}
         <FieldSpacer>
           {(estate || staff || staffType || dateFrom || dateTo || kw) && (

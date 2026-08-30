@@ -7,6 +7,7 @@ import { cleanCounts, filterItems, type HkStaff, type HkProperty } from '@/lib/h
 import { payroll, dailyUnits, fmtUnits } from '@/lib/hk-payroll';
 import { softDelete, restoreTrash } from '@/lib/trash';
 import { EXPORT_TONE } from '@/components/Actions';
+import StatHero from '@/components/StatHero';
 
 /**
  * 房務排班統計（「房務管理」的一個分頁）。
@@ -434,11 +435,8 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
             </div>
           );
         })}
-        <div className="rounded-xl surf-deep text-white p-4 min-w-0">
-          <div className="text-ui font-semibold opacity-90">床單總計</div>
-          <div className="stat-num font-bold mt-1">{totalLinen}</div>
-          <div className="text-xs opacity-70 mt-0.5">床數 + 拿床單</div>
-        </div>
+        {/* ★ 這張沒有「筆數」可放 —— 它只有一個總數，右上角就留空 */}
+        <StatHero title="床單總計" value={totalLinen} sub="床數 + 拿床單" />
       </div>
 
       {/* 分頁放在摘要卡片之後 —— 卡片是整月總覽,不該被分頁切掉 */}

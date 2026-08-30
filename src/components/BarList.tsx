@@ -30,7 +30,7 @@ import { ReactNode } from 'react';
  *    支出頁原本用 13px —— 那是表格裡塞十二欄時才需要的尺寸，
  *    這種一列只有三個東西的面板沒有理由跟著縮。
  *
- * 2. **要捲，但門檻拉高到 `maxRows`（預設 10 列）。**
+ * 2. **要捲，但門檻拉高到 `maxRows`（預設 9 列）。**
  *
  *    原本是 `max-h-44 overflow-auto` —— 一次只露**四列**，
  *    而這種面板的用途正是「一眼看完分布」，露四列等於沒有用。
@@ -61,7 +61,7 @@ const FILL: Record<BarTone, string> = {
  * 面板外框。標題列用 `text-ui`（17px）—— 它是**外框**不是資料，
  * 跟按鈕、篩選標題同一級（見 anxing-ui skill 的字級表）。
  */
-export function BarPanel({ title, right, children, maxRows = 10, className = '' }: {
+export function BarPanel({ title, right, children, maxRows = 9, className = '' }: {
   title: ReactNode;
   /** 標題列右邊（下載鈕之類）。沒有就不佔位置。 */
   right?: ReactNode;
@@ -69,6 +69,10 @@ export function BarPanel({ title, right, children, maxRows = 10, className = '' 
   /**
    * 超過幾列才出現捲軸。**同一排的面板要填一樣的值** ——
    * 不然三張卡三種高度，那一排看起來是壞的。
+   *
+   * ★ 預設 9：支出頁「物業分項」剛好 9 個（正隆…亞曼尼），
+   *   使用者指定「高度到亞曼尼就好」—— 那一排最滿的那張不捲，
+   *   會計科目那 22 列才捲。
    *
    * ★ 一列約 39px（`py-2` ＋ 15px 字）。名稱換到第二行的那幾列會高一點，
    *   所以這是「大約」幾列，不是保證。

@@ -38,6 +38,7 @@ import { softDelete } from '@/lib/trash';
 import TrashLink from '@/components/TrashLink';
 import RangeInput from '@/components/RangeInput';
 import { Tabs } from '@/components/Tabs';
+import { FilterSearch } from '@/lib/filters';
 
 /**
  * 暫收管理（原「押金管理」，2026-08-24 改名，migration_174）。
@@ -1504,14 +1505,8 @@ export default function DepositsPage() {
             ))}
             {stats.orphan.n > 0 && <option value="orphan">孤兒</option>}
           </select></label>
-        <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">關鍵字(房源/姓名/備註)</span>
-          <div className="flex items-center gap-1">
-            <input value={kwInput} onChange={(e) => setKwInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') setKw(kwInput.trim()); }}
-              placeholder="搜尋" className={`${inp} w-28`} />
-            <button onClick={() => setKw(kwInput.trim())}
-              className="rounded-lg bg-mor-slate text-white px-3 py-1.5 hover:bg-mor-slatedark">搜尋</button>
-          </div></label>
+        <FilterSearch value={kwInput} onChange={setKwInput}
+          onSubmit={() => setKw(kwInput.trim())} placeholder="房源／姓名／備註" />
         {/*
           清除只在真的有篩選時出現，樣式改成底線文字 —— 跟訂單頁一致。
           常駐一顆有邊框的按鈕會讓人以為那是主要動作之一,

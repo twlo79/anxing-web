@@ -580,10 +580,9 @@ export default function AccountsPage() {
                 所以直接從畫面上複製 `$7,000` 貼進來也查得到。
               ══════════════════════════════════════════════════════
             */}
-            <FilterSearch label="關鍵字"
-              value={qDraft} onChange={setQDraft}
+            <FilterSearch value={qDraft} onChange={setQDraft}
               onSubmit={() => set('q', qDraft)}
-              placeholder="摘要、交易帳號、銀行、金額…" width="w-52" />
+              placeholder="摘要／交易帳號／銀行／金額" />
             {/*
               一年可能只出現一次的東西 —— 沒有這個開關就只能一頁一頁翻
             */}
