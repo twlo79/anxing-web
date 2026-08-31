@@ -75,20 +75,32 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: 安裝 Supabase CLI
-        uses: supabase/setup-cli@v1
-        with:
-          version: latest
-
-      - name: 匯出（roles / schema / data 三份）
+      # ══════════════════════════════════════════════════════
+      # ★★★ 用 pg_dump，**不用 Supabase CLI**（2026-08-31 換掉）
+      #
+      #   第一版用 `supabase db dump`，跑完是綠的、檔案也產生了，
+      #   但 roles.sql 只有 297 bytes、data.sql 裡一張業務表都沒有 ——
+      #   **它成功地備份了空氣**。
+      #
+      #   ★ 而本機那支用同一個資料庫、同一串連線字串，
+      #     plain pg_dump 抓出 11.92 MB。所以問題不在資料庫也不在連線，
+      #     在那個工具。
+      #
+      #   ★★ 換成跟本機**一模一樣的做法**:同一支 pg_dump、同一組參數。
+      #     兩邊一致的價值不只是少一種工具 —— 是「本機測得過的東西，
+      #     雲端就一定跑得過」。工具不同的話，本機驗證證明不了雲端。
+      #
+      #   代價:pg_dump 不會自動排除 Supabase 管的 schema，所以改成
+      #   明確指定要哪幾個（見下面 --schema 那幾行）。
+      # ══════════════════════════════════════════════════════
+      - name: 匯出
         env:
           DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
           set -euo pipefail
 
           # ★★ Secret 沒設的話要**明白地講**。
-          #   不擋的話 supabase 會拿空字串去連,錯誤訊息是
-          #   「invalid connection string」—— 看起來像密碼打錯,
+          #   不擋的話 pg_dump 會拿空字串去連,錯誤訊息看起來像密碼打錯,
           #   而真正的原因是根本沒有那個 Secret。
           if [ -z "${DB_URL}" ]; then
             echo "::error::找不到 SUPABASE_DB_URL 這個 Secret。"
@@ -98,52 +110,73 @@ jobs:
 
           mkdir -p out
 
-          # ── 1. 角色 ──────────────────────────────
-          # ★ 自訂角色與它們的權限。還原時要**最先**跑這一份，
-          #   不然後面 schema.sql 裡的 `GRANT ... TO xxx` 會找不到 xxx。
-          echo "→ roles"
-          supabase db dump --db-url "$DB_URL" -f out/roles.sql --role-only
+          # ★ 用 Docker 跑 pg_dump，版本自己指定。
+          #   runner 內建的 pg_dump 版本會隨 image 改變,而
+          #   「pg_dump 比伺服器舊」的症狀是 server version mismatch ——
+          #   那會在某一次 runner 更新後突然開始發生,而沒有人動過這個檔案。
+          #   釘死版本就不會有那一天。18 對任何 ≤18 的伺服器都可以。
+          PG='docker run --rm -i postgres:18-alpine pg_dump'
 
-          # ── 2. 結構 ──────────────────────────────
-          # ★ 表、索引、觸發器、RLS policy、函式。
-          #   ★★ 這一份裡面**有 migration_166 那道觸發器**與所有 RLS ——
-          #     只還原 data 不還原 schema 的話,資料回來了但保護全沒了。
-          echo "→ schema"
-          supabase db dump --db-url "$DB_URL" -f out/schema.sql
+          # ── 1. 結構 ＋ 資料（一份）──────────────
+          #
+          # ★ 跟本機那支同一組參數。
+          #   `--schema=public`             我們自己的表:訂單、支出、流水、契約…
+          #   `--schema=supabase_migrations` migration 的執行紀錄
+          #   `--no-owner --no-privileges`   不要帶 supabase_admin 那些擁有者資訊,
+          #                                  帶著的話還原到新專案會一路噴 role does not exist
+          echo "→ public ＋ supabase_migrations"
+          $PG "$DB_URL" \
+            --no-owner --no-privileges \
+            --schema=public --schema=supabase_migrations \
+            --quote-all-identifiers \
+            > out/anxing.sql
 
-          # ── 3. 資料 ──────────────────────────────
-          # ★ `--use-copy`:用 COPY 而不是一列一個 INSERT。
-          #   幾千筆流水用 INSERT 會產生幾千行,檔案大好幾倍、還原也慢好幾倍。
-          # ★ 兩個 `-x` 是官方文件指定要排除的 storage 內部表。
-          echo "→ data"
-          supabase db dump --db-url "$DB_URL" -f out/data.sql \
-            --use-copy --data-only \
-            -x "storage.buckets_vectors" -x "storage.vector_indexes"
+          # ── 2. 登入帳號（盡力而為）──────────────
+          #
+          # ★★ auth schema 是 Supabase 管的,pg_dump 抓得到但**權限可能不足**。
+          #   抓得到就多一份保險;抓不到**不讓整個備份失敗** ——
+          #   員工帳號重新邀請就有了,而訂單與流水沒有第二個來源。
+          #
+          # ★ 主次要分清楚:一份「大部分成功」的備份，
+          #   遠好過一份「因為次要項目失敗而根本不存在」的備份。
+          echo "→ auth（抓不到不算失敗）"
+          if $PG "$DB_URL" --no-owner --no-privileges \
+               --schema=auth --data-only --quote-all-identifiers \
+               > out/auth.sql 2>out/auth.err; then
+            echo "  auth 也抓到了"
+          else
+            echo "::warning::auth schema 抓不到（權限不足）—— 員工登入帳號沒有備份到，其餘不受影響"
+            echo "-- auth schema 匯出失敗，原因：" > out/auth.sql
+            cat out/auth.err >> out/auth.sql
+          fi
+          rm -f out/auth.err
 
           # ══════════════════════════════════════════
           # ★★★ 檢查備份不是空的
           #
-          #   `supabase db dump` 連不上或權限不足時**有可能回 0 但只寫出檔頭**。
-          #   那個檔案存在、大小幾百 bytes、artifact 也上傳成功 ——
+          #   2026-08-31 這一段**真的擋下了一次空備份**（第一版用 Supabase CLI
+          #   那次）。工具回 0、檔案也產生了、artifact 也會上傳成功 ——
           #   而三十天後你要用它的時候才發現裡面什麼都沒有。
           #
           #   **沒有驗證的備份不算備份。**
           # ══════════════════════════════════════════
           fail=0
-          for f in roles schema data; do
-            size=$(stat -c%s "out/$f.sql")
-            echo "  $f.sql = ${size} bytes"
-            if [ "$size" -lt 1000 ]; then
-              echo "::error::out/$f.sql 只有 ${size} bytes —— 這不像是真的備份"
-              fail=1
-            fi
-          done
+          size=$(stat -c%s out/anxing.sql)
+          echo "  anxing.sql = $((size / 1024)) KB"
+          # ★ 門檻抓 1 MB。本機那份是 11.92 MB,真的壞掉時是幾百 bytes ——
+          #   中間差兩個數量級,不會誤判。
+          if [ "$size" -lt 1000000 ]; then
+            echo "::error::anxing.sql 只有 ${size} bytes —— 本機那份是 11.9 MB，這不像是真的備份"
+            fail=1
+          fi
 
-          # ★ data.sql 要找得到主要的幾張表。檔案夠大但內容是別的東西
-          #   （例如只有 supabase 內部表）也是壞的備份。
+          # ★ 檔案夠大但內容是別的東西也是壞的備份,所以要點名四張主表。
+          #   ★★ 找 `COPY "public"."xxx"` 而不是只找表名 ——
+          #     只找表名的話,schema 定義裡的一行 CREATE TABLE 就會讓檢查過關,
+          #     而那份備份裡一列資料都沒有。要驗的是**資料**在不在。
           for t in bank_transactions orders expenses contracts; do
-            if ! grep -q "public\.${t}" out/data.sql; then
-              echo "::error::data.sql 裡找不到 public.${t} —— 資料沒有被匯出"
+            if ! grep -q "COPY \"public\".\"${t}\"" out/anxing.sql; then
+              echo "::error::anxing.sql 裡找不到 ${t} 的資料（COPY 那一段）"
               fail=1
             fi
           done
