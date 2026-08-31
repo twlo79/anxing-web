@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import StatCard, { StatRow } from '@/components/StatCard';
 import { createClient } from '@/lib/supabase';
 import { fetchAll } from '@/lib/fetch-all';
@@ -17,6 +17,7 @@ import { ExportButton } from '@/components/Actions';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import FilterToggle from '@/components/FilterToggle';
 import { Tabs, TabShell } from '@/components/Tabs';
+import Receipts, { type ReceiptsHandle } from '@/components/Receipts';
 
 /**
  * 帳戶明細 —— 三個銀行帳戶的流水鏡像。
@@ -129,6 +130,13 @@ const ymd = (d: string | null) => (d ? d.slice(0, 10).replace(/-/g, '/') : '—'
 export default function AccountsPage() {
   const supabase = useMemo(() => createClient(), []);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  /*
+   * ★★ `loadTxns` 的相依只有 `[supabase]` —— 直接讀 `accounts` 的話
+   *   它會抓到閉包裡那份**建立當下的**空陣列，而不是現在的。
+   *   症狀是「第一次切到現金分頁時回形針全部不見」，重整才會出現。
+   *   ref 永遠指向最新的，而且不會讓 useCallback 重新建立。
+   */
+  const accountsRef = useRef<Account[]>([]);
   const [latest, setLatest] = useState<Record<string, Stmt | undefined>>({});
   /*
    * ══════════════════════════════════════════════════════════
@@ -225,6 +233,29 @@ export default function AccountsPage() {
   const [cashForm, setCashForm] = useState<(CashDraft & { id?: string }) | null>(null);
   const [cashErr, setCashErr] = useState('');
   const [cashBusy, setCashBusy] = useState(false);
+  /**
+   * 收據照片（migration_185）。
+   *
+   * ★★ 新增時還沒有 id，路徑組不出來 —— 所以 `Receipts` 先把檔案留在瀏覽器裡，
+   *   等這一列存好之後由 `flush(id)` 真的上傳。
+   *   不採「先建一張草稿再上傳」的做法:使用者按取消就會留下一列空流水，
+   *   而那一列會進到餘額裡。
+   */
+  const receiptsRef = useRef<ReceiptsHandle>(null);
+  /**
+   * 哪一列的照片區是展開的。null = 都收起來。
+   *
+   * ★ 一次只開一列。全部展開的話幾百列的表格會變成幾千像素高，
+   *   而使用者要的只是「看這一筆的收據」。
+   */
+  const [attOpen, setAttOpen] = useState<string | null>(null);
+  /**
+   * 每一列有幾張照片。**一次撈完，不是一列一次查**。
+   *
+   * ★★ 一列一次查的話，兩百列就是兩百次往返 —— 那一頁會卡住好幾秒，
+   *   而且畫面上看起來是「回形針一個一個慢慢亮起來」。
+   */
+  const [attCount, setAttCount] = useState<Record<string, number>>({});
   /** 目前這個分頁的帳戶。★ 五個地方要判斷是不是現金,查一次就好。 */
   const cur = useMemo(() => accounts.find((a) => a.id === tab), [accounts, tab]);
 
@@ -310,13 +341,28 @@ export default function AccountsPage() {
       }
     }
 
+    /*
+     * ★★★ 照片要在**這一列存好之後**才上傳（`flush`）。
+     *
+     *   路徑是 `cash/{這一列的 id}/xxx.jpg` —— 沒有 id 就組不出路徑，
+     *   而 storage 的權限就是讀這個路徑判斷的（migration_51）。
+     *
+     * ★★ 上傳失敗**不讓整筆失敗**。流水已經進去了、餘額也重算完了，
+     *   這時候回報「失敗」會讓人以為那一筆沒存到而再存一次 ——
+     *   結果是兩筆一樣的流水。所以照片失敗只提醒「照片沒傳上去」。
+     */
+    let attMsg = '';
+    if (savedId && receiptsRef.current?.hasStaged()) {
+      const upErr = await receiptsRef.current.flush(savedId);
+      attMsg = upErr ? `　⚠ 但照片沒傳上去：${upErr}` : '';
+    }
+
     setCashBusy(false);
     setCashForm(null);
     await loadTxns(cur.id);
     await loadAccounts();
-    setMsg(cashForm.id ? '已更新' : `已新增，同時重算了 ${diffs.length} 筆餘額`);
-    setErr(false);
-    void savedId;
+    setMsg((cashForm.id ? '已更新' : `已新增，同時重算了 ${diffs.length} 筆餘額`) + attMsg);
+    setErr(!!attMsg);
   }
 
   /**
@@ -377,6 +423,7 @@ export default function AccountsPage() {
     }
     const list = (data ?? []) as Account[];
     setAccounts(list);
+    accountsRef.current = list;
     setTab((t) => t || list[0]?.id || '');
 
     /*
@@ -447,6 +494,33 @@ export default function AccountsPage() {
       // 畫面上看起來只是「這個帳戶流水比較少」
       if (error) { setMsg(`讀取流水失敗：${error}`); setErr(true); }
       setTxns(rows);
+
+      /*
+       * 每一列有幾張收據照片。
+       *
+       * ★ 只在現金帳戶撈 —— 銀行流水不接受附件（migration_185），
+       *   撈了也永遠是 0，等於白花一次往返。
+       *
+       * ★★ 一次撈完這個帳戶的全部，前端自己數。
+       *   一列一次查的話兩百列就是兩百次往返。
+       *
+       * ★ 失敗**不擋畫面**:回形針的數字少一個是小事，
+       *   流水看不到才是大事。所以這裡不 setErr。
+       */
+      const acct = accountsRef.current.find((a) => a.id === accountId);
+      if (!isCash(acct)) { setAttCount({}); return; }
+
+      const ids = rows.map((r) => r.id);
+      if (ids.length === 0) { setAttCount({}); return; }
+      const { data: atts } = await supabase
+        .from('attachments')
+        .select('bank_transaction_id')
+        .in('bank_transaction_id', ids);
+      const cnt: Record<string, number> = {};
+      for (const a of (atts ?? []) as { bank_transaction_id: string }[]) {
+        cnt[a.bank_transaction_id] = (cnt[a.bank_transaction_id] ?? 0) + 1;
+      }
+      setAttCount(cnt);
     },
     [supabase],
   );
@@ -940,6 +1014,26 @@ export default function AccountsPage() {
                   className="h-9 rounded border border-gray-300 px-2 text-sm" />
               </label>
             </div>
+            {/*
+              ── 收據照片（migration_185）─────────────
+
+              ★★★ 為什麼現金特別需要照片:銀行流水有對帳單當靠山，
+                金額對不上時可以回去翻 PDF。**現金沒有。**
+                它的唯一來源是那個 key 的人，而三個月後沒有人記得
+                「8/18 收陳小胖 8000」是怎麼回事。
+
+              ★ 支出也給，不只存入。現金付出去連對方的入帳紀錄都沒有，
+                收據是唯一的東西；收入至少還有房客那邊對得上。
+
+              ★★ 新增時 `parentId` 是 null —— `Receipts` 會把檔案留在
+                瀏覽器裡，等這一列存好後由 `flush(id)` 真的上傳。
+            */}
+            <div className="mt-3 border-t border-mor-slate/15 pt-3">
+              <Receipts ref={receiptsRef} kind="cash"
+                parentId={cashForm.id ?? null}
+                label="收據照片（選填，可多張）" />
+            </div>
+
             <div className="mt-2 flex items-center gap-2">
               <button onClick={saveCash} disabled={cashBusy}
                 className="rounded-lg bg-mor-slate px-4 py-1.5 text-sm font-medium text-white
@@ -1046,6 +1140,18 @@ export default function AccountsPage() {
                   */}
                   {isCash(cur) && (
                     <div className="mt-1 flex justify-end gap-1">
+                      {/*
+                        ★★ 手機上收據照片**比桌機更重要** ——
+                          現金多半就是在外面收的，人在現場、收據在手上，
+                          那一刻拍照最省事。回家再補多半就不會補了。
+                      */}
+                      <button onClick={() => setAttOpen((v) => (v === t.id ? null : t.id))}
+                        aria-expanded={attOpen === t.id}
+                        aria-label={attCount[t.id] ? `${attCount[t.id]} 張收據` : '加收據照片'}
+                        className={`px-1.5 py-1 text-[11px] ${
+                          attCount[t.id] ? 'text-mor-slate' : 'text-gray-400 opacity-50'}`}>
+                        📎{attCount[t.id] ? attCount[t.id] : ''}
+                      </button>
                       <button onClick={() => editCash(t)} disabled={cashBusy}
                         className="px-1.5 py-1 text-[11px] text-mor-slate underline disabled:opacity-40">改</button>
                       <button onClick={() => deleteCash(t)} disabled={cashBusy}
@@ -1054,6 +1160,13 @@ export default function AccountsPage() {
                   )}
                 </div>
               </div>
+              {/* 展開的收據區。★ 在卡片**內**，不是另一張卡 —— 它屬於這一筆 */}
+              {isCash(cur) && attOpen === t.id && (
+                <div className="mt-2 border-t border-mor-line pt-2">
+                  <Receipts kind="cash" parentId={t.id} label="收據照片"
+                    onImages={() => { if (cur) void loadTxns(cur.id); }} />
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -1095,6 +1208,8 @@ export default function AccountsPage() {
                 ★ `w-[5rem]` 放得下「改 刪」兩個連結,不會把前面七欄擠窄。
               */}
               {isCash(cur) && <col className="w-[5rem]" />}
+              {/* 收據照片（migration_185）。★ 只放一個回形針與數字，3rem 夠 */}
+              {isCash(cur) && <col className="w-[3rem]" />}
             </colgroup>
             {/* ★ 全站標準表頭寫法（14 處都是這個）—— 原本這頁用 bg-mor-sand/40
                   ＋ text-gray-600,是唯一的例外 */}
@@ -1135,18 +1250,24 @@ export default function AccountsPage() {
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={isCash(cur) ? 8 : 7} className="px-3 py-8 text-center text-gray-400">載入中⋯</td></tr>
+                <tr><td colSpan={isCash(cur) ? 9 : 7} className="px-3 py-8 text-center text-gray-400">載入中⋯</td></tr>
               )}
               {!loading && shown.length === 0 && (
                 <tr>
-                  <td colSpan={isCash(cur) ? 8 : 7} className="px-3 py-8 text-center text-gray-400">
+                  <td colSpan={isCash(cur) ? 9 : 7} className="px-3 py-8 text-center text-gray-400">
                     {txns.length === 0
                       ? '這個帳戶還沒有流水 —— 上傳一份對帳單試試'
                       : `沒有符合的資料（全部 ${txns.length} 筆）`}
                   </td>
                 </tr>
               )}
-              {shown.map((t) => (
+              {/*
+                ★★ `flatMap` 而不是 `map` —— 現金帳戶的每一筆可能回**兩列**:
+                  主列，加上展開的收據照片列。
+                  `map` 回巢狀陣列的話 React 會警告 key 重複，
+                  而且 `<tbody>` 底下多一層陣列 HTML 是不合法的。
+              */}
+              {shown.flatMap((t) => [
                 /*
                   斑馬紋。**這是這一頁最需要顏色的地方** ——
                   七欄寬的表格，眼睛從左邊的日期掃到右邊的餘額時
@@ -1328,8 +1449,44 @@ export default function AccountsPage() {
                         className="ml-2 text-xs text-red-600 underline disabled:opacity-40">刪</button>
                     </td>
                   )}
-                </tr>
-              ))}
+                  {/*
+                    ★★★ 已經存好的列也要能加照片（2026-08-31 使用者:
+                       「已存的可以再上傳嗎」）。
+
+                      ★ **沒有照片的也要能點**（淡色的回形針）。
+                        只讓有照片的可點的話,「補第一張」就沒有入口了 ——
+                        這跟摘要那個「空的也要能開鎖」是同一條道理。
+
+                      ★★ 一次只展開一列。全部展開的話兩百列的表格會變成
+                        幾千像素高,而使用者要的只是「看這一筆的收據」。
+                  */}
+                  {isCash(cur) && (
+                    <td className="px-2 py-1.5 text-center">
+                      <button
+                        onClick={() => setAttOpen((v) => (v === t.id ? null : t.id))}
+                        aria-expanded={attOpen === t.id}
+                        title={attCount[t.id] ? `${attCount[t.id]} 張收據` : '加收據照片'}
+                        className={`rounded px-1 text-xs leading-5 transition-opacity ${
+                          attCount[t.id] ? 'text-mor-slate' : 'text-gray-400 opacity-40 hover:opacity-100'}`}>
+                        📎{attCount[t.id] ? <span className="ml-0.5">{attCount[t.id]}</span> : ''}
+                      </button>
+                    </td>
+                  )}
+                </tr>,
+                /*
+                  展開的照片區。★ 做成**第二個 <tr>** 而不是塞進上面那一列 ——
+                  塞進去的話那一格會把整列撐高,而旁邊六格是空的。
+                  ★ `key` 要跟主列不同,不然 React 會把兩者當成同一個。
+                */
+                isCash(cur) && attOpen === t.id ? (
+                  <tr key={`att-${t.id}`} className="bg-mor-sand/30">
+                    <td colSpan={9} className="px-4 py-3">
+                      <Receipts kind="cash" parentId={t.id} label="收據照片"
+                        onImages={() => { if (cur) void loadTxns(cur.id); }} />
+                    </td>
+                  </tr>
+                ) : null,
+              ])}
             </tbody>
             {shown.length > 0 && (
               <tfoot className="border-t border-mor-line bg-mor-sand/30 text-xs">

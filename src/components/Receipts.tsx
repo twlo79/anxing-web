@@ -82,7 +82,7 @@ const Receipts = forwardRef<ReceiptsHandle, {
    *   都掛在押金底下的話分不出哪張對哪筆 ——
    *   而金額對不上時，那正是唯一能查的東西。
    */
-  kind: 'pr' | 'pri' | 'exp' | 'dep' | 'op' | 'dp' | 'of' | 'td';
+  kind: 'pr' | 'pri' | 'exp' | 'dep' | 'op' | 'dp' | 'of' | 'td' | 'cash';
   parentId: string | null | undefined;
   canEdit?: boolean;
   label?: string;
@@ -137,6 +137,21 @@ const Receipts = forwardRef<ReceiptsHandle, {
      * ★ `td/` 只有 super_admin 看得到（migration_179 在 can_see_receipt 加的分支）。
      */
     : kind === 'td' ? 'tender_id'
+    /*
+     * 現金流水的收據照片（migration_185）。
+     *
+     * ★★★ **只有現金帳戶**（`bank_accounts.kind = 'cash'`）。
+     *   銀行流水是對帳單的鏡像 —— 它的憑證是那份 PDF，不是照片，
+     *   而且 migration_166 的觸發器連摘要以外的欄位都不准改。
+     *
+     * ★ 現金相反:沒有對帳單、沒有第三方紀錄。
+     *   收據照片是那筆錢**唯一的第三方證據** ——
+     *   三個月後沒有人記得「8/18 收陳小胖 8000」是怎麼回事。
+     *
+     * ★★ 前綴是 `cash/`。管家的三個例外（`op/`、`of/`、`pr/`）不含它 ——
+     *   他沒有帳戶明細那一頁可以進去，放行等於純粹外洩。
+     */
+    : kind === 'cash' ? 'bank_transaction_id'
     : 'expense_id';
 
   const load = useCallback(async () => {
