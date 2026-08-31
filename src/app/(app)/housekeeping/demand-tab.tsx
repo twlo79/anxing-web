@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
+import { isFilled, validateDemand, estateIdToSave } from '@/lib/demand';
 import { useProfile } from '@/lib/profile';
 import { ReqMark } from '@/components/Req';
 import {
@@ -40,6 +41,15 @@ type Item = {
   item_name: string;
   /** 規格說明。**大概數量寫在這裡**（migration_141 之後沒有數量欄） */
   spec: string;
+  /**
+   * 用途類別（migration_186）。
+   *
+   * ★★ `office` 時 `estate_id` **必須是空字串** ——
+   *   安幸辦公室不是物業，它不在 `estates` 裡。
+   *   資料庫有互斥約束擋著（`pdi_purpose_one_of`），
+   *   前端留著上一次選的物業的話會被擋下來，而錯誤訊息看不懂。
+   */
+  purpose_type: 'estate' | 'office';
   estate_id: string;
   /** 建議採購連結（蝦皮／露天等）。知道去哪買時填,會計省一趟詢價 */
   buy_link: string;
@@ -72,7 +82,7 @@ type Demand = {
 const SHIP_EXTRA = ['安幸辦公室', '其他'];
 
 const blankItem = (): Item =>
-  ({ item_name: '', spec: '', estate_id: '', buy_link: '', status: 'pending' });
+  ({ item_name: '', spec: '', purpose_type: 'estate', estate_id: '', buy_link: '', status: 'pending' });
 
 const inp = 'rounded-lg border border-gray-300 px-2 py-1.5 text-sm';
 
@@ -103,7 +113,7 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
       .select(`id, demand_no, requester_id, requested_on, note, status, ship_to, ship_floor,
                profiles(name),
                purchase_demand_items(
-                 id, item_name, spec, estate_id, buy_link, status, request_item_id,
+                 id, item_name, spec, purpose_type, estate_id, buy_link, status, request_item_id,
                  purchase_request_items(purchase_requests(req_no))
                )`)
       .order('requested_on', { ascending: false })
@@ -122,7 +132,8 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
       status: d.status,
       items: (d.purchase_demand_items ?? []).map((i: any) => ({
         id: i.id, item_name: i.item_name, spec: i.spec ?? '',
-        estate_id: i.estate_id, buy_link: i.buy_link ?? '', status: i.status,
+        purpose_type: i.purpose_type === 'office' ? 'office' : 'estate',
+        estate_id: i.estate_id ?? '', buy_link: i.buy_link ?? '', status: i.status,
         request_item_id: i.request_item_id,
         request_no: i.purchase_request_items?.purchase_requests?.req_no ?? null,
       })),
@@ -168,12 +179,15 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
      * 「null value in column "estate_id" violates not-null constraint」，
      * 而填表的人不知道 estate_id 是什麼。
      */
-    const items = edit.items.filter((i) => i.item_name.trim() || i.estate_id);
-    if (!items.length) return onMsg('至少要填一個項目', true);
-    const bad = items.findIndex((i) => !i.item_name.trim() || !i.estate_id);
-    if (bad >= 0) return onMsg(`第 ${bad + 1} 項的品名與用途都要填`, true);
-    // 寄送地點必填 —— 東西買了不知道寄哪的話，會計要回頭問一次
-    if (!edit.ship_to) return onMsg('請選寄送地點', true);
+    /*
+     * ★★★ 驗證規則在 `lib/demand.ts`,**跟按鈕的 disabled 共用同一支**。
+     *   兩份各寫一次的話遲早會漂 —— 而漂掉的症狀是
+     *   「按鈕亮著卻送不出去」或「填好了按鈕還是灰的」,
+     *   兩種都只會讓人覺得系統壞了。（migration_186 加辦公室時差點漏掉其中一份）
+     */
+    const bad = validateDemand(edit.items, edit.ship_to);
+    if (bad) return onMsg(bad, true);
+    const items = edit.items.filter(isFilled);
 
     setSaving(true);
     const { data: d, error } = await supabase.from('purchase_demands')
@@ -185,7 +199,14 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
     const { error: e2 } = await supabase.from('purchase_demand_items').insert(
       items.map((i) => ({
         demand_id: d.id, item_name: i.item_name.trim(), spec: i.spec.trim() || null,
-        estate_id: i.estate_id, buy_link: i.buy_link.trim() || null,
+        purpose_type: i.purpose_type,
+        /*
+         * ★★ office 一定寫 null，不是空字串也不是留著上一次的物業。
+         *   互斥約束（`pdi_purpose_one_of`）會擋，但擋下來的訊息看不懂 ——
+         *   而且真正的傷害是「沒擋住」的那種寫法:報表照 estate_id 分組，
+         *   一筆同時算進辦公室與那個物業，兩邊都對不上。
+         */
+        estate_id: estateIdToSave(i),
       })));
     setSaving(false);
     if (e2) {
@@ -210,13 +231,11 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
    * 這裡只負責「亮不亮」,save() 仍然要再驗一次:
    * 按鈕的 disabled 擋得住滑鼠,擋不住 Enter 鍵與程式呼叫。
    */
-  const canSubmit = useMemo(() => {
-    if (!edit) return false;
-    const items = edit.items.filter((i) => i.item_name.trim() || i.estate_id);
-    if (!items.length) return false;
-    if (items.some((i) => !i.item_name.trim() || !i.estate_id)) return false;
-    return !!edit.ship_to;
-  }, [edit]);
+  const canSubmit = useMemo(
+    // ★ 跟 save() 呼叫同一支（lib/demand.ts）—— 條件不可能再漂掉
+    () => !!edit && validateDemand(edit.items, edit.ship_to) === null,
+    [edit],
+  );
 
   const setItem = (idx: number, patch: Partial<Item>) =>
     setEdit((e) => e && ({ ...e, items: e.items.map((it, i) => (i === idx ? { ...it, ...patch } : it)) }));
@@ -284,7 +303,7 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                       <div key={i.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-sm">
                         <span className="font-medium">{i.item_name}</span>
                         <span className="text-xs rounded bg-mor-sand px-1.5 py-0.5">
-                          {estateName[i.estate_id] ?? '—'}
+                          {i.purpose_type === 'office' ? '安幸辦公室' : estateName[i.estate_id] ?? '—'}
                         </span>
                         {/* 規格說明裡就有大概數量 —— 沒有獨立的數量欄（migration_141） */}
                         {i.spec && <span className="text-xs text-gray-400">{i.spec}</span>}
@@ -369,9 +388,24 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                   <div className="flex flex-wrap items-center gap-2 pl-10">
                     <span className="relative">
                       <ReqMark />
-                      <select value={it.estate_id} onChange={(e) => setItem(idx, { estate_id: e.target.value })}
+                      {/*
+                        ★ 一個下拉同時管兩件事（跟支出頁、請款單同一套寫法）:
+                          選 `office` → purpose_type='office'、estate_id 清空
+                          選物業      → purpose_type='estate'、estate_id=那個 id
+
+                        ★★ 拆成兩個欄位（先選類別再選物業）的話，
+                          九成的情況要多按一次 —— 而那九成都是選物業。
+                      */}
+                      <select
+                        value={it.purpose_type === 'office' ? 'office' : it.estate_id}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v === 'office') setItem(idx, { purpose_type: 'office', estate_id: '' });
+                          else setItem(idx, { purpose_type: 'estate', estate_id: v });
+                        }}
                         className={`${inp} w-32`}>
                         <option value="">用途</option>
+                        <option value="office">安幸辦公室</option>
                         {estates.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
                       </select>
                     </span>
