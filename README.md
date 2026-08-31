@@ -3623,23 +3623,51 @@ select name, applied_at, source from schema_migrations order by name;
 > 2026-08-31 加。在這之前**沒有任何備份** —— 資料庫掛掉、誤刪一張表、
 > 或 migration 寫錯把某一欄清空，都沒有東西可以回去。
 
-## 12.1 兩份備份，用途不同
+## 12.1 三條路，兩個地方
 
-|  | GitHub（自動） | 本機（手動） |
-|---|---|---|
-| 什麼時候跑 | 每天台灣時間 04:00 | 你按的時候 |
-| 檔案 | `roles.sql` ＋ `schema.sql` ＋ `data.sql` | 一份 `anxing_日期.sql` |
-| 涵蓋 | **全部**（含登入帳號） | public ＋ supabase_migrations |
-| 保留 | 30 天 | 30 天 |
-| 放哪 | Actions 的 artifact | `C:\Users\你\anxing-db-backup\` |
-| 要裝什麼 | 不用 | `pg_dump`（裝一次） |
+|  | GitHub（自動） | 本機（自動下載） | 本機（手動 dump） |
+|---|---|---|---|
+| 腳本 | `.github/workflows/backup.yml` | `scripts/fetch-backup.ps1` | `scripts/backup-db.ps1` |
+| 什麼時候 | 每天台灣 04:00 | 每次登入後 3 分鐘 | 你按的時候 |
+| 做什麼 | 連資料庫 dump | **下載 GitHub 那份** | 連資料庫 dump |
+| 產出 | `anxing.sql.gz` ＋ `auth.sql.gz` | 同左（原封不動搬回來） | `anxing_日期.sql` |
+| 涵蓋 auth | ✅ 盡力而為 | ✅ 跟著來 | ❌ 沒有 |
+| 放哪 | Actions 的 artifact | `~\anxing-db-backup\gh_日期_runNNN\` | `~\anxing-db-backup\` |
+| 保留 | 30 天（GitHub 刪） | 30 天（腳本刪） | 30 天（腳本刪） |
+| 要裝什麼 | 不用 | `gh`（裝一次 ＋ 登入一次） | `pg_dump`（裝一次） |
 
-**兩份都要，不是二選一。** GitHub 帳號出事的時候，備份會跟程式碼一起沒；
-自己電腦硬碟壞的時候，本機那份也沒了。兩個同時出事的機率才是真正的風險。
+### 為什麼是這個組合
 
-★★ 本機那一份**不含 auth 與 storage** —— 救得回所有營運資料
-（訂單、支出、流水、契約、客戶、評價、班表、請款、押金、標案），
-救不回員工的登入帳號與上傳的收據圖檔。那兩樣要靠 GitHub 那一份。
+**GitHub 那支是主力。** 每天自動，人不用記得。
+
+**「下載」是把雲端那份搬回自己手上。** 不是再 dump 一次 ——
+少拉一次全量資料，而且本機那份跟雲端**保證是同一批 bytes**。
+各自 dump 的話兩份差幾分鐘，出事時還要比對「哪一份比較新」。
+
+**「手動 dump」留著給兩種情況**：
+「等一下要跑一支會改資料的 migration，我現在就要一份」，
+以及「GitHub 那邊今天沒跑成功」。★ 備份系統最不該有的就是單一路徑。
+
+### ★★ 三支都會先驗證再收工
+
+檔案太小、或四張主表（`bank_transactions` / `orders` / `expenses` / `contracts`）
+的 `COPY` 段找不到，就當作失敗 —— 不會靜靜留下一個看起來像備份的空檔。
+
+> 2026-08-31 這道檢查**真的擋下了一次**。第一版 workflow 用 `supabase db dump`，
+> 跑完是綠的、檔案也產生了，但 `roles.sql` 只有 297 bytes、`data.sql` 裡
+> 一張業務表都沒有 —— **它成功地備份了空氣**。
+> 只看「Actions 綠了」的話，會以為有備份，而三十天後打開來是空的。
+
+★ 下載那支**還會再驗一次**，即使 workflow 已經驗過。
+中間隔了一次網路傳輸與一次解壓縮，任何一段壞掉都會留下大小正常、內容是垃圾的檔案。
+「上游驗過了所以這裡不用驗」是備份系統最常見的漏洞：
+每一段都相信上一段，於是沒有人真的看過最後那個檔案。
+
+### ★ 太舊會出聲
+
+下載那支發現「最新的備份已經超過 2 天」時會警告。
+排程壞掉的症狀是**每天都下載成功** —— 下載的是同一份三個禮拜前的東西，
+而畫面上每天都是綠的。
 
 ## 12.2 第一次要設定的東西
 
@@ -3664,7 +3692,36 @@ select name, applied_at, source from schema_migrations order by name;
 4. Actions 頁籤 → 「每日資料庫備份」→ **Run workflow** 手動跑一次，
    確認會綠。★ 不要等明天 —— 設錯了要今天知道。
 
-### 本機（設一次）
+### 本機的自動下載（設一次）
+
+1. 裝 GitHub CLI 並登入：
+
+```powershell
+winget install --id GitHub.cli
+# 裝完重開 PowerShell
+gh auth login          # 選 GitHub.com → HTTPS → 用瀏覽器登入
+```
+
+2. 登記成登入時自動跑（**只要跑一次**）：
+
+```powershell
+cd C:\Users\ASUS\Desktop\anxing-web
+.\scripts\register-backup-task.ps1
+```
+
+3. 馬上試一次，不用等重開機：
+
+```powershell
+Start-ScheduledTask -TaskName AnxingBackupFetch
+```
+
+紀錄在 `~\anxing-db-backup\fetch.log`。不想要了：
+
+```powershell
+Unregister-ScheduledTask -TaskName AnxingBackupFetch -Confirm:$false
+```
+
+### 本機的手動 dump（設一次）
 
 1. 裝 `pg_dump`：<https://www.postgresql.org/download/windows/>
    安裝時**只勾 Command Line Tools**（資料庫本體幾百 MB，用不到）。
