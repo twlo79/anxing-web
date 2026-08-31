@@ -189,6 +189,82 @@ describe('三張卡片的合計', () => {
   });
 
   /*
+   * ══════════════════════════════════════════════════════════
+   * ★★★ 現金帳戶:有餘額但沒有對帳單（migration_184）
+   *
+   *   原本的判斷是「balance 有值 **且** asOf 有值」才計入 ——
+   *   現金帳戶永遠沒有 asOf,所以會掉進 missing:
+   *     · 錢不算進總額
+   *     · 而且被指名「⚠ 現金 沒有對帳單，未計入」
+   *   而它是**永遠不會有對帳單的**,那句話會一直掛在那裡。
+   * ══════════════════════════════════════════════════════════
+   */
+  describe('★★★ 現金帳戶（dated: false）', () => {
+    test('計入總額', () => {
+      const r = totalBalance([
+        { name: '70564', balance: 81_977, asOf: '2025-06-30' },
+        { name: '現金', balance: 23_500, asOf: null, dated: false },
+      ]);
+      assert.equal(r.total, 105_477);
+    });
+
+    test('★ 不會被報成「沒有對帳單，未計入」', () => {
+      const r = totalBalance([
+        { name: '70564', balance: 81_977, asOf: '2025-06-30' },
+        { name: '現金', balance: 23_500, asOf: null, dated: false },
+      ]);
+      assert.deepEqual(r.missing, []);
+    });
+
+    test('★★ 不影響日期區間 —— 標題不會因為現金而變成「區間」', () => {
+      const r = totalBalance([
+        { name: '70564', balance: 81_977, asOf: '2025-06-30' },
+        { name: '24145', balance: 6_590, asOf: '2025-06-30' },
+        { name: '現金', balance: 23_500, asOf: null, dated: false },
+      ]);
+      assert.equal(r.asOf, '2025-06-30');
+      assert.equal(r.newestAsOf, '2025-06-30');
+      assert.deepEqual(r.stale, []);
+    });
+
+    test('★ 也不會被列進 stale', () => {
+      const r = totalBalance([
+        { name: '70564', balance: 81_977, asOf: '2025-12-31' },
+        { name: '24145', balance: 6_590, asOf: '2025-03-31' },
+        { name: '現金', balance: 23_500, asOf: null, dated: false },
+      ]);
+      assert.deepEqual(r.stale, ['24145']);
+    });
+
+    test('餘額 0 的現金帳戶還是要計入，不是 missing', () => {
+      // 0 是「花光了」,不是「不知道」—— 這兩件事不可以長得一樣
+      const r = totalBalance([
+        { name: '70564', balance: 81_977, asOf: '2025-06-30' },
+        { name: '現金', balance: 0, asOf: null, dated: false },
+      ]);
+      assert.equal(r.total, 81_977);
+      assert.deepEqual(r.missing, []);
+    });
+
+    test('★ 只有現金一個帳戶時，總額照給但日期是 null', () => {
+      const r = totalBalance([{ name: '現金', balance: 23_500, asOf: null, dated: false }]);
+      assert.equal(r.total, 23_500);
+      assert.equal(r.asOf, null);
+      assert.equal(r.newestAsOf, null);
+      assert.deepEqual(r.missing, []);
+    });
+
+    test('★★ 銀行帳戶沒給 dated 時行為完全不變（回頭相容）', () => {
+      const r = totalBalance([
+        { name: '08311', balance: null, asOf: null },
+        { name: '70564', balance: 81_977, asOf: '2025-06-30' },
+      ]);
+      assert.equal(r.total, 81_977);
+      assert.deepEqual(r.missing, ['08311']);
+    });
+  });
+
+  /*
    * ★★★ 只更新其中一個帳戶（2026-08-29 使用者問「對帳單日期會怎麼寫？」）。
    *
    *   剛傳完 24145 的新對帳單,另外兩個還停在舊的日期。

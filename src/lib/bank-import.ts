@@ -150,7 +150,25 @@ export function matchAccount(
  * 所以回傳最舊的那個日期,畫面上標出來:
  *   「總計 $351,000（其中 24145 只到 03/31）」
  */
-export type AccountBalance = { name: string; balance: number | null; asOf: string | null };
+export type AccountBalance = {
+  name: string;
+  balance: number | null;
+  asOf: string | null;
+  /**
+   * 這個餘額有沒有「對帳單截止日」這個概念。預設有（銀行帳戶）。
+   *
+   * ★★★ 現金帳戶填 `false`（migration_184）。它的餘額是最後一筆流水累加出來的，
+   *   **沒有對帳單，所以沒有截止日** —— 但那不是「還沒上傳」，
+   *   而是「這種帳戶本來就不會有」。兩者的差別是:
+   *
+   *     還沒上傳 → 不計入總額 ＋ 報「⚠ 沒有對帳單，未計入」
+   *     本來沒有 → **計入總額** ＋ 不報任何警語 ＋ 不影響日期區間
+   *
+   * ★★ 沒有這個旗標的話,現金帳戶會被當成「還沒上傳」——
+   *   而它永遠不會上傳,那句警語會永久掛著,錢也永遠不算進總額。
+   */
+  dated?: boolean;
+};
 
 export function totalBalance(rows: AccountBalance[]): {
   total: number;
@@ -168,11 +186,30 @@ export function totalBalance(rows: AccountBalance[]): {
   /** 還沒上傳過對帳單的帳戶。它們沒有算進 total。 */
   missing: string[];
 } {
-  const withData = rows.filter((r) => r.balance != null && r.asOf);
-  const missing = rows.filter((r) => r.balance == null || !r.asOf).map((r) => r.name);
-  const total = withData.reduce((a, r) => a + (r.balance as number), 0);
-  if (withData.length === 0) return { total: 0, asOf: null, newestAsOf: null, stale: [], missing };
+  /*
+   * ★★★ 三群，不是兩群（2026-08-31 加了現金帳戶之後）:
+   *
+   *   dated 且有餘額   → 計入總額、參與日期區間與 stale 的判斷
+   *   dated=false 有餘額 → **計入總額**，但不碰日期（現金帳戶）
+   *   沒有餘額          → 不計入，報 missing
+   *
+   * ★★ 原本只有兩群（`balance != null && asOf`），
+   *   現金帳戶會掉進 missing —— 錢不算、還被指名說沒上傳對帳單。
+   */
+  const dated = rows.filter((r) => r.balance != null && r.asOf && r.dated !== false);
+  const undated = rows.filter((r) => r.balance != null && r.dated === false);
+  const missing = rows
+    .filter((r) => r.balance == null || (!r.asOf && r.dated !== false))
+    .map((r) => r.name);
 
+  const total = [...dated, ...undated].reduce((a, r) => a + (r.balance as number), 0);
+  /*
+   * ★ 只有 undated 有資料時,total 要照給,但日期欄位全部是 null ——
+   *   「有錢但不知道是哪一天的」跟「完全沒資料」是兩件事。
+   */
+  if (dated.length === 0) return { total, asOf: null, newestAsOf: null, stale: [], missing };
+
+  const withData = dated;
   const dates = withData.map((r) => r.asOf as string);
   const oldest = dates.reduce((a, b) => (a < b ? a : b));
   const newest = dates.reduce((a, b) => (a > b ? a : b));

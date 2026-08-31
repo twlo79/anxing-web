@@ -7,6 +7,9 @@ import Toast from '@/components/Toast';
 import UploadPanel from './upload-panel';
 import StatementsPanel from './statements-panel';
 import { totalBalance } from '@/lib/bank-import';
+import {
+  recalcBalances, changedBalances, validateCash, draftToRow, type CashDraft,
+} from '@/lib/cash-txn';
 import { filterTxns, hasFilter, sumRows, amountOf, splitRef, type BankFilter } from '@/lib/bank-filter';
 import * as XLSX from 'xlsx-js-style';
 import { FilterCount, FieldSpacer, FilterClear, FilterSelect, FilterDateRange, FilterSearch } from '@/lib/filters';
@@ -36,8 +39,41 @@ type Account = {
   name: string;
   bank: string;
   account_no: string | null;
-  account_no_tail: string;
+  account_no_tail: string | null;
   sort: number;
+  /**
+   * `bank` = 上傳對帳單、只能改摘要；`cash` = 手動 key、全部可改（migration_184）。
+   *
+   * ★★★ 這一個欄位決定畫面上五件事:
+   *   1. 有沒有「上傳對帳單」鈕（現金沒有檔案可傳）
+   *   2. 有沒有「＋ 新增一筆」鈕（銀行的資料只能從對帳單來）
+   *   3.「交易帳號」欄顯示 `ref_no`（銀行）還是 `counterparty`（現金填人名）
+   *   4. 那一列能不能改、能不能刪
+   *   5. 沒有對帳單時要不要報「未計入」（現金永遠不會有對帳單）
+   *
+   * ★ 舊資料沒有這欄時當 bank —— migration 給了 `default 'bank'`,
+   *   但前端也要有預設,不然 migration 還沒跑就整頁壞掉。
+   */
+  kind?: 'bank' | 'cash' | null;
+  /** 現金帳戶的期初餘額。留空當 0（使用者 2026-08-31 選的）。 */
+  opening_balance?: number | null;
+};
+/** 這一列是不是現金帳戶。★ 只寫一次，全頁共用 —— 判斷分散在十處就一定會漏掉一處。 */
+const isCash = (a?: Account | null) => a?.kind === 'cash';
+
+/**
+ * 重算餘額時只需要這幾欄。
+ *
+ * ★ 不用整個 `Txn`:重算會把這個帳戶**全部**的流水撈回來,
+ *   而摘要、對方帳號那些欄位一個都用不到 —— 少撈就少一份傳輸與記憶體。
+ */
+type BalRow = {
+  id: string;
+  post_date: string;
+  seq: number | null;
+  debit: number;
+  credit: number;
+  balance: number;
 };
 type Stmt = {
   id: string;
@@ -112,6 +148,17 @@ export default function AccountsPage() {
    * ══════════════════════════════════════════════════════════
    */
   const [lastTxn, setLastTxn] = useState<Record<string, string | undefined>>({});
+  /**
+   * 現金帳戶「最後一筆的餘額」——它的期末餘額。
+   *
+   * ★★★ 銀行帳戶的餘額來自 `bank_statements.closing_balance`（銀行印的），
+   *   現金帳戶**沒有對帳單**，所以它的餘額只能是最後一筆流水的 `balance`。
+   *   兩個來源不一樣，但意思一樣:「現在這個帳戶有多少錢」。
+   *
+   * ★ 沒有這個的話現金帳戶會被當成「沒有對帳單，未計入」——
+   *   而它是永遠不會有對帳單的，那句警語會一直掛在那裡。
+   */
+  const [cashBal, setCashBal] = useState<Record<string, number | undefined>>({});
   const [txns, setTxns] = useState<Txn[]>([]);
   const [tab, setTab] = useState<string>('');
   const [f, setF] = useState<BankFilter>({ from: '', to: '', dir: '', q: '' });
@@ -166,10 +213,162 @@ export default function AccountsPage() {
   // 流水 ／ 匯入紀錄。匯入紀錄是「哪一批可以撤銷」的地方
   const [view, setView] = useState<'txn' | 'stmt'>('txn');
 
+  /*
+   * ══════════════════════════════════════════════════════════
+   * 現金帳戶的手動記帳（2026-08-31 使用者:「現金不會有匯入,都是手動 key」）
+   *
+   * ★★ 新增與編輯**共用一個表單**。`id` 有值就是編輯,沒有就是新增。
+   *   分成兩套 UI 的話,兩邊的檢查規則與欄位順序一定會漂 ——
+   *   而漂掉的症狀是「新增擋得住的東西,編輯放它過去」。
+   * ══════════════════════════════════════════════════════════
+   */
+  const [cashForm, setCashForm] = useState<(CashDraft & { id?: string }) | null>(null);
+  const [cashErr, setCashErr] = useState('');
+  const [cashBusy, setCashBusy] = useState(false);
+  /** 目前這個分頁的帳戶。★ 五個地方要判斷是不是現金,查一次就好。 */
+  const cur = useMemo(() => accounts.find((a) => a.id === tab), [accounts, tab]);
+
+  /** 空白表單。★ 日期預設今天 —— 現金多半是當天記的,少打一次。 */
+  const blankCash = (): CashDraft => ({
+    post_date: new Date().toISOString().slice(0, 10),
+    counterparty: '', dir: 'credit', amount: '', memo: '',
+  });
+
+  /**
+   * 存一筆現金流水（新增或編輯），然後**整串重算餘額**。
+   *
+   * ============================================================
+   * 【★★★ 為什麼要整串重算】
+   *
+   * 補一筆 8/15 的舊帳時，8/18 那一筆的餘額也要跟著往下移 ——
+   * 只寫新那一筆的話，8/18 的餘額會停在舊值，而它跟前後兜不攏。
+   * 規則寫在 `lib/cash-txn.ts`（有測試），這裡只負責寫回去。
+   *
+   * 【★★ 為什麼要看 `.select('id')` 的長度】
+   *
+   * RLS 或觸發器擋下的 UPDATE **回成功且影響 0 列**（CLAUDE.md 的坑表）。
+   * 只看 `error` 的話畫面會說存好了，而那一列一動也沒動。
+   *
+   * 【★ 為什麼不做成一個交易】
+   *
+   * Supabase 的前端 client 沒有交易。中途失敗的話會留下
+   * 「新那一筆進去了，但後面的餘額還沒重算」的狀態 ——
+   * **那個狀態是看得出來的**（餘額對不上），而且重新整理後再存一次就好。
+   * 相較之下，硬要原子性得寫一支 RPC，而那把規則搬進 SQL 就測不到了。
+   */
+  async function saveCash() {
+    if (!cashForm || !cur) return;
+    const bad = validateCash(cashForm);
+    if (bad) { setCashErr(bad); return; }
+    setCashErr(''); setCashBusy(true);
+
+    const row = draftToRow(cashForm, cur.id);
+    let savedId = cashForm.id;
+
+    if (cashForm.id) {
+      const { data, error } = await supabase.from('bank_transactions')
+        .update(row).eq('id', cashForm.id).select('id');
+      if (error) { setCashBusy(false); setCashErr(`存不進去：${error.message}`); return; }
+      if (!data?.length) {
+        setCashBusy(false);
+        setCashErr('沒有任何一列被更新，通常是權限問題。請重新整理後再試。');
+        return;
+      }
+    } else {
+      const { data, error } = await supabase.from('bank_transactions')
+        /*
+         * ★ `balance` 先給 0 佔位 —— 欄位是 not null,不能不給。
+         *   正確的值在下面那一輪重算時補上。
+         *   給 null 會直接被資料庫擋下來,而給 0 只是短短一瞬間不準。
+         */
+        .insert({ ...row, balance: 0 }).select('id');
+      if (error) { setCashBusy(false); setCashErr(`存不進去：${error.message}`); return; }
+      savedId = (data?.[0] as { id: string } | undefined)?.id;
+    }
+
+    /*
+     * 重新撈這個帳戶的全部流水再重算。
+     * ★ 用剛剛的 `txns` 加上新那一筆去算也可以，但那要自己維護一份影子狀態，
+     *   而影子跟真實分岔的時候沒有人會發現。重撈一次是幾百列，便宜。
+     */
+    const { rows: fresh } = await fetchAll<BalRow>((from, to) =>
+      supabase.from('bank_transactions')
+        .select('id, post_date, seq, debit, credit, balance')
+        .eq('account_id', cur.id).range(from, to),
+    );
+    const after = recalcBalances(fresh, Number(cur.opening_balance) || 0);
+    const diffs = changedBalances(fresh, after);
+
+    for (const d of diffs) {
+      const { error } = await supabase.from('bank_transactions')
+        .update({ balance: d.balance }).eq('id', d.id);
+      if (error) {
+        setCashBusy(false);
+        setCashErr(`餘額重算寫回失敗：${error.message}。這一筆已經存進去了，重新整理後再存一次即可。`);
+        await loadTxns(cur.id); await loadAccounts();
+        return;
+      }
+    }
+
+    setCashBusy(false);
+    setCashForm(null);
+    await loadTxns(cur.id);
+    await loadAccounts();
+    setMsg(cashForm.id ? '已更新' : `已新增，同時重算了 ${diffs.length} 筆餘額`);
+    setErr(false);
+    void savedId;
+  }
+
+  /**
+   * 刪掉一筆現金流水，然後整串重算。
+   *
+   * ★★ 要問過。刪掉之後**後面每一筆的餘額都會變** ——
+   *   使用者以為只是拿掉一列，而實際上整段歷史的數字都動了。
+   *   所以那句話要說出來，不能只問「確定刪除嗎」。
+   */
+  async function deleteCash(t: Txn) {
+    if (!cur) return;
+    const label = `${ymd(t.post_date)}　${t.memo || t.counterparty || '（無摘要）'}`;
+    if (!confirm(`刪掉這一筆？\n\n${label}\n\n★ 這一筆之後每一筆的餘額都會跟著重算。`)) return;
+
+    setCashBusy(true);
+    const { error } = await supabase.from('bank_transactions').delete().eq('id', t.id);
+    if (error) { setCashBusy(false); setMsg(`刪不掉：${error.message}`); setErr(true); return; }
+
+    const { rows: fresh } = await fetchAll<BalRow>((from, to) =>
+      supabase.from('bank_transactions')
+        .select('id, post_date, seq, debit, credit, balance')
+        .eq('account_id', cur.id).range(from, to),
+    );
+    const after = recalcBalances(fresh, Number(cur.opening_balance) || 0);
+    for (const d of changedBalances(fresh, after)) {
+      await supabase.from('bank_transactions').update({ balance: d.balance }).eq('id', d.id);
+    }
+
+    setCashBusy(false);
+    if (cashForm?.id === t.id) setCashForm(null);
+    await loadTxns(cur.id);
+    await loadAccounts();
+    setMsg('已刪除，餘額已重算'); setErr(false);
+  }
+
+  /** 把既有的一列讀進表單。★ 金額轉回字串 —— input 的 value 只吃字串。 */
+  function editCash(t: Txn) {
+    setCashErr('');
+    setCashForm({
+      id: t.id,
+      post_date: t.post_date.slice(0, 10),
+      counterparty: t.counterparty ?? '',
+      dir: Number(t.debit) > 0 ? 'debit' : 'credit',
+      amount: String(Number(t.debit) > 0 ? t.debit : t.credit),
+      memo: t.memo ?? '',
+    });
+  }
+
   const loadAccounts = useCallback(async () => {
     const { data, error } = await supabase
       .from('bank_accounts')
-      .select('id, name, bank, account_no, account_no_tail, sort')
+      .select('id, name, bank, account_no, account_no_tail, sort, kind, opening_balance')
       .eq('active', true)
       .order('sort');
     if (error) {
@@ -199,19 +398,31 @@ export default function AccountsPage() {
     );
     setLatest(map);
 
+    /*
+     * 最後一筆流水。★ 順便把 `balance` 也撈回來 —— 現金帳戶的期末餘額就是它。
+     *
+     * ★★ 排序要 `post_date desc, seq desc` 兩層。只排日期的話，
+     *   同一天有好幾筆時「最後一筆」是哪一筆不確定 ——
+     *   而現金帳戶同一天記兩三筆是常態，抓錯就是餘額顯示錯。
+     */
     const lt: Record<string, string | undefined> = {};
+    const cb: Record<string, number | undefined> = {};
     await Promise.all(
       list.map(async (a) => {
         const { data: t } = await supabase
           .from('bank_transactions')
-          .select('post_date')
+          .select('post_date, balance')
           .eq('account_id', a.id)
           .order('post_date', { ascending: false })
+          .order('seq', { ascending: false })
           .limit(1);
-        lt[a.id] = (t?.[0] as { post_date: string } | undefined)?.post_date;
+        const row = t?.[0] as { post_date: string; balance: number } | undefined;
+        lt[a.id] = row?.post_date;
+        if (isCash(a)) cb[a.id] = row ? Number(row.balance) : Number(a.opening_balance) || 0;
       }),
     );
     setLastTxn(lt);
+    setCashBal(cb);
     return list;
   }, [supabase]);
 
@@ -253,16 +464,32 @@ export default function AccountsPage() {
     if (tab) loadTxns(tab);
   }, [tab, loadTxns]);
 
+  /*
+   * ★★★ 現金帳戶的餘額走另一條路（2026-08-31）。
+   *
+   *   銀行:`bank_statements.closing_balance` ＋ `period_to`
+   *   現金:最後一筆流水的 `balance`，**`asOf` 給 null**
+   *
+   * ★★ `asOf` 一定要留 null。給日期的話它會被算進標題那句
+   *   「對帳單 08/25 ~ 09/30」的區間裡 —— 而現金帳戶根本沒有對帳單，
+   *   那句話會因為一個不存在的對帳單而變成區間。
+   *   `totalBalance` 對 `balance 有值但 asOf 是 null` 的處理是
+   *   「計入總額、不影響日期」，正是要的。
+   *
+   * ★ 現金**計入總額**。上面那個大數字的意思因此從「銀行裡有多少」
+   *   變成「手上有多少錢」—— 那才是看這一頁的人要問的問題。
+   */
   const totals = useMemo(
     () =>
       totalBalance(
         accounts.map((a) => ({
           name: a.name,
-          balance: latest[a.id]?.closing_balance ?? null,
-          asOf: latest[a.id]?.period_to ?? null,
+          balance: isCash(a) ? cashBal[a.id] ?? null : latest[a.id]?.closing_balance ?? null,
+          asOf: isCash(a) ? null : latest[a.id]?.period_to ?? null,
+          dated: !isCash(a),
         })),
       ),
-    [accounts, latest],
+    [accounts, latest, cashBal],
   );
 
   /*
@@ -445,10 +672,18 @@ export default function AccountsPage() {
       <StatRow cols={3} className="mb-4">
         {accounts.map((a) => {
           const st = latest[a.id];
+          /*
+            ★★★ 現金帳戶的三個欄位都走另一條路（2026-08-31）:
+              · 餘額   → 最後一筆流水的 balance（沒有對帳單可以問）
+              · 有資料 → 看有沒有流水,不是看有沒有對帳單
+              · 附註   → 「還沒上傳對帳單」對現金是永遠成立的廢話
+          */
+          const cash = isCash(a);
+          const has = cash ? cashBal[a.id] != null : !!st;
           return (
             <StatCard key={a.id}
               label={a.name}
-              value={money(st?.closing_balance)}
+              value={money(cash ? cashBal[a.id] : st?.closing_balance)}
               /*
                 ★ 只給一個數字的話,看的人不知道那是今天的還是三個月前的 ——
                   餘額是「最後一次上傳的對帳單的期末」,不是即時的。
@@ -460,11 +695,13 @@ export default function AccountsPage() {
                   而三個帳戶的對帳單日期是同一天 —— 印在這裡是同一句話講三遍,
                   還會把這張卡唯一不一樣的資訊擠到第二行。
               */
-              sub={!st ? '還沒上傳對帳單'
+              sub={cash
+                ? (lastTxn[a.id] ? `最後異動 ${ymd(lastTxn[a.id]!).slice(5)}` : '還沒有紀錄')
+                : !st ? '還沒上傳對帳單'
                 : lastTxn[a.id] ? `最後異動 ${ymd(lastTxn[a.id]!).slice(5)}`
                 : '沒有流水'}
               active={tab === a.id}
-              muted={!st}
+              muted={!has}
               onClick={() => setTab(a.id)} />
           );
         })}
@@ -610,13 +847,117 @@ export default function AccountsPage() {
             <div className="mr-auto md:mr-0"><FilterCount n={shown.length} unit="筆" /></div>
           )}
           {view === 'txn' && <ExportButton onClick={exportXlsx} disabled={shown.length === 0} />}
-          <button
-            onClick={() => setShowUpload(true)}
-            className="rounded-lg bg-mor-slate px-4 py-1.5 font-medium text-white hover:bg-mor-slatedark whitespace-nowrap"
-          >
-            ⬆ 上傳對帳單
-          </button>
+          {/*
+            ★★★ 現金帳戶換一顆鈕（2026-08-31）。
+
+              「上傳對帳單」對現金帳戶是**沒有東西可以傳**——
+              留著它的話,點下去會開一個永遠不該用的視窗,
+              而使用者要自己想通「喔原來現金不是這樣加的」。
+
+            ★ 兩顆鈕**位置與樣式一樣**,只有字不同。
+              放在不同的地方的話,換分頁時眼睛要重新找。
+          */}
+          {isCash(cur) ? (
+            <button
+              onClick={() => { setCashErr(''); setCashForm(blankCash()); }}
+              disabled={!!cashForm}
+              className="rounded-lg bg-mor-slate px-4 py-1.5 font-medium text-white
+                         hover:bg-mor-slatedark whitespace-nowrap disabled:opacity-50"
+            >
+              ＋ 新增一筆
+            </button>
+          ) : (
+            <button
+              onClick={() => setShowUpload(true)}
+              className="rounded-lg bg-mor-slate px-4 py-1.5 font-medium text-white hover:bg-mor-slatedark whitespace-nowrap"
+            >
+              ⬆ 上傳對帳單
+            </button>
+          )}
         </div>
+
+        {/*
+          ── 新增／編輯現金流水 ─────────────────────
+
+          ★★ 開在**表格上方**而不是彈出視窗。
+            現金記帳是「看著前幾筆、照樣再記一筆」——
+            視窗蓋住清單的話,那個參照就沒了。
+
+          ★ 編輯既有的那一筆時同一個表單,只是標題與按鈕的字不一樣。
+            兩套 UI 做同一件事,行為一定會漂。
+        */}
+        {isCash(cur) && cashForm && (
+          <div className="border-b border-mor-line bg-mor-bluelight/50 px-4 py-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="text-uisub font-medium text-mor-slate">
+                {cashForm.id ? '編輯這一筆' : '新增一筆現金收支'}
+              </span>
+              {cashErr && <span className="text-uisub text-red-600">{cashErr}</span>}
+            </div>
+            <div className="grid grid-cols-2 gap-2 md:grid-cols-6">
+              <label className="flex flex-col gap-1 text-xs text-gray-600">交易日
+                <input type="date" value={cashForm.post_date}
+                  onChange={(e) => setCashForm((o) => o && { ...o, post_date: e.target.value })}
+                  className="h-9 rounded border border-gray-300 px-2 text-sm" />
+              </label>
+              {/*
+                ★ 交易型態是**唯讀的「現金」**（使用者 2026-08-31 指定）。
+                  讓人自由填的話會冒出「現金」「現金交易」「CASH」三種寫法,
+                  而依型態分組時它們是三個不同的東西。
+                  唯讀但**顯示出來**:留白的話看的人不知道這欄會被填什麼。
+              */}
+              <label className="flex flex-col gap-1 text-xs text-gray-600">交易型態
+                <input value="現金" readOnly tabIndex={-1}
+                  className="h-9 rounded border border-gray-200 bg-gray-50 px-2 text-sm text-gray-500" />
+              </label>
+              <label className="flex flex-col gap-1 text-xs text-gray-600">交易帳號（人名）
+                <input value={cashForm.counterparty} placeholder="陳小胖"
+                  onChange={(e) => setCashForm((o) => o && { ...o, counterparty: e.target.value })}
+                  className="h-9 rounded border border-gray-300 px-2 text-sm" />
+              </label>
+              {/*
+                ★★ 方向用下拉,**不是讓人打負號**。
+                  打負號的話「−500」跟「-500」跟「(500)」都會出現,
+                  而 `Number()` 只認得其中一種 —— 另外兩種變 NaN,
+                  存進去是 0,而畫面上那一列看起來只是金額很小。
+              */}
+              <label className="flex flex-col gap-1 text-xs text-gray-600">收支
+                <select value={cashForm.dir}
+                  onChange={(e) => setCashForm((o) => o && { ...o, dir: e.target.value as 'credit' | 'debit' })}
+                  className="h-9 rounded border border-gray-300 px-2 text-sm">
+                  <option value="credit">存入</option>
+                  <option value="debit">支出</option>
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 text-xs text-gray-600">金額
+                <input value={cashForm.amount} placeholder="8000" inputMode="decimal"
+                  onChange={(e) => setCashForm((o) => o && { ...o, amount: e.target.value })}
+                  className="h-9 rounded border border-gray-300 px-2 text-sm tabular-nums" />
+              </label>
+              <label className="col-span-2 flex flex-col gap-1 text-xs text-gray-600 md:col-span-1">摘要
+                <input value={cashForm.memo} placeholder="開封1F-1 8月租金"
+                  onChange={(e) => setCashForm((o) => o && { ...o, memo: e.target.value })}
+                  className="h-9 rounded border border-gray-300 px-2 text-sm" />
+              </label>
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <button onClick={saveCash} disabled={cashBusy}
+                className="rounded-lg bg-mor-slate px-4 py-1.5 text-sm font-medium text-white
+                           hover:bg-mor-slatedark disabled:opacity-50">
+                {cashBusy ? '存檔中…' : cashForm.id ? '存檔' : '新增'}
+              </button>
+              <button onClick={() => { setCashForm(null); setCashErr(''); }}
+                className="text-sm text-gray-500 underline">取消</button>
+              {/*
+                ★ 餘額會怎麼變**先講出來**。存下去才發現後面十筆餘額都跳了,
+                  那時已經來不及了 —— 而「先講」的成本是一行字。
+              */}
+              <span className="ml-auto text-xs text-gray-500">
+                餘額自動接上一筆；補舊日期時後面的會一起重算
+              </span>
+            </div>
+          </div>
+        )}
 
         {view === 'stmt' ? (
           <StatementsPanel
@@ -658,9 +999,17 @@ export default function AccountsPage() {
                     )}
                   </div>
                   <div className="font-medium mt-0.5 truncate">{t.description ?? ''}</div>
-                  {/* 摘要可編輯 —— 手機上也是對帳會用到的（同桌機規則） */}
+                  {/*
+                    摘要可編輯 —— 手機上也是對帳會用到的（同桌機規則），
+                    ★ 包含那把鎖（2026-08-31）。手機更容易手滑，這裡的鎖比桌機更需要。
+
+                    ★★ 鎖的點擊面積 `w-7 h-7`（28px）而不是跟桌機一樣的字大小。
+                      手指按不準 12px 的圖示 —— 按不到會變成「一直點但沒反應」，
+                      而那比沒有鎖更糟。
+                  */}
                   {memoEdit?.id === t.id ? (
                     <div className="flex items-center gap-1 mt-1">
+                      <span aria-hidden className="shrink-0 text-xs">🔓</span>
                       <input autoFocus value={memoEdit.text}
                         onChange={(e) => setMemoEdit({ id: t.id, text: e.target.value })}
                         className="flex-1 min-w-0 h-9 rounded border border-mor-slate px-2 text-sm" />
@@ -670,10 +1019,14 @@ export default function AccountsPage() {
                         className="shrink-0 text-xs text-gray-400 underline px-1">取消</button>
                     </div>
                   ) : (
-                    <button onClick={() => setMemoEdit({ id: t.id, text: t.memo ?? '' })}
-                      className="text-[11px] text-gray-600 mt-0.5 break-words text-left">
-                      {t.memo || <span className="text-gray-300">✎ 加摘要</span>}
-                    </button>
+                    <div className="flex items-start gap-1 mt-0.5">
+                      <button onClick={() => setMemoEdit({ id: t.id, text: t.memo ?? '' })}
+                        aria-label="開鎖編輯摘要"
+                        className="shrink-0 w-7 h-7 -ml-1 text-xs opacity-40">🔒</button>
+                      <span className="text-[11px] text-gray-600 break-words min-w-0 pt-1">
+                        {t.memo || <span className="text-gray-300">還沒有摘要</span>}
+                      </span>
+                    </div>
                   )}
                 </div>
                 <div className="shrink-0 text-right">
@@ -686,6 +1039,19 @@ export default function AccountsPage() {
                   <div className="text-[11px] text-gray-400 tabular-nums mt-0.5">
                     餘 {money(t.balance)}
                   </div>
+                  {/*
+                    ★ 手機也要有改／刪。手機是**最常打錯的地方**——
+                      螢幕小、鍵盤擋住一半的表單,而現金多半就是在外面用手機記的。
+                    ★ 面積比桌機大（`py-1 px-1.5`）—— 手指按不準純文字連結。
+                  */}
+                  {isCash(cur) && (
+                    <div className="mt-1 flex justify-end gap-1">
+                      <button onClick={() => editCash(t)} disabled={cashBusy}
+                        className="px-1.5 py-1 text-[11px] text-mor-slate underline disabled:opacity-40">改</button>
+                      <button onClick={() => deleteCash(t)} disabled={cashBusy}
+                        className="px-1.5 py-1 text-[11px] text-red-600 underline disabled:opacity-40">刪</button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -722,6 +1088,13 @@ export default function AccountsPage() {
               <col className="w-[6.5rem]" />   {/* 支出 */}
               <col className="w-[6.5rem]" />   {/* 存入 */}
               <col className="w-[7.5rem]" />   {/* 餘額（可能有備註第二行） */}
+              {/*
+                ★★ 現金帳戶才有的第八欄:改／刪。
+                  銀行帳戶不給這一欄 —— 那些是對帳單的鏡像,
+                  要修正只能重新上傳（migration_166 的觸發器也擋著）。
+                ★ `w-[5rem]` 放得下「改 刪」兩個連結,不會把前面七欄擠窄。
+              */}
+              {isCash(cur) && <col className="w-[5rem]" />}
             </colgroup>
             {/* ★ 全站標準表頭寫法（14 處都是這個）—— 原本這頁用 bg-mor-sand/40
                   ＋ text-gray-600,是唯一的例外 */}
@@ -762,11 +1135,11 @@ export default function AccountsPage() {
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={7} className="px-3 py-8 text-center text-gray-400">載入中⋯</td></tr>
+                <tr><td colSpan={isCash(cur) ? 8 : 7} className="px-3 py-8 text-center text-gray-400">載入中⋯</td></tr>
               )}
               {!loading && shown.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-3 py-8 text-center text-gray-400">
+                  <td colSpan={isCash(cur) ? 8 : 7} className="px-3 py-8 text-center text-gray-400">
                     {txns.length === 0
                       ? '這個帳戶還沒有流水 —— 上傳一份對帳單試試'
                       : `沒有符合的資料（全部 ${txns.length} 筆）`}
@@ -808,14 +1181,34 @@ export default function AccountsPage() {
                     折行:摘要是自由文字，斷在哪裡都讀得懂，
                     而它擠掉帳號的代價比多佔一行高度大得多。
 
-                    ★ 點一下就變輸入框，不用另開視窗 ——
-                      對帳時是一筆接一筆地補註記，每筆都開關一次視窗太慢。
-                    ★ 空的也要能點。只讓有值的可點的話，
-                      「加一筆新註記」就沒有入口了 —— 所以空的顯示一個淡淡的 ✎。
+                    ============================================================
+                    【★★★ 每一列各自上鎖】（2026-08-31 使用者：
+                      「存完自動鎖起來，要先開鎖才能存」，從 A／B／C 選了 B）
+
+                    原本是「點文字就直接變輸入框」。那個設計的代價是
+                    **滑過去手滑點到，就把原本的摘要蓋掉**，而摘要是這一頁
+                    唯一人工輸入、重新上傳對帳單救不回來的東西。
+
+                    所以拆成兩步：點 🔒 才開，存完 `setMemoEdit(null)` 自動關回去。
+
+                    ★★ 鎖做在**列**上不是頁上（A 案被否）。
+                      對帳是一筆接一筆地補註記 —— 開關放頁首的話，
+                      每改一筆滑鼠就要跑回頁首一次。
+                      鎖在那一格旁邊，開鎖跟編輯是連著的兩下。
+
+                    ★★ 攔在「進入編輯」不是攔在「按存」（C 案被否）。
+                      攔在存的話，字都打完了才發現存不進去 —— 白打一次。
+                      防手滑要攔在動作**開始前**。
+
+                    ★ 這是畫面上的防手滑，**不是權限**。重新整理就回到鎖上。
+                      真正擋非法寫入的是 migration_166 的 trg_bank_txn_memo_only
+                      （只准改 memo，其餘欄位改了就拋錯）—— 那一道還在，兩層不同的東西。
                   */}
                   <td className="px-3 py-1.5 text-gray-600 break-words">
                     {memoEdit?.id === t.id ? (
                       <div className="flex items-center gap-1">
+                        {/* 開著的鎖:讓人看得出「現在是開的，所以能打字」 */}
+                        <span aria-hidden className="shrink-0 text-xs">🔓</span>
                         <input autoFocus value={memoEdit.text}
                           onChange={(e) => setMemoEdit({ id: t.id, text: e.target.value })}
                           onKeyDown={(e) => {
@@ -830,13 +1223,23 @@ export default function AccountsPage() {
                           className="shrink-0 text-xs text-gray-400 underline">取消</button>
                       </div>
                     ) : (
-                      <button onClick={() => setMemoEdit({ id: t.id, text: t.memo ?? '' })}
-                        title="點一下編輯摘要（其他欄位是銀行給的，不能改）"
-                        className="w-full text-left hover:bg-mor-sand/60 rounded px-1 -mx-1 min-h-6">
-                        {t.memo
-                          ? t.memo
-                          : <span className="text-gray-300 text-xs">✎</span>}
-                      </button>
+                      <div className="flex items-start gap-1.5">
+                        {/*
+                          ★ 只有這顆鎖可以點，文字本身不可點 ——
+                            文字還可以點的話，鎖就只是裝飾。
+                          ★ 空的摘要也要能開鎖，不然「加第一筆註記」沒有入口。
+                        */}
+                        <button onClick={() => setMemoEdit({ id: t.id, text: t.memo ?? '' })}
+                          title="開鎖後編輯摘要（存完自動鎖回去）"
+                          aria-label="開鎖編輯摘要"
+                          className="shrink-0 text-xs leading-5 opacity-40 hover:opacity-100
+                                     transition-opacity rounded px-0.5">
+                          🔒
+                        </button>
+                        <span className="min-w-0">
+                          {t.memo || <span className="text-gray-300 text-xs">—</span>}
+                        </span>
+                      </div>
                     )}
                   </td>
                   <td className="px-3 py-1.5">
@@ -855,13 +1258,33 @@ export default function AccountsPage() {
                         遇到更長的號碼時的保險 —— 折行總比溢出去蓋到別欄好 */}
                     {/* 13px（2026-08-19 使用者指定放大）—— 這一欄是對帳時真正在讀的東西,
                         原本 12px 的等寬數字在一堆 14px 中文旁邊看起來像註腳 */}
-                    {t.ref_no && (
-                      <div className="break-all font-mono text-[14px] font-medium tracking-tight text-gray-800">
-                        {splitRef(t.ref_no)}
-                      </div>
-                    )}
-                    {t.counterparty && (
-                      <div className="text-[11px] text-gray-400 mt-0.5 truncate">{t.counterparty}</div>
+                    {/*
+                      ★★★ 現金帳戶這一欄放的是**人名**（使用者 2026-08-31 指定）。
+
+                        銀行帳戶:主體是 `ref_no`（對方帳號）、註腳是 `counterparty`（銀行名）
+                        現金帳戶:`ref_no` 是空的,人名存在 `counterparty` ——
+                                 所以它變成主體，而且不用等寬字（人名不是數字串）。
+
+                      ★ 欄位標題兩種情況都叫「交易帳號」,沒有改。
+                        使用者要的就是「交易帳號欄填人名」,改標題反而跟他說的不一樣。
+                    */}
+                    {isCash(cur) ? (
+                      t.counterparty && (
+                        <div className="truncate text-[14px] font-medium text-gray-800">
+                          {t.counterparty}
+                        </div>
+                      )
+                    ) : (
+                      <>
+                        {t.ref_no && (
+                          <div className="break-all font-mono text-[14px] font-medium tracking-tight text-gray-800">
+                            {splitRef(t.ref_no)}
+                          </div>
+                        )}
+                        {t.counterparty && (
+                          <div className="text-[11px] text-gray-400 mt-0.5 truncate">{t.counterparty}</div>
+                        )}
+                      </>
                     )}
                   </td>
                   <td className="whitespace-nowrap px-3 py-1.5 text-right tabular-nums text-red-600">
@@ -887,6 +1310,24 @@ export default function AccountsPage() {
                       </div>
                     )}
                   </td>
+                  {/*
+                    ★★★ 改／刪只有現金帳戶有（使用者 2026-08-31:「key 錯了要可以改、可以刪」）。
+
+                      手動輸入一定會打錯,而現金**沒有對帳單可以重新上傳**——
+                      沒有退路的話這個帳戶等於不能用。
+
+                    ★★ 銀行帳戶連這兩個字都不出現。畫出來再擋的話,
+                      使用者會以為是權限不足而去找人開權限 ——
+                      而那是永遠開不出來的（資料是對帳單的鏡像,本來就不該改）。
+                  */}
+                  {isCash(cur) && (
+                    <td className="whitespace-nowrap px-3 py-1.5 text-right">
+                      <button onClick={() => editCash(t)} disabled={cashBusy}
+                        className="text-xs text-mor-slate underline disabled:opacity-40">改</button>
+                      <button onClick={() => deleteCash(t)} disabled={cashBusy}
+                        className="ml-2 text-xs text-red-600 underline disabled:opacity-40">刪</button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
