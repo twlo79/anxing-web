@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  netOf, recalcBalances, changedBalances, validateCash, draftToRow,
+  netOf, recalcBalances, changedBalances, validateCash, draftToRow, nextSeq,
   type CashRow, type CashDraft,
 } from './cash-txn.ts';
 
@@ -226,5 +226,75 @@ describe('draftToRow', () => {
   test('txn_date 跟 post_date 一樣（現金當天就入帳）', () => {
     const r = draftToRow(d, 'acc-1');
     assert.equal(r.txn_date, r.post_date);
+  });
+});
+
+
+describe('★★★ nextSeq —— 同一天的順序要固定（2026-08-31）', () => {
+  test('空帳戶從 1 開始', () => assert.equal(nextSeq([]), 1));
+
+  test('取整個帳戶的最大值 ＋1，不是當天的', () => {
+    // 全域遞增的話 seq 同時也是「這個帳戶的第幾筆」，
+    // 補一筆舊日期時也不會跟當天既有的撞號
+    assert.equal(nextSeq([{ seq: 1 }, { seq: 7 }, { seq: 3 }]), 8);
+  });
+
+  test('★ null / undefined 的舊資料當 0，不會變 NaN', () => {
+    // NaN 會一路傳染，而寫進 DB 是錯誤而不是壞值 —— 但錯誤訊息看不懂
+    assert.equal(nextSeq([{ seq: null }, { seq: undefined }]), 1);
+    assert.equal(nextSeq([{ seq: null }, { seq: 5 }]), 6);
+  });
+
+  test('字串進來也算得對', () =>
+    assert.equal(nextSeq([{ seq: '4' as unknown as number }]), 5));
+
+  test('★★ 連號才不會平手', () => {
+    // 每次都回同一個號碼的話,同一天的幾筆又會撞在一起 —— 等於沒修
+    const rows: { seq: number | null }[] = [];
+    for (let i = 0; i < 5; i++) rows.push({ seq: nextSeq(rows) });
+    assert.deepEqual(rows.map((r) => r.seq), [1, 2, 3, 4, 5]);
+  });
+});
+
+describe('draftToRow 的 seq', () => {
+  const d: CashDraft = {
+    post_date: '2026-08-18', counterparty: '陳小胖',
+    dir: 'credit', amount: '8000', memo: '',
+  };
+
+  test('有給就寫進去', () =>
+    assert.equal((draftToRow(d, 'a', 9) as { seq?: number }).seq, 9));
+
+  test('★ 沒給就整個不出現（編輯時不能動到排序）', () => {
+    // 寫 undefined 進去的話 supabase-js 會忽略,但寫 null 會把它清空 ——
+    // 而清空等於那一列跳回平手
+    assert.equal('seq' in draftToRow(d, 'a'), false);
+  });
+
+  test('seq = 0 也要寫進去（不能被當成沒給）', () =>
+    assert.equal((draftToRow(d, 'a', 0) as { seq?: number }).seq, 0));
+});
+
+describe('★★ 有了 seq 之後，同一天的順序才固定', () => {
+  test('同一天三筆照 seq 排，餘額嚴格遞增', () => {
+    const rows: CashRow[] = [
+      { id: 'c', post_date: '2026-08-18', seq: 3, credit: 146000, debit: 0 },
+      { id: 'a', post_date: '2026-08-18', seq: 1, credit: 310000, debit: 0 },
+      { id: 'b', post_date: '2026-08-18', seq: 2, credit: 30000, debit: 0 },
+    ];
+    const out = recalcBalances(rows, 470385);
+    assert.deepEqual(out.map((r) => r.id), ['a', 'b', 'c']);
+    assert.deepEqual(out.map((r) => r.balance), [780385, 810385, 956385]);
+  });
+
+  test('★★★ 傳進來的順序不影響結果 —— 這正是原本壞掉的地方', () => {
+    const mk = (): CashRow[] => [
+      { id: 'a', post_date: '2026-08-18', seq: 1, credit: 310000, debit: 0 },
+      { id: 'b', post_date: '2026-08-18', seq: 2, credit: 30000, debit: 0 },
+      { id: 'c', post_date: '2026-08-18', seq: 3, credit: 146000, debit: 0 },
+    ];
+    const asc = recalcBalances(mk(), 470385);
+    const rev = recalcBalances(mk().reverse(), 470385);
+    assert.deepEqual(asc.map((r) => [r.id, r.balance]), rev.map((r) => [r.id, r.balance]));
   });
 });

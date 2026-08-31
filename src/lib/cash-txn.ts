@@ -149,13 +149,58 @@ export function validateCash(d: CashDraft): string | null {
   return null;
 }
 
-/** 把通過檢查的表單變成要寫進資料庫的那一列（餘額還沒算，由 `recalcBalances` 補）。 */
-export function draftToRow(d: CashDraft, accountId: string) {
+/**
+ * 下一個 `seq`。
+ *
+ * ============================================================
+ * 【★★★ 為什麼現金流水一定要有 seq】（2026-08-31 使用者:「編排日期出問題」）
+ *
+ * `seq` 原本的用途是「在那份對帳單裡的第幾列」—— 銀行流水從 PDF
+ * 讀出來時自然就有。現金是手 key 的，一開始沒給它值，於是全是 null。
+ *
+ * 結果是同一天的幾筆在排序時**全部平手**:
+ *
+ *   畫面   `.order('post_date', desc).order('seq', desc)`
+ *   重算   `(a.seq ?? 0) - (b.seq ?? 0)`  → 全是 0
+ *
+ * 兩邊都退回「陣列本來的順序」，而那是資料庫回什麼就是什麼。
+ *
+ * ★★ 症狀有兩層:
+ *   看得見的  日期新到舊、同一天內卻舊到新，餘額欄讀起來像壞了
+ *   看不見的  **順序不保證穩定** —— 下次新增一筆觸發重算，
+ *             同一天那幾筆可能換順序，每一列的餘額跟著改。
+ *             總額不變，所以不會有任何錯誤訊息。
+ *
+ * ★ 用「整個帳戶的最大值 ＋1」而不是「當天的最大值 ＋1」:
+ *   全域遞增的話，`seq` 同時也是**這個帳戶的第幾筆**，
+ *   補一筆舊日期時也不會跟當天既有的撞號。
+ */
+export function nextSeq(rows: Pick<CashRow, 'seq'>[]): number {
+  let max = 0;
+  for (const r of rows) {
+    const n = Number(r.seq);
+    if (Number.isFinite(n) && n > max) max = n;
+  }
+  return max + 1;
+}
+
+/**
+ * 把通過檢查的表單變成要寫進資料庫的那一列（餘額還沒算，由 `recalcBalances` 補）。
+ *
+ * @param seq 這一列的排序號。**新增時一定要給** —— 見 `nextSeq` 的說明。
+ *            編輯既有的列時傳原本的值，不然那一列會跳到最後面。
+ */
+export function draftToRow(d: CashDraft, accountId: string, seq?: number) {
   const amt = Number(d.amount.trim());
   return {
     account_id: accountId,
     post_date: d.post_date,
     txn_date: d.post_date,
+    /*
+     * ★ `seq` 沒給就不寫（`undefined` 在 supabase-js 會被忽略）——
+     *   編輯既有的列時不該動到它的排序。
+     */
+    ...(seq === undefined ? {} : { seq }),
     /*
      * ★★ 交易型態固定寫「現金」（使用者 2026-08-31 指定）。
      *   讓人自由填的話會出現「現金」「現金交易」「CASH」三種寫法，

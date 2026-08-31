@@ -8,7 +8,7 @@ import UploadPanel from './upload-panel';
 import StatementsPanel from './statements-panel';
 import { totalBalance } from '@/lib/bank-import';
 import {
-  recalcBalances, changedBalances, validateCash, draftToRow, type CashDraft,
+  recalcBalances, changedBalances, validateCash, draftToRow, nextSeq, type CashDraft,
 } from '@/lib/cash-txn';
 import { filterTxns, hasFilter, sumRows, amountOf, splitRef, type BankFilter } from '@/lib/bank-filter';
 import * as XLSX from 'xlsx-js-style';
@@ -293,7 +293,16 @@ export default function AccountsPage() {
     if (bad) { setCashErr(bad); return; }
     setCashErr(''); setCashBusy(true);
 
-    const row = draftToRow(cashForm, cur.id);
+    /*
+     * ★★★ 新增時要給 `seq`（2026-08-31）。
+     *   沒有它的話同一天的幾筆會平手，而平手時的順序**不保證穩定** ——
+     *   下次重算可能換順序，每一列的餘額跟著改（見 lib/cash-txn.ts 的 nextSeq）。
+     *
+     * ★ 編輯時**不給** —— 傳 undefined，那一列的排序維持原樣。
+     *   給新號碼的話改個錯字就會讓那一筆跳到最後面。
+     */
+    const seq = cashForm.id ? undefined : nextSeq(txns);
+    const row = draftToRow(cashForm, cur.id, seq);
     let savedId = cashForm.id;
 
     if (cashForm.id) {
