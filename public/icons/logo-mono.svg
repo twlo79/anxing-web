@@ -1,16 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="安幸上工">
-  <title>安幸上工 標誌（單色）</title>
-  <desc>單色版：合約、招牌、單色印刷、刻章用。沒有底色與漸層，門板用 currentColor 填滿，門把是挖空的（透出下層），所以放在任何底色上都成立。</desc>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="安幸上工">
   <!--
-    ★ 為什麼要另外一份單色版:
-      漸層在單色印刷、雕刻、繡花、傳真上全部會變成一塊死黑 ——
-      那些場合需要的是「形狀」,不是「質感」。
-      而彩色版硬轉單色的結果通常是門把不見了（它是挖空的,轉檔時常被填掉）。
-
-    ★ 用 currentColor:放進 <span style="color:…"> 就跟著變色,
-      不用為了黑白兩版各存一個檔。
+    單色版（印刷、蓋章、單色列印）。
+    ★ 三階明暗在單色下沒有意義,所以**只留輪廓**:一個實心的拱洞。
+      硬要用 currentColor 加透明度的話,傳真與雷射印表機會把兩階壓成同一個灰。
   -->
-  <path d="M136 396 V206 A120 120 0 0 1 376 206 V396 Z
-           M331 285 A18 18 0 1 0 331 321 A18 18 0 1 0 331 285 Z"
-        fill="currentColor" fill-rule="evenodd"/>
+  <path fill="currentColor" d="M144 512V240a112 112 0 0 1 224 0v272z"/>
 </svg>

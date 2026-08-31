@@ -1,22 +1,24 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="安幸上工">
-  <title>安幸上工 標誌</title>
-  <desc>一扇拱形的門，門板填滿紅木色的垂直漸層（上淺下深，像光從上面來），右側有一個挖空的圓形門把。門板佔畫布約 62%，並往上移做視覺置中 —— 門是上輕下重的形狀，幾何置中會看起來偏低。門把偏右不置中：門把本來就在門邊，置中會先被讀成「一個點」再被讀成門把。</desc>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="安幸上工">
+  <!--
+    ★ 跟 gen-icons.py 是**同一組幾何與顏色**。改了那支就要改這支 ——
+      兩邊分岔的話,SVG 用在哪裡就會出現一個跟 PNG 不一樣的記號,
+      而那種不一致只有把兩個擺在一起才看得出來。
+  -->
   <defs>
-    <linearGradient id="anxing-bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#FBF8F1"/>
-      <stop offset="1" stop-color="#F0EADC"/>
+    <linearGradient id="wall" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F3EEE3"/><stop offset="1" stop-color="#E8E0CE"/>
     </linearGradient>
-    <linearGradient id="anxing-door" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#A05B44"/>
-      <stop offset="1" stop-color="#54291D"/>
+    <linearGradient id="hole" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#355977"/><stop offset="1" stop-color="#1C3348"/>
     </linearGradient>
-    <mask id="anxing-handle">
-      <rect width="512" height="512" fill="#fff"/>
-      <circle cx="331" cy="303" r="18" fill="#000"/>
-    </mask>
+    <!-- 遠端的洞要被近端的洞裁掉,不然位移出去的部分會蓋到牆上 -->
+    <clipPath id="near"><path d="M144 512V240a112 112 0 0 1 224 0v272z"/></clipPath>
   </defs>
-  <!-- 底色滿版、不透明、無圓角 —— 圓角由系統切（Apple HIG） -->
-  <rect width="512" height="512" fill="url(#anxing-bg)"/>
-  <path d="M136 396 V206 A120 120 0 0 1 376 206 V396 Z"
-        fill="url(#anxing-door)" mask="url(#anxing-handle)"/>
+  <rect width="512" height="512" fill="url(#wall)"/>
+  <!-- 內壁：近端的洞整個填中間調 -->
+  <path d="M144 512V240a112 112 0 0 1 224 0v272z" fill="#6E8CA8"/>
+  <!-- 洞裡：遠端的洞往右下位移 40/30，裁進近端 -->
+  <g clip-path="url(#near)">
+    <path d="M184 512V270a112 112 0 0 1 224 0v242z" fill="url(#hole)"/>
+  </g>
 </svg>
