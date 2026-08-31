@@ -11,6 +11,8 @@ Next.js 14 (App Router) + Supabase(Auth + PostgreSQL + RLS)。
 
 **動手前先讀三件事**:〈角色與權限〉、〈Migration 怎麼跑〉、以及文末的〈已知缺口〉—— 這三處是踩坑最多的地方。
 
+**要動畫面的話**,先讀〈十、介面規則〉—— 尤其是 **10.4「UI 改版一律先過審」**。
+
 ---
 
 
@@ -998,6 +1000,10 @@ where conrelid = 'public.attachments'::regclass and conname = 'att_one_parent';
 | **管家權限** | 契約與訂單編輯全面開放：固定加費、訂單收款、收款證明照片 | 154 |
 | **憑證下放** | 憑證號碼從整張單下放到每個請款項目，加「共同憑證」開關 | 155、156 |
 | **押金加費** | 加費從押金扣除，應退 = 押金 − 加費。押金退掉後整張訂單鎖住 | 157 |
+| **非營運支出** | 支出可標「非營運」（老闆個人、股東往來…）。**只做記號不改金額**，支出頁照舊全部計入；財務儀表板一顆開關把它從支出與淨額裡扣掉 | 181 |
+| **儀表板兩顆排除鈕** | 「排除非營運支出」＋「排除一次性收入」（前身是只影響一張表的「只看房租」）。**改成整頁生效** —— 同一頁兩種口徑比整頁一起變更危險 | — |
+| **訂單數口徑** | 從「checkin 落在本期」改成「本期有營收認列的訂單去重」，跟「依來源」同一套。一張 8/1~10/30 的訂單三個月都算 | — |
+| **介面統一** | 深藍卡收成 `StatHero`、分項面板收成 `BarList`、分頁籤重畫、關鍵字欄位 13 處統一、模式開關收成 `ToggleInfo`。見〈十、介面規則〉 | — |
 | **加費憑證** | 每筆加費各自可附照片（`attachments.order_id`） | 158 |
 | **押金退款** | 改成三段式（送審 → 排匯款 → 確認退款），與請款單完全對齊，補上撤銷 | — |
 | **帳本分家** | 愛皮（旅行社）／洪鯊（投資）獨立收支帳，兩家各一套會計科目，請款免主管票 | 159–163 |
@@ -1486,10 +1492,10 @@ grep -n "^  \." src/app/globals.css   # 元件層的 class
 | 元件 | 管什麼 | 全站幾處在用 |
 |---|---|---|
 | `components/StatHero.tsx` | 深藍大卡（一頁最重要的那個數字） | 6 |
-| `components/BarList.tsx` | 分項面板（項目 ＋ 長條 ＋ 數字） | 8 |
+| `components/BarList.tsx` | 分項面板（項目 ＋ 長條 ＋ 數字） | 10 |
 | `components/StatCard.tsx` | 一排統計小卡 | 多處 |
-| `components/Tabs.tsx` | 分頁籤（`browser` / `segment` / `solid`）＋ `TabShell` | 10 |
-| `components/ToggleInfo.tsx` | 標題列右上的模式開關 ＋ ⓘ 說明 | 3 |
+| `components/Tabs.tsx` | 分頁籤（`browser` / `segment` / `solid`）＋ `TabShell` | 13 |
+| `components/ToggleInfo.tsx` | 標題列右上的模式開關 ＋ ⓘ 說明 | 6 |
 | `lib/filters.tsx` | 篩選列（`FilterBar` / `FilterSelect` / `FilterDateRange` / `FilterSearch` / `FilterClear` / `ActionRow`） | 13 |
 | `lib/sortable.tsx` | 可排序表頭 `SortTh` | 多處 |
 
@@ -1546,10 +1552,10 @@ grep -n "^  \." src/app/globals.css   # 元件層的 class
 
 | skill | 什麼時候會用到 | 行數 |
 |---|---|---|
-| **`anxing-ui`** | 任何 `.tsx`、任何 `className`、任何版面／字級／元件的需求 | ~530 |
-| **`anxing-color`** | 挑顏色、改顏色，或被說「太髒／看不清楚／不搭」 | ~180 |
-| **`anxing-supabase`** | 任何 `.update()` / `.insert()` / `.upsert()` / 任何加總查詢 | ~135 |
-| **`anxing-migration`** | 新增或修改 `supabase/migrations/*.sql` | ~190 |
+| **`anxing-ui`** | 任何 `.tsx`、任何 `className`、任何版面／字級／元件的需求 | 528 |
+| **`anxing-migration`** | 新增或修改 `supabase/migrations/*.sql` | 192 |
+| **`anxing-color`** | 挑顏色、改顏色，或被說「太髒／看不清楚／不搭」 | 177 |
+| **`anxing-supabase`** | 任何 `.update()` / `.insert()` / `.upsert()` / 任何加總查詢 | 133 |
 
 ## 為什麼要分成四份
 

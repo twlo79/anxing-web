@@ -33,8 +33,8 @@ import { ReactNode } from 'react';
  *
  * ★★ 標題置頂是為了**跟旁邊的卡對齊**；數字置中是為了
  *   卡片被隔壁的分項面板拉高時，中間不會空一大片。
- *   兩件事要分開處理，所以不能整塊 `justify-center`（B 案）
- *   也不能整塊靠上（A 案）。
+ *   兩件事要分開處理 —— 整塊置中的話標題跟隔壁對不齊，
+ *   整塊靠上的話卡片高時下面空一大片。兩種都被否掉過。
  *
  * ★★★ 「筆數」一律**右上角**，不要混在附註那一行。
  *   混在一起的話「1,900 筆・押金非營收」是兩件不相干的事黏成一句：
@@ -58,7 +58,7 @@ export default function StatHero({
    *   而它講的是「這個數字算的是哪一段」，是讀數字的人第二個要看的東西。
    */
   sub?: ReactNode;
-  /** 數字底下再接的東西（評價頁的星等分布）。 */
+  /** 數字底下再接的東西（評價頁的星等分布）。★ 跟數字同一塊，一起置中。 */
   children?: ReactNode;
   onClick?: () => void;
   /** 可以點的時候給 `title` 提示。 */
@@ -76,12 +76,19 @@ export default function StatHero({
         <span className="text-ui font-semibold opacity-90">{title}</span>
         {count != null && <span className="text-uisub opacity-80 whitespace-nowrap">{count}</span>}
       </div>
-      {/* ★ `flex-1` ＋ `justify-center`：卡片被隔壁拉高時，多出來的高度平均分到數字上下 */}
+      {/*
+        ★ `flex-1` ＋ `justify-center`：卡片被隔壁拉高時，多出來的高度平均分到上下。
+
+        ★★★ `children` **也放在這一塊裡面**（2026-08-29 使用者選 B：
+          「評價往上移」）。放在外面的話它會被推到卡片最底，
+          而中間空一段 —— 那是評價卡星等分布原本的樣子。
+          數字、期間、分布是同一組東西，要一起置中。
+      */}
       <div className="flex-1 flex flex-col justify-center min-w-0">
         <div className="stat-num-lg font-bold tabular-nums">{value}</div>
         {sub && <div className="text-ui opacity-80 mt-3">{sub}</div>}
+        {children}
       </div>
-      {children}
     </>
   );
 
