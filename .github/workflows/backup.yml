@@ -1,0 +1,169 @@
+# ══════════════════════════════════════════════════════════════
+# 每日資料庫備份
+# ══════════════════════════════════════════════════════════════
+#
+# 2026-08-31 使用者：「可以備份資料庫 到 github 或是我地端」「每天，留 30 天」
+#
+# 這一支負責雲端那一半（GitHub）。本機那一半是 `scripts/backup-db.ps1`。
+# 兩份都做的理由:GitHub 帳號出事的時候,備份跟程式碼會一起沒。
+#
+# ══════════════════════════════════════════════════════════════
+# 【★★★ 跑之前一定要確認 repo 是 private】
+#
+#   artifact 的下載權限**跟 repo 一樣**。
+#   repo 是 public 的話,任何人點一下就下載到整個資料庫 ——
+#   房客姓名、電話、租金、銀行帳號、員工薪資,全部。
+#
+#   而那**不會有任何警告**。GitHub 不會問「你確定要公開資料庫嗎」,
+#   它只是照 repo 的設定給人下載。
+#
+#   確認方式:repo 首頁標題旁邊要有一個灰色的「Private」標籤。
+#
+# ══════════════════════════════════════════════════════════════
+# 【要先設定的 Secret：只有一個】
+#
+#   Settings → Secrets and variables → Actions → New repository secret
+#     Name:   SUPABASE_DB_URL
+#     Secret: postgresql://postgres.[專案代號]:[資料庫密碼]@aws-0-[區域].pooler.supabase.com:5432/postgres
+#
+#   去哪拿:Supabase Dashboard → 右上角 Connect → Session pooler 那一段。
+#   密碼忘了就去 Database Settings 重設（重設之後這裡也要跟著改）。
+#
+#   ★★ 這串字裡面**有資料庫密碼**。不要貼進 issue、不要貼進 commit、
+#     也不要傳給任何人（包含我）—— 它等於整個資料庫的鑰匙。
+#
+# ══════════════════════════════════════════════════════════════
+# 【為什麼用 Supabase CLI 而不是直接 pg_dump】
+#
+#   Supabase 的資料庫裡有一堆**它自己管的 schema**（auth、storage、
+#   extensions 建的那些）。直接 pg_dump 全部撈下來的話,還原時會撞上
+#   「permission denied for schema auth」之類的錯誤 ——
+#   那些東西新專案本來就有,不該由備份帶進去。
+#
+#   `supabase db dump` 知道要排除哪些,這是它唯一但關鍵的價值。
+#
+# ══════════════════════════════════════════════════════════════
+
+name: 每日資料庫備份
+
+on:
+  schedule:
+    # ★ cron 是 UTC。台灣時間 04:00 = UTC 20:00（前一天）。
+    #   選凌晨是因為那時沒有人在操作 —— 備份到一半有人在改資料的話，
+    #   三個檔案（roles / schema / data）之間會對不起來。
+    - cron: '0 20 * * *'
+  # ★ 手動也要能跑。只有排程的話，「我現在想要一份」就得等到明天，
+  #   而想備份的時刻通常正是「等一下要做一件危險的事」。
+  workflow_dispatch:
+
+# ★ 一次只准跑一個（跟 deploy.yml 同一個理由）。
+#   手動按下去時剛好排程也在跑的話，兩個 job 會同時對資料庫拉全量資料。
+concurrency:
+  group: backup-db
+  cancel-in-progress: false
+
+# ★ 這支不需要寫入任何東西 —— 權限給到最小。
+#   預設的 GITHUB_TOKEN 有寫入權限,而備份用不到。
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    # ★ 30 分鐘沒跑完就砍掉。沒有這一行的話，卡住的 job 會跑滿六小時，
+    #   而那六小時裡每天的排程還在往上疊。
+    timeout-minutes: 30
+
+    steps:
+      - name: 安裝 Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: 匯出（roles / schema / data 三份）
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+
+          # ★★ Secret 沒設的話要**明白地講**。
+          #   不擋的話 supabase 會拿空字串去連,錯誤訊息是
+          #   「invalid connection string」—— 看起來像密碼打錯,
+          #   而真正的原因是根本沒有那個 Secret。
+          if [ -z "${DB_URL}" ]; then
+            echo "::error::找不到 SUPABASE_DB_URL 這個 Secret。"
+            echo "::error::請到 Settings → Secrets and variables → Actions 新增。"
+            exit 1
+          fi
+
+          mkdir -p out
+
+          # ── 1. 角色 ──────────────────────────────
+          # ★ 自訂角色與它們的權限。還原時要**最先**跑這一份，
+          #   不然後面 schema.sql 裡的 `GRANT ... TO xxx` 會找不到 xxx。
+          echo "→ roles"
+          supabase db dump --db-url "$DB_URL" -f out/roles.sql --role-only
+
+          # ── 2. 結構 ──────────────────────────────
+          # ★ 表、索引、觸發器、RLS policy、函式。
+          #   ★★ 這一份裡面**有 migration_166 那道觸發器**與所有 RLS ——
+          #     只還原 data 不還原 schema 的話,資料回來了但保護全沒了。
+          echo "→ schema"
+          supabase db dump --db-url "$DB_URL" -f out/schema.sql
+
+          # ── 3. 資料 ──────────────────────────────
+          # ★ `--use-copy`:用 COPY 而不是一列一個 INSERT。
+          #   幾千筆流水用 INSERT 會產生幾千行,檔案大好幾倍、還原也慢好幾倍。
+          # ★ 兩個 `-x` 是官方文件指定要排除的 storage 內部表。
+          echo "→ data"
+          supabase db dump --db-url "$DB_URL" -f out/data.sql \
+            --use-copy --data-only \
+            -x "storage.buckets_vectors" -x "storage.vector_indexes"
+
+          # ══════════════════════════════════════════
+          # ★★★ 檢查備份不是空的
+          #
+          #   `supabase db dump` 連不上或權限不足時**有可能回 0 但只寫出檔頭**。
+          #   那個檔案存在、大小幾百 bytes、artifact 也上傳成功 ——
+          #   而三十天後你要用它的時候才發現裡面什麼都沒有。
+          #
+          #   **沒有驗證的備份不算備份。**
+          # ══════════════════════════════════════════
+          fail=0
+          for f in roles schema data; do
+            size=$(stat -c%s "out/$f.sql")
+            echo "  $f.sql = ${size} bytes"
+            if [ "$size" -lt 1000 ]; then
+              echo "::error::out/$f.sql 只有 ${size} bytes —— 這不像是真的備份"
+              fail=1
+            fi
+          done
+
+          # ★ data.sql 要找得到主要的幾張表。檔案夠大但內容是別的東西
+          #   （例如只有 supabase 內部表）也是壞的備份。
+          for t in bank_transactions orders expenses contracts; do
+            if ! grep -q "public\.${t}" out/data.sql; then
+              echo "::error::data.sql 裡找不到 public.${t} —— 資料沒有被匯出"
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ] || exit 1
+
+          # 壓縮。SQL 是純文字，壓縮率很高（通常剩十分之一）。
+          gzip -9 out/*.sql
+          echo "── 備份完成 ──"
+          ls -lh out/
+
+      - name: 上傳（保留 30 天）
+        uses: actions/upload-artifact@v4
+        with:
+          # ★ 檔名帶日期。全部叫 backup 的話，
+          #   下載三份下來會變成 backup(1).zip、backup(2).zip，分不出誰是誰。
+          name: db-backup-${{ github.run_id }}
+          path: out/
+          # ★ 使用者指定 30 天。GitHub 上限 90 天。
+          #   到期會自動刪 —— 不用手動清，也不會無限長大。
+          retention-days: 30
+          # ★ 檔案不見時要**失敗**,不要靜靜上傳一個空的 artifact。
+          if-no-files-found: error
+          compression-level: 0  # 已經 gzip 過了，再壓一次只是浪費時間

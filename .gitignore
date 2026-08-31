@@ -30,3 +30,21 @@ supabase/.temp/
 # 抓取腳本本身留著(sync-housekeeping.ps1)—— 那是程式,要版控。
 timetree-sync/*.json
 timetree-sync/*.txt
+
+# ── 資料庫備份（2026-08-31）──────────────────────
+#
+# ★★★ 備份檔裡是**整個資料庫**:房客姓名電話、租金、銀行帳號、
+#   員工薪資。commit 進去等於把全部公開,而 git 的歷史刪不乾淨 ——
+#   改掉之後舊的 commit 裡還在。
+#
+# 預設的備份位置是「文件\安幸資料庫備份」(不在專案裡),
+# 但萬一有人手動存到專案資料夾,這幾條擋住它。
+*.sql.gz
+*.dump
+anxing_*.sql
+backup/
+# ★ 資料夾整個擋掉 —— 2026-08-31 那次 pg_dump 因為工作目錄沒同步，
+#   把備份寫進了專案資料夾裡（C:\...\anxing-web\anxing-db-backup\）。
+#   裡面的檔案被 anxing_*.sql 擋住了，但資料夾本身要一起擋，
+#   免得哪天檔名規則改了又漏出去。
+anxing-db-backup/

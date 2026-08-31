@@ -3615,3 +3615,141 @@ select name, applied_at, source from schema_migrations order by name;
 * 結尾補上 `select record_migration('編號_名稱')`
 * **要能重跑**。`migration_63` 第二次跑時報「不同名或不同物業」,是因為守衛把「已經處理完了」和「資料對不上」講成同一句話。守衛要分開判斷,而且「已完成」要跳過而不是中止。
 * **驗證段要有真的寫入**,不能只有 `select`。`sync_order_deposits()` 的陣列 bug 撐了兩天沒被發現,就是因為驗證只讀不寫,從來沒碰到觸發器。做法是包在 `do $$ ... $$` 裡寫一次、檢查結果、再讓它回滾。
+
+---
+
+# 十二、備份與還原
+
+> 2026-08-31 加。在這之前**沒有任何備份** —— 資料庫掛掉、誤刪一張表、
+> 或 migration 寫錯把某一欄清空，都沒有東西可以回去。
+
+## 12.1 兩份備份，用途不同
+
+|  | GitHub（自動） | 本機（手動） |
+|---|---|---|
+| 什麼時候跑 | 每天台灣時間 04:00 | 你按的時候 |
+| 檔案 | `roles.sql` ＋ `schema.sql` ＋ `data.sql` | 一份 `anxing_日期.sql` |
+| 涵蓋 | **全部**（含登入帳號） | public ＋ supabase_migrations |
+| 保留 | 30 天 | 30 天 |
+| 放哪 | Actions 的 artifact | `C:\Users\你\anxing-db-backup\` |
+| 要裝什麼 | 不用 | `pg_dump`（裝一次） |
+
+**兩份都要，不是二選一。** GitHub 帳號出事的時候，備份會跟程式碼一起沒；
+自己電腦硬碟壞的時候，本機那份也沒了。兩個同時出事的機率才是真正的風險。
+
+★★ 本機那一份**不含 auth 與 storage** —— 救得回所有營運資料
+（訂單、支出、流水、契約、客戶、評價、班表、請款、押金、標案），
+救不回員工的登入帳號與上傳的收據圖檔。那兩樣要靠 GitHub 那一份。
+
+## 12.2 第一次要設定的東西
+
+### GitHub（設一次，之後全自動）
+
+1. **先確認 repo 是 private。**
+   ★★★ artifact 的下載權限跟 repo 一樣 —— repo 是 public 的話，
+   任何人點一下就下載到整個資料庫，而**不會有任何警告**。
+   repo 首頁標題旁邊要看到灰色的「Private」標籤。
+
+2. Supabase Dashboard → 右上角 **Connect** → **Session pooler**，
+   複製那串 `postgresql://...`，把 `[YOUR-PASSWORD]` 換成資料庫密碼。
+
+3. GitHub → repo → Settings → Secrets and variables → Actions →
+   New repository secret：
+
+   | | |
+   |---|---|
+   | Name | `SUPABASE_DB_URL` |
+   | Secret | 上一步那串字 |
+
+4. Actions 頁籤 → 「每日資料庫備份」→ **Run workflow** 手動跑一次，
+   確認會綠。★ 不要等明天 —— 設錯了要今天知道。
+
+### 本機（設一次）
+
+1. 裝 `pg_dump`：<https://www.postgresql.org/download/windows/>
+   安裝時**只勾 Command Line Tools**（資料庫本體幾百 MB，用不到）。
+
+2. 記住連線字串（只跑一次，會永久記住）：
+
+```powershell
+[Environment]::SetEnvironmentVariable('SUPABASE_DB_URL', '貼在這裡', 'User')
+```
+
+3. 關掉 PowerShell 重開，然後：
+
+```powershell
+cd C:\Users\ASUS\Desktop\anxing-web
+.\scripts\backup-db.ps1
+```
+
+★ 那串連線字串裡有**資料庫密碼**。不要貼進聊天室、不要 commit、
+不要傳給任何人（包含 Claude）—— 它等於整個資料庫的鑰匙。
+
+## 12.3 ★★★ 沒有驗證的備份不算備份
+
+兩支腳本都會在匯出後**檢查檔案裡真的有資料**：
+
+* 檔案大小要超過門檻（`pg_dump` 權限不足時會回 0 但只寫出檔頭）
+* `data.sql` 裡要找得到 `bank_transactions` / `orders` / `expenses` / `contracts`
+
+找不到就**讓它失敗**，不會靜靜上傳一個空的 artifact。
+
+> 這一條是從對帳單那次學到的：`groupRows` 的測試 57 條全綠，
+> 線上 56 筆帳號無聲消失 —— 因為測試素材只有一種來源。
+> 備份是同一種形狀的風險：**成功的訊息不等於成功的結果。**
+
+★ 每季自己還原一次到一個測試專案。從來沒還原過的備份，
+只是一個沒有人開過的檔案。
+
+## 12.4 還原
+
+### 完整還原（GitHub 那三份）
+
+1. 到 Actions → 那次執行 → 下載 `db-backup-xxx.zip`，解壓、`gunzip`
+2. 建一個新的 Supabase 專案，拿它的連線字串
+3. **順序不能換**（roles 要在 schema 之前，schema 要在 data 之前）：
+
+```bash
+psql \
+  --single-transaction \
+  --variable ON_ERROR_STOP=1 \
+  --file roles.sql \
+  --file schema.sql \
+  --command 'SET session_replication_role = replica' \
+  --file data.sql \
+  --dbname "新專案的連線字串"
+```
+
+★★ `session_replication_role = replica` 是**關掉觸發器**。
+沒有它的話，還原 `bank_transactions` 時會一列一列去撞
+`trg_bank_txn_memo_only`（migration_166），整份還原失敗。
+
+### 只救幾張表（本機那一份）
+
+整份還原太大動作時，用文字編輯器打開 `anxing_日期.sql`，
+找到那張表的 `COPY public."xxx" ...` 到 `\.` 為止那一段，貼進 SQL Editor。
+
+★ 先把現有的那張表清空或改名，不然會撞主鍵。
+
+### 常見錯誤
+
+| 訊息 | 怎麼辦 |
+|---|---|
+| `permission denied to grant role "postgres"` | 打開 `roles.sql`，把含 `cli_login_postgres` 的那行註解掉 |
+| `ALTER ... OWNER TO "supabase_admin"` 權限錯誤 | 打開 `schema.sql`，把那幾行註解掉 |
+| `role "xxx" does not exist` | roles.sql 沒跑或跑在 schema 之後 —— 順序不能換 |
+
+## 12.5 備份**沒有**涵蓋的東西
+
+★★ 這幾樣還原不回來，出事時要手動重建：
+
+* **Vercel／Vultr 的環境變數** —— 抄一份存在密碼管理器裡
+* **Supabase 的 Auth 設定**（第三方登入、email 模板）
+* **Database Webhooks 與 Publications** —— 還原後要去 Dashboard 重新啟用
+* **Storage 裡的檔案本體** —— `storage.objects` 那張表備份得到，
+  但**檔案內容存在 S3，不在資料庫裡**。要另外搬（見 Supabase 官方文件的
+  migrating storage objects 那一節）
+
+Sources:
+- [Backup and Restore using the CLI | Supabase Docs](https://supabase.com/docs/guides/platform/migrating-within-supabase/backup-restore)
+- [Supabase CLI - db dump](https://supabase.com/docs/reference/cli/supabase-db-dump)
