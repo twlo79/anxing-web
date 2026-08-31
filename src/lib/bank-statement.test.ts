@@ -642,6 +642,51 @@ describe('★★ 餘額印錯一格：資料完整時只警告，不擋', () => 
  * 所以底下把每一個詞再切碎，模擬另一種 PDF 函式庫的行為 ——
  * 表格靠座標所以不受影響，抬頭則必須切法無關。
  */
+/**
+ * ══════════════════════════════════════════════════════════
+ * 【真實事故】2026-08-31：56 筆流水的對方帳號整個不見
+ *
+ * 舊版 `groupRows` 用 `Math.round(top / 3)` 分行 —— **絕對位置**切格子。
+ * 帳號那一行離格子邊界只有 0.13pt，而 pdfplumber（字框頂）與
+ * pdfjs（baseline）的 `top` 差不到 1pt —— 就足以把帳號推進前一格。
+ * 前一格沒有序號，`pickTxn` 回 null，**整行連同帳號消失且不報錯**。
+ *
+ * 抓得到的那些只是離邊界遠一點（0.33 以上）。所以症狀是
+ * 「同一頁、同一欄、格式一樣，抓到兩筆漏兩筆」。
+ *
+ * ★★★ 這一組把整份的 `top` 平移半點，結果**必須一模一樣**。
+ *   舊版在 −0.5pt 就會壞；依間距分行的新版不受絕對位置影響。
+ * ══════════════════════════════════════════════════════════
+ */
+describe('★★★ 座標整體位移不可以改變任何結果', () => {
+  const shift = (ws: Word[], d: number) => ws.map((w) => ({ ...w, top: w.top + d }));
+
+  for (const tail of ['70564', '24145', '48088'] as const) {
+    for (const d of [-0.9, -0.5, -0.4, 0.4, 0.5, 0.9]) {
+      test(`${tail}：平移 ${d}pt 後每一筆的帳號與摘要都不變`, () => {
+        const a = parseStatement(W[tail]);
+        const b = parseStatement(shift(W[tail], d));
+        assert.equal(b.txns.length, a.txns.length, '筆數不可以變');
+        /* 逐筆比 —— 只比總數的話「一筆掉了、另一筆多了」會互相抵消 */
+        for (const t of a.txns) {
+          const u = b.txns.find((x) => x.seq === t.seq);
+          assert.equal(u?.refNo, t.refNo, `seq ${t.seq} 的帳號變了`);
+          assert.equal(u?.memo, t.memo, `seq ${t.seq} 的摘要變了`);
+        }
+      });
+    }
+  }
+
+  test('★★ 有帳號的筆數不會因為位移而減少（舊版就是這樣掉了 56 筆）', () => {
+    const n = (ws: Word[]) => parseStatement(ws).txns.filter((t) => t.refNo).length;
+    const base = n(W['70564']);
+    assert.ok(base > 0, 'fixture 本來就要有帳號，不然這條測試沒有意義');
+    for (const d of [-0.9, -0.5, 0.5, 0.9]) {
+      assert.equal(n(shift(W['70564'], d)), base, `平移 ${d}pt 後有帳號的筆數變了`);
+    }
+  });
+});
+
 function shatter(words: Word[]): Word[] {
   const out: Word[] = [];
   for (const w of words) {

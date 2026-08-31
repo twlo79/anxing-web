@@ -181,6 +181,41 @@ export function accountMatches(
  * 容差 3pt —— 同一行的詞 top 會有零點幾的差異（字體大小不同）。
  * 太小會把一行切成兩行,太大會把上下兩行併在一起。
  */
+/**
+ * 把詞分成「行」。
+ *
+ * ============================================================
+ * 【★★★ 為什麼不能用 `Math.round(top / tol)` 分桶】（2026-08-31 事故）
+ *
+ * 舊版是把 `top` 除以 3 再四捨五入，當成「第幾行」。那是**絕對位置**切格子 ——
+ * 兩個只差 0.7pt 的詞，可能因為剛好跨過格子邊界而被切成兩行。
+ *
+ * 線上 56 筆流水的對方帳號整個不見，就是這樣來的：
+ *
+ *     top=307.9  013-0000022506584136   → 103（離邊界 0.13）
+ *     top=308.6  2026/07/12             → 103（離邊界 0.37）
+ *
+ *   pdfplumber 的 top 是字框頂、pdfjs 是 baseline，兩者差不到 1pt ——
+ *   但 0.13 的餘裕不夠，帳號在瀏覽器那邊掉進**前一格**。
+ *   而前一格沒有序號，`pickTxn` 直接回 null → **那個帳號連同整行消失，不報錯**。
+ *
+ * ★★ 抓得到的那幾筆只是運氣好（離邊界 0.33 以上）。
+ *   所以症狀是「同一頁、同一欄、格式一樣，抓到兩筆漏兩筆」。
+ *
+ * ★★★ 改成**依間距分行**：排序後，跟這一行第一個詞的 top 差 ≤ tol 就同一行。
+ *   0.7pt 的差距**永遠**同一行，跟它落在座標系的哪裡無關。
+ *
+ * ★ 用「跟該行第一個詞比」而不是「跟前一個詞比」——
+ *   後者會鏈式蔓延（每個都差 3pt 的話整頁連成一行）。
+ *
+ * ============================================================
+ * 【教訓：素材只有一種抽法，就測不到換一種抽法會怎樣】
+ *
+ * 57 條測試全綠，因為 fixture 全是 pdfplumber 抽的。
+ * 這個檔案裡本來就有 `shatter()` 在模擬「切更碎」，但沒有人模擬
+ * **「座標整體位移」** —— 而那正是這次咬人的東西。
+ * 新增的測試把 top 平移半點，結果必須一模一樣。
+ */
 function groupRows(words: Word[], tol = 3): Word[][] {
   const byPage = new Map<number, Word[]>();
   for (const w of words) {
@@ -190,16 +225,24 @@ function groupRows(words: Word[], tol = 3): Word[][] {
   }
   const out: Word[][] = [];
   for (const page of [...byPage.keys()].sort((a, b) => a - b)) {
-    const bucket = new Map<number, Word[]>();
-    for (const w of byPage.get(page)!) {
-      const k = Math.round(w.top / tol);
-      const a = bucket.get(k);
-      if (a) a.push(w);
-      else bucket.set(k, [w]);
+    /*
+     * ★ 先按 top 排序，再**依間距**切行。
+     *   `Math.sign` 那一段是為了讓同 top 的維持穩定順序（左到右）。
+     */
+    const ws = byPage.get(page)!.slice().sort((a, b) => a.top - b.top || a.x0 - b.x0);
+    let cur: Word[] = [];
+    let base = Number.NaN;
+    for (const w of ws) {
+      if (cur.length === 0 || w.top - base <= tol) {
+        if (cur.length === 0) base = w.top;
+        cur.push(w);
+      } else {
+        out.push(cur.sort((a, b) => a.x0 - b.x0));
+        cur = [w];
+        base = w.top;
+      }
     }
-    for (const k of [...bucket.keys()].sort((a, b) => a - b)) {
-      out.push(bucket.get(k)!.sort((a, b) => a.x0 - b.x0));
-    }
+    if (cur.length) out.push(cur.sort((a, b) => a.x0 - b.x0));
   }
   return out;
 }
