@@ -434,6 +434,47 @@ describe('備註與票據號碼', () => {
     assert.equal(t1.memo, '');
   });
 
+  /*
+   * ══════════════════════════════════════════════════════════
+   * ★★★ 【真實事故】2026-08-31 使用者：「沒讀到帳號」
+   *
+   *   線上 18 筆代繳市水的 `ref_no` 全是空的，戶號整句留在摘要裡 ——
+   *   **而下面那條 test:447 測的正是同一種形狀，還是綠的。**
+   *
+   *   原因：fixture 是 pdfplumber 抽的，備註格已經切成五個詞；
+   *   線上的 pdfjs 按「文字段落」給，整格是**一個含空白的詞**。
+   *   `isRefLike` 要求整串都是數字與連字號，含空白的那個必定失敗。
+   *
+   *   這一條把 pdfjs 的切法**明確做出來**，釘住「兩種切法要同一個結果」。
+   *   少了它，同一個 bug 會在下一份 PDF 上原封不動再來一次。
+   * ══════════════════════════════════════════════════════════
+   */
+  test('★★★ 備註格黏成一個詞（pdfjs 的切法）也要抽得出戶號', () => {
+    const st = parseStatement(load('24145-2607'));
+    const t39 = st.txns.find((t) => t.seq === 39);
+    /* 先確認 fixture 那一列本來就是這個內容 —— 不然下面比的是空氣 */
+    assert.equal(t39?.refNo, '1040077312');
+
+    /** 把備註欄那幾個詞黏成一個，模擬 pdfjs。 */
+    const glued = (() => {
+      const ws = load('24145-2607');
+      const memoWs = ws.filter((w) => w.x0 >= 435 && w.top > 145 && w.top < 147);
+      if (memoWs.length < 2) return null;           // fixture 換了就別硬測
+      const merged = {
+        ...memoWs[0],
+        x1: memoWs[memoWs.length - 1].x1,
+        text: memoWs.map((w) => w.text).join(' '),
+      };
+      return [...ws.filter((w) => !memoWs.includes(w)), merged];
+    })();
+    if (!glued) return;
+
+    const st2 = parseStatement(glued);
+    const g39 = st2.txns.find((t) => t.seq === 39);
+    assert.equal(g39?.refNo, '1040077312', '黏成一個詞時戶號還是要進 refNo');
+    assert.equal(g39?.memo, '代繳市水 08025 112 TPCW', '其餘留在摘要，順序不變');
+  });
+
   test('★★ 行首的長數字是號碼，句子中間的短數字要留在句子裡', () => {
     /*
      * 「1040077312 代繳市水 08025 112 TPCW」:
