@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ReqMark } from '@/components/Req';
 import { createClient } from '@/lib/supabase';
+import { useOnce } from '@/lib/once';
 import { BTN, BTN2, CARD, INPUT, noRowsMsg, type Announcement, type TabProps } from './types';
 import { noticeContentChanged } from '@/lib/notice';
 
@@ -78,7 +79,27 @@ export default function NoticeTab({ me, isAdmin, onMsg }: TabProps) {
   // 內容一變就自動勾起來；使用者可以取消（改錯字就不用驚動全公司）
   useEffect(() => { setRenotify(changed); }, [changed]);
 
-  async function save() {
+  /*
+
+   * ★★★ 用 `useOnce` 包起來，擋住重複點擊（2026-09-01）。
+
+   *
+
+   *   稽核紀錄上出現同一秒鐘的三筆訂單 ＋ 三筆押金，操作人與金額完全相同 ——
+
+   *   儲存鈕沒有 disabled，而這支是 async 且中間有好幾次 await，
+
+   *   按第二下時第一輪還停在某個 await 上，於是兩輪各跑一次完整流程。
+
+   *
+
+   * ★ 閘門是 ref（同步）不是 state —— state 的更新是非同步的，
+
+   *   快速連點三下時三次都可能讀到「還沒在存」。見 lib/once.ts。
+
+   */
+
+  async function saveInner() {
     if (!editing) return;
     if (!editing.title?.trim() || !editing.body?.trim()) {
       return onMsg('標題與內容都要填。', true);
@@ -113,6 +134,9 @@ export default function NoticeTab({ me, isAdmin, onMsg }: TabProps) {
     onMsg((editing.id ? '已更新' : '已發布') + extra, extra.startsWith('（但'));
     setEditing(null); setOrig(null); load();
   }
+
+
+  const [save, saveBusy] = useOnce(saveInner);
 
   const visible = list.filter((a) => a.active || isAdmin);
 
@@ -166,7 +190,8 @@ export default function NoticeTab({ me, isAdmin, onMsg }: TabProps) {
             )}
             <div className="flex-1" />
             <button onClick={() => { setEditing(null); setOrig(null); }} className={BTN2}>取消</button>
-            <button onClick={save} className={BTN}>{editing.id ? '儲存' : '發布'}</button>
+            <button onClick={save} disabled={saveBusy} className={`${BTN} disabled:opacity-50`}>
+              {saveBusy ? '處理中⋯' : editing.id ? '儲存' : '發布'}</button>
           </div>
           <div className="text-xs text-gray-400 space-y-1">
             <div>不要的公告請取消「顯示中」，不要刪除 —— 公告是講過的話，刪掉之後爭議就沒有證據。</div>

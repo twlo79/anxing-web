@@ -7,6 +7,7 @@ import { checkContractRequired } from '@/lib/order-check';
 import Toast from '@/components/Toast';
 import { FilterBar, FilterSelect, FilterDateRange, FilterSearch, FilterClear, FilterCount } from '@/lib/filters';
 import { createClient } from '@/lib/supabase';
+import { useOnce } from '@/lib/once';
 import { titleCaseName } from '@/lib/name-format';
 import { earnestOnlyMissing, monthlyRentToSave } from '@/lib/earnest';
 import { useOpenFromUrl } from '@/lib/open-from-url';
@@ -324,7 +325,27 @@ export default function ContractsPage() {
   /** 新增契約時 ContractFees 暫存的設定 —— 契約 insert 成功後才補寫 */
   const [pendingFees, setPendingFees] = useState<Rc[]>([]);
 
-  async function save() {
+  /*
+
+   * ★★★ 用 `useOnce` 包起來，擋住重複點擊（2026-09-01）。
+
+   *
+
+   *   稽核紀錄上出現同一秒鐘的三筆訂單 ＋ 三筆押金，操作人與金額完全相同 ——
+
+   *   儲存鈕沒有 disabled，而這支是 async 且中間有好幾次 await，
+
+   *   按第二下時第一輪還停在某個 await 上，於是兩輪各跑一次完整流程。
+
+   *
+
+   * ★ 閘門是 ref（同步）不是 state —— state 的更新是非同步的，
+
+   *   快速連點三下時三次都可能讀到「還沒在存」。見 lib/once.ts。
+
+   */
+
+  async function saveInner() {
     if (!edit) return;
     setTried(true);
     /*
@@ -443,6 +464,9 @@ export default function ContractsPage() {
     // 改租期會讓月租單重產。等觸發器跑完再檢查有沒有「租期外但已收款」的殘留。
     if (edit.id) { setTimeout(() => { warnStray({ ...(edit as Contract) }); }, 500); }
   }
+
+
+  const [save, saveBusy] = useOnce(saveInner);
   /** 一張契約底下的全部訂單。刪除與結束租約都要先知道會動到什麼。 */
   async function ordersOf(id: string): Promise<OrderLite[]> {
     const { data } = await supabase.from('orders')
@@ -1251,7 +1275,9 @@ const nameOf = (c: Contract) =>
             </div>
             <div className="sticky bottom-0 bg-white border-t border-mor-line px-6 py-3 flex justify-end gap-2">
               <button onClick={() => setEdit(null)} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>
-              <button onClick={save} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium hover:bg-mor-slatedark">儲存</button>
+              <button onClick={save} disabled={saveBusy}
+                className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium hover:bg-mor-slatedark disabled:opacity-50">
+                {saveBusy ? '儲存中⋯' : '儲存'}</button>
             </div>
           </div>
         </div>

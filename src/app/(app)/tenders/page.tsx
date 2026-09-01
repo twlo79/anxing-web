@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase';
+import { useOnce } from '@/lib/once';
 import { useProfile } from '@/lib/profile';
 import { fetchAll } from '@/lib/fetch-all';
 import Toast from '@/components/Toast';
@@ -140,7 +141,17 @@ export default function TendersPage() {
   useEffect(() => { loadFeed(); }, [loadFeed]);
 
   /* ══════════════ 存檔 ══════════════ */
-  async function save() {
+  /*
+   * ★★★ 用 `useOnce` 包起來，擋住重複點擊（2026-09-01）。
+   *
+   *   稽核紀錄上出現同一秒鐘的三筆訂單 ＋ 三筆押金，操作人與金額完全相同 ——
+   *   儲存鈕沒有 disabled，而這支是 async 且中間有好幾次 await，
+   *   按第二下時第一輪還停在某個 await 上，於是兩輪各跑一次完整流程。
+   *
+   * ★ 閘門是 ref（同步）不是 state —— state 的更新是非同步的，
+   *   快速連點三下時三次都可能讀到「還沒在存」。見 lib/once.ts。
+   */
+  async function saveInner() {
     if (!edit) return;
     const e = tenderError(edit);
     if (e) return say(e, true);
@@ -193,6 +204,8 @@ export default function TendersPage() {
     say('已儲存');
     load();
   }
+
+  const [save, saveBusy] = useOnce(saveInner);
 
   /* ══════════════ 刪除 ══════════════ */
   async function del(t: Tender) {
@@ -676,7 +689,8 @@ export default function TendersPage() {
             </div>
             <div className="modal-foot">
               <button onClick={() => setEdit(null)} className="btn btn-ghost">取消</button>
-              <button onClick={save} className="btn btn-primary">儲存</button>
+              <button onClick={save} disabled={saveBusy} className="btn btn-primary disabled:opacity-50">
+                {saveBusy ? '儲存中⋯' : '儲存'}</button>
             </div>
           </div>
         </div>

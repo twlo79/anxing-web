@@ -48,3 +48,14 @@ backup/
 #   裡面的檔案被 anxing_*.sql 擋住了，但資料夾本身要一起擋，
 #   免得哪天檔名規則改了又漏出去。
 anxing-db-backup/
+
+# ── TimeTree 抓下來的原始檔（2026-09-01）─────────
+#
+# ★★★ 檔名看起來無害，內容是**房客姓名 ＋ 員工姓名**
+#   （「退-A2-Martin Kossa」「B7-Jessie Wu (吳旻蓁)-入住」）。
+#   那是個資,不該躺在程式碼倉庫裡跟著每一次 clone 複製出去。
+#
+# `timetree-sync/*.json` 早就擋住了,但**放在專案根目錄的沒擋到** ——
+# 而爬蟲的輸出預設就落在根目錄。
+timetree-*.json
+timetree-*.csv
