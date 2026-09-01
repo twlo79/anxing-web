@@ -159,8 +159,22 @@ describe('查詢加帳本條件', () => {
 });
 
 describe('押金這一欄該不該顯示', () => {
-  test('★★ 平台代收沒有押金 —— 錢是平台收的，不經過我們手上', () => {
-    for (const s of ['airbnb', 'agoda', 'airbnb_cancelled']) {
+  /*
+   * ★★★ 2026-09-01 起 Airbnb 例外（migration_194，寵物押金）。
+   *   房費是平台收的，但寵物押金是我們當場收的 —— 錢在我們手上，
+   *   所以要進暫收管理才退得出去。
+   */
+  test('★★ Airbnb 現在可以收押金（寵物押金）', () => {
+    assert.equal(hasDeposit('airbnb'), true);
+  });
+
+  /*
+   * ★★★ 這一條是護欄:使用者只要求開放 Airbnb。
+   *   哪天有人把 DEPOSIT_OK_PLATFORMS 改成整個 PLATFORM_SOURCES，
+   *   Agoda 會多出一欄永遠空白的押金，而畫面上沒有任何跡象。
+   */
+  test('★★★ Agoda 與已取消的 Airbnb 維持鎖住', () => {
+    for (const s of ['agoda', 'airbnb_cancelled']) {
       assert.equal(hasDeposit(s), false, s);
     }
   });

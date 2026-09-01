@@ -19,8 +19,8 @@ import { fetchAll } from '@/lib/fetch-all';
 import Receipts from '@/components/Receipts';
 import RefundFields, { METHOD_LABEL, METHOD_OPTS } from '@/components/RefundFields';
 import {
-  depLines, primaryText, extraLines, summaryText, isMultiCurrency, sumByCurrency,
-  lineText, type DepLine,
+  depLines, primaryText, extraLines, summaryText, hasDetail, sumByCurrency,
+  lineText, lineKey, type DepLine,
 } from '@/lib/deposit-lines';
 import {
   canBeSource, canBeTarget, canTransfer, transferCandidates, transferTargets,
@@ -1551,8 +1551,8 @@ export default function DepositsPage() {
                 {/* 多幣別是一起收退的一筆押金,主要金額大字、其餘小字列在下面 */}
                 <div className="stat-num font-bold">{primaryText(r)}</div>
                 <div className="mt-0.5">{kindChip(r)}</div>
-                {extraLines(r).map((l) => (
-                  <div key={l.cur} className="text-[11px] text-gray-500">＋{lineText(l)}</div>
+                {extraLines(r).map((l, i) => (
+                  <div key={lineKey(l, i)} className="text-[11px] text-gray-500">＋{lineText(l)}</div>
                 ))}
                 <div className="mt-1">{statusChip(r)}{voteLine(r)}</div>
               </div>
@@ -1597,8 +1597,8 @@ export default function DepositsPage() {
                 <td className="px-3 py-2 text-right whitespace-nowrap">
                   <div>{primaryText(r)}</div>
                   <div className="mt-0.5">{kindChip(r)}</div>
-                  {extraLines(r).map((l) => (
-                    <div key={l.cur} className="text-[11px] text-gray-500 font-normal">＋{lineText(l)}</div>
+                  {extraLines(r).map((l, i) => (
+                    <div key={lineKey(l, i)} className="text-[11px] text-gray-500 font-normal">＋{lineText(l)}</div>
                   ))}
                 </td>
                 <td className="px-3 py-2 whitespace-nowrap">{r.received_on ?? '—'}</td>
@@ -1678,8 +1678,8 @@ export default function DepositsPage() {
                 {row(wordOf(d), (
                   <span>
                     <span className="font-bold">{primaryText(d)}</span>
-                    {extraLines(d).map((l) => (
-                      <span key={l.cur} className="ml-2 text-xs text-gray-500">＋{lineText(l)}</span>
+                    {extraLines(d).map((l, i) => (
+                      <span key={lineKey(l, i)} className="ml-2 text-xs text-gray-500">＋{lineText(l)}</span>
                     ))}
                   </span>
                 ))}
@@ -2190,10 +2190,10 @@ export default function DepositsPage() {
                     底下的收退款只有一組 —— 錢放在同一個保險箱,一次收、一次退。
                   */}
                   {edit.guest_name ?? '—'}・{wordOf(edit)}
-                  {isMultiCurrency(edit) ? (
+                  {hasDetail(edit) ? (
                     <span className="block mt-1 font-bold">
-                      {depLines(edit).map((l) => (
-                        <span key={l.cur} className="block">{lineText(l)}</span>
+                      {depLines(edit).map((l, i) => (
+                        <span key={lineKey(l, i)} className="block">{lineText(l)}</span>
                       ))}
                     </span>
                   ) : <span className="font-bold"> {primaryText(edit)}</span>}

@@ -35,6 +35,10 @@ import {
 import OrderPayments from '@/components/OrderPayments';
 import MoneyLines from '@/components/MoneyLines';
 import { toLines, fromLines, totalTwd, validateLines, type Line } from '@/lib/money-lines';
+import {
+  petAllowed, autoDepositAmount, feePresets, onFeeLabelChange,
+  validatePetLines, startsLocked, PET_FEE_LABEL, type FeeDefault,
+} from '@/lib/pet-fee';
 import { payStatus, remaining, isExempt, STATUS_LABEL, STATUS_CLASS, STATUS_FILTER } from '@/lib/order-payment';
 import { softDelete } from '@/lib/trash';
 import { feeFilterOptions, feeFilterPredicate, feeSourceConflict, ONEOFF_SOURCES, FEE_F_ALL, FEE_F_RENT } from '@/lib/order-filter';
@@ -50,6 +54,12 @@ type Order = {
   id: string; order_key: string; source: string; estate_id: string | null; property_id?: string | null; property_raw: string | null;
   guest_name: string | null; checkin: string; checkout: string; nights: number;
   amount: number; deposit: number | null; account: string | null; note: string | null;
+  /**
+   * 寵物押金（migration_194）。跟 deposit 分開存 ——
+   * deposit 是「一個數字」（fromLines 會把台幣各列加總進去），
+   * 合著存的話「一般 100,000 ＋ 寵物 30,000」變成 130,000，項目消失。
+   */
+  pet_deposit?: number | null;
   /**
    * 收款。paid_amount 是 order_payments 的合計,由觸發器維護（migration_84）——
    * 前端只讀不寫,狀態一律用 lib/order-payment 的 payStatus() 算,不另外存欄位。
@@ -265,6 +275,24 @@ export default function ShortTermPage() {
   const [revLines, setRevLines] = useState<Line[]>([]);
   const [depLines, setDepLines] = useState<Line[]>([]);
   /*
+   * 寵物押金（migration_194）。
+   *
+   * ★★ `null` 與 `0` 是**兩件事**:
+   *     null → 這張訂單沒有寵物押金，那一列不顯示
+   *     0    → 有那一列，但金額還沒填（或刻意填 0）
+   *   合成一個的話，按了「+ 寵物押金」之後那一列會立刻消失。
+   */
+  const [petDep, setPetDep] = useState<number | null>(null);
+  /** 金額欄鎖著。有預設值才鎖 —— 沒有預設可保護時鎖著只是多一次點擊。 */
+  const [petLocked, setPetLocked] = useState(true);
+  /** 各物業的寵物預設金額（estate_fee_default，migration_193）。 */
+  const [feeDefaults, setFeeDefaults] = useState<FeeDefault[]>([]);
+  /*
+   * 哪幾列加費解了鎖。用索引記，跟 MoneyLines 的 `custom` 同一個作法 ——
+   * 把 locked 放進 Fee 物件的話，它會跟著被寫進資料庫的 payload。
+   */
+  const [feeUnlocked, setFeeUnlocked] = useState<Set<number>>(new Set());
+  /*
    * 表單開啟次數。初始化 effect 綁在這個計數器上,不是綁在 edit.id ——
    * 新訂單的 id 一直是空字串,綁 id 的話「新增 → 取消 → 再新增」
    * 不會重跑初始化,第二張單會帶著第一張單的金額與幣別,而且沒有任何跡象。
@@ -283,9 +311,26 @@ export default function ShortTermPage() {
       .select('*, properties(name)').eq('id', id).maybeSingle();
     return (data as Order) ?? null;
   }, openEdit);
+  /*
+   * 物業的寵物預設金額。整份載進來（八個物業，一次查完）——
+   * 每次開表單再查一次的話，網路慢的時候表單會先出現、金額後補，
+   * 而使用者可能已經按了「+ 寵物押金」看到空白欄。
+   */
+  useEffect(() => {
+    supabase.from('estate_fee_default').select('estate_id, pet_allowed, pet_deposit, pet_fee')
+      .then(({ data }) => setFeeDefaults((data ?? []) as FeeDefault[]));
+  }, [supabase]);
   useEffect(() => {
     setRevLines(toLines(edit?.amount, (edit as any)?.fx_revenue, 'revenue'));
     setDepLines(toLines(edit?.deposit, (edit as any)?.fx_deposit, 'deposit'));
+    /*
+     * ★ 已經有寵物押金的訂單，打開時那一列直接就在（不用再按一次）。
+     *   而且**一開始就鎖住** —— 已存的金額是確定的，
+     *   不鎖的話滑鼠滾輪掃過數字欄就會改掉它。
+     */
+    setPetDep(edit?.pet_deposit == null ? null : Number(edit.pet_deposit));
+    setPetLocked(true);
+    setFeeUnlocked(new Set());
     if (edit?.id) {
       supabase.from('orders').select('id, checkin, amount, fee_type, item_name, note, deposit_id').eq('parent_order_id', edit.id).eq('source', 'oneoff').then(({ data }) => setFees((data ?? []).map((f: any) => ({ id: f.id, date: f.checkin ?? '', deposit_id: f.deposit_id ?? null, /*
        * 兩欄還原成選單的 label。找不到對應的預設就用科目當 label ——
@@ -407,6 +452,15 @@ export default function ShortTermPage() {
     const r = checkPrice(totalTwd(revLines), nights, past);
     return r.low ? r : null;
   }, [edit?.source, edit?.checkin, edit?.checkout, revLines, past]);
+  /*
+   * 這一列加費「本來會帶入多少」。用來判斷鎖頭要不要出現 ——
+   * 未設定金額的物業（台視、南京、復興）選了寵物費也不該有鎖，
+   * 因為沒有一個已知正確的數字要保護。
+   */
+  const autoFeeAmountOf = (i: number) =>
+    onFeeLabelChange(feeDefaults, edit?.estate_id ?? null, fees[i]?.type ?? null, 0).locked
+      ? onFeeLabelChange(feeDefaults, edit?.estate_id ?? null, fees[i]?.type ?? null, 0).amount
+      : null;
   const updFee = (i: number, patch: Partial<Fee>) => setFees((fs) => fs.map((f, idx) => idx === i ? { ...f, ...patch } : f));
   const delFee = (i: number) => setFees((fs) => fs.filter((_, idx) => idx !== i));
   const [properties, setProperties] = useState<{ id: string; name: string; estate_id: string | null;
@@ -659,7 +713,12 @@ export default function ShortTermPage() {
           T(Math.round(Number(o.paid_amount) || 0), stNum),
           T(remaining(o), stNum),
           T(STATUS_LABEL[payStatus(o)], stCell),
-          T(Math.round(Number(o.deposit) || 0), stNum),
+          /*
+            ★★ 含寵物押金（migration_194）。押金管理頁的 amount 也是含的 ——
+              這裡不加的話，同一張訂單在兩份報表上的押金金額不一樣，
+              而兩個數字都看起來很合理。
+          */
+          T(Math.round((Number(o.deposit) || 0) + (Number(o.pet_deposit) || 0)), stNum),
           T(o.account ?? '', stCell),
           T(o.note ?? '', stCell),
         ]);
@@ -744,6 +803,16 @@ export default function ShortTermPage() {
     if (revErr) return flash('訂單金額:' + revErr);
     const depErr = validateLines(depLines, 'deposit');
     if (depErr) return flash('押金:' + depErr);
+    /*
+     * ★★★ 最後一道。畫面上開封的入口已經不見了，但那不是唯一的路 ——
+     *   先在正隆填了寵物押金、再把房源改成開封，欄位還在畫面上。
+     *   存進去之後就只剩一個金額合理的押金，沒有人看得出它不該存在。
+     */
+    const petErr = validatePetLines(
+      feeDefaults, edit.estate_id,
+      petDep == null ? [] : ['寵物押金'],
+      fees.map((f) => f.type));
+    if (petErr) return flash(petErr);
     const rev = fromLines(revLines, 'revenue');
     const dep = fromLines(depLines, 'deposit');
     const payload = { source: edit.source, estate_id: edit.estate_id, property_id: edit.property_id ?? null, property_raw: edit.property_raw, guest_name: edit.guest_name, checkin: edit.checkin || null, checkout: co || null, nights, amount: rev.twd, deposit: dep.twd, account: edit.account, note: edit.note,
@@ -752,6 +821,12 @@ export default function ShortTermPage() {
       fee_type: edit.source === 'oneoff' ? (edit.fee_type || null) : null,
       item_name: edit.source === 'oneoff' ? (edit.item_name?.trim() || null) : null,
       fx_revenue: rev.fx, fx_deposit: dep.fx,
+      /*
+       * ★★ 寫 `null` 而不是 0 —— 0 在 sync_order_deposits() 裡不會產生
+       *   lines 那一筆（`if pet > 0`），行為一樣；但資料庫裡
+       *   「沒收寵物押金」與「收了 0 元」讀起來是兩件事。
+       */
+      pet_deposit: petDep == null ? null : petDep,
       /*
        * 哪一家的錢（migration_159）。
        *
@@ -1400,9 +1475,17 @@ export default function ShortTermPage() {
                   帶押金 id 只會看到其中一種幣別,而使用者按的是「這張單的押金」。
                 */}
                 {/* 收退狀態在「押金管理」頁,入口在下面的操作列。這裡只顯示金額。 */}
-                {row('押金', (d.deposit || d.fx_deposit?.length) ? (
+                {/*
+                  ★★ 寵物押金要在這裡看得到（migration_194）。
+                    唯讀抽屜是「不打開編輯也能確認這張單」的地方 ——
+                    漏掉的話使用者得點進編輯才知道有沒有收寵物押金。
+                */}
+                {row('押金', (d.deposit || d.pet_deposit || d.fx_deposit?.length) ? (
                   <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
                     <span>${fmt(d.deposit)}</span>
+                    {Number(d.pet_deposit) > 0 && (
+                      <span className="text-xs text-gray-500">＋寵物押金 ${fmt(d.pet_deposit ?? 0)}</span>
+                    )}
                     {d.fx_deposit?.filter((f) => f.cur && f.amt).map((f, i) => (
                       <span key={i} className="text-xs text-gray-500">＋{f.cur} {fmt(f.amt)}</span>
                     ))}
@@ -1771,12 +1854,69 @@ export default function ShortTermPage() {
                     新單還沒有 id，押金也還沒產生，這時給連結會連到空的清單，
                     所以只有已存檔的訂單才顯示。
                   */
-                  action={edit.id ? (
-                    <a href={`/deposits?order=${edit.id}`} target="_blank" rel="noreferrer"
-                      className="text-xs text-mor-blue underline hover:text-mor-slate">收退狀態 →</a>
+                  action={(
+                    <>
+                      {edit.id ? (
+                        <a href={`/deposits?order=${edit.id}`} target="_blank" rel="noreferrer"
+                          className="text-xs text-mor-blue underline hover:text-mor-slate">收退狀態 →</a>
+                      ) : null}
+                      {/*
+                        ★★★ 禁止帶寵物的物業**連結根本不出現**，不是灰掉。
+                          灰掉的按鈕會讓人問「為什麼不能按」，
+                          而答案是「這個物業不能帶寵物」—— 那不是暫時的狀態，
+                          是永久規則。永久做不到的事不該留一個看得到的入口。
+
+                        ★ 已經加過就變灰:一張訂單只能有一筆寵物押金
+                          （deposits 一列，明細在 lines 裡）。
+                          這裡灰掉是對的 —— 它是暫時的，刪掉那一列就能再加。
+                      */}
+                      {hasDeposit(edit.source) && petAllowed(feeDefaults, edit.estate_id) && (
+                        petDep == null ? (
+                          <button type="button"
+                            onClick={() => {
+                              const auto = autoDepositAmount(feeDefaults, edit.estate_id, '寵物押金');
+                              setPetDep(auto ?? 0);
+                              setPetLocked(startsLocked(auto));
+                            }}
+                            className="text-xs text-mor-blue underline hover:text-mor-slate">+ 寵物押金</button>
+                        ) : (
+                          <span className="text-xs text-gray-400">+ 寵物押金</span>
+                        ))}
+                    </>
+                  )}
+                  /*
+                    寵物押金那一列。放進 MoneyLines 的框裡而不是框外面 ——
+                    它跟上面幾列是**同一筆押金**（同一列 deposits、一起收退），
+                    畫在框外會看起來像另一個獨立的東西。
+                  */
+                  footer={petDep != null && hasDeposit(edit.source) ? (
+                    <div className="flex flex-wrap items-center gap-2 mt-2 pt-2 border-t border-dashed border-mor-line">
+                      <span className="w-24 h-11 md:h-8 rounded-lg bg-mor-bluelight text-mor-slate
+                                       text-xs font-medium flex items-center justify-center shrink-0">寵物押金</span>
+                      <MoneyInput value={petDep} onChange={(n) => setPetDep(n)}
+                        disabled={petLocked}
+                        className={`h-11 md:h-8 rounded-lg border border-mor-line px-2 text-sm
+                                    flex-1 min-w-[6rem] text-right
+                                    ${petLocked ? 'bg-gray-100 text-gray-500' : 'bg-white'}`} />
+                      {/*
+                        ★ 鎖是為了保護一個**已知正確**的數字不被誤改
+                          （滑鼠滾輪掃過數字欄就會改掉它）。
+                          沒有預設可保護時 startsLocked() 回 false，這顆一開始就是開的。
+                      */}
+                      <button type="button" onClick={() => setPetLocked((v) => !v)}
+                        title={petLocked ? '點一下才能改' : '改完點一下鎖回去'}
+                        className="text-sm text-gray-500 hover:text-mor-slate px-1">
+                        {petLocked ? '🔒' : '🔓'}
+                      </button>
+                      <button type="button" onClick={() => { setPetDep(null); setPetLocked(true); }}
+                        className="text-xs text-red-500 underline">刪</button>
+                    </div>
                   ) : null}
                   hint={hasDeposit(edit.source)
                     ? '押金原幣退還,不換匯,所以沒有匯率欄。填了金額就會自動出現在押金管理頁,收退日期與帳戶在那裡維護。'
+                      + (petDep != null
+                        ? '一般押金與寵物押金是同一筆,一起收、一起退。'
+                        : '')
                     : '這是平台代收的訂單 —— 押金由平台收，不經過我們的帳戶，所以這裡鎖住。'} />
               )}
               <label className="flex flex-col gap-1">收款方式<select value={edit.account ?? ''} onChange={(e) => setEdit({ ...edit, account: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option><option value="現金">現金</option>{payAccounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}<option value="加密貨幣">加密貨幣</option></select></label>
@@ -1825,8 +1965,54 @@ export default function ShortTermPage() {
                     {fees.map((f, i) => (
                       <div key={i} className="flex flex-wrap items-center gap-2 bg-mor-sand/30 rounded-lg px-2 py-2">
                         <input type="date" value={f.date} onChange={(e) => updFee(i, { date: e.target.value })} className="rounded border border-gray-300 px-2 py-1 text-xs" />
-                        <select value={f.type} onChange={(e) => updFee(i, { type: e.target.value })} className="rounded border border-gray-300 px-2 py-1 text-xs">{ONEOFF_PRESETS.map((p) => <option key={p.label} value={p.label}>{p.label}</option>)}</select>
-                        <MoneyInput value={f.amount || 0} onChange={(n) => updFee(i, { amount: n })} placeholder="費用" className="rounded border border-gray-300 px-2 py-1 text-xs w-24 text-right" />
+                        {/*
+                          ★ 選單依物業過濾:開封禁止帶寵物 → 這裡沒有「寵物費」。
+                            跟押金那邊同一個道理，永久做不到的事不留入口。
+                        */}
+                        <select value={f.type}
+                          onChange={(e) => {
+                            const label = e.target.value;
+                            const next = onFeeLabelChange(feeDefaults, edit.estate_id, label, f.amount || 0);
+                            updFee(i, { type: label, amount: next.amount });
+                            /*
+                              ★★ 鎖狀態跟金額一起換。分開更新的話，
+                                從「寵物費」切到「清潔費」時金額解鎖了但鎖頭圖示還在。
+                            */
+                            setFeeUnlocked((sset) => {
+                              const n = new Set(sset);
+                              if (next.locked) n.delete(i); else n.add(i);
+                              return n;
+                            });
+                          }}
+                          className="rounded border border-gray-300 px-2 py-1 text-xs">
+                          {feePresets(ONEOFF_PRESETS, feeDefaults, edit.estate_id)
+                            .map((p) => <option key={p.label} value={p.label}>{p.label}</option>)}
+                        </select>
+                        {(() => {
+                          // 這一列鎖著嗎:是寵物費、有帶入預設、而且使用者沒有手動解鎖
+                          const locked = f.type === PET_FEE_LABEL && !feeUnlocked.has(i)
+                            && startsLocked(autoFeeAmountOf(i));
+                          return (
+                            <>
+                              <MoneyInput value={f.amount || 0} onChange={(n) => updFee(i, { amount: n })}
+                                disabled={locked} placeholder="費用"
+                                className={`rounded border border-gray-300 px-2 py-1 text-xs w-24 text-right
+                                            ${locked ? 'bg-gray-100 text-gray-500' : ''}`} />
+                              {f.type === PET_FEE_LABEL && startsLocked(autoFeeAmountOf(i)) && (
+                                <button type="button"
+                                  onClick={() => setFeeUnlocked((sset) => {
+                                    const n = new Set(sset);
+                                    if (n.has(i)) n.delete(i); else n.add(i);
+                                    return n;
+                                  })}
+                                  title={locked ? '點一下才能改' : '改完點一下鎖回去'}
+                                  className="text-xs text-gray-500 hover:text-mor-slate px-1">
+                                  {locked ? '🔒' : '🔓'}
+                                </button>
+                              )}
+                            </>
+                          );
+                        })()}
                         <input value={f.note} onChange={(e) => updFee(i, { note: e.target.value })} placeholder="備註" className="rounded border border-gray-300 px-2 py-1 text-xs flex-1 min-w-[6rem]" />
                         <button type="button" onClick={() => delFee(i)} className="text-xs text-red-500 underline">刪除</button>
 

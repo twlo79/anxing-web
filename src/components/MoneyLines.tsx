@@ -32,7 +32,7 @@ const CTRL = 'h-11 md:h-8 bg-white rounded-lg border border-mor-line px-2 text-s
 const OTHER = '__other__';
 
 export default function MoneyLines({
-  lines, onChange, mode, label, hint, disabled = false, action, invalid, required,
+  lines, onChange, mode, label, hint, disabled = false, action, invalid, required, footer,
 }: {
   lines: Line[];
   onChange: (next: Line[]) => void;
@@ -47,6 +47,14 @@ export default function MoneyLines({
   required?: boolean;
   /** 標題右邊的額外連結（例如「到押金管理」）。 */
   action?: React.ReactNode;
+  /*
+   * 幣別各列**底下**的額外內容（寵物押金那一列，migration_194）。
+   *
+   * ★ 做成 prop 而不是讓呼叫端畫在元件外面 ——
+   *   畫在外面的話它會掉在這個框的下方，看起來像另一個區塊，
+   *   而它其實是同一筆押金的一部分（同一列 deposits、一起收退）。
+   */
+  footer?: React.ReactNode;
 }) {
   const withRate = mode === 'revenue';
   /**
@@ -162,6 +170,7 @@ export default function MoneyLines({
           <span className="font-semibold text-mor-slate">${fmt(totalTwd(lines))}</span>
         </div>
       )}
+      {footer}
       {hint && <div className="text-xs text-gray-400 mt-2">{hint}</div>}
     </div>
   );

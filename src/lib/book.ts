@@ -104,9 +104,27 @@ export const incomePartyLabel = (source: string | null | undefined) =>
  */
 const PLATFORM_SOURCES = ['airbnb', 'agoda', 'airbnb_cancelled'] as const;
 
+/**
+ * ★★★ Airbnb 例外（2026-09-01 使用者:「airbnb 可放入 額外押金
+ * 加入後一樣會到 暫收管理 可開放」）。
+ *
+ * 上面那段「平台代收」的道理沒有變 —— **房費**確實是平台收的。
+ * 但寵物押金不是房費:房客帶寵物來的時候，那筆錢是我們自己當場收的，
+ * 錢真的在我們手上，所以它必須進暫收管理，才退得出去。
+ *
+ * ★ Agoda 與其他事業體**維持鎖住**。使用者只講了 Airbnb，
+ *   而「順便一起開」是在替沒有人要求的情境做決定 ——
+ *   Agoda 沒有寵物政策的話，那一欄會永遠是空的
+ *   （而永遠是空的欄位在教使用者「這一頁有些東西不用看」，見上）。
+ *
+ * ★★ `airbnb_cancelled` 也不開:已取消的訂單不會有人帶寵物來。
+ */
+const DEPOSIT_OK_PLATFORMS = ['airbnb'] as const;
+
 export const hasDeposit = (source: string | null | undefined) =>
-  !(PLATFORM_SOURCES as readonly string[]).includes(source ?? '')
-  && source !== OTHER_BIZ_SOURCE;
+  (DEPOSIT_OK_PLATFORMS as readonly string[]).includes(source ?? '')
+  || (!(PLATFORM_SOURCES as readonly string[]).includes(source ?? '')
+      && source !== OTHER_BIZ_SOURCE);
 
 /* ══════════════ 支出側 ══════════════ */
 

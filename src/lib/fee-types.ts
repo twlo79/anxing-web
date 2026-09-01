@@ -184,6 +184,26 @@ export const FEE_DEFAULT = '其他';
 export const ONEOFF_PRESETS: { label: string; fee_type: string; item_name: string | null }[] = [
   ...CONTRACT_FEE_PRESETS.filter((p) => p.label !== '其它'),
   { label: '保證金', fee_type: '保證金', item_name: null },
+  /*
+   * 寵物費（migration_193，2026-09-01 使用者:「JPR 寵物費$1500 | 時兆 $1000 |
+   * 開封 不能帶寵物入住 | 亞曼尼 $1500 對應房源，可自動填入」）。
+   *
+   * 【為什麼放這裡而不是 CONTRACT_FEE_PRESETS】
+   * 寵物費是**入住時收一次**，不是每個月自動長出來的固定加費 ——
+   * 放進固定加費的話，長租契約每一期都會多算一筆。
+   *
+   * 【為什麼科目是「其他」】
+   * `account_codes` 裡沒有「寵物費」這個科目，而它在會計上就是其他收入。
+   * 硬開一個新科目要動資料庫的科目對應表，為一個項目不值得 ——
+   * 跟電費歸「水電瓦斯」、垃圾代收歸「清潔費」同一個作法。
+   *
+   * ⚠ 這份清單**契約頁的一次性費用也在用**（檔頭寫了那是刻意的）——
+   *   所以長租契約的一次性費用選單也會多這一項。租客中途養寵物時用得到。
+   *
+   * ★ 金額不寫在這裡:每個物業不一樣，而且會漲。
+   *   放在 `estate_fee_default`，見 `lib/pet-fee.ts`。
+   */
+  { label: '寵物費', fee_type: '其他',   item_name: '寵物費' },
   { label: '其它',   fee_type: '其他',   item_name: '其它' },
 ];
 

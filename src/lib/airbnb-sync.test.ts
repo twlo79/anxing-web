@@ -867,3 +867,42 @@ test('看到了就從頭算起 —— 累計次數不是永久的', () => {
   // 這條靠呼叫端把看到的歸零。這裡釘住「streak 是 0 就要重新累積」
   assert.deepEqual(toMark(['A'], () => 0), []);
 });
+
+/* ══════════════════════════════════════════════════════════
+ * 寵物押金／寵物費不會被網爬洗掉（migration_194）
+ *
+ * 2026-09-01 使用者第 4 點:「網爬複寫 不會把這些人工建入的資料洗掉
+ * > 同時還是會建議 延長日期 與增加金額」。
+ *
+ * ★★★ 今天成立的理由是 decide() 的 patch **根本不碰押金欄位** ——
+ *   它只自動改「取消」。但那是靠讀程式碼確認的，不是靠型別擋的:
+ *   哪天有人在 patch 裡多加一個欄位，這裡會炸，而那正是我們要的。
+ * ══════════════════════════════════════════════════════════ */
+test('★★★ 更新既有訂單時，patch 不含任何押金欄位', () => {
+  // 金額變了、日期延長了 —— 最會想「順便一起更新」的情境
+  const { decision } = decide(
+    inc({ earnings: 26000, end: '2026-07-08', nights: 7 }),
+    ex(), PROP_A15);
+
+  if (decision.kind === 'update') {
+    for (const k of ['deposit', 'pet_deposit', 'fx_deposit']) {
+      assert.equal(k in decision.patch, false, `patch 不該有 ${k}`);
+    }
+  }
+});
+
+test('★★ 取消也一樣不碰押金', () => {
+  const { decision } = decide(inc({ statusKey: 'cancelled' }), ex(), PROP_A15);
+  if (decision.kind === 'update') {
+    assert.equal('deposit' in decision.patch, false);
+    assert.equal('pet_deposit' in decision.patch, false);
+  }
+});
+
+/* ★ 「不洗掉」不等於「不提醒」——金額與日期的變化還是要變成建議 */
+test('★ 金額與日期的變化仍然會出建議', () => {
+  const { diffs } = decide(
+    inc({ earnings: 26000, end: '2026-07-08', nights: 7 }),
+    ex(), PROP_A15);
+  assert.ok(diffs.length > 0, '延長日期與加價要看得到建議');
+});
