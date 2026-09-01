@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx-js-style';
 import { createClient } from '@/lib/supabase';
 import { cleanCounts, filterItems, type HkStaff, type HkProperty } from '@/lib/hkParse';
 import { payroll, dailyUnits, fmtUnits } from '@/lib/hk-payroll';
+import { sharePreview, previewText } from '@/lib/hk-crew';
 import { softDelete, restoreTrash } from '@/lib/trash';
 import { EXPORT_TONE } from '@/components/Actions';
 import StatHero from '@/components/StatHero';
@@ -75,7 +76,15 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
   const [msg, setMsg] = useState('');
   const [undo, setUndo] = useState<{ it: Wi; trashId?: string; until: number } | null>(null);
   /** 正在新增房源格的儲存格 */
-  const [adding, setAdding] = useState<{ date: string; staffId: string; code: string; type: string } | null>(null);
+  /*
+   * 正在新增的那一列。
+   *
+   * ★★★ `staffIds` 是**陣列**（2026-09-01 使用者:「不要單間計入」）。
+   *   原本是單選,合掃要按兩次「加入」,而中間手滑改到房源的話
+   *   兩筆就不是同一份工了 —— 各算 1 間,那個房間憑空變成兩間。
+   */
+  const [adding, setAdding] = useState<
+    { date: string; staffIds: string[]; code: string; type: string } | null>(null);
   /** 就地編輯某個房源格 */
   const [editItem, setEditItem] = useState<{ id: string; staffId: string; code: string; type: string } | null>(null);
 
@@ -236,16 +245,37 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
     return `當日已有 ${n} 個房源（${codes.join('、')}）,要先移除才能設休假。`;
   }
 
-  /** 手動新增的工作項。source='manual' —— 下次同步永不刪除它。 */
-  async function addItem(date: string, staffId: string, code: string, type: string) {
-    if (!canAddItem(date, staffId)) return flash('休假日不能新增房源');
-    const row = {
+  /**
+   * 手動新增的工作項。source='manual' —— 下次同步永不刪除它
+   * （route.ts 的 delete 帶了 `.eq('source','timetree')`，2026-09-01 補上的）。
+   *
+   * ============================================================
+   * 【★★★ 一次收好幾個人】（2026-09-01 使用者:「不要單間計入」）
+   *
+   * 合掃是常態，而分攤的分母是「同一天、同一間、同一種工作的全部人」。
+   * 一個一個加的話中間會經過「只有一個人」的狀態 —— 那本身沒問題
+   * （每次加完都會重算），但**操作上很容易加完第一個就跑掉**，
+   * 結果那個人被記成掃了一整間。
+   *
+   * ★ 一次寫進去，就不會有「只加到一半」的中間狀態。
+   *
+   * ★★ 休假的人**個別跳過**，不是整批失敗 ——
+   *   勾了三個人其中一個休假就全部不給加的話，
+   *   使用者得自己回去看是誰，而畫面沒說。
+   */
+  async function addItems(date: string, staffIds: string[], code: string, type: string) {
+    const ok = staffIds.filter((id) => canAddItem(date, id));
+    const skipped = staffIds.length - ok.length;
+    if (ok.length === 0) return flash('這幾位當天都是休假,要先清除休假才能新增房源');
+
+    const rows = ok.map((staff_id) => ({
       period, work_date: date, property_code: code || null,
-      work_type: type, staff_id: staffId, source: 'manual',
-    };
-    const { data, error } = await supabase.from('hk_work_item').insert(row).select('*').single();
+      work_type: type, staff_id, source: 'manual',
+    }));
+    const { data, error } = await supabase.from('hk_work_item').insert(rows).select('*');
     if (error) return flash('新增失敗:' + error.message);
-    setItems((xs) => [...xs, data as Wi]);
+    setItems((xs) => [...xs, ...((data ?? []) as Wi[])]);
+    if (skipped > 0) flash(`已加入 ${ok.length} 筆，另外 ${skipped} 位當天休假已跳過`);
   }
 
   /**
@@ -578,33 +608,114 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                         })}
 
                         {adding?.date === d ? (
-                          <span className="inline-flex items-center gap-1">
-                            <select value={adding.staffId} onChange={(e) => setAdding({ ...adding, staffId: e.target.value })} className={`${inp} w-20`}>
-                              {staff.filter((s) => s.count_mode !== 'none').map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                            </select>
-                            <input list="hk-props" value={adding.code} autoFocus
-                              onChange={(e) => setAdding({ ...adding, code: e.target.value })}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter' && adding.code) {
-                                  addItem(d, adding.staffId, adding.code, adding.type);
-                                  setAdding({ ...adding, code: '' });   // 連續新增:存檔後停在輸入器
-                                }
-                                if (e.key === 'Escape') setAdding(null);
-                              }}
-                              placeholder="房源" className={`${inp} w-24`} />
-                            <select value={adding.type} onChange={(e) => setAdding({ ...adding, type: e.target.value })} className={`${inp} w-24`}>
-                              {WORK_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-                            </select>
-                            <button onClick={() => { if (adding.code) { addItem(d, adding.staffId, adding.code, adding.type); setAdding({ ...adding, code: '' }); } }}
-                              className="text-xs text-mor-blue underline">加入</button>
-                            <button onClick={() => setAdding(null)} className="text-xs text-gray-400 underline">完成</button>
+                          /*
+                            ══════════════════════════════════════════
+                            新增一筆工作項（2026-09-01 改成可複選）
+
+                            ★★★ 「誰做的」是**名字鈕**不是下拉。
+                              合掃是常態,而下拉一次只能選一個 ——
+                              要按兩次「加入」,中間手滑改到房源的話
+                              兩筆就不是同一份工,各算 1 間,房間憑空變兩間。
+
+                            ★ 排成一整塊（不是一行）—— 名字有九個,
+                              擠在同一行會把房源欄壓到看不見。
+                            ══════════════════════════════════════════
+                          */
+                          <span className="inline-flex flex-col gap-1.5 align-top">
+                            <span className="inline-flex items-center gap-1 flex-wrap">
+                              <input list="hk-props" value={adding.code} autoFocus
+                                onChange={(e) => setAdding({ ...adding, code: e.target.value })}
+                                onKeyDown={(e) => {
+                                  /*
+                                    ★ Enter 只在「有房源、也有人」的時候才送出。
+                                      少了人的檢查會寫出一批 staff_id 是空的列,
+                                      而那些列不屬於任何人 —— 誰的統計都看不到它們。
+                                  */
+                                  if (e.key === 'Enter' && adding.code && adding.staffIds.length) {
+                                    addItems(d, adding.staffIds, adding.code, adding.type);
+                                    setAdding({ ...adding, code: '' });   // 連續新增:存檔後停在輸入器
+                                  }
+                                  if (e.key === 'Escape') setAdding(null);
+                                }}
+                                placeholder="房源" className={`${inp} w-24`} />
+                              <select value={adding.type} onChange={(e) => setAdding({ ...adding, type: e.target.value })} className={`${inp} w-24`}>
+                                {WORK_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                              </select>
+                              <button
+                                onClick={() => {
+                                  if (adding.code && adding.staffIds.length) {
+                                    addItems(d, adding.staffIds, adding.code, adding.type);
+                                    setAdding({ ...adding, code: '' });
+                                  }
+                                }}
+                                disabled={!adding.code || !adding.staffIds.length}
+                                className="text-xs text-mor-blue underline disabled:opacity-40 disabled:no-underline">加入</button>
+                              <button onClick={() => setAdding(null)} className="text-xs text-gray-400 underline">完成</button>
+                            </span>
+
+                            {/*
+                              誰做的 —— 可複選。★ 選中用實心，沒選用外框:
+                              只靠顏色深淺的話，縮圖或色弱時分不出哪些被選了。
+                            */}
+                            <span className="inline-flex items-center gap-1 flex-wrap">
+                              <span className="text-[11px] text-gray-400 mr-0.5">誰做的</span>
+                              {staff.filter((x) => x.count_mode !== 'none').map((x) => {
+                                const on = adding.staffIds.includes(x.id);
+                                return (
+                                  <button key={x.id}
+                                    onClick={() => setAdding({
+                                      ...adding,
+                                      staffIds: on
+                                        ? adding.staffIds.filter((i) => i !== x.id)
+                                        : [...adding.staffIds, x.id],
+                                    })}
+                                    aria-pressed={on}
+                                    className={`rounded px-2 py-0.5 text-[11px] border transition-colors ${
+                                      on ? 'bg-mor-slate text-white border-mor-slate'
+                                         : 'border-gray-300 text-gray-600 hover:border-mor-slate'}`}>
+                                    {x.name}{on ? ' ✓' : ''}
+                                  </button>
+                                );
+                              })}
+                            </span>
+
+                            {/*
+                              ══════════════════════════════════════════
+                              ★★★ 按下去會變成怎樣，先講
+
+                                分攤的分母是「這份工的全部人」，不只是剛勾的那幾個。
+                                所以補一個人進既有的工，**原本那個人會從 1 間掉到 0.5 間** ——
+                                那是對的（一間房只有一間），但不先講的話，
+                                畫面上只會看到「我明明是補資料，怎麼反而變少了」。
+
+                              ★ 規則寫在 `lib/hk-crew.ts`（有測試），這裡只負責顯示。
+                              ══════════════════════════════════════════
+                            */}
+                            {(() => {
+                              if (!adding.staffIds.length) return null;
+                              const t = previewText(
+                                sharePreview(items, d, adding.code, adding.type, adding.staffIds),
+                                (id) => staff.find((x) => x.id === id)?.name ?? id,
+                              );
+                              if (!t) return null;
+                              return (
+                                <span className="inline-flex flex-col gap-0.5 rounded bg-mor-green/10 px-2 py-1">
+                                  <span className="text-[11px] text-mor-green">{t.line}</span>
+                                  {t.warn && (
+                                    <span className="text-[11px] text-amber-700">⚠ {t.warn}</span>
+                                  )}
+                                </span>
+                              );
+                            })()}
                           </span>
                         ) : (
                           <button
                             onClick={() => {
                               const s = staff.find((x) => x.count_mode === 'rooms' && canAddItem(d, x.id));
                               if (!s) return flash('當日所有人員都是休假狀態,要先清除休假才能新增房源');
-                              setAdding({ date: d, staffId: s.id, code: '', type: '退房清潔' });
+                              /* ★ 預設勾一個人 —— 九成的情況是一個人掃一間，
+                                   一個都不勾的話每次都要先按一下 */
+                              setAdding({ date: d, staffIds: [s.id], code: '', type: '退房清潔' });
                             }}
                             className="w-5 h-5 rounded border border-dashed border-gray-300 text-gray-400 text-xs leading-none hover:border-mor-blue hover:text-mor-blue"
                             title="新增房源">+</button>
