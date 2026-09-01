@@ -1487,7 +1487,13 @@ export default function DepositsPage() {
       </>)}
       <Tabs variant="browser" tone="page" className="mb-3" value={kindF} onChange={setKindF}
         items={([
-          { k: 'all' as const,     label: '全部' },
+          /*
+            ★ 「全部暫收」而不是「全部」（2026-09-01 使用者指定）。
+              多了暫付這個分頁之後，「全部」會被讀成「四個分頁的全部」——
+              而它其實**不含暫付**（收進來與付出去的錢加總沒有意義）。
+              名字寫清楚範圍，比在旁邊補一句說明有效。
+          */
+          { k: 'all' as const,     label: '全部暫收' },
           { k: 'earnest' as const, label: '訂金' },
           { k: 'deposit' as const, label: '押金' },
           /*
