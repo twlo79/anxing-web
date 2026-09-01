@@ -108,7 +108,23 @@ export default function ImportPanel({
        * 硬刪除不進回收桶 —— 這是「整期重匯前先清空」，一次幾百格；
        * 進回收桶的話，真正誤刪的那一格會被埋在幾百筆機制紀錄裡面。
        */
-      await supabase.from('hk_work_item').delete().eq('period', per);
+      /*
+       * ★★★ 手動加的工作項不能刪（2026-09-01 補上，跟 route.ts 同一個洞）
+       *
+       *   `migration_59` 的 comment:「manual = 手動新增，**同步永不刪除**」。
+       *   API 那一支（`/api/import/housekeeping`）已經修好了，
+       *   **這一支漏掉了** —— 而它是房務頁上那顆「匯入」按鈕走的路。
+       *
+       * ★★ 兩條路做同一件事、只修其中一條的話，症狀會變成
+       *   「用腳本同步沒事，但在畫面上按匯入就會不見幾筆」——
+       *   那比兩條都壞更難查，因為它時好時壞。
+       *
+       * ★ `timetree_edited`（同步來的、但人改過的）也要留 ——
+       *   刪掉的話下次匯入會用原始值蓋回去，等於把人的修正丟掉。
+       *   而 `hk_event` 的 cascade 已經由 migration_188 改成 SET NULL。
+       */
+      await supabase.from('hk_work_item')
+        .delete().eq('period', per).eq('source', 'timetree');
       await supabase.from('hk_event').delete().eq('period', per);
 
       const byName = staffLookup(staff);
