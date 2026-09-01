@@ -56,11 +56,45 @@ type Account = {
    *   但前端也要有預設,不然 migration 還沒跑就整頁壞掉。
    */
   kind?: 'bank' | 'cash' | null;
+  /**
+   * 資料是人手 key 的（migration_192）。
+   *
+   * ★★★ 跟 `kind` 是**兩件事**（2026-09-01 使用者:「08311 像現金一樣手動建入」）:
+   *
+   *     kind          這是什麼帳戶   → 決定**顯示**（交易帳號欄放帳號還是人名）
+   *     manual_entry  資料怎麼進來的 → 決定**行為**（新增／改／刪、上傳鈕、餘額怎麼算）
+   *
+   *   現金   kind=cash  manual=true   人名 ／ 手動
+   *   08311 kind=bank  manual=true   對方帳號 ／ 手動
+   *   其餘三個 kind=bank  manual=false  對方帳號 ／ 上傳對帳單
+   *
+   * ★ 08311 是**真的銀行帳戶**，只是沒有對帳單可下載。
+   *   把它的 kind 改成 cash 一行就好，但那樣「交易帳號」欄會變成填人名 ——
+   *   而它的匯款對方是有帳號的。
+   */
+  manual_entry?: boolean | null;
   /** 現金帳戶的期初餘額。留空當 0（使用者 2026-08-31 選的）。 */
   opening_balance?: number | null;
 };
-/** 這一列是不是現金帳戶。★ 只寫一次，全頁共用 —— 判斷分散在十處就一定會漏掉一處。 */
+/**
+ * 這一列是不是現金帳戶。**只影響顯示** ——
+ * 現金沒有對方帳號，所以「交易帳號」欄放的是人名（`counterparty`）。
+ *
+ * ★ 要判斷「能不能手動新增／改／刪」請用 `isManual`，不是這個。
+ */
 const isCash = (a?: Account | null) => a?.kind === 'cash';
+
+/**
+ * 這個帳戶的資料是不是人手 key 的。**這才是決定行為的那一個。**
+ *
+ * ★★★ 現金與 08311 都是 true，但它們的 `kind` 不同（cash ／ bank）。
+ *   用 `isCash` 判斷行為的話，08311 會少掉新增鈕、多出上傳鈕 ——
+ *   而它根本沒有對帳單可傳。
+ *
+ * ★ `manual_entry` 沒值時看 `kind === 'cash'` —— migration_192 還沒跑時
+ *   現金帳戶的行為不會壞掉。跑完之後 DB 裡就有值了，這個 fallback 只是保險。
+ */
+const isManual = (a?: Account | null) => a?.manual_entry === true || a?.kind === 'cash';
 
 /**
  * 重算餘額時只需要這幾欄。
@@ -289,7 +323,7 @@ export default function AccountsPage() {
    */
   async function saveCash() {
     if (!cashForm || !cur) return;
-    const bad = validateCash(cashForm);
+    const bad = validateCash(cashForm, isCash(cur));
     if (bad) { setCashErr(bad); return; }
     setCashErr(''); setCashBusy(true);
 
@@ -302,7 +336,7 @@ export default function AccountsPage() {
      *   給新號碼的話改個錯字就會讓那一筆跳到最後面。
      */
     const seq = cashForm.id ? undefined : nextSeq(txns);
-    const row = draftToRow(cashForm, cur.id, seq);
+    const row = draftToRow(cashForm, cur.id, seq, isCash(cur));
     let savedId = cashForm.id;
 
     if (cashForm.id) {
@@ -413,7 +447,12 @@ export default function AccountsPage() {
     setCashForm({
       id: t.id,
       post_date: t.post_date.slice(0, 10),
-      counterparty: t.counterparty ?? '',
+      /*
+        ★ 讀回來要跟存進去對稱 —— 現金存 counterparty、銀行存 ref_no。
+          一律讀 counterparty 的話，08311 的那一格會是空的，
+          而使用者按「改」之後不小心存檔，帳號就被清掉了。
+      */
+      counterparty: (isCash(cur) ? t.counterparty : t.ref_no) ?? '',
       dir: Number(t.debit) > 0 ? 'debit' : 'credit',
       amount: String(Number(t.debit) > 0 ? t.debit : t.credit),
       memo: t.memo ?? '',
@@ -423,7 +462,7 @@ export default function AccountsPage() {
   const loadAccounts = useCallback(async () => {
     const { data, error } = await supabase
       .from('bank_accounts')
-      .select('id, name, bank, account_no, account_no_tail, sort, kind, opening_balance')
+      .select('id, name, bank, account_no, account_no_tail, sort, kind, manual_entry, opening_balance')
       .eq('active', true)
       .order('sort');
     if (error) {
@@ -474,7 +513,7 @@ export default function AccountsPage() {
           .limit(1);
         const row = t?.[0] as { post_date: string; balance: number } | undefined;
         lt[a.id] = row?.post_date;
-        if (isCash(a)) cb[a.id] = row ? Number(row.balance) : Number(a.opening_balance) || 0;
+        if (isManual(a)) cb[a.id] = row ? Number(row.balance) : Number(a.opening_balance) || 0;
       }),
     );
     setLastTxn(lt);
@@ -517,7 +556,7 @@ export default function AccountsPage() {
        *   流水看不到才是大事。所以這裡不 setErr。
        */
       const acct = accountsRef.current.find((a) => a.id === accountId);
-      if (!isCash(acct)) { setAttCount({}); return; }
+      if (!isManual(acct)) { setAttCount({}); return; }
 
       const ids = rows.map((r) => r.id);
       if (ids.length === 0) { setAttCount({}); return; }
@@ -567,9 +606,13 @@ export default function AccountsPage() {
       totalBalance(
         accounts.map((a) => ({
           name: a.name,
-          balance: isCash(a) ? cashBal[a.id] ?? null : latest[a.id]?.closing_balance ?? null,
-          asOf: isCash(a) ? null : latest[a.id]?.period_to ?? null,
-          dated: !isCash(a),
+          /*
+            ★ 用 isManual 不是 isCash —— 08311 也沒有對帳單，
+              它的餘額同樣要從最後一筆流水來，而且不該進日期區間。
+          */
+          balance: isManual(a) ? cashBal[a.id] ?? null : latest[a.id]?.closing_balance ?? null,
+          asOf: isManual(a) ? null : latest[a.id]?.period_to ?? null,
+          dated: !isManual(a),
         })),
       ),
     [accounts, latest, cashBal],
@@ -761,7 +804,7 @@ export default function AccountsPage() {
               · 有資料 → 看有沒有流水,不是看有沒有對帳單
               · 附註   → 「還沒上傳對帳單」對現金是永遠成立的廢話
           */
-          const cash = isCash(a);
+          const cash = isManual(a);
           const has = cash ? cashBal[a.id] != null : !!st;
           return (
             <StatCard key={a.id}
@@ -940,7 +983,7 @@ export default function AccountsPage() {
             ★ 兩顆鈕**位置與樣式一樣**,只有字不同。
               放在不同的地方的話,換分頁時眼睛要重新找。
           */}
-          {isCash(cur) ? (
+          {isManual(cur) ? (
             <button
               onClick={() => { setCashErr(''); setCashForm(blankCash()); }}
               disabled={!!cashForm}
@@ -969,7 +1012,7 @@ export default function AccountsPage() {
           ★ 編輯既有的那一筆時同一個表單,只是標題與按鈕的字不一樣。
             兩套 UI 做同一件事,行為一定會漂。
         */}
-        {isCash(cur) && cashForm && (
+        {isManual(cur) && cashForm && (
           <div className="border-b border-mor-line bg-mor-bluelight/50 px-4 py-3">
             <div className="mb-2 flex items-center justify-between gap-2">
               <span className="text-uisub font-medium text-mor-slate">
@@ -990,11 +1033,20 @@ export default function AccountsPage() {
                   唯讀但**顯示出來**:留白的話看的人不知道這欄會被填什麼。
               */}
               <label className="flex flex-col gap-1 text-xs text-gray-600">交易型態
-                <input value="現金" readOnly tabIndex={-1}
+                <input value={isCash(cur) ? '現金' : '手動'} readOnly tabIndex={-1}
                   className="h-9 rounded border border-gray-200 bg-gray-50 px-2 text-sm text-gray-500" />
               </label>
-              <label className="flex flex-col gap-1 text-xs text-gray-600">交易帳號（人名）
-                <input value={cashForm.counterparty} placeholder="陳小胖"
+              {/*
+                ★★ 同一個輸入框，兩種意思（migration_192）:
+                  現金 → 填人名，存 counterparty
+                  08311 → 填帳號，存 ref_no（它是真的銀行帳戶，對方有帳號）
+                標籤與 placeholder 都要跟著換 —— 只換存法不換標籤的話，
+                在 08311 上看到「（人名）」的人會填人名進去。
+              */}
+              <label className="flex flex-col gap-1 text-xs text-gray-600">
+                {isCash(cur) ? '交易帳號（人名）' : '交易帳號'}
+                <input value={cashForm.counterparty}
+                  placeholder={isCash(cur) ? '陳小胖' : '013-0000012345678'}
                   onChange={(e) => setCashForm((o) => o && { ...o, counterparty: e.target.value })}
                   className="h-9 rounded border border-gray-300 px-2 text-sm" />
               </label>
@@ -1147,7 +1199,7 @@ export default function AccountsPage() {
                       螢幕小、鍵盤擋住一半的表單,而現金多半就是在外面用手機記的。
                     ★ 面積比桌機大（`py-1 px-1.5`）—— 手指按不準純文字連結。
                   */}
-                  {isCash(cur) && (
+                  {isManual(cur) && (
                     <div className="mt-1 flex justify-end gap-1">
                       {/*
                         ★★ 手機上收據照片**比桌機更重要** ——
@@ -1170,7 +1222,7 @@ export default function AccountsPage() {
                 </div>
               </div>
               {/* 展開的收據區。★ 在卡片**內**，不是另一張卡 —— 它屬於這一筆 */}
-              {isCash(cur) && attOpen === t.id && (
+              {isManual(cur) && attOpen === t.id && (
                 <div className="mt-2 border-t border-mor-line pt-2">
                   <Receipts kind="cash" parentId={t.id} label="收據照片"
                     onImages={() => { if (cur) void loadTxns(cur.id); }} />
@@ -1216,9 +1268,9 @@ export default function AccountsPage() {
                   要修正只能重新上傳（migration_166 的觸發器也擋著）。
                 ★ `w-[5rem]` 放得下「改 刪」兩個連結,不會把前面七欄擠窄。
               */}
-              {isCash(cur) && <col className="w-[5rem]" />}
+              {isManual(cur) && <col className="w-[5rem]" />}
               {/* 收據照片（migration_185）。★ 只放一個回形針與數字，3rem 夠 */}
-              {isCash(cur) && <col className="w-[3rem]" />}
+              {isManual(cur) && <col className="w-[3rem]" />}
             </colgroup>
             {/* ★ 全站標準表頭寫法（14 處都是這個）—— 原本這頁用 bg-mor-sand/40
                   ＋ text-gray-600,是唯一的例外 */}
@@ -1259,11 +1311,11 @@ export default function AccountsPage() {
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={isCash(cur) ? 9 : 7} className="px-3 py-8 text-center text-gray-400">載入中⋯</td></tr>
+                <tr><td colSpan={isManual(cur) ? 9 : 7} className="px-3 py-8 text-center text-gray-400">載入中⋯</td></tr>
               )}
               {!loading && shown.length === 0 && (
                 <tr>
-                  <td colSpan={isCash(cur) ? 9 : 7} className="px-3 py-8 text-center text-gray-400">
+                  <td colSpan={isManual(cur) ? 9 : 7} className="px-3 py-8 text-center text-gray-400">
                     {txns.length === 0
                       ? '這個帳戶還沒有流水 —— 上傳一份對帳單試試'
                       : `沒有符合的資料（全部 ${txns.length} 筆）`}
@@ -1450,7 +1502,7 @@ export default function AccountsPage() {
                       使用者會以為是權限不足而去找人開權限 ——
                       而那是永遠開不出來的（資料是對帳單的鏡像,本來就不該改）。
                   */}
-                  {isCash(cur) && (
+                  {isManual(cur) && (
                     <td className="whitespace-nowrap px-3 py-1.5 text-right">
                       <button onClick={() => editCash(t)} disabled={cashBusy}
                         className="text-xs text-mor-slate underline disabled:opacity-40">改</button>
@@ -1469,7 +1521,7 @@ export default function AccountsPage() {
                       ★★ 一次只展開一列。全部展開的話兩百列的表格會變成
                         幾千像素高,而使用者要的只是「看這一筆的收據」。
                   */}
-                  {isCash(cur) && (
+                  {isManual(cur) && (
                     <td className="px-2 py-1.5 text-center">
                       <button
                         onClick={() => setAttOpen((v) => (v === t.id ? null : t.id))}
@@ -1487,7 +1539,7 @@ export default function AccountsPage() {
                   塞進去的話那一格會把整列撐高,而旁邊六格是空的。
                   ★ `key` 要跟主列不同,不然 React 會把兩者當成同一個。
                 */
-                isCash(cur) && attOpen === t.id ? (
+                isManual(cur) && attOpen === t.id ? (
                   <tr key={`att-${t.id}`} className="bg-mor-sand/30">
                     <td colSpan={9} className="px-4 py-3">
                       <Receipts kind="cash" parentId={t.id} label="收據照片"

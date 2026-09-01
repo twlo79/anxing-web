@@ -105,7 +105,17 @@ export function changedBalances<T extends CashRow & { id?: string }>(
 /** 新增／編輯表單的內容。 */
 export type CashDraft = {
   post_date: string;
-  /** 交易帳號欄填的是**人名**（使用者 2026-08-31 指定）。 */
+  /**
+   * 「交易帳號」欄填的東西。**存到哪一欄看帳戶類型**（migration_192）:
+   *
+   *     現金（kind=cash）  填**人名**    → 存 `counterparty`
+   *     08311（kind=bank） 填**帳號**    → 存 `ref_no`
+   *
+   * ★★ 現金沒有對方帳號，所以那一欄借來放人名（2026-08-31 使用者指定）。
+   *   08311 是真的銀行帳戶，匯款進來的對方是有帳號的
+   *   —— 把帳號存進 `counterparty` 的話，那一欄在報表上的意思就變了
+   *   （其他三個帳戶的 `counterparty` 存的是銀行名稱）。
+   */
   counterparty: string;
   /** 存入或支出。 */
   dir: 'credit' | 'debit';
@@ -123,11 +133,15 @@ export type CashDraft = {
  * ★★ 「對不上的不猜」（CLAUDE.md）:金額打成 `1,000` 或 `１０００`
  *   這種看得出意圖的，這裡**不自動修**。修錯一個沒有人會發現。
  */
-export function validateCash(d: CashDraft): string | null {
+export function validateCash(d: CashDraft, asCash = true): string | null {
   if (!d.post_date) return '要填交易日';
 
+  /*
+   * ★ 訊息要講**這個帳戶**該填什麼。
+   *   一律寫「人名」的話，在 08311 上填帳號的人會以為自己填錯了。
+   */
   const name = d.counterparty.trim();
-  if (!name) return '要填交易帳號（人名）';
+  if (!name) return asCash ? '要填交易帳號（人名）' : '要填交易帳號';
 
   /*
    * ★ 金額用 `Number()` 而不是 `parseFloat()`。
@@ -187,10 +201,15 @@ export function nextSeq(rows: Pick<CashRow, 'seq'>[]): number {
 /**
  * 把通過檢查的表單變成要寫進資料庫的那一列（餘額還沒算，由 `recalcBalances` 補）。
  *
- * @param seq 這一列的排序號。**新增時一定要給** —— 見 `nextSeq` 的說明。
- *            編輯既有的列時傳原本的值，不然那一列會跳到最後面。
+ * @param seq    這一列的排序號。**新增時一定要給** —— 見 `nextSeq` 的說明。
+ *               編輯既有的列時傳原本的值，不然那一列會跳到最後面。
+ * @param asCash 是不是現金帳戶（`kind === 'cash'`）。
+ *               決定「交易帳號」欄存到 `counterparty` 還是 `ref_no`，
+ *               以及交易型態寫「現金」還是「手動」。
  */
-export function draftToRow(d: CashDraft, accountId: string, seq?: number) {
+export function draftToRow(
+  d: CashDraft, accountId: string, seq?: number, asCash = true,
+) {
   const amt = Number(d.amount.trim());
   return {
     account_id: accountId,
@@ -202,21 +221,26 @@ export function draftToRow(d: CashDraft, accountId: string, seq?: number) {
      */
     ...(seq === undefined ? {} : { seq }),
     /*
-     * ★★ 交易型態固定寫「現金」（使用者 2026-08-31 指定）。
-     *   讓人自由填的話會出現「現金」「現金交易」「CASH」三種寫法，
-     *   而依交易型態篩選或分組時它們是三個不同的東西。
+     * ★★ 交易型態**不讓人自由填**（使用者 2026-08-31 指定）——
+     *   自由填的話會出現「現金」「現金交易」「CASH」三種寫法，
+     *   而依型態分組時它們是三個不同的東西。
+     *
+     * ★ 現金帳戶固定寫「現金」，
+     *   手動記帳的**銀行**帳戶（08311）寫「手動」——
+     *   兩個都寫「現金」的話，之後依型態分組會把銀行的那幾筆算進現金。
      */
-    description: '現金',
-    counterparty: d.counterparty.trim(),
+    description: asCash ? '現金' : '手動',
+    /*
+     * ★★★ 同一個輸入框，兩個欄位（見 CashDraft.counterparty 的說明）。
+     *   現金 → counterparty（人名）；銀行 → ref_no（對方帳號）。
+     *   沒用到的那一欄寫 null，不是空字串 ——
+     *   空字串在畫面上跟 null 長得一樣，但 `is null` 的查詢會分岔。
+     */
+    counterparty: asCash ? (d.counterparty.trim() || null) : null,
     debit: d.dir === 'debit' ? amt : 0,
     credit: d.dir === 'credit' ? amt : 0,
     memo: d.memo.trim() || null,
-    /*
-     * ★ `ref_no`（交易帳號欄顯示的東西）留空 —— 現金沒有帳號。
-     *   畫面上那一欄顯示的是 `counterparty`（人名），
-     *   跟銀行帳戶那一欄顯示 `ref_no` 是不同的來源。
-     */
-    ref_no: null,
+    ref_no: asCash ? null : (d.counterparty.trim() || null),
     statement_id: null,
     bank_balance: null,
   };

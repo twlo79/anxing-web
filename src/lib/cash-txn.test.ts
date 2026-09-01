@@ -298,3 +298,70 @@ describe('★★ 有了 seq 之後，同一天的順序才固定', () => {
     assert.deepEqual(asc.map((r) => [r.id, r.balance]), rev.map((r) => [r.id, r.balance]));
   });
 });
+
+
+// ══════════════════════════════════════════════════════════════
+// ★★★ 手動記帳的**銀行**帳戶（08311，migration_192）
+//
+//   使用者:「08311 像現金一樣 手動建入」「交易帳號 填號碼」
+//
+//   行為跟現金一樣（手動新增／改／刪、餘額累加），
+//   但**顯示與存法不一樣** —— 它是真的銀行帳戶，對方有帳號。
+// ══════════════════════════════════════════════════════════════
+describe('★★★ asCash = false（08311 這種手動記帳的銀行帳戶）', () => {
+  const d: CashDraft = {
+    post_date: '2026-09-01', counterparty: ' 013-0000012345678 ',
+    dir: 'credit', amount: '50000', memo: '9月租金',
+  };
+
+  test('交易帳號存進 ref_no，不是 counterparty', () => {
+    const r = draftToRow(d, 'acc-8311', 1, false);
+    assert.equal(r.ref_no, '013-0000012345678');
+    assert.equal(r.counterparty, null);
+  });
+
+  test('★ 現金相反：存 counterparty，ref_no 是 null', () => {
+    const r = draftToRow({ ...d, counterparty: '陳小胖' }, 'acc-cash', 1, true);
+    assert.equal(r.counterparty, '陳小胖');
+    assert.equal(r.ref_no, null);
+  });
+
+  test('★★ 沒用到的那一欄是 null 不是空字串', () => {
+    // 空字串在畫面上跟 null 長得一樣，但 `is null` 的查詢會分岔
+    assert.equal(draftToRow(d, 'a', 1, false).counterparty, null);
+    assert.equal(draftToRow(d, 'a', 1, true).ref_no, null);
+  });
+
+  test('★ 交易型態分得開：現金寫「現金」、手動銀行寫「手動」', () => {
+    // 兩個都寫「現金」的話，依型態分組會把銀行那幾筆算進現金
+    assert.equal(draftToRow(d, 'a', 1, true).description, '現金');
+    assert.equal(draftToRow(d, 'a', 1, false).description, '手動');
+  });
+
+  test('預設是現金（不給第四個參數時行為不變）', () => {
+    assert.equal(draftToRow(d, 'a', 1).description, '現金');
+    assert.equal(draftToRow(d, 'a', 1).ref_no, null);
+  });
+
+  test('★ 錯誤訊息跟著帳戶類型換', () => {
+    const empty = { ...d, counterparty: '' };
+    assert.match(validateCash(empty, true)!, /人名/);
+    assert.match(validateCash(empty, false)!, /交易帳號/);
+    assert.doesNotMatch(validateCash(empty, false)!, /人名/);
+  });
+
+  test('其餘檢查兩種都一樣（金額、日期）', () => {
+    for (const asCash of [true, false]) {
+      assert.match(validateCash({ ...d, amount: '100元' }, asCash)!, /只能填數字/);
+      assert.match(validateCash({ ...d, post_date: '' }, asCash)!, /交易日/);
+    }
+  });
+
+  test('★★ 餘額累加兩種完全一樣 —— 只有顯示不同', () => {
+    const rows: CashRow[] = [
+      { id: 'a', post_date: '2026-09-01', seq: 1, credit: 50000, debit: 0 },
+      { id: 'b', post_date: '2026-09-02', seq: 2, credit: 0, debit: 1200 },
+    ];
+    assert.deepEqual(recalcBalances(rows, 0).map((r) => r.balance), [50000, 48800]);
+  });
+});
