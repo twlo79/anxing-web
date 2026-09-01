@@ -3,7 +3,27 @@
  * 暫付分頁 —— 公司付出去、之後要收回來的押金與保證金（migration_196）。
  *
  * ============================================================
- * 【為什麼是獨立的元件而不是塞進 deposits/page.tsx】
+ * 【★★★ 為什麼拆成 hook ＋ 兩個元件】（2026-09-01 使用者:「tab 位置被移動」）
+ *
+ * 這一頁的版面順序是**固定的**:
+ *
+ *     總計 ＋ 統計卡  →  分頁籤  →  篩選 ＋ 清單
+ *
+ * 分頁籤夾在中間。所以暫付的卡片必須放在分頁籤**之前**、清單放在**之後** ——
+ * 一個元件包全部的話，它只能整塊放在分頁籤下面，
+ * 於是切到暫付時分頁籤會從畫面中間跳到最上面。
+ *
+ * ★ 第一版就是那樣做的，而使用者一眼就看到了。**版面順序不是實作細節**:
+ *   使用者在頁面上找東西靠的是位置記憶，換一個分頁就換一個位置
+ *   等於每次都要重新找。
+ *
+ * ★★ 拆開之後兩邊要共用同一份資料 —— 所以資料抓取提成 `useAdvance()`，
+ *   由 page 呼叫一次，把結果分別傳給兩個元件。
+ *   兩個元件各自抓一次的話，數字會有一瞬間對不上，
+ *   而且新增一筆之後只有其中一邊會更新。
+ *
+ * ============================================================
+ * 【為什麼不塞進 deposits/page.tsx】
  *
  * 那一頁已經 2,300 行，而暫付跟暫收**只有版面像**:
  *
@@ -12,10 +32,6 @@
  *
  * 混在同一個元件裡的話，每一個判斷式都要先問「這是哪一種」——
  * 而那正是 CLAUDE.md 說的「以後每次都要多想一次」。
- *
- * ★ 分頁籤留在 page.tsx（它要算全部四種的筆數），
- *   切到暫付之後**整個內容區**換成這一支:卡片、篩選、表格都是自己的。
- *   使用者 2026-09-01:「點暫付 後卡片換成 暫付的狀態」。
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
@@ -56,13 +72,19 @@ const blank = (): Advance => ({
   paid_on: '', refunded_on: null, refunded_amount: null, note: '',
 });
 
-export default function AdvanceTab({
-  estates, onCount,
-}: {
-  estates: { id: string; name: string }[];
-  /** 把筆數回報給頁面，讓分頁籤上的數字對得起來。 */
-  onCount?: (n: number) => void;
-}) {
+/* ══════════════════════════════════════════════════════════
+ * 資料 —— 卡片與清單共用同一份
+ * ══════════════════════════════════════════════════════════ */
+
+export type AdvanceState = ReturnType<typeof useAdvance>;
+
+/**
+ * @param enabled 只有在暫付分頁時才去查。
+ *
+ * ★ 不加這個旗標的話，每次打開暫收付管理都會多一次查詢 ——
+ *   而使用者九成的時間待在暫收那三頁。
+ */
+export function useAdvance(enabled: boolean) {
   const supabase = useMemo(() => createClient(), []);
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
@@ -71,19 +93,15 @@ export default function AdvanceTab({
   const [estateF, setEstateF] = useState('');
   const [edit, setEdit] = useState<Advance | null>(null);
 
-  const estateName = useMemo(
-    () => Object.fromEntries(estates.map((e) => [e.id, e.name])), [estates]);
-
   const load = useCallback(async () => {
+    if (!enabled) return;
     setLoading(true);
     const { data, error } = await supabase.from('advance_payments')
       .select('*').order('paid_on', { ascending: false, nullsFirst: true });
     if (error) setMsg('讀取失敗：' + error.message);
-    const list = (data ?? []) as Row[];
-    setRows(list);
-    onCount?.(list.length);
+    setRows((data ?? []) as Row[]);
     setLoading(false);
-  }, [supabase, onCount]);
+  }, [supabase, enabled]);
   useEffect(() => { load(); }, [load]);
 
   const shown = useMemo(() => rows.filter((r) => {
@@ -99,6 +117,73 @@ export default function AdvanceTab({
    *   跟暫收那邊同一條規則（那裡的註解寫著「筆數算在 base 上」）。
    */
   const st = useMemo(() => statsOf(rows), [rows]);
+
+  return {
+    supabase, rows, shown, st, loading, msg, setMsg,
+    statusF, setStatusF, estateF, setEstateF, edit, setEdit, load,
+  };
+}
+
+/* ══════════════════════════════════════════════════════════
+ * 上半：總計 ＋ 統計卡（放在分頁籤**之前**）
+ * ══════════════════════════════════════════════════════════ */
+
+export function AdvanceStats({ a }: { a: AdvanceState }) {
+  const { st, statusF, setStatusF } = a;
+  return (
+    <div>
+      {/*
+        ★ 總計回答的是「我們現在有多少錢在別人那裡」——
+          跟暫收那句「錢在我們手上」正好相反，所以標籤要講清楚方向。
+          只寫「暫付總計」會被讀成「所有暫付加起來」，而它不含已收回的。
+      */}
+      <StatTotal
+        label="暫付款總計"
+        value={`NT$ ${fmt(st.paid.amt)}`}
+        sub={`${st.paid.n} 筆・錢在別人手上`} />
+
+      <StatGroup label="暫付" tone="slate" />
+      <StatRow className="mb-4">
+        {([
+          { k: 'paid'      as const, title: '已付款', s: st.paid,      sub: '還沒收回' },
+          { k: 'refunded'  as const, title: '已退款', s: st.refunded,  sub: '實際收回' },
+          { k: 'forfeited' as const, title: '被扣',   s: st.forfeited, sub: '已轉支出' },
+        ]).map((t) => (
+          <StatCard key={t.k}
+            label={t.title}
+            value={`NT$ ${fmt(t.s.amt)}`}
+            sub={`${t.s.n} 筆・${t.sub}`}
+            muted={t.s.n === 0}
+            /*
+             * ★ 「被扣」點下去篩「部分退」—— 那兩者是同一群列。
+             *   分開命名是因為卡片問的是「損失多少」，
+             *   而狀態問的是「這一列走到哪了」。
+             */
+            active={statusF === (t.k === 'forfeited' ? 'partial' : t.k)}
+            onClick={() => setStatusF(t.k === 'forfeited' ? 'partial' : t.k)} />
+        ))}
+      </StatRow>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════
+ * 下半：篩選 ＋ 清單 ＋ 新增／編輯（放在分頁籤**之後**）
+ * ══════════════════════════════════════════════════════════ */
+
+export function AdvanceList({
+  a, estates,
+}: {
+  a: AdvanceState;
+  estates: { id: string; name: string }[];
+}) {
+  const {
+    supabase, rows, shown, loading, msg, setMsg,
+    statusF, setStatusF, estateF, setEstateF, edit, setEdit, load,
+  } = a;
+
+  const estateName = useMemo(
+    () => Object.fromEntries(estates.map((e) => [e.id, e.name])), [estates]);
 
   async function saveInner() {
     if (!edit) return;
@@ -158,38 +243,6 @@ export default function AdvanceTab({
           <button onClick={() => setMsg(null)} className="text-xs text-gray-400 underline">關閉</button>
         </div>
       )}
-
-      {/*
-        ★ 總計回答的是「我們現在有多少錢在別人那裡」——
-          跟暫收那句「錢在我們手上」正好相反，所以標籤要講清楚方向。
-          只寫「暫付總計」會被讀成「所有暫付加起來」，而它不含已收回的。
-      */}
-      <StatTotal
-        label="暫付款總計"
-        value={`NT$ ${fmt(st.paid.amt)}`}
-        sub={`${st.paid.n} 筆・錢在別人手上`} />
-
-      <StatGroup label="暫付" tone="slate" />
-      <StatRow className="mb-4">
-        {([
-          { k: 'paid'      as const, title: '已付款', s: st.paid,      sub: '還沒收回' },
-          { k: 'refunded'  as const, title: '已退款', s: st.refunded,  sub: '實際收回' },
-          { k: 'forfeited' as const, title: '被扣',   s: st.forfeited, sub: '已轉支出' },
-        ]).map((t) => (
-          <StatCard key={t.k}
-            label={t.title}
-            value={`NT$ ${fmt(t.s.amt)}`}
-            sub={`${t.s.n} 筆・${t.sub}`}
-            muted={t.s.n === 0}
-            /*
-             * ★ 「被扣」點下去篩「部分退」—— 那兩者是同一群列。
-             *   分開命名是因為卡片問的是「損失多少」，
-             *   而狀態問的是「這一列走到哪了」。
-             */
-            active={statusF === (t.k === 'forfeited' ? 'partial' : t.k)}
-            onClick={() => setStatusF(t.k === 'forfeited' ? 'partial' : t.k)} />
-        ))}
-      </StatRow>
 
       <div className="filter-bar rounded-xl glass p-4 mb-4 flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">物業</span>

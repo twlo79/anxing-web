@@ -13,7 +13,7 @@ import { titleCaseName } from '@/lib/name-format';
 import { manualDepositError } from '@/lib/manual-deposit';
 import { totalBuckets } from '@/lib/deposit-summary';
 import StatCard, { StatRow, StatTotal, StatGroup } from '@/components/StatCard';
-import AdvanceTab from './advance-tab';
+import { useAdvance, AdvanceStats, AdvanceList } from './advance-tab';
 import { exitBlockedReason, forfeitOrder, earnestStatus, convertPlan, type EarnestDep } from '@/lib/earnest';
 import { useProfile } from '@/lib/profile';
 import { fetchAll } from '@/lib/fetch-all';
@@ -187,8 +187,15 @@ export default function DepositsPage() {
    *   混在一起的話，切到暫付會拿暫收的資料去比對，而結果是空清單，不是錯誤。
    */
   const [kindF, setKindF] = useState<'all' | 'deposit' | 'earnest' | 'advance'>('all');
-  /** 暫付的筆數。由 AdvanceTab 回報 —— 分頁籤上的數字要對得起來。 */
-  const [advN, setAdvN] = useState(0);
+  /*
+   * 暫付的資料。★ 卡片與清單**共用同一份** ——
+   *   兩邊各抓一次的話數字會有一瞬間對不上，
+   *   而且新增一筆之後只有其中一邊會更新。
+   *
+   * ★★ 只有在暫付分頁時才真的去查（`enabled`）——
+   *   使用者九成的時間待在暫收那三頁，不該每次進來都多一次查詢。
+   */
+  const adv = useAdvance(kindF === 'advance');
   /*
    * 目前這個頁籤在講哪一種錢。**只用在句子裡**，表頭不用。
    *
@@ -1324,10 +1331,15 @@ export default function DepositsPage() {
             對不出來的人只會覺得自己算錯。
       */}
       {/*
-        ★★★ 暫收的統計卡。切到暫付分頁時整組收起來 ——
-          暫收問「錢在我們手上多少」，暫付問「錢在別人那裡多少」，
-          兩組並排會讓人以為是同一筆錢的兩個階段。
+        ★★★ 統計卡區。**分頁籤在它下面**（這一頁的版面順序是
+          「總計＋卡片 → 分頁籤 → 篩選＋清單」）。
+
+          ★ 暫付的卡片一定要放在這裡，不能跟清單綁在一起放到分頁籤下面 ——
+            那樣切到暫付時分頁籤會從畫面中間跳到最上面
+            （2026-09-01 使用者:「tab 位置被移動」）。
+            使用者靠位置記憶找東西，換一個分頁就換一個位置等於每次重新找。
       */}
+      {kindF === 'advance' && <AdvanceStats a={adv} />}
       {kindF !== 'advance' && (<>
       <StatTotal
         label="暫收款總計"
@@ -1487,7 +1499,7 @@ export default function DepositsPage() {
           key: t.k,
           label: t.label,
           badge: t.k === 'all' ? base.length
-            : t.k === 'advance' ? advN
+            : t.k === 'advance' ? adv.rows.length
             : base.filter((r) => (r.kind ?? 'deposit') === t.k).length,
         }))} />
 
@@ -1497,9 +1509,9 @@ export default function DepositsPage() {
           兩組並排的話要多一條分隔線與一套配色去區分，
           而使用者 2026-09-01 選的是換掉:「點暫付 後卡片換成 暫付的狀態」。
       */}
-      {kindF === 'advance' && <AdvanceTab estates={estates} onCount={setAdvN} />}
+      {kindF === 'advance' && <AdvanceList a={adv} estates={estates} />}
 
-      {/* ★ 暫收的篩選與清單。暫付有自己的一套（AdvanceTab）。 */}
+      {/* ★ 暫收的篩選與清單。暫付有自己的一套（AdvanceList）。 */}
       {kindF !== 'advance' && (<>
       {/* 篩選 */}
       <FilterToggle />
