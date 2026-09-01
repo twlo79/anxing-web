@@ -127,10 +127,17 @@ select v."檢查項目", v."結果", v."說明" from (
    *   還是 c 的話，同步照樣會把人改過的項目殺掉。
    */
   select 1, '★★★ event_id 改成 SET NULL 了',
+         /*
+          * ★★ `confdeltype` 的型別是 `"char"`（單位元組），不是 text。
+          *   直接 `'…' || confdeltype` 會 ERROR 42725:
+          *   「operator is not unique: unknown || "char"」——
+          *   Postgres 有好幾個 `||` 的候選，挑不出唯一的那個。
+          *   **明寫 `::text`**，不要靠推斷（2026-09-01 踩過）。
+          */
          coalesce((select case confdeltype
                             when 'n' then '✅ SET NULL'
                             when 'c' then '⚠ 還是 CASCADE —— 同步仍會刪掉人改過的項目'
-                            else '⚠ 是 ' || confdeltype end
+                            else '⚠ 是 ' || confdeltype::text end
                      from pg_constraint
                     where conrelid = 'public.hk_work_item'::regclass
                       and contype = 'f'
