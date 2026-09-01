@@ -13,6 +13,7 @@ import { titleCaseName } from '@/lib/name-format';
 import { manualDepositError } from '@/lib/manual-deposit';
 import { totalBuckets } from '@/lib/deposit-summary';
 import StatCard, { StatRow, StatTotal, StatGroup } from '@/components/StatCard';
+import AdvanceTab from './advance-tab';
 import { exitBlockedReason, forfeitOrder, earnestStatus, convertPlan, type EarnestDep } from '@/lib/earnest';
 import { useProfile } from '@/lib/profile';
 import { fetchAll } from '@/lib/fetch-all';
@@ -41,7 +42,7 @@ import { Tabs } from '@/components/Tabs';
 import { FilterSearch } from '@/lib/filters';
 
 /**
- * 暫收管理（原「押金管理」，2026-08-24 改名，migration_174）。
+ * 暫收付管理（原「押金管理」→ 2026-08-24「暫收管理」→ 2026-09-01 加上暫付，migration_196）。
  *
  * 含**兩種**暫收，靠 `deposits.kind` 分：
  *
@@ -138,7 +139,7 @@ const STATUS_LABEL: Record<Status, string> = {
    *   用不帶種類的說法，句型維持一致（未付／已收／已結案）。
    *
    *   舊的「已收款(暫收中)」括號裡那三個字是舊名字的殘留，
-   *   現在整頁都叫暫收管理了，寫在這裡反而像另一種狀態。
+   *   現在整頁都叫暫收付管理了，寫在這裡反而像另一種狀態。
    */
   all: '全部', pending: '未付款', held: '已收款', returned: '已結案', orphan: '孤兒',
   refund_pending: '退款審核中', refund_approved: '已核可待匯款',
@@ -179,7 +180,15 @@ export default function DepositsPage() {
    *   而不是先決定看哪一種。押金 101 筆、訂金剛開始只有幾筆，
    *   預設分開的話訂金那一頁會長期是空的。
    */
-  const [kindF, setKindF] = useState<'all' | 'deposit' | 'earnest'>('all');
+  /*
+   * ★ 多一個 'advance'（暫付，migration_196）。它跟另外三個**不是同一種東西**:
+   *   前三個篩的是 `deposits` 這張表的 kind，暫付篩的是另一張表。
+   *   所以每一處用到 kindF 的地方都要先確認「不是暫付」——
+   *   混在一起的話，切到暫付會拿暫收的資料去比對，而結果是空清單，不是錯誤。
+   */
+  const [kindF, setKindF] = useState<'all' | 'deposit' | 'earnest' | 'advance'>('all');
+  /** 暫付的筆數。由 AdvanceTab 回報 —— 分頁籤上的數字要對得起來。 */
+  const [advN, setAdvN] = useState(0);
   /*
    * 目前這個頁籤在講哪一種錢。**只用在句子裡**，表頭不用。
    *
@@ -197,7 +206,7 @@ export default function DepositsPage() {
    * ★ 句子裡還是要用具體的詞:「這一類目前沒有**訂金**紀錄」
    *   比「沒有暫收紀錄」精確 —— 那句話是在描述你現在的篩選。
    */
-  const kindWord = kindF === 'earnest' ? '訂金' : kindF === 'deposit' ? '押金' : '暫收';
+  const kindWord = kindF === 'earnest' ? '訂金' : kindF === 'deposit' ? '押金' : kindF === 'advance' ? '暫付' : '暫收';
   /**
    * 從訂單／契約跳過來時只顯示那一筆的押金。
    *
@@ -428,6 +437,8 @@ export default function DepositsPage() {
   const filtered = useMemo(() => base.filter((r) => {
     // 訂金 / 押金。★ 篩在這一層而不是 base —— base 要留給卡片當總覽，
     // 篩在 base 的話切到訂金時押金那一列的數字會全部歸零
+    // ★ 暫付是另一張表，這裡的列一筆都不該通過（畫面上也不會渲染這份清單）
+    if (kindF === 'advance') return false;
     if (kindF !== 'all' && (r.kind ?? 'deposit') !== kindF) return false;
     if (statusF === 'all') return true;
     if (statusF === 'orphan') return r.orphaned;
@@ -1288,7 +1299,7 @@ export default function DepositsPage() {
 
           底下兩列各自回答「訂金在哪個階段」「押金在哪個階段」，
           少的是最上面那一句:**我們手上總共有多少別人的錢**。
-          那正是「暫收管理」這個名字在問的事。
+          那正是「暫收付管理」的暫收那半在問的事。
 
           ★ 做成一條窄的橫幅而不是第三列大卡片 ——
             三列大卡片會把清單推到第一屏之外，
@@ -1312,6 +1323,12 @@ export default function DepositsPage() {
             差了一百多萬，而且**兩種讀法看起來都合理**，
             對不出來的人只會覺得自己算錯。
       */}
+      {/*
+        ★★★ 暫收的統計卡。切到暫付分頁時整組收起來 ——
+          暫收問「錢在我們手上多少」，暫付問「錢在別人那裡多少」，
+          兩組並排會讓人以為是同一筆錢的兩個階段。
+      */}
+      {kindF !== 'advance' && (<>
       <StatTotal
         label="暫收款總計"
         value={`NT$ ${fmt(allStats.held.cur['TWD'] ?? 0)}`}
@@ -1455,18 +1472,35 @@ export default function DepositsPage() {
         ★ 筆數算在 `base` 上（不含 kind 篩選本身）—— 切到訂金之後
           押金那個數字還在，頁籤才是總覽而不是當前清單的重複。
       */}
+      </>)}
       <Tabs variant="browser" tone="page" className="mb-3" value={kindF} onChange={setKindF}
         items={([
           { k: 'all' as const,     label: '全部' },
           { k: 'earnest' as const, label: '訂金' },
           { k: 'deposit' as const, label: '押金' },
+          /*
+            ★ 暫付（migration_196）。**「全部」不含它** ——
+              收進來與付出去的錢放同一個清單、共用一個金額欄，加總就沒有意義了。
+          */
+          { k: 'advance' as const, label: '暫付' },
         ]).map((t) => ({
           key: t.k,
           label: t.label,
           badge: t.k === 'all' ? base.length
+            : t.k === 'advance' ? advN
             : base.filter((r) => (r.kind ?? 'deposit') === t.k).length,
         }))} />
 
+      {/*
+        ★★★ 切到暫付 → **整個內容區換掉**（卡片、篩選、表格都是暫付自己的）。
+          暫收那三頁的卡片問「錢在我們手上多少」，暫付問「錢在別人那裡多少」——
+          兩組並排的話要多一條分隔線與一套配色去區分，
+          而使用者 2026-09-01 選的是換掉:「點暫付 後卡片換成 暫付的狀態」。
+      */}
+      {kindF === 'advance' && <AdvanceTab estates={estates} onCount={setAdvN} />}
+
+      {/* ★ 暫收的篩選與清單。暫付有自己的一套（AdvanceTab）。 */}
+      {kindF !== 'advance' && (<>
       {/* 篩選 */}
       <FilterToggle />
       <div className="filter-bar collapsible-filters rounded-xl glass p-4 mb-4 flex flex-wrap items-end gap-3">
@@ -1644,6 +1678,7 @@ export default function DepositsPage() {
           </tbody>
         </table>
       </div>
+      </>)}
 
       {/* 詳細抽屜 */}
       {detail && (() => {

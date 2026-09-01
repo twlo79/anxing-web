@@ -172,3 +172,43 @@ describe('活躍的 migration', () => {
       + '確認不是的話再調整這裡。）\n' + bad.join('\n'));
   });
 });
+
+/*
+ * ★★★ 回溯造成的誤報（2026-09-01，migration_196 踩過）。
+ *
+ * 原本的 `\/\*[\s\S]*?\*\/` 在比對失敗時會回溯並跨過中間的真程式碼，
+ * 把「註解一 ＋ 欄位定義 ＋ 註解二」整段當成一個註解吞掉 ——
+ * 於是一支完全正常的 create table 被說成有多餘的逗號。
+ *
+ * ★ 誤報是檢查器最糟的失敗方式:它說謊一次，人就開始不信它，
+ *   然後真的有問題時也一起忽略。
+ */
+test('★★★ create table 的欄位之間有註解，不該誤報', () => {
+  const sql = `create table t (
+  id uuid primary key default gen_random_uuid(),
+
+  /* 註解一
+     ★ 這裡提到 delete 這個字 */
+  a uuid references x(id) on delete set null,
+
+  /* 註解二 */
+  b text
+);
+
+select 1;`;
+  assert.deepEqual(danglingCteComma(sql), []);
+});
+
+test('★ 真的多逗號還是抓得到', () => {
+  const sql = `with a as (select 1),
+     b as (select 2),
+insert into t select 1;`;
+  assert.equal(danglingCteComma(sql).length, 1);
+});
+
+test('★ 逗號與 DML 之間隔著註解也抓得到', () => {
+  const sql = `with a as (select 1),
+/* 中間隔著十幾行註解，所以看起來很正常 */
+insert into t select 1;`;
+  assert.equal(danglingCteComma(sql).length, 1);
+});

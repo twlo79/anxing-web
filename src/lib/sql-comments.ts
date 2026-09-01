@@ -131,7 +131,22 @@ export function danglingCteComma(sql: string): number[] {
    * ★ 只認 DML 關鍵字，不是「任何東西」——
    *   `values (1,2),\n(3,4)` 那種 `),` 後面接的是括號，不會誤報。
    */
-  const re = /\)\s*,(?:\s|--[^\n]*\n|\/\*[\s\S]*?\*\/)*\s*\b(insert|update|delete|select)\b/gi;
+  /*
+   * ★★★ 區塊註解要用 `\/\*(?:[^*]|\*(?!\/))*\*\/`，**不能用 `[\s\S]*?`**
+   *   （2026-09-01 踩過，migration_196 誤報）。
+   *
+   *   `[\s\S]*?` 是非貪婪，看起來會停在第一個 `*\/` —— 但比對失敗時
+   *   正則引擎會**回溯並繼續往後找下一個 `*\/`**，於是它把
+   *
+   *       /* 註解一 *\/  request_item_id uuid references …  /* 註解二 *\/
+   *
+   *   整段當成「一個註解」吞掉，再往下撞到某個 select 就報錯。
+   *   症狀是**一支完全正常的 create table 被說成有多餘的逗號**，
+   *   而那正是誤報最糟的形式:檢查器說謊，人就開始不信它。
+   *
+   *   `(?:[^*]|\*(?!\/))*` 沒有這個問題 —— 它遇到 `*\/` 就停，回溯不了。
+   */
+  const re = /\)\s*,(?:\s|--[^\n]*\n|\/\*(?:[^*]|\*(?!\/))*\*\/)*\s*\b(insert|update|delete|select)\b/gi;
   for (const m of sql.matchAll(re)) {
     lines.push(sql.slice(0, m.index).split('\n').length);
   }

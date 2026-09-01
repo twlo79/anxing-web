@@ -145,7 +145,7 @@ const NAV: { href: string; label: string; icon: string; roles: string[]; group?:
    * `cleaner` 不放進選單 —— 但 RLS 跟 housekeeper 相同（migration_131），
    * 知道網址還是進得去。那是既有的取捨,不是這次新增的。
    */
-  { href: '/deposits', label: '暫收管理', icon: '🏦', group: '收入', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/deposits', label: '暫收付管理', icon: '🏦', group: '收入', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   // 🤑 是整份選單裡**唯一的一張臉** —— 收合成只剩 icon 時最好認的就是它。
   // 💰 讓給帳戶明細（2026-08-19 使用者指定）。
   { href: '/revenues', label: '營收表', icon: '🤑', group: '收入', roles: ['accountant', 'manager', 'super_admin'] },
