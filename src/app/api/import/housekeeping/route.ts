@@ -105,7 +105,30 @@ export async function POST(req: Request) {
   if (dryRun) return NextResponse.json({ dryRun: true, ...report }, { headers: CORS });
 
   // ── 寫入 ────────────────────────────────────────────
-  await supabase.from('hk_work_item').delete().eq('period', period);
+  /*
+   * ══════════════════════════════════════════════════════════
+   * ★★★ 手動加的工作項**不能刪**（2026-09-01 修）
+   *
+   *   `migration_59` 就是為了這件事加的 `source` 欄位，
+   *   它的 comment 寫著:「manual = 手動新增，**同步永不刪除**」。
+   *   而這一行原本是 `.delete().eq('period', period)` —— 沒有帶那個條件，
+   *   所以**每一次同步都把手動補的整批洗掉**。
+   *
+   *   房務統計頁的每日表格上那個「＋」就是在寫 source='manual' 的列
+   *   （`stats-tab.tsx` 的 `addItem`，註解也寫著「下次同步永不刪除它」）。
+   *   兩邊都寫了同一句話，中間這一行沒做。
+   *
+   * ★★ 這種 bug 最傷的地方是**使用者不會馬上發現**:
+   *   補完當下畫面是對的，下一次同步之後那幾筆安靜消失，
+   *   而月底看報表時只會覺得「那個人怎麼比我印象中少」。
+   *   migration_59 的檔頭原話:「那是最傷信任的一種 bug」。
+   *
+   * ★ `timetree_edited` 也要留 —— 那是「同步來的，但人改過了」。
+   *   刪掉的話下次同步會用原始值蓋回去，等於把人的修正丟掉。
+   * ══════════════════════════════════════════════════════════
+   */
+  await supabase.from('hk_work_item')
+    .delete().eq('period', period).eq('source', 'timetree');
   /*
    * 通知前要先數一次。
    *
