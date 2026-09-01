@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { normKey, isSubseq, guessLink, rankNames } from './hk-link.ts';
 
@@ -72,4 +72,78 @@ test('★ 對得上的排到選單最前面', () => {
 test('對不上的維持原本順序', () => {
   const r = rankNames('完全不相干', [], ERP);
   assert.deepEqual(r, ERP);
+});
+
+
+// ══════════════════════════════════════════════════════════════
+// ★★★ 補零（2026-09-01 使用者:「A07 / B03」）
+//
+//   房務代碼是人手打的 `A7`、`B3`；ERP 房源補零對齊成 `A07`、`B03`。
+//   不正規化的話 `A7` 會同時像 `A07` 與 `A17`,兩個候選、又沒有完全相等的,
+//   於是**不給提示** —— 那幾間永遠對不到房源,打掃點數算不出來,
+//   而畫面上顯示成「⚠ N 筆未計」,看起來像「忘了設點數」。
+// ══════════════════════════════════════════════════════════════
+describe('★★★ 補零正規化', () => {
+  test('A07 與 A7 拉平後相同', () => {
+    assert.equal(normKey('A07'), normKey('A7'));
+    assert.equal(normKey('B03'), normKey('B3'));
+  });
+
+  test('★ 但 A17 不會被拉成 A7', () => {
+    assert.notEqual(normKey('A17'), normKey('A7'));
+  });
+
+  test('★★ 中間與結尾的 0 不可以被吃掉', () => {
+    // 直覺寫法 `.replace(/0+(\d)/g,'$1')` 會把 A100 變成 A10
+    assert.equal(normKey('A100'), 'A100');
+    assert.equal(normKey('A10'), 'A10');
+    assert.equal(normKey('1000'), '1000');
+  });
+
+  test('多組數字各自處理', () => {
+    assert.equal(normKey('開2-01'), '開2-1');
+    assert.equal(normKey('台1+02'), '台1+2');
+  });
+
+  test('全形數字也要一起拉平', () => {
+    assert.equal(normKey('Ａ０７'), normKey('A7'));
+  });
+
+  test('沒有數字的不受影響', () => {
+    assert.equal(normKey('開封整棟'), '開封整棟');
+    assert.equal(normKey(' jpr 整棟 '), 'JPR整棟');
+  });
+});
+
+describe('★★★ 補零之後提示才給得出來', () => {
+  const erp = ['A01', 'A05', 'A07', 'A17', 'B03', 'B05'];
+
+  test('A7 → A07（原本因為同時像 A17 而不給提示）', () => {
+    assert.equal(guessLink('A7', [], erp), 'A07');
+  });
+
+  test('B3 → B03', () => {
+    assert.equal(guessLink('B3', [], erp), 'B03');
+  });
+
+  test('★ A17 還是對到 A17，沒有被搶走', () => {
+    assert.equal(guessLink('A17', [], erp), 'A17');
+  });
+
+  test('★★ 真的模稜兩可時仍然不給提示', () => {
+    // B3 與 B03 同時存在 —— 正規化後兩個都完全相等，回 null 才是對的。
+    // 「模稜兩可時什麼都不說」這條規則沒有因為補零而鬆掉。
+    assert.equal(guessLink('B3', [], ['B3', 'B03']), null);
+  });
+
+  test('★ 對不到的還是回 null', () => {
+    assert.equal(guessLink('Z9', [], erp), null);
+  });
+
+  test('排序也跟著受惠：對得上的排前面', () => {
+    // A07 與 A17 都是子序列命中（排前面）,B05 沒命中（排後面）
+    const out = rankNames('A7', [], ['B05', 'A17', 'A07']);
+    assert.equal(out[out.length - 1], 'B05');
+    assert.ok(out.indexOf('A07') < out.indexOf('B05'));
+  });
 });
