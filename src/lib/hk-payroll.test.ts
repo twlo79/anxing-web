@@ -1,7 +1,7 @@
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  crewSize, cleanUnits, linenJobs, linenSets, payroll, byEstate, fmtUnits,
+  crewSize, cleanUnits, linenJobs, linenSets, payroll, byEstate, estateLog, fmtUnits,
   type PayrollRow, dailyUnits } from './hk-payroll.ts';
 
 const r = (p: Partial<PayrollRow> = {}): PayrollRow => ({
@@ -378,4 +378,93 @@ describe('byEstate —— 各物業的間數與點數', () => {
   });
 
   test('空清單不會爆', () => assert.deepEqual(byEstate([], pointsOf, estateOf), []));
+});
+
+/*
+ * ★★★ 2026-09-02 使用者:「間數點數可以點開 toggle 看各物業裡面的清潔日誌」。
+ *
+ *   日誌的總和必須等於卡片上的數字 —— 兩個數字在同一個畫面上，
+ *   對不起來的話兩邊都失去意義。
+ */
+describe('estateLog —— 各物業的清潔日誌', () => {
+  const P = (o: Partial<PayrollRow> = {}): PayrollRow => ({
+    work_date: '2026-08-03', property_id: 'p1', work_type: '清潔', staff_id: 's1', ...o,
+  });
+  const est: Record<string, string> = { p1: '時兆', p2: '時兆', p3: '正隆' };
+  const pts: Record<string, number> = { p1: 3, p2: 3, p3: 4 };
+  const pointsOf = (id: string | null) => (id ? pts[id] : null) ?? null;
+  const estateOf = (id: string | null) => (id ? est[id] : null) ?? null;
+
+  /*
+   * ★★★ 合掃在日誌上是**一列**，不是兩列。
+   *   照資料庫原樣列的話，同一天同一間會出現兩次、各 0.5 間 ——
+   *   而使用者看的是「那天做了什麼」，不是「資料庫存了幾列」。
+   */
+  test('★★★ 兩人合掃 → 一列、兩個人、算 1 間', () => {
+    const log = estateLog([P(), P({ staff_id: 's2' })], pointsOf, estateOf);
+    const rows = log.get('時兆')!;
+    assert.equal(rows.length, 1);
+    assert.deepEqual(rows[0].staffIds, ['s1', 's2']);
+    assert.equal(rows[0].units, 1);
+    assert.equal(rows[0].points, 3);
+  });
+
+  test('★★★ 日誌加總 = 卡片的數字', () => {
+    const rows = [
+      P(), P({ property_id: 'p2' }),
+      P({ property_id: 'p3', staff_id: 's2' }), P({ property_id: 'p3' }),
+      P({ property_id: null, points_override: 8, label: '時兆三四樓' }),
+    ];
+    const card = byEstate(rows, pointsOf, estateOf);
+    const log = estateLog(rows, pointsOf, estateOf);
+    for (const c of card) {
+      const list = log.get(c.estate ?? '') ?? [];
+      const u = Math.round(list.reduce((a, x) => a + x.units, 0) * 100) / 100;
+      const pt = Math.round(list.reduce((a, x) => a + x.points, 0) * 100) / 100;
+      assert.equal(u, Math.round(c.units * 100) / 100);
+      assert.equal(pt, Math.round(c.points * 100) / 100);
+    }
+  });
+
+  test('不同日期、不同房源、不同工作類型都各自一列', () => {
+    const log = estateLog([
+      P(), P({ work_date: '2026-08-04' }), P({ work_type: '加強清潔' }), P({ property_id: 'p2' }),
+    ], pointsOf, estateOf);
+    assert.equal(log.get('時兆')!.length, 4);
+  });
+
+  test('照日期由舊到新', () => {
+    const log = estateLog([
+      P({ work_date: '2026-08-20' }), P({ work_date: '2026-08-03' }),
+    ], pointsOf, estateOf);
+    assert.deepEqual(log.get('時兆')!.map((r) => r.work_date), ['2026-08-03', '2026-08-20']);
+  });
+
+  /*
+   * ★★ 沒有物業的歸在 '' 這個鍵（對應卡片上的 estate: null）。
+   *   而 label 要留著 —— 使用者當初打的字樣是他唯一的線索。
+   */
+  test('★★ 無房源歸在空字串鍵，而且留著使用者打的字', () => {
+    const log = estateLog(
+      [P({ property_id: null, points_override: 2, label: '時兆三四樓' })], pointsOf, estateOf);
+    const rows = log.get('')!;
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].label, '時兆三四樓');
+    assert.equal(rows[0].points, 2);
+  });
+
+  test('房源留空的 label 是空字串,不是 undefined', () => {
+    const log = estateLog([P({ property_id: null, units_override: 1 })], pointsOf, estateOf);
+    assert.equal(log.get('')![0].label, '');
+  });
+
+  test('算不出點數的留在那一列上', () => {
+    const log = estateLog([P({ property_id: 'p9' })], pointsOf, () => '南京');
+    assert.equal(log.get('南京')![0].unknownPoints, 1);
+  });
+
+  test('沒指派的不出現', () => {
+    assert.equal(estateLog([P({ staff_id: null })], pointsOf, estateOf).size, 0);
+  });
+  test('空清單不會爆', () => assert.equal(estateLog([], pointsOf, estateOf).size, 0));
 });

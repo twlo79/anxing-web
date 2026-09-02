@@ -39,6 +39,14 @@ export type PayrollRow = {
    *   那些原本會落進 `unknownPoints`（畫面上的「⚠ N 筆未計」）。
    */
   points_override?: number | null;
+  /**
+   * 顯示用的房源字樣（`hk_work_item.property_code`）。
+   *
+   * ★ **只給清潔日誌用**，不參與任何計算 —— 計算一律走 `property_id`。
+   *   會需要它是因為主檔對不到的房源（使用者自己打的「時兆三四樓」）
+   *   沒有 property_id，而日誌上要看得到他當初打了什麼。
+   */
+  label?: string | null;
 };
 
 /**
@@ -285,6 +293,76 @@ export function byEstate(
     if (b.estate === null) return -1;
     return b.points - a.points || b.units - a.units;
   });
+}
+
+export type LogEntry = {
+  work_date: string;
+  work_type: string;
+  property_id: string | null;
+  /** 使用者當初打的房源字樣。空字串 = 沒填。 */
+  label: string;
+  /** 這一份工有誰做。合掃就是好幾個人。 */
+  staffIds: string[];
+  /** 這一份工總共算幾間（合掃的各半已經加回來了）。 */
+  units: number;
+  points: number;
+  unknownPoints: number;
+};
+
+/**
+ * 各物業底下的清潔日誌 —— 一份工一列。
+ *
+ * ============================================================
+ * 【★★★ 為什麼一份工一列，不是一筆資料一列】
+ *
+ * 兩個人合掃一間，資料庫裡是**兩列** `hk_work_item`。
+ * 照原樣列出來的話，日誌上會看到同一天同一間出現兩次、各 0.5 間 ——
+ * 而使用者看的是「那天做了什麼」，不是「資料庫存了幾列」。
+ *
+ * ★ 所以照 `jobKey`（日期＋房源＋工作類型）合併，人員收成一欄，
+ *   間數把兩個 0.5 加回 1。加起來的總數跟上面那張卡片一模一樣，
+ *   因為兩邊走的都是 `eachShare`。
+ *
+ * ★★ `unknownPoints` 保留在每一列上 —— 哪一筆算不出點數要看得到，
+ *   而不是只有卡片上一個「⚠4」讓人去猜是哪四筆。
+ */
+export function estateLog(
+  rows: PayrollRow[],
+  pointsOf: (propertyId: string | null) => number | null | undefined,
+  estateOf: (propertyId: string | null) => string | null | undefined,
+): Map<string, LogEntry[]> {
+  const byJob = new Map<string, LogEntry & { estate: string }>();
+  eachShare(rows, pointsOf, (r, units, points, unknown) => {
+    const estate = estateOf(r.property_id) ?? '';
+    const key = `${estate}|${r.work_date}|${r.property_id ?? r.label ?? ''}|${r.work_type}`;
+    const e = byJob.get(key) ?? {
+      estate,
+      work_date: r.work_date, work_type: r.work_type,
+      property_id: r.property_id ?? null, label: r.label ?? '',
+      staffIds: [], units: 0, points: 0, unknownPoints: 0,
+    };
+    // ★ 同一個人在同一份工上重複指派時 eachShare 已經去過重了，
+    //   這裡再擋一次是為了「同一份工被拆成兩筆但人相同」的舊資料
+    if (r.staff_id && !e.staffIds.includes(r.staff_id)) e.staffIds.push(r.staff_id);
+    e.units += units;
+    e.points += points;
+    e.unknownPoints += unknown;
+    byJob.set(key, e);
+  });
+
+  const out = new Map<string, LogEntry[]>();
+  for (const e of byJob.values()) {
+    const { estate, ...rest } = e;
+    const list = out.get(estate) ?? [];
+    list.push(rest);
+    out.set(estate, list);
+  }
+  // 日誌照日期由舊到新 —— 使用者是照時間回想「那天做了什麼」
+  for (const list of out.values()) {
+    list.sort((a, b) => a.work_date.localeCompare(b.work_date)
+      || (a.label || '').localeCompare(b.label || ''));
+  }
+  return out;
 }
 
 /**

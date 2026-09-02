@@ -4,7 +4,7 @@ import Link from 'next/link';
 import * as XLSX from 'xlsx-js-style';
 import { createClient } from '@/lib/supabase';
 import { cleanCounts, filterItems, buildLookup, matchProperty, type HkStaff, type HkProperty } from '@/lib/hkParse';
-import { payroll, byEstate, dailyUnits, fmtUnits } from '@/lib/hk-payroll';
+import { payroll, byEstate, estateLog, dailyUnits, fmtUnits } from '@/lib/hk-payroll';
 import { sharePreview, previewText } from '@/lib/hk-crew';
 import {
   reparsePreview, visibleRows, dismissedCount, prefillFromEvent,
@@ -243,6 +243,9 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
     // ★★★ 這兩行少了的話 migration_198 等於沒做:欄位存進去了，但算的時候看不到
     units_override: i.units_override ?? null,
     points_override: i.points_override ?? null,
+    // ★ 只給日誌顯示用,不參與計算 —— 主檔對不到的房源沒有 property_id,
+    //   但日誌上要看得到使用者當初打了什麼
+    label: i.property_code ?? '',
   })), [roomItems, propByCode]);
 
   const pay = useMemo(
@@ -259,6 +262,16 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
       (pid) => (pid ? pointsById[pid] : null),
       (pid) => (pid ? estateById[pid] : null)),
     [payRows, pointsById, estateById]);
+  const estateLogs = useMemo(
+    () => estateLog(payRows,
+      (pid) => (pid ? pointsById[pid] : null),
+      (pid) => (pid ? estateById[pid] : null)),
+    [payRows, pointsById, estateById]);
+  /*
+   * 展開哪一個物業。**一次只開一個** —— 全部展開的話這張卡會把
+   * 下面的排班表整個推出畫面，而它本來是「一眼看完」的摘要。
+   */
+  const [openEstate, setOpenEstate] = useState<string | null>(null);
   const estateMax = Math.max(1, ...estateLines.map((e) => e.points));
   const estateTotal = estateLines.reduce(
     (a, e) => ({ units: a.units + e.units, points: a.points + e.points }), { units: 0, points: 0 });
@@ -759,12 +772,23 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
           <div className="space-y-1.5">
             {estateLines.map((e) => {
               const none = e.estate === null;
+              const key = e.estate ?? '';
+              const open = openEstate === key;
+              const log = estateLogs.get(key) ?? [];
               return (
-                <div key={e.estate ?? '__none'} className="flex items-center gap-2.5 text-xs">
-                  <div className={`w-16 shrink-0 truncate ${none ? 'text-amber-700' : ''}`}
+                <div key={e.estate ?? '__none'}>
+                <div className="flex items-center gap-2.5 text-xs">
+                  {/*
+                    ★ 點物業名稱展開日誌（2026-09-02 使用者:「間數點數可以點開
+                      toggle 看各物業裡面的清潔日誌」）。整列都可以點的話，
+                      使用者會不小心在拖曳長條時展開。
+                  */}
+                  <button type="button" onClick={() => setOpenEstate(open ? null : key)}
+                    className={`w-16 shrink-0 truncate text-left hover:underline ${
+                      none ? 'text-amber-700' : ''} ${open ? 'font-medium' : ''}`}
                     title={none ? '補登時沒填房源，或房源還沒對到 ERP 物業' : (e.estate ?? '')}>
-                    {none ? '⚠ 無房源' : e.estate}
-                  </div>
+                    {open ? '▾ ' : '▸ '}{none ? '⚠ 無房源' : e.estate}
+                  </button>
                   <div className="flex-1 h-4 rounded bg-gray-100 min-w-0">
                     <div className={`h-4 rounded ${none ? 'bg-amber-400' : 'bg-mor-slate'}`}
                       style={{ width: `${Math.round((e.points / estateMax) * 100)}%` }} />
@@ -783,11 +807,63 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                     )}
                   </div>
                 </div>
+                {/*
+                  清潔日誌 —— **一份工一列**，不是一筆資料一列。
+                  合掃的兩筆在 `estateLog` 裡就合起來了（人員收成一欄、
+                  間數把兩個 0.5 加回 1），所以這裡加總會等於左邊那個數字。
+                */}
+                {open && (
+                  <div className="mt-1 mb-2 ml-[4.5rem] rounded-lg bg-gray-50 px-3 py-2">
+                    {log.length === 0 ? (
+                      <div className="text-[11px] text-gray-400">這個月沒有明細</div>
+                    ) : (
+                      <table className="w-full text-[11px] table-fixed">
+                        <tbody>
+                          <tr className="text-gray-400">
+                            <td className="py-1 w-12">日期</td>
+                            <td className="py-1 w-28">誰做的</td>
+                            <td className="py-1">房源</td>
+                            <td className="py-1 w-14 text-right">間數</td>
+                            <td className="py-1 w-14 text-right">點數</td>
+                          </tr>
+                          {log.map((r, li) => (
+                            <tr key={li} className="border-t border-gray-200">
+                              <td className="py-1 text-gray-500">{r.work_date.slice(5)}</td>
+                              <td className="py-1 text-gray-600 truncate">
+                                {r.staffIds.map((id) => staff.find((x) => x.id === id)?.name ?? '?').join('・')}
+                              </td>
+                              <td className="py-1 text-gray-600 truncate">
+                                {/*
+                                  ★ 房源留空的寫「（沒填）」不是留白 ——
+                                    留白看起來像資料掉了，而那是使用者自己選的
+                                */}
+                                {r.label || <span className="text-amber-600">（沒填）</span>}
+                                {r.label && !propByCode[r.label] && (
+                                  <span className="ml-1 text-amber-600">主檔沒有</span>
+                                )}
+                              </td>
+                              <td className="py-1 text-right tabular-nums">{fmtUnits(r.units)}</td>
+                              <td className="py-1 text-right tabular-nums">
+                                {r.unknownPoints ? <span className="text-amber-600">—</span> : fmtUnits(r.points)}
+                              </td>
+                            </tr>
+                          ))}
+                          <tr className="border-t border-gray-300 font-medium">
+                            <td className="py-1" colSpan={3}>{none ? '無房源' : e.estate} 小計</td>
+                            <td className="py-1 text-right tabular-nums">{fmtUnits(e.units)}</td>
+                            <td className="py-1 text-right tabular-nums">{fmtUnits(e.points)}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                )}
+                </div>
               );
             })}
           </div>
           <div className="mt-2.5 pt-2 border-t border-mor-line text-[11px] text-gray-400">
-            只列這個月有工作的物業。長度是點數比例
+            只列這個月有工作的物業。長度是點數比例・點物業名稱看明細
           </div>
         </div>
       )}
