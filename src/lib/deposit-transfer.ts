@@ -136,24 +136,56 @@ export function canTransfer(from: TransferDep, to: TransferDep): Verdict {
   }
 
   /*
-   * ★ 金額不同一律擋（2026-08-19 使用者選 (a)）。
+   * ══════════ 金額不同怎麼辦（2026-09-02 改）══════════
    *
-   * 因為 deposits.amount 是觸發器從 orders.deposit 同步過來的,
-   * 移轉時**改不動 B 那一欄** —— 下次訂單一存檔就被蓋回去。
-   * 放行的話 B 會顯示一個從來沒收到的數字,而差額不在任何地方。
+   * 【原本一律擋】（2026-08-19 使用者選 (a)）
+   *   那時的理由是「差額不在任何地方」—— 而那句話當時是對的:
+   *   還沒有「押金收多筆」，B 只能是全收或未收兩種狀態。
+   *   原本的提示自己也寫著「**或等「押金收款多筆」做完再補收差額**」。
+   *
+   * 【現在放行「B 比較貴」】（2026-09-02 使用者:「移房完 如果增加押金
+   *   如果沒收完 一樣顯示 收部分 全收」）
+   *
+   *   `deposit_payments` 做完了（migration_147），所以移轉進去的那一筆
+   *   就是一筆收款 —— B 的狀態由既有的 `depPayStatus` 算出來，
+   *   收不滿自然就是「收部分」。**不用多存一個欄位。**
+   *
+   * ★★★ 但「B 比較便宜」還是要擋。
+   *   放行的話 B 會**超收**，而多出來的錢是要退給房客的 ——
+   *   那是退款，不是移轉。混在一起的話，帳上會有一筆
+   *   「已收 30,000 / 應收 20,000」而沒有任何地方說得出那 10,000 去哪了。
    */
   const af = Math.round((Number(from.amount) || 0) * 100);
   const at = Math.round((Number(to.amount) || 0) * 100);
-  if (af !== at) {
+  if (at < af) {
     const where = to.order_id ? '訂單' : '契約';
     return {
       ok: false,
-      reason: `金額不同，差 ${money(Math.abs(at - af) / 100)}`,
-      hint: `${depName(from)} 收了 ${money(from.amount)}，${depName(to)} 要 ${money(to.amount)}。`
-        + `請先到${where}把押金金額改成一致，或等「押金收款多筆」做完再補收差額`,
+      reason: `目的的押金比較少，會超收 ${money((af - at) / 100)}`,
+      hint: `${depName(from)} 收了 ${money(from.amount)}，${depName(to)} 只要 ${money(to.amount)}。`
+        + `多的那筆要退給房客 —— 那是退款不是移轉。`
+        + `請先到${where}把金額改成一致，或先退款再移轉`,
     };
   }
   return { ok: true, reason: '' };
+}
+
+/**
+ * 移轉之後 B 還差多少。0 = 剛好收滿。
+ *
+ * ★ 給移轉視窗**按下去之前**顯示用 —— 「移轉後還差 $10,000，
+ *   要另外補收」比事後才發現狀態是「收部分」好。
+ *
+ * ★★ 這裡**不**處理超收（負數）—— 那種情況 `canTransfer` 已經擋掉了。
+ *   回 0 而不是負數，因為畫面上「還差 -10,000」沒有人看得懂。
+ */
+export function shortfallAfterTransfer(
+  from: Pick<TransferDep, 'amount'>,
+  to: Pick<TransferDep, 'amount'>,
+): number {
+  const af = Math.round((Number(from.amount) || 0) * 100);
+  const at = Math.round((Number(to.amount) || 0) * 100);
+  return Math.max(0, (at - af) / 100);
 }
 
 /**
@@ -236,3 +268,76 @@ export function transferChip(
   }
   return null;
 }
+
+/* ══════════════════════════════════════════════════════════
+ * 狀態標籤:押金狀態 ＋ 移房狀態（2026-09-02）
+ * ══════════════════════════════════════════════════════════ */
+
+/**
+ * 這一筆押金要顯示哪幾個標籤。
+ *
+ * ============================================================
+ * 【★★★ 原本一欄七個狀態搶著顯示，會蓋掉真正重要的那個】
+ *
+ * 舊的 `statusChip` 是一條優先序鏈:孤兒 → 移轉出 → 已退 → 移轉入 →
+ * 收部分 → 已收 → 未收，**只回一個**。於是:
+ *
+ *   移轉進來又沒收滿  → 顯示「移轉自 5B2」，**「收部分」被蓋掉**
+ *                        （2026-09-02 使用者移房加押金後就是這個情況）
+ *   移轉進來又退掉    → 顯示「已退」，**「移轉自」被蓋掉**
+ *
+ * ★ 兩件事本來就是**兩個維度**:錢收到什麼程度、這筆是不是移房來的。
+ *   擠成一個欄位就一定有一個要被犧牲。
+ *
+ * ============================================================
+ * 【為什麼移轉出去的只顯示一個】
+ *
+ * 移轉出去的那筆 `returned_on` 有值，但**錢沒有退給房客** ——
+ * 顯示「已退」會讓看清單的人以為錢出去了，而押金總額一毛都沒少。
+ *
+ * ★ 所以它的押金狀態直接寫「已移轉」，而且不用再多一個「已移轉 → 9A5」
+ *   的重複標籤 —— 一個標籤把方向與對象都講完。
+ */
+export type DepBadges = {
+  /** 押金狀態。`transferred` = 移轉出去（**不是**退給房客）。 */
+  pay: 'orphan' | 'transferred' | 'returned' | 'paid' | 'partial' | 'unpaid';
+  /** 要不要另外掛一個「移轉自 X」。移轉**出去**的不用 —— pay 已經講完了。 */
+  showFrom: boolean;
+};
+
+export function depBadges(
+  d: Pick<TransferDep, 'transfer_to_id' | 'transfer_from_id' | 'orphaned'
+        | 'received_on' | 'returned_on'> & { received_amount?: number | null; amount?: number | null },
+): DepBadges {
+  // ★ 孤兒優先:來源單都不在了,其他狀態都建立在一個不存在的前提上
+  if (d.orphaned) return { pay: 'orphan', showFrom: !!d.transfer_from_id };
+  if (d.transfer_to_id) return { pay: 'transferred', showFrom: false };
+
+  const showFrom = !!d.transfer_from_id;
+  if (d.returned_on) return { pay: 'returned', showFrom };
+  if (d.received_on) return { pay: 'paid', showFrom };
+  /*
+   * ★★ 收了一部分要看得出來（migration_147）。
+   *   `received_on` 只有**收滿**才會被觸發器填上，所以走到這裡
+   *   代表沒收滿 —— 有金額就是收部分。
+   */
+  if (Math.round(Number(d.received_amount) || 0) > 0) return { pay: 'partial', showFrom };
+  return { pay: 'unpaid', showFrom };
+}
+
+/**
+ * 押金狀態的文字。**畫面與 Excel 匯出共用同一份**。
+ *
+ * ★★★ 匯出原本自己寫了一條鏈（孤兒／已移轉／已退／暫收中／尚未收）——
+ *   那是同一條規則的**第三份**，而且它**漏掉了「收部分」**:
+ *   一筆收了一半的押金匯出去會寫「尚未收」，而金額欄是有數字的。
+ *   看報表的人只會覺得那一列自相矛盾（CLAUDE.md 的坑）。
+ */
+export const DEP_BADGE_LABEL: Record<DepBadges['pay'], string> = {
+  orphan: '孤兒',
+  transferred: '已移轉',
+  returned: '已退',
+  paid: '全收',
+  partial: '收部分',
+  unpaid: '尚未收',
+};

@@ -2,7 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   canBeSource, canBeTarget, canTransfer, transferCandidates, transferTargets, transferChip,
-  roleCanTransfer, depName, isTransfer, type TransferDep,
+  roleCanTransfer, depName, isTransfer, shortfallAfterTransfer, depBadges, type TransferDep,
 } from './deposit-transfer.ts';
 
 /**
@@ -102,17 +102,21 @@ describe('配對', () => {
     assert.equal(canTransfer(A(), A()).ok, false);
   });
 
-  test('★★ 金額不同一律擋，訊息要帶差額', () => {
-    /*
-     * 為什麼不能放行:deposits.amount 是觸發器從 orders.deposit 同步的,
-     * 移轉時改不動 B 那一欄 —— 下次訂單一存檔就被蓋回去。
-     * 放行的話 B 會顯示一個從來沒收到的數字。
-     */
-    const v = canTransfer(A({ amount: 30_000 }), B({ amount: 40_000 }));
+  /*
+   * ★★ 2026-09-02 契約變了:**B 比較貴改成放行**（使用者:「移房完 如果增加押金
+   *   如果沒收完 一樣顯示 收部分 全收」）。移轉後 B 是「收部分」，
+   *   差額用既有的押金收款補 —— 那個功能 migration_147 做完了。
+   *
+   * ★ 擋的變成「B 比較便宜」:那會超收，而多的錢要退給房客，是退款不是移轉。
+   */
+  test('★★ B 比較貴 → 放行；B 比較便宜 → 擋，訊息要帶差額', () => {
+    assert.equal(canTransfer(A({ amount: 30_000 }), B({ amount: 40_000 })).ok, true);
+
+    const v = canTransfer(A({ amount: 40_000 }), B({ amount: 30_000 }));
     assert.equal(v.ok, false);
     assert.match(v.reason, /10,000/);          // 差額要出現
-    assert.match(v.hint ?? '', /30,000/);      // 兩個原始數字也要
-    assert.match(v.hint ?? '', /40,000/);
+    assert.match(v.hint ?? '', /40,000/);      // 兩個原始數字也要
+    assert.match(v.hint ?? '', /30,000/);
   });
 
   test('★ 差額訊息要指到正確的地方改（訂單／契約）', () => {
@@ -181,11 +185,14 @@ describe('挑來源的清單', () => {
   });
 
   test('★ 不能移的也帶著原因回來，不是直接消失', () => {
-    // 金額不同的那筆要看得到「差多少」,不然使用者不知道該去改什麼
-    const c = transferCandidates(ROWS, B({ amount: 99_999 }));
+    /*
+     * ★ 2026-09-02 起「目的比較貴」是**放行**的，所以這裡要用
+     *   **比較便宜**的目的才擋得住（會超收）。
+     */
+    const c = transferCandidates(ROWS, B({ amount: 1_000 }));
     assert.equal(c.length, 2);
     assert.equal(c.every((x) => !x.verdict.ok), true);
-    assert.match(c[0].verdict.reason, /金額不同/);
+    assert.match(c[0].verdict.reason, /超收/);
   });
 });
 
@@ -214,10 +221,11 @@ describe('挑目的的清單（從來源那邊開始）', () => {
       transferTargets([...ROWS, self], self).some((x) => x.dep.id === 'self'), false);
   });
 
-  test('★ 金額不同的排後面，但仍然看得到原因', () => {
-    const c = transferTargets([...ROWS, B({ id: 'b9', room: 'B999', amount: 55_000 })], A());
+  test('★ 移不了的排後面，但仍然看得到原因', () => {
+    // ★ 用比較便宜的目的（會超收）—— 比較貴的現在放行了
+    const c = transferTargets([...ROWS, B({ id: 'b9', room: 'B999', amount: 1_000 })], A());
     assert.equal(c[c.length - 1].dep.id, 'b9');
-    assert.match(c[c.length - 1].verdict.reason, /金額不同/);
+    assert.match(c[c.length - 1].verdict.reason, /超收/);
   });
 
   test('搜房號找得到', () => {
@@ -312,4 +320,131 @@ test('押金照樣可以移（沒有把功能一起關掉）', () => {
 test('沒帶 kind 時當押金 —— 既有呼叫端不會壞', () => {
   assert.equal(canBeSource(A()).ok, true);
   assert.equal(canBeTarget(B()).ok, true);
+});
+
+/*
+ * ★★★ 2026-09-02 使用者:「移房完 如果增加押金 如果沒收完 一樣顯示 收部分 全收」。
+ *
+ *   原本金額不同一律擋，而那個提示自己就寫著解法:
+ *   「或等『押金收款多筆』做完再補收差額」—— 那個做完了（migration_147）。
+ */
+describe('移轉時金額不同（2026-09-02 改）', () => {
+  const A = (o: Partial<TransferDep> = {}): TransferDep => ({
+    id: 'a', room: '5B2', guest_name: '林賜恩', currency: 'TWD', amount: 20000,
+    received_on: '2026-05-01', returned_on: null, orphaned: false,
+    received_amount: 20000, ...o,
+  } as TransferDep);
+  const B = (o: Partial<TransferDep> = {}): TransferDep => ({
+    id: 'b', room: '9A5', guest_name: '林賜恩', currency: 'TWD', amount: 30000,
+    received_on: null, returned_on: null, orphaned: false,
+    received_amount: 0, order_id: 'o1', ...o,
+  } as TransferDep);
+
+  /*
+   * ★★★ 這是這次要放行的那一種:新房押金比較貴。
+   *   移轉之後 B 是「收部分」，差額用既有的押金收款補。
+   */
+  test('★★★ B 比較貴 → 放行（移轉後是收部分）', () => {
+    assert.equal(canTransfer(A(), B()).ok, true);
+  });
+
+  test('一樣多 → 照舊放行', () => {
+    assert.equal(canTransfer(A(), B({ amount: 20000 })).ok, true);
+  });
+
+  /*
+   * ★★★ B 比較便宜還是要擋。放行的話 B 會超收，
+   *   而多出來的錢是要退給房客的 —— 那是退款不是移轉。
+   */
+  test('★★★ B 比較便宜 → 擋，而且說得出會超收多少', () => {
+    const v = canTransfer(A(), B({ amount: 15000 }));
+    assert.equal(v.ok, false);
+    assert.match(v.reason, /超收/);
+    assert.match(v.reason, /5,000/);
+  });
+
+  test('擋下來的提示要講「退款不是移轉」', () => {
+    assert.match(canTransfer(A(), B({ amount: 15000 })).hint ?? '', /退款/);
+  });
+
+  // ★ 幣別不同還是擋 —— 換匯是另一件事，不能靠移轉帶過
+  test('幣別不同照舊擋', () => {
+    assert.equal(canTransfer(A(), B({ currency: 'USD' })).ok, false);
+  });
+});
+
+describe('shortfallAfterTransfer —— 移轉後還差多少', () => {
+  test('B 比較貴就是差額', () => {
+    assert.equal(shortfallAfterTransfer({ amount: 20000 }, { amount: 30000 }), 10000);
+  });
+  test('一樣多是 0', () => {
+    assert.equal(shortfallAfterTransfer({ amount: 20000 }, { amount: 20000 }), 0);
+  });
+  // ★ 超收回 0 不回負數 —— 畫面上「還差 -10,000」沒有人看得懂
+  test('★ B 比較便宜回 0，不回負數', () => {
+    assert.equal(shortfallAfterTransfer({ amount: 30000 }, { amount: 20000 }), 0);
+  });
+  test('小數用分計算,不會漂', () => {
+    assert.equal(shortfallAfterTransfer({ amount: 0.1 }, { amount: 0.3 }), 0.2);
+  });
+});
+
+/*
+ * ★★★ 2026-09-02 使用者:「和一起就可以了」——
+ *   一個欄位，押金狀態與移房狀態兩個標籤並排。
+ */
+describe('depBadges —— 押金狀態 ＋ 移房狀態', () => {
+  const D = (o: any = {}) => ({
+    transfer_to_id: null, transfer_from_id: null, orphaned: false,
+    received_on: null, returned_on: null, received_amount: 0, amount: 30000, ...o,
+  });
+
+  /*
+   * ★★★ 這是這次要修的那一個:移房加押金、還沒收滿。
+   *   舊的優先序鏈會回「移轉自」，把「收部分」蓋掉。
+   */
+  test('★★★ 移轉進來又沒收滿 → 收部分 ＋ 移轉自', () => {
+    const b = depBadges(D({ transfer_from_id: 'a', received_amount: 20000 }));
+    assert.deepEqual(b, { pay: 'partial', showFrom: true });
+  });
+
+  /*
+   * ★★ 移進來之後又退給房客 —— 舊的會顯示「已退」而把「移轉自」蓋掉，
+   *   於是看不出那筆錢的來歷。
+   */
+  test('★★ 移轉進來又退掉 → 已退 ＋ 移轉自', () => {
+    const b = depBadges(D({ transfer_from_id: 'a', received_on: '2026-05-01', returned_on: '2026-08-01' }));
+    assert.deepEqual(b, { pay: 'returned', showFrom: true });
+  });
+
+  /*
+   * ★★★ 移轉出去的**不是**「已退」—— 錢沒給房客，押金總額一毛沒少。
+   *   而且不用再掛一個重複的移房標籤。
+   */
+  test('★★★ 移轉出去 → 已移轉，而且只有一個標籤', () => {
+    const b = depBadges(D({ transfer_to_id: 'b', received_on: '2026-05-01', returned_on: '2026-08-01' }));
+    assert.deepEqual(b, { pay: 'transferred', showFrom: false });
+  });
+
+  test('沒移房的照常四種', () => {
+    assert.equal(depBadges(D()).pay, 'unpaid');
+    assert.equal(depBadges(D({ received_amount: 100 })).pay, 'partial');
+    assert.equal(depBadges(D({ received_on: '2026-05-01', received_amount: 30000 })).pay, 'paid');
+    assert.equal(depBadges(D({ received_on: '2026-05-01', returned_on: '2026-08-01' })).pay, 'returned');
+  });
+
+  test('沒移房就不掛移房標籤', () => {
+    assert.equal(depBadges(D()).showFrom, false);
+  });
+
+  // ★ 孤兒優先 —— 來源單都不在了,其他狀態都建立在不存在的前提上
+  test('★ 孤兒最優先，但移轉來源還是看得到', () => {
+    const b = depBadges(D({ orphaned: true, transfer_from_id: 'a', received_amount: 100 }));
+    assert.deepEqual(b, { pay: 'orphan', showFrom: true });
+  });
+
+  // ★ 0.4 元不算收到 —— 四捨五入到元再比,跟 remainingDep 同一條規則
+  test('★ 不到一元不算收部分', () => {
+    assert.equal(depBadges(D({ received_amount: 0.4 })).pay, 'unpaid');
+  });
 });

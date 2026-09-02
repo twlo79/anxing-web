@@ -25,7 +25,7 @@ import {
 } from '@/lib/deposit-lines';
 import {
   canBeSource, canBeTarget, canTransfer, transferCandidates, transferTargets,
-  transferChip, roleCanTransfer, depName, isTransfer, type TransferDep,
+  transferChip, roleCanTransfer, depName, isTransfer, depBadges, DEP_BADGE_LABEL, type TransferDep,
 } from '@/lib/deposit-transfer';
 import DepositPayments from '@/components/DepositPayments';
 // 加費從押金扣（migration_157）—— 應退小計由它算，送審送的是小計不是押金原額
@@ -1110,10 +1110,8 @@ export default function DepositsPage() {
         // 帳號一律當文字。當數字的話 Excel 會吃掉開頭的 0,長帳號還會變科學記號
         T(r.payee_account ?? '', stCell),
         T(transferChip(r, nameOfDep)?.text ?? '', stCell),
-        T(r.orphaned ? '孤兒'
-          : r.transfer_to_id ? '已移轉'
-          : r.returned_on ? '已退'
-          : r.received_on ? '暫收中' : '尚未收', stCell),
+        // ★ 跟畫面同一支 depBadges —— 匯出原本自己寫一條鏈,而且漏了「收部分」
+        T(DEP_BADGE_LABEL[depBadges(r as any).pay], stCell),
         T(r.note ?? '', stCell),
       ]);
     }
@@ -1221,43 +1219,60 @@ export default function DepositsPage() {
     );
   };
 
+  /*
+   * ══════════ 押金狀態 ＋ 移房狀態，同一欄兩個標籤（2026-09-02 使用者:「和一起就可以了」）══════════
+   *
+   * ★★★ 舊版是一條**優先序鏈**（孤兒 → 移轉出 → 已退 → 移轉入 → 收部分 → …），
+   *   只回一個標籤。於是兩件事會互相蓋掉:
+   *
+   *     移轉進來又沒收滿  顯示「移轉自 5B2」，**收部分被蓋掉**
+   *                        （移房加押金就是這個情況，正是使用者這次要修的）
+   *     移轉進來又退掉    顯示「已退」，**移轉自被蓋掉**，看不出錢的來歷
+   *
+   * ★ 那本來就是**兩個維度**:錢收到什麼程度、這筆是不是移房來的。
+   *   擠成一個標籤就一定有一個要被犧牲。
+   *
+   * ★★ 判斷寫在 `lib/deposit-transfer` 的 `depBadges()`（有測試）——
+   *   這裡只負責挑顏色。
+   */
+  const PAY_CHIP: Record<string, { text: string; cls: string }> = {
+    orphan:      { text: DEP_BADGE_LABEL.orphan,      cls: 'bg-red-50 text-red-600' },
+    transferred: { text: DEP_BADGE_LABEL.transferred, cls: 'bg-violet-50 text-violet-700' },
+    returned:    { text: DEP_BADGE_LABEL.returned,    cls: 'bg-gray-100 text-gray-500' },
+    paid:        { text: DEP_BADGE_LABEL.paid,        cls: 'bg-mor-greenlight text-mor-green' },
+    partial:     { text: DEP_BADGE_LABEL.partial,     cls: 'bg-amber-50 text-amber-700' },
+    unpaid:      { text: DEP_BADGE_LABEL.unpaid,      cls: 'bg-amber-50 text-amber-600' },
+  };
+
   const statusChip = (r: Dep) => {
-    if (r.orphaned) return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-red-50 text-red-600">孤兒</span>;
+    const b = depBadges(r as any);
+    const move = moveChip(r);
+    const pc = PAY_CHIP[b.pay];
+
     /*
-     * ★ 順序有意義:移轉出去 → 真的退了 → 移轉進來。
-     *
-     * 一筆押金可以**同時**是「移轉進來的」跟「已經退給房客了」——
-     * 移進來之後房客退租就是這樣（B6 移到 B5、B5 再退款）。
-     * 那種時候狀態欄要說「已退」,因為錢真的出去了,那是更重要的事實;
-     * 「移轉自 B6」在詳情裡看得到。
-     *
-     * 先判斷移轉進來的話,一筆已經退掉的押金會顯示成「移轉自 ⋯」,
-     * 而清單上就再也看不出那筆錢已經不在我們手上了。
+     * ★ 退款流程進行中的優先顯示流程狀態 —— 「全收」看不出有人正在等核可，
+     *   而那是現在有人要動作的事（既有行為，不動）。
      */
-    if (r.transfer_to_id) return moveChip(r);
-    if (r.returned_on) return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-gray-100 text-gray-500">已退</span>;
-    const mc = moveChip(r);
-    if (mc) return mc;
-    /*
-     * ★ 部分收款要單獨顯示（migration_147）。
-     *
-     * 舊模型記不下這個狀態,所以「收了一半」跟「一毛沒收」以前長得一樣。
-     * 併回「尚未收」的話這支功能等於白做 —— 那正是它要解決的問題。
-     */
-    if (depPayStatus(r) === 'partial') {
-      return (
-        <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-amber-50 text-amber-700"
-          title={`已收 ${fmt(r.received_amount ?? 0)} / ${fmt(r.amount)}`}>
-          部分收款
-        </span>
-      );
-    }
-    if (r.received_on) {
-      // 退款流程進行中的,狀態欄直接顯示流程狀態 —— 「暫收中」看不出有人正在等核可
-      const rc = refundChip(r);
-      return rc ?? <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-mor-bluelight text-mor-slate">暫收中</span>;
-    }
-    return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-amber-50 text-amber-600">尚未收</span>;
+    const rc = b.pay === 'paid' ? refundChip(r) : null;
+
+    return (
+      <span className="inline-flex flex-wrap items-center gap-1">
+        {rc ?? (
+          <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] ${pc.cls}`}
+            title={b.pay === 'partial'
+              ? `已收 ${fmt(r.received_amount ?? 0)} / ${fmt(r.amount)}`
+              : (b.pay === 'transferred' ? '錢沒有退給房客，只是換了名目' : undefined)}>
+            {pc.text}
+          </span>
+        )}
+        {/*
+          ★ 移轉**出去**的不再掛第二個標籤 —— 上面那個「已移轉」
+            已經把方向講完了，`moveChip` 會再寫一次「已移轉 → 9A5」。
+        */}
+        {b.showFrom && move}
+        {b.pay === 'transferred' && move}
+      </span>
+    );
   };
 
   const inp = 'rounded-lg border border-gray-300 px-2 py-1.5';

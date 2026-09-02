@@ -13,7 +13,7 @@ import {
   itemLabel, oneoffItems, oneoffLabel, skeleton, reconcile, SHORT_SOURCES, ROOM_NONE, ONEOFF_LABEL,
 } from '@/lib/revenue-report';
 // 【結算】區塊的算法（有測試）—— 這一頁只負責排版
-import { settleLines, rocRange } from '@/lib/revenue-settle';
+import { settleGrid, rocRange } from '@/lib/revenue-settle';
 import { roomCell, periodCell, amountCell, nightsText } from '@/lib/revenue-row';
 import RowDrawer from './row-drawer';
 import RangeInput from '@/components/RangeInput';
@@ -411,6 +411,61 @@ export default function RevenuesPage() {
       // ySplit 要跟著算,對帳警告列出現時表頭會往下移一格。
       ws['!freeze'] = { xSplit: 1, ySplit: bad ? 4 : 3 };
       XLSX.utils.book_append_sheet(wb, ws, '營收總表');
+
+    /* ═══════════════════════════════════════════════════════════════
+     * 【結算】獨立一張工作表（2026-09-02 使用者指定）
+     *
+     * ★★★ 為什麼不塞在明細那張表裡:結算只用得到「分類」與金額，
+     *   而明細有 18 欄 —— 塞在一起就是一大片空格，
+     *   而且十幾列一個物業會把明細推得很遠
+     *   （使用者:「然後很多欄空白」「是否設計兩個表」）。
+     *
+     * ★★ 版面是 B 案（使用者選的）:**一列一個分類、一欄一個物業**。
+     *   直式堆疊八個物業要 140 列，而且物業之間的同一科目隔了十幾列，
+     *   根本比不了。橫著擺一頁看完。
+     *
+     * ★ 多月份就往下疊區塊，欄位維持同一批物業（取聯集）——
+     *   橫著比物業、直著比月份，兩個方向都成立。
+     *
+     * 算法在 `lib/revenue-settle` 的 `settleGrid()`（31 條測試），
+     * 這裡只負責排版。
+     * ═══════════════════════════════════════════════════════════════ */
+    {
+      // ★ 月份由新到舊（使用者指定）—— 跟營收總表一致，最新的放最上面
+      const gm = [...monthData].reverse()
+        .map((md) => ({ label: `${md.y - 1911}年${md.m}月`, rows: md.rows }));
+      const g = settleGrid(gm, (e) => estateSort[e] ?? 99);
+      const gC = g.estates.length + 2;              // 分類 ＋ 各物業 ＋ 合計
+      const G: any[][] = [];
+      const gblank = () => Array(gC).fill(T('', {}));
+
+      G.push([T('收入結算', stTitle), ...Array(gC - 1).fill(T('', {}))]);
+      G.push([T(`${estateFilter || '全部物業'}・${gm.length ? `${gm[gm.length - 1].label}~${gm[0].label}` : ''}`,
+               stSub), ...Array(gC - 1).fill(T('', {}))]);
+      G.push([T('分類', stHead), ...g.estates.map((e) => T(e, stHead)), T('合計', stHead)]);
+
+      for (const b of g.blocks) {
+        // 月份標題自己一列 —— 區塊之間要分得開，不然上下兩個月會黏在一起
+        G.push([T(b.label, stGroup), ...Array(gC - 1).fill(T('', stGroup))]);
+        for (const r of b.rows) {
+          const st = r.kind === 'subtotal' ? stSubtotal : stCell;
+          const stn = { ...st, alignment: { horizontal: 'right' } };
+          G.push([T(r.label, st), ...r.amounts.map((a) => T(a, stn)), T(r.total, { ...stn, font: { bold: true } })]);
+        }
+        G.push(gblank());
+      }
+
+      const wsG = XLSX.utils.aoa_to_sheet(G);
+      wsG['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: gC - 1 } },
+        { s: { r: 1, c: 0 }, e: { r: 1, c: gC - 1 } },
+      ];
+      // 分類那一欄要寬 —— 「其他收入・水電瓦斯・—」是最長的字串
+      wsG['!cols'] = [{ wch: 24 }, ...g.estates.map(() => ({ wch: 13 })), { wch: 14 }];
+      // ★ 凍結前三列與第一欄:捲到第五個月時還看得到欄名與分類
+      wsG['!freeze'] = { xSplit: 1, ySplit: 3 };
+      XLSX.utils.book_append_sheet(wb, wsG, '結算');
+    }
     }
 
     /* ═══════════════════════════════════════════════════════════
@@ -465,36 +520,6 @@ export default function RevenuesPage() {
       S.push([T(rocRange(md.y, md.m), stSub), ...mblank(MC - 1)]);
       S.push(MHEAD.map((h) => T(h, stHead)));
 
-      /*
-       * ══════════ 【結算】（2026-09-02 使用者指定，附了紙本報表的照片）══════════
-       *
-       * 放在明細**上面**、欄位標題**下面** —— 使用者要的是
-       * 「一張表看得完」:先看結算，往下捲才是逐筆。
-       *
-       * ★★ 每個科目都列、沒金額的寫 0（使用者選的）。這份表是拿來
-       *   橫向比對月份的 —— 列數不一樣的話，同一個位置的兩個數字
-       *   就不是同一個科目了。
-       *
-       * ★ 算法在 `lib/revenue-settle`（19 條測試），這裡只負責排版。
-       */
-      S.push([T('【結算】', stGroup), ...Array(MC - 1).fill(T('', stGroup))]);
-      for (const l of settleLines(md.rows, (e) => estateSort[e] ?? 99)) {
-        if (l.kind === 'estate') {
-          // 物業名自己一列，金額欄留空 —— 它是標題不是數字
-          S.push([T('', stCell), T('', stCell), T(l.label, stGroup),
-                  ...Array(MC - 6).fill(T('', stCell)), T('', stCell), T('', stCell), T('', stGroup)]);
-          continue;
-        }
-        const st = l.kind === 'item' ? stCell : (l.kind === 'subtotal' ? stSubtotal : stTotal);
-        S.push([
-          T('', st), T('', st), T(l.label, st),
-          ...Array(MC - 6).fill(T('', st)),
-          T('', st), T('', st),
-          T(l.amount, { ...st, alignment: { horizontal: 'right' } }),
-        ]);
-      }
-      S.push(mblank(MC));
-      S.push([T('【明細】', stGroup), ...Array(MC - 1).fill(T('', stGroup))]);
 
       /** 明細列。訂單層級,一列一筆認列。 */
       const detail = (r: Row, est: string, room: string, cls: string) => {
@@ -538,6 +563,20 @@ export default function RevenuesPage() {
        * 應該一開表就看得到。
        *
        * 下面的明細是同一批數字的展開,兩邊必然相等。
+       */
+      /*
+       * ── 結算 ──
+       *
+       * 放在最上面。明細有兩百多列,物業小計散在中間,
+       * 「這個月各棟各賺多少」得滾很久才拼得出來 —— 那是最常被問的問題,
+       * 應該一開表就看得到。
+       *
+       * 下面的明細是同一批數字的展開,兩邊必然相等。
+       *
+       * ★ 2026-09-02 一度被我換成細分版（長租／短租／其他收入各科目），
+       *   但那是 17 列一個物業、而且只用得到 2 欄 —— 明細被推得很遠，
+       *   空欄一大片（使用者:「然後很多欄空白」「是否設計兩個表」）。
+       *   細分版搬到獨立的「結算」工作表，這裡還原成原本的短版。
        */
       S.push([T('【結算】', stGroup), ...Array(MC - 1).fill(T('', stGroup))]);
       estList.forEach((e) =>
