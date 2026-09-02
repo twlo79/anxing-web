@@ -170,6 +170,20 @@ const NOT_EXCEPTION = ['協助行政', '洗烘折毛巾'];
 export function exceptionEvents(events: ExEvent[]): ExEvent[] {
   return (events ?? []).filter((e) => {
     if (NOT_EXCEPTION.some((k) => e.title.includes(k))) return false;
+    /*
+     * ★★★ 按過的一律留著（2026-09-01 使用者:「8/23 8/28 不見」）。
+     *
+     *   原本的條件是「沒有 parsed_code 才算例外」。而「補」會**同時**
+     *   建工作項目並按掉來源事件 —— 如果那筆後來又被重新解析對上了房源，
+     *   它就同時滿足「有 parsed_code」→ 從清單上**無聲消失**。
+     *
+     *   使用者看到的是「我剛剛處理的那兩筆不見了」，
+     *   而畫面上沒有任何地方說得出它們去哪了。
+     *
+     * ★ 留著的成本是清單長一點（而且預設是收起來的）；
+     *   消失的成本是使用者不敢相信這份清單。
+     */
+    if (isDismissed(e)) return true;
     if (e.excluded === 'no_assignee') return true;
     return !e.excluded && !e.parsed_code;
   });

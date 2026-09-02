@@ -289,19 +289,41 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
    *   勾了三個人其中一個休假就全部不給加的話，
    *   使用者得自己回去看是誰，而畫面沒說。
    */
-  async function addItems(date: string, staffIds: string[], code: string, type: string) {
+  /**
+   * @returns 真的寫進去了沒有。
+   *
+   * ★★★ 一定要回報（2026-09-01 使用者:「登完一筆無法登第二筆」）。
+   *   原本三條失敗路徑都 `return flash(...)`，也就是回 `undefined` ——
+   *   而呼叫端沒有檢查，於是「休假擋下來」「RLS 擋下來」的時候
+   *   照樣把那筆記成「已補」並且把來源事件按掉。
+   *   結果是:例外清單少一筆、統計沒有多一筆，**兩邊都沒有錯誤訊息**。
+   */
+  async function addItems(date: string, staffIds: string[], code: string, type: string): Promise<boolean> {
     const ok = staffIds.filter((id) => canAddItem(date, id));
     const skipped = staffIds.length - ok.length;
-    if (ok.length === 0) return flash('這幾位當天都是休假,要先清除休假才能新增房源');
+    if (ok.length === 0) { flash('這幾位當天都是休假,要先清除休假才能新增房源'); return false; }
+
+    /*
+     * ★★ 日期不在這個月的話 `period` 會對不上 —— 那筆寫得進去，
+     *   但它屬於另一個月份，這個月的統計看不到它，
+     *   而使用者以為補好了（補登表單的日期是可以改的）。
+     */
+    if (!date.startsWith(period)) {
+      flash(`${date} 不在 ${period} 這個月，請先切換月份再補`);
+      return false;
+    }
 
     const rows = ok.map((staff_id) => ({
       period, work_date: date, property_code: code || null,
       work_type: type, staff_id, source: 'manual',
     }));
     const { data, error } = await supabase.from('hk_work_item').insert(rows).select('*');
-    if (error) return flash('新增失敗:' + error.message);
-    setItems((xs) => [...xs, ...((data ?? []) as Wi[])]);
+    if (error) { flash('新增失敗:' + error.message); return false; }
+    // ★ RLS 擋下的 insert 會回成功而且 0 列（CLAUDE.md 的坑）
+    if (!data || data.length === 0) { flash('沒有寫入任何資料 —— 可能是權限不足'); return false; }
+    setItems((xs) => [...xs, ...(data as Wi[])]);
     if (skipped > 0) flash(`已加入 ${ok.length} 筆，另外 ${skipped} 位當天休假已跳過`);
+    return true;
   }
 
   /**
@@ -448,8 +470,13 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
       return hit ? { ...e, parsed_code: hit.code } : e;
     }));
     setReparse(null);
+    /*
+     * ★ 要講出「它們離開了這份清單」——
+     *   對上房源之後就不是例外了，畫面上會少幾列。
+     *   只說「已重新對上 5 筆」的話，使用者會問剛剛那幾筆去哪了。
+     */
     flash(ok === reparse.length
-      ? `已重新對上 ${ok} 筆`
+      ? `已重新對上 ${ok} 筆 —— 它們已進入統計，不再列在這裡`
       : `只更新了 ${ok} / ${reparse.length} 筆 —— 其餘可能是權限不足`);
   }
 
@@ -483,7 +510,10 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
   async function submitExAdd(again: boolean) {
     if (!exAdd) return;
     if (!exAdd.code || !exAdd.staffIds.length) return flash('要填房源、也要選人');
-    await addItems(exAdd.date, exAdd.staffIds, exAdd.code, exAdd.type);
+    // ★★★ 沒寫進去就**什麼都不做** —— 不記「已補」、不按掉來源事件。
+    //   原本沒檢查，休假或權限擋下來時例外清單會少一筆而統計沒有多一筆。
+    const ok = await addItems(exAdd.date, exAdd.staffIds, exAdd.code, exAdd.type);
+    if (!ok) return;
     setExAdded((xs) => [...xs,
       `${exAdd.code} ${exAdd.staffIds.map((i) => staff.find((x) => x.id === i)?.name ?? '?').join('＋')}`]);
 
@@ -1003,10 +1033,63 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
               </div>
             )}
 
+            <div className="divide-y divide-mor-line/40">
+              {exShown.length === 0 ? (
+                <div className="px-4 py-8 text-center text-xs text-gray-300">沒有漏掉的</div>
+              ) : exShown.map((e) => {
+                const off = !!e.dismissed_at;
+                return (
+                  <div key={e.id} className={`px-4 py-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm ${off ? 'opacity-50' : ''}`}>
+                    <span className="text-gray-500 w-14 shrink-0">{e.event_date.slice(5)}</span>
+                    <span className={`min-w-0 flex-1 ${off ? 'line-through' : ''}`}>
+                      <span className="font-medium">{e.title}</span>
+                      {e.assignees?.length ? <span className="ml-2 text-xs text-gray-400">{e.assignees.join('・')}</span> : null}
+                    </span>
+                    <span className={`text-xs shrink-0 ${
+                      reasonOf(e as ExEvent) === '人員對不到' ? 'text-red-500' : 'text-amber-600'}`}>
+                      {reasonOf(e as ExEvent)}
+                    </span>
+                    {off ? (
+                      <span className="shrink-0 flex items-center gap-2">
+                        <span className="text-xs text-gray-400">已按掉</span>
+                        <button onClick={() => toggleDismiss(e)} className="text-xs text-mor-blue underline">還原</button>
+                      </span>
+                    ) : (
+                      <span className="shrink-0 flex items-center gap-2">
+                        <button onClick={() => { setExAdded([]); setExAdd({ evId: e.id, ...prefillFromEvent(e as ExEvent, (n) => staff.find((x) => x.name === n)?.id ?? null) }); }}
+                          className="rounded-lg bg-mor-slate text-white px-3 py-1 text-xs font-medium hover:bg-mor-slatedark">補</button>
+                        <button onClick={() => toggleDismiss(e)}
+                          className="rounded-lg border border-gray-300 px-3 py-1 text-xs hover:bg-gray-50">按掉</button>
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
             {/* 手動補的表單 —— 跟排班表那張同一組欄位，多一個日期 */}
             {exAdd && (
               <div className="px-4 py-3 bg-mor-bluelight/60 border-b border-mor-line">
-                <div className="text-sm text-mor-slate font-medium mb-2">手動補這一天的工作（可以連補幾筆）</div>
+                {(() => {
+                  /*
+                    ★★★ 表單要說出**這是在補哪一筆**（2026-09-01 使用者:
+                      「補登 上方要顯示 沒進系統的條列」）。
+                      沒有這一行的話，畫面上只有四個空欄位 ——
+                      使用者按了「補」之後得往上捲去確認自己按的是哪一列，
+                      而連補幾筆時更是完全記不得。
+                  */
+                  const src = events.find((e) => e.id === exAdd.evId);
+                  return (
+                    <div className="mb-2">
+                      <div className="text-sm text-mor-slate font-medium">手動補這一天的工作（可以連補幾筆）</div>
+                      {src && (
+                        <div className="text-xs text-gray-500 mt-0.5">
+                          補這一筆：<b className="text-gray-700">{src.event_date.slice(5)}　{src.title}</b>
+                          {src.assignees?.length ? <span className="ml-2 text-gray-400">{src.assignees.join('・')}</span> : null}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
                 <div className="flex flex-wrap items-end gap-3">
                   <label className="flex flex-col gap-1"><span className="text-[11px] text-gray-500">日期</span>
                     <input type="date" value={exAdd.date}
@@ -1072,39 +1155,6 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
               </div>
             )}
 
-            <div className="divide-y divide-mor-line/40">
-              {exShown.length === 0 ? (
-                <div className="px-4 py-8 text-center text-xs text-gray-300">沒有漏掉的</div>
-              ) : exShown.map((e) => {
-                const off = !!e.dismissed_at;
-                return (
-                  <div key={e.id} className={`px-4 py-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm ${off ? 'opacity-50' : ''}`}>
-                    <span className="text-gray-500 w-14 shrink-0">{e.event_date.slice(5)}</span>
-                    <span className={`min-w-0 flex-1 ${off ? 'line-through' : ''}`}>
-                      <span className="font-medium">{e.title}</span>
-                      {e.assignees?.length ? <span className="ml-2 text-xs text-gray-400">{e.assignees.join('・')}</span> : null}
-                    </span>
-                    <span className={`text-xs shrink-0 ${
-                      reasonOf(e as ExEvent) === '人員對不到' ? 'text-red-500' : 'text-amber-600'}`}>
-                      {reasonOf(e as ExEvent)}
-                    </span>
-                    {off ? (
-                      <span className="shrink-0 flex items-center gap-2">
-                        <span className="text-xs text-gray-400">已按掉</span>
-                        <button onClick={() => toggleDismiss(e)} className="text-xs text-mor-blue underline">還原</button>
-                      </span>
-                    ) : (
-                      <span className="shrink-0 flex items-center gap-2">
-                        <button onClick={() => { setExAdded([]); setExAdd({ evId: e.id, ...prefillFromEvent(e as ExEvent, (n) => staff.find((x) => x.name === n)?.id ?? null) }); }}
-                          className="rounded-lg bg-mor-slate text-white px-3 py-1 text-xs font-medium hover:bg-mor-slatedark">補</button>
-                        <button onClick={() => toggleDismiss(e)}
-                          className="rounded-lg border border-gray-300 px-3 py-1 text-xs hover:bg-gray-50">按掉</button>
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
           </div>
 
           {/* 這兩區列的不是事件，沒有「按掉」—— 解法是去把資料補上，見各自的說明 */}

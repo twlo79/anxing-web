@@ -154,3 +154,16 @@ describe('reasonOf ／ exceptionEvents', () => {
     assert.deepEqual(exceptionEvents([E({ title: '協助行政' }), E({ title: '洗烘折毛巾' })]), []);
   });
 });
+
+/*
+ * ★★★ 2026-09-01 使用者:「8/23 8/28 不見」。
+ *   補完會按掉來源事件；那筆後來又被重新解析對上房源的話，
+ *   舊條件會讓它同時「有 parsed_code」而從清單上無聲消失。
+ */
+test('★★★ 按過的一律留在清單上，即使後來對上了房源', () => {
+  const e = E({ dismissed_at: '2026-09-01', parsed_code: 'JPR2F' });
+  assert.equal(exceptionEvents([e]).length, 1);
+  assert.deepEqual(visibleRows(exceptionEvents([e]), true).length, 1);
+  // ★ 但預設還是收起來的 —— 處理完的不該一直佔著版面
+  assert.deepEqual(visibleRows(exceptionEvents([e]), false).length, 0);
+});
