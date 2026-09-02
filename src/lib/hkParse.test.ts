@@ -303,3 +303,54 @@ describe('2026-07 全月（對照人工 Excel）', () => {
     assert.equal(prep.length, 0, '入住準備組的事件應該被標記為 not_counted');
   });
 });
+
+/* ══════════════════════════════════════════════════════════
+ * ★★★ 只有有房間才算間數（2026-09-01 使用者指定）
+ *
+ * `NO_PROPERTY`（協助行政／洗烘折毛巾／聚餐／開會／教育訓練）刻意不對房源，
+ * 但它們**照樣產生工作項目**，工作類型是預設的「清潔」——
+ * 修之前各算 1 間，於是:
+ *   · 排班表出現「庭玉 清潔」這種沒有房間的格子
+ *   · 個人間數多了幾間
+ *   · 打掃點數算不出來 → 卡片上的「⚠ N 筆未計」
+ * ══════════════════════════════════════════════════════════ */
+describe('間數：沒有房源就不算', () => {
+  const I = (o: Partial<{ work_date: string; property_code: string | null; staff_id: string; work_type: string }> = {}) => ({
+    work_date: '2026-08-09', property_code: 'A08', staff_id: 's1', work_type: '清潔', ...o,
+  });
+
+  test('★★★ property_code 是 null → 不算間數', () => {
+    const { rooms } = filterItems([I({ property_code: null })]);
+    assert.equal(rooms.length, 0);
+  });
+
+  test('★ 空字串也不算 —— 空字串在畫面上跟 null 長得一樣', () => {
+    assert.equal(filterItems([I({ property_code: '' })]).rooms.length, 0);
+  });
+
+  test('有房源就照算', () => {
+    assert.equal(filterItems([I()]).rooms.length, 1);
+  });
+
+  test('八月那三筆洗烘折毛巾不再灌水', () => {
+    const items = [
+      I({ work_date: '2026-08-09', property_code: null }),
+      I({ work_date: '2026-08-13', property_code: null }),
+      I({ work_date: '2026-08-23', property_code: null }),
+      I({ work_date: '2026-08-09', property_code: 'B08' }),
+    ];
+    assert.equal(filterItems(items).rooms.length, 1);
+  });
+
+  // ★ 布巾那條鏈本來就只算有房源的，不該被這次的改動影響
+  test('布巾的行為不變', () => {
+    assert.equal(filterItems([I()]).linen.length, 1);
+    assert.equal(filterItems([I({ property_code: null })]).linen.length, 0);
+  });
+
+  // ★ 工作類型自己的開關還是有效 —— 這次加的是「而且要有房源」，不是取代
+  test('count_workload=false 仍然擋得住', () => {
+    const wt = [{ code: '清潔', count_workload: false, count_linen: true }];
+    assert.equal(filterItems([I()], { workTypes: wt }).rooms.length, 0);
+  });
+});

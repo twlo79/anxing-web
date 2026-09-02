@@ -31,6 +31,8 @@
  *   · 按掉的判斷寫錯   → 一筆真的清掃從統計裡消失，而且沒有痕跡
  */
 
+import { NO_PROPERTY } from './hkParse.ts';
+
 /** 例外清單上的一列（`hk_event` 的子集）。 */
 export type ExEvent = {
   id: string;
@@ -163,13 +165,14 @@ export function reasonOf(e: ExEvent): string {
  *   「這個月有哪幾筆沒進系統」這一個問題的答案，
  *   而不是「沒進系統的原因有幾種」。
  *
- * ★ 協助行政／洗烘折毛巾本來就不是房源工作，不列 —— 那不是例外，是常態。
+ * ★★★ 「沒有房源可言的工作」不列 —— 那不是例外，是常態。
+ *   名單**直接用 hkParse 的 `NO_PROPERTY`**，不自己抄一份
+ *   （2026-09-01 踩過:這裡原本只寫了協助行政與洗烘折毛巾，
+ *   於是「聚餐」被當成「房源沒對到」列在清單上，而它本來就不會有房源）。
  */
-const NOT_EXCEPTION = ['協助行政', '洗烘折毛巾'];
-
 export function exceptionEvents(events: ExEvent[]): ExEvent[] {
   return (events ?? []).filter((e) => {
-    if (NOT_EXCEPTION.some((k) => e.title.includes(k))) return false;
+    if (NO_PROPERTY.some((k) => e.title.includes(k))) return false;
     /*
      * ★★★ 按過的一律留著（2026-09-01 使用者:「8/23 8/28 不見」）。
      *

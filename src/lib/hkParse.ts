@@ -72,8 +72,15 @@ const WORK_TYPES: [RegExp, string][] = [
   [/拆備品/, '拆備品'],
 ];
 
-/** 沒有房源可言的工作 */
-const NO_PROPERTY = ['協助行政', '洗烘折毛巾', '聚餐', '開會', '教育訓練'];
+/**
+ * 沒有房源可言的工作。
+ *
+ * ★★★ 這一份是**唯一**的一份（2026-09-01 匯出）。
+ *   `hk-exception.ts` 原本自己抄了一份只有兩個值的名單，
+ *   於是「聚餐」被當成「房源沒對到」的例外列在清單上 ——
+ *   而它本來就不會有房源。兩份名單總有一天會分岔。
+ */
+export const NO_PROPERTY = ['協助行政', '洗烘折毛巾', '聚餐', '開會', '教育訓練'];
 
 /**
  * 從標題抽出「可能是房源」的候選字串。
@@ -204,6 +211,25 @@ export function filterItems<T extends CountableItem>(
   const linen: T[] = [];
   for (const i of items) {
     if (!includeGift && i.work_type === '贈品補充') continue;
+    /*
+     * ★★★ 沒有房源就不算間數（2026-09-01 使用者:「這些都不算 只有有房間才算」）。
+     *
+     * `NO_PROPERTY`（協助行政／洗烘折毛巾／聚餐／開會／教育訓練）那幾種
+     * 刻意不對房源，但它們**照樣產生工作項目**，而工作類型是預設的「清潔」——
+     * 於是各算 1 間。症狀在畫面上是:
+     *
+     *   · 排班表出現「庭玉 清潔」這種沒有房間的格子
+     *   · 間數多了幾間
+     *   · 打掃點數算不出來 → 卡片上的「⚠ N 筆未計」
+     *
+     * ★★ 用「有沒有房源」判斷，**不是**再維護一份標題名單。
+     *   名單要跟 hkParse 的 NO_PROPERTY 同步，而那兩份總有一天會分岔
+     *   —— 分岔之後某一種工作會安靜地多算或少算。
+     *   「只有有房間才算」是使用者的原話，也剛好是最難寫錯的規則。
+     *
+     * ★ 布巾那條鏈不用改:它本來就只算有房源的（下面 `i.property_code &&`）。
+     */
+    if (!i.property_code) continue;
     const w = wtMap.get(i.work_type);
     if (w?.count_workload !== false) rooms.push(i);
     if (w?.count_linen === false) continue;
