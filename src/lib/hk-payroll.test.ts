@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   crewSize, cleanUnits, linenJobs, linenSets, payroll, fmtUnits,
@@ -205,4 +205,81 @@ test('★ 逐日加起來要等於 cleanUnits 的月合計 —— 兩處必須�
   let unaSum = 0;
   for (const [k, v] of daily) if (k.endsWith('|una')) unaSum += v;
   assert.equal(unaSum, cleanUnits(rows).get('una'));
+});
+
+/* ══════════════════════════════════════════════════════════
+ * 一筆等於好幾間（migration_198）
+ *
+ * 2026-09-01 使用者:「可以 key 房源我自己打 + 間數 | 打掃點數
+ *                     舉例 無房間 0.5 | 3.5點；無房間 0 | 2點」
+ * ══════════════════════════════════════════════════════════ */
+describe('units_override ／ points_override', () => {
+  const R = (o: Partial<PayrollRow> = {}): PayrollRow => ({
+    work_date: '2026-08-14', property_id: 'p1', work_type: '清潔', staff_id: 's1', ...o,
+  });
+  const pts = (id: string | null) => (id === 'p1' ? 2 : null);
+
+  test('沒填就照原本算 1 間', () => {
+    assert.equal(payroll([R()], pts).get('s1')!.units, 1);
+  });
+
+  test('填 4 → 算 4 間', () => {
+    assert.equal(payroll([R({ units_override: 4 })], pts).get('s1')!.units, 4);
+  });
+
+  /*
+   * ★★★ `|| 1` 會把 0 變成 1。而「這一筆不算間數、只記點數」
+   *   是使用者明確講的一種輸入。
+   */
+  test('★★★ 填 0 就是 0 間，不會變成 1', () => {
+    const l = payroll([R({ property_id: null, units_override: 0, points_override: 2 })], pts).get('s1')!;
+    assert.equal(l.units, 0);
+    assert.equal(l.points, 2);
+  });
+
+  test('★ 使用者的例子：無房間 0.5 間 ／ 3.5 點', () => {
+    const l = payroll([R({ property_id: null, units_override: 0.5, points_override: 3.5 })], pts).get('s1')!;
+    assert.equal(l.units, 0.5);
+    assert.equal(l.points, 3.5);
+    // ★ 手填了點數就不算「未計」—— 那正是這個欄位要消滅的東西
+    assert.equal(l.unknownPoints, 0);
+  });
+
+  /*
+   * ★★ 合掃要除以人數，而且是在 override **之後**除。
+   *   順序顛倒的話合掃的量會翻倍，而總數看起來只是「多一點」。
+   */
+  test('★★ 4 間兩個人做 → 各 2 間', () => {
+    const rows = [R({ units_override: 4 }), R({ units_override: 4, staff_id: 's2' })];
+    const out = payroll(rows, pts);
+    assert.equal(out.get('s1')!.units, 2);
+    assert.equal(out.get('s2')!.units, 2);
+  });
+
+  /*
+   * ★★★ 手填的點數是**這一列的總點數** —— 除人數，但不再乘間數。
+   *   乘下去的話「4 間 8 點」會變成 32 點。
+   */
+  test('★★★ 手填點數不再乘間數', () => {
+    const l = payroll([R({ units_override: 4, points_override: 8 })], pts).get('s1')!;
+    assert.equal(l.units, 4);
+    assert.equal(l.points, 8);
+  });
+
+  test('★★ 手填點數兩個人做 → 各一半', () => {
+    const rows = [R({ points_override: 8 }), R({ points_override: 8, staff_id: 's2' })];
+    assert.equal(payroll(rows, pts).get('s1')!.points, 4);
+  });
+
+  test('只填間數、沒填點數 → 照房源算', () => {
+    const l = payroll([R({ units_override: 3 })], pts).get('s1')!;
+    assert.equal(l.points, 6);      // 3 間 × 2 點
+    assert.equal(l.unknownPoints, 0);
+  });
+
+  test('沒房源又沒填點數 → 進未計', () => {
+    const l = payroll([R({ property_id: null, units_override: 2 })], pts).get('s1')!;
+    assert.equal(l.units, 2);
+    assert.equal(l.unknownPoints, 1);
+  });
 });

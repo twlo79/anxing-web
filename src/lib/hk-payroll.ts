@@ -25,7 +25,30 @@ export type PayrollRow = {
   /** 同一天同一間的「同一種工作」才算合掃 —— 退房與入住是兩次不同的工作 */
   work_type: string;
   staff_id: string | null;
+  /**
+   * 這一列算幾間（migration_198）。null／undefined = 算 1 間。
+   *
+   * ★ 給「一筆等於好幾間」的工作用 —— 行事曆標題只寫「正隆」，
+   *   實際上那天在正隆掃了四間，而使用者未必知道是哪四間房號。
+   */
+  units_override?: number | null;
+  /**
+   * 這一列的打掃點數（migration_198）。null／undefined = 照房源的點數算。
+   *
+   * ★ 給查不到房源、因此算不出點數的工作用 ——
+   *   那些原本會落進 `unknownPoints`（畫面上的「⚠ N 筆未計」）。
+   */
+  points_override?: number | null;
 };
+
+/**
+ * 這一列算幾間。
+ *
+ * ★★★ 用 `== null` 判斷，**不能用 `|| 1`** ——
+ *   `0 || 1` 是 1，而「這一筆不算間數」（只想記點數）是一個合理的輸入。
+ *   寫成 `||` 的話那種列會安靜地變成 1 間。
+ */
+const unitsOf = (r: PayrollRow) => (r.units_override == null ? 1 : Number(r.units_override) || 0);
 
 /** 同一天、同一間、同一種工作 = 同一份工 */
 const jobKey = (r: PayrollRow) => `${r.work_date}|${r.property_id ?? ''}|${r.work_type}`;
@@ -158,12 +181,27 @@ export function payroll(
 
     const line = out.get(r.staff_id)
       ?? { staffId: r.staff_id, units: 0, points: 0, unknownPoints: 0 };
-    const share = 1 / (crew.get(k) ?? 1);
+    /*
+     * ★★ 合掃除以人數這一步在 override **之後**:
+     *   「4 間、兩個人做」＝ 各 2 間，不是各 4 間。
+     *   順序顛倒的話合掃的量會翻倍，而總數看起來只是「多一點」。
+     */
+    const share = unitsOf(r) / (crew.get(k) ?? 1);
     line.units += share;
 
-    const p = pointsOf(r.property_id);
-    if (p == null) line.unknownPoints++;
-    else line.points += share * p;
+    /*
+     * ★★★ 手填的點數是**這一列的總點數**，所以也要除以人數，
+     *   但**不能再乘間數** —— 使用者填的已經是總數了。
+     *   乘下去的話「4 間 8 點」會變成 32 點。
+     */
+    if (r.points_override != null) {
+      line.points += (Number(r.points_override) || 0) / (crew.get(k) ?? 1);
+    } else {
+      const p = pointsOf(r.property_id);
+      // ★ 房源查不到點數 —— 這一筆進「未計」，讓人看得到，不要靜靜地少算
+      if (p == null) line.unknownPoints++;
+      else line.points += share * p;
+    }
 
     out.set(r.staff_id, line);
   }

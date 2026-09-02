@@ -41,6 +41,13 @@ type Wi = {
   id: string; period: string; work_date: string; property_code: string | null;
   work_type: string; staff_id: string; source?: string; note?: string | null;
   /**
+   * 一筆算幾間／幾點（migration_198）。null = 照原本算。
+   *
+   * ★ 給「一筆等於好幾間」的工作用 —— 行事曆只寫「正隆」，
+   *   實際上那天在正隆掃了四間，而使用者未必知道是哪四間房號。
+   */
+  units_override?: number | null; points_override?: number | null;
+  /**
    * 這一列是從哪個行事曆事件長出來的（migration_188）。
    *
    * ★★★ 重新解析要靠它把房源補回工作項目 —— 只改 hk_event.parsed_code
@@ -90,7 +97,9 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
   const [reparse, setReparse] = useState<Reparse[] | null>(null);
   /** 「手動補」的表單。跟排班表那張是同一組欄位，只是多一個日期。 */
   const [exAdd, setExAdd] = useState<
-    { evId: string; date: string; code: string; type: string; staffIds: string[] } | null>(null);
+    { evId: string; date: string; code: string; type: string; staffIds: string[];
+      /** 空字串 = 沒填，照原本算。**不要用 0 當沒填** —— 0 是合法輸入 */
+      units: string; points: string } | null>(null);
   /*
    * 這一輪已經補了什麼。
    *
@@ -203,6 +212,9 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
       property_id: propByCode[i.property_code ?? '']?.property_id ?? null,
       work_type: i.work_type,
       staff_id: i.staff_id,
+      // ★★★ 這兩行少了的話 migration_198 等於沒做:欄位存進去了，但算的時候看不到
+      units_override: i.units_override ?? null,
+      points_override: i.points_override ?? null,
     })),
     (pid) => (pid ? pointsById[pid] : null),
   ), [roomItems, propByCode, pointsById]);
@@ -306,7 +318,14 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
    *   照樣把那筆記成「已補」並且把來源事件按掉。
    *   結果是:例外清單少一筆、統計沒有多一筆，**兩邊都沒有錯誤訊息**。
    */
-  async function addItems(date: string, staffIds: string[], code: string, type: string): Promise<boolean> {
+  async function addItems(
+    date: string, staffIds: string[], code: string, type: string,
+    /**
+     * 一筆算幾間／幾點（migration_198）。null = 照原本算。
+     * ★ **不要用 0 當「沒填」** —— 0 是合法輸入（「這一筆不算間數，只記點數」）。
+     */
+    unitsOv: number | null = null, pointsOv: number | null = null,
+  ): Promise<boolean> {
     const ok = staffIds.filter((id) => canAddItem(date, id));
     const skipped = staffIds.length - ok.length;
     if (ok.length === 0) { flash('這幾位當天都是休假,要先清除休假才能新增房源'); return false; }
@@ -324,6 +343,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
     const rows = ok.map((staff_id) => ({
       period, work_date: date, property_code: code || null,
       work_type: type, staff_id, source: 'manual',
+      units_override: unitsOv, points_override: pointsOv,
     }));
     const { data, error } = await supabase.from('hk_work_item').insert(rows).select('*');
     if (error) { flash('新增失敗:' + error.message); return false; }
@@ -549,10 +569,25 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
    */
   async function submitExAdd(again: boolean) {
     if (!exAdd) return;
-    if (!exAdd.code || !exAdd.staffIds.length) return flash('要填房源、也要選人');
+    /*
+     * ★★ 房源可以留空 —— 但那時**一定要填間數或點數**，
+     *   否則那一筆什麼都不算（filterItems 會把它丟掉），
+     *   使用者會以為補進去了。
+     */
+    if (!exAdd.staffIds.length) return flash('要選人');
+    if (!exAdd.code && !exAdd.units.trim() && !exAdd.points.trim()) {
+      return flash('沒填房源的話，要填間數或打掃點數 —— 不然這一筆什麼都不會算');
+    }
+    for (const [label, v] of [['間數', exAdd.units], ['打掃點數', exAdd.points]] as const) {
+      if (v.trim() === '') continue;
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < 0) return flash(`${label}只能填 0 以上的數字`);
+    }
     // ★★★ 沒寫進去就**什麼都不做** —— 不記「已補」、不按掉來源事件。
     //   原本沒檢查，休假或權限擋下來時例外清單會少一筆而統計沒有多一筆。
-    const ok = await addItems(exAdd.date, exAdd.staffIds, exAdd.code, exAdd.type);
+    const ok = await addItems(exAdd.date, exAdd.staffIds, exAdd.code, exAdd.type,
+      exAdd.units.trim() === '' ? null : Number(exAdd.units),
+      exAdd.points.trim() === '' ? null : Number(exAdd.points));
     if (!ok) return;
     setExAdded((xs) => [...xs,
       `${exAdd.code} ${exAdd.staffIds.map((i) => staff.find((x) => x.id === i)?.name ?? '?').join('＋')}`]);
@@ -567,7 +602,8 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
     if (ev && !ev.dismissed_at) await toggleDismiss(ev);
 
     // ★ 連補時只清房源，日期與人員留著 —— 同一天常常是同一組人掃好幾間
-    if (again) setExAdd({ ...exAdd, code: '' });
+    // ★ 連補時間數與點數也清掉 —— 下一間未必是同樣的量
+    if (again) setExAdd({ ...exAdd, code: '', units: '', points: '' });
     else { setExAdd(null); setExAdded([]); }
   }
 
@@ -1096,7 +1132,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                       </span>
                     ) : (
                       <span className="shrink-0 flex items-center gap-2">
-                        <button onClick={() => { setExAdded([]); setExAdd({ evId: e.id, ...prefillFromEvent(e as ExEvent, (n) => staff.find((x) => x.name === n)?.id ?? null) }); }}
+                        <button onClick={() => { setExAdded([]); setExAdd({ evId: e.id, units: '', points: '', ...prefillFromEvent(e as ExEvent, (n) => staff.find((x) => x.name === n)?.id ?? null) }); }}
                           className="rounded-lg bg-mor-slate text-white px-3 py-1 text-xs font-medium hover:bg-mor-slatedark">補</button>
                         <button onClick={() => toggleDismiss(e)}
                           className="rounded-lg border border-gray-300 px-3 py-1 text-xs hover:bg-gray-50">按掉</button>
@@ -1143,7 +1179,39 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                       className={`${inp} w-24`}>
                       {wtypes.map((w) => <option key={w.code} value={w.code}>{w.name}</option>)}
                     </select></label>
+                  {/*
+                    ★★★ 一筆等於好幾間（migration_198，2026-09-01 使用者:
+                      「可以 key 房源我自己打 + 間數 | 打掃點數
+                        舉例 無房間 0.5 | 3.5點；無房間 0 | 2點」）。
+
+                      行事曆只寫「正隆」的那種，一筆其實是那天在那個物業做的好幾間，
+                      而使用者未必知道是哪幾間房號。
+
+                    ★ 兩欄都**留空 = 照原本算**（1 間、點數查房源）。
+                      留空跟填 0 是兩件事:0 代表「這一筆不算間數，只記點數」。
+                  */}
+                  <label className="flex flex-col gap-1"><span className="text-[11px] text-gray-500">間數</span>
+                    <input value={exAdd.units} inputMode="decimal" placeholder="留空=1"
+                      onChange={(e) => setExAdd({ ...exAdd, units: e.target.value })}
+                      className={`${inp} w-20 text-right`} /></label>
+                  <label className="flex flex-col gap-1"><span className="text-[11px] text-gray-500">打掃點數</span>
+                    <input value={exAdd.points} inputMode="decimal" placeholder="留空=查房源"
+                      onChange={(e) => setExAdd({ ...exAdd, points: e.target.value })}
+                      className={`${inp} w-24 text-right`} /></label>
                 </div>
+                {(exAdd.units.trim() !== '' || exAdd.points.trim() !== '') && (
+                  <div className="mt-2 rounded-lg bg-mor-sand/60 px-2 py-1.5 text-[11px] text-gray-600 leading-relaxed">
+                    這一筆算 <b>{exAdd.units.trim() === '' ? '1' : exAdd.units}</b> 間
+                    {exAdd.points.trim() !== '' && <>、<b>{exAdd.points}</b> 點</>}
+                    {exAdd.staffIds.length > 1 && (
+                      <span className="text-mor-slate">
+                        　{exAdd.staffIds.length} 個人一起做 → 每人各
+                        {' '}{fmtUnits((Number(exAdd.units || 1) || 0) / exAdd.staffIds.length)} 間
+                        {exAdd.points.trim() !== '' && <>、{fmtUnits((Number(exAdd.points) || 0) / exAdd.staffIds.length)} 點</>}
+                      </span>
+                    )}
+                  </div>
+                )}
                 <div className="mt-2">
                   <div className="text-[11px] text-gray-500 mb-1">誰做的（可複選）</div>
                   <div className="flex flex-wrap gap-1">

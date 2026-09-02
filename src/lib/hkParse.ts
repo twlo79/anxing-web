@@ -183,6 +183,9 @@ export type HkWorkType = { code: string; count_workload: boolean; count_linen: b
 /** 工作項在計算時只需要這幾個欄位 */
 export type CountableItem = {
   work_date: string; property_code: string | null; staff_id: string; work_type: string;
+  /** 這一列算幾間／幾點（migration_198）。有值就代表人工指定過。 */
+  units_override?: number | null;
+  points_override?: number | null;
 };
 
 /**
@@ -229,7 +232,18 @@ export function filterItems<T extends CountableItem>(
      *
      * ★ 布巾那條鏈不用改:它本來就只算有房源的（下面 `i.property_code &&`）。
      */
-    if (!i.property_code) continue;
+    /*
+     * ★★★ 人工指定過的**不受這條限制**（migration_198）。
+     *
+     *   使用者 2026-09-01:「無房間 0.5 | 3.5點」「無房間 0 | 2點」——
+     *   那正是「沒有房源、但確實有工作量與點數」的情況。
+     *   一律以 property_code 判斷的話，那兩種列會被整個丟掉，
+     *   連手填的點數都一起消失。
+     *
+     * ★ 判斷用 `== null` 而不是 truthy —— `0` 是合法的輸入
+     *   （「這一筆不算間數，只記點數」）。
+     */
+    if (!i.property_code && i.units_override == null && i.points_override == null) continue;
     const w = wtMap.get(i.work_type);
     if (w?.count_workload !== false) rooms.push(i);
     if (w?.count_linen === false) continue;
