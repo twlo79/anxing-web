@@ -3,9 +3,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import * as XLSX from 'xlsx-js-style';
 import { createClient } from '@/lib/supabase';
-import { cleanCounts, filterItems, type HkStaff, type HkProperty } from '@/lib/hkParse';
+import { cleanCounts, filterItems, buildLookup, matchProperty, type HkStaff, type HkProperty } from '@/lib/hkParse';
 import { payroll, dailyUnits, fmtUnits } from '@/lib/hk-payroll';
 import { sharePreview, previewText } from '@/lib/hk-crew';
+import {
+  reparsePreview, visibleRows, dismissedCount, prefillFromEvent,
+  reasonOf, exceptionEvents,
+  type Reparse, type ExEvent,
+} from '@/lib/hk-exception';
 import { softDelete, restoreTrash } from '@/lib/trash';
 import { EXPORT_TONE } from '@/components/Actions';
 import StatHero from '@/components/StatHero';
@@ -24,6 +29,13 @@ type Ev = {
   id: string; period: string; event_date: string; title: string;
   assignees: string[]; parsed_code: string | null; work_type: string | null;
   excluded: string | null;
+  /**
+   * 被按掉的時間（migration_188）。null = 還在例外清單上。
+   *
+   * ★★ 按掉是「我看過了，這筆不算」，**不是刪掉** ——
+   *   三個月後有人問「八月那筆聚餐怎麼沒進統計」，要查得到是誰按的。
+   */
+  dismissed_at?: string | null; dismissed_by?: string | null;
 };
 type Wi = {
   id: string; period: string; work_date: string; property_code: string | null;
@@ -64,6 +76,20 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
   const [period, setPeriod] = useState(ymOf(new Date()));
   // 排班與布巾放在同一頁 —— 改一格房源要能立刻看到布巾跟著動,分頁會讓人來回切
   const [tab, setTab] = useState<'sheet' | 'exception'>('sheet');
+  /* ── 例外清單（migration_188 的 dismissed_at 終於有人用了）── */
+  const [showDismissed, setShowDismissed] = useState(false);
+  /** 重新解析的預覽。null = 還沒按。★ 先看再寫（CLAUDE.md：建議，不自動） */
+  const [reparse, setReparse] = useState<Reparse[] | null>(null);
+  /** 「手動補」的表單。跟排班表那張是同一組欄位，只是多一個日期。 */
+  const [exAdd, setExAdd] = useState<
+    { evId: string; date: string; code: string; type: string; staffIds: string[] } | null>(null);
+  /*
+   * 這一輪已經補了什麼。
+   *
+   * ★ 連補幾筆時要看得到補過什麼 —— 沒有這個的話第三筆會忘記前兩筆，
+   *   而重複的工作項目在畫面上看不出來（同一天、同一間、同一個人，只是多一列）。
+   */
+  const [exAdded, setExAdded] = useState<string[]>([]);
   const [staff, setStaff] = useState<HkStaff[]>([]);
   const [props, setProps] = useState<HkProperty[]>([]);
   const [events, setEvents] = useState<Ev[]>([]);
@@ -382,6 +408,104 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
     XLSX.utils.book_append_sheet(wb, ws, period);
     XLSX.writeFile(wb, `${period}_房務排班統計.xlsx`);
   }
+
+  /* ══════════════════════════════════════════════════════════
+   * 例外清單的三個動作（2026-09-01 使用者:「還是沒有按掉的功能阿」）
+   * ══════════════════════════════════════════════════════════ */
+
+  /**
+   * 用**現在**的房源主檔重新解析。
+   *
+   * ★★★ 為什麼需要這個:`hk_event.parsed_code` 是匯入當下算好存起來的
+   *   （見 import-panel.tsx 與 api/import/housekeeping/route.ts）——
+   *   後來才補的別名不會回頭修既有資料。
+   *   八月匯入時還沒有 J1→JPR1F，那幾筆就永遠躺在例外清單裡，
+   *   而看的人會以為別名沒生效，跑去再加一次。
+   */
+  const lookup = useMemo(() => buildLookup(props), [props]);
+  function previewReparse() {
+    const list = reparsePreview(events as ExEvent[], (t) => matchProperty(t, lookup).code);
+    setReparse(list);
+    if (!list.length) flash('用現在的別名重對一次，沒有任何一筆對得上');
+  }
+
+  /** 確認寫入。★ 只寫 parsed_code，不碰任何人工建立的工作項目。 */
+  async function applyReparse() {
+    if (!reparse?.length) return;
+    let ok = 0;
+    for (const r of reparse) {
+      const { data, error } = await supabase.from('hk_event')
+        .update({ parsed_code: r.code }).eq('id', r.id).select('id');
+      if (error) return flash('重新解析失敗:' + error.message);
+      /*
+       * ★★ RLS 擋下的 UPDATE 會回成功而且影響 0 列（CLAUDE.md 的坑）。
+       *   不數的話，沒有權限的人會看到「已更新 5 筆」而一筆都沒變。
+       */
+      if (data?.length) ok += 1;
+    }
+    setEvents((xs) => xs.map((e) => {
+      const hit = reparse.find((r) => r.id === e.id);
+      return hit ? { ...e, parsed_code: hit.code } : e;
+    }));
+    setReparse(null);
+    flash(ok === reparse.length
+      ? `已重新對上 ${ok} 筆`
+      : `只更新了 ${ok} / ${reparse.length} 筆 —— 其餘可能是權限不足`);
+  }
+
+  /**
+   * 按掉／還原。
+   *
+   * ★ 不是刪除。按掉的列還在資料庫裡，打開「顯示已按掉的」就看得到，
+   *   而且記著是誰在什麼時候按的。
+   */
+  async function toggleDismiss(e: Ev) {
+    const on = !e.dismissed_at;
+    const { data: { user } } = await supabase.auth.getUser();
+    const patch = on
+      ? { dismissed_at: new Date().toISOString(), dismissed_by: user?.id ?? null }
+      : { dismissed_at: null, dismissed_by: null };
+    const { data, error } = await supabase.from('hk_event')
+      .update(patch).eq('id', e.id).select('id');
+    if (error) return flash((on ? '按掉' : '還原') + '失敗:' + error.message);
+    if (!data?.length) return flash('沒有寫入任何資料 —— 可能是權限不足');
+    setEvents((xs) => xs.map((x) => (x.id === e.id ? { ...x, ...patch } : x)));
+  }
+
+  /**
+   * 手動加入完成之後，把那個事件一併按掉。
+   *
+   * ★★★ 兩件事要一起做。只加不按掉的話，那一筆同時
+   *   **出現在統計裡、也還躺在例外清單上** —— 下次有人看到又加一次，
+   *   而重複的工作項目在畫面上看不出來（同一天、同一間、同一個人，
+   *   只是多了一列）。
+   */
+  async function submitExAdd(again: boolean) {
+    if (!exAdd) return;
+    if (!exAdd.code || !exAdd.staffIds.length) return flash('要填房源、也要選人');
+    await addItems(exAdd.date, exAdd.staffIds, exAdd.code, exAdd.type);
+    setExAdded((xs) => [...xs,
+      `${exAdd.code} ${exAdd.staffIds.map((i) => staff.find((x) => x.id === i)?.name ?? '?').join('＋')}`]);
+
+    /*
+     * ★★★ 補完就把那個事件按掉。兩件事**一定要一起** ——
+     *   只補不按掉的話，那一筆同時出現在統計裡、也還躺在例外清單上，
+     *   下次有人看到又補一次。而重複的工作項目在畫面上看不出來:
+     *   同一天、同一間、同一個人，只是多了一列。
+     */
+    const ev = events.find((e) => e.id === exAdd.evId);
+    if (ev && !ev.dismissed_at) await toggleDismiss(ev);
+
+    // ★ 連補時只清房源，日期與人員留著 —— 同一天常常是同一組人掃好幾間
+    if (again) setExAdd({ ...exAdd, code: '' });
+    else { setExAdd(null); setExAdded([]); }
+  }
+
+  /** 沒進系統的事件（未指派 ＋ 房源對不到合成一份）。 */
+  const exEvents = useMemo(() => exceptionEvents(events as ExEvent[]) as unknown as Ev[], [events]);
+  const exShown = useMemo(
+    () => visibleRows(exEvents as unknown as ExEvent[], showDismissed) as unknown as Ev[],
+    [exEvents, showDismissed]);
 
   const exceptions = useMemo(() => ({
     noAssignee: events.filter((e) => e.excluded === 'no_assignee'),
@@ -824,10 +948,168 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
         </div>
       ) : (
         <div className="space-y-4">
+
+          {/*
+            ══════════════════════════════════════════════════════
+            沒進系統的事件 —— **未指派與房源對不到合成一份**。
+
+            ★★★ 使用者要的是「這個月有哪幾筆沒進系統」這一個問題的答案，
+              不是「沒進系統的原因有幾種」。分成兩個區塊的話，
+              同一天的兩筆會落在畫面上相距很遠的地方，
+              而人是照日期在找東西的（2026-08-31 使用者:
+              「我看不懂耶 我的理解是 1. 看甚麼沒進系統 2. 手動放進去 3. 按掉」）。
+
+            ★ 原因寫在每一列上，動作也在每一列上。
+            ══════════════════════════════════════════════════════
+          */}
+          <div className="rounded-xl glass">
+            <div className="px-4 py-2.5 border-b border-mor-line bg-white/45 flex flex-wrap items-center justify-between gap-2">
+              <span className="font-medium text-sm">沒進系統的</span>
+              <span className="flex items-center gap-3">
+                {/*
+                  ★★★ 別名是後來才加的 —— `hk_event.parsed_code` 是匯入當下
+                    算好存起來的，加別名不會回頭修既有資料。
+                    沒有這顆的話，使用者會以為別名沒生效而跑去再加一次。
+                */}
+                <button onClick={previewReparse}
+                  className="rounded-lg border border-mor-green text-mor-greendark px-2.5 py-1 text-xs font-medium hover:bg-mor-greenlight">
+                  重新解析
+                </button>
+                {dismissedCount(exEvents as ExEvent[]) > 0 && (
+                  <button onClick={() => setShowDismissed((v) => !v)}
+                    className="text-xs text-mor-blue underline">
+                    {showDismissed ? '隱藏已按掉的' : `顯示已按掉的（${dismissedCount(exEvents as ExEvent[])}）`}
+                  </button>
+                )}
+                <span className={`text-xs ${exShown.length ? 'text-amber-600' : 'text-gray-400'}`}>{exShown.length} 筆</span>
+              </span>
+            </div>
+
+            {/* 重新解析的預覽。★ 先看再寫 —— 對錯房源的代價是點數算到別人頭上 */}
+            {reparse !== null && reparse.length > 0 && (
+              <div className="px-4 py-3 bg-mor-greenlight/60 border-b border-mor-line text-sm">
+                <div className="font-medium text-mor-greendark mb-1">用現在的別名可以對上 {reparse.length} 筆</div>
+                <div className="text-xs text-gray-600 space-y-0.5 mb-2">
+                  {reparse.map((r) => (
+                    <div key={r.id}>{r.event_date}　{r.title} → <b>{r.code}</b></div>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={applyReparse}
+                    className="rounded-lg bg-mor-slate text-white px-3 py-1 text-xs font-medium hover:bg-mor-slatedark">寫入</button>
+                  <button onClick={() => setReparse(null)}
+                    className="rounded-lg border border-gray-300 px-3 py-1 text-xs">取消</button>
+                </div>
+              </div>
+            )}
+
+            {/* 手動補的表單 —— 跟排班表那張同一組欄位，多一個日期 */}
+            {exAdd && (
+              <div className="px-4 py-3 bg-mor-bluelight/60 border-b border-mor-line">
+                <div className="text-sm text-mor-slate font-medium mb-2">手動補這一天的工作（可以連補幾筆）</div>
+                <div className="flex flex-wrap items-end gap-3">
+                  <label className="flex flex-col gap-1"><span className="text-[11px] text-gray-500">日期</span>
+                    <input type="date" value={exAdd.date}
+                      onChange={(e) => setExAdd({ ...exAdd, date: e.target.value })} className={inp} /></label>
+                  <label className="flex flex-col gap-1"><span className="text-[11px] text-gray-500">房源</span>
+                    <input list="hk-props" value={exAdd.code} autoFocus
+                      onChange={(e) => setExAdd({ ...exAdd, code: e.target.value })}
+                      className={`${inp} w-28`} /></label>
+                  <label className="flex flex-col gap-1"><span className="text-[11px] text-gray-500">工作類型</span>
+                    <select value={exAdd.type} onChange={(e) => setExAdd({ ...exAdd, type: e.target.value })}
+                      className={`${inp} w-24`}>
+                      {wtypes.map((w) => <option key={w.code} value={w.code}>{w.name}</option>)}
+                    </select></label>
+                </div>
+                <div className="mt-2">
+                  <div className="text-[11px] text-gray-500 mb-1">誰做的（可複選）</div>
+                  <div className="flex flex-wrap gap-1">
+                    {roomStaff.map((x) => {
+                      const on = exAdd.staffIds.includes(x.id);
+                      return (
+                        <button key={x.id} type="button"
+                          onClick={() => setExAdd({
+                            ...exAdd,
+                            staffIds: on ? exAdd.staffIds.filter((i) => i !== x.id) : [...exAdd.staffIds, x.id],
+                          })}
+                          className={`rounded-lg px-2 py-1 text-xs font-medium border ${
+                            on ? 'bg-mor-slate text-white border-mor-slate' : 'bg-white border-gray-300 text-gray-600'}`}>
+                          {x.name}{on ? ' ✓' : ''}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {/* 合掃預覽 —— 兩個人一起掃是各 0.5 間，不是各 1 間 */}
+                  {exAdd.staffIds.length > 0 && exAdd.code && (
+                    <div className="mt-2 rounded-lg bg-mor-greenlight px-2 py-1.5 text-[11px] text-mor-greendark">
+                      {(() => {
+                        const t = previewText(
+                          sharePreview(items, exAdd.date, exAdd.code, exAdd.type, exAdd.staffIds),
+                          (id) => staff.find((x) => x.id === id)?.name ?? id,
+                        );
+                        if (!t) return null;
+                        // ★ 警告（有人從 1 間掉到 0.5 間）要另起一行，不能跟主句混在一起
+                        return <>{t.line}{t.warn && <div className="text-amber-700 mt-0.5">{t.warn}</div>}</>;
+                      })()}
+                    </div>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-2 mt-3">
+                  <button onClick={() => submitExAdd(true)}
+                    disabled={!exAdd.code || !exAdd.staffIds.length}
+                    className="rounded-lg bg-mor-slate text-white px-3 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">
+                    存並再補一筆</button>
+                  <button onClick={() => submitExAdd(false)}
+                    disabled={!exAdd.code || !exAdd.staffIds.length}
+                    className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs disabled:opacity-40">存完收起來</button>
+                  <button onClick={() => { setExAdd(null); setExAdded([]); }}
+                    className="text-xs text-gray-500 underline">取消</button>
+                  {/* ★ 連補幾筆時要看得到補了什麼 —— 不然第三筆會忘記前兩筆 */}
+                  {exAdded.length > 0 && (
+                    <span className="text-xs text-mor-greendark">已補 {exAdded.length} 筆：{exAdded.join('・')}</span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="divide-y divide-mor-line/40">
+              {exShown.length === 0 ? (
+                <div className="px-4 py-8 text-center text-xs text-gray-300">沒有漏掉的</div>
+              ) : exShown.map((e) => {
+                const off = !!e.dismissed_at;
+                return (
+                  <div key={e.id} className={`px-4 py-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm ${off ? 'opacity-50' : ''}`}>
+                    <span className="text-gray-500 w-14 shrink-0">{e.event_date.slice(5)}</span>
+                    <span className={`min-w-0 flex-1 ${off ? 'line-through' : ''}`}>
+                      <span className="font-medium">{e.title}</span>
+                      {e.assignees?.length ? <span className="ml-2 text-xs text-gray-400">{e.assignees.join('・')}</span> : null}
+                    </span>
+                    <span className={`text-xs shrink-0 ${
+                      reasonOf(e as ExEvent) === '人員對不到' ? 'text-red-500' : 'text-amber-600'}`}>
+                      {reasonOf(e as ExEvent)}
+                    </span>
+                    {off ? (
+                      <span className="shrink-0 flex items-center gap-2">
+                        <span className="text-xs text-gray-400">已按掉</span>
+                        <button onClick={() => toggleDismiss(e)} className="text-xs text-mor-blue underline">還原</button>
+                      </span>
+                    ) : (
+                      <span className="shrink-0 flex items-center gap-2">
+                        <button onClick={() => { setExAdded([]); setExAdd({ evId: e.id, ...prefillFromEvent(e as ExEvent, (n) => staff.find((x) => x.name === n)?.id ?? null) }); }}
+                          className="rounded-lg bg-mor-slate text-white px-3 py-1 text-xs font-medium hover:bg-mor-slatedark">補</button>
+                        <button onClick={() => toggleDismiss(e)}
+                          className="rounded-lg border border-gray-300 px-3 py-1 text-xs hover:bg-gray-50">按掉</button>
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 這兩區列的不是事件，沒有「按掉」—— 解法是去把資料補上，見各自的說明 */}
           {[
-            { title: '未指派負責人', rows: exceptions.noAssignee.map((e) => `${e.event_date}　${e.title}`), hint: '這些事件沒有人負責,不計入任何統計。' },
-            { title: '房源無法解析', rows: exceptions.unknownProp.map((e) => `${e.event_date}　${e.title}`), hint: '標題裡抽不出對得上主檔的房源。到設定加別名,或建立新房源後重新匯入。' },
-            { title: '尚未建檔「幾床」', rows: exceptions.noBeds, hint: '這些房源有清掃紀錄但沒有床數,床單推算會少算。' },
+            { title: '尚未建檔「幾床」', rows: exceptions.noBeds, hint: '這些房源有清掃紀錄但沒有床數,床單推算會少算。★ 沒有「按掉」——按掉只會讓少算的床單消失在視線外,而總數依然是錯的。' },
             { title: '同月清掃 3 次以上', rows: exceptions.heavy.map(([c, n]) => `${c}　${n} 次`), hint: '可能是重複建立的事件,值得看一眼。' },
           ].map((sec) => (
             <div key={sec.title} className="rounded-xl glass">
