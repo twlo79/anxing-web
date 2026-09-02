@@ -786,8 +786,8 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                   <button type="button" onClick={() => setOpenEstate(open ? null : key)}
                     className={`w-16 shrink-0 truncate text-left hover:underline ${
                       none ? 'text-amber-700' : ''} ${open ? 'font-medium' : ''}`}
-                    title={none ? '補登時沒填房源，或房源還沒對到 ERP 物業' : (e.estate ?? '')}>
-                    {open ? '▾ ' : '▸ '}{none ? '⚠ 無房源' : e.estate}
+                    title={none ? '這些工作算不進任何物業。展開看每一筆的原因' : (e.estate ?? '')}>
+                    {open ? '▾ ' : '▸ '}{none ? '⚠ 未歸物業' : e.estate}
                   </button>
                   <div className="flex-1 h-4 rounded bg-gray-100 min-w-0">
                     <div className={`h-4 rounded ${none ? 'bg-amber-400' : 'bg-mor-slate'}`}
@@ -832,15 +832,31 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                               <td className="py-1 text-gray-600 truncate">
                                 {r.staffIds.map((id) => staff.find((x) => x.id === id)?.name ?? '?').join('・')}
                               </td>
+                              {/*
+                                ★★★ 算不進物業有**三種**原因，要分開講
+                                  （2026-09-02 使用者:「這些有房源耶」——
+                                  他看到亞曼尼、時兆公區、開3 被歸進「無房源」，
+                                  而那三個確實有房源也在主檔裡）。
+
+                                    沒填房源        使用者自己留空的
+                                    主檔沒有        他自己打的字，房務主檔查不到
+                                    沒接上 ERP      房務主檔有，但沒連到 ERP 房源
+                                                    （hk_property.property_id 是空的）
+                                    房源沒有物業    連上了，但那個 ERP 房源沒設物業
+
+                                ★ 用一個「無房源」蓋掉四種的話，看的人不知道
+                                  該去補什麼 —— 而前兩種要改補登、後兩種要改主檔。
+                              */}
                               <td className="py-1 text-gray-600 truncate">
-                                {/*
-                                  ★ 房源留空的寫「（沒填）」不是留白 ——
-                                    留白看起來像資料掉了，而那是使用者自己選的
-                                */}
-                                {r.label || <span className="text-amber-600">（沒填）</span>}
-                                {r.label && !propByCode[r.label] && (
-                                  <span className="ml-1 text-amber-600">主檔沒有</span>
-                                )}
+                                {r.label || <span className="text-amber-600">（沒填房源）</span>}
+                                {(() => {
+                                  if (!r.label) return null;
+                                  const hp = propByCode[r.label];
+                                  if (!hp) return <span className="ml-1 text-amber-600">主檔沒有</span>;
+                                  if (!hp.property_id) return <span className="ml-1 text-amber-600">沒接上 ERP</span>;
+                                  if (!estateById[hp.property_id]) return <span className="ml-1 text-amber-600">房源沒有物業</span>;
+                                  return null;
+                                })()}
                               </td>
                               <td className="py-1 text-right tabular-nums">{fmtUnits(r.units)}</td>
                               <td className="py-1 text-right tabular-nums">
@@ -849,7 +865,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                             </tr>
                           ))}
                           <tr className="border-t border-gray-300 font-medium">
-                            <td className="py-1" colSpan={3}>{none ? '無房源' : e.estate} 小計</td>
+                            <td className="py-1" colSpan={3}>{none ? '未歸物業' : e.estate} 小計</td>
                             <td className="py-1 text-right tabular-nums">{fmtUnits(e.units)}</td>
                             <td className="py-1 text-right tabular-nums">{fmtUnits(e.points)}</td>
                           </tr>
