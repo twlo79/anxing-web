@@ -170,23 +170,6 @@ export function canTransfer(from: TransferDep, to: TransferDep): Verdict {
   return { ok: true, reason: '' };
 }
 
-/**
- * 移轉之後 B 還差多少。0 = 剛好收滿。
- *
- * ★ 給移轉視窗**按下去之前**顯示用 —— 「移轉後還差 $10,000，
- *   要另外補收」比事後才發現狀態是「收部分」好。
- *
- * ★★ 這裡**不**處理超收（負數）—— 那種情況 `canTransfer` 已經擋掉了。
- *   回 0 而不是負數，因為畫面上「還差 -10,000」沒有人看得懂。
- */
-export function shortfallAfterTransfer(
-  from: Pick<TransferDep, 'amount'>,
-  to: Pick<TransferDep, 'amount'>,
-): number {
-  const af = Math.round((Number(from.amount) || 0) * 100);
-  const at = Math.round((Number(to.amount) || 0) * 100);
-  return Math.max(0, (at - af) / 100);
-}
 
 /**
  * 給定目的（B），列出可以當來源的押金。

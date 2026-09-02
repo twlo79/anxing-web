@@ -856,7 +856,7 @@ export default function DashboardPage() {
           <div className="text-xs mt-1 text-amber-700">
             儀表板的營收讀的是<b>訂單營收認列</b>（跨月已按天數拆好）,不是收款日期也不是訂單原始金額。
             認列由訂單的觸發器產生 —— 沒產生的話這裡會偏低。
-            跑 <code className="px-1 bg-amber-100 rounded">supabase/查-營收認列為何是零.sql</code> 找原因,
+            跑 <code className="px-1 bg-amber-100 rounded">supabase/audits/查-營收認列健檢.sql</code> 找原因,
             確認是缺漏之後用 <code className="px-1 bg-amber-100 rounded">select rebuild_recognitions();</code> 重算。
             <br />
             （若這個區間本來就有大量跨月訂單,落差是正常的 —— 錢會認列在之後的月份。）

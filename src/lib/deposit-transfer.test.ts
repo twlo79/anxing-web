@@ -2,7 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   canBeSource, canBeTarget, canTransfer, transferCandidates, transferTargets, transferChip,
-  roleCanTransfer, depName, isTransfer, shortfallAfterTransfer, depBadges, type TransferDep,
+  roleCanTransfer, depName, isTransfer, depBadges, type TransferDep,
 } from './deposit-transfer.ts';
 
 /**
@@ -373,21 +373,6 @@ describe('移轉時金額不同（2026-09-02 改）', () => {
   });
 });
 
-describe('shortfallAfterTransfer —— 移轉後還差多少', () => {
-  test('B 比較貴就是差額', () => {
-    assert.equal(shortfallAfterTransfer({ amount: 20000 }, { amount: 30000 }), 10000);
-  });
-  test('一樣多是 0', () => {
-    assert.equal(shortfallAfterTransfer({ amount: 20000 }, { amount: 20000 }), 0);
-  });
-  // ★ 超收回 0 不回負數 —— 畫面上「還差 -10,000」沒有人看得懂
-  test('★ B 比較便宜回 0，不回負數', () => {
-    assert.equal(shortfallAfterTransfer({ amount: 30000 }, { amount: 20000 }), 0);
-  });
-  test('小數用分計算,不會漂', () => {
-    assert.equal(shortfallAfterTransfer({ amount: 0.1 }, { amount: 0.3 }), 0.2);
-  });
-});
 
 /*
  * ★★★ 2026-09-02 使用者:「和一起就可以了」——
