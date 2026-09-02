@@ -41,6 +41,14 @@ type Contract = {
   earnest_amount?: number | null; earnest_only?: boolean | null;
   paid: boolean; account: string | null; note: string | null; active: boolean; watch?: boolean; display_name?: string | null;
   invoice_required?: boolean; invoice_day?: number | null; invoice_after_paid?: boolean;
+  /**
+   * 價格未稅（migration_204）。false = 含稅價（預設）。
+   *
+   * ★★ true 時不開發票 —— 要開的話那一期到收租加一筆「稅費」。
+   * ★ 跟 invoice_required 是兩件事:未稅是**價格的性質**，
+   *   開不開票是**跟客戶的約定**。資料庫有 check 約束擋住「未稅又要開票」。
+   */
+  tax_free?: boolean;
   invoice_title?: string | null; invoice_tax_id?: string | null; invoice_note?: string | null;
   /** 外幣押金 [{cur,amt}]。台幣仍在 deposit —— 格式與 orders.fx_deposit 一致（migration_87）。 */
   fx_deposit?: { cur: string; amt: number }[] | null;
@@ -286,7 +294,9 @@ export default function ContractsPage() {
   // 年繳契約收款時 12 個月會一次轉 paid,若以入帳為準會一次湧入 12 列淹沒其他家;
   // 以月份為準則每月只出現一列,在該契約的 invoice_day 當天提醒。
   const invPending = useMemo(() => {
-    const need = rows.filter((r) => r.active && r.invoice_required);
+    // ★ 未稅的不列（migration_204）。約束其實已經擋住「未稅又要開票」,
+    //   這裡明寫一次是因為讀這段的人不會知道有那條約束
+    const need = rows.filter((r) => r.active && r.invoice_required && !r.tax_free);
     if (!need.length) return [] as any[];
     const issued = new Set(invoices.map((v) => `${v.contract_id}|${v.ym}`));
     const nowDay = new Date().getDate();
@@ -421,8 +431,13 @@ export default function ContractsPage() {
       deposit: edit.deposit, fx_deposit: [],
       start_date: edit.start_date || null, end_date: edit.end_date || null, first_payment_date: edit.first_payment_date || null, pay_day: edit.pay_day ?? null,
       account: edit.account, note: edit.note, active: edit.active, watch: edit.watch ?? false, display_name: edit.display_name || null, name: `${edit.tenant_name ?? ''}-${edit.room ?? ''}`,
-      invoice_required: edit.invoice_required ?? false,
-      invoice_day: edit.invoice_required ? (edit.invoice_day ?? null) : null,
+      /*
+       * ★★★ 未稅就強制關掉開發票（migration_204 的 check 約束也擋）。
+       *   前端先對齊是因為約束擋下來的訊息是約束名稱，沒人看得懂。
+       */
+      tax_free: !!edit.tax_free,
+      invoice_required: edit.tax_free ? false : (edit.invoice_required ?? false),
+      invoice_day: (!edit.tax_free && edit.invoice_required) ? (edit.invoice_day ?? null) : null,
       invoice_after_paid: edit.invoice_after_paid !== false,
       invoice_title: edit.invoice_title || null,
       invoice_tax_id: edit.invoice_tax_id || null,
@@ -663,7 +678,7 @@ const nameOf = (c: Contract) =>
 
   function blank(): Contract {
     return { id: '', estate_id: estates.find((e) => e.name === '正隆')?.id ?? null, room: '', tenant_name: '', phone: '', cadence: 'monthly', type: 'longterm', monthly_rent: 0, amount_per_period: 0, deposit: 0, start_date: '', end_date: '', pay_day: null, first_payment_date: '', paid: false, account: null, note: '', active: true, watch: false, display_name: '', earnest_only: false, earnest_amount: 0,
-      invoice_required: false, invoice_day: null, invoice_after_paid: true, invoice_title: '', invoice_tax_id: '', invoice_note: '', concessions: [] };
+      invoice_required: false, invoice_day: null, invoice_after_paid: true, invoice_title: '', invoice_tax_id: '', invoice_note: '', tax_free: false, concessions: [] };
   }
 
   return (
@@ -975,6 +990,7 @@ const nameOf = (c: Contract) =>
                     {c.auto_renew && <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-mor-bluelight text-mor-slate">自動續約</span>}
                   </span>
                 ))}
+                {c.tax_free ? row('發票', '價格未稅・不開發票（要開請在收租加「稅費」）') : null}
                 {c.invoice_required ? row('發票', `需開立${c.invoice_day ? `・每月 ${c.invoice_day} 號` : ''}${c.invoice_after_paid ? '・收款後開' : ''}${c.invoice_title ? `\n抬頭 ${c.invoice_title}` : ''}${c.invoice_tax_id ? `・統編 ${c.invoice_tax_id}` : ''}`) : null}
                 {((c.concessions ?? []) as Concession[]).length > 0 ? row('折讓約定', (
                   <span className="space-y-0.5 block">
@@ -1210,12 +1226,46 @@ const nameOf = (c: Contract) =>
                 </p>
               </div>
 
+              {/*
+                價格未稅（2026-09-02 使用者指定）。
+
+                ★ 租金**預設是含稅價** —— 所以這一格預設不勾，
+                  既有的三十幾張契約行為一個字都不變。
+
+                ★★ 勾了就把「需要開發票」整區關掉並清空。可勾但灰掉的話，
+                  一定有人勾了以為有效（資料庫的 check 約束也擋，
+                  前端只是讓人不會誤按）。
+              */}
               <div className="col-span-2 border-t border-mor-line pt-3 mt-1">
-                <label className="flex items-center gap-2 text-xs font-semibold text-gray-500" title="勾選後會出現在主畫面的「待開發票」提醒清單">
-                  <input type="checkbox" checked={!!edit.invoice_required} onChange={(e) => setEdit({ ...edit, invoice_required: e.target.checked })} />
+                <label className="flex items-start gap-2 rounded-lg bg-mor-bluelight/60 px-3 py-2 cursor-pointer">
+                  <input type="checkbox" className="mt-0.5" checked={!!edit.tax_free}
+                    onChange={(e) => setEdit({
+                      ...edit,
+                      tax_free: e.target.checked,
+                      // ★ 勾起來就一起清掉,不要留著等使用者取消勾選時「復活」
+                      ...(e.target.checked
+                        ? { invoice_required: false, invoice_day: null }
+                        : {}),
+                    })} />
+                  <span>
+                    <span className="text-sm text-mor-blue">價格未稅</span>
+                    <span className="block text-xs text-gray-500 mt-0.5">
+                      要開發票的話，每一期到收租加一筆「稅費」再開立
+                    </span>
+                  </span>
+                </label>
+              </div>
+
+              <div className={`col-span-2 pt-3 ${edit.tax_free ? 'opacity-40' : ''}`}>
+                <label className={`flex items-center gap-2 text-xs font-semibold text-gray-500 ${
+                  edit.tax_free ? '' : 'cursor-pointer'}`}
+                  title={edit.tax_free ? '價格未稅的契約不開發票' : '勾選後會出現在主畫面的「待開發票」提醒清單'}>
+                  <input type="checkbox" disabled={!!edit.tax_free}
+                    checked={!edit.tax_free && !!edit.invoice_required}
+                    onChange={(e) => setEdit({ ...edit, invoice_required: e.target.checked })} />
                   需要開發票
                 </label>
-                {edit.invoice_required && (
+                {!edit.tax_free && edit.invoice_required && (
                   <>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2 text-sm">
                       <label className="flex flex-col gap-1 text-xs text-gray-500">每月開票日
@@ -2032,86 +2082,6 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                           </button>
                         )}
                       </div>
-                      {pt.lines.length > 1 && openPays === payKey && (
-                        <div className="mt-1 space-y-0.5">
-                          {pt.lines.map((l, li) => (
-                            /*
-                              ★ 拿掉每一行的 ✓／·（2026-08-25 使用者:「上面不用打勾」）。
-
-                                那一欄是為了「一期裡有些收了有些沒收」設計的,
-                                但整期是**一起標記**的（setPeriodPaid 一次改全部）——
-                                所以每一行永遠一模一樣,等於用一整欄重複講
-                                卡片顏色已經講過的事。
-                            */
-                            <div key={li} className="flex items-baseline gap-2 text-xs">
-                              <span className="text-gray-600">{l.label}</span>
-                              {l.kind === 'fixed' && <span className="text-[10px] text-gray-400">每期固定</span>}
-                              <span className={`ml-auto tabular-nums ${
-                                l.negative ? 'text-orange-600' : 'text-gray-700'}`}>
-                                {l.negative ? '−' : ''}${fmt(l.amount)}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      {/*
-                        收款明細,跟費用明細**同一個 toggle** ——
-                        使用者要的是「所有費用與收款明細 toggle」（2026-08-25）。
-                        分成兩個開關的話,同一件事要點兩次才看得完。
-                      */}
-                      {openPays === payKey && periodPays.length > 0 && (
-                        <div className="mt-1 space-y-0.5 border-t border-mor-line/40 pt-1">
-                          {periodPays.map((pp: any) => (
-                            <div key={pp.id} className="flex items-baseline gap-2 text-xs">
-                              <span className="text-gray-500">{String(pp.paid_on).slice(5)}</span>
-                              <span className="text-gray-400">
-                                {METHOD_LABEL[pp.method] ?? pp.method ?? '—'}
-                              </span>
-                              {/*
-                                收款帳號（2026-09-02 使用者:「UI 顯示 我們收款帳號」）。
-
-                                ★ 資料本來就查回來了（`order_payments.account`），
-                                  只是沒顯示 —— 對銀行帳的時候要知道這筆錢
-                                  進的是哪一個戶頭，不然得回頭開收款視窗看。
-
-                                ★★ 只有匯款對得到帳號（見 lib/pay-method 的說明）——
-                                  現金是當面收的、信用卡走收單行。
-                                  所以是 `pp.account &&` 而不是永遠顯示一個「—」，
-                                  那會讓人以為現金那筆漏填了。
-
-                                ★ 顯示帳戶**名稱**不是代碼:「元大 8088」看得懂，
-                                  「8088」要自己對照。查不到就退回原值，不要空白。
-                              */}
-                              {pp.account && (
-                                <span className="text-gray-400">
-                                  {payAccounts.find((a) => a.code === pp.account)?.name ?? pp.account}
-                                </span>
-                              )}
-                              {/*
-                                ★★ 內扣要寫出**實際進帳多少**（2026-08-25 使用者指定）。
-
-                                  記的金額是房客付的 165,000,銀行扣 30,
-                                  我們戶頭真正進的是 164,970 —— 對銀行帳的時候
-                                  看的是後面那個數字。
-                                  只寫「內扣 $30」的話,對帳的人得自己減一次,
-                                  而那是每個月每一筆都要減一次。
-
-                                ★ 兩個數字都留:165,000 是算應收用的,
-                                  164,970 是對銀行用的。少哪一個都會有人自己算。
-                              */}
-                              {Number(pp.fee_amount) > 0 && (
-                                <span className="text-orange-600">內扣 ${fmt(pp.fee_amount)}</span>
-                              )}
-                              <span className="ml-auto tabular-nums text-gray-700">${fmt(pp.amount)}</span>
-                              {Number(pp.fee_amount) > 0 && (
-                                <span className="tabular-nums text-orange-600 whitespace-nowrap">
-                                  實收 ${fmt(Number(pp.amount) - Number(pp.fee_amount))}
-                                </span>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      )}
                       {(() => {
                         const m = periodMismatch(chunk);
                         if (!m) return null;
@@ -2203,6 +2173,107 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                           )}
                         </div>)}
                   </div>
+
+                  {/*
+                    ══════════ 明細移到整寬的下一行（2026-09-02 使用者選 A 案）══════════
+
+                    改版前明細跟「收款日」的日期框**共用同一條水平線** ——
+                    明細的金額欄一路頂過去，跟日期框撞在一起
+                    （使用者:「主要是會跟收款日 box 卡到」）。
+
+                    ★★★ 把它移到整寬的下一行，是**結構上**保證不再撞:
+                      不管明細幾行、帳戶名多長、視窗多窄，都不會再碰到右上那兩個控制項。
+                      只是把左欄改窄的話，加費項目名稱一長還是會擠回去。
+
+                    ★★ 順便分成「應收明細」與「已收 N 筆」兩組。
+                      改版前兩份清單長得一模一樣但意思相反 ——
+                      一個是**該收多少**、一個是**收到了什麼**。
+
+                    ★ 金額改用 table 的固定欄寬靠右對齊。原本每一列各自 `ml-auto`，
+                      所以幾百塊跟幾萬塊的個位數對不齊，掃一眼加不起來。
+                  */}
+                  {openPays === payKey && (pt.lines.length > 1 || periodPays.length > 0) && (
+                    <div className="mt-2 pt-2 border-t border-mor-line/60">
+                      {pt.lines.length > 1 && (
+                        <>
+                          <div className="text-[11px] text-gray-400 mb-0.5">應收明細</div>
+                          <table className="w-full text-xs table-fixed">
+                            <tbody>
+                              {/*
+                                ★ 拿掉每一行的 ✓／·（2026-08-25 使用者:「上面不用打勾」）。
+                                  整期是一起標記的（setPeriodPaid 一次改全部），
+                                  所以每一行永遠一模一樣，等於用一整欄重複講卡片顏色已經講過的事。
+                              */}
+                              {pt.lines.map((l, li) => (
+                                <tr key={li}>
+                                  <td className="py-0.5 text-gray-600">
+                                    {l.label}
+                                    {l.kind === 'fixed' && (
+                                      <span className="ml-1.5 text-[10px] text-gray-400">每期固定</span>
+                                    )}
+                                  </td>
+                                  <td className={`py-0.5 w-24 text-right tabular-nums ${
+                                    l.negative ? 'text-orange-600' : 'text-gray-700'}`}>
+                                    {l.negative ? '−' : ''}${fmt(l.amount)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </>
+                      )}
+                      {periodPays.length > 0 && (
+                        <>
+                          <div className={`text-[11px] text-gray-400 mb-0.5 ${
+                            pt.lines.length > 1 ? 'mt-2' : ''}`}>已收 {periodPays.length} 筆</div>
+                          <table className="w-full text-xs table-fixed">
+                            <tbody>
+                              {periodPays.map((pp: any) => (
+                                <tr key={pp.id} className="align-top">
+                                  <td className="py-0.5 w-14 text-gray-500">{String(pp.paid_on).slice(5)}</td>
+                                  <td className="py-0.5 w-14 text-gray-500">
+                                    {METHOD_LABEL[pp.method] ?? pp.method ?? '—'}
+                                  </td>
+                                  {/*
+                                    收款帳號（2026-09-02 使用者:「UI 顯示 我們收款帳號」）。
+
+                                    ★ 只有匯款對得到帳號（見 lib/pay-method）—— 現金是當面收的、
+                                      信用卡走收單行。所以沒有就留空，不要放一個「—」讓人以為漏填。
+
+                                    ★★ 剝掉開頭的「(安幸)」。這一頁的帳號本來就都是我們的，
+                                      那三個字每一列重複一次只是佔位置。
+                                      **但主檔裡還是叫「(安幸)元大 70564」** —— 同一個帳戶在
+                                      兩頁叫不同名字違反 CLAUDE.md 的「統一用語」，
+                                      要不要改主檔還沒決定（改了會動到支出頁與請款單）。
+                                  */}
+                                  <td className="py-0.5 text-gray-400 truncate">
+                                    {pp.account
+                                      ? (payAccounts.find((a) => a.code === pp.account)?.name ?? pp.account)
+                                          .replace(/^[（(]安幸[）)]\s*/, '')
+                                      : ''}
+                                  </td>
+                                  {/*
+                                    ★★ 內扣要寫出**實際進帳多少**（2026-08-25 使用者指定）。
+                                      記的金額是房客付的 165,000、銀行扣 30，
+                                      我們戶頭真正進的是 164,970 —— 對銀行帳看的是後面那個。
+                                      少哪一個都會有人自己減一次，而那是每個月每一筆都要減。
+                                  */}
+                                  <td className="py-0.5 w-24 text-right tabular-nums text-gray-700">
+                                    ${fmt(pp.amount)}
+                                    {Number(pp.fee_amount) > 0 && (
+                                      <span className="block text-[10px] text-orange-600 whitespace-nowrap">
+                                        內扣 ${fmt(pp.fee_amount)}・實收 ${fmt(Number(pp.amount) - Number(pp.fee_amount))}
+                                      </span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </>
+                      )}
+                    </div>
+                  )}
                   <div className="mt-2 border-t border-mor-line/50 pt-1.5">
                     {pfees.map((f: any) => {
                       // 固定加費是設定產生的。這裡給「刪」會很誤導 ——
