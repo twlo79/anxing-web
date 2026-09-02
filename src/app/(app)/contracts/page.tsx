@@ -2068,6 +2068,26 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                                 {METHOD_LABEL[pp.method] ?? pp.method ?? '—'}
                               </span>
                               {/*
+                                收款帳號（2026-09-02 使用者:「UI 顯示 我們收款帳號」）。
+
+                                ★ 資料本來就查回來了（`order_payments.account`），
+                                  只是沒顯示 —— 對銀行帳的時候要知道這筆錢
+                                  進的是哪一個戶頭，不然得回頭開收款視窗看。
+
+                                ★★ 只有匯款對得到帳號（見 lib/pay-method 的說明）——
+                                  現金是當面收的、信用卡走收單行。
+                                  所以是 `pp.account &&` 而不是永遠顯示一個「—」，
+                                  那會讓人以為現金那筆漏填了。
+
+                                ★ 顯示帳戶**名稱**不是代碼:「元大 8088」看得懂，
+                                  「8088」要自己對照。查不到就退回原值，不要空白。
+                              */}
+                              {pp.account && (
+                                <span className="text-gray-400">
+                                  {payAccounts.find((a) => a.code === pp.account)?.name ?? pp.account}
+                                </span>
+                              )}
+                              {/*
                                 ★★ 內扣要寫出**實際進帳多少**（2026-08-25 使用者指定）。
 
                                   記的金額是房客付的 165,000,銀行扣 30,
