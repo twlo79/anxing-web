@@ -166,6 +166,24 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
 
   const staffById = useMemo(() => Object.fromEntries(staff.map((s) => [s.id, s as any])), [staff]);
   const roomStaff = useMemo(() => staff.filter((s) => s.count_mode === 'rooms'), [staff]);
+  /**
+   * 可以被指派房源工作的人 —— **「不統計」以外的都算**
+   * （2026-09-01 使用者:「不統計的人不該能選」）。
+   *
+   * ★★★ 這條規則有**三個**地方在用，先前有兩份寫法:
+   *
+   *     解析器      hkParse.ts:341   `s.count_mode !== 'none'`   ✔
+   *     排班表新增  這一頁 inline     同上（但自己寫了一次）      ✔
+   *     例外補登    這一頁            `=== 'rooms'`               ✘
+   *
+   *   於是劉姐（計時數）匯入時會被建房源工作，手動補卻選不到她 ——
+   *   兩條路對同一個人給出不同答案，而畫面上完全看不出來。
+   *
+   * ★ 「不統計」的（綠庭清潔、月 Dianne、Carol芊芊…）不出現:
+   *   那些人補進去也不會算，給選只會讓人以為補好了。
+   */
+  const assignableStaff = useMemo(
+    () => staff.filter((s) => s.count_mode !== 'none'), [staff]);
   const hourStaff = useMemo(() => staff.filter((s) => s.count_mode === 'hours'), [staff]);
   const propByCode = useMemo(() => Object.fromEntries(props.map((p) => [p.code, p])), [props]);
 
@@ -889,7 +907,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                             */}
                             <span className="inline-flex items-center gap-1 flex-wrap">
                               <span className="text-[11px] text-gray-400 mr-0.5">誰做的</span>
-                              {staff.filter((x) => x.count_mode !== 'none').map((x) => {
+                              {assignableStaff.map((x) => {
                                 const on = adding.staffIds.includes(x.id);
                                 return (
                                   <button key={x.id}
@@ -1173,7 +1191,35 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                   <label className="flex flex-col gap-1"><span className="text-[11px] text-gray-500">房源</span>
                     <input list="hk-props" value={exAdd.code} autoFocus
                       onChange={(e) => setExAdd({ ...exAdd, code: e.target.value })}
-                      className={`${inp} w-28`} /></label>
+                      className={`${inp} w-28`} />
+                    {/*
+                      ★★★ 打了房源就把那間的打掃點數**顯示**出來
+                        （2026-09-01 使用者:「改作顯示 點數即可 不要修改」）。
+
+                      ★ 只顯示，**不自動填進上面的欄位**。填進去的話，
+                        使用者存檔時看到的是一個他沒打過的數字 ——
+                        而那個數字之後改了房源設定也不會跟著變（它已經被抄下來了）。
+                        留空才是「照房源算」，那是會跟著設定走的。
+
+                      ★★ 點數的唯一來源是 `properties.clean_points`
+                        （權限管理 → 房源管理）。這裡不提供修改 ——
+                        一份資料兩個地方改，是這一輪已經踩過三次的坑。
+                    */}
+                    {(() => {
+                      const code = exAdd.code.trim();
+                      if (!code) return null;
+                      const hk = propByCode[code];
+                      if (!hk) return <span className="text-[11px] text-amber-600">主檔沒有這個房源</span>;
+                      const p = hk.property_id ? pointsById[hk.property_id] : null;
+                      return (
+                        <span className="text-[11px] text-gray-500">
+                          {p == null
+                            ? '這間還沒設打掃點數'
+                            : <>這間 <b className="text-mor-slate">{p}</b> 點{exAdd.points.trim() === '' && '（留空就用這個）'}</>}
+                        </span>
+                      );
+                    })()}
+                    </label>
                   <label className="flex flex-col gap-1"><span className="text-[11px] text-gray-500">工作類型</span>
                     <select value={exAdd.type} onChange={(e) => setExAdd({ ...exAdd, type: e.target.value })}
                       className={`${inp} w-24`}>
@@ -1215,7 +1261,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                 <div className="mt-2">
                   <div className="text-[11px] text-gray-500 mb-1">誰做的（可複選）</div>
                   <div className="flex flex-wrap gap-1">
-                    {roomStaff.map((x) => {
+                    {assignableStaff.map((x) => {
                       const on = exAdd.staffIds.includes(x.id);
                       return (
                         <button key={x.id} type="button"
