@@ -1281,7 +1281,21 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                       const code = exAdd.code.trim();
                       if (!code) return null;
                       const hk = propByCode[code];
-                      if (!hk) return <span className="text-[11px] text-amber-600">主檔沒有這個房源</span>;
+                      /*
+                       * ★★ 主檔沒有的房源**照樣存得了**（2026-09-02 使用者:
+                       *   「我要自己填房源耶」）—— 這一格本來就是自由輸入。
+                       *
+                       *   但要講出代價:查不到房源就算不出點數，那一筆會落進
+                       *   卡片上的「⚠ N 筆未計」，而各物業那張表會把它歸到「無房源」。
+                       *   不講的話使用者存完看到總數沒變，會以為沒存進去。
+                       */
+                      if (!hk) {
+                        return (
+                          <span className="text-[11px] text-amber-600">
+                            主檔沒有這個房源{exAdd.points.trim() === '' && ' —— 算不出點數，右邊請自己填'}
+                          </span>
+                        );
+                      }
                       const p = hk.property_id ? pointsById[hk.property_id] : null;
                       return (
                         <span className="text-[11px] text-gray-500">
