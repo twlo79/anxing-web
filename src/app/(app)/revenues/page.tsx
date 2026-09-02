@@ -12,6 +12,8 @@ import {
   isOffice, isCompany, inEstateBlock, estateOf, guestOf, roomOf,
   itemLabel, oneoffItems, oneoffLabel, skeleton, reconcile, SHORT_SOURCES, ROOM_NONE, ONEOFF_LABEL,
 } from '@/lib/revenue-report';
+// 【結算】區塊的算法（有測試）—— 這一頁只負責排版
+import { settleLines, rocRange } from '@/lib/revenue-settle';
 import { roomCell, periodCell, amountCell, nightsText } from '@/lib/revenue-row';
 import RowDrawer from './row-drawer';
 import RangeInput from '@/components/RangeInput';
@@ -267,7 +269,19 @@ export default function RevenuesPage() {
 
     const monthData: { ym: string; y: number; m: number; rows: Row[] }[] = [];
     for (const [y, m] of months) {
-      monthData.push({ ym: `${y}${String(m).padStart(2, '0')}`, y, m, rows: await fetchMonthRows(y, m) });
+      /*
+       * ★★★ 匯出**跟著畫面的物業篩選走**（2026-09-02 使用者:「選正隆就只出正隆」）。
+       *
+       *   條件要跟畫面上那一行一模一樣（第 185 行的 `filtered`）——
+       *   各寫一份的話，畫面說 76 筆、匯出給 143 筆，
+       *   而兩邊都不會報錯（CLAUDE.md:「同一條規則在三個地方各寫一次」）。
+       *
+       * ★ 只跟物業，不跟房源／來源／關鍵字 —— 那三個是「找東西」用的，
+       *   而這份是報表。要那樣篩的人會自己在 Excel 裡篩。
+       */
+      const all = await fetchMonthRows(y, m);
+      monthData.push({ ym: `${y}${String(m).padStart(2, '0')}`, y, m,
+        rows: estateFilter ? all.filter((r) => (r.estate_name ?? '無') === estateFilter) : all });
     }
 
     // ===== 樣式 =====
@@ -448,8 +462,39 @@ export default function RevenuesPage() {
       const S: any[][] = [];
       const mblank = (n: number) => Array(n).fill(T('', {}));
       S.push([T('收入明細', stTitle), ...mblank(MC - 1)]);
-      S.push([T(`${md.y - 1911}年${md.m}月1日~${md.y - 1911}年${md.m}月${lastDay}日`, stSub), ...mblank(MC - 1)]);
+      S.push([T(rocRange(md.y, md.m), stSub), ...mblank(MC - 1)]);
       S.push(MHEAD.map((h) => T(h, stHead)));
+
+      /*
+       * ══════════ 【結算】（2026-09-02 使用者指定，附了紙本報表的照片）══════════
+       *
+       * 放在明細**上面**、欄位標題**下面** —— 使用者要的是
+       * 「一張表看得完」:先看結算，往下捲才是逐筆。
+       *
+       * ★★ 每個科目都列、沒金額的寫 0（使用者選的）。這份表是拿來
+       *   橫向比對月份的 —— 列數不一樣的話，同一個位置的兩個數字
+       *   就不是同一個科目了。
+       *
+       * ★ 算法在 `lib/revenue-settle`（19 條測試），這裡只負責排版。
+       */
+      S.push([T('【結算】', stGroup), ...Array(MC - 1).fill(T('', stGroup))]);
+      for (const l of settleLines(md.rows, (e) => estateSort[e] ?? 99)) {
+        if (l.kind === 'estate') {
+          // 物業名自己一列，金額欄留空 —— 它是標題不是數字
+          S.push([T('', stCell), T('', stCell), T(l.label, stGroup),
+                  ...Array(MC - 6).fill(T('', stCell)), T('', stCell), T('', stCell), T('', stGroup)]);
+          continue;
+        }
+        const st = l.kind === 'item' ? stCell : (l.kind === 'subtotal' ? stSubtotal : stTotal);
+        S.push([
+          T('', st), T('', st), T(l.label, st),
+          ...Array(MC - 6).fill(T('', st)),
+          T('', st), T('', st),
+          T(l.amount, { ...st, alignment: { horizontal: 'right' } }),
+        ]);
+      }
+      S.push(mblank(MC));
+      S.push([T('【明細】', stGroup), ...Array(MC - 1).fill(T('', stGroup))]);
 
       /** 明細列。訂單層級,一列一筆認列。 */
       const detail = (r: Row, est: string, room: string, cls: string) => {
@@ -569,7 +614,12 @@ export default function RevenuesPage() {
       wsM['!freeze'] = { xSplit: 4, ySplit: 3 };
       XLSX.utils.book_append_sheet(wb, wsM, md.ym);
     }
-    XLSX.writeFile(wb, `營收_${fromM}_${toM}.xlsx`);
+    /*
+     * ★ 檔名帶物業（2026-09-02）。篩了正隆再下載，檔名還是「營收_…」的話，
+     *   桌面上放三個月的三個檔案，過兩天分不出哪個是全部、哪個是正隆 ——
+     *   而打開才發現的成本比檔名長幾個字高得多。
+     */
+    XLSX.writeFile(wb, `營收${estateFilter ? `_${estateFilter}` : ''}_${fromM}_${toM}.xlsx`);
   }
 
   const orderRange = (r: Row) => {

@@ -121,7 +121,8 @@ describe('房源分類', () => {
     ];
     const lines = roomLines(rows, '時兆');
     assert.equal(lines.length, 2, '合成一列就看不出組成');
-    assert.deepEqual(lines.map((l) => l.cls).sort(), [`${ONEOFF_LABEL}・—・—`, '長租']);
+    // ★ 2026-09-02 起「項目沒填」不再補破折號 —— 科目沒填才寫 —
+    assert.deepEqual(lines.map((l) => l.cls).sort(), [`${ONEOFF_LABEL}・—`, '長租']);
   });
 
   test('一次性收入依項目再拆一層', () => {
@@ -139,11 +140,18 @@ describe('房源分類', () => {
        `${ONEOFF_LABEL}・清潔費・烘衣機`].sort());
   });
 
-  test('一次性一律帶出科目與項目,空的寫破折號', () => {
-    // 「要有會計科目,空的呈現 —」:兩層都要看得到,缺的那層用破折號佔位,
-    // 不要留 `清潔費・` 這種尾巴空著的字串。
-    assert.equal(itemLabel(r({ source: 'oneoff', fee_type: null, item_name: null })), `${ONEOFF_LABEL}・—・—`);
-    assert.equal(itemLabel(r({ source: 'oneoff', fee_type: '清潔費', item_name: null })), `${ONEOFF_LABEL}・清潔費・—`);
+  /*
+   * ★★ 2026-09-02 使用者:「一次性費用 為何後面有空」。
+   *
+   *   原本項目沒填也補一個破折號，於是多數列長成「其他收入・管理費・—」——
+   *   而那個破折號不帶訊息:管理費本來就沒有細項。
+   *
+   * ★ 但**科目**沒填還是要寫 —— 那是異常（一次性收入沒有會計科目），
+   *   跟「項目沒填」的意義不一樣。下面兩條就是在釘這個差別。
+   */
+  test('項目沒填不補破折號,科目沒填要補', () => {
+    assert.equal(itemLabel(r({ source: 'oneoff', fee_type: null, item_name: null })), `${ONEOFF_LABEL}・—`);
+    assert.equal(itemLabel(r({ source: 'oneoff', fee_type: '清潔費', item_name: null })), `${ONEOFF_LABEL}・清潔費`);
     assert.equal(itemLabel(r({ source: 'oneoff', fee_type: '清潔費', item_name: '洗衣機' })), `${ONEOFF_LABEL}・清潔費・洗衣機`);
     // 科目與項目只對一次性有意義,其餘來源不該被加尾巴
     assert.equal(itemLabel(r({ source: 'longterm', fee_type: '清潔費', item_name: 'x' })), '長租');
@@ -160,7 +168,7 @@ describe('房源分類', () => {
     assert.deepEqual(oneoffItems(rows), [
       { item: '清潔費・垃圾代收費', amount: 5070 },
       { item: '清潔費・洗衣機', amount: 150 },
-      { item: '—・—', amount: 7 },
+      { item: '—', amount: 7 },
     ]);
   });
 

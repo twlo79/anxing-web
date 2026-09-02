@@ -119,7 +119,21 @@ export function itemLabel(r: RevRow): string {
  * 空的一律寫破折號,不要留 `清潔費・` 這種尾巴空著的字串。
  */
 export function oneoffLabel(r: RevRow): string {
-  return `${r.fee_type || ROOM_NONE}・${r.item_name || ROOM_NONE}`;
+  const code = r.fee_type || ROOM_NONE;
+  /*
+   * ★★ 沒有項目就**不接第三段**（2026-09-02 使用者:「為何後面有空」）。
+   *
+   *   原本一律補破折號，於是多數列長成「其他收入・管理費・—」——
+   *   而那個破折號不帶任何訊息:管理費本來就沒有細項。
+   *
+   * ★ 但**科目**沒填還是寫破折號。那是異常（一次性收入沒有會計科目），
+   *   要看得見；項目沒填是常態。兩個空值的意義不一樣。
+   *
+   * ★★★ 這支同時是**分組的鍵**（`oneoffItems`）與顯示的標籤。
+   *   兩邊一起變才不會出現「篩選器有這一項、清單卻是另一個字」
+   *   —— 所以只能改這裡，不能在畫面上另外處理。
+   */
+  return r.item_name ? `${code}・${r.item_name}` : code;
 }
 
 /** 一次性收入依「科目・項目」彙總,金額大到小。 */
