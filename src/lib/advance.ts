@@ -26,20 +26,32 @@
 /** 一列暫付。欄位名跟資料庫一致 —— 中間多一層對照表只會多一個出錯的地方。 */
 export type Advance = {
   id?: string;
-  category: '押金' | '保證金';
+  category: '押金' | '保證金' | '其他';
   counterparty: string;
   usage: string;
   estate_id?: string | null;
   amount: number;
   paid_on?: string | null;
+  /** 從哪個帳戶付出去的。收回時錢要回到同一個（2026-09-02 使用者指定）。 */
+  paid_account?: string | null;
   refunded_on?: string | null;
   /** 實際收回多少。**null 與 0 是兩件事** —— 見 `statusOf`。 */
   refunded_amount?: number | null;
+  refund_account?: string | null;
   forfeit_expense_id?: string | null;
+  /**
+   * 被扣的差額要記到哪個會計科目。
+   *
+   * ★ **不存進 advance_payments** —— 它是那筆支出的屬性，
+   *   寫進 `expenses.account_code` 就好。放在型別裡只是為了讓
+   *   收款抽屜的檢查看得到它（同一份表單的欄位）。
+   */
+  forfeit_account_code?: string | null;
   note?: string | null;
 };
 
-export const CATEGORIES = ['押金', '保證金'] as const;
+/** 2026-09-02 使用者:「類別有其他」。跟 migration_202 的 check 約束一致。 */
+export const CATEGORIES = ['押金', '保證金', '其他'] as const;
 
 /**
  * 狀態。
@@ -109,7 +121,7 @@ export const isOutstanding = (a: Advance) => statusOf(a) === 'paid';
  * ★★ 一次只回**第一個**錯誤。全部列出來會變成一段文章，而人只看第一行。
  */
 export function validateAdvance(a: Advance): string | null {
-  if (!CATEGORIES.includes(a.category)) return '要選押金或保證金';
+  if (!(CATEGORIES as readonly string[]).includes(a.category)) return '要選類別';
   if (!a.counterparty?.trim()) return '要填對象（錢付給誰）';
   /*
    * ★ 用途是必填。留空的話三個月後看到一筆 150,000 的暫付，
@@ -153,7 +165,51 @@ export function validateRefund(a: Advance): string | null {
   if (!a.paid_on) return '還沒出款，不能先收回';
   if (a.refunded_on! < a.paid_on) return '收回日不能早於出款日';
 
+  /*
+   * ★★★ 被扣的差額要選會計科目（2026-09-02 使用者:「可選會計科目」）。
+   *
+   *   不強制的話那筆支出會落進「未分類」或空的科目 —— 而三個月後
+   *   看到一筆 2,000 的支出，沒有人查得出它是哪一筆押金被扣的。
+   *
+   * ★ 只在**這一次要產生**時才要求（`needsForfeitExpense`）。
+   *   已經產生過的（forfeit_expense_id 有值）再開來看不該又被擋住 ——
+   *   那筆支出早就存在，科目在它自己身上。
+   */
+  if (needsForfeitExpense(a) && !a.forfeit_account_code?.trim()) {
+    return `沒收回的 ${forfeitedOf(a)} 要記成支出 —— 請選會計科目`;
+  }
+
   return null;
+}
+
+/**
+ * 收回時「收款帳戶」的預設值 —— **原本的出款帳戶**（2026-09-02 使用者指定）。
+ *
+ * ★ 回 null 時表示那筆暫付沒有記出款帳戶（手動建的、或舊單沒填），
+ *   這時候要讓使用者自己選，而不是留空讓他以為系統知道。
+ */
+export const defaultRefundAccount = (a: Advance): string | null =>
+  a.paid_account?.trim() || null;
+
+/**
+ * 收款帳戶跟出款帳戶不一樣時的提醒。一樣（或無從比較）回 null。
+ *
+ * ============================================================
+ * 【★★ 為什麼是提醒不是禁止】
+ *
+ * 規則是「暫支要回到原支出帳戶」，但錢**確實有可能**回到別的帳戶 ——
+ * 換帳戶、對方匯錯、公司帳戶關掉。硬鎖住的話那筆錢就記不進系統，
+ * 而使用者只能改資料庫或亂填一個。
+ *
+ * ★ 系統負責看見，人負責決定（CLAUDE.md 的判斷原則）——
+ *   所以這裡回一句話讓他看到，按下去還是存得了。
+ */
+export function refundAccountWarning(a: Advance): string | null {
+  const from = a.paid_account?.trim();
+  const to = a.refund_account?.trim();
+  if (!from || !to) return null;
+  if (from === to) return null;
+  return `跟出款帳戶不同（原本是 ${from}）`;
 }
 
 /** 一組暫付的統計。暫付分頁的三張卡用。 */

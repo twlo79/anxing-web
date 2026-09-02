@@ -40,6 +40,7 @@ import {
 // 排匯款／確認退款日 —— 押金管理頁用同一支，兩邊的規則不會漂走
 import DepositRefundStep, { type StepMode } from '@/components/DepositRefundStep';
 import { refundPerms as depPerms, cancelPatch } from '@/lib/deposit-refund';
+import { CATEGORIES as ADVANCE_CATEGORIES } from '@/lib/advance';
 
 type Item = {
   id?: string; request_id?: string; item_name: string; amount: number;
@@ -85,6 +86,15 @@ type Req = {
    * 詳細規則（含多房源時歸辦公室）在 migration_83。
    */
   fee_mode?: string; fee_amount?: number | null;
+  /**
+   * 暫支款（migration_202）。null = 一般請款，行為完全不變。
+   *
+   * ★★★ 有值的話確認出款時**不產生支出**，改在 advance_payments 建一列 ——
+   *   那筆錢是暫時放在別人那裡的資產，不是花掉的錢。
+   * ★ 勾在**整張單**不是項目（2026-09-02 使用者指定）。
+   */
+  advance_category?: string | null;
+  advance_usage?: string | null;
   currency: string; fx_rate: number;
   purchase_request_items?: Item[];
 };
@@ -130,6 +140,13 @@ const FREE_THRESHOLD = 3000;   // 與 migration 的 pr_apply_status() 一致
  * 多一種方式就得找齊每一處 —— 而漏掉的那處不會報錯。
  */
 const CURRENCIES = ['TWD', 'USD', 'JPY', 'CNY', 'EUR'];
+/*
+ * 暫支款的類別。**直接用 lib/advance 的那一份**，不在這裡抄第二份 ——
+ * 抄的話，哪天多一種（履約保證金、押標金）就得記得改兩個地方，
+ * 而漏掉的那邊不會報錯，只是下拉少一個選項（CLAUDE.md 的坑表）。
+ * 資料庫那層由 `pr_advance_category_chk` 擋（migration_202）。
+ */
+const ADV_CATEGORIES = ADVANCE_CATEGORIES;
 /*
  * 採購單 = 房務管理底下的「採購需求」（2026-08-22 使用者指定）。
  *
@@ -990,6 +1007,16 @@ export default function PurchasesPage() {
         // 但約束擋下來的錯誤訊息是約束名稱,沒人看得懂,所以前端先對齊。
         fee_mode: feeApplies ? 'extra' : 'included',
         fee_amount: feeApplies ? (Number(edit.fee_amount) || 0) : 0,
+        /*
+         * 暫支款（migration_202）。★★ 沒勾就**兩欄一起清成 null** ——
+         * 只清類別的話，用途會留在資料庫裡，而下次有人勾起來就看到
+         * 上一次的用途，還以為是系統帶的。
+         *
+         * ★ 用途 trim 後是空字串也當成沒填:`pr_advance_usage_chk` 會擋，
+         *   而約束擋下來的訊息是約束名稱，沒人看得懂。
+         */
+        advance_category: edit.advance_category || null,
+        advance_usage: edit.advance_category ? (edit.advance_usage?.trim() || null) : null,
         /*
          * 送審中或已核可被編輯:退回草稿。
          * 退回 draft 有兩個作用 —— 項目的 pri_write policy 只認 draft/rejected,
@@ -3249,6 +3276,63 @@ export default function PurchasesPage() {
                     </div>
                   </div>
                   )}
+                  {/*
+                    暫支款（2026-09-02 使用者指定，migration_202）。
+
+                    ★★★ 勾了之後確認出款**不產生支出** —— 那筆錢是暫時放在
+                      別人那裡的資產，不是花掉的錢。它會進暫收付管理的暫付分頁，
+                      日後收回時沖銷（收回不記收入，只有被扣的差額變成支出）。
+
+                    ★★ 手續費**不跟著岔開**（上面那一區照舊）——
+                      手續費是真的花掉的錢，不會收回來，那不是暫支。
+
+                    ★ 放在手續費下面而不是項目表格裡，因為它是**整張單**的性質，
+                      跟幣別、憑證、手續費同一層（2026-09-02 使用者：「下方有一個
+                      暫支款 選項」）。
+                  */}
+                  <div className="rounded-lg border border-mor-line p-3">
+                    <label className="flex items-start gap-2 text-sm cursor-pointer">
+                      <input type="checkbox" disabled={readOnly} className="mt-1"
+                        checked={!!edit.advance_category}
+                        onChange={(e) => setEdit({
+                          ...edit,
+                          // ★ 取消勾選時用途也要清掉,不然下次勾起來會看到上一次的
+                          advance_category: e.target.checked ? '押金' : null,
+                          advance_usage: e.target.checked ? edit.advance_usage : '',
+                        })} />
+                      <span>
+                        <span>這是暫支款（之後會收回來）</span>
+                        <span className="block text-xs text-gray-500 mt-0.5">
+                          勾了之後這筆錢<span className="text-amber-700">不算當月支出</span>
+                          {' '}—— 它是暫時放在別人那裡的錢，不是花掉的
+                        </span>
+                      </span>
+                    </label>
+                    {!!edit.advance_category && (
+                      <div className="mt-3 pl-6 flex flex-wrap items-end gap-3">
+                        <label className="flex flex-col gap-1">
+                          <span className="text-xs text-gray-500">類別</span>
+                          <select disabled={readOnly} value={edit.advance_category}
+                            onChange={(e) => setEdit({ ...edit, advance_category: e.target.value })}
+                            className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50">
+                            {ADV_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                          </select>
+                        </label>
+                        <label className="flex flex-col gap-1 flex-1 min-w-[200px]">
+                          <span className="text-xs text-gray-500">用途（收回時要認得出來）</span>
+                          <input disabled={readOnly} value={edit.advance_usage ?? ''}
+                            onChange={(e) => setEdit({ ...edit, advance_usage: e.target.value })}
+                            placeholder="安幸辦公室租賃押金"
+                            className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50" />
+                        </label>
+                        <div className="w-full text-xs text-gray-400 leading-relaxed">
+                          確認出款後會在<span className="text-gray-600">暫收付管理 → 暫付</span>出現一列：
+                          對象帶收款人、金額帶合計、出款帳戶帶這張單的。
+                          收回時錢要回到同一個帳戶。
+                        </div>
+                      </div>
+                    )}
+                  </div>
 
                   <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">備註</span>
                     <textarea disabled={readOnly} value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })}

@@ -2,7 +2,7 @@ import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   statusOf, STATUS_LABEL, forfeitedOf, needsForfeitExpense, isOutstanding,
-  validateAdvance, validateRefund, statsOf, type Advance,
+  validateAdvance, validateRefund, statsOf, defaultRefundAccount, refundAccountWarning, type Advance,
 } from './advance.ts';
 
 const A = (o: Partial<Advance> = {}): Advance => ({
@@ -83,7 +83,8 @@ describe('needsForfeitExpense —— 冪等', () => {
 
 describe('validateAdvance —— 必填', () => {
   test('都填好了', () => assert.equal(validateAdvance(A()), null));
-  test('類別亂填', () => assert.match(validateAdvance(A({ category: '訂金' as never })) ?? '', /押金或保證金/));
+  // ★ 2026-09-02 類別多了「其他」,訊息從「要選押金或保證金」改成「要選類別」
+  test('類別亂填', () => assert.match(validateAdvance(A({ category: '訂金' as never })) ?? '', /要選類別/));
   test('沒填對象', () => assert.match(validateAdvance(A({ counterparty: '  ' })) ?? '', /對象/));
 
   // ★ 用途留空的話，三個月後只知道付給誰、不知道為什麼
@@ -99,11 +100,20 @@ describe('validateRefund —— 跟資料庫的約束同一組規則', () => {
   test('正常全額收回', () => {
     assert.equal(validateRefund(A({ refunded_on: '2026-08-01', refunded_amount: 150000 })), null);
   });
+  /*
+   * ★★ 2026-09-02 起,短收時**必須選會計科目**（使用者:「可選會計科目」）。
+   *   所以下面兩條要帶 forfeit_account_code —— 契約變了,不是測試壞了。
+   *   沒帶的情形另外有測（「短收的差額要選會計科目」那一組）。
+   */
   test('正常部分收回', () => {
-    assert.equal(validateRefund(A({ refunded_on: '2026-08-01', refunded_amount: 148000 })), null);
+    assert.equal(validateRefund(A({
+      refunded_on: '2026-08-01', refunded_amount: 148000, forfeit_account_code: 'guarantee',
+    })), null);
   });
   test('★ 收回 0（全額被扣）是合法的', () => {
-    assert.equal(validateRefund(A({ refunded_on: '2026-08-01', refunded_amount: 0 })), null);
+    assert.equal(validateRefund(A({
+      refunded_on: '2026-08-01', refunded_amount: 0, forfeit_account_code: 'guarantee',
+    })), null);
   });
 
   /*
@@ -172,5 +182,105 @@ describe('statsOf —— 三張卡', () => {
       A({ amount: 0.2, refunded_on: '2026-08-01', refunded_amount: 0 }),
     ]);
     assert.equal(f.forfeited.amt, 0.3);
+  });
+});
+
+/*
+ * ★★★ 2026-09-02 使用者三個新條件：
+ *   「類別有其他」「暫支要回到原支出帳戶」「短收可選會計科目」
+ */
+describe('類別加「其他」', () => {
+  test('三種都過', () => {
+    for (const c of ['押金', '保證金', '其他'] as const) {
+      assert.equal(validateAdvance({
+        category: c, counterparty: '宇田', usage: '裝潢保證金', amount: 200000,
+      }), null);
+    }
+  });
+  test('沒選或亂填的擋掉', () => {
+    assert.equal(validateAdvance({
+      category: '' as never, counterparty: '宇田', usage: 'x', amount: 1,
+    }), '要選類別');
+  });
+});
+
+describe('收回要回到原出款帳戶', () => {
+  const A = (o: Partial<Advance> = {}): Advance => ({
+    category: '保證金', counterparty: '宇田', usage: '裝潢保證金',
+    amount: 200000, paid_on: '2026-08-20', paid_account: '4145', ...o,
+  });
+
+  test('預設帶原出款帳戶', () => {
+    assert.equal(defaultRefundAccount(A()), '4145');
+  });
+
+  /*
+   * ★ 回 null 是「系統不知道」,不是「沒有帳戶」——
+   *   手動建的暫付與舊單都沒有出款帳戶,那時要讓人自己選。
+   */
+  test('★ 沒有出款帳戶時回 null,不要瞎猜', () => {
+    assert.equal(defaultRefundAccount(A({ paid_account: null })), null);
+    assert.equal(defaultRefundAccount(A({ paid_account: '  ' })), null);
+  });
+
+  test('一樣就不提醒', () => {
+    assert.equal(refundAccountWarning(A({ refund_account: '4145' })), null);
+  });
+  test('不一樣要提醒,而且講出原本是哪個', () => {
+    assert.equal(refundAccountWarning(A({ refund_account: '08311' })),
+      '跟出款帳戶不同（原本是 4145）');
+  });
+  test('還沒填收款帳戶時不提醒 —— 那是還沒做完,不是做錯', () => {
+    assert.equal(refundAccountWarning(A()), null);
+  });
+
+  /*
+   * ★★ 提醒**不會**擋住存檔。錢確實可能回到別的帳戶,
+   *   硬鎖住的話那筆錢就記不進系統。
+   */
+  test('★★ 帳戶不同照樣存得了', () => {
+    assert.equal(validateRefund(A({
+      refund_account: '08311', refunded_on: '2026-09-02', refunded_amount: 200000,
+    })), null);
+  });
+});
+
+describe('短收的差額要選會計科目', () => {
+  const A = (o: Partial<Advance> = {}): Advance => ({
+    category: '保證金', counterparty: '宇田', usage: '裝潢保證金',
+    amount: 200000, paid_on: '2026-08-20',
+    refunded_on: '2026-09-02', refunded_amount: 198000, ...o,
+  });
+
+  test('★★★ 短收但沒選科目 → 擋下來,而且講出金額', () => {
+    assert.equal(validateRefund(A()), '沒收回的 2000 要記成支出 —— 請選會計科目');
+  });
+  test('選了就過', () => {
+    assert.equal(validateRefund(A({ forfeit_account_code: 'guarantee' })), null);
+  });
+  test('全額收回不需要科目', () => {
+    assert.equal(validateRefund(A({ refunded_amount: 200000 })), null);
+  });
+
+  /*
+   * ★ 全額被扣（收回 0）也是短收 —— 而且是最該記科目的那一種。
+   *   用 `!refunded_amount` 判斷的話這一筆會漏掉。
+   */
+  test('★ 收回 0（全額被扣）也要選科目', () => {
+    assert.equal(validateRefund(A({ refunded_amount: 0 })),
+      '沒收回的 200000 要記成支出 —— 請選會計科目');
+  });
+
+  /*
+   * ★★ 已經產生過支出的不再要求。那筆支出早就存在、科目在它自己身上,
+   *   再擋一次的話使用者只是開來看一眼就存不了。
+   */
+  test('★★ 已經產生過支出的不再要求科目', () => {
+    assert.equal(validateRefund(A({ forfeit_expense_id: 'e1' })), null);
+  });
+
+  test('空白字串不算選了', () => {
+    assert.equal(validateRefund(A({ forfeit_account_code: '   ' })),
+      '沒收回的 2000 要記成支出 —— 請選會計科目');
   });
 });

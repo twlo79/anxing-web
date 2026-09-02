@@ -40,6 +40,7 @@ import MoneyInput from '@/components/MoneyInput';
 import { useOnce } from '@/lib/once';
 import {
   statusOf, STATUS_LABEL, forfeitedOf, statsOf, validateAdvance,
+  defaultRefundAccount, refundAccountWarning, needsForfeitExpense,
   CATEGORIES, type Advance, type AdvanceStatus,
 } from '@/lib/advance';
 
@@ -61,6 +62,7 @@ const STATUS_CLASS: Record<AdvanceStatus, string> = {
 const CAT_CLASS: Record<string, string> = {
   押金:   'bg-mor-bluelight text-mor-slate',
   保證金: 'bg-purple-50 text-purple-700',
+  其他:   'bg-gray-100 text-gray-600',
 };
 
 const CTRL = 'h-11 md:h-9 rounded-lg border border-gray-300 px-2 text-sm bg-white';
@@ -93,6 +95,15 @@ export function useAdvance(enabled: boolean) {
   const [estateF, setEstateF] = useState('');
   const [edit, setEdit] = useState<Advance | null>(null);
 
+  /*
+   * 收款帳戶與會計科目的選單資料。
+   *
+   * ★ 在這支 hook 裡查，不從 deposits/page.tsx 傳進來 —— 那一頁的四個分頁
+   *   只有暫付需要它們，往上提就變成每個分頁都要背著兩份用不到的資料。
+   */
+  const [payAccounts, setPayAccounts] = useState<{ code: string; name: string }[]>([]);
+  const [accountCodes, setAccountCodes] = useState<{ code: string; name: string }[]>([]);
+
   const load = useCallback(async () => {
     if (!enabled) return;
     setLoading(true);
@@ -103,6 +114,32 @@ export function useAdvance(enabled: boolean) {
     setLoading(false);
   }, [supabase, enabled]);
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    /*
+     * ★ 表名是 `payment_accounts` 不是 `pay_accounts`（purchases/page.tsx:355）。
+     *   寫錯的話 PostgREST 回 404、這裡沒有檢查 error，
+     *   結果是下拉**靜靜地空著** —— 而使用者只會覺得「怎麼沒有帳戶可選」。
+     */
+    supabase.from('payment_accounts').select('code, name').order('code')
+      .then(({ data, error }) => {
+        if (error) setMsg('讀不到收款帳戶：' + error.message);
+        setPayAccounts((data ?? []) as { code: string; name: string }[]);
+      });
+    /*
+     * ★ 只要能記支出的科目。`kind` 是 income 的（房租收入那些）出現在
+     *   「被扣的差額」下拉裡沒有意義 —— 而選下去會產生一筆科目是收入的支出，
+     *   那在報表上是查不出來的（migration_90 定義了這個 kind）。
+     */
+    supabase.from('account_codes').select('code, name, kind, active').order('sort')
+      .then(({ data, error }) => {
+        if (error) setMsg('讀不到會計科目：' + error.message);
+        setAccountCodes(((data ?? []) as any[])
+          .filter((c) => c.active !== false && c.kind !== 'income')
+          .map((c) => ({ code: c.code, name: c.name })));
+      });
+  }, [supabase, enabled]);
 
   const shown = useMemo(() => rows.filter((r) => {
     if (estateF && r.estate_id !== estateF) return false;
@@ -121,6 +158,7 @@ export function useAdvance(enabled: boolean) {
   return {
     supabase, rows, shown, st, loading, msg, setMsg,
     statusF, setStatusF, estateF, setEstateF, edit, setEdit, load,
+    payAccounts, accountCodes,
   };
 }
 
@@ -180,6 +218,7 @@ export function AdvanceList({
   const {
     supabase, rows, shown, loading, msg, setMsg,
     statusF, setStatusF, estateF, setEstateF, edit, setEdit, load,
+    payAccounts, accountCodes,
   } = a;
 
   const estateName = useMemo(
@@ -204,6 +243,12 @@ export function AdvanceList({
       paid_on: edit.paid_on || null,
       refunded_on: edit.refunded_on || null,
       refunded_amount: edit.refunded_on ? Number(edit.refunded_amount ?? 0) : null,
+      /*
+       * ★ 收款帳戶只在真的收回時才寫。沒收回卻留著帳戶的話，
+       *   `refundAccountWarning` 會拿它跟出款帳戶比而跳出提醒 ——
+       *   而那時根本還沒有人決定要收到哪裡。
+       */
+      refund_account: edit.refunded_on ? (edit.refund_account || null) : null,
       note: edit.note?.trim() || null,
     };
 
@@ -287,7 +332,7 @@ export function AdvanceList({
             {!loading && shown.length === 0 && (
               <tr><td colSpan={9} className="px-3 py-6 text-center text-gray-400">
                 {rows.length === 0
-                  ? '還沒有暫付。請款單的項目選「押金」或「保證金」，確認出款後會出現在這裡。'
+                  ? '還沒有暫付。請款單填完在下方勾「這是暫支款」，確認出款後會出現在這裡。'
                   : '這個篩選沒有資料'}
               </td></tr>
             )}
@@ -379,7 +424,18 @@ export function AdvanceList({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">收回日</span>
                     <input type="date" value={edit.refunded_on ?? ''}
-                      onChange={(e) => setEdit({ ...edit, refunded_on: e.target.value || null })}
+                      onChange={(e) => setEdit({
+                        ...edit,
+                        refunded_on: e.target.value || null,
+                        /*
+                         * ★★ 一填收回日就把**原出款帳戶**帶進來
+                         *   （2026-09-02 使用者:「暫支要回到原支出帳戶」）。
+                         *   已經選過的不覆蓋 —— 使用者改成別的之後，
+                         *   改一次日期就被打回去是最惱人的那種 bug。
+                         */
+                        refund_account: edit.refund_account
+                          || (e.target.value ? defaultRefundAccount(edit) : null),
+                      })}
                       className={CTRL} /></label>
                   <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">實際收回</span>
                     <MoneyInput value={Number(edit.refunded_amount ?? 0)}
@@ -392,6 +448,28 @@ export function AdvanceList({
                     全額被扣填 0 是合法的，而沒有這句話的人會以為要留空 ——
                     留空的話那筆押金會永遠躺在「錢還在外面」的清單裡。
                 */}
+                {/*
+                  收款帳戶。★★ 預設是**原出款帳戶**（2026-09-02 使用者指定）。
+                    可以改，但改了會在底下講一句 —— 錢確實有可能回到別的帳戶
+                    （換帳戶、對方匯錯），硬鎖住的話那筆錢就記不進系統。
+                    系統負責看見，人負責決定。
+                */}
+                {edit.refunded_on && (
+                  <label className="flex flex-col gap-1 mt-3">
+                    <span className="text-xs text-gray-500">收款帳戶</span>
+                    <select value={edit.refund_account ?? ''}
+                      onChange={(e) => setEdit({ ...edit, refund_account: e.target.value || null })}
+                      className={CTRL}>
+                      <option value="">（未選）</option>
+                      {payAccounts.map((p) => (
+                        <option key={p.code} value={p.code}>{p.code} {p.name}</option>
+                      ))}
+                    </select>
+                    {refundAccountWarning(edit) && (
+                      <span className="text-xs text-amber-700">{refundAccountWarning(edit)}</span>
+                    )}
+                  </label>
+                )}
                 <div className="text-xs text-gray-400 mt-2 leading-relaxed">
                   全額被扣就填 <b>0</b>，不要留空 —— 留空代表「還沒收回」，那一筆會一直等一個不會來的退款。
                   {Number(edit.refunded_amount ?? 0) < Number(edit.amount) && edit.refunded_on && (
@@ -400,6 +478,37 @@ export function AdvanceList({
                     </div>
                   )}
                 </div>
+                {/*
+                  ★★★ 被扣的差額要選會計科目（2026-09-02 使用者:「可選會計科目」）。
+
+                    不強制的話那筆支出會落進空科目 —— 而三個月後看到一筆
+                    2,000 的支出，沒有人查得出它是哪一筆押金被扣的。
+                    `validateRefund` 也擋，這裡只是先讓他看到要填什麼。
+
+                  ★ 只在**這一次要產生**時出現。已經產生過的（forfeit_expense_id
+                    有值）不再問 —— 那筆支出早就存在，科目在它自己身上。
+                */}
+                {needsForfeitExpense(edit) && (
+                  <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 p-3">
+                    <div className="text-sm text-amber-900">
+                      沒收回的 <b>{fmt(forfeitedOf(edit))}</b> 要記成一筆支出
+                    </div>
+                    <label className="flex flex-col gap-1 mt-2">
+                      <span className="text-xs text-amber-800">會計科目</span>
+                      <select value={edit.forfeit_account_code ?? ''}
+                        onChange={(e) => setEdit({ ...edit, forfeit_account_code: e.target.value || null })}
+                        className={CTRL}>
+                        <option value="">（請選）</option>
+                        {accountCodes.map((c) => (
+                          <option key={c.code} value={c.code}>{c.code} {c.name}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="text-xs text-amber-800 mt-2">
+                      科目沒選就不給存 —— 落在空科目的錢三個月後沒有人查得出是什麼
+                    </div>
+                  </div>
+                )}
               </div>
 
               <label className="flex flex-col gap-1 sm:col-span-2"><span className="text-xs text-gray-500">備註</span>
