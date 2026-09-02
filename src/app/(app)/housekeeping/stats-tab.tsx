@@ -219,22 +219,34 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
   const [estateById, setEstateById] = useState<Record<string, string>>({});
   /** 房源 → 清潔費公訂價（`properties.clean_price`，migration_206）。 */
   const [priceById, setPriceById] = useState<Record<string, number>>({});
+  /**
+   * 物業 id → 物業名稱。
+   *
+   * ★ 從同一趟 properties 查詢裡順手組出來，不另外查 estates ——
+   *   人事費的預覽要寫「正隆 整個物業」，而 estateById 是
+   *   **房源** id → 物業名，鍵不一樣。
+   */
+  const [estNameById, setEstNameById] = useState<Record<string, string>>({});
   /** 人事費設定（月固定）。 */
   const [labor, setLabor] = useState<any[]>([]);
   const [genOpen, setGenOpen] = useState(false);
+  /** 預覽裡「支出長什麼樣子」那一段展開了沒。 */
+  const [genRowsOpen, setGenRowsOpen] = useState(false);
   useEffect(() => {
     supabase.from('properties').select('id, clean_points, clean_price, estate_id, estates(name)')
       .then(({ data }) => {
         const m: Record<string, number> = {};
         const pz: Record<string, number> = {};
         const e: Record<string, string> = {};
+        const en: Record<string, string> = {};
         for (const r of (data ?? []) as any[]) {
           if (r.clean_points != null) m[r.id] = Number(r.clean_points);
           if (r.clean_price != null) pz[r.id] = Number(r.clean_price);
           const nm = Array.isArray(r.estates) ? r.estates[0]?.name : r.estates?.name;
           if (nm) e[r.id] = nm;
+          if (nm && r.estate_id) en[r.estate_id] = nm;
         }
-        setPointsById(m); setPriceById(pz); setEstateById(e);
+        setPointsById(m); setPriceById(pz); setEstateById(e); setEstNameById(en);
       });
   }, [supabase]);
 
@@ -1081,6 +1093,79 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
               </tr>
             </tbody>
           </table>
+
+          {/*
+            ★★★ 逐筆列出**支出長什麼樣子**（2026-09-02 使用者:「可以有預覽 支出 的樣子嗎？」）。
+
+              只給總額的話，按下去等於簽一張看不到明細的單 ——
+              而產生完之後那些支出散在支出頁的幾百列裡，要挑出來對很難。
+
+            ★ 預設收起來:多數時候看總額就夠了，展開是為了「這次不太對」的時候。
+            ★★ 不用巢狀捲動（CLAUDE.md）—— 直接全部列出來，
+              長就長，反正是展開才看得到的。
+          */}
+          <div className="mt-3">
+            <button onClick={() => setGenRowsOpen(!genRowsOpen)}
+              className="text-xs text-mor-blue underline">
+              {genRowsOpen ? '收起明細' : `看這 ${gen.rows.length + gen.lab.length} 筆支出長什麼樣子`}
+            </button>
+            {genRowsOpen && (
+              <div className="mt-2 rounded-lg border border-mor-line overflow-hidden">
+                <table className="w-full text-[11px] table-fixed">
+                  <tbody>
+                    <tr className="bg-gray-50 text-gray-500">
+                      <td className="px-2 py-1.5 w-20">日期</td>
+                      <td className="px-2 py-1.5">項目</td>
+                      <td className="px-2 py-1.5 w-24">會計科目</td>
+                      <td className="px-2 py-1.5 w-16">標籤</td>
+                      <td className="px-2 py-1.5 w-20">付款方式</td>
+                      <td className="px-2 py-1.5 w-24 text-right">金額</td>
+                    </tr>
+                    {gen.rows.map((r) => (
+                      <tr key={r.key} className="border-t border-mor-line/60">
+                        <td className="px-2 py-1 text-gray-500">{r.work_date}</td>
+                        <td className="px-2 py-1 truncate">
+                          房務清潔 {r.label}{r.units !== 1 ? ` ×${fmtUnits(r.units)}` : ''}
+                          <span className="ml-1 text-gray-400">
+                            {fmtUnits(r.units)} × ${r.price.toLocaleString('en-US')}
+                          </span>
+                        </td>
+                        <td className="px-2 py-1 text-gray-500">房務清潔</td>
+                        <td className="px-2 py-1">
+                          <span className="rounded bg-mor-bluelight text-mor-slate px-1.5 py-0.5">房務</span>
+                        </td>
+                        <td className="px-2 py-1 text-gray-400">無</td>
+                        <td className="px-2 py-1 text-right tabular-nums">
+                          ${r.amount.toLocaleString('en-US')}
+                        </td>
+                      </tr>
+                    ))}
+                    {gen.lab.map((r) => (
+                      <tr key={r.key} className="border-t border-mor-line/60 bg-amber-50/40">
+                        <td className="px-2 py-1 text-gray-500">{r.spent_on}</td>
+                        <td className="px-2 py-1 truncate">
+                          房務人事費
+                          <span className="ml-1 text-gray-400">
+                            {r.property_id
+                              ? '（房源）'
+                              : `（${estNameById[r.estate_id ?? ''] ?? '物業'} 整個物業）`}
+                          </span>
+                        </td>
+                        <td className="px-2 py-1 text-gray-500">房務清潔</td>
+                        <td className="px-2 py-1">
+                          <span className="rounded bg-mor-bluelight text-mor-slate px-1.5 py-0.5">房務</span>
+                        </td>
+                        <td className="px-2 py-1 text-gray-400">無</td>
+                        <td className="px-2 py-1 text-right tabular-nums">
+                          ${r.amount.toLocaleString('en-US')}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
 
           {gen.unpriced.length > 0 && (
             <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 p-3">

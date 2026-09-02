@@ -39,7 +39,7 @@ import { ReactNode, useState } from 'react';
  *    而那正是他還不確定要不要打開的時候。
  */
 
-export type ToggleTone = 'red' | 'amber' | 'violet';
+export type ToggleTone = 'red' | 'amber' | 'violet' | 'slate';
 
 const TONE: Record<ToggleTone, { text: string; hover: string; track: string }> = {
   red: { text: 'text-red-700', hover: 'hover:bg-red-50', track: 'bg-red-500' },
@@ -51,6 +51,15 @@ const TONE: Record<ToggleTone, { text: string; hover: string; track: string }> =
    *   非營運是第五種意思,借用任何一個都會讓那個顏色失去原本的意思。
    */
   violet: { text: 'text-violet-700', hover: 'hover:bg-violet-50', track: 'bg-violet-500' },
+  /*
+   * ★ 石板藍給「非房務」（2026-09-02）。
+   *
+   *   它是站上房務的主色，而這個開關講的正是房務 —— 顏色一致比較好認。
+   *
+   * ★★ 但方向是**相反**的（藏起來，不是只看）。所以顏色一致、
+   *   標籤寫「非房務」，兩件事一起才講得清楚。
+   */
+  slate: { text: 'text-mor-slate', hover: 'hover:bg-mor-bluelight/60', track: 'bg-mor-slate' },
 };
 
 export default function ToggleInfo({

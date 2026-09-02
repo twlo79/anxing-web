@@ -47,6 +47,13 @@ type Expense = {
    *   要看營運口徑的人去財務儀表板 —— 一個數字一個地方。
    */
   non_operating?: boolean;
+  /**
+   * 標籤（migration_206）。房務自動產生的支出帶 `房務`。
+   *
+   * ★ 用陣列不是布林 —— 之後還會有別的標籤，
+   *   每多一種就加一個布林欄位的話，篩選器會變成一排開關。
+   */
+  tags?: string[] | null;
 };
 /** kind：expense=只用於支出 / income=只用於收入 / both=兩邊都用（migration_90） */
 type AccountCode = { code: string; name: string; sort: number; active: boolean; kind?: string };
@@ -78,6 +85,22 @@ const todayStr = () => new Date().toISOString().slice(0, 10);
  *   「看清單時一眼就讀得懂，不用猜圖示的意思」。
  *   代價是標記／取消要進「檢視」抽屜，不能在列上一鍵切換。
  */
+/**
+ * 「房務」標籤。房務自動產生的支出才有（migration_206）。
+ *
+ * ★ 跟 NonOpTag 同一種做法:**只有標了才出現**，沒標的不佔位置。
+ * ★★ 顏色用藍灰（跟站上房務的主色一致），不跟紫色的「非營運」撞 ——
+ *   兩個標籤可能同時出現在同一列。
+ */
+function HkTag() {
+  return (
+    <span className="ml-1.5 inline-block rounded-md bg-mor-bluelight px-2 py-0.5
+                     text-xs font-medium text-mor-slate align-middle">
+      房務
+    </span>
+  );
+}
+
 function NonOpTag() {
   return (
     <span className="ml-1.5 inline-block rounded-md bg-violet-50 px-2 py-0.5
@@ -99,6 +122,14 @@ export default function ExpensesPage() {
   const [edit, setEdit] = useState<Expense | null>(null);
   const [starF, setStarF] = useState(false);     // 只看重要支出
   const [nonOpF, setNonOpF] = useState(false);   // 只看非營運
+  /*
+   * 「非房務」＝ **把房務自動產生的支出藏起來**（2026-09-02 使用者指定）。
+   *
+   * ★ 跟上面兩個開關的方向相反:那兩個是「只看標了的」，
+   *   這個是「只看沒標的」。會這樣是因為房務一個月產生五十幾筆，
+   *   不藏起來的話手工記的那些會被淹掉。
+   */
+  const [nonHkF, setNonHkF] = useState(false);
   const [saving, setSaving] = useState(false);
   // 新支出還沒有 id，憑證要等這筆建立後才傳得上去 —— 存檔時呼叫 flush()
   const receiptsRef = useRef<ReceiptsHandle>(null);
@@ -175,6 +206,8 @@ export default function ExpensesPage() {
       if (kw) q = q.or(`item_name.ilike.%${kw}%,note.ilike.%${kw}%,voucher_no.ilike.%${kw}%`);
       if (starF) q = q.eq('starred', true);
       if (nonOpF) q = q.eq('non_operating', true);
+      // ★ `cs` = contains（陣列包含）。not(...) 就是「不包含房務」
+      if (nonHkF) q = q.not('tags', 'cs', '{房務}');
       const { data, error } = await q.range(from, from + 999);
       if (error) { flash('載入失敗:' + error.message); break; }
       const chunk = (data as Expense[]) ?? [];
@@ -489,6 +522,31 @@ export default function ExpensesPage() {
             非營運的錢也是真的花掉了。要看營運口徑請到財務儀表板。
           </span>
         </ToggleInfo>
+
+        {/*
+          ★★★ 「非房務」跟上面兩個開關**方向相反**（2026-09-02 使用者指定）。
+
+            那兩個是「只看標了的」，這個是「只看**沒**標的」——
+            因為房務一個月自動產生五十幾筆，不藏起來的話
+            手工記的那些會被淹掉。
+
+          ★ 所以 ⓘ 裡要把方向講明白。同一排三個開關，兩個是加法一個是減法，
+            不講的話使用者打開之後會以為壞了。
+        */}
+        <ToggleInfo label="非房務" tone="slate"
+          on={nonHkF} onToggle={() => setNonHkF(!nonHkF)}
+          infoLabel="非房務是什麼">
+          <span className="block text-sm mb-2">把房務自動產生的支出藏起來。</span>
+          <span className="block border-t border-mor-line pt-2 text-uisub text-gray-600 leading-relaxed">
+            <span className="block">1. 排班統計按「產生本月支出」時，那幾十筆會帶 <HkTag /> 標籤</span>
+            <span className="block">2. 打開開關，**只留下沒有** <HkTag /> 的支出</span>
+            <span className="block">3. 手工記的那些才不會被一個月五十幾筆淹掉</span>
+          </span>
+          <span className="block mt-2 pt-2 border-t border-mor-line text-xs text-gray-400 leading-relaxed">
+            ★ 跟左邊兩個<b>方向相反</b>:那兩個是「只看標了的」，這個是「只看沒標的」。
+            要只看房務的，用關鍵字搜「房務清潔」。
+          </span>
+        </ToggleInfo>
       </div>
 
       {/* 統計 */}
@@ -640,6 +698,7 @@ export default function ExpensesPage() {
                 <div className="font-medium">
                   <span className="truncate align-middle">{r.item_name}</span>
                   {r.non_operating && <NonOpTag />}
+                  {r.tags?.includes('房務') && <HkTag />}
                 </div>
                 <div className="text-[11px] text-gray-500 mt-1">
                   {r.spent_on}・{r.account_code ? codeName[r.account_code] ?? r.account_code : '未分類'}
@@ -712,6 +771,7 @@ export default function ExpensesPage() {
                   )}
                   {r.item_name}
                   {r.non_operating && <NonOpTag />}
+                  {r.tags?.includes('房務') && <HkTag />}
                   {r.source_item_id && <span className="ml-2 inline-block rounded-md bg-mor-bluelight text-mor-slate px-1.5 py-0.5 text-[10px]">請款</span>}
                 </td>
                 <td className="px-3 py-2 text-right font-medium">
@@ -812,6 +872,7 @@ export default function ExpensesPage() {
                   <div className="font-bold">
                     <span className="align-middle">{d.item_name}</span>
                     {d.non_operating && <NonOpTag />}
+                    {d.tags?.includes('房務') && <HkTag />}
                   </div>
                   <div className="text-xs text-gray-500 mt-0.5">
                     {d.spent_on}
