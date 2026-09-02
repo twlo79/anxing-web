@@ -16,6 +16,8 @@ import StatCard, { StatRow, StatTotal, StatGroup } from '@/components/StatCard';
 import { useAdvance, AdvanceStats, AdvanceList } from './advance-tab';
 import { exitBlockedReason, forfeitOrder, earnestStatus, convertPlan, type EarnestDep } from '@/lib/earnest';
 import { useProfile } from '@/lib/profile';
+// 收款只有會計與總管理員（2026-09-02）—— 規則寫在 lib，三頁共用同一支
+import { canCollect, collectDeniedMsg } from '@/lib/collect-perm';
 import { fetchAll } from '@/lib/fetch-all';
 import Receipts from '@/components/Receipts';
 import RefundFields, { METHOD_LABEL, METHOD_OPTS } from '@/components/RefundFields';
@@ -1850,8 +1852,21 @@ export default function DepositsPage() {
                     {/* ① 收款 —— 一筆一列（migration_147）。
                            **沒退款之前都開得起來**:已經收滿了還是要看得到
                            明細與收款證明照片。 */}
+                    {/*
+                      ★★★ 2026-09-02:收款收成「只有會計與總管理員」
+                        （使用者:「把管家與主管的權限關掉」）。
+
+                      ★ 按鈕**不藏起來** —— 藏了主管不知道這件事做得到，
+                        只會改用 LINE 問。留著、點了說要找誰。
+
+                      ★★ `canEdit` 那一段不動:主管照樣改得了備註、
+                        申請退款、看收款證明。收回來的只有「收錢」。
+                    */}
                     {canEdit && !d.returned_on && (
-                      <button onClick={() => { setPaying(d); setDetail(null); }}
+                      <button onClick={() => {
+                        if (!canCollect(role)) return flash(collectDeniedMsg('押金'));
+                        setPaying(d); setDetail(null);
+                      }}
                         className={`${btn} border border-mor-slate text-mor-slate`}>收款</button>
                     )}
 

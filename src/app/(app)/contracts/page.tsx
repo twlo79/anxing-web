@@ -5,6 +5,9 @@ import Req from '@/components/Req';
 import MoneyInput from '@/components/MoneyInput';
 import { checkContractRequired } from '@/lib/order-check';
 import Toast from '@/components/Toast';
+// 收款只有會計與總管理員（2026-09-02）—— 規則寫在 lib，三頁共用同一支
+import { canCollect, collectDeniedMsg } from '@/lib/collect-perm';
+import { useProfile } from '@/lib/profile';
 import { FilterBar, FilterSelect, FilterDateRange, FilterSearch, FilterClear, FilterCount } from '@/lib/filters';
 import { createClient } from '@/lib/supabase';
 import { useOnce } from '@/lib/once';
@@ -1362,6 +1365,25 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
   /** 安幸收款帳號。分筆收款的「匯款」要選 —— 見下面的 OrderPayments */
   payAccounts: { code: string; name: string }[];
 }) {
+  /*
+   * ★★★ 收款只有會計與總管理員（2026-09-02 使用者:
+   *   「把管家與主管的權限關掉，不能去按收款，可以檢視，按了會有警示」）。
+   *
+   * ★ 按鈕**不藏起來**（使用者選的）:藏了主管不知道這件事做得到，
+   *   只會改用 LINE 問，而那通訊息沒有人記得回。
+   *
+   * ★★ 訊息就近顯示，不用 `alert()` 也不寫到頁面最上方 ——
+   *   這個視窗是捲動的，訊息跑到看不見的地方等於沒講
+   *   （CLAUDE.md 2026-09-02 那一條）。
+   */
+  const myRole = useProfile().profile?.role ?? '';
+  /** 哪一顆按鈕被擋下來了。★ 存 key 不存 boolean —— 不然一行字會同時出現在每一期旁邊 */
+  const [denied, setDenied] = useState('');
+  /** ★ 訊息不佔高度（absolute）—— 出現時旁邊的欄位一格都不會動（CLAUDE.md 2026-09-02） */
+  const denyBtn = (key: string) => {
+    setDenied(key);
+    setTimeout(() => setDenied((d) => (d === key ? '' : d)), 6000);
+  };
   const [existing, setExisting] = useState<Record<string, any>>({});
   const [endDate, setEndDate] = useState<string | null>(c.end_date ?? null);
   const [loading, setLoading] = useState(true);
@@ -2138,15 +2160,25 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
 
                             ★ 掛在這一期的**第一張**月租單上,目標金額用 pt.net（整期合計）。
                           */}
-                          <button
-                            onClick={() => setSplitPay({
-                              order: os[0], chunk, due: pt.net,
-                              label: `第 ${i + 1} 期 ${first.label}${STEP > 1 ? `~${last.label}` : ''}`,
-                            })}
-                            disabled={!!busy}
-                            className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">
-                            收款
-                          </button>
+                          <div className="relative">
+                            <button
+                              onClick={() => {
+                                if (!canCollect(myRole)) return denyBtn(`p${i}`);
+                                setSplitPay({
+                                  order: os[0], chunk, due: pt.net,
+                                  label: `第 ${i + 1} 期 ${first.label}${STEP > 1 ? `~${last.label}` : ''}`,
+                                });
+                              }}
+                              disabled={!!busy}
+                              className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">
+                              收款
+                            </button>
+                            {denied === `p${i}` && (
+                              <div className="absolute top-full right-0 z-10 mt-1 w-64 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] leading-snug text-red-700 shadow-sm">
+                                {collectDeniedMsg('這一期的租金')}
+                              </div>
+                            )}
+                          </div>
                           {/*
                             ★★ 收滿了但這一期還沒標記已收。
 
@@ -2432,7 +2464,20 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                             disabled={!!busy}
                             className="rounded-lg bg-mor-greenlight text-mor-green px-2.5 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">退回未收</button>
                         </div>
-                      : <button onClick={() => setPeriodPaid(chunk, true, `延展 第 ${j + 1} 期 ${mm.label}`)} disabled={!!busy} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">{busy === mm.ym ? '…' : '確認收款'}</button>)}
+                      : <div className="relative">
+                          <button
+                            onClick={() => {
+                              if (!canCollect(myRole)) return denyBtn(`x${j}`);
+                              setPeriodPaid(chunk, true, `延展 第 ${j + 1} 期 ${mm.label}`);
+                            }}
+                            disabled={!!busy}
+                            className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">{busy === mm.ym ? '…' : '確認收款'}</button>
+                          {denied === `x${j}` && (
+                            <div className="absolute top-full right-0 z-10 mt-1 w-64 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] leading-snug text-red-700 shadow-sm">
+                              {collectDeniedMsg('這一期的租金')}
+                            </div>
+                          )}
+                        </div>)}
                   </div>
                   {c.invoice_required && (
                     <div className="mt-1.5 border-t border-amber-200/60 pt-1.5">{invPeriodRows(chunk, j, `延展 第 ${j + 1} 期 ${mm.label}`)}</div>

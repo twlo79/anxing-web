@@ -13,6 +13,8 @@ import { useOnce } from '@/lib/once';
 import { titleCaseName } from '@/lib/name-format';
 import { useOpenFromUrl } from '@/lib/open-from-url';
 import { useProfile } from '@/lib/profile';
+// 收款只有會計與總管理員（2026-09-02）—— 規則寫在 lib，三頁共用同一支
+import { canCollect as roleCanCollect, collectDeniedMsg } from '@/lib/collect-perm';
 import { savedState, pinnedHint, hasAnyFilter, SAVED_TTL_MS, type SavedMark } from '@/lib/just-saved';
 import { FEE_TYPES, ONEOFF_FEE_TYPES, ONEOFF_PRESETS, presetOf } from '@/lib/fee-types';
 import { ONEOFF_LABEL } from '@/lib/revenue-report';
@@ -264,7 +266,19 @@ export default function ShortTermPage() {
    * 清單搬進 lib 是因為這一頁用了兩次、契約頁又是另一套 ——
    * 散在三個地方的話,改了其中一個不會有任何東西提醒你另外兩個還是舊的。
    */
-  const canCollect = useMemo(() => canEditOrders(role), [role]);
+  /*
+   * ★★★ 2026-09-02 使用者:「把管家與主管的權限關掉，不能去按收款」。
+   *
+   *   原本是 `canEditOrders(role)`（管家也能收，migration_154 開的）。
+   *   現在**收款**單獨收成一條規則:只有會計與總管理員。
+   *
+   * ★ 其餘的訂單編輯權限一個字都不動 —— 收回來的只有「收錢」這件事。
+   *
+   * ★★ 按鈕**不藏起來**（使用者選的）:藏了管家不知道這件事做得到，
+   *   只會改用 LINE 問，而那通訊息沒有人記得回。
+   *   留著、點了說「只有會計能收款」，他就知道要找誰。
+   */
+  const canCollect = useMemo(() => roleCanCollect(role), [role]);
   const estateName = useMemo(() => Object.fromEntries(estates.map((e) => [e.id, e.name])), [estates]);
   const [fees, setFees] = useState<Fee[]>([]);
   /*
@@ -1403,8 +1417,12 @@ export default function ShortTermPage() {
                   })()}
                 </td>
                 <td className="px-3 py-2 text-right whitespace-nowrap">
-                  {!isExempt(o) && canCollect && (
-                    <button onClick={(e) => { e.stopPropagation(); setCollect(o); }}
+                  {!isExempt(o) && (
+                    <button onClick={(e) => {
+                      e.stopPropagation();
+                      if (!canCollect) return flash(collectDeniedMsg('這筆訂單的款'));
+                      setCollect(o);
+                    }}
                       className="text-xs text-mor-green underline hover:opacity-80 mr-3">收款</button>
                   )}
                   <button onClick={(e) => { e.stopPropagation(); setDetail(o); }} className="text-xs text-mor-slate underline hover:text-mor-blue">檢視</button>
@@ -1512,8 +1530,11 @@ export default function ShortTermPage() {
                 style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
                 <button onClick={() => { setDetail(null); openEdit(d); }}
                   className="flex-1 min-w-[6rem] h-11 rounded-lg bg-mor-slate text-white text-sm font-medium hover:bg-mor-slatedark">編輯</button>
-                {!isExempt(d) && canCollect && (
-                  <button onClick={() => { setDetail(null); setCollect(d); }}
+                {!isExempt(d) && (
+                  <button onClick={() => {
+                    if (!canCollect) return flash(collectDeniedMsg('這筆訂單的款'));
+                    setDetail(null); setCollect(d);
+                  }}
                     className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-green text-mor-green text-sm font-medium hover:bg-mor-greenlight">收款</button>
                 )}
                 {canMove && (
