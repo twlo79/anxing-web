@@ -40,6 +40,14 @@ type Ev = {
 type Wi = {
   id: string; period: string; work_date: string; property_code: string | null;
   work_type: string; staff_id: string; source?: string; note?: string | null;
+  /**
+   * 這一列是從哪個行事曆事件長出來的（migration_188）。
+   *
+   * ★★★ 重新解析要靠它把房源補回工作項目 —— 只改 hk_event.parsed_code
+   *   的話，事件對上了房源，但**排班表上那一格還是空的**，
+   *   而間數照算、點數算不出來（2026-09-01 使用者:「沒登記進去」）。
+   */
+  event_id?: string | null;
 };
 type Day = { period: string; work_date: string; staff_id: string; status: string | null; hours: number | null; rooms_override?: number | null };
 type MP = { period: string; property_code: string; count_override: number | null; linen_taken: number };
@@ -451,10 +459,26 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
     if (!list.length) flash('用現在的別名重對一次，沒有任何一筆對得上');
   }
 
-  /** 確認寫入。★ 只寫 parsed_code，不碰任何人工建立的工作項目。 */
+  /**
+   * 確認寫入。
+   *
+   * ★★★ **兩張表都要寫**（2026-09-01 使用者:「沒登記進去」）。
+   *
+   *   hk_event.parsed_code       事件對到哪個房源
+   *   hk_work_item.property_code 排班表那一格顯示什麼、點數算哪一間
+   *
+   *   只寫前者的話:事件離開例外清單、間數照算，
+   *   但**排班表那一格是空的**（畫面上是「庭玉 清潔」而不是「庭玉 JPR2F」），
+   *   而且打掃點數算不出來 —— 也就是卡片上那個「⚠ N 筆未計」。
+   *   使用者看到的是「按了重新解析，但沒登記進去」。
+   *
+   * ★★ 只補**還是空的**那些格（`property_code is null`）——
+   *   有人手動填過的不覆蓋。人填的優先於推導的。
+   */
   async function applyReparse() {
     if (!reparse?.length) return;
     let ok = 0;
+    let cells = 0;
     for (const r of reparse) {
       const { data, error } = await supabase.from('hk_event')
         .update({ parsed_code: r.code }).eq('id', r.id).select('id');
@@ -463,11 +487,23 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
        * ★★ RLS 擋下的 UPDATE 會回成功而且影響 0 列（CLAUDE.md 的坑）。
        *   不數的話，沒有權限的人會看到「已更新 5 筆」而一筆都沒變。
        */
-      if (data?.length) ok += 1;
+      if (!data?.length) continue;
+      ok += 1;
+
+      const { data: wi, error: we } = await supabase.from('hk_work_item')
+        .update({ property_code: r.code })
+        .eq('event_id', r.id).is('property_code', null).select('id');
+      if (we) return flash('房源補進排班表時失敗:' + we.message);
+      cells += wi?.length ?? 0;
     }
     setEvents((xs) => xs.map((e) => {
       const hit = reparse.find((r) => r.id === e.id);
       return hit ? { ...e, parsed_code: hit.code } : e;
+    }));
+    setItems((xs) => xs.map((w) => {
+      const hit = w.event_id && !w.property_code
+        ? reparse.find((r) => r.id === w.event_id) : null;
+      return hit ? { ...w, property_code: hit.code } : w;
     }));
     setReparse(null);
     /*
@@ -475,8 +511,12 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
      *   對上房源之後就不是例外了，畫面上會少幾列。
      *   只說「已重新對上 5 筆」的話，使用者會問剛剛那幾筆去哪了。
      */
+    /*
+     * ★ 兩個數字都要講。「事件 5 筆」與「排班表 4 格」不一樣是正常的
+     *   （有些格子本來就填過房源），但差很多就值得看一眼。
+     */
     flash(ok === reparse.length
-      ? `已重新對上 ${ok} 筆 —— 它們已進入統計，不再列在這裡`
+      ? `已重新對上 ${ok} 筆，排班表補了 ${cells} 格房源`
       : `只更新了 ${ok} / ${reparse.length} 筆 —— 其餘可能是權限不足`);
   }
 
