@@ -275,6 +275,18 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
   const estateMax = Math.max(1, ...estateLines.map((e) => e.points));
   const estateTotal = estateLines.reduce(
     (a, e) => ({ units: a.units + e.units, points: a.points + e.points }), { units: 0, points: 0 });
+  /*
+   * ★★★ 時薪人員（劉姐）做的間數也在各物業裡，但**上面的人員卡片不會顯示**
+   *   —— `roomStaff` 只挑 count_mode === 'rooms' 的人（第 168 行）。
+   *
+   *   結果是同一個畫面上兩個總數對不起來:各物業合計 65.5，
+   *   而 Una ＋ 庭玉只有 52.5。使用者去對帳時會以為系統算錯
+   *   （2026-09-02 驗算時發現，使用者選「留著，但卡片要講明」）。
+   *
+   * ★ 房子確實被掃了，所以物業統計含它是對的 —— 要修的是**說出來**。
+   *   用 `pay`（每人合計）取，跟卡片同一份資料，不另外算一次。
+   */
+  const hoursUnits = hourStaff.reduce((a, s) => a + (pay.get(s.id)?.units ?? 0), 0);
 
   /**
    * 每人每日間數（由房源格推導的自動值）。
@@ -767,6 +779,12 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
             <div className="text-xs text-gray-500">各物業</div>
             <div className="text-xs text-gray-400">
               合計 {fmtUnits(estateTotal.units)} 間・{fmtUnits(estateTotal.points)} 點
+              {hoursUnits > 0 && (
+                <span className="ml-1 text-amber-600"
+                  title="時薪人員的間數不會出現在上面的人員卡片上，所以這個合計會比卡片相加多">
+                  含時薪 {fmtUnits(hoursUnits)} 間
+                </span>
+              )}
             </div>
           </div>
           <div className="space-y-1.5">
