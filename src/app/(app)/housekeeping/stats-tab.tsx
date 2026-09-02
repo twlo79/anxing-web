@@ -1376,6 +1376,18 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                     className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs disabled:opacity-40">存完收起來</button>
                   <button onClick={() => { setExAdd(null); setExAdded([]); }}
                     className="text-xs text-gray-500 underline">取消</button>
+                  {/*
+                    ★★★ 按鈕是灰的時候要**說出為什麼**（2026-09-02 使用者:
+                      「如何存 無房源」—— 他以為是房源留空造成的，
+                      實際上是還沒選人）。
+
+                      灰掉而不說原因，使用者只能一格一格試。而這裡的訊息
+                      跟 `submitExAdd` 讀的是同一支 `exAddError`，
+                      所以不可能出現「上面說要選人、按下去卻說別的」。
+                  */}
+                  {exAddError(exAdd) && (
+                    <span className="text-xs text-amber-700">{exAddError(exAdd)}</span>
+                  )}
                   {/* ★ 連補幾筆時要看得到補了什麼 —— 不然第三筆會忘記前兩筆 */}
                   {exAdded.length > 0 && (
                     <span className="text-xs text-mor-greendark">已補 {exAdded.length} 筆：{exAdded.join('・')}</span>
