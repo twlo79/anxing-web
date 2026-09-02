@@ -5,6 +5,9 @@ import * as XLSX from 'xlsx-js-style';
 import { createClient } from '@/lib/supabase';
 import { cleanCounts, filterItems, buildLookup, matchProperty, type HkStaff, type HkProperty } from '@/lib/hkParse';
 import { payroll, byEstate, estateLog, dailyUnits, fmtUnits } from '@/lib/hk-payroll';
+import { cleaningCosts, laborCosts, lastDayOf, costTotal } from '@/lib/hk-cost';
+// ★ useRef 的同步閘門 —— useState 是非同步的,連點兩下會兩筆都送出去
+import { useOnce } from '@/lib/once';
 import { sharePreview, previewText } from '@/lib/hk-crew';
 import {
   reparsePreview, visibleRows, dismissedCount, prefillFromEvent,
@@ -214,19 +217,38 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
    * （`properties.estate_id` → `estates.name`），房務這邊不另存一份。
    */
   const [estateById, setEstateById] = useState<Record<string, string>>({});
+  /** 房源 → 清潔費公訂價（`properties.clean_price`，migration_206）。 */
+  const [priceById, setPriceById] = useState<Record<string, number>>({});
+  /** 人事費設定（月固定）。 */
+  const [labor, setLabor] = useState<any[]>([]);
+  const [genOpen, setGenOpen] = useState(false);
   useEffect(() => {
-    supabase.from('properties').select('id, clean_points, estate_id, estates(name)')
+    supabase.from('properties').select('id, clean_points, clean_price, estate_id, estates(name)')
       .then(({ data }) => {
         const m: Record<string, number> = {};
+        const pz: Record<string, number> = {};
         const e: Record<string, string> = {};
         for (const r of (data ?? []) as any[]) {
           if (r.clean_points != null) m[r.id] = Number(r.clean_points);
+          if (r.clean_price != null) pz[r.id] = Number(r.clean_price);
           const nm = Array.isArray(r.estates) ? r.estates[0]?.name : r.estates?.name;
           if (nm) e[r.id] = nm;
         }
-        setPointsById(m); setEstateById(e);
+        setPointsById(m); setPriceById(pz); setEstateById(e);
       });
   }, [supabase]);
+
+  /*
+   * 人事費設定（migration_206）。月固定，跟清潔次數無關。
+   * ★ estate_id 與 property_id 擇一 —— 開封是每個房源一個金額，
+   *   正隆是整個物業 200,000（正隆沒有「整棟」那個房源，塞不進 properties）。
+   */
+  useEffect(() => {
+    supabase.from('hk_labor_cost').select('*').eq('active', true)
+      .then(({ data }) => setLabor((data ?? []) as any[]));
+  }, [supabase]);
+
+
 
   /*
    * 每人的打掃量與報酬點數。算法在 lib/hk-payroll（有測試）——
@@ -272,6 +294,93 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
    * 下面的排班表整個推出畫面，而它本來是「一眼看完」的摘要。
    */
   const [openEstate, setOpenEstate] = useState<string | null>(null);
+  const [genBusy, setGenBusy] = useState(false);
+
+  /**
+   * 產生本月的房務支出。
+   *
+   * ============================================================
+   * 【★★★ 冪等靠資料庫，不靠這裡記得】
+   *
+   * `expenses.hk_job_key` 與 `hk_labor_key` 各有一個唯一索引
+   * （migration_206）。所以按兩次只會有一份帳 ——
+   * 沒有它的話重複的支出**在帳上看起來完全正常**，沒有任何地方會叫。
+   *
+   * ★ 用 `upsert` ＋ `ignoreDuplicates` 而不是先查再寫:
+   *   先查再寫中間有空窗，兩個人同時按就會各寫一筆。
+   *
+   * ★★ 已經產生過的**不會被更新**。改了單價之後重按，舊那筆維持原金額 ——
+   *   要改請到支出頁。自動改的話，上個月已經對過的帳會無聲變動。
+   */
+  async function generateInner() {
+    if (!gen.rows.length && !gen.lab.length) return flash('沒有可以產生的支出');
+    setGenBusy(true);
+    try {
+      const mk = (r: any) => ({
+        spent_on: r.spent_on ?? r.work_date,
+        item_name: r.item_name,
+        amount: r.amount,
+        account_code: 'hk_cleaning',
+        purpose_type: 'estate',
+        property_id: r.property_id ?? null,
+        estate_id: r.estate_id ?? null,
+        // ★ 使用者指定「付款方式 無」—— 這幾筆是內部成本認列,錢還沒真的匯出去
+        payment_method: null,
+        tags: ['房務'],
+        no_voucher: true,
+        hk_job_key: r.key_job ?? null,
+        hk_labor_key: r.key_labor ?? null,
+      });
+
+      const cleanRows = gen.rows.map((r) => mk({
+        work_date: r.work_date, amount: r.amount, property_id: r.property_id,
+        item_name: `房務清潔 ${r.label}${r.units !== 1 ? ` ×${fmtUnits(r.units)}` : ''}`,
+        key_job: r.key,
+      }));
+      const laborRows = gen.lab.map((r) => mk({
+        spent_on: r.spent_on, amount: r.amount,
+        property_id: r.property_id, estate_id: r.estate_id,
+        item_name: '房務人事費',
+        key_labor: r.key,
+      }));
+
+      let made = 0;
+      for (const [rows, conflict] of [
+        [cleanRows, 'hk_job_key'], [laborRows, 'hk_labor_key'],
+      ] as const) {
+        if (!rows.length) continue;
+        const { data, error } = await supabase.from('expenses')
+          .upsert(rows, { onConflict: conflict, ignoreDuplicates: true })
+          .select('id');
+        if (error) { flash('產生失敗：' + error.message); return; }
+        made += data?.length ?? 0;
+      }
+      /*
+       * ★★ `made` 是**真的新增**的筆數。全部都已經產生過的話會是 0 ——
+       *   那不是失敗，要講清楚，不然使用者會一直按。
+       */
+      flash(made === 0
+        ? '這個月的支出都已經產生過了，沒有新增任何一筆'
+        : `已產生 ${made} 筆支出（共 $${costTotal([...cleanRows, ...laborRows]).toLocaleString('en-US')}）`);
+      setGenOpen(false);
+    } finally { setGenBusy(false); }
+  }
+  const [doGenerate] = useOnce(generateInner);
+
+  /*
+   * ★★★ 產生預覽 —— **按下去之前先看到錢**。
+   *
+   *   清潔費吃的是 `estateLog` 攤平後的 job（一份工一列，合掃已經合併）。
+   *   合掃付一份不是兩份（2026-09-02 使用者確認）——
+   *   用打掃量那套的話，正隆一間合掃就付 18,000。
+   */
+  const gen = useMemo(() => {
+    const jobs = [...estateLogs.values()].flat();
+    const { rows, unpriced } = cleaningCosts(jobs, (pid) => priceById[pid]);
+    const lab = laborCosts(labor as any, period);
+    return { rows, unpriced, lab,
+             total: costTotal(rows) + costTotal(lab) };
+  }, [estateLogs, priceById, labor, period]);
   const estateMax = Math.max(1, ...estateLines.map((e) => e.points));
   const estateTotal = estateLines.reduce(
     (a, e) => ({ units: a.units + e.units, points: a.points + e.points }), { units: 0, points: 0 });
@@ -718,6 +827,18 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
             className="rounded-lg border border-mor-line px-3 py-1.5 text-sm text-gray-600 hover:bg-mor-sand/60">⚙ 設定</Link>
           <button onClick={exportXlsx} disabled={!items.length}
             className={`rounded-lg px-4 py-1.5 text-sm font-medium disabled:opacity-40 ${EXPORT_TONE}`}>⬇ 下載 Excel</button>
+          {/*
+            ★★★ 產生房務支出（migration_206）。**先預覽再寫** ——
+              錢的事不自動（CLAUDE.md 的判斷原則）。
+
+            ★ 這個分頁本身就只有 canEdit 進得來（housekeeping/page.tsx:155），
+              所以這裡不用再判斷一次 —— 判斷兩次的話，哪天上面改了下面沒改，
+              就會出現「看得到但按了沒用」。
+          */}
+          <button onClick={() => setGenOpen(true)}
+            className="rounded-lg border border-mor-line px-3 py-1.5 text-sm text-gray-600 hover:bg-mor-sand/60">
+            產生本月支出
+          </button>
         </div>
       </div>
 
@@ -898,6 +1019,100 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
           </div>
           <div className="mt-2.5 pt-2 border-t border-mor-line text-[11px] text-gray-400">
             只列這個月有工作的物業。長度是點數比例・點物業名稱看明細
+          </div>
+        </div>
+      )}
+
+      {/*
+        ══════════ 產生房務支出的預覽（migration_206）══════════
+
+        ★★★ **按下去之前先看到錢**。這一個動作會在支出頁憑空多出幾十筆、
+          幾十萬 —— 而支出頁上那些看起來跟人工記的一模一樣。
+
+        ★★ 算不出錢的那一區要顯示。沒單價的**整筆不產生**（不是記成 $0），
+          所以帳會少一截 —— 不講的話沒有人會發現少了什麼。
+
+        ★ 用 `relative` 的一般流排版，不用 position:fixed 的遮罩 ——
+          這一頁本來就沒有別的 modal，多一層遮罩只是多一種捲動行為。
+      */}
+      {genOpen && (
+        <div className="rounded-xl bg-white border border-mor-line p-4 mb-4">
+          <div className="flex items-baseline justify-between pb-2 mb-3 border-b border-mor-line">
+            <div className="text-sm font-medium text-mor-slate">
+              產生 {period.slice(0, 4)} 年 {Number(period.slice(4))} 月的房務支出
+            </div>
+            <div className="text-[11px] text-gray-400">
+              會計科目：房務清潔・標籤 房務
+            </div>
+          </div>
+
+          <table className="w-full text-sm table-fixed">
+            <tbody>
+              <tr>
+                <td className="py-1">
+                  清潔費
+                  <span className="ml-2 text-xs text-gray-400">{gen.rows.length} 份工</span>
+                </td>
+                <td className="py-1 w-28 text-right tabular-nums">
+                  ${costTotal(gen.rows).toLocaleString('en-US')}
+                </td>
+              </tr>
+              <tr>
+                <td className="py-1">
+                  人事費
+                  <span className="ml-2 text-xs text-gray-400">
+                    {gen.lab.length} 筆・記在 {lastDayOf(period).slice(5)}
+                  </span>
+                </td>
+                <td className="py-1 text-right tabular-nums">
+                  ${costTotal(gen.lab).toLocaleString('en-US')}
+                </td>
+              </tr>
+              <tr className="border-t border-mor-line font-medium">
+                <td className="py-2">
+                  合計
+                  <span className="ml-2 text-xs text-gray-400 font-normal">
+                    {gen.rows.length + gen.lab.length} 筆支出
+                  </span>
+                </td>
+                <td className="py-2 text-right tabular-nums text-base">
+                  ${gen.total.toLocaleString('en-US')}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          {gen.unpriced.length > 0 && (
+            <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 p-3">
+              <div className="text-xs text-amber-900">
+                {gen.unpriced.length} 份工<b>算不出錢</b>，不會產生支出
+              </div>
+              <div className="text-[11px] text-amber-800 mt-1.5 leading-relaxed">
+                {(() => {
+                  // ★ 逐筆列會很長 —— 照「房源＋原因」收合，數量放後面
+                  const g = new Map<string, number>();
+                  for (const u of gen.unpriced) {
+                    const k = `${u.label}・${u.reason}`;
+                    g.set(k, (g.get(k) ?? 0) + 1);
+                  }
+                  return [...g].map(([k, n]) => `${k} ${n} 份`).join('　｜　');
+                })()}
+              </div>
+            </div>
+          )}
+
+          <div className="mt-2 rounded-lg bg-gray-50 p-3 text-[11px] text-gray-500 leading-relaxed">
+            已經產生過的不會再產生一次。
+            <b>改了單價之後重按，舊的那筆不會跟著改</b> —— 要改金額請到支出頁。
+          </div>
+
+          <div className="flex items-center gap-2 mt-3">
+            <button onClick={doGenerate} disabled={genBusy || gen.total === 0}
+              className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium hover:bg-mor-slatedark disabled:opacity-40">
+              {genBusy ? '產生中⋯' : `產生 ${gen.rows.length + gen.lab.length} 筆支出`}
+            </button>
+            <button onClick={() => setGenOpen(false)}
+              className="text-xs text-gray-500 underline">取消</button>
           </div>
         </div>
       )}

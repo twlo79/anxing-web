@@ -41,6 +41,13 @@ type Property = {
    * 報酬點數 ＝ 打掃量 × 這個值。null = 還沒設,那間房算不出報酬。
    */
   clean_points?: number | null;
+  /**
+   * 清潔費公訂價，一份工多少錢（migration_206）。null = 未設。
+   *
+   * ★★ 跟 `clean_points` 是**兩件事**:points 是算薪用的難度分，
+   *   price 是付出去的錢。未設的不會產生支出（不是當成 0）。
+   */
+  clean_price?: number | null;
   active?: boolean | null;
 };
 type Profile = { id: string; name: string | null; role: string; active: boolean };
@@ -314,7 +321,7 @@ export default function AdminPage() {
     const { data: pf } = await supabase.from('profiles').select('id, name, role, active');
     const { data: es } = await supabase.from('estates').select('*').order('sort').order('name');
     const { data: pr } = await supabase.from('properties')
-      .select('id, name, estate_id, airbnb_listing_id, parent_property_id, beds, clean_points, active').order('name');
+      .select('id, name, estate_id, airbnb_listing_id, parent_property_id, beds, clean_points, clean_price, active').order('name');
     const { data: pa } = await supabase.from('payment_accounts').select('*').order('sort').order('code');
     const { data: pl } = await supabase.from('property_listings')
       .select('listing_id, property_id, is_current, note').order('is_current', { ascending: false });
@@ -1222,6 +1229,7 @@ export default function AdminPage() {
                   <th className="px-4 py-2.5 whitespace-nowrap">屬於哪個房源</th>
                   <th className="px-4 py-2.5 whitespace-nowrap">床數</th>
                   <th className="px-4 py-2.5 whitespace-nowrap">打掃點數</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">清潔費</th>
                   <th className="px-4 py-2.5 text-right">操作</th>
                 </tr>
               </thead>
@@ -1397,6 +1405,34 @@ export default function AdminPage() {
                         className={`rounded-lg border px-2 py-1 w-16 text-center ${
                           p.clean_points == null ? 'border-amber-300 bg-amber-50/50' : 'border-gray-300'}`} />
                     </td>
+                    {/*
+                      清潔費（migration_206）＝ 一份工要付多少錢。
+
+                      ★★ 跟左邊那一欄不一樣:打掃點數是**算薪**用的難度分，
+                        清潔費是**付出去**的錢。兩個都要填，缺一個就少一半。
+
+                      ★★★ 未設的**不產生支出**，不是當成 0 —— 支出頁看到一筆 $0
+                        只會被當成「還沒填」，而帳實際上少一截。
+                        產生預覽會把未設的列出來。
+
+                      ★ 允許小數（有些是拆帳後的零頭），但不允許負數。
+                    */}
+                    <td className="px-4 py-2 whitespace-nowrap">
+                      <input defaultValue={p.clean_price ?? ''} placeholder="未設"
+                        inputMode="decimal"
+                        onBlur={(ev) => {
+                          const v = ev.target.value.trim().replace(/,/g, '');
+                          const cur = p.clean_price == null ? '' : String(p.clean_price);
+                          if (v === cur) return;
+                          if (v && !/^\d+(\.\d{1,2})?$/.test(v)) {
+                            ev.target.value = cur;
+                            return flash('清潔費只能是 0 以上的數字（可帶兩位小數）');
+                          }
+                          updateProperty(p.id, { clean_price: v === '' ? null : Number(v) });
+                        }}
+                        className={`rounded-lg border px-2 py-1 w-24 text-right ${
+                          p.clean_price == null ? 'border-amber-300 bg-amber-50/50' : 'border-gray-300'}`} />
+                    </td>
                     <td className="px-4 py-2 text-right">
                       <button onClick={() => deleteProperty(p.id, p.name)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
                     </td>
@@ -1426,7 +1462,8 @@ export default function AdminPage() {
           const noListing = here.filter((p) => !p.airbnb_listing_id);
           const noBeds = here.filter((p) => p.beds == null);
           const noPoints = here.filter((p) => p.clean_points == null);
-          if (!noListing.length && !noBeds.length && !noPoints.length) return null;
+          const noPrice = here.filter((p) => p.clean_price == null);
+          if (!noListing.length && !noBeds.length && !noPoints.length && !noPrice.length) return null;
           return (
             <div className="text-xs text-amber-700 mt-1 space-y-1">
               {noListing.length > 0 && (
@@ -1449,6 +1486,18 @@ export default function AdminPage() {
                   <b>{noPoints.length} 間沒設打掃點數</b>：{noPoints.map((p) => p.name).join('、')}。
                   報酬點數 ＝ 打掃量 × 打掃點數 —— 沒設的話那幾間<b>算不出報酬</b>
                   （不是算成 0,是列進「算不出來」讓人看見）。
+                </p>
+              )}
+              {/*
+                ★★★ 沒設清潔費的要主動講:那幾間被打掃時**整筆不產生支出**
+                  —— 不是記成 $0。$0 至少看得到，不產生是帳上憑空少一截，
+                  而沒有任何地方會叫（migration_206）。
+              */}
+              {noPrice.length > 0 && (
+                <p>
+                  <b>{noPrice.length} 間沒設清潔費</b>：{noPrice.map((p) => p.name).join('、')}。
+                  那幾間被打掃時<b>不會產生支出</b>（不是記成 $0，是整筆不產生）。
+                  不用付清潔費的房源留空是正常的。
                 </p>
               )}
             </div>
