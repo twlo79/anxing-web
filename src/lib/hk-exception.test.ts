@@ -2,7 +2,7 @@ import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   isDismissed, reparsePreview, visibleRows, dismissedCount,
-  prefillFromEvent, canDismiss, canSubmitExAdd, reasonOf, exceptionEvents, type ExEvent,
+  prefillFromEvent, canDismiss, canSubmitExAdd, inPeriod, reasonOf, exceptionEvents, type ExEvent,
 } from './hk-exception.ts';
 
 const E = (o: Partial<ExEvent> = {}): ExEvent => ({
@@ -205,5 +205,32 @@ describe('canSubmitExAdd —— 按鈕與存檔讀同一句話', () => {
   });
   test('空白字串當成沒填,不當成 0', () => {
     assert.equal(canSubmitExAdd(F({ code: 'A07', units: '   ' })), true);
+  });
+});
+
+/*
+ * ★★★ 2026-09-02 使用者連續三次「不能存」。
+ *
+ *   前兩次是按鈕 disabled 與人員必填（都是真的問題），
+ *   第三次才找到這一個 —— 而它把**每一次**補登都擋掉了。
+ */
+describe('inPeriod —— 日期有橫線、period 沒有', () => {
+  test('★★★ 同一個月 → true（原本的 startsWith 在這裡是 false）', () => {
+    assert.equal(inPeriod('2026-08-20', '202608'), true);
+    assert.equal('2026-08-20'.startsWith('202608'), false);   // 這就是那個 bug
+  });
+  test('同年不同月', () => assert.equal(inPeriod('2026-09-01', '202608'), false));
+  test('同月不同年', () => assert.equal(inPeriod('2025-08-20', '202608'), false));
+  test('月初月底都算', () => {
+    assert.equal(inPeriod('2026-08-01', '202608'), true);
+    assert.equal(inPeriod('2026-08-31', '202608'), true);
+  });
+  test('個位數月份的前導零', () => {
+    assert.equal(inPeriod('2026-01-05', '202601'), true);
+    assert.equal(inPeriod('2026-01-05', '20261'), false);
+  });
+  test('空的一律 false —— 不要當成「符合」', () => {
+    assert.equal(inPeriod('', '202608'), false);
+    assert.equal(inPeriod('2026-08-20', ''), false);
   });
 });

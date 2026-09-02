@@ -8,7 +8,7 @@ import { payroll, byEstate, dailyUnits, fmtUnits } from '@/lib/hk-payroll';
 import { sharePreview, previewText } from '@/lib/hk-crew';
 import {
   reparsePreview, visibleRows, dismissedCount, prefillFromEvent,
-  reasonOf, exceptionEvents, exAddError, canSubmitExAdd,
+  reasonOf, exceptionEvents, exAddError, canSubmitExAdd, inPeriod,
   type Reparse, type ExEvent,
 } from '@/lib/hk-exception';
 import { softDelete, restoreTrash } from '@/lib/trash';
@@ -379,7 +379,10 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
      *   但它屬於另一個月份，這個月的統計看不到它，
      *   而使用者以為補好了（補登表單的日期是可以改的）。
      */
-    if (!date.startsWith(period)) {
+    // ★★★ 用 inPeriod 不要用 startsWith —— 日期有橫線、period 沒有,
+    //   `'2026-08-20'.startsWith('202608')` 永遠是 false,
+    //   於是這個守衛把每一次補登都擋掉（2026-09-02 踩過,見 hk-exception.ts）
+    if (!inPeriod(date, period)) {
       flash(`${date} 不在 ${period} 這個月，請先切換月份再補`);
       return false;
     }
@@ -1222,8 +1225,24 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                       </span>
                     ) : (
                       <span className="shrink-0 flex items-center gap-2">
+                        {/*
+                          ★★★ 正在補的那一列要看得出來（2026-09-02 使用者:
+                            「點另一列的『補』沒反應」）。
+
+                            表單只有一個，固定在清單**最下面**。點另一列時它確實換了，
+                            但換掉的只有標題那一行小字 —— 而兩筆的人員都對不到主檔，
+                            所以表單看起來一模一樣（都是空的）。
+                            使用者的結論是「沒反應」，那是完全合理的判斷。
+
+                          ★ 所以把狀態放回**他手指所在的那一列**:按鈕變成「補中…」。
+                        */}
                         <button onClick={() => { setExAdded([]); setExAdd({ evId: e.id, units: '', points: '', ...prefillFromEvent(e as ExEvent, (n) => staff.find((x) => x.name === n)?.id ?? null) }); }}
-                          className="rounded-lg bg-mor-slate text-white px-3 py-1 text-xs font-medium hover:bg-mor-slatedark">補</button>
+                          className={`rounded-lg px-3 py-1 text-xs font-medium ${
+                            exAdd?.evId === e.id
+                              ? 'bg-white text-mor-slate border border-mor-slate'
+                              : 'bg-mor-slate text-white hover:bg-mor-slatedark'}`}>
+                          {exAdd?.evId === e.id ? '補中…' : '補'}
+                        </button>
                         <button onClick={() => toggleDismiss(e)}
                           className="rounded-lg border border-gray-300 px-3 py-1 text-xs hover:bg-gray-50">按掉</button>
                       </span>
@@ -1345,8 +1364,25 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                   </div>
                 )}
                 <div className="mt-2">
-                  <div className="text-[11px] text-gray-500 mb-1">誰做的（可複選）</div>
-                  <div className="flex flex-wrap gap-1">
+                  {/*
+                    ★★★ 沒選人時整區標紅（2026-09-02 使用者:「打入也不可存耶」）。
+
+                      原因本來只寫在最下面按鈕旁邊一行小字，離這裡有半個表單遠 ——
+                      而「誰做的」三顆看起來像標籤不像必填欄位，
+                      使用者把房源、間數、點數都打完了才發現存不了，
+                      然後以為是房源或間數的問題（他先後怪過那兩個）。
+
+                    ★ 行事曆上的人名對不到主檔就帶不進來（Ayu、SHAO-YING HSIEH
+                      都不在人員主檔裡），所以這一格**經常**是空的 ——
+                      不是偶爾。必填的提示要放在手指要點的地方。
+                  */}
+                  <div className={`text-[11px] mb-1 ${
+                    exAdd.staffIds.length ? 'text-gray-500' : 'text-red-600 font-medium'}`}>
+                    誰做的（可複選）
+                    {!exAdd.staffIds.length && ' —— 必選，點一下名字'}
+                  </div>
+                  <div className={`flex flex-wrap gap-1 ${
+                    exAdd.staffIds.length ? '' : 'ring-1 ring-red-300 rounded-lg p-1 -m-1'}`}>
                     {assignableStaff.map((x) => {
                       const on = exAdd.staffIds.includes(x.id);
                       return (
@@ -1401,6 +1437,19 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                   */}
                   {exAddError(exAdd) && (
                     <span className="text-xs text-amber-700">{exAddError(exAdd)}</span>
+                  )}
+                  {/*
+                    ★★★ 存檔失敗的訊息也放這裡一份（2026-09-02）。
+
+                      `flash()` 只寫到頁面**最上方**那條訊息列 —— 而補登表單
+                      在畫面下半部，捲下來就看不到了。
+                      使用者按了「存並再補一筆」，畫面上什麼都沒發生，
+                      他的結論是「按鈕壞了」，而系統其實有講原因。
+
+                    ★ 訊息要出現在**動作發生的地方**，不是頁面頂端。
+                  */}
+                  {msg && !exAddError(exAdd) && (
+                    <span className="text-xs text-red-600">{msg}</span>
                   )}
                   {/* ★ 連補幾筆時要看得到補了什麼 —— 不然第三筆會忘記前兩筆 */}
                   {exAdded.length > 0 && (

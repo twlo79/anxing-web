@@ -184,6 +184,36 @@ export function exAddError(f: ExAddForm): string | null {
 export const canSubmitExAdd = (f: ExAddForm): boolean => exAddError(f) === null;
 
 /**
+ * 這個日期屬不屬於這個月份。
+ *
+ * ============================================================
+ * 【★★★ 為什麼這麼小的東西要寫成函式 ＋ 測試】（2026-09-02 踩過）
+ *
+ * 原本寫在頁面裡，一行:
+ *
+ *     if (!date.startsWith(period)) { flash('不在這個月'); return false; }
+ *
+ * 而 `date` 是 `'2026-08-20'`（有橫線）、`period` 是 `'202608'`（沒有）——
+ * **`startsWith` 永遠是 false**，所以那個守衛把**每一次**補登都擋掉了。
+ *
+ * ★★ 症狀是「按了存並再補一筆，什麼都沒發生」。
+ *   而錯誤訊息確實有跳，只是在頁面最上方 —— 使用者在畫面下半部，看不到。
+ *   他連續回報了三次「不能存」，而我前兩次都在查別的東西
+ *   （按鈕 disabled、人員必填）—— 那兩個確實也是問題，但不是這一個。
+ *
+ * ★ 兩個格式不同的字串拿去比對，是**不會報錯**的那種錯
+ *   —— tsc 過、測試沒寫、畫面上看起來像權限問題。
+ *   寫在 `.ts` 裡就會被逼著想「這兩個東西長什麼樣」。
+ */
+export function inPeriod(date: string, period: string): boolean {
+  if (!date || !period) return false;
+  // '2026-08-20' → '202608'。用 slice 不用 replace —— 日期一定是這個格式
+  // （`<input type="date">` 給的 ISO），而 replace 只換第一個橫線,
+  //  剛好也對，但那是碰巧對，不是寫對的
+  return date.slice(0, 4) + date.slice(5, 7) === period;
+}
+
+/**
  * 這一列能不能按掉。
  *
  * ★★ 只有**事件**能按掉。「尚未建檔幾床」列的是房源，

@@ -374,11 +374,27 @@ export default function AccountsPage() {
     const diffs = changedBalances(fresh, after);
 
     for (const d of diffs) {
-      const { error } = await supabase.from('bank_transactions')
-        .update({ balance: d.balance }).eq('id', d.id);
-      if (error) {
+      /*
+       * ★★★ 這裡原本只看 `error`（2026-09-02 修）。
+       *
+       *   RLS 擋下的 UPDATE **回成功而且影響 0 列**（CLAUDE.md 的坑）——
+       *   於是餘額全部停在 insert 時的佔位值 `0`，而畫面說「已儲存」。
+       *
+       *   症狀正是使用者看到的:元大 08311 有三筆存入共 $51,083，
+       *   每一列的餘額都是 $0，卡片也是 $0，而沒有任何錯誤訊息。
+       *
+       * ★ 所以 `.select('id')` 之後檢查長度。錯的話要講清楚
+       *   「流水已經存進去了、只有餘額沒算」—— 不然使用者會再存一次，
+       *   結果是兩筆一樣的流水。
+       */
+      const { data, error } = await supabase.from('bank_transactions')
+        .update({ balance: d.balance }).eq('id', d.id).select('id');
+      if (error || !data?.length) {
         setCashBusy(false);
-        setCashErr(`餘額重算寫回失敗：${error.message}。這一筆已經存進去了，重新整理後再存一次即可。`);
+        setCashErr(error
+          ? `餘額重算寫回失敗：${error.message}。這一筆已經存進去了，重新整理後再存一次即可。`
+          : '餘額沒有寫回去（沒有任何一列被更新，通常是權限問題）。'
+            + '流水本身已經存進去了 —— **不要再存一次**，那會變成兩筆。');
         await loadTxns(cur.id); await loadAccounts();
         return;
       }
