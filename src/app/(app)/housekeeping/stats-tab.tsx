@@ -1279,7 +1279,17 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                   <label className="flex flex-col gap-1"><span className="text-[11px] text-gray-500">日期</span>
                     <input type="date" value={exAdd.date}
                       onChange={(e) => setExAdd({ ...exAdd, date: e.target.value })} className={inp} /></label>
-                  <label className="flex flex-col gap-1"><span className="text-[11px] text-gray-500">房源</span>
+                  {/*
+                    ★★ `relative` ＋ 底下那句提示 `absolute`（2026-09-02 使用者:
+                      「沒對到房源的 顯示會歪掉」）。
+
+                      這一排是 `items-end`。提示直接放進 label 裡的話，
+                      這一格會變高，而靠底對齊會把輸入框**往上推** ——
+                      於是打了主檔沒有的房源，整排欄位就錯開一階。
+
+                    ★ 絕對定位不佔高度，所以提示出現或消失都不會動到版面。
+                  */}
+                  <label className="relative flex flex-col gap-1"><span className="text-[11px] text-gray-500">房源</span>
                     <input list="hk-props" value={exAdd.code} autoFocus
                       onChange={(e) => setExAdd({ ...exAdd, code: e.target.value })}
                       className={`${inp} w-28`} />
@@ -1310,14 +1320,14 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                        */
                       if (!hk) {
                         return (
-                          <span className="text-[11px] text-amber-600">
+                          <span className="absolute top-full left-0 mt-0.5 whitespace-nowrap text-[11px] text-amber-600">
                             主檔沒有這個房源{exAdd.points.trim() === '' && ' —— 算不出點數，右邊請自己填'}
                           </span>
                         );
                       }
                       const p = hk.property_id ? pointsById[hk.property_id] : null;
                       return (
-                        <span className="text-[11px] text-gray-500">
+                        <span className="absolute top-full left-0 mt-0.5 whitespace-nowrap text-[11px] text-gray-500">
                           {p == null
                             ? '這間還沒設打掃點數'
                             : <>這間 <b className="text-mor-slate">{p}</b> 點{exAdd.points.trim() === '' && '（留空就用這個）'}</>}
