@@ -132,6 +132,58 @@ export function prefillFromEvent(
 }
 
 /**
+ * 「手動補一筆」那個表單能不能按存檔。
+ *
+ * ============================================================
+ * 【★★★ 為什麼要抽出來】（2026-09-02 使用者:「不能留多房源啊」→「現在不能留空白耶」）
+ *
+ * 規則本來寫在兩個地方，而且**兩邊不一樣**:
+ *
+ *   submitExAdd 的檢查   房源可以留空，但那時要填間數或點數
+ *   按鈕的 disabled      `!exAdd.code` —— 房源空的就直接鎖住
+ *
+ * ★★ 結果是 migration_198 的「間數／點數」等於白做:
+ *   欄位建了、算式也接上了，但**按鈕永遠按不下去**，
+ *   而按鈕旁邊那句「沒填房源的話，要填間數或打掃點數」
+ *   使用者一輩子都看不到 —— 因為那個檢查根本跑不到。
+ *
+ * ★ 「正隆」「時兆三四樓洗衣機間和公區窗戶」這種整棟／公區的工作
+ *   本來就沒有單一房號，硬要填一個就是把工作算到錯的房源頭上
+ *   （CLAUDE.md:「對不上的不猜」）。
+ *
+ * 抽成一個函式之後，按鈕與存檔讀的是同一句話。
+ */
+export type ExAddForm = {
+  code: string;
+  staffIds: string[];
+  units: string;
+  points: string;
+};
+
+/**
+ * 不能存的話，回一句**給人看的原因**；可以存回 null。
+ *
+ * ★ 訊息跟判斷寫在一起，`canSubmitExAdd` 只是問它是不是 null ——
+ *   這樣「按鈕會不會亮」跟「按下去會說什麼」不可能各說各話。
+ */
+export function exAddError(f: ExAddForm): string | null {
+  if (!f.staffIds.length) return '要選人';
+  // 房源留空時,要有間數或點數 —— 否則 filterItems 會把那一筆丟掉,
+  // 而使用者會以為補進去了
+  if (!f.code && !f.units.trim() && !f.points.trim()) {
+    return '沒填房源的話，要填間數或打掃點數 —— 不然這一筆什麼都不會算';
+  }
+  for (const [label, v] of [['間數', f.units], ['打掃點數', f.points]] as const) {
+    if (v.trim() === '') continue;
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < 0) return `${label}只能填 0 以上的數字`;
+  }
+  return null;
+}
+
+export const canSubmitExAdd = (f: ExAddForm): boolean => exAddError(f) === null;
+
+/**
  * 這一列能不能按掉。
  *
  * ★★ 只有**事件**能按掉。「尚未建檔幾床」列的是房源，

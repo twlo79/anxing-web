@@ -230,8 +230,11 @@ export default function CalendarTab({
       return onMsg('這筆是從訂單自動長出來的,不能直接刪 —— 要拿掉請改訂單（取消或改日期）。', true);
     }
     if (!confirm(`刪掉「${displayTitle(t)}」？`)) return;
-    const { error } = await supabase.from('hk_task').delete().eq('id', t.id);
+    // 上面新增／編輯那段已經有這個檢查,刪除卻漏了 —— RLS 擋掉的 delete
+    // 一樣回成功且影響 0 列,結果是跳「已刪除」、重新整理東西還在
+    const { data, error } = await supabase.from('hk_task').delete().eq('id', t.id).select('id');
     if (error) return onMsg('刪除失敗：' + error.message, true);
+    if (!data?.length) return onMsg('沒有刪掉 —— 你的帳號沒有排班的權限。', true);
     onMsg('已刪除'); load();
   }
 

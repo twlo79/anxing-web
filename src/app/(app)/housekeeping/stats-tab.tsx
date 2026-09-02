@@ -4,11 +4,11 @@ import Link from 'next/link';
 import * as XLSX from 'xlsx-js-style';
 import { createClient } from '@/lib/supabase';
 import { cleanCounts, filterItems, buildLookup, matchProperty, type HkStaff, type HkProperty } from '@/lib/hkParse';
-import { payroll, dailyUnits, fmtUnits } from '@/lib/hk-payroll';
+import { payroll, byEstate, dailyUnits, fmtUnits } from '@/lib/hk-payroll';
 import { sharePreview, previewText } from '@/lib/hk-crew';
 import {
   reparsePreview, visibleRows, dismissedCount, prefillFromEvent,
-  reasonOf, exceptionEvents,
+  reasonOf, exceptionEvents, exAddError, canSubmitExAdd,
   type Reparse, type ExEvent,
 } from '@/lib/hk-exception';
 import { softDelete, restoreTrash } from '@/lib/trash';
@@ -209,12 +209,23 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
    * 只會讓那個人那個月的點數少一截。
    */
   const [pointsById, setPointsById] = useState<Record<string, number>>({});
+  /*
+   * 房源 → 物業名稱。同一趟查回來 —— 物業是 ERP 那邊的分類
+   * （`properties.estate_id` → `estates.name`），房務這邊不另存一份。
+   */
+  const [estateById, setEstateById] = useState<Record<string, string>>({});
   useEffect(() => {
-    supabase.from('properties').select('id, clean_points').then(({ data }) => {
-      const m: Record<string, number> = {};
-      for (const r of (data ?? []) as any[]) if (r.clean_points != null) m[r.id] = Number(r.clean_points);
-      setPointsById(m);
-    });
+    supabase.from('properties').select('id, clean_points, estate_id, estates(name)')
+      .then(({ data }) => {
+        const m: Record<string, number> = {};
+        const e: Record<string, string> = {};
+        for (const r of (data ?? []) as any[]) {
+          if (r.clean_points != null) m[r.id] = Number(r.clean_points);
+          const nm = Array.isArray(r.estates) ? r.estates[0]?.name : r.estates?.name;
+          if (nm) e[r.id] = nm;
+        }
+        setPointsById(m); setEstateById(e);
+      });
   }, [supabase]);
 
   /*
@@ -224,18 +235,33 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
    * **不要在這裡重寫一份。** 上方卡片、每日表格、Excel 三處都讀這一份,
    * 各算各的就會出現「卡片說 28 間、表格加起來 26.5」。
    */
-  const pay = useMemo(() => payroll(
-    roomItems.map((i) => ({
-      work_date: i.work_date,
-      property_id: propByCode[i.property_code ?? '']?.property_id ?? null,
-      work_type: i.work_type,
-      staff_id: i.staff_id,
-      // ★★★ 這兩行少了的話 migration_198 等於沒做:欄位存進去了，但算的時候看不到
-      units_override: i.units_override ?? null,
-      points_override: i.points_override ?? null,
-    })),
-    (pid) => (pid ? pointsById[pid] : null),
-  ), [roomItems, propByCode, pointsById]);
+  const payRows = useMemo(() => roomItems.map((i) => ({
+    work_date: i.work_date,
+    property_id: propByCode[i.property_code ?? '']?.property_id ?? null,
+    work_type: i.work_type,
+    staff_id: i.staff_id,
+    // ★★★ 這兩行少了的話 migration_198 等於沒做:欄位存進去了，但算的時候看不到
+    units_override: i.units_override ?? null,
+    points_override: i.points_override ?? null,
+  })), [roomItems, propByCode]);
+
+  const pay = useMemo(
+    () => payroll(payRows, (pid) => (pid ? pointsById[pid] : null)),
+    [payRows, pointsById]);
+
+  /*
+   * 各物業的間數與點數。**跟每人卡片吃同一份 `payRows`** ——
+   * 兩個數字會並排出現在畫面上，各算各的就會對不起來
+   * （byEstate 有一條測試專門盯這個恆等式）。
+   */
+  const estateLines = useMemo(
+    () => byEstate(payRows,
+      (pid) => (pid ? pointsById[pid] : null),
+      (pid) => (pid ? estateById[pid] : null)),
+    [payRows, pointsById, estateById]);
+  const estateMax = Math.max(1, ...estateLines.map((e) => e.points));
+  const estateTotal = estateLines.reduce(
+    (a, e) => ({ units: a.units + e.units, points: a.points + e.points }), { units: 0, points: 0 });
 
   /**
    * 每人每日間數（由房源格推導的自動值）。
@@ -588,19 +614,15 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
   async function submitExAdd(again: boolean) {
     if (!exAdd) return;
     /*
-     * ★★ 房源可以留空 —— 但那時**一定要填間數或點數**，
-     *   否則那一筆什麼都不算（filterItems 會把它丟掉），
-     *   使用者會以為補進去了。
+     * ★★★ 判斷寫在 hk-exception 的 `exAddError`，按鈕的 disabled 讀同一支。
+     *
+     *   原本這裡允許房源留空（只要有間數或點數），但按鈕寫的是
+     *   `!exAdd.code` —— 嚴的那邊贏，於是 migration_198 的間數／點數
+     *   **永遠按不下去**，而下面這句原因使用者一輩子看不到。
+     *   （2026-09-02 使用者:「現在 不能留空白耶」）
      */
-    if (!exAdd.staffIds.length) return flash('要選人');
-    if (!exAdd.code && !exAdd.units.trim() && !exAdd.points.trim()) {
-      return flash('沒填房源的話，要填間數或打掃點數 —— 不然這一筆什麼都不會算');
-    }
-    for (const [label, v] of [['間數', exAdd.units], ['打掃點數', exAdd.points]] as const) {
-      if (v.trim() === '') continue;
-      const n = Number(v);
-      if (!Number.isFinite(n) || n < 0) return flash(`${label}只能填 0 以上的數字`);
-    }
+    const err = exAddError(exAdd);
+    if (err) return flash(err);
     // ★★★ 沒寫進去就**什麼都不做** —— 不記「已補」、不按掉來源事件。
     //   原本沒檢查，休假或權限擋下來時例外清單會少一筆而統計沒有多一筆。
     const ok = await addItems(exAdd.date, exAdd.staffIds, exAdd.code, exAdd.type,
@@ -716,6 +738,56 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
         {/* ★ 這張沒有「筆數」可放 —— 它只有一個總數，右上角就留空 */}
         <StatHero title="床單總計" value={totalLinen} sub="床數 + 拿床單" />
       </div>
+
+      {/*
+        各物業的清潔間數與點數（2026-09-02 使用者指定，A 案:上方一張寬卡）。
+
+        ★★ 合計刻意寫出來 —— 它必須等於上面每個人的間數相加。
+          兩個數字並排出現而對不起來的話，使用者不會知道該信哪一個。
+      */}
+      {estateLines.length > 0 && (
+        <div className="rounded-xl bg-white border border-mor-line p-4 mb-4">
+          <div className="flex items-baseline justify-between mb-3">
+            <div className="text-xs text-gray-500">各物業</div>
+            <div className="text-xs text-gray-400">
+              合計 {fmtUnits(estateTotal.units)} 間・{fmtUnits(estateTotal.points)} 點
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            {estateLines.map((e) => {
+              const none = e.estate === null;
+              return (
+                <div key={e.estate ?? '__none'} className="flex items-center gap-2.5 text-xs">
+                  <div className={`w-16 shrink-0 truncate ${none ? 'text-amber-700' : ''}`}
+                    title={none ? '補登時沒填房源，或房源還沒對到 ERP 物業' : (e.estate ?? '')}>
+                    {none ? '⚠ 無房源' : e.estate}
+                  </div>
+                  <div className="flex-1 h-4 rounded bg-gray-100 min-w-0">
+                    <div className={`h-4 rounded ${none ? 'bg-amber-400' : 'bg-mor-slate'}`}
+                      style={{ width: `${Math.round((e.points / estateMax) * 100)}%` }} />
+                  </div>
+                  <div className="w-32 shrink-0 text-right text-gray-500 tabular-nums">
+                    {/*
+                      ★ 沒有間數時寫「—」不寫 0 —— 只手填點數的那種工作
+                        本來就不算間數（migration_198），寫 0 會被當成「漏填」
+                    */}
+                    {e.units > 0 ? `${fmtUnits(e.units)} 間・` : '— 間・'}
+                    {fmtUnits(e.points)} 點
+                    {!!e.unknownPoints && (
+                      <span className="ml-1 text-amber-600" title="這些房源還沒設打掃點數">
+                        ⚠{e.unknownPoints}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="mt-2.5 pt-2 border-t border-mor-line text-[11px] text-gray-400">
+            只列這個月有工作的物業。長度是點數比例
+          </div>
+        </div>
+      )}
 
       {/* 分頁放在摘要卡片之後 —— 卡片是整月總覽,不該被分頁切掉 */}
       <div className="flex flex-wrap items-center gap-2 mb-4">
@@ -1292,12 +1364,15 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                   )}
                 </div>
                 <div className="flex flex-wrap items-center gap-2 mt-3">
+                  {/* ★★★ 房源留空 ＋ 有間數或點數也要能存 —— 判斷跟 submitExAdd
+                      同一支（`canSubmitExAdd`）。原本這裡寫 `!exAdd.code`，
+                      「正隆」那種整棟工作永遠按不下去（2026-09-02 踩過）。 */}
                   <button onClick={() => submitExAdd(true)}
-                    disabled={!exAdd.code || !exAdd.staffIds.length}
+                    disabled={!canSubmitExAdd(exAdd)}
                     className="rounded-lg bg-mor-slate text-white px-3 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">
                     存並再補一筆</button>
                   <button onClick={() => submitExAdd(false)}
-                    disabled={!exAdd.code || !exAdd.staffIds.length}
+                    disabled={!canSubmitExAdd(exAdd)}
                     className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs disabled:opacity-40">存完收起來</button>
                   <button onClick={() => { setExAdd(null); setExAdded([]); }}
                     className="text-xs text-gray-500 underline">取消</button>

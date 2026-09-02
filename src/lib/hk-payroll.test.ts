@@ -1,7 +1,7 @@
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  crewSize, cleanUnits, linenJobs, linenSets, payroll, fmtUnits,
+  crewSize, cleanUnits, linenJobs, linenSets, payroll, byEstate, fmtUnits,
   type PayrollRow, dailyUnits } from './hk-payroll.ts';
 
 const r = (p: Partial<PayrollRow> = {}): PayrollRow => ({
@@ -282,4 +282,100 @@ describe('units_override ／ points_override', () => {
     assert.equal(l.units, 2);
     assert.equal(l.unknownPoints, 1);
   });
+});
+
+/*
+ * ★★★ 2026-09-02 使用者:「可以看出各物業 的清潔間數 跟點數」。
+ *
+ *   排班統計頁上「Una 27 間、庭玉 30 間」與「各物業合計 57 間」
+ *   會同時出現在同一個畫面。對不起來的話兩個數字都失去意義 ——
+ *   所以下面第一條測的就是那個恆等式。
+ */
+describe('byEstate —— 各物業的間數與點數', () => {
+  const P = (o: Partial<PayrollRow> = {}): PayrollRow => ({
+    work_date: '2026-08-03', property_id: 'p1', work_type: '清潔', staff_id: 's1', ...o,
+  });
+  const est: Record<string, string> = { p1: '時兆', p2: '時兆', p3: '正隆' };
+  const pts: Record<string, number> = { p1: 3, p2: 3, p3: 4 };
+  const pointsOf = (id: string | null) => (id ? pts[id] : null) ?? null;
+  const estateOf = (id: string | null) => (id ? est[id] : null) ?? null;
+
+  test('★★★ 各物業的總和 = 每人合計的總和', () => {
+    const rows = [
+      P(), P({ property_id: 'p2' }), P({ property_id: 'p3', staff_id: 's2' }),
+      P({ property_id: 'p3', staff_id: 's1' }),                    // 與 s2 合掃
+      P({ property_id: null, points_override: 8, staff_id: 's2' }),
+    ];
+    const byE = byEstate(rows, pointsOf, estateOf);
+    const byS = [...payroll(rows, pointsOf).values()];
+    const sum = (a: { units: number; points: number }[], k: 'units' | 'points') =>
+      Math.round(a.reduce((t, x) => t + x[k], 0) * 100) / 100;
+    assert.equal(sum(byE, 'units'), sum(byS, 'units'));
+    assert.equal(sum(byE, 'points'), sum(byS, 'points'));
+  });
+
+  test('同一個物業的兩間會合起來', () => {
+    const out = byEstate([P(), P({ property_id: 'p2' })], pointsOf, estateOf);
+    assert.equal(out.length, 1);
+    assert.deepEqual([out[0].estate, out[0].units, out[0].points], ['時兆', 2, 6]);
+  });
+
+  test('合掃的除以人數 —— 兩人掃一間各 0.5,物業還是算 1 間', () => {
+    const out = byEstate([P(), P({ staff_id: 's2' })], pointsOf, estateOf);
+    assert.equal(out[0].units, 1);
+    assert.equal(out[0].points, 3);
+  });
+
+  test('間數 override：一筆等於四間', () => {
+    const out = byEstate([P({ property_id: 'p3', units_override: 4 })], pointsOf, estateOf);
+    assert.deepEqual([out[0].estate, out[0].units, out[0].points], ['正隆', 4, 16]);
+  });
+
+  /*
+   * ★★ 手填的點數是這一列的總點數,不再乘間數（跟 payroll 同一條規則）。
+   *   乘下去的話「4 間 8 點」會變成 32 點。
+   */
+  test('★★ 點數 override 不乘間數', () => {
+    const out = byEstate([P({ units_override: 4, points_override: 8 })], pointsOf, estateOf);
+    assert.equal(out[0].points, 8);
+    assert.equal(out[0].units, 4);
+  });
+
+  /*
+   * ★★★ 沒有物業的那些**不能藏起來**。藏了的話各物業加起來會少一截,
+   *   而少的那一截沒有任何地方交代得出來。
+   */
+  test('★★★ 查不到物業的歸成一條 estate: null', () => {
+    const out = byEstate([P({ property_id: null, points_override: 8 })], pointsOf, estateOf);
+    assert.equal(out.length, 1);
+    assert.equal(out[0].estate, null);
+    assert.equal(out[0].points, 8);
+  });
+
+  test('★★ 無房源那條一律排最後,不管點數多高', () => {
+    const out = byEstate([
+      P({ property_id: null, points_override: 999 }),
+      P({ property_id: 'p3', staff_id: 's2' }),
+    ], pointsOf, estateOf);
+    assert.deepEqual(out.map((x) => x.estate), ['正隆', null]);
+  });
+
+  test('其餘照點數由多到少', () => {
+    const out = byEstate([
+      P(), P({ property_id: 'p3', staff_id: 's2', units_override: 5 }),
+    ], pointsOf, estateOf);
+    assert.deepEqual(out.map((x) => x.estate), ['正隆', '時兆']);
+  });
+
+  test('房源查不到點數 → 進 unknownPoints,不當成 0', () => {
+    const out = byEstate([P({ property_id: 'p9' })], pointsOf, () => '南京');
+    assert.equal(out[0].unknownPoints, 1);
+    assert.equal(out[0].points, 0);
+  });
+
+  test('沒指派的人不算', () => {
+    assert.deepEqual(byEstate([P({ staff_id: null })], pointsOf, estateOf), []);
+  });
+
+  test('空清單不會爆', () => assert.deepEqual(byEstate([], pointsOf, estateOf), []));
 });

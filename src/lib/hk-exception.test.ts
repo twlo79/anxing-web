@@ -2,7 +2,7 @@ import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   isDismissed, reparsePreview, visibleRows, dismissedCount,
-  prefillFromEvent, canDismiss, reasonOf, exceptionEvents, type ExEvent,
+  prefillFromEvent, canDismiss, canSubmitExAdd, reasonOf, exceptionEvents, type ExEvent,
 } from './hk-exception.ts';
 
 const E = (o: Partial<ExEvent> = {}): ExEvent => ({
@@ -166,4 +166,44 @@ test('★★★ 按過的一律留在清單上，即使後來對上了房源', (
   assert.deepEqual(visibleRows(exceptionEvents([e]), true).length, 1);
   // ★ 但預設還是收起來的 —— 處理完的不該一直佔著版面
   assert.deepEqual(visibleRows(exceptionEvents([e]), false).length, 0);
+});
+
+/*
+ * ★★★ 2026-09-02 使用者:「不能留多房源啊」→「現在 不能留空白耶」。
+ *
+ *   submitExAdd 允許房源留空（只要有間數或點數），但按鈕的 disabled
+ *   寫的是 `!exAdd.code` —— 兩邊規則不一樣，而嚴的那一邊贏。
+ *   結果 migration_198 的間數／點數等於白做:按鈕永遠按不下去。
+ */
+describe('canSubmitExAdd —— 按鈕與存檔讀同一句話', () => {
+  const F = (o: Partial<Parameters<typeof canSubmitExAdd>[0]> = {}) =>
+    ({ code: '', staffIds: ['s1'], units: '', points: '', ...o });
+
+  test('★★★ 房源留空 ＋ 有間數 → 可以存', () => {
+    assert.equal(canSubmitExAdd(F({ units: '0.5' })), true);
+  });
+  test('★★★ 房源留空 ＋ 只有點數 → 可以存', () => {
+    assert.equal(canSubmitExAdd(F({ points: '3.5' })), true);
+  });
+  test('房源留空 ＋ 兩個都空 → 不能存（那一筆什麼都不會算）', () => {
+    assert.equal(canSubmitExAdd(F()), false);
+  });
+  test('有房源就夠了', () => {
+    assert.equal(canSubmitExAdd(F({ code: 'A07' })), true);
+  });
+  test('沒選人一律不能存', () => {
+    assert.equal(canSubmitExAdd(F({ code: 'A07', staffIds: [] })), false);
+  });
+
+  // ★ 0 是合理的輸入（「這一筆不算間數，只記點數」），不是「沒填」
+  test('★★ 間數 0 ＋ 點數 2 → 可以存', () => {
+    assert.equal(canSubmitExAdd(F({ units: '0', points: '2' })), true);
+  });
+  test('負數與亂打的擋掉', () => {
+    assert.equal(canSubmitExAdd(F({ units: '-1' })), false);
+    assert.equal(canSubmitExAdd(F({ points: 'abc' })), false);
+  });
+  test('空白字串當成沒填,不當成 0', () => {
+    assert.equal(canSubmitExAdd(F({ code: 'A07', units: '   ' })), true);
+  });
 });

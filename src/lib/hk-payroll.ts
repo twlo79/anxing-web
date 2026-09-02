@@ -168,8 +168,33 @@ export function payroll(
   rows: PayrollRow[],
   pointsOf: (propertyId: string | null) => number | null | undefined,
 ): Map<string, PayrollLine> {
-  const crew = crewSize(rows);
   const out = new Map<string, PayrollLine>();
+  eachShare(rows, pointsOf, (r, units, points, unknown) => {
+    const line = out.get(r.staff_id!)
+      ?? { staffId: r.staff_id!, units: 0, points: 0, unknownPoints: 0 };
+    line.units += units;
+    line.points += points;
+    line.unknownPoints += unknown;
+    out.set(r.staff_id!, line);
+  });
+  return out;
+}
+
+/**
+ * 走一遍每一筆「某人分到的那一份」，把合掃、去重、override 三件事
+ * **只做一次**。
+ *
+ * ★★★ 這個函式存在的理由是 CLAUDE.md 那條「同一條規則在三個地方各寫一次」。
+ *   每人合計（payroll）與各物業合計（byEstate）算的是同一批 share ——
+ *   各寫一份的話，某天改了合掃規則只改到一邊，
+ *   結果是**兩張表的總和對不起來，而畫面上完全看不出是哪一邊錯**。
+ */
+function eachShare(
+  rows: PayrollRow[],
+  pointsOf: (propertyId: string | null) => number | null | undefined,
+  cb: (r: PayrollRow, units: number, points: number, unknownPoints: number) => void,
+): void {
+  const crew = crewSize(rows);
   const counted = new Set<string>();
 
   for (const r of rows) {
@@ -179,15 +204,13 @@ export function payroll(
     if (counted.has(dedupe)) continue;
     counted.add(dedupe);
 
-    const line = out.get(r.staff_id)
-      ?? { staffId: r.staff_id, units: 0, points: 0, unknownPoints: 0 };
+    const n = crew.get(k) ?? 1;
     /*
      * ★★ 合掃除以人數這一步在 override **之後**:
      *   「4 間、兩個人做」＝ 各 2 間，不是各 4 間。
      *   順序顛倒的話合掃的量會翻倍，而總數看起來只是「多一點」。
      */
-    const share = unitsOf(r) / (crew.get(k) ?? 1);
-    line.units += share;
+    const share = unitsOf(r) / n;
 
     /*
      * ★★★ 手填的點數是**這一列的總點數**，所以也要除以人數，
@@ -195,17 +218,73 @@ export function payroll(
      *   乘下去的話「4 間 8 點」會變成 32 點。
      */
     if (r.points_override != null) {
-      line.points += (Number(r.points_override) || 0) / (crew.get(k) ?? 1);
+      cb(r, share, (Number(r.points_override) || 0) / n, 0);
     } else {
       const p = pointsOf(r.property_id);
       // ★ 房源查不到點數 —— 這一筆進「未計」，讓人看得到，不要靜靜地少算
-      if (p == null) line.unknownPoints++;
-      else line.points += share * p;
+      if (p == null) cb(r, share, 0, 1);
+      else cb(r, share, share * p, 0);
     }
-
-    out.set(r.staff_id, line);
   }
-  return out;
+}
+
+export type EstateLine = {
+  /** 物業名稱。查不到的一律是 null —— 顯示成「無房源」那一條 */
+  estate: string | null;
+  units: number;
+  points: number;
+  unknownPoints: number;
+};
+
+/**
+ * 各物業的清潔間數與點數。
+ *
+ * ============================================================
+ * 【★★★ 為什麼總和一定等於每人合計】
+ *
+ * 因為它跟 `payroll` 走的是同一個 `eachShare` —— 同一批 share
+ * 換一個維度加總而已。
+ *
+ * ★ 這件事重要在:排班統計頁上「Una 27 間、庭玉 30 間」跟
+ *   「各物業合計 57 間」會同時出現在畫面上。對不起來的話，
+ *   使用者不會知道該信哪一個，而兩個數字都會失去意義。
+ *
+ * ============================================================
+ * 【沒有物業的那些】
+ *
+ * `estateOf` 回傳 null 就歸到 `estate: null` 那一條。來源有兩種:
+ *
+ *   · 補登時房源留空（「正隆」那種整棟工作，本來就沒有單一房號）
+ *   · 房源對不到 ERP 的物業
+ *
+ * ★★ **不能把它藏起來**。藏起來的話各物業加起來會少一截，
+ *   而少的那一截沒有任何地方交代得出來 —— 使用者只會覺得數字怪怪的。
+ */
+export function byEstate(
+  rows: PayrollRow[],
+  pointsOf: (propertyId: string | null) => number | null | undefined,
+  estateOf: (propertyId: string | null) => string | null | undefined,
+): EstateLine[] {
+  const out = new Map<string, EstateLine>();
+  eachShare(rows, pointsOf, (r, units, points, unknown) => {
+    const e = estateOf(r.property_id) ?? null;
+    const key = e ?? '';
+    const line = out.get(key) ?? { estate: e, units: 0, points: 0, unknownPoints: 0 };
+    line.units += units;
+    line.points += points;
+    line.unknownPoints += unknown;
+    out.set(key, line);
+  });
+  /*
+   * 點數由多到少。而「無房源」**一律排最後** ——
+   * 它不是一個物業，是一堆還沒歸位的工作。
+   * 混在中間排的話會被當成正常的一列而沒有人去處理它。
+   */
+  return [...out.values()].sort((a, b) => {
+    if (a.estate === null) return 1;
+    if (b.estate === null) return -1;
+    return b.points - a.points || b.units - a.units;
+  });
 }
 
 /**
