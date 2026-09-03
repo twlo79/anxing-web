@@ -18,8 +18,19 @@
 -- 【範圍】
 -- ★ 只動 tags 含「房務」而且 estate_id 是 null 的。
 --   其他來源的支出可能有它們自己的理由留空 —— 不順手一起改，
---   「對不上的不猜」（CLAUDE.md）。非房務的同樣形狀在下面第 3 列報數字，
+--   「對不上的不猜」（CLAUDE.md）。非房務的同樣形狀在下面第 4 列報數字，
 --   有幾筆先看到，要不要動另外決定。
+--
+-- 【2026-09-03 實際跑的結果】
+-- 補了 **0 筆** —— 那時候「產生本月支出」根本還沒按過，
+-- 整張 expenses 裡一筆 `hk_job_key` 都沒有。
+--
+-- ★★★ 而自檢當下回了**六個 ✅** ——
+--   母體是空的，於是「還有幾筆沒補」「有沒有錯置」通通自動成立。
+--   第 1 列的 0 是唯一的線索，而我把它標成「參考值，不判斷對錯」。
+--   下面第 1 列已經改成會**判定**（見 CLAUDE.md 同日新增的那條坑）。
+--
+-- 這一支是冪等的，之後真的有漏補的資料時可以重跑。
 --
 -- 【怎麼跑】整份貼進 Supabase SQL Editor，看最後那張表。
 -- ============================================================
@@ -37,11 +48,14 @@ update public.expenses e
    and e.tags @> array['房務']::text[];
 
 -- ── 2. 記一筆 ────────────────────────────────────────────────
-select public.record_migration(
-  210,
-  'migration_210_hk_expense_estate',
-  '房務支出補回 estate_id（產生時只寫了 property_id，支出頁的用途欄因此整欄空白）'
-);
+-- ★ 簽章是 record_migration(text) 一個參數，名字**不帶** migration_ 前綴
+--   （2026-09-03 我自己寫成三個參數，整支在這裡炸掉）
+do $$
+begin
+  if to_regprocedure('public.record_migration(text)') is not null then
+    perform public.record_migration('210_hk_expense_estate');
+  end if;
+end $$;
 
 commit;
 
@@ -54,9 +68,15 @@ commit;
 with hk as (
   select * from public.expenses where tags @> array['房務']::text[]
 )
-select '1. 房務支出總筆數' as 檢查,
-       count(*)::text     as 結果,
-       '參考值，不判斷對錯' as 判定
+-- ★★★ 母體要**判定**，不能寫「參考值」。
+--   是 0 的話下面每一條都會自動回綠，而六個綠勾比一個紅字更容易放過
+--   （2026-09-03 就是這樣過關的）。
+select '1. 房務支出總筆數（母體）' as 檢查,
+       count(*)::text             as 結果,
+       case when count(*) = 0
+            then '⚠ 沒有房務支出 —— 下面每一條都是空集合，全部不算數'
+            else '✅ 有母體，下面的檢查才有意義'
+       end                        as 判定
   from hk
 
 union all
@@ -88,7 +108,7 @@ select '4. 非房務的支出裡，有房源卻沒物業的',
   from public.expenses
  where estate_id is null
    and property_id is not null
-   and not (coalesce(tags, '{}') @> array['房務']::text[])
+   and not (coalesce(tags, '{}'::text[]) @> array['房務']::text[])
 
 union all
 -- ★★ 補完的物業必須真的是那個房源的物業，不是隨便填一個
@@ -104,8 +124,9 @@ select '5. estate_id 與房源的物業對不上的',
    and e.estate_id <> p.estate_id
 
 union all
+-- ★ schema_migrations 認的是 name 不是 version
 select '6. 這一支有沒有被記錄',
        coalesce(max(name), '（沒記到）'),
-       case when count(*) = 1 then '✅' else '❌ record_migration 沒寫進去' end
+       case when count(*) >= 1 then '✅' else '❌ record_migration 沒寫進去' end
   from public.schema_migrations
- where version = 210;
+ where name = '210_hk_expense_estate';
