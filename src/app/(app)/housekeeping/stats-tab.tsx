@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import * as XLSX from 'xlsx-js-style';
 import { createClient } from '@/lib/supabase';
@@ -10,6 +10,9 @@ import {
 } from '@/lib/hk-cost';
 import { TAG_NON_CASH } from '@/lib/expense-tags';
 import { parseUnits, parseAmount } from '@/lib/clean-params';
+import {
+  indexSplits, splitJobKey, splitError, splitTotal, type SplitLine,
+} from '@/lib/work-split';
 // ★ useRef 的同步閘門 —— useState 是非同步的,連點兩下會兩筆都送出去
 import { useOnce } from '@/lib/once';
 import { sharePreview, previewText } from '@/lib/hk-crew';
@@ -273,6 +276,187 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
    */
   const [doneKeys, setDoneKeys] = useState<Set<string>>(new Set());
   const [doneLoading, setDoneLoading] = useState(false);
+
+  /*
+   * ══════════ 拆帳:一份工的錢記到好幾間（migration_216）══════════
+   * 2026-09-03 使用者:「我想要在表單上呈現一項 然後支出拆成多間」
+   *
+   * ★★★ 拆的是**錢**不是工作量。打掃量、報酬點數、床單
+   *   全部走原本那一筆工單 —— 這裡一列都不參與那些計算。
+   */
+  const [splits, setSplits] = useState<SplitLine[]>([]);
+  /**
+   * ★★★ 讀失敗要看得見。
+   *
+   *   RLS 擋下來時查詢是**回成功、0 列**（CLAUDE.md）——
+   *   畫面上就是一個很正常的「沒有拆帳」，而錢照樣掉出去。
+   *   migration_206 建 hk_labor_cost 沒寫 policy 就是這樣，
+   *   六筆人事費一筆都讀不到而畫面顯示「0 筆 $0」。
+   */
+  const [splitErr, setSplitErr] = useState<string | null>(null);
+  /** 正在拆哪一份工。null = 沒有打開。 */
+  const [splitOpen, setSplitOpen] =
+    useState<{ work_date: string; job_code: string; work_type: string } | null>(null);
+  /** 編輯中的那幾列。`id` 有值 = 資料庫裡已經有這一列。 */
+  const [splitDraft, setSplitDraft] =
+    useState<{ id?: string; property_id: string; amount: string }[]>([]);
+  const [splitMsg, setSplitMsg] = useState<string | null>(null);
+  const [splitBusy, setSplitBusy] = useState(false);
+
+  const loadSplits = useCallback(async () => {
+    const { data, error } = await supabase.from('hk_work_split')
+      .select('id, period, work_date, job_code, work_type, property_id, amount, seq')
+      .eq('period', period)
+      .order('seq');
+    if (error) {
+      // ★ 不要吞掉。吞掉的話「拆帳不見了」跟「這個月沒拆過」長得一模一樣
+      setSplitErr(error.message);
+      setSplits([]);
+      return;
+    }
+    setSplitErr(null);
+    setSplits(((data ?? []) as any[]).map((r) => ({
+      ...r, amount: Number(r.amount), work_date: String(r.work_date),
+    })) as SplitLine[]);
+  }, [supabase, period]);
+  useEffect(() => { void loadSplits(); }, [loadSplits]);
+
+  /**
+   * 照「哪一份工」分組，順便補上房源名（項目名稱要用）。
+   *
+   * ★ lib 不查主檔 —— 名字由這裡填，`cleaningCosts` 只管算錢。
+   */
+  const splitIdx = useMemo(
+    () => indexSplits(splits.map((s) => ({
+      ...s, property_label: propNameById[s.property_id] ?? '',
+    }))),
+    [splits, propNameById]);
+
+  /** 下拉用的房源清單:物業・房源，照字排。 */
+  const propOptions = useMemo(
+    () => Object.entries(propNameById)
+      .map(([id, name]) => ({ id, name, estate: estateById[id] ?? '' }))
+      .sort((a, b) => (a.estate + a.name).localeCompare(b.estate + b.name)),
+    [propNameById, estateById]);
+
+  /** 打開拆帳面板，把資料庫裡已經有的那幾列帶進來。 */
+  function openSplit(job: { work_date: string; label?: string | null; work_type: string }) {
+    const jc = job.label ?? '';
+    const cur = splitIdx.get(splitJobKey(job)) ?? [];
+    setSplitOpen({ work_date: job.work_date, job_code: jc, work_type: job.work_type });
+    setSplitDraft(cur.length
+      ? cur.map((s) => ({ id: s.id, property_id: s.property_id, amount: String(s.amount) }))
+      : [{ property_id: '', amount: '' }]);
+    setSplitMsg(null);
+  }
+
+  /**
+   * 存拆帳。
+   *
+   * ============================================================
+   * 【★★★ 為什麼不是「全刪再全建」】
+   *
+   * 支出的冪等鍵是 `split:<這一列的 id>`。整批刪掉重建的話 id 全變了，
+   * 已經產生的那幾筆支出**全部變成孤兒**，而下次按產生又會多出一整組
+   * —— 帳上直接雙倍，總額看起來只是「比較大」。
+   *
+   * 所以:留著的用 update（id 不動）、新的 insert、拿掉的才 delete。
+   *
+   * ★★ 每一步都數影響列數。RLS 擋下的 UPDATE／DELETE
+   *   **回成功且影響 0 列**（CLAUDE.md）—— 不數的話畫面會說存好了。
+   */
+  async function saveSplit() {
+    if (!splitOpen || splitBusy) return;
+    const lines = splitDraft.map((d) => {
+      const a = parseAmount(d.amount);
+      return {
+        id: d.id,
+        property_id: d.property_id || null,
+        amount: a.ok ? a.value : Number.NaN,
+        parseError: a.ok ? null : a.error,
+      };
+    });
+    const bad = lines.find((l) => l.parseError);
+    if (bad) return setSplitMsg(bad.parseError!);
+    const err = splitError(lines);
+    if (err) return setSplitMsg(err);
+
+    setSplitBusy(true);
+    try {
+      const cur = splitIdx.get(splitJobKey({
+        work_date: splitOpen.work_date, label: splitOpen.job_code,
+        work_type: splitOpen.work_type,
+      })) ?? [];
+      const keep = new Set(lines.map((l) => l.id).filter(Boolean) as string[]);
+      const gone = cur.filter((s) => !keep.has(s.id)).map((s) => s.id);
+
+      if (gone.length) {
+        const { data, error } = await supabase.from('hk_work_split')
+          .delete().in('id', gone).select('id');
+        if (error) return setSplitMsg('刪除失敗：' + error.message);
+        if ((data?.length ?? 0) !== gone.length) {
+          return setSplitMsg(`要刪 ${gone.length} 列，實際刪掉 ${data?.length ?? 0} 列`
+            + ' —— 可能是權限擋下來了，先不要繼續');
+        }
+      }
+
+      for (let i = 0; i < lines.length; i++) {
+        const l = lines[i];
+        const body = {
+          property_id: l.property_id, amount: l.amount, seq: i,
+        };
+        if (l.id) {
+          const { data, error } = await supabase.from('hk_work_split')
+            .update(body).eq('id', l.id).select('id');
+          if (error) return setSplitMsg('儲存失敗：' + error.message);
+          if (!data?.length) {
+            return setSplitMsg('儲存回成功但一列都沒改到 —— 可能是權限，請找管理員');
+          }
+        } else {
+          const { data, error } = await supabase.from('hk_work_split')
+            .insert({
+              ...body, period, work_date: splitOpen.work_date,
+              job_code: splitOpen.job_code, work_type: splitOpen.work_type,
+            }).select('id');
+          if (error) return setSplitMsg('新增失敗：' + error.message);
+          if (!data?.length) {
+            return setSplitMsg('新增回成功但沒建出東西 —— 可能是權限，請找管理員');
+          }
+        }
+      }
+
+      await loadSplits();
+      setSplitOpen(null);
+      flash(`已拆成 ${lines.length} 間，合計 $${splitTotal(
+        lines.map((l) => ({ amount: Number(l.amount) || 0 }))).toLocaleString('en-US')}`);
+    } finally { setSplitBusy(false); }
+  }
+
+  /** 整份取消拆帳:把那幾列全刪掉，這份工回到「間數 × 單價」。 */
+  async function clearSplit() {
+    if (!splitOpen || splitBusy) return;
+    const cur = splitIdx.get(splitJobKey({
+      work_date: splitOpen.work_date, label: splitOpen.job_code,
+      work_type: splitOpen.work_type,
+    })) ?? [];
+    if (!cur.length) { setSplitOpen(null); return; }
+    setSplitBusy(true);
+    try {
+      const { data, error } = await supabase.from('hk_work_split')
+        .delete().in('id', cur.map((s) => s.id)).select('id');
+      if (error) return setSplitMsg('取消失敗：' + error.message);
+      if ((data?.length ?? 0) !== cur.length) {
+        return setSplitMsg(`要刪 ${cur.length} 列，實際刪掉 ${data?.length ?? 0} 列 —— 先不要繼續`);
+      }
+      await loadSplits();
+      setSplitOpen(null);
+      /*
+       * ★★ 已經產生的支出**不會**跟著刪 —— 錢付了就是付了。
+       *   不講的話使用者會以為取消拆帳等於把那幾筆帳撤掉。
+       */
+      flash('已取消拆帳。★ 已經產生過的那幾筆支出還在帳上，要撤請到支出頁');
+    } finally { setSplitBusy(false); }
+  }
   useEffect(() => {
     supabase.from('properties').select('id, name, clean_points, clean_price, estate_id, estates(name)')
       .then(({ data }) => {
@@ -385,17 +569,17 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
    * ★ 已產生的那列直接寫「已產生」並指出去哪裡改，
    *   不是只把輸入框變灰 —— 灰掉的欄位不會告訴人要找誰。
    */
-  function nameCell(key: string, def: string) {
+  function nameCell(key: string, def: string, pad = '') {
     if (doneKeys.has(key)) {
       return (
-        <td className="px-2 py-1 text-gray-400">
+        <td className={'px-2 py-1 text-gray-400 ' + pad}>
           <span className="truncate align-middle">{def}</span>
           <span className="ml-1 rounded bg-gray-100 text-gray-500 px-1.5 py-0.5 whitespace-nowrap">已產生</span>
         </td>
       );
     }
     return (
-      <td className="px-2 py-1">
+      <td className={'px-2 py-1 ' + pad}>
         <input
           value={nameBy[key] ?? def}
           onChange={(e) => setNameBy({ ...nameBy, [key]: e.target.value })}
@@ -504,11 +688,13 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
 
   const gen = useMemo(() => {
     const jobs = [...estateLogs.values()].flat();
-    const { rows, unpriced } = cleaningCosts(jobs, (pid) => priceById[pid]);
+    // ★ 第三個參數是拆帳。拆過的那幾份工不走「間數 × 單價」，
+    //   也不會進 unpriced —— 「正隆多間」根本查不到單價
+    const { rows, unpriced } = cleaningCosts(jobs, (pid) => priceById[pid], splitIdx);
     const lab = laborCosts(labor as any, period);
     return { rows, unpriced, lab,
              total: costTotal(rows) + costTotal(lab) };
-  }, [estateLogs, priceById, labor, period]);
+  }, [estateLogs, priceById, labor, period, splitIdx]);
   /** 這次預覽裡有幾筆是已經產生過的。 */
   const doneNum = useMemo(
     () => [...gen.rows, ...gen.lab].filter((r) => doneKeys.has(r.key)).length,
@@ -1279,10 +1465,45 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                       <td className="px-2 py-1.5 w-16">付款方式</td>
                       <td className="px-2 py-1.5 w-24 text-right">金額</td>
                     </tr>
-                    {gen.rows.map((r) => (
-                      <tr key={r.key} className="border-t border-mor-line/60">
-                        <td className="px-2 py-1 text-gray-500">{r.work_date}</td>
-                        {nameCell(r.key, cleanItemName(r.label, r.units, r.fixedAmount))}
+                    {gen.rows.map((r, i) => {
+                      /*
+                       * ★★ 拆帳的第一列上面插一條母列。三筆各自獨立的 $1,500
+                       *   看起來像三份工 —— 而它是一份（0.5 間）。
+                       */
+                      // ★ 同一份工 = 同一天 ＋ 同一個代碼 ＋ 同一種工作類型。
+                      //   少比一個，兩份不同的工會被畫成一份
+                      const sameJob = (x: typeof r) =>
+                        x.fromSplit && x.work_date === r.work_date
+                        && x.splitOf === r.splitOf && x.work_type === r.work_type;
+                      const prev = gen.rows[i - 1];
+                      const head = r.fromSplit && !(prev && sameJob(prev))
+                        ? gen.rows.filter(sameJob) : null;
+                      return (
+                      <Fragment key={r.key}>
+                      {head && (
+                        <tr className="border-t border-mor-line/60 bg-gray-50/70">
+                          <td className="px-2 py-1.5 text-gray-500">{r.work_date}</td>
+                          <td className="px-2 py-1.5 text-gray-600" colSpan={3}>
+                            {/* ★ 代換只在**顯示**這一層。存回去的是 r.splitOf 原樣 */}
+                            {r.splitOf || '（沒填房源）'}
+                            <span className="ml-2 text-gray-400">拆成 {head.length} 間</span>
+                          </td>
+                          <td className="px-2 py-1.5" colSpan={2}>
+                            <button
+                              onClick={() => openSplit({
+                                work_date: r.work_date, label: r.splitOf, work_type: r.work_type })}
+                              className="text-mor-blue underline">改拆法</button>
+                          </td>
+                          <td className="px-2 py-1.5" />
+                          <td className="px-2 py-1.5 text-right tabular-nums font-medium whitespace-nowrap">
+                            ${splitTotal(head).toLocaleString('en-US')}
+                          </td>
+                        </tr>
+                      )}
+                      <tr className="border-t border-mor-line/60">
+                        <td className="px-2 py-1 text-gray-500">{r.fromSplit ? '' : r.work_date}</td>
+                        {nameCell(r.key, cleanItemName(r.label, r.units, r.fixedAmount),
+                                  r.fromSplit ? 'pl-6' : '')}
                         <td className="px-2 py-1 text-gray-600">{estateById[r.property_id] ?? '—'}</td>
                         <td className="px-2 py-1 text-gray-600">{propNameById[r.property_id] ?? '—'}</td>
                         <td className="px-2 py-1 text-gray-500">房務清潔</td>
@@ -1293,13 +1514,19 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                         <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap">
                           ${r.amount.toLocaleString('en-US')}
                           {/* ★ 單價留在金額底下 —— 「1 × $9,000」是算式不是名字，
-                              放在項目欄裡會讓人以為那是要寫進去的字 */}
-                          <div className="text-gray-400">
-                            {fmtUnits(r.units)} × ${r.price.toLocaleString('en-US')}
-                          </div>
+                              放在項目欄裡會讓人以為那是要寫進去的字
+                              ★★ 人工指定金額的**不印** —— 「0.5 × $0」是一個
+                              算不出 $1,500 的算式，看得懂的人會以為系統錯了 */}
+                          {!r.fixedAmount && (
+                            <div className="text-gray-400">
+                              {fmtUnits(r.units)} × ${r.price.toLocaleString('en-US')}
+                            </div>
+                          )}
                         </td>
                       </tr>
-                    ))}
+                      </Fragment>
+                      );
+                    })}
                     {gen.lab.map((r) => (
                       <tr key={r.key} className="border-t border-mor-line/60 bg-amber-50/40">
                         <td className="px-2 py-1 text-gray-500">{r.spent_on}</td>
@@ -1344,21 +1571,143 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
             )}
           </div>
 
+          {/*
+            ★★★ 讀拆帳失敗要看得見。RLS 擋下來時查詢是回成功、0 列 ——
+              畫面上就是一個很正常的「沒有拆帳」，而錢照樣掉出去
+              （CLAUDE.md:一個靜默的讀 ＋ 一個靜默的寫 ＝ 一個不存在的功能）。
+          */}
+          {splitErr && (
+            <div className="mt-3 rounded-lg bg-red-50 border border-red-200 p-3 text-[11px] text-red-800">
+              讀不到拆帳設定：{splitErr}
+              <div className="mt-1">
+                ★ 拆過的那幾份工這次<b>不會產生支出</b>，先不要按產生。
+              </div>
+            </div>
+          )}
+
           {gen.unpriced.length > 0 && (
             <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 p-3">
               <div className="text-xs text-amber-900">
                 {gen.unpriced.length} 份工<b>算不出錢</b>，不會產生支出
               </div>
-              <div className="text-[11px] text-amber-800 mt-1.5 leading-relaxed">
-                {(() => {
-                  // ★ 逐筆列會很長 —— 照「房源＋原因」收合，數量放後面
-                  const g = new Map<string, number>();
-                  for (const u of gen.unpriced) {
-                    const k = `${u.label}・${u.reason}`;
-                    g.set(k, (g.get(k) ?? 0) + 1);
-                  }
-                  return [...g].map(([k, n]) => `${k} ${n} 份`).join('　｜　');
-                })()}
+              {/*
+                ★★★ 逐筆列出來並且**就地能修**。
+                  本來只印一行收合的統計，看得到卻改不到 ——
+                  而這一區正是最需要動手的地方（CLAUDE.md:編輯用的欄位
+                  不要放在會消失的畫面上）。
+                ★ 一份工掃好幾間就按「拆成多間」；單純沒設價的去清潔計算補。
+              */}
+              <table className="w-full text-[11px] mt-2">
+                <tbody>
+                  {gen.unpriced.map((u, i) => (
+                    <tr key={`${u.work_date}|${u.label}|${u.work_type}|${i}`}
+                      className="border-t border-amber-200/70">
+                      <td className="py-1 pr-2 text-amber-800 whitespace-nowrap w-20">{u.work_date}</td>
+                      <td className="py-1 pr-2 text-amber-900">{u.label}</td>
+                      <td className="py-1 pr-2 text-amber-700 w-20">{u.reason}</td>
+                      <td className="py-1 text-right w-20">
+                        <button
+                          // ★ 用 job_code（原始字樣）不是 label（顯示字）
+                          onClick={() => openSplit({
+                            work_date: u.work_date, label: u.job_code, work_type: u.work_type })}
+                          className="text-mor-blue underline whitespace-nowrap">拆成多間</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="text-[11px] text-amber-800 mt-2">
+                一份工掃了好幾間就按「拆成多間」，各記各的錢。
+                {/* ★ 只連到頁面，不帶 ?tab= —— admin 頁不讀網址參數，
+                    帶了會落在「人員」而使用者以為連結壞了 */}
+                單純沒設清潔費的請到<Link href="/admin"
+                  className="underline">權限管理</Link>的「清潔計算」分頁補。
+              </div>
+            </div>
+          )}
+
+          {/*
+            ══════════ 拆帳面板（migration_216）══════════
+
+            ★★ 就地展開，不用 position:fixed 的遮罩 ——
+              這一頁本來就沒有別的 modal。
+            ★★★ 訊息放在動作發生的地方（面板底部按鈕旁），
+              不是頁面最上方 —— 使用者在這裡操作，捲上去的訊息等於沒講
+              （CLAUDE.md 2026-09-02）。
+          */}
+          {splitOpen && (
+            <div className="mt-3 rounded-lg bg-white border border-mor-line p-3">
+              <div className="text-xs text-mor-slate mb-2">
+                {splitOpen.work_date}　{splitOpen.job_code || '（沒填房源）'}
+                <span className="text-gray-400">{splitOpen.work_type}</span>
+              </div>
+              <table className="w-full text-[11px]">
+                <tbody>
+                  <tr className="text-gray-500">
+                    <td className="pb-1">房源</td>
+                    <td className="pb-1 w-28 text-right">金額</td>
+                    <td className="w-10" />
+                  </tr>
+                  {splitDraft.map((d, i) => (
+                    <tr key={i}>
+                      <td className="py-0.5 pr-2">
+                        <select
+                          value={d.property_id}
+                          onChange={(e) => setSplitDraft(splitDraft.map(
+                            (x, j) => j === i ? { ...x, property_id: e.target.value } : x))}
+                          className="w-full rounded border border-gray-300 px-1.5 py-1">
+                          <option value="">選房源…</option>
+                          {propOptions.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.estate ? `${p.estate}・${p.name}` : p.name}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="py-0.5">
+                        <input
+                          value={d.amount}
+                          onChange={(e) => setSplitDraft(splitDraft.map(
+                            (x, j) => j === i ? { ...x, amount: e.target.value } : x))}
+                          className="w-full rounded border border-gray-300 px-1.5 py-1 text-right tabular-nums" />
+                      </td>
+                      <td className="py-0.5 text-right">
+                        <button
+                          onClick={() => setSplitDraft(splitDraft.filter((_, j) => j !== i))}
+                          className="text-gray-400 hover:text-red-600 px-1">✕</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="flex items-center justify-between mt-2 pt-2 border-t border-mor-line">
+                <button
+                  onClick={() => setSplitDraft([...splitDraft, { property_id: '', amount: '' }])}
+                  className="text-[11px] text-mor-blue underline">＋ 加一間</button>
+                <div className="text-xs">
+                  合計 <b className="tabular-nums">
+                    ${splitTotal(splitDraft.map((d) => ({
+                      amount: Number(String(d.amount).replace(/,/g, '')) || 0,
+                    }))).toLocaleString('en-US')}
+                  </b>
+                </div>
+              </div>
+              {/* ★ 一句話講完，寫給不知道前因後果的人看 */}
+              <div className="text-[11px] text-gray-500 mt-2">
+                這份工的打掃量與床單不變，拆的只有錢。
+              </div>
+              {splitMsg && (
+                <div className="text-[11px] text-red-600 mt-1.5">{splitMsg}</div>
+              )}
+              <div className="flex gap-2 mt-2">
+                <button onClick={() => void saveSplit()} disabled={splitBusy}
+                  className="rounded-lg bg-mor-blue text-white text-xs px-3 py-1.5 disabled:opacity-50">
+                  {splitBusy ? '儲存中…' : '儲存拆法'}
+                </button>
+                <button onClick={() => setSplitOpen(null)} disabled={splitBusy}
+                  className="rounded-lg border border-mor-line text-xs px-3 py-1.5">取消</button>
+                <button onClick={() => void clearSplit()} disabled={splitBusy}
+                  className="ml-auto text-[11px] text-gray-500 underline">整份不拆了</button>
               </div>
             </div>
           )}

@@ -5,6 +5,7 @@ import {
   type LaborCost, cleanItemName, LABOR_ITEM_NAME,
 } from './hk-cost.ts';
 import { estateLog, type PayrollRow, type LogEntry } from './hk-payroll.ts';
+import { indexSplits, type SplitLine } from './work-split.ts';
 
 const J = (o: Partial<LogEntry> = {}): LogEntry => ({
   work_date: '2026-08-03', work_type: '清潔', property_id: 'p1',
@@ -85,6 +86,149 @@ describe('cleaningCosts —— 一份工一筆', () => {
     const { rows, unpriced } = cleaningCosts([J({ property_id: 'p3' })], priceOf);
     assert.equal(rows.length, 0);
     assert.equal(unpriced.length, 0);
+  });
+
+  /*
+   * ══════════ 拆帳:一份工記到好幾間 ══════════
+   * （2026-09-03 使用者:「我想要在表單上呈現一項 然後支出拆成多間」）
+   */
+  const S = (o: Partial<SplitLine> = {}): SplitLine => ({
+    id: 'x1', work_date: '2026-08-14', job_code: '正隆多間',
+    work_type: '清潔', property_id: 'p2', amount: 1500, ...o,
+  });
+  /** 08-14 庭玉的「正隆多間」:三間各 1,500 */
+  const zhenglong = () => indexSplits([
+    S({ id: 'a', property_id: 'r1', property_label: '4B3' }),
+    S({ id: 'b', property_id: 'r2', property_label: '13A5' }),
+    S({ id: 'c', property_id: 'r3', property_label: '14B1' }),
+  ]);
+  const multiJob = (o: Partial<LogEntry> = {}) => J({
+    work_date: '2026-08-14', property_id: null, label: '正隆多間',
+    units: 0.5, ...o,
+  });
+
+  /*
+   * ★★★ 拆帳的整個重點:「正隆多間」不在房源主檔，沒有 property_id、
+   *   查不到任何單價。沒有拆帳的話它會整筆掉進 unpriced 而帳少 4,500。
+   */
+  test('★★★ 沒有房源也算得出錢 —— 拆帳三筆各 1,500', () => {
+    const { rows, unpriced } = cleaningCosts([multiJob()], priceOf, zhenglong());
+    assert.equal(rows.length, 3);
+    assert.equal(unpriced.length, 0, '拆過的不該再進「算不出錢」');
+    assert.equal(costTotal(rows), 4500);
+    assert.deepEqual(rows.map((r) => r.property_id), ['r1', 'r2', 'r3']);
+  });
+
+  /*
+   * ★★★ 冪等鍵不能是「日期|房源|類型」—— 同一天同一間如果另有
+   *   一份正常工單就會撞成同一個鍵，而 hk_job_key 有唯一索引:
+   *   第二筆被安靜地跳過，帳少一筆而畫面上完全正常。
+   */
+  test('★★★ 拆帳的鍵是 split:<id>，不會跟一般工單撞', () => {
+    const { rows } = cleaningCosts([multiJob()], priceOf, zhenglong());
+    assert.deepEqual(rows.map((r) => r.key), ['split:a', 'split:b', 'split:c']);
+    // 同一天同一間 r1 另有一份正常工單 —— 兩個鍵必須不同
+    const solo = cleaningCosts(
+      [J({ work_date: '2026-08-14', property_id: 'r1' })], () => 9000);
+    assert.equal(solo.rows.length, 1);
+    assert.notEqual(solo.rows[0].key, 'split:a');
+  });
+
+  /*
+   * ★★ 拆的是錢不是工作量。母列還是 0.5 間 ——
+   *   拆帳列的 units 寫 0 並標 fixedAmount，畫面才不會印
+   *   「0.5 × $0」這種算不出 1,500 的算式。
+   */
+  test('★★ 拆帳列不帶間數與單價，標成人工指定', () => {
+    const { rows } = cleaningCosts([multiJob()], priceOf, zhenglong());
+    for (const r of rows) {
+      assert.equal(r.units, 0);
+      assert.equal(r.price, 0);
+      assert.equal(r.fixedAmount, true);
+      assert.equal(r.splitOf, '正隆多間', '要認得回是從哪一份工拆的');
+    }
+    assert.equal(cleanItemName(rows[0].label, rows[0].units, rows[0].fixedAmount),
+      '房務清潔 4B3', '不印 ×N');
+  });
+
+  // ★ 有單價的房源被拆時，也不走公式 —— 人填的金額說了算
+  test('★ 拆過就不查單價，即使那一份工本來算得出錢', () => {
+    const { rows } = cleaningCosts(
+      [J({ work_date: '2026-08-14', property_id: 'p2', label: '正隆多間' })],
+      priceOf, zhenglong());
+    assert.equal(rows.length, 3);
+    assert.equal(costTotal(rows), 4500, '不是 9,000');
+  });
+
+  /*
+   * ★ 人明確填 0 是「這一間這次不用錢」。略過的話那一間
+   *   會從清單上消失，而合計看起來還是對的。
+   */
+  test('★ 拆帳列的 0 照樣產生 —— 跟「算出來剛好是 0」不同', () => {
+    const m = indexSplits([S({ id: 'a', property_id: 'r1', amount: 0 })]);
+    const { rows } = cleaningCosts([multiJob()], priceOf, m);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].amount, 0);
+  });
+
+  test('沒拆的工單完全不受影響', () => {
+    const { rows } = cleaningCosts([J()], priceOf, zhenglong());
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].key, '2026-08-03|p1|清潔');
+    assert.equal(rows[0].amount, 730);
+  });
+
+  test('不傳第三個參數時行為跟以前一樣', () => {
+    const { rows, unpriced } = cleaningCosts([multiJob()], priceOf);
+    assert.equal(rows.length, 0);
+    assert.equal(unpriced[0].reason, '沒有房源');
+  });
+
+  /*
+   * ★★ 合掃是兩列 hk_work_item、一份工。拆帳綁在「工」上，
+   *   所以合掃的那份工拆完還是三筆，不是六筆。
+   */
+  test('★★ 合掃的那份工拆完還是三筆，不是六筆', () => {
+    const P = (o: Partial<PayrollRow> = {}): PayrollRow => ({
+      work_date: '2026-08-14', property_id: null, label: '正隆多間',
+      work_type: '清潔', staff_id: 's1', units_override: 0.5, ...o,
+    });
+    const log = estateLog([P(), P({ staff_id: 's2' })], () => 1, () => '正隆');
+    const { rows } = cleaningCosts([...log.values()].flat(), priceOf, zhenglong());
+    assert.equal(rows.length, 3);
+    assert.equal(costTotal(rows), 4500);
+  });
+
+  // ★ unpriced 要帶 work_type，畫面才組得出鍵去開拆帳
+  test('★ 算不出錢的那些帶得出工作類型', () => {
+    const { unpriced } = cleaningCosts([multiJob()], priceOf);
+    assert.equal(unpriced[0].work_type, '清潔');
+  });
+
+  /*
+   * ★★★ 顯示字與存回去的字**不能是同一支**。
+   *
+   *   沒填房源時 `label` 顯示成「（沒填房源）」。畫面若拿那四個字
+   *   去存 `job_code`，`splitJobKey` 就對不上（它用的是原始的空字串）——
+   *   症狀是「拆完存好了，但支出完全沒變」，沒有任何錯誤訊息。
+   *   跟 2026-09-02 那次 `'2026-08-20'.startsWith('202608')` 同一種病。
+   */
+  test('★★★ job_code 是原始字樣，label 才是顯示用的', () => {
+    const { unpriced } = cleaningCosts([J({ property_id: null, label: '' })], priceOf);
+    assert.equal(unpriced[0].label, '（沒填房源）', '顯示用');
+    assert.equal(unpriced[0].job_code, '', '存回去用 —— 空的就是空的');
+  });
+
+  test('★★★ 拆帳列的 splitOf 也是原始字樣，不是顯示字', () => {
+    const m = indexSplits([{
+      id: 'a', work_date: '2026-08-14', job_code: '', work_type: '清潔',
+      property_id: 'r1', amount: 1500,
+    }]);
+    const { rows } = cleaningCosts(
+      [J({ work_date: '2026-08-14', property_id: null, label: '' })], priceOf, m);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].splitOf, '');
+    assert.equal(rows[0].fromSplit, true, '★ 用 fromSplit 判斷，不要判斷 splitOf 是不是空字串');
   });
 
   test('★★ 冪等鍵 = 日期|房源|工作類型', () => {

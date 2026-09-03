@@ -264,21 +264,42 @@ export function filterItems<T extends CountableItem>(
  *
  * 用 COUNT 會讓合掃翻倍;用「同日去重」則會把同日的兩次清掃併成一次。
  * 兩種都會讓床單估算失準,而且方向相反。
+ *
+ * ============================================================
+ * 【★★★ 人估的那幾份工不算】（2026-09-03 使用者指定）
+ *
+ * `units_override` 有值 = 這一份工是**人手動記的概算**
+ *（「今天在正隆掃了三間、大概半天份」）。
+ *
+ * 使用者的原話:「無法記錄出要幾個床單，**因為清三間不一定有換床單**」。
+ *
+ * 照床數去乘只是編一個數字出來 —— 而那個數字會被當成真的，
+ * 進到布巾表、進到報表，沒有人會回頭質疑它。
+ * 所以這種工**完全不算次數**，床單要在「拿床單」那一欄手動填。
+ *
+ * ★ 判斷的是「有沒有值」不是「值是多少」—— 0.5 跟 1 一樣都是人估的。
+ * ★★ 舊資料裡還有 0.17／4 這種值（2026-09-03 之前沒有限制），
+ *   一樣算人估的，不會因為它們現在非法就漏掉。
  */
 export function cleanCounts(
-  items: { work_date: string; property_code: string | null; staff_id: string }[],
+  items: {
+    work_date: string; property_code: string | null; staff_id: string;
+    units_override?: number | null;
+  }[],
   mode: 'clean' | 'headcount' = 'clean',
 ): Record<string, number> {
   const out: Record<string, number> = {};
+  // ★ 人估的先濾掉 —— 兩種 mode 都要，不然換個模式又冒出來
+  const auto = items.filter((i) => i.units_override == null);
   if (mode === 'headcount') {
-    for (const i of items) {
+    for (const i of auto) {
       if (i.property_code) out[i.property_code] = (out[i.property_code] ?? 0) + 1;
     }
     return out;
   }
   // date|code → staff_id → 該人當日在該房源的筆數
   const grid = new Map<string, Map<string, number>>();
-  for (const i of items) {
+  for (const i of auto) {
     if (!i.property_code) continue;
     const k = `${i.work_date}|${i.property_code}`;
     if (!grid.has(k)) grid.set(k, new Map());

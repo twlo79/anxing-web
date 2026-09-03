@@ -27,6 +27,9 @@
  */
 
 import type { LogEntry } from './hk-payroll.ts';
+import {
+  splitJobKey, splitExpenseKey, hasSplit, type SplitLine,
+} from './work-split.ts';
 
 export type CostRow = {
   /**
@@ -49,6 +52,22 @@ export type CostRow = {
   amount: number;
   /** 這筆是不是人工指定金額的（migration_215）。影響項目名稱要不要印 ×N */
   fixedAmount?: boolean;
+  /**
+   * 這筆是從哪一份工拆出來的（migration_216）。
+   *
+   * ★ 畫面上要縮排在那份工底下 —— 不然三筆各自獨立的 $1,500
+   *   看起來像三份工，而它是一份。
+   *
+   * ★★★ 這是**工單上的原始代碼字樣**，不是拿來顯示的字。
+   *   空字串（沒填房源）就是空字串，不要在這裡代成「（沒填房源）」——
+   *   畫面把那四個字存回 `job_code` 的話，`splitJobKey` 就對不上了，
+   *   而症狀是「拆完存好了，但支出沒有變」，完全沒有錯誤訊息
+   *   （CLAUDE.md:兩個格式不同的字串拿去比對，2026-09-02 踩過）。
+   *   顯示的代換交給畫面。
+   */
+  splitOf?: string;
+  /** 有拆帳就是 true。★ 用它判斷「是不是拆出來的」，不要判斷 `splitOf` 是不是空字串 */
+  fromSplit?: boolean;
 };
 
 /** 沒辦法算錢的那些，要在畫面上列出來讓人去補。 */
@@ -57,6 +76,20 @@ export type Unpriced = {
   label: string;
   units: number;
   reason: '沒有房源' | '沒設單價';
+  /**
+   * ★★ 帶著工作類型，畫面才組得出 `splitJobKey` 去開拆帳。
+   *   少了它，「算不出錢」那一區就只能看不能修 ——
+   *   而那一區正是最需要就地補的地方（CLAUDE.md:編輯用的欄位
+   *   不要放在會消失的畫面上）。
+   */
+  work_type: string;
+  /**
+   * ★★★ 工單上的**原始**代碼字樣（可能是空字串）。
+   *   `label` 是拿來看的（空的會顯示成「（沒填房源）」），
+   *   存拆帳時一定要用這一支 —— 把顯示字存回去的話 key 就對不上，
+   *   而症狀是「存好了但支出沒變」，沒有任何錯誤訊息。
+   */
+  job_code: string;
 };
 
 /**
@@ -68,18 +101,55 @@ export type Unpriced = {
 export function cleaningCosts(
   jobs: LogEntry[],
   priceOf: (propertyId: string) => number | null | undefined,
+  splitsOf?: Map<string, SplitLine[]>,
 ): { rows: CostRow[]; unpriced: Unpriced[] } {
   const rows: CostRow[] = [];
   const unpriced: Unpriced[] = [];
 
   for (const j of jobs ?? []) {
     /*
+     * ══════════ 拆帳:一份工記到好幾間 ══════════
+     * （2026-09-03 使用者:「我想要在表單上呈現一項 然後支出拆成多間」）
+     *
+     * ★★★ 拆過的**完全不走下面那套**:不查單價、不乘間數、
+     *   也不會進 unpriced。這正是拆帳存在的理由 ——
+     *   「正隆多間」根本不在房源主檔，查不到任何單價。
+     *
+     * ★★ 間數與單價寫 0 並且 `fixedAmount`。畫面上不要印「×N」
+     *   或「0.5 × $0」—— 那是一個算不出 $1,500 的算式，
+     *   看得懂的人會停下來算，然後以為系統錯了。
+     *
+     * ★ 金額 0 的那一列照樣產生（不像下面會 `continue` 掉）——
+     *   人明確填了 0 是「這一間這次不用錢」，跟「算出來剛好是 0」不同。
+     *   略過的話那一間會從拆帳清單上消失，而合計看起來還是對的。
+     */
+    const sp = splitsOf?.get(splitJobKey(j));
+    if (hasSplit(sp)) {
+      for (const s of sp!) {
+        rows.push({
+          key: splitExpenseKey(s.id),
+          work_date: j.work_date,
+          property_id: s.property_id,
+          label: s.property_label ?? '',
+          work_type: j.work_type,
+          units: 0, price: 0,
+          amount: Math.round(Number(s.amount) || 0),
+          fixedAmount: true,
+          splitOf: j.label ?? '',
+          fromSplit: true,
+        });
+      }
+      continue;
+    }
+
+    /*
      * ★ 沒有房源就沒有單價可查。這些是補登時房源留空、
      *   或房務代碼還沒接上 ERP 的 —— 兩種都要人去補，不是這裡猜。
      */
     if (!j.property_id) {
       unpriced.push({ work_date: j.work_date, label: j.label || '（沒填房源）',
-                      units: j.units, reason: '沒有房源' });
+                      units: j.units, reason: '沒有房源',
+                      work_type: j.work_type, job_code: j.label ?? '' });
       continue;
     }
     const price = priceOf(j.property_id);
@@ -91,7 +161,8 @@ export function cleaningCosts(
      */
     if (price == null && j.amountOverride == null) {
       unpriced.push({ work_date: j.work_date, label: j.label,
-                      units: j.units, reason: '沒設單價' });
+                      units: j.units, reason: '沒設單價',
+                      work_type: j.work_type, job_code: j.label ?? '' });
       continue;
     }
     /*

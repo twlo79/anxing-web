@@ -354,3 +354,46 @@ describe('間數：沒有房源就不算', () => {
     assert.equal(filterItems([I()], { workTypes: wt }).rooms.length, 0);
   });
 });
+
+describe('cleanCounts —— 人估的那幾份工不算床單（2026-09-03）', () => {
+  const I = (o: any = {}) => ({
+    work_date: '2026-08-14', property_code: '4B3', staff_id: 's1', ...o,
+  });
+
+  test('正常一份工照算', () => {
+    assert.deepEqual(cleanCounts([I()]), { '4B3': 1 });
+  });
+
+  // ★ 合掃是兩列同一間，MAX 讓它只算一次 —— 這條不能被新規則弄壞
+  test('★ 合掃還是只算一次', () => {
+    assert.deepEqual(cleanCounts([I(), I({ staff_id: 's2' })]), { '4B3': 1 });
+  });
+
+  /*
+   * ★★★ 使用者:「無法記錄出要幾個床單，因為清三間不一定有換床單」。
+   *   人估的那幾份工照床數乘只是編一個數字。
+   */
+  test('★★★ 有 units_override 就完全不算', () => {
+    assert.deepEqual(cleanCounts([I({ units_override: 0.5 })]), {});
+    assert.deepEqual(cleanCounts([I({ units_override: 1 })]), {}, '填 1 也是人估的');
+  });
+
+  // ★ 舊資料的非法值一樣不算 —— 不能因為現在擋掉輸入就漏了它們
+  test('★ 舊的 0.17／4 也不算', () => {
+    assert.deepEqual(cleanCounts([I({ units_override: 0.17 })]), {});
+    assert.deepEqual(cleanCounts([I({ units_override: 4 })]), {});
+  });
+
+  test('★★ 混在一起時只算自動的那些', () => {
+    assert.deepEqual(
+      cleanCounts([I(), I({ property_code: '13A5', units_override: 0.5 })]),
+      { '4B3': 1 },
+    );
+  });
+
+  // ★ headcount 模式也要濾 —— 換個模式又冒出來的話等於沒修
+  test('★ headcount 模式一樣濾掉', () => {
+    assert.deepEqual(cleanCounts([I({ units_override: 0.5 })], 'headcount'), {});
+    assert.deepEqual(cleanCounts([I()], 'headcount'), { '4B3': 1 });
+  });
+});

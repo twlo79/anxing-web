@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   parseBeds, parsePoints, parsePrice, parseLabor,
   laborMode, canEditEstateLabor, canEditRoomLabor, laborLockMsg,
-  cleanGaps, hasGap, parseUnits, parseAmount,
+  cleanGaps, hasGap, parseUnits, parseAmount, isEstimatedJob,
 } from './clean-params.ts';
 
 describe('parse* —— 四個參數的驗證（2026-09-03）', () => {
@@ -140,33 +140,61 @@ describe('cleanGaps —— 缺什麼要講出房源名（2026-09-03）', () => {
   });
 });
 
-describe('parseUnits —— 這份工算幾間（2026-09-03）', () => {
-  /*
-   * ★★★ 留空是 null（用預設的一間），填 0 是「不算間數」。
-   *   兩者在畫面上都是空格子，但一個算錢一個不算。
-   */
-  test('★★★ 留空 null、填 0 是 0', () => {
+describe('parseUnits —— 概算，只收 0.5 或 1（2026-09-03）', () => {
+  // ★ 留空 = 行程來的正常一份工，不是「0 間」
+  test('留空是 null', () => {
     assert.deepEqual(parseUnits(''), { ok: true, value: null });
-    assert.deepEqual(parseUnits('0'), { ok: true, value: 0 });
+    assert.deepEqual(parseUnits('  '), { ok: true, value: null });
   });
 
-  test('合掃的 0.5', () => {
+  test('0.5 與 1 收得下', () => {
     assert.deepEqual(parseUnits('0.5'), { ok: true, value: 0.5 });
+    assert.deepEqual(parseUnits('1'), { ok: true, value: 1 });
   });
 
-  // ★ 正隆多間那次是 1/(2×3)=0.1667，兩位小數只能存 0.17
-  test('兩位小數收得下，三位擋掉', () => {
-    assert.deepEqual(parseUnits('0.17'), { ok: true, value: 0.17 });
-    assert.equal(parseUnits('0.167').ok, false);
+  /*
+   * ★★★ 其他數字一律擋掉（使用者:「只有 0.5 or 1 可以合併記，其它不行」）。
+   *   這個欄位是**概算**不是精確房間數 —— 我一度用 0.17／0.17／0.16
+   *   去拆正隆那份工，那是把估計值裝成精確值。
+   */
+  test('★★★ 0.17、4、0 都要擋掉', () => {
+    for (const v of ['0.17', '4', '0', '2.5', '1.5']) {
+      assert.equal(parseUnits(v).ok, false, v + ' 應該被擋');
+    }
   });
 
-  test('批量:一列算 4 間', () => {
-    assert.deepEqual(parseUnits('4'), { ok: true, value: 4 });
+  test('★ 錯誤訊息要說得出去哪裡填金額', () => {
+    const r = parseUnits('0.17');
+    assert.equal(r.ok, false);
+    assert.match((r as any).error, /金額/);
   });
 
   test('負數與亂打擋掉', () => {
     assert.equal(parseUnits('-1').ok, false);
     assert.equal(parseUnits('兩間').ok, false);
+  });
+});
+
+describe('isEstimatedJob —— 有值就是人估的，床單不自動算（2026-09-03）', () => {
+  /*
+   * ★★★ 使用者:「無法記錄出要幾個床單，因為清三間不一定有換床單」。
+   *   人估的那些，床單要手動填 —— 照床數乘只是編一個數字。
+   */
+  test('★★★ null 是正常一份工，床單照算', () => {
+    assert.equal(isEstimatedJob(null), false);
+    assert.equal(isEstimatedJob(undefined), false);
+  });
+
+  test('★★★ 0.5 與 1 都是人估的 —— 判斷「有沒有值」不是「值多少」', () => {
+    assert.equal(isEstimatedJob(0.5), true);
+    assert.equal(isEstimatedJob(1), true, '填 1 也是人估的，不等於沒填');
+  });
+
+  // ★ 舊資料還有 0.17／4 這種值 —— 一樣算人估的，不要因為擋輸入就漏掉它們
+  test('★ 舊的非法值也算人估的', () => {
+    assert.equal(isEstimatedJob(0.17), true);
+    assert.equal(isEstimatedJob(4), true);
+    assert.equal(isEstimatedJob(0), true);
   });
 });
 
