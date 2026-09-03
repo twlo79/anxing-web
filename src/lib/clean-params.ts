@@ -137,3 +137,16 @@ export function cleanGaps(
 
 /** 有沒有任何缺口 —— 沒有的話整塊警告不要出現。 */
 export const hasGap = (g: CleanGap) => !!(g.beds.length || g.points.length || g.price.length);
+
+/**
+ * 「這一份工算幾間」（`hk_work_item.units_override`）。
+ *
+ * ★★★ 留空 = null = **用預設的一間**（合掃再各 0.5）。
+ *   填 0 是「這份工不算間數」—— 兩者完全不同，
+ *   而畫面上都是一個空格子看不出差別。所以留空一定要回 null。
+ *
+ * ★ 兩位小數:`numeric(6,2)`（migration_198）。
+ *   1/6 這種除不盡的要人自己配（0.17 / 0.17 / 0.16），
+ *   多的位數存進去會被資料庫默默四捨五入。
+ */
+export const parseUnits = (raw: string) => parseNum(raw, 2, '間數');

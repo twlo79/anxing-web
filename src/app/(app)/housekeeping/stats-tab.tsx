@@ -9,6 +9,7 @@ import {
   cleaningCosts, laborCosts, lastDayOf, costTotal, cleanItemName, LABOR_ITEM_NAME,
 } from '@/lib/hk-cost';
 import { TAG_NON_CASH } from '@/lib/expense-tags';
+import { parseUnits } from '@/lib/clean-params';
 // ★ useRef 的同步閘門 —— useState 是非同步的,連點兩下會兩筆都送出去
 import { useOnce } from '@/lib/once';
 import { sharePreview, previewText } from '@/lib/hk-crew';
@@ -132,10 +133,16 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
    *   原本是單選,合掃要按兩次「加入」,而中間手滑改到房源的話
    *   兩筆就不是同一份工了 —— 各算 1 間,那個房間憑空變成兩間。
    */
+  /*
+   * ★ `units` 是字串不是數字 —— 使用者打到一半的「0.」不是合法數字，
+   *   存成 number 的話那一刻會變成 NaN 或 0，游標跳掉。
+   *   送出時才走 `parseUnits`。
+   */
   const [adding, setAdding] = useState<
-    { date: string; staffIds: string[]; code: string; type: string } | null>(null);
+    { date: string; staffIds: string[]; code: string; type: string; units: string } | null>(null);
   /** 就地編輯某個房源格 */
-  const [editItem, setEditItem] = useState<{ id: string; staffId: string; code: string; type: string } | null>(null);
+  const [editItem, setEditItem] = useState<
+    { id: string; staffId: string; code: string; type: string; units: string } | null>(null);
 
   function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 4000); }
 
@@ -665,10 +672,19 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
   async function saveItem() {
     if (!editItem) return;
     const cur = items.find((x) => x.id === editItem.id);
+    /*
+     * ★★ 間數（2026-09-03 使用者:「多間 要手動拆開」）。
+     *   本來只有例外補登填得到，而那個入口在「沒進系統的」清單空掉之後
+     *   就消失了 —— 於是沒有任何一條路改得了間數。
+     *   房源格是程式自己註解裡寫的「唯一真實來源」，欄位就該在這。
+     */
+    const u = parseUnits(editItem.units);
+    if (!u.ok) return flash(u.error);
     const patch: any = {
       property_code: editItem.code || null,
       work_type: editItem.type,
       staff_id: editItem.staffId,
+      units_override: u.value,
       source: cur?.source === 'manual' ? 'manual' : 'timetree_edited',
     };
     setItems((xs) => xs.map((x) => (x.id === editItem.id ? { ...x, ...patch } : x)));
@@ -1462,6 +1478,14 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                                   className={`${inp} w-24`}>
                                   {WORK_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                                 </select>
+                                <span className="inline-flex items-center gap-1 rounded bg-mor-greenlight/60 px-1.5 py-0.5">
+                                  <span className="text-[11px] text-mor-green">間數</span>
+                                  <input value={editItem.units} inputMode="decimal" placeholder="1"
+                                    onChange={(e) => setEditItem({ ...editItem, units: e.target.value })}
+                                    onKeyDown={(e) => { if (e.key === 'Enter') saveItem(); if (e.key === 'Escape') setEditItem(null); }}
+                                    title="這一份工算幾間。留空＝一間（合掃自動各 0.5）"
+                                    className={`${inp} w-14 text-center`} />
+                                </span>
                                 <button onClick={saveItem} className="text-xs text-mor-blue underline">存</button>
                                 <button onClick={() => setEditItem(null)} className="text-xs text-gray-400 underline">取消</button>
                                 <button onClick={() => { setEditItem(null); delItem(it); }} className="text-xs text-red-500 underline">刪除</button>
@@ -1471,7 +1495,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
 
                           return (
                             <span key={it.id}
-                              onClick={() => setEditItem({ id: it.id, staffId: it.staff_id, code: it.property_code ?? '', type: it.work_type })}
+                              onClick={() => setEditItem({ id: it.id, staffId: it.staff_id, code: it.property_code ?? '', type: it.work_type, units: it.units_override == null ? '' : String(it.units_override) })}
                               className="group inline-flex items-center rounded text-xs pl-1.5 pr-0.5 py-0.5 border-l-4 cursor-pointer hover:brightness-95"
                               style={{
                                 backgroundColor: s?.color ? `#${s.color}` : '#f3f4f6',
@@ -1518,7 +1542,11 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                                       而那些列不屬於任何人 —— 誰的統計都看不到它們。
                                   */
                                   if (e.key === 'Enter' && adding.code && adding.staffIds.length) {
-                                    addItems(d, adding.staffIds, adding.code, adding.type);
+                                    // ★★ 這條路也要帶間數 —— 兩個入口行為不同的話，
+                                    //   用 Enter 的人會發現間數沒存進去而不知道為什麼
+                                    const u = parseUnits(adding.units);
+                                    if (!u.ok) { flash(u.error); return; }
+                                    addItems(d, adding.staffIds, adding.code, adding.type, u.value);
                                     setAdding({ ...adding, code: '' });   // 連續新增:存檔後停在輸入器
                                   }
                                   if (e.key === 'Escape') setAdding(null);
@@ -1527,10 +1555,26 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                               <select value={adding.type} onChange={(e) => setAdding({ ...adding, type: e.target.value })} className={`${inp} w-24`}>
                                 {WORK_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                               </select>
+                              {/*
+                                ★★ 間數（2026-09-03）。留空 ＝ 一間（合掃再各 0.5），
+                                  填了才是「這一份工算幾間」。
+                                ★ 淡綠底把它跟左邊兩個必填欄分開 —— 它是選填的，
+                                  而空白的輸入框看起來都一樣。
+                              */}
+                              <span className="inline-flex items-center gap-1 rounded-lg bg-mor-greenlight/60 px-1.5 py-0.5">
+                                <span className="text-[11px] text-mor-green">間數</span>
+                                <input value={adding.units} inputMode="decimal" placeholder="1"
+                                  onChange={(e) => setAdding({ ...adding, units: e.target.value })}
+                                  title="這一份工算幾間。留空＝一間（合掃自動各 0.5）"
+                                  className={`${inp} w-14 text-center`} />
+                              </span>
                               <button
                                 onClick={() => {
                                   if (adding.code && adding.staffIds.length) {
-                                    addItems(d, adding.staffIds, adding.code, adding.type);
+                                    const u = parseUnits(adding.units);
+                                    if (!u.ok) return flash(u.error);
+                                    addItems(d, adding.staffIds, adding.code, adding.type, u.value);
+                                    // ★ 間數留著不清 —— 拆多間時三筆常常是同一個數字
                                     setAdding({ ...adding, code: '' });
                                   }
                                 }}
@@ -1601,7 +1645,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                               if (!s) return flash('當日所有人員都是休假狀態,要先清除休假才能新增房源');
                               /* ★ 預設勾一個人 —— 九成的情況是一個人掃一間，
                                    一個都不勾的話每次都要先按一下 */
-                              setAdding({ date: d, staffIds: [s.id], code: '', type: '退房清潔' });
+                              setAdding({ date: d, staffIds: [s.id], code: '', type: '退房清潔', units: '' });
                             }}
                             className="w-5 h-5 rounded border border-dashed border-gray-300 text-gray-400 text-xs leading-none hover:border-mor-blue hover:text-mor-blue"
                             title="新增房源">+</button>

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   parseBeds, parsePoints, parsePrice, parseLabor,
   laborMode, canEditEstateLabor, canEditRoomLabor, laborLockMsg,
-  cleanGaps, hasGap,
+  cleanGaps, hasGap, parseUnits,
 } from './clean-params.ts';
 
 describe('parse* —— 四個參數的驗證（2026-09-03）', () => {
@@ -137,5 +137,35 @@ describe('cleanGaps —— 缺什麼要講出房源名（2026-09-03）', () => {
 
   test('空清單不會爆', () => {
     assert.equal(hasGap(cleanGaps([])), false);
+  });
+});
+
+describe('parseUnits —— 這份工算幾間（2026-09-03）', () => {
+  /*
+   * ★★★ 留空是 null（用預設的一間），填 0 是「不算間數」。
+   *   兩者在畫面上都是空格子，但一個算錢一個不算。
+   */
+  test('★★★ 留空 null、填 0 是 0', () => {
+    assert.deepEqual(parseUnits(''), { ok: true, value: null });
+    assert.deepEqual(parseUnits('0'), { ok: true, value: 0 });
+  });
+
+  test('合掃的 0.5', () => {
+    assert.deepEqual(parseUnits('0.5'), { ok: true, value: 0.5 });
+  });
+
+  // ★ 正隆多間那次是 1/(2×3)=0.1667，兩位小數只能存 0.17
+  test('兩位小數收得下，三位擋掉', () => {
+    assert.deepEqual(parseUnits('0.17'), { ok: true, value: 0.17 });
+    assert.equal(parseUnits('0.167').ok, false);
+  });
+
+  test('批量:一列算 4 間', () => {
+    assert.deepEqual(parseUnits('4'), { ok: true, value: 4 });
+  });
+
+  test('負數與亂打擋掉', () => {
+    assert.equal(parseUnits('-1').ok, false);
+    assert.equal(parseUnits('兩間').ok, false);
   });
 });
