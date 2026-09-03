@@ -437,7 +437,17 @@ export default function ExpensesPage() {
     const T = (v: any, st: any) => ({ v: v ?? '', t: typeof v === 'number' ? 'n' : 's', s: st, z: typeof v === 'number' ? '#,##0' : undefined });
 
     // 用途已是物業層級,原本的「物業」欄與「用途」欄內容重複,合併成一欄
-    const header = ['關注', '非營運', '支出日期', '支出項目', '認列金額', '實際支出', '遞延', '會計科目', '用途', '憑證號碼', '支付方式', '安幸付款帳號', '備註'];
+    /*
+     * ★ 「房源」跟在「用途」後面（2026-09-03 使用者指定）。
+     *
+     *   用途 = 物業（`estate_id`），房源 = 房間（`property_id`）——
+     *   兩個欄位一起才講得完「這筆錢花在哪」。畫面上房源只在抽屜裡，
+     *   匯出的人拿去對帳時看不到，只好回系統一筆一筆點開。
+     *
+     * ★★ 沒指定房源的留**空白**不要寫「整個物業」——
+     *   Excel 裡那四個字會被當成一個房源名，篩選時多一個假選項。
+     */
+    const header = ['關注', '非營運', '支出日期', '支出項目', '認列金額', '實際支出', '遞延', '會計科目', '用途', '房源', '憑證號碼', '支付方式', '安幸付款帳號', '備註'];
     const aoa: any[][] = [header.map((h) => T(h, stHead))];
     for (const r of sorted) {
       aoa.push([
@@ -451,6 +461,7 @@ export default function ExpensesPage() {
         T(r.deferred ? '母單' : (r.parent_expense_id ? '子單' : ''), stCell),
         T(r.account_code ? codeName[r.account_code] ?? r.account_code : '', stCell),
         T(purposeLabel(r), stCell),
+        T(r.property_id ? (properties.find((x) => x.id === r.property_id)?.name ?? '') : '', stCell),
         T(r.voucher_no ?? '', stCell),
         T(r.payment_method ? PAY_LABEL[r.payment_method] ?? r.payment_method : '', stCell),
         T(r.pay_account ?? '', stCell),
@@ -467,7 +478,9 @@ export default function ExpensesPage() {
       { wch: 5 },   // 關注
       { wch: 8 },   // 非營運
       { wch: 12 }, { wch: 24 }, { wch: 12 }, { wch: 12 }, { wch: 7 },
-      { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 10 }, { wch: 12 },
+      { wch: 12 }, { wch: 14 },
+      { wch: 12 },  // 房源
+      { wch: 14 }, { wch: 10 }, { wch: 12 },
       { wch: 28 },  // 備註
     ];
     ws['!freeze'] = { xSplit: 0, ySplit: 1 };
