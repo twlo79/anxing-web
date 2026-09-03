@@ -2,7 +2,7 @@ import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   cleaningCosts, laborCosts, lastDayOf, costTotal,
-  type LaborCost,
+  type LaborCost, cleanItemName, LABOR_ITEM_NAME,
 } from './hk-cost.ts';
 import { estateLog, type PayrollRow, type LogEntry } from './hk-payroll.ts';
 
@@ -178,5 +178,28 @@ describe('laborCosts —— 一個月一個對象一筆', () => {
     ], '202608');
     assert.equal(rows.length, 6);
     assert.equal(costTotal(rows), 248000);
+  });
+});
+
+describe('cleanItemName —— 畫面與寫入用同一支（2026-09-03）', () => {
+  test('一間就不印倍數', () => {
+    assert.equal(cleanItemName('1485', 1), '房務清潔 1485');
+  });
+  test('多間才印', () => {
+    assert.equal(cleanItemName('正隆整棟', 4), '房務清潔 正隆整棟 ×4');
+  });
+  // ★ 合掃是 0.5 —— 不能被四捨五入成 0 或 1
+  test('合掃的 0.5 印得出來', () => {
+    assert.equal(cleanItemName('1485', 0.5), '房務清潔 1485 ×0.5');
+  });
+  // ★ 0.30000000000000004 這種浮點尾巴不可以跑到畫面上
+  test('浮點尾巴要收乾淨', () => {
+    assert.equal(cleanItemName('A', 0.1 + 0.2), '房務清潔 A ×0.3');
+  });
+  test('label 空的時候不留下尾巴空白', () => {
+    assert.equal(cleanItemName('', 1), '房務清潔');
+  });
+  test('人事費沒有括號', () => {
+    assert.equal(LABOR_ITEM_NAME, '房務人事費');
   });
 });

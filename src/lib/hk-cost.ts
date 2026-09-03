@@ -170,3 +170,43 @@ export function laborCosts(costs: LaborCost[], period: string): LaborRow[] {
 export function costTotal(rows: { amount: number }[]): number {
   return (rows ?? []).reduce((a, r) => a + (Number(r.amount) || 0), 0);
 }
+
+/**
+ * 支出的預設項目名稱。
+ *
+ * ============================================================
+ * 【★★★ 為什麼要抽出來】（2026-09-03）
+ *
+ * 這個字串本來寫在兩個地方 —— 預覽表格一份、`generateInner()` 一份 ——
+ * 而它們**已經不一樣了**：預覽在後面多印一段灰色的「1 × $9,000」，
+ * 寫進資料庫的沒有。人事費更糟，預覽印「（房源）」那四個字，
+ * 而那是我當初寫死的佔位字，從來沒帶進過房源名。
+ *
+ * 症狀是**看到的跟存進去的不是同一個東西**，而畫面上完全看不出來
+ * —— 跟 CLAUDE.md 那條「同一條規則在三個地方各寫一次」同一種病。
+ *
+ * ★ 現在畫面與寫入都呼叫這一支。要改名字改這裡。
+ *
+ * ============================================================
+ * 【★★ 改了這裡不會動到已經產生的支出】
+ *
+ * 產生是 `upsert` ＋ `ignoreDuplicates`，既有的那筆不會被覆蓋。
+ * 所以改完之後八月的舊資料維持舊名字，九月才是新的 ——
+ * 這是刻意的（已經對過的帳不該無聲變動），但要知道會有兩種名字並存。
+ */
+
+/** 清潔費。★ `units` 是 1 的時候不印 —— 「房務清潔 1485 ×1」是雜訊。 */
+export function cleanItemName(label: string, units: number): string {
+  const u = Number(units);
+  const suffix = u !== 1 && Number.isFinite(u) ? ` ×${Number(u.toFixed(2))}` : '';
+  return `房務清潔 ${label ?? ''}`.trimEnd() + suffix;
+}
+
+/**
+ * 人事費。
+ *
+ * ★ 沒有物業／房源字樣 —— 表格已經有「物業」與「房源」兩欄
+ *   （2026-09-03 使用者:「項目1 物業2 房源3」）。
+ *   名字裡再寫一次只是把同一件事講兩遍，而兩邊不同步時就變成矛盾。
+ */
+export const LABOR_ITEM_NAME = '房務人事費';

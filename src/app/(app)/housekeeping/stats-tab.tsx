@@ -5,7 +5,9 @@ import * as XLSX from 'xlsx-js-style';
 import { createClient } from '@/lib/supabase';
 import { cleanCounts, filterItems, buildLookup, matchProperty, type HkStaff, type HkProperty } from '@/lib/hkParse';
 import { payroll, byEstate, estateLog, dailyUnits, fmtUnits } from '@/lib/hk-payroll';
-import { cleaningCosts, laborCosts, lastDayOf, costTotal } from '@/lib/hk-cost';
+import {
+  cleaningCosts, laborCosts, lastDayOf, costTotal, cleanItemName, LABOR_ITEM_NAME,
+} from '@/lib/hk-cost';
 // ★ useRef 的同步閘門 —— useState 是非同步的,連點兩下會兩筆都送出去
 import { useOnce } from '@/lib/once';
 import { sharePreview, previewText } from '@/lib/hk-crew';
@@ -227,26 +229,62 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
    *   **房源** id → 物業名，鍵不一樣。
    */
   const [estNameById, setEstNameById] = useState<Record<string, string>>({});
+  /** `properties.id` → ERP 房源名。預覽的「房源」欄。 */
+  const [propNameById, setPropNameById] = useState<Record<string, string>>({});
+  /**
+   * `properties.id` → `estate_id`。
+   *
+   * ★★★ 注意跟 `estateById` 不一樣 —— 那一支存的是物業**名字**，
+   *   這一支是 **uuid**。寫進 `expenses.estate_id` 要的是這一支。
+   *   （2026-09-03:清潔支出一直沒寫 estate_id，支出頁的「用途」欄整欄空白）
+   */
+  const [estIdByProp, setEstIdByProp] = useState<Record<string, string>>({});
   /** 人事費設定（月固定）。 */
   const [labor, setLabor] = useState<any[]>([]);
   const [genOpen, setGenOpen] = useState(false);
   /** 預覽裡「支出長什麼樣子」那一段展開了沒。 */
   const [genRowsOpen, setGenRowsOpen] = useState(false);
+  /**
+   * 使用者在預覽裡改過的項目名稱。key 是那一列的 `hk_job_key` / `hk_labor_key`。
+   *
+   * ★ 只活在對話框打開的期間 —— 關掉就回到預設名字。改了名要**馬上按產生**。
+   *   存起來的話又是一份要跟主檔同步的資料，而它只用一次。
+   */
+  const [nameBy, setNameBy] = useState<Record<string, string>>({});
+  /**
+   * ★★★ 這個月**已經產生過**的那些 key。
+   *
+   * 產生是 `upsert` ＋ `ignoreDuplicates` —— 已經在的那筆**不會被覆蓋**。
+   * 所以在預覽裡改已產生那列的名字，按下去會說成功，資料庫裡還是舊名字
+   * （CLAUDE.md:「RLS 擋下的 UPDATE 回成功且影響 0 列」同一種病:
+   *   沒有錯誤、沒有紅字、就是沒改到）。
+   *
+   * 所以那幾列鎖起來標「已產生」，改名請到支出頁。
+   */
+  const [doneKeys, setDoneKeys] = useState<Set<string>>(new Set());
+  const [doneLoading, setDoneLoading] = useState(false);
   useEffect(() => {
-    supabase.from('properties').select('id, clean_points, clean_price, estate_id, estates(name)')
+    supabase.from('properties').select('id, name, clean_points, clean_price, estate_id, estates(name)')
       .then(({ data }) => {
         const m: Record<string, number> = {};
         const pz: Record<string, number> = {};
         const e: Record<string, string> = {};
         const en: Record<string, string> = {};
+        // ★ ERP 的房源名。預覽的「房源」欄要它 —— 房務代碼（亞曼尼）
+        //   跟 ERP 房源（804）不是同一個字，而對不上的地方正是要看的地方
+        const pn: Record<string, string> = {};
+        const ei: Record<string, string> = {};
         for (const r of (data ?? []) as any[]) {
+          if (r.estate_id) ei[r.id] = r.estate_id;
           if (r.clean_points != null) m[r.id] = Number(r.clean_points);
           if (r.clean_price != null) pz[r.id] = Number(r.clean_price);
+          if (r.name) pn[r.id] = r.name;
           const nm = Array.isArray(r.estates) ? r.estates[0]?.name : r.estates?.name;
           if (nm) e[r.id] = nm;
           if (nm && r.estate_id) en[r.estate_id] = nm;
         }
         setPointsById(m); setPriceById(pz); setEstateById(e); setEstNameById(en);
+        setPropNameById(pn); setEstIdByProp(ei);
       });
   }, [supabase]);
 
@@ -324,6 +362,38 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
    * ★★ 已經產生過的**不會被更新**。改了單價之後重按，舊那筆維持原金額 ——
    *   要改請到支出頁。自動改的話，上個月已經對過的帳會無聲變動。
    */
+  /**
+   * 預覽裡的「項目」格。可以直接改名 —— **但已經產生過的鎖住**。
+   *
+   * ★★★ 鎖的理由不是權限，是**改了沒有用**:
+   *   產生走 `upsert` ＋ `ignoreDuplicates`，既有的那筆不會被覆蓋。
+   *   不鎖的話使用者改完按產生，畫面說成功，資料庫裡還是舊名字 ——
+   *   而這種「回成功但沒改到」正是最難查的一種
+   *   （CLAUDE.md 那條 RLS 影響 0 列）。
+   *
+   * ★ 已產生的那列直接寫「已產生」並指出去哪裡改，
+   *   不是只把輸入框變灰 —— 灰掉的欄位不會告訴人要找誰。
+   */
+  function nameCell(key: string, def: string) {
+    if (doneKeys.has(key)) {
+      return (
+        <td className="px-2 py-1 text-gray-400">
+          <span className="truncate align-middle">{def}</span>
+          <span className="ml-1 rounded bg-gray-100 text-gray-500 px-1.5 py-0.5 whitespace-nowrap">已產生</span>
+        </td>
+      );
+    }
+    return (
+      <td className="px-2 py-1">
+        <input
+          value={nameBy[key] ?? def}
+          onChange={(e) => setNameBy({ ...nameBy, [key]: e.target.value })}
+          className="w-full rounded border border-gray-300 px-1.5 py-0.5 text-[11px]"
+        />
+      </td>
+    );
+  }
+
   async function generateInner() {
     if (!gen.rows.length && !gen.lab.length) return flash('沒有可以產生的支出');
     setGenBusy(true);
@@ -346,13 +416,17 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
 
       const cleanRows = gen.rows.map((r) => mk({
         work_date: r.work_date, amount: r.amount, property_id: r.property_id,
-        item_name: `房務清潔 ${r.label}${r.units !== 1 ? ` ×${fmtUnits(r.units)}` : ''}`,
+        // ★★ 物業要一起寫。只給 property_id 的話支出頁的「用途」欄是空的
+        //   —— 那一欄讀的是 estate_id（2026-09-03）
+        estate_id: estIdByProp[r.property_id] ?? null,
+        // ★ 使用者在預覽裡改過就用他的。空字串當成沒改 —— 不讓項目變空白
+        item_name: nameBy[r.key]?.trim() || cleanItemName(r.label, r.units),
         key_job: r.key,
       }));
       const laborRows = gen.lab.map((r) => mk({
         spent_on: r.spent_on, amount: r.amount,
         property_id: r.property_id, estate_id: r.estate_id,
-        item_name: '房務人事費',
+        item_name: nameBy[r.key]?.trim() || LABOR_ITEM_NAME,
         key_labor: r.key,
       }));
 
@@ -386,6 +460,37 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
    *   合掃付一份不是兩份（2026-09-02 使用者確認）——
    *   用打掃量那套的話，正隆一間合掃就付 18,000。
    */
+  /*
+   * 開預覽時查一次「這個月已經產生過哪些」。
+   *
+   * ★ 只查 key 兩欄，不撈整列 —— 這是用來鎖畫面的，不是拿來對帳的。
+   * ★★ 不分頁。key 的數量 ＝ 這個月的清潔次數 ＋ 人事費筆數，
+   *   離 Supabase 那 1000 列的天花板還很遠（八月是 17 筆）。
+   *   真的破千的話這裡會安靜漏掉 —— 所以順手把筆數也記下來檢查。
+   */
+  useEffect(() => {
+    if (!genOpen) return;
+    let alive = true;
+    setDoneLoading(true);
+    supabase.from('expenses')
+      .select('hk_job_key, hk_labor_key')
+      .or('hk_job_key.not.is.null,hk_labor_key.not.is.null')
+      .limit(2000)
+      .then(({ data, error }) => {
+        if (!alive) return;
+        setDoneLoading(false);
+        // ★ 查不到就當作「都還沒產生」—— 寧可讓人能編，也不要無聲鎖住整張表
+        if (error) return setDoneKeys(new Set());
+        const k = new Set<string>();
+        for (const r of (data ?? []) as any[]) {
+          if (r.hk_job_key) k.add(r.hk_job_key);
+          if (r.hk_labor_key) k.add(r.hk_labor_key);
+        }
+        setDoneKeys(k);
+      });
+    return () => { alive = false; };
+  }, [genOpen, supabase]);
+
   const gen = useMemo(() => {
     const jobs = [...estateLogs.values()].flat();
     const { rows, unpriced } = cleaningCosts(jobs, (pid) => priceById[pid]);
@@ -393,6 +498,11 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
     return { rows, unpriced, lab,
              total: costTotal(rows) + costTotal(lab) };
   }, [estateLogs, priceById, labor, period]);
+  /** 這次預覽裡有幾筆是已經產生過的。 */
+  const doneNum = useMemo(
+    () => [...gen.rows, ...gen.lab].filter((r) => doneKeys.has(r.key)).length,
+    [gen, doneKeys]);
+
   const estateMax = Math.max(1, ...estateLines.map((e) => e.points));
   const estateTotal = estateLines.reduce(
     (a, e) => ({ units: a.units + e.units, points: a.points + e.points }), { units: 0, points: 0 });
@@ -1111,58 +1221,80 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
             </button>
             {genRowsOpen && (
               <div className="mt-2 rounded-lg border border-mor-line overflow-hidden">
-                <table className="w-full text-[11px] table-fixed">
+                <div className="overflow-x-auto">
+                <table className="w-full text-[11px] min-w-[680px]">
                   <tbody>
                     <tr className="bg-gray-50 text-gray-500">
                       <td className="px-2 py-1.5 w-20">日期</td>
-                      <td className="px-2 py-1.5">項目</td>
-                      <td className="px-2 py-1.5 w-24">會計科目</td>
-                      <td className="px-2 py-1.5 w-16">標籤</td>
-                      <td className="px-2 py-1.5 w-20">付款方式</td>
+                      <td className="px-2 py-1.5 w-44">項目</td>
+                      <td className="px-2 py-1.5 w-20">物業</td>
+                      <td className="px-2 py-1.5 w-24">房源</td>
+                      <td className="px-2 py-1.5 w-20">會計科目</td>
+                      <td className="px-2 py-1.5 w-14">標籤</td>
+                      <td className="px-2 py-1.5 w-16">付款方式</td>
                       <td className="px-2 py-1.5 w-24 text-right">金額</td>
                     </tr>
                     {gen.rows.map((r) => (
                       <tr key={r.key} className="border-t border-mor-line/60">
                         <td className="px-2 py-1 text-gray-500">{r.work_date}</td>
-                        <td className="px-2 py-1 truncate">
-                          房務清潔 {r.label}{r.units !== 1 ? ` ×${fmtUnits(r.units)}` : ''}
-                          <span className="ml-1 text-gray-400">
-                            {fmtUnits(r.units)} × ${r.price.toLocaleString('en-US')}
-                          </span>
-                        </td>
+                        {nameCell(r.key, cleanItemName(r.label, r.units))}
+                        <td className="px-2 py-1 text-gray-600">{estateById[r.property_id] ?? '—'}</td>
+                        <td className="px-2 py-1 text-gray-600">{propNameById[r.property_id] ?? '—'}</td>
                         <td className="px-2 py-1 text-gray-500">房務清潔</td>
                         <td className="px-2 py-1">
                           <span className="rounded bg-mor-bluelight text-mor-slate px-1.5 py-0.5">房務</span>
                         </td>
                         <td className="px-2 py-1 text-gray-400">無</td>
-                        <td className="px-2 py-1 text-right tabular-nums">
+                        <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap">
                           ${r.amount.toLocaleString('en-US')}
+                          {/* ★ 單價留在金額底下 —— 「1 × $9,000」是算式不是名字，
+                              放在項目欄裡會讓人以為那是要寫進去的字 */}
+                          <div className="text-gray-400">
+                            {fmtUnits(r.units)} × ${r.price.toLocaleString('en-US')}
+                          </div>
                         </td>
                       </tr>
                     ))}
                     {gen.lab.map((r) => (
                       <tr key={r.key} className="border-t border-mor-line/60 bg-amber-50/40">
                         <td className="px-2 py-1 text-gray-500">{r.spent_on}</td>
-                        <td className="px-2 py-1 truncate">
-                          房務人事費
-                          <span className="ml-1 text-gray-400">
-                            {r.property_id
-                              ? '（房源）'
-                              : `（${estNameById[r.estate_id ?? ''] ?? '物業'} 整個物業）`}
-                          </span>
+                        {nameCell(r.key, LABOR_ITEM_NAME)}
+                        <td className="px-2 py-1 text-gray-600">
+                          {r.property_id
+                            ? (estateById[r.property_id] ?? '—')
+                            : (estNameById[r.estate_id ?? ''] ?? '—')}
+                        </td>
+                        <td className="px-2 py-1 text-gray-600">
+                          {r.property_id
+                            ? (propNameById[r.property_id] ?? '—')
+                            : <span className="text-gray-400">整個物業</span>}
                         </td>
                         <td className="px-2 py-1 text-gray-500">房務清潔</td>
                         <td className="px-2 py-1">
                           <span className="rounded bg-mor-bluelight text-mor-slate px-1.5 py-0.5">房務</span>
                         </td>
                         <td className="px-2 py-1 text-gray-400">無</td>
-                        <td className="px-2 py-1 text-right tabular-nums">
+                        <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap">
                           ${r.amount.toLocaleString('en-US')}
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
+                </div>
+                {/*
+                  ★ 說明放在表格**底下**、不是頁面最上方 ——
+                    這張表要捲，訊息跑到看不見的地方等於沒講
+                    （CLAUDE.md 2026-09-02）。
+                  ★★ 一行講完:改名只對還沒產生的有效。
+                */}
+                <div className="border-t border-mor-line bg-gray-50 px-2 py-1.5 text-[11px] text-gray-500">
+                  {doneLoading
+                    ? '正在查這個月已經產生過哪些…'
+                    : doneNum > 0
+                      ? `項目名稱可以直接改。標「已產生」的 ${doneNum} 筆改名沒有用（系統不會覆蓋既有支出），要改請到支出頁。`
+                      : '項目名稱可以直接改。改完要按下面的「產生」才算數，關掉視窗就回到預設名字。'}
+                </div>
               </div>
             )}
           </div>
