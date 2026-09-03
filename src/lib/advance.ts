@@ -176,10 +176,15 @@ export function validateAdvance(a: Advance): string | null {
   if (!(CATEGORIES as readonly string[]).includes(a.category)) return '要選類別';
   if (!a.counterparty?.trim()) return '要填對象（錢付給誰）';
   /*
-   * ★ 用途是必填。留空的話三個月後看到一筆 150,000 的暫付，
+   * ★ 項目是必填。留空的話三個月後看到一筆 150,000 的暫付，
    *   只知道付給誰、不知道為什麼 —— 而要收回時得先想起那是什麼。
+   *
+   * ★★ 訊息裡的欄位名要跟**畫面上的標籤一致**。這一欄 2026-09-03
+   *   從「用途」改名成「項目」（用途讓給了物業那個下拉），
+   *   訊息沒跟著改的話會變成「畫面說項目、報錯說用途」——
+   *   使用者會去找一個不存在的欄位。
    */
-  if (!a.usage?.trim()) return '要填用途';
+  if (!a.usage?.trim()) return '要填項目';
 
   const amt = Number(a.amount);
   if (!Number.isFinite(amt)) return '金額只能填數字';

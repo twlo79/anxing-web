@@ -70,6 +70,23 @@ const CAT_CLASS: Record<string, string> = {
 
 const CTRL = 'h-11 md:h-9 rounded-lg border border-gray-300 px-2 text-sm bg-white';
 
+/**
+ * 必填欄位的標題（2026-09-03 使用者:「必填 打*」）。
+ *
+ * ★★ 只有**真的會擋下存檔**的四個欄位可以用這個 ——
+ *   類別、對象、項目、暫付款（`validateAdvance` 擋的就是這四個）。
+ *   標了星卻不擋、或擋了卻沒標，兩種都會讓人不信任那顆星。
+ *
+ * ★ 星號是紅的而且在字後面 —— 表單慣例，不用另外解釋。
+ */
+function Req({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="text-xs text-gray-500">
+      {children}<span className="text-red-500 ml-0.5">*</span>
+    </span>
+  );
+}
+
 type Row = Advance & { id: string; estate_id: string | null; purpose_type?: string | null; created_at?: string };
 
 const blank = (): Advance => ({
@@ -404,27 +421,31 @@ export function AdvanceList({
             <div className="text-ui font-medium mb-3">{edit.id ? '編輯暫付' : '新增暫付'}</div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">類別</span>
+              {/*
+                ══════════ 項目排第一（2026-09-03 使用者指定）══════════
+
+                ★ 這是「這筆錢在做什麼」—— 填表的人腦中第一個念頭，
+                  而且是之後**唯一認得出這筆是什麼**的欄位。
+                  類別（押金/保證金/零用金）是分類，分類要先有東西才分得了。
+
+                ★★ 跟支出頁一致:那邊也是「項目」在最上面。
+              */}
+              <label className="flex flex-col gap-1 sm:col-span-2"><Req>項目</Req>
+                <input value={edit.usage} autoFocus
+                  onChange={(e) => setEdit({ ...edit, usage: e.target.value })}
+                  placeholder="辦公室租賃／零用金撥補／114 年清潔標案" className={CTRL} /></label>
+
+              <label className="flex flex-col gap-1"><Req>類別</Req>
                 <select value={edit.category}
                   onChange={(e) => setEdit({ ...edit, category: e.target.value as Advance['category'] })}
                   className={CTRL}>
                   {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
                 </select></label>
 
-              <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">對象（錢付給誰）</span>
+              <label className="flex flex-col gap-1"><Req>對象（錢付給誰）</Req>
                 <input value={edit.counterparty}
                   onChange={(e) => setEdit({ ...edit, counterparty: e.target.value })}
                   placeholder="王大明／台北市政府" className={CTRL} /></label>
-
-              {/*
-                ★★★ 這一欄本來叫「用途」，2026-09-03 改叫「項目」——
-                  因為「用途」讓給了下面那個下拉（跟支出頁一致:用途＝物業）。
-                  同一個詞在兩頁不同意思是最難查的一種錯，而它不會報錯。
-              */}
-              <label className="flex flex-col gap-1 sm:col-span-2"><span className="text-xs text-gray-500">項目</span>
-                <input value={edit.usage}
-                  onChange={(e) => setEdit({ ...edit, usage: e.target.value })}
-                  placeholder="辦公室租賃／零用金撥補／114 年清潔標案" className={CTRL} /></label>
 
               {/*
                 用途（migration_212）。★ 安幸辦公室**不是物業** ——
@@ -439,7 +460,7 @@ export function AdvanceList({
                   {estates.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
                 </select></label>
 
-              <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">暫付款</span>
+              <label className="flex flex-col gap-1"><Req>暫付款</Req>
                 <MoneyInput value={edit.amount} onChange={(n) => setEdit({ ...edit, amount: n })}
                   className={`${CTRL} text-right`} /></label>
 

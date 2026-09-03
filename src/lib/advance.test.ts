@@ -88,8 +88,13 @@ describe('validateAdvance —— 必填', () => {
   test('類別亂填', () => assert.match(validateAdvance(A({ category: '訂金' as never })) ?? '', /要選類別/));
   test('沒填對象', () => assert.match(validateAdvance(A({ counterparty: '  ' })) ?? '', /對象/));
 
-  // ★ 用途留空的話，三個月後只知道付給誰、不知道為什麼
-  test('沒填用途', () => assert.match(validateAdvance(A({ usage: '' })) ?? '', /用途/));
+  /*
+   * ★ 項目留空的話，三個月後只知道付給誰、不知道為什麼。
+   * ★★ 這裡比對的是「項目」不是「用途」—— 2026-09-03 改名了
+   *   （用途讓給了物業那個下拉）。訊息裡的欄位名必須跟畫面上的標籤一致，
+   *   不然使用者會去找一個不存在的欄位。
+   */
+  test('沒填項目', () => assert.match(validateAdvance(A({ usage: '' })) ?? '', /項目/));
 
   test('金額是 0', () => assert.match(validateAdvance(A({ amount: 0 })) ?? '', /大於 0/));
   test('金額是負數', () => assert.match(validateAdvance(A({ amount: -1 })) ?? '', /大於 0/));
