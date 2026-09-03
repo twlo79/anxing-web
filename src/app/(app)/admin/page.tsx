@@ -5,6 +5,11 @@ import {
 } from '@/lib/estate-manager';
 import Toast from '@/components/Toast';
 import { createClient } from '@/lib/supabase';
+import {
+  parseBeds, parsePoints, parsePrice, parseLabor,
+  laborMode, canEditEstateLabor, canEditRoomLabor, laborLockMsg,
+  cleanGaps, hasGap,
+} from '@/lib/clean-params';
 import { extraDetails, needsCrawlerDetail } from '@/lib/sync-extra';
 import { findListingOwner, listingOwnerHint } from '@/lib/listing-owner';
 import { useProfile } from '@/lib/profile';
@@ -139,7 +144,7 @@ const METHOD_LABEL: Record<string, string> = { transfer: '匯款', credit_card: 
 
 const TAB_LABEL = {
   people: '權限管理', estates: '物業與負責人', accounts: '收付款帳號',
-  payees: '常用帳號', props: '房源管理',
+  payees: '常用帳號', props: '房源管理', clean: '清潔計算',
   sync: '同步建議', audit: '編輯紀錄',
 } as const;
 type TabKey = keyof typeof TAB_LABEL;
@@ -279,6 +284,16 @@ export default function AdminPage() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [estates, setEstates] = useState<Estate[]>([]);
   const [properties, setProperties] = useState<Property[]>([]);
+  /**
+   * 人事費（`hk_labor_cost`，migration_206）。
+   *
+   * ★★ 跟 `properties` 是**不同一張表** —— 畫面上排在同一列，
+   *   但寫入是兩條路。`estate_id` 與 `property_id` 擇一。
+   *
+   * ★ 含停用的一起載:停用的那筆佔著唯一索引，
+   *   不知道它在的話「新增」會撞鍵而使用者看到的只是「更新失敗」。
+   */
+  const [labor, setLaborRows] = useState<any[]>([]);
   /*
    * 一間房的所有 Airbnb 編號（migration_127）。
    *
@@ -323,6 +338,8 @@ export default function AdminPage() {
     const { data: pr } = await supabase.from('properties')
       .select('id, name, estate_id, airbnb_listing_id, parent_property_id, beds, clean_points, clean_price, active').order('name');
     const { data: pa } = await supabase.from('payment_accounts').select('*').order('sort').order('code');
+    const { data: lb } = await supabase.from('hk_labor_cost')
+      .select('id, estate_id, property_id, monthly_amount, active, note');
     const { data: pl } = await supabase.from('property_listings')
       .select('listing_id, property_id, is_current, note').order('is_current', { ascending: false });
     // 任期表很小（一個物業幾段）,一次載完在前端算就好
@@ -334,6 +351,7 @@ export default function AdminPage() {
     setEstates(es ?? []);
     setListings(pl ?? []);
     setProperties(pr ?? []);
+    setLaborRows((lb ?? []) as any[]);
     setPayAccounts(pa ?? []);
     setTenures((tn ?? []) as MgrTenure[]);
     setSelEstate((cur) => cur || es?.[0]?.id || '');
@@ -733,6 +751,96 @@ export default function AdminPage() {
     if (error) return flash('新增失敗:' + error.message);
     setNewPropName(''); flash('已新增 ' + name); load();
   }
+  /**
+   * 這一列的人事費目前是多少。回 null = 沒設。
+   *
+   * ★ 只認 `active` 的 —— 停用的那筆還在表裡（唯一索引是部分索引），
+   *   但它不產生支出，畫面上不該顯示成「有設」。
+   */
+  function laborOf(key: { estateId?: string; propertyId?: string }): number | null {
+    const r = labor.find((x) => x.active
+      && (key.estateId ? x.estate_id === key.estateId : x.property_id === key.propertyId));
+    return r ? Number(r.monthly_amount) : null;
+  }
+
+  /**
+   * 存人事費。整棟或某一間，擇一。
+   *
+   * ============================================================
+   * 【★★★ 三條路，而且每一條都要檢查影響列數】
+   *
+   *   留空 ＋ 本來有  → 刪掉
+   *   有值 ＋ 本來有  → 改金額
+   *   有值 ＋ 本來沒有 → 新增
+   *
+   * ★★ 每一條都 `.select('id')` 回來數長度。
+   *   RLS 擋下的 update/delete **回成功而且影響 0 列**（CLAUDE.md）——
+   *   不檢查的話畫面會說「已更新」，而金額根本沒變。
+   *
+   * ★ 不用 upsert:唯一索引是**部分索引**（`where active`），
+   *   PostgREST 的 onConflict 指不到部分索引。
+   */
+  async function saveLabor(
+    key: { estateId?: string; propertyId?: string },
+    raw: string,
+  ) {
+    const r = parseLabor(raw);
+    if (!r.ok) return flash(r.error);
+
+    const cur = labor.find((x) => x.active
+      && (key.estateId ? x.estate_id === key.estateId : x.property_id === key.propertyId));
+    const curVal = cur ? Number(cur.monthly_amount) : null;
+    if (r.value === curVal) return;                    // 沒變就不打 API
+
+    if (r.value == null) {
+      if (!cur) return;
+      const { data, error } = await supabase.from('hk_labor_cost')
+        .delete().eq('id', cur.id).select('id');
+      if (error) return flash('刪除失敗:' + error.message);
+      if (!data?.length) return flash('沒有任何一列被刪除 —— 通常是權限');
+      flash('已清空人事費'); return load();
+    }
+
+    if (cur) {
+      const { data, error } = await supabase.from('hk_labor_cost')
+        .update({ monthly_amount: r.value }).eq('id', cur.id).select('id');
+      if (error) return flash('更新失敗:' + error.message);
+      if (!data?.length) return flash('沒有任何一列被更新 —— 通常是權限');
+      flash('已更新'); return load();
+    }
+
+    const { data, error } = await supabase.from('hk_labor_cost')
+      .insert({
+        estate_id: key.estateId ?? null,
+        property_id: key.propertyId ?? null,
+        monthly_amount: r.value,
+        active: true,
+      }).select('id');
+    if (error) return flash('新增失敗:' + error.message);
+    if (!data?.length) return flash('沒有新增任何一列 —— 通常是權限');
+    flash('已新增'); return load();
+  }
+
+  /**
+   * 清潔參數的其中一格改了。三個欄位共用 —— 驗證規則在 `clean-params.ts`。
+   *
+   * ★ 驗證沒過就把輸入框**還原成原值**，不是留著紅字 ——
+   *   留著的話使用者以為存進去了。
+   */
+  function saveCleanField(
+    ev: React.FocusEvent<HTMLInputElement>,
+    p: Property,
+    field: 'beds' | 'clean_points' | 'clean_price',
+    parse: (raw: string) => { ok: boolean; value?: number | null; error?: string },
+  ) {
+    const cur = (p as any)[field] == null ? '' : String((p as any)[field]);
+    const raw = ev.target.value.trim();
+    if (raw === cur) return;
+    const r = parse(raw);
+    if (!r.ok) { ev.target.value = cur; return flash(r.error!); }
+    updateProperty(p.id, { [field]: r.value } as any);
+  }
+
   async function updateProperty(id: string, patch: Partial<Property>) {
     const { error } = await supabase.from('properties').update(patch).eq('id', id);
     if (error) return flash('更新失敗:' + error.message);
@@ -1227,9 +1335,15 @@ export default function AdminPage() {
                   <th className="px-4 py-2.5">房源名稱(點擊可改名)</th>
                   <th className="px-4 py-2.5">Airbnb listing_id</th>
                   <th className="px-4 py-2.5 whitespace-nowrap">屬於哪個房源</th>
-                  <th className="px-4 py-2.5 whitespace-nowrap">床數</th>
-                  <th className="px-4 py-2.5 whitespace-nowrap">打掃點數</th>
-                  <th className="px-4 py-2.5 whitespace-nowrap">清潔費</th>
+                  {/*
+                    ★★★ 床數／打掃點數／清潔費 2026-09-03 搬到「清潔計算」分頁
+                      （使用者:「房源管理 切出 清潔計算」）。
+
+                      是**搬走不是複製** —— 兩個地方都能改就會有兩個真相，
+                      而這一輪已經踩過三次同一種病。
+
+                      這一頁現在只回答「這棟有哪些房間、對到哪個 listing」。
+                  */}
                   <th className="px-4 py-2.5 text-right">操作</th>
                 </tr>
               </thead>
@@ -1279,7 +1393,7 @@ export default function AdminPage() {
                             moveListing(id, p.id);
                             return;
                           }
-                          /*
+                    /*
                             上面找不到持有者也不能就直接寫。
 
                             前端這份清單是載入當下的快照 —— 別人剛剛填了同一個
@@ -1364,82 +1478,13 @@ export default function AdminPage() {
                           .map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
                       </select>
                     </td>
-                    {/*
-                      布巾組數 ＝ 床數 × 打掃次數。沒填的話那間房
-                      算不出房務要帶幾組 —— 而算不出來就是靜靜地少帶。
-                      公區填 0。
-                    */}
-                    <td className="px-4 py-2 whitespace-nowrap">
-                      <input defaultValue={p.beds ?? ''} placeholder="未填"
-                        inputMode="numeric"
-                        onBlur={(ev) => {
-                          const v = ev.target.value.trim();
-                          const cur = p.beds == null ? '' : String(p.beds);
-                          if (v === cur) return;
-                          if (v && !/^\d+$/.test(v)) { ev.target.value = cur; return flash('床數只能是數字'); }
-                          updateProperty(p.id, { beds: v === '' ? null : Number(v) });
-                        }}
-                        className={`rounded-lg border px-2 py-1 w-16 text-center ${
-                          p.beds == null ? 'border-amber-300 bg-amber-50/50' : 'border-gray-300'}`} />
-                    </td>
-                    {/*
-                      打掃點數 ＝ 難度係數。報酬點數 ＝ 打掃量 × 這個值。
-
-                      難度是房子的性質不是人的 —— 開封4F 四層樓爬上爬下，
-                      誰去掃都一樣。掛在人身上的話每換一個負責人就要重設一次，
-                      而漏設那次不會報錯，只會讓那個月的報酬少一截。
-                    */}
-                    <td className="px-4 py-2 whitespace-nowrap">
-                      <input defaultValue={p.clean_points ?? ''} placeholder="未設"
-                        inputMode="decimal"
-                        onBlur={(ev) => {
-                          const v = ev.target.value.trim();
-                          const cur = p.clean_points == null ? '' : String(p.clean_points);
-                          if (v === cur) return;
-                          if (v && !/^\d+(\.\d)?$/.test(v)) {
-                            ev.target.value = cur;
-                            return flash('打掃點數只能是數字（可帶一位小數）');
-                          }
-                          updateProperty(p.id, { clean_points: v === '' ? null : Number(v) });
-                        }}
-                        className={`rounded-lg border px-2 py-1 w-16 text-center ${
-                          p.clean_points == null ? 'border-amber-300 bg-amber-50/50' : 'border-gray-300'}`} />
-                    </td>
-                    {/*
-                      清潔費（migration_206）＝ 一份工要付多少錢。
-
-                      ★★ 跟左邊那一欄不一樣:打掃點數是**算薪**用的難度分，
-                        清潔費是**付出去**的錢。兩個都要填，缺一個就少一半。
-
-                      ★★★ 未設的**不產生支出**，不是當成 0 —— 支出頁看到一筆 $0
-                        只會被當成「還沒填」，而帳實際上少一截。
-                        產生預覽會把未設的列出來。
-
-                      ★ 允許小數（有些是拆帳後的零頭），但不允許負數。
-                    */}
-                    <td className="px-4 py-2 whitespace-nowrap">
-                      <input defaultValue={p.clean_price ?? ''} placeholder="未設"
-                        inputMode="decimal"
-                        onBlur={(ev) => {
-                          const v = ev.target.value.trim().replace(/,/g, '');
-                          const cur = p.clean_price == null ? '' : String(p.clean_price);
-                          if (v === cur) return;
-                          if (v && !/^\d+(\.\d{1,2})?$/.test(v)) {
-                            ev.target.value = cur;
-                            return flash('清潔費只能是 0 以上的數字（可帶兩位小數）');
-                          }
-                          updateProperty(p.id, { clean_price: v === '' ? null : Number(v) });
-                        }}
-                        className={`rounded-lg border px-2 py-1 w-24 text-right ${
-                          p.clean_price == null ? 'border-amber-300 bg-amber-50/50' : 'border-gray-300'}`} />
-                    </td>
                     <td className="px-4 py-2 text-right">
                       <button onClick={() => deleteProperty(p.id, p.name)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
                     </td>
                   </tr>
                 ))}
                 {properties.filter((p) => p.estate_id === selEstate).length === 0 && (
-                  <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-400">此物業尚無房源</td></tr>
+                  <tr><td colSpan={4} className="px-4 py-6 text-center text-gray-400">此物業尚無房源</td></tr>
                 )}
               </tbody>
             </table>
@@ -1459,11 +1504,10 @@ export default function AdminPage() {
         */}
         {(() => {
           const here = properties.filter((p) => p.estate_id === selEstate);
+          // ★ 床數／點數／清潔費的三段警告 2026-09-03 搬到「清潔計算」分頁 ——
+          //   警告要跟它能修的欄位在同一頁，不然看到了也不知道去哪改
           const noListing = here.filter((p) => !p.airbnb_listing_id);
-          const noBeds = here.filter((p) => p.beds == null);
-          const noPoints = here.filter((p) => p.clean_points == null);
-          const noPrice = here.filter((p) => p.clean_price == null);
-          if (!noListing.length && !noBeds.length && !noPoints.length && !noPrice.length) return null;
+          if (!noListing.length) return null;
           return (
             <div className="text-xs text-amber-700 mt-1 space-y-1">
               {noListing.length > 0 && (
@@ -1472,32 +1516,6 @@ export default function AdminPage() {
                   走 Airbnb 的房源一定要填 —— 沒填的話那個 listing 的訂單抓回來對不到房源,
                   整筆不會進系統。（不走 Airbnb 的房源留空是正常的。）
                   listing_id 在 Airbnb 房源網址裡:<span className="font-mono">airbnb.com/rooms/<b>1234567890</b></span>
-                </p>
-              )}
-              {noBeds.length > 0 && (
-                <p>
-                  <b>{noBeds.length} 間沒填床數</b>：{noBeds.map((p) => p.name).join('、')}。
-                  房務的布巾組數 ＝ 床數 × 打掃次數 —— 沒填的話那間房算不出要帶幾組,
-                  而算不出來就是<b>靜默地少帶</b>,到現場才發現。公區填 0。
-                </p>
-              )}
-              {noPoints.length > 0 && (
-                <p>
-                  <b>{noPoints.length} 間沒設打掃點數</b>：{noPoints.map((p) => p.name).join('、')}。
-                  報酬點數 ＝ 打掃量 × 打掃點數 —— 沒設的話那幾間<b>算不出報酬</b>
-                  （不是算成 0,是列進「算不出來」讓人看見）。
-                </p>
-              )}
-              {/*
-                ★★★ 沒設清潔費的要主動講:那幾間被打掃時**整筆不產生支出**
-                  —— 不是記成 $0。$0 至少看得到，不產生是帳上憑空少一截，
-                  而沒有任何地方會叫（migration_206）。
-              */}
-              {noPrice.length > 0 && (
-                <p>
-                  <b>{noPrice.length} 間沒設清潔費</b>：{noPrice.map((p) => p.name).join('、')}。
-                  那幾間被打掃時<b>不會產生支出</b>（不是記成 $0，是整筆不產生）。
-                  不用付清潔費的房源留空是正常的。
                 </p>
               )}
             </div>
@@ -1524,6 +1542,182 @@ export default function AdminPage() {
         所以這裡的清單是「現在還沒解決的」—— 修好之後隔天自己消失。
         清單空了就代表真的沒事了,那是流水帳給不了的保證。
       */}
+      {/*
+        ══════════ 清潔計算（2026-09-03 使用者指定）══════════
+
+        「房源管理 切出 清潔計算 / 1.床位 2.打掃點數 3.清潔費 4.整棟人事費
+          流程 > 先創物業 > 設定房源 > 設定清潔」
+
+        ★★★ 這四個參數**只在這一頁能改**。房源管理那邊已經拿掉了 ——
+          兩個地方都能改就會有兩個真相，而畫面上看不出哪個是對的。
+
+        ★★ 前三欄寫 `properties`，第四欄寫 `hk_labor_cost`（另一張表）。
+          排在一起是因為使用者的心智模型是「這間房要花多少錢」，
+          不是「這些欄位存在哪」。
+
+        ★ 驗證規則全部在 `src/lib/clean-params.ts`（有 21 條測試）——
+          四個欄位本來各自 inline 一份正規表示式，而且已經不一致了。
+      */}
+      {tab === 'clean' && (
+      <section className="mt-8">
+        <h2 className="text-sm font-semibold text-gray-700 mb-2">清潔計算</h2>
+        {/*
+          ★ 流程講在最上面。使用者自己講的順序 ——
+            新來的人不知道要先去別的分頁建物業與房源，
+            會在這一頁對著空表格找「新增」按鈕（這裡沒有）。
+        */}
+        <p className="text-xs text-gray-500 mb-2 leading-relaxed">
+          順序：<b>物業與負責人</b>（先創物業）→ <b>房源管理</b>（設定房源）→ 這一頁（設定清潔）。
+          這一頁不能新增房源，只設定既有房源的清潔參數。
+        </p>
+        <div className="flex items-center gap-2 mb-2 text-sm">
+          <span className="text-xs text-gray-500">物業</span>
+          <select value={selEstate} onChange={(e) => setSelEstate(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
+            {estates.map((e) => <option key={e.id} value={e.id}>{e.name}{e.active ? '' : '(停用)'}</option>)}
+          </select>
+          <span className="text-xs text-gray-400">共 {properties.filter((p) => p.estate_id === selEstate).length} 間</span>
+        </div>
+        {(() => {
+          const here = properties.filter((p) => p.estate_id === selEstate);
+          const mode = laborMode(laborOf({ estateId: selEstate }),
+                                 here.map((p) => laborOf({ propertyId: p.id })));
+          const estLock = laborLockMsg(mode, 'estate');
+          const roomLock = laborLockMsg(mode, 'room');
+          const gaps = cleanGaps(here);
+          return (
+        <div className="rounded-xl glass overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[620px] text-sm">
+              <thead>
+                <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-white/45">
+                  <th className="px-4 py-2.5">房源</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">床位</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">打掃點數</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">清潔費</th>
+                  {/* ★ 人事費是另一張表 —— 用左邊那條線把它跟前三欄分開 */}
+                  <th className="px-4 py-2.5 whitespace-nowrap border-l border-mor-line">人事費／月</th>
+                </tr>
+              </thead>
+              <tbody>
+                {/*
+                  ★★★ 整棟那一列。正隆的 200,000 是整個物業一筆 ——
+                    正隆沒有「整棟」這個房源，塞不進 `properties`。
+                  ★ 只有人事費那一格可填。床位／點數／清潔費是房間的性質，
+                    整棟沒有那些東西。
+                */}
+                <tr className="border-b border-mor-line/60 bg-mor-bluelight/40">
+                  <td className="px-4 py-2 font-medium text-mor-slate whitespace-nowrap">{estates.find((e) => e.id === selEstate)?.name ?? ''} 整棟</td>
+                  <td className="px-4 py-2 text-gray-400">—</td>
+                  <td className="px-4 py-2 text-gray-400">—</td>
+                  <td className="px-4 py-2 text-gray-400">—</td>
+                  <td className="px-4 py-2 whitespace-nowrap border-l border-mor-line">
+                    <input key={`est-${selEstate}-${laborOf({ estateId: selEstate }) ?? ''}`}
+                      defaultValue={laborOf({ estateId: selEstate }) ?? ''}
+                      placeholder={estLock ? '已逐間設定' : '未設'}
+                      disabled={!canEditEstateLabor(mode)}
+                      inputMode="numeric"
+                      onBlur={(ev) => saveLabor({ estateId: selEstate }, ev.target.value)}
+                      className={`rounded-lg border px-2 py-1 w-28 text-right ${
+                        !canEditEstateLabor(mode) ? 'border-mor-line bg-gray-50 text-gray-400'
+                          : laborOf({ estateId: selEstate }) == null ? 'border-amber-300 bg-amber-50/50' : 'border-gray-300'}`} />
+                  </td>
+                </tr>
+                {here.map((p) => (
+                  <tr key={p.id} className="border-b border-mor-line/60 last:border-0">
+                    <td className="px-4 py-2 whitespace-nowrap">{p.name}</td>
+                    <td className="px-4 py-2 whitespace-nowrap">
+                      <input defaultValue={p.beds ?? ''} placeholder="未填" inputMode="numeric"
+                        onBlur={(ev) => saveCleanField(ev, p, 'beds', parseBeds)}
+                        className={`rounded-lg border px-2 py-1 w-16 text-center ${
+                          p.beds == null ? 'border-amber-300 bg-amber-50/50' : 'border-gray-300'}`} />
+                    </td>
+                    <td className="px-4 py-2 whitespace-nowrap">
+                      <input defaultValue={p.clean_points ?? ''} placeholder="未設" inputMode="decimal"
+                        onBlur={(ev) => saveCleanField(ev, p, 'clean_points', parsePoints)}
+                        className={`rounded-lg border px-2 py-1 w-16 text-center ${
+                          p.clean_points == null ? 'border-amber-300 bg-amber-50/50' : 'border-gray-300'}`} />
+                    </td>
+                    <td className="px-4 py-2 whitespace-nowrap">
+                      <input defaultValue={p.clean_price ?? ''} placeholder="未設" inputMode="decimal"
+                        onBlur={(ev) => saveCleanField(ev, p, 'clean_price', parsePrice)}
+                        className={`rounded-lg border px-2 py-1 w-24 text-right ${
+                          p.clean_price == null ? 'border-amber-300 bg-amber-50/50' : 'border-gray-300'}`} />
+                    </td>
+                    <td className="px-4 py-2 whitespace-nowrap border-l border-mor-line">
+                      <input key={`lab-${p.id}-${laborOf({ propertyId: p.id }) ?? ''}`}
+                        defaultValue={laborOf({ propertyId: p.id }) ?? ''}
+                        placeholder={roomLock ? '已設整棟' : '未設'}
+                        disabled={!canEditRoomLabor(mode)}
+                        inputMode="numeric"
+                        onBlur={(ev) => saveLabor({ propertyId: p.id }, ev.target.value)}
+                        className={`rounded-lg border px-2 py-1 w-28 text-right ${
+                          !canEditRoomLabor(mode) ? 'border-mor-line bg-gray-50 text-gray-400' : 'border-gray-300'}`} />
+                    </td>
+                  </tr>
+                ))}
+                {here.length === 0 && (
+                  <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-400">
+                    此物業尚無房源 —— 先到「房源管理」新增
+                  </td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          {/*
+            ★ 鎖住的原因寫在表格底下，緊接著那一欄 ——
+              只把欄位變灰的話，使用者不知道是壞了還是故意的
+              （CLAUDE.md:「訊息要出現在動作發生的地方」）。
+          */}
+          {(estLock || roomLock) && (
+            <div className="border-t border-mor-line bg-mor-bluelight/30 px-4 py-2 text-xs text-mor-slate">
+              {estLock ?? roomLock}
+            </div>
+          )}
+        </div>
+          );
+        })()}
+        <p className="text-xs text-gray-400 mt-2">
+          直接點欄位即可修改(改完點空白處儲存)。<b>床位</b>算布巾組數、
+          <b>打掃點數</b>算房務報酬、<b>清潔費</b>與<b>人事費</b>算支出 ——
+          四個各管各的，缺一個就少一塊。
+        </p>
+        {/*
+          ★★★ 缺什麼要**講出房源名**不是筆數 —— 正隆有 74 列，
+            「3 間沒設」等於叫人自己一列列找。
+        */}
+        {(() => {
+          const here = properties.filter((p) => p.estate_id === selEstate);
+          const g = cleanGaps(here);
+          if (!hasGap(g)) return null;
+          return (
+            <div className="text-xs text-amber-700 mt-1 space-y-1">
+              {g.beds.length > 0 && (
+                <p>
+                  <b>{g.beds.length} 間沒填床位</b>：{g.beds.join('、')}。
+                  布巾組數 ＝ 床位 × 打掃次數 —— 沒填的話那間房算不出要帶幾組,
+                  而算不出來就是<b>靜默地少帶</b>,到現場才發現。公區填 0。
+                </p>
+              )}
+              {g.points.length > 0 && (
+                <p>
+                  <b>{g.points.length} 間沒設打掃點數</b>：{g.points.join('、')}。
+                  報酬點數 ＝ 打掃量 × 打掃點數 —— 沒設的話那幾間<b>算不出報酬</b>
+                  （不是算成 0,是列進「算不出來」讓人看見）。
+                </p>
+              )}
+              {g.price.length > 0 && (
+                <p>
+                  <b>{g.price.length} 間沒設清潔費</b>：{g.price.join('、')}。
+                  那幾間被打掃時<b>不會產生支出</b>（不是記成 $0，是整筆不產生）。
+                  不用付清潔費的房源留空是正常的。
+                </p>
+              )}
+            </div>
+          );
+        })()}
+      </section>
+      )}
+
       {tab === 'sync' && (
       <section className="space-y-5">
         {/* ── 分級規則 ─────────────────────────── */}
