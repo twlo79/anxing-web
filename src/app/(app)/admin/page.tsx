@@ -578,7 +578,30 @@ export default function AdminPage() {
   }
 
   // ---- 人員 ----
-  const activeHousekeepers = useMemo(() => staff.filter((s) => s.active && s.staff_type === 'housekeeper'), [staff]);
+  /**
+   * 可以當物業負責人的人。
+   *
+   * ============================================================
+   * 【★★★ 為什麼不只有管家】（2026-09-03 使用者:「經理會去兼管家的工作」）
+   *
+   * 房源評價的「管家」不是填寫人，是**那個時間點的物業負責人**
+   * （`estate_managers` 任期表，migration_115）。
+   *
+   * 原本這裡只列 `staff_type === 'housekeeper'` —— 而 Jessica 的職位是經理。
+   * 結果她選不進任何一個物業的負責人，她管的那些物業評價**歸不到任何人**，
+   * 而畫面上只是那個物業的負責人欄空著，沒有任何地方會叫。
+   *
+   * ★ 只放寬到經理，不是「全部的人」。房務、會計不會去管物業，
+   *   列進來只會讓下拉變長而且選得到錯的人。
+   *
+   * ★★ 以後如果會計也去兼，就該改成職位表加一個「可以當物業負責人」的欄位
+   *   （2026-09-03 討論過的 B 案）。現在只有一個人這樣，
+   *   為了還沒發生的情況先加一張表的複雜度不划算。
+   */
+  const MANAGERIAL_TYPES = ['housekeeper', 'manager'];
+  const estateManagerCands = useMemo(
+    () => staff.filter((s) => s.active && MANAGERIAL_TYPES.includes(s.staff_type ?? '')),
+    [staff]);
   // 有登入帳號(profiles)但名冊(staff)沒有對應列的孤兒帳號 —— 多半是直接用 SQL 建的
   const orphanAccounts = useMemo(() => {
     const linked = new Set(staff.map((s) => s.auth_uid).filter(Boolean));
@@ -1122,12 +1145,22 @@ export default function AdminPage() {
                           兩種都不會被發現。
                         */}
                         <div className="flex flex-wrap items-end gap-2 border-t border-mor-line pt-3">
-                          <label className="flex flex-col gap-1 text-xs text-gray-500">接手的管家
+                          {/*
+                            ★ 標題是「負責人」不是「管家」—— 經理也選得到了，
+                              掛在「管家」底下會讓人以為選錯人（2026-09-03）。
+                            ★★ 選項後面印職位。清單裡混了兩種職位時，
+                              光看名字分不出來 Jessica 是管家還是經理。
+                          */}
+                          <label className="flex flex-col gap-1 text-xs text-gray-500">接手的負責人
                             <select value={tenDraft.staff_id}
                               onChange={(ev) => setTenDraft({ ...tenDraft, staff_id: ev.target.value })}
                               className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm min-w-28">
                               <option value="">請選擇</option>
-                              {activeHousekeepers.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
+                              {estateManagerCands.map((h) => (
+                                <option key={h.id} value={h.id}>
+                                  {h.name}（{TYPE_LABEL[h.staff_type ?? 'other'] ?? h.staff_type}）
+                                </option>
+                              ))}
                             </select>
                           </label>
                           <label className="flex flex-col gap-1 text-xs text-gray-500">從哪一天開始

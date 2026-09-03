@@ -21,7 +21,31 @@ type Rec = {
 const PAGE_SIZE = 50;
 const FORM_HOUSEKEEPER = 'https://docs.google.com/forms/d/e/1FAIpQLSeTR203A1Q3rvyngaN0TJYadt7_Es_DoRsby_Xz5MKVVobeaw/viewform';
 const FORM_ROOMSERVICE = 'https://docs.google.com/forms/d/e/1FAIpQLSeS-lhGwtUjhZWHUSlxyTS9gygQdVA4y_HoWYEjAmdsXB6mZQ/viewform';
-const TYPE_LABEL: Record<string, string> = { housekeeper: '管家', roomservice: '房務', manager: '主管', accountant: '會計', other: '其他' };
+/**
+ * `cleaning_records.staff_type` → 畫面上的字。
+ *
+ * ★★★ `manager` 是「經理」不是「主管」（2026-09-03 修）。
+ *   「主管」是**權限**（`profiles.role`）的名字，這一欄存的是**職位**
+ *   （`staff.staff_type`）—— 權限管理頁上這兩欄本來就是分開的兩欄
+ *   （職位＝經理、權限＝主管），只有這裡把兩者混在一起。
+ *   同一個人在兩頁看到兩個頭銜，使用者會以為那是兩件事。
+ *
+ * ★ 這份清單要跟 `admin/page.tsx` 的 TYPE_LABEL 一致。
+ *   兩邊各寫一份是既有的形狀，改的時候兩邊都要動。
+ */
+const TYPE_LABEL: Record<string, string> = { housekeeper: '管家', roomservice: '房務', manager: '經理', accountant: '會計', gm: '總經理', other: '其他' };
+
+/**
+ * 「職位」篩選的選項。
+ *
+ * ★★★ 經理也會去兼管家的工作（2026-09-03 使用者）——
+ *   她的清潔記錄存的是 `manager`，而原本這個下拉只有管家／房務，
+ *   所以**選哪一個都看不到她的紀錄**，而畫面上完全沒有提示說
+ *   還有第三種。少掉的東西不會叫。
+ *
+ * ★ 抽成常數 —— 手機版與桌機版各有一份下拉，寫兩次就會有一天不一致。
+ */
+const TYPE_FILTERS = ['housekeeper', 'roomservice', 'manager'] as const;
 
 function csvEsc(v: unknown) {
   if (v == null) return '';
@@ -143,7 +167,19 @@ export default function CleaningPage() {
    * 目前用全形空白對齊欄位,視覺上盡量接近卡片。
    */
   function shareRec(r: Rec) {
-    const isHk = r.staff_type === 'housekeeper';
+    /*
+     * ★★★ 經理兼管家時也算管家檢查（2026-09-03）。
+     *
+     *   原本寫 `=== 'housekeeper'`，所以 Jessica（職位是經理）做的管家檢查
+     *   會發成「🧹 清潔檢查表填寫通知 / 清潔日 / 房務員 Jessica」——
+     *   標題、日期欄名、稱謂三個全錯，而**這是發出去給人看的訊息**，
+     *   系統這邊完全不會叫。
+     *
+     * ★ 用明列不是 `!== 'roomservice'`。對不到名字的 `other`
+     *   維持原本的房務版型 —— 那一種本來就分不出來，
+     *   而這次的改動不該順手改掉一個沒人要求改的判斷。
+     */
+    const isHk = r.staff_type === 'housekeeper' || r.staff_type === 'manager';
     const head = isHk ? '👩 管家檢查結果通知' : '🧹 清潔檢查表填寫通知';
     const dateLabel = isHk ? '檢查日' : '清潔日';
     const whoLabel = isHk ? '管家　' : '房務員';
@@ -237,8 +273,7 @@ export default function CleaningPage() {
             <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">職位</span>
               <select value={staffType} onChange={(e) => setStaffType(e.target.value)} className="h-12 rounded-lg border border-gray-300 px-2">
                 <option value="">全部</option>
-                <option value="housekeeper">管家</option>
-                <option value="roomservice">房務</option>
+                {TYPE_FILTERS.map((t) => <option key={t} value={t}>{TYPE_LABEL[t]}</option>)}
               </select></label>
           </div>
           {/* ★ 兩個獨立欄位併成一組區間 —— 起訖本來就是一件事 */}
@@ -280,8 +315,7 @@ export default function CleaningPage() {
           <label className="block text-xs text-gray-500 mb-1">職位</label>
           <select value={staffType} onChange={(e) => setStaffType(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5 min-w-20">
             <option value="">全部</option>
-            <option value="housekeeper">管家</option>
-            <option value="roomservice">房務</option>
+            {TYPE_FILTERS.map((t) => <option key={t} value={t}>{TYPE_LABEL[t]}</option>)}
           </select>
         </div>
         <div>
