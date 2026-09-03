@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AddButton, ExportButton } from '@/components/Actions';
 import { ActionRow, FilterCount, FieldSpacer, FilterSearch, FILTER_BTN_H } from '@/lib/filters';
-import { TAG_NON_CASH, TAG_NON_CASH_PG, isNonCash } from '@/lib/expense-tags';
+import { TAG_NON_CASH, TAG_NON_CASH_PG, isNonCash, withNonCash } from '@/lib/expense-tags';
 import Req from '@/components/Req';
 import MoneyInput from '@/components/MoneyInput';
 import { missingFields, missingMessage } from '@/lib/required';
@@ -49,7 +49,8 @@ type Expense = {
    */
   non_operating?: boolean;
   /**
-   * 標籤（migration_206）。房務自動產生的支出帶 `房務`。
+   * 標籤（migration_206）。目前只有一種:`非實支`
+   *（2026-09-03 從「房務」改名，唯一出處是 `src/lib/expense-tags.ts`）。
    *
    * ★ 用陣列不是布林 —— 之後還會有別的標籤，
    *   每多一種就加一個布林欄位的話，篩選器會變成一排開關。
@@ -277,7 +278,7 @@ export default function ExpensesPage() {
     return {
       id: '', spent_on: todayStr(), item_name: '', amount: 0, account_code: null,
       purpose_type: 'estate', estate_id: null, property_id: null, voucher_no: null, no_voucher: false,
-      non_operating: false,
+      non_operating: false, starred: false,
       payment_method: 'cash', pay_account: null, note: null, source_item_id: null,
       currency: 'TWD', fx_rate: 1, amount_original: 0,
     };
@@ -366,6 +367,18 @@ export default function ExpensesPage() {
       voucher_no: edit.no_voucher ? null : (edit.voucher_no?.trim() || null),
       no_voucher: !!edit.no_voucher,
       non_operating: !!edit.non_operating,
+      /*
+       * ★★★ `starred` 以前**不在 payload 裡** —— 表單沒有這個欄位，
+       *   只能在列上點星星（那條路是另一支 update）。
+       *   09-03 表單多了勾選框，這裡沒跟著加的話勾了不會存，
+       *   而畫面上不會有任何錯誤（2026-09-03）。
+       */
+      starred: !!edit.starred,
+      /*
+       * ★ 勾選框已經把 `edit.tags` 改好了（走 `withNonCash`，會保留其他標籤），
+       *   這裡只要把空陣列收成 null —— 讓「沒有標籤」只有一種形狀。
+       */
+      tags: edit.tags?.length ? edit.tags : null,
       payment_method: edit.payment_method || null,
       /*
        * 現金以外都要記錄錢從哪個帳戶/哪張卡出去;現金沒有帳戶,清成 null。
@@ -1104,6 +1117,27 @@ export default function ExpensesPage() {
                 ★ 勾選框旁邊要寫清楚它會做什麼。只寫「非營運」的話,
                   勾的人不知道這會不會改到金額 —— 而它不會。
               */}
+              {/*
+                ★ 重要支出（2026-09-03 使用者:「多一個 非實支 跟重要支出標籤」）。
+
+                  以前只能在列上點星星 —— 而那顆星在最右邊的操作欄，
+                  窄視窗會被橫向捲出去。編輯時想標記就得先關掉表單去點星星。
+
+                ★★ 三個勾選框的順序跟頁面最上方那排開關**一致**:
+                  重要支出 → 非營運 → 非實支。同一件事在兩個地方換順序，
+                  使用者會多花一秒找 —— 而那一秒每天發生幾十次。
+              */}
+              <label className="flex items-start gap-2 rounded-lg bg-amber-50/60 px-3 py-2.5">
+                <input type="checkbox" className="mt-0.5" checked={!!edit.starred}
+                  onChange={(e) => setEdit({ ...edit, starred: e.target.checked })} />
+                <span className="text-sm">
+                  <span className="font-medium text-amber-700">★ 重要支出</span>
+                  <span className="block text-xs text-gray-500 mt-0.5">
+                    要盯著的那幾筆。<b>不會改到任何金額</b> ——
+                    只是讓最上面的「重要支出」開關可以單獨列出來。
+                  </span>
+                </span>
+              </label>
               <label className="flex items-start gap-2 rounded-lg bg-violet-50/60 px-3 py-2.5">
                 <input type="checkbox" className="mt-0.5" checked={!!edit.non_operating}
                   onChange={(e) => setEdit({ ...edit, non_operating: e.target.checked })} />
@@ -1112,6 +1146,29 @@ export default function ExpensesPage() {
                   <span className="block text-xs text-gray-500 mt-0.5">
                     跟出租本業無關的花費。<b>不會改到任何金額</b> ——
                     支出頁照舊全部計入，只有財務儀表板可以把它排除。
+                  </span>
+                </span>
+              </label>
+              {/*
+                ★★ 非實支（2026-09-03 使用者:「多一個 非實支」）。
+
+                  緊接在非營運下面 —— 兩個都是「這筆錢的性質」，
+                  而且都**不會改到金額**。同一類的東西放在一起，
+                  使用者才看得出「這一區是打記號的」。
+
+                ★ 顏色用藍灰跟表格上的 chip 一致，不跟紫色的非營運撞。
+
+                ★★★ 房務自動產生的那幾十筆本來就帶這個標籤。
+                  這裡是給**手動**記帳的人用的 —— 例如認列了但月底才付的東西。
+              */}
+              <label className="flex items-start gap-2 rounded-lg bg-mor-bluelight/50 px-3 py-2.5">
+                <input type="checkbox" className="mt-0.5" checked={isNonCash(edit.tags)}
+                  onChange={(e) => setEdit({ ...edit, tags: withNonCash(edit.tags, e.target.checked) ?? undefined })} />
+                <span className="text-sm">
+                  <span className="font-medium text-mor-slate">{TAG_NON_CASH}</span>
+                  <span className="block text-xs text-gray-500 mt-0.5">
+                    記了帳但錢還沒付出去。<b>不會改到任何金額</b> ——
+                    只是讓支出頁的「實支」開關可以把它排除。
                   </span>
                 </span>
               </label>

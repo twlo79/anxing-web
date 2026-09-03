@@ -46,3 +46,24 @@ export const TAG_NON_CASH_PG = `{${TAG_NON_CASH}}`;
 export function isNonCash(tags: string[] | null | undefined): boolean {
   return (tags ?? []).includes(TAG_NON_CASH);
 }
+
+/**
+ * 勾／不勾「非實支」之後，`tags` 該長什麼樣。
+ *
+ * ★★★ **保留其他標籤。** 直接寫 `['非實支']` 或 `[]` 的話，
+ *   之後多了第二種標籤，使用者一存檔就把它洗掉了 ——
+ *   而畫面上只是少一顆 chip，沒有任何錯誤
+ *   （CLAUDE.md:「PostgREST 批次 upsert 取欄位聯集，某列少了鍵會被填 null」
+ *    的同一種病:寫的人以為自己只改了一件事）。
+ *
+ * ★ 回傳 null 而不是 `[]` —— 資料庫裡沒有標籤的那些本來就是 null，
+ *   存成空陣列的話「沒標籤」會有兩種形狀，之後寫查詢的人要記得兩種都問。
+ */
+export function withNonCash(
+  tags: string[] | null | undefined,
+  on: boolean,
+): string[] | null {
+  const rest = (tags ?? []).filter((t) => t !== TAG_NON_CASH);
+  const next = on ? [...rest, TAG_NON_CASH] : rest;
+  return next.length ? next : null;
+}
