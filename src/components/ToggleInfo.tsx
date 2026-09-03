@@ -52,12 +52,12 @@ const TONE: Record<ToggleTone, { text: string; hover: string; track: string }> =
    */
   violet: { text: 'text-violet-700', hover: 'hover:bg-violet-50', track: 'bg-violet-500' },
   /*
-   * ★ 石板藍給「非房務」（2026-09-02）。
+   * ★ 石板藍給「實支」（2026-09-02，09-03 改名）。
    *
    *   它是站上房務的主色，而這個開關講的正是房務 —— 顏色一致比較好認。
    *
    * ★★ 但方向是**相反**的（藏起來，不是只看）。所以顏色一致、
-   *   標籤寫「非房務」，兩件事一起才講得清楚。
+   *   標籤寫「實支」，兩件事一起才講得清楚。
    */
   slate: { text: 'text-mor-slate', hover: 'hover:bg-mor-bluelight/60', track: 'bg-mor-slate' },
 };

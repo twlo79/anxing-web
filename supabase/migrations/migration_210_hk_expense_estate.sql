@@ -16,7 +16,9 @@
 -- 前端已經在同一輪修好（`estIdByProp`），這一支補既有資料。
 --
 -- 【範圍】
--- ★ 只動 tags 含「房務」而且 estate_id 是 null 的。
+-- ★ 只動 tags 含「非實支」而且 estate_id 是 null 的。
+--   ★★ 這個字串跟 `src/lib/expense-tags.ts` 的 `TAG_NON_CASH` 同步 ——
+--     SQL 抄不到那邊，改名時**兩邊都要改**（09-03 從「房務」改過來的）。
 --   其他來源的支出可能有它們自己的理由留空 —— 不順手一起改，
 --   「對不上的不猜」（CLAUDE.md）。非房務的同樣形狀在下面第 4 列報數字，
 --   有幾筆先看到，要不要動另外決定。
@@ -45,7 +47,7 @@ update public.expenses e
    and e.estate_id is null
    and e.property_id is not null
    and p.estate_id is not null
-   and e.tags @> array['房務']::text[];
+   and e.tags @> array['非實支']::text[];
 
 -- ── 2. 記一筆 ────────────────────────────────────────────────
 -- ★ 簽章是 record_migration(text) 一個參數，名字**不帶** migration_ 前綴
@@ -66,21 +68,21 @@ commit;
 --   （CLAUDE.md 2026-09-02）。這裡問的都是改完之後應該成立的事實。
 -- ============================================================
 with hk as (
-  select * from public.expenses where tags @> array['房務']::text[]
+  select * from public.expenses where tags @> array['非實支']::text[]
 )
 -- ★★★ 母體要**判定**，不能寫「參考值」。
 --   是 0 的話下面每一條都會自動回綠，而六個綠勾比一個紅字更容易放過
 --   （2026-09-03 就是這樣過關的）。
-select '1. 房務支出總筆數（母體）' as 檢查,
+select '1. 非實支支出總筆數（母體）' as 檢查,
        count(*)::text             as 結果,
        case when count(*) = 0
-            then '⚠ 沒有房務支出 —— 下面每一條都是空集合，全部不算數'
+            then '⚠ 沒有非實支支出 —— 下面每一條都是空集合，全部不算數'
             else '✅ 有母體，下面的檢查才有意義'
        end                        as 判定
   from hk
 
 union all
-select '2. 房務支出還有幾筆 estate_id 空的',
+select '2. 非實支支出還有幾筆 estate_id 空的',
        count(*)::text,
        case when count(*) = 0 then '✅ 補完了'
             else '⚠ 這些的 property_id 對不到房源，或房源自己就沒有物業'
@@ -92,7 +94,7 @@ select '2. 房務支出還有幾筆 estate_id 空的',
 union all
 -- ★ 人事費的正隆那筆本來就沒有 property_id（正隆沒有「整棟」這個房源），
 --   它的 estate_id 是產生時直接寫的 —— 不該被算成漏掉
-select '3. 房務支出裡沒有 property_id 的（人事費・整個物業）',
+select '3. 非實支支出裡沒有 property_id 的（人事費・整個物業）',
        count(*)::text,
        case when count(*) = count(*) filter (where estate_id is not null)
             then '✅ 這些都有 estate_id'
@@ -102,13 +104,13 @@ select '3. 房務支出裡沒有 property_id 的（人事費・整個物業）',
  where property_id is null
 
 union all
-select '4. 非房務的支出裡，有房源卻沒物業的',
+select '4. 其他支出裡，有房源卻沒物業的',
        count(*)::text,
        '這一支沒動它們。要不要一起補另外決定'
   from public.expenses
  where estate_id is null
    and property_id is not null
-   and not (coalesce(tags, '{}'::text[]) @> array['房務']::text[])
+   and not (coalesce(tags, '{}'::text[]) @> array['非實支']::text[])
 
 union all
 -- ★★ 補完的物業必須真的是那個房源的物業，不是隨便填一個

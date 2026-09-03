@@ -8,6 +8,7 @@ import { payroll, byEstate, estateLog, dailyUnits, fmtUnits } from '@/lib/hk-pay
 import {
   cleaningCosts, laborCosts, lastDayOf, costTotal, cleanItemName, LABOR_ITEM_NAME,
 } from '@/lib/hk-cost';
+import { TAG_NON_CASH } from '@/lib/expense-tags';
 // ★ useRef 的同步閘門 —— useState 是非同步的,連點兩下會兩筆都送出去
 import { useOnce } from '@/lib/once';
 import { sharePreview, previewText } from '@/lib/hk-crew';
@@ -408,7 +409,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
         estate_id: r.estate_id ?? null,
         // ★ 使用者指定「付款方式 無」—— 這幾筆是內部成本認列,錢還沒真的匯出去
         payment_method: null,
-        tags: ['房務'],
+        tags: [TAG_NON_CASH],
         no_voucher: true,
         hk_job_key: r.key_job ?? null,
         hk_labor_key: r.key_labor ?? null,
@@ -1242,7 +1243,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                         <td className="px-2 py-1 text-gray-600">{propNameById[r.property_id] ?? '—'}</td>
                         <td className="px-2 py-1 text-gray-500">房務清潔</td>
                         <td className="px-2 py-1">
-                          <span className="rounded bg-mor-bluelight text-mor-slate px-1.5 py-0.5">房務</span>
+                          <span className="rounded bg-mor-bluelight text-mor-slate px-1.5 py-0.5">{TAG_NON_CASH}</span>
                         </td>
                         <td className="px-2 py-1 text-gray-400">無</td>
                         <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap">
@@ -1271,7 +1272,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                         </td>
                         <td className="px-2 py-1 text-gray-500">房務清潔</td>
                         <td className="px-2 py-1">
-                          <span className="rounded bg-mor-bluelight text-mor-slate px-1.5 py-0.5">房務</span>
+                          <span className="rounded bg-mor-bluelight text-mor-slate px-1.5 py-0.5">{TAG_NON_CASH}</span>
                         </td>
                         <td className="px-2 py-1 text-gray-400">無</td>
                         <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap">

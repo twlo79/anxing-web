@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AddButton, ExportButton } from '@/components/Actions';
 import { ActionRow, FilterCount, FieldSpacer, FilterSearch, FILTER_BTN_H } from '@/lib/filters';
+import { TAG_NON_CASH, TAG_NON_CASH_PG, isNonCash } from '@/lib/expense-tags';
 import Req from '@/components/Req';
 import MoneyInput from '@/components/MoneyInput';
 import { missingFields, missingMessage } from '@/lib/required';
@@ -96,7 +97,7 @@ function HkTag() {
   return (
     <span className="ml-1.5 inline-block rounded-md bg-mor-bluelight px-2 py-0.5
                      text-xs font-medium text-mor-slate align-middle">
-      房務
+      {TAG_NON_CASH}
     </span>
   );
 }
@@ -123,11 +124,10 @@ export default function ExpensesPage() {
   const [starF, setStarF] = useState(false);     // 只看重要支出
   const [nonOpF, setNonOpF] = useState(false);   // 只看非營運
   /*
-   * 「非房務」＝ **把房務自動產生的支出藏起來**（2026-09-02 使用者指定）。
+   * 「實支」＝ **只看真的付錢出去的**（2026-09-03 使用者:「實支 扣除非實支」）。
    *
-   * ★ 跟上面兩個開關的方向相反:那兩個是「只看標了的」，
-   *   這個是「只看沒標的」。會這樣是因為房務一個月產生五十幾筆，
-   *   不藏起來的話手工記的那些會被淹掉。
+   * ★ 變數名還叫 `nonHkF` 是歷史 —— 這一顆本來叫「非房務」。
+   *   語意已經是「只看實支」，實作是 `not tags cs {非實支}`。
    */
   const [nonHkF, setNonHkF] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -207,7 +207,7 @@ export default function ExpensesPage() {
       if (starF) q = q.eq('starred', true);
       if (nonOpF) q = q.eq('non_operating', true);
       // ★ `cs` = contains（陣列包含）。not(...) 就是「不包含房務」
-      if (nonHkF) q = q.not('tags', 'cs', '{房務}');
+      if (nonHkF) q = q.not('tags', 'cs', TAG_NON_CASH_PG);
       const { data, error } = await q.range(from, from + 999);
       if (error) { flash('載入失敗:' + error.message); break; }
       const chunk = (data as Expense[]) ?? [];
@@ -524,27 +524,28 @@ export default function ExpensesPage() {
         </ToggleInfo>
 
         {/*
-          ★★★ 「非房務」跟上面兩個開關**方向相反**（2026-09-02 使用者指定）。
+          ══════════ 「實支」（2026-09-03 使用者:「實支 扣除非實支」）══════════
 
-            那兩個是「只看標了的」，這個是「只看**沒**標的」——
-            因為房務一個月自動產生五十幾筆，不藏起來的話
-            手工記的那些會被淹掉。
+          ★★★ 這一顆改名之前叫「非房務」，而那時它跟左邊兩顆**方向相反**
+            —— 那兩個是「只看標了的」，它是「只看沒標的」。
+            同一排三個開關兩個加法一個減法，使用者打開會以為壞了。
 
-          ★ 所以 ⓘ 裡要把方向講明白。同一排三個開關，兩個是加法一個是減法，
-            不講的話使用者打開之後會以為壞了。
+          ★ 改叫「實支」之後三顆的方向就一致了:都是「只看某某」。
+            實作沒變（還是 `not tags cs {非實支}`），但**使用者腦中的模型**
+            從「排除」變成「篩選」—— 而畫面上的字就是那個模型。
         */}
-        <ToggleInfo label="非房務" tone="slate"
+        <ToggleInfo label="實支" tone="slate"
           on={nonHkF} onToggle={() => setNonHkF(!nonHkF)}
-          infoLabel="非房務是什麼">
-          <span className="block text-sm mb-2">把房務自動產生的支出藏起來。</span>
+          infoLabel="實支是什麼">
+          <span className="block text-sm mb-2">只看<b>真的付錢出去</b>的支出。</span>
           <span className="block border-t border-mor-line pt-2 text-uisub text-gray-600 leading-relaxed">
-            <span className="block">1. 排班統計按「產生本月支出」時，那幾十筆會帶 <HkTag /> 標籤</span>
-            <span className="block">2. 打開開關，**只留下沒有** <HkTag /> 的支出</span>
-            <span className="block">3. 手工記的那些才不會被一個月五十幾筆淹掉</span>
+            <span className="block">1. 記了帳但錢還沒匯出去的，會帶 <HkTag /> 標籤（付款方式是「無」）</span>
+            <span className="block">2. 目前是排班統計按「產生本月支出」的那幾十筆</span>
+            <span className="block">3. 打開開關，那些就不列出來</span>
           </span>
           <span className="block mt-2 pt-2 border-t border-mor-line text-xs text-gray-400 leading-relaxed">
-            ★ 跟左邊兩個<b>方向相反</b>:那兩個是「只看標了的」，這個是「只看沒標的」。
-            要只看房務的，用關鍵字搜「房務清潔」。
+            ★ 這一頁的總額與三張分項卡<b>照舊全部計入</b> ——
+            非實支也是真的成本，只是還沒付。要只看房務的，用關鍵字搜「房務清潔」。
           </span>
         </ToggleInfo>
       </div>
@@ -698,7 +699,7 @@ export default function ExpensesPage() {
                 <div className="font-medium">
                   <span className="truncate align-middle">{r.item_name}</span>
                   {r.non_operating && <NonOpTag />}
-                  {r.tags?.includes('房務') && <HkTag />}
+                  {isNonCash(r.tags) && <HkTag />}
                 </div>
                 <div className="text-[11px] text-gray-500 mt-1">
                   {r.spent_on}・{r.account_code ? codeName[r.account_code] ?? r.account_code : '未分類'}
@@ -771,7 +772,7 @@ export default function ExpensesPage() {
                   )}
                   {r.item_name}
                   {r.non_operating && <NonOpTag />}
-                  {r.tags?.includes('房務') && <HkTag />}
+                  {isNonCash(r.tags) && <HkTag />}
                   {r.source_item_id && <span className="ml-2 inline-block rounded-md bg-mor-bluelight text-mor-slate px-1.5 py-0.5 text-[10px]">請款</span>}
                 </td>
                 <td className="px-3 py-2 text-right font-medium">
@@ -872,7 +873,7 @@ export default function ExpensesPage() {
                   <div className="font-bold">
                     <span className="align-middle">{d.item_name}</span>
                     {d.non_operating && <NonOpTag />}
-                    {d.tags?.includes('房務') && <HkTag />}
+                    {isNonCash(d.tags) && <HkTag />}
                   </div>
                   <div className="text-xs text-gray-500 mt-0.5">
                     {d.spent_on}
