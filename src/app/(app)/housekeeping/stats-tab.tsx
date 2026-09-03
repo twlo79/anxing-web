@@ -710,7 +710,27 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
       const rest = ds.filter((d) => !(d.work_date === date && d.staff_id === staffId));
       return [...rest, next as Day];
     });
-    await supabase.from('hk_day').upsert(next, { onConflict: 'work_date,staff_id' });
+    /*
+     * ★★★ 這裡本來**完全沒檢查回傳值**（2026-09-03 發現）。
+     *
+     *   `hk_day.rooms_override` 這一欄線上根本不存在
+     *   （migration_60 寫了但沒生效，migration_211 才補上），
+     *   所以每一次在排班表改「間數」都是失敗的 ——
+     *   而畫面因為先做了樂觀更新，看起來成功了。
+     *   使用者看到的是「我明明改過，重新整理又變回去」。
+     *
+     * ★ 失敗時要把樂觀更新**收回去**，不是只跳訊息 ——
+     *   留著假的數字比沒改更糟，他會以為存好了。
+     */
+    const { error } = await supabase.from('hk_day')
+      .upsert(next, { onConflict: 'work_date,staff_id' });
+    if (error) {
+      setDays((ds) => {
+        const rest = ds.filter((d) => !(d.work_date === date && d.staff_id === staffId));
+        return cur ? [...rest, cur] : rest;
+      });
+      flash('存檔失敗:' + error.message);
+    }
   }
 
   /** 幾床是房源主檔的屬性,不是月份的。改了會影響所有月份的重算。 */
