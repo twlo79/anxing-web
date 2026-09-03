@@ -56,14 +56,24 @@ export function isNonCash(tags: string[] | null | undefined): boolean {
  *   （CLAUDE.md:「PostgREST 批次 upsert 取欄位聯集，某列少了鍵會被填 null」
  *    的同一種病:寫的人以為自己只改了一件事）。
  *
- * ★ 回傳 null 而不是 `[]` —— 資料庫裡沒有標籤的那些本來就是 null，
- *   存成空陣列的話「沒標籤」會有兩種形狀，之後寫查詢的人要記得兩種都問。
+ * ★★★ 回傳 `[]` **不是 null** —— `expenses.tags` 是
+ *   `text[] not null default '{}'`（migration_206）。
+ *
+ *   2026-09-03 我一度讓它回 null，理由寫著「讓『沒標籤』只有一種形狀」——
+ *   方向是對的，但我**沒去看那一欄的定義就決定哪一種是那個形狀**。
+ *   資料庫早就選好了:`{}`。
+ *
+ *   結果是**整個支出頁存不了檔**:
+ *   `null value in column "tags" violates not-null constraint`。
+ *   使用者第一個動作就撞上（他只是想把用途改成正隆）。
+ *
+ * ★ 教訓:要「只有一種形狀」的時候，那個形狀必須跟 schema 對齊，
+ *   不是自己挑一個看起來比較乾淨的。
  */
 export function withNonCash(
   tags: string[] | null | undefined,
   on: boolean,
-): string[] | null {
+): string[] {
   const rest = (tags ?? []).filter((t) => t !== TAG_NON_CASH);
-  const next = on ? [...rest, TAG_NON_CASH] : rest;
-  return next.length ? next : null;
+  return on ? [...rest, TAG_NON_CASH] : rest;
 }

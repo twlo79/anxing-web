@@ -41,8 +41,15 @@ describe('withNonCash —— 勾選框存回去（2026-09-03）', () => {
     assert.deepEqual(withNonCash([], true), ['非實支']);
   });
 
-  test('取消就拿掉，沒有標籤時存 null 不是空陣列', () => {
-    assert.equal(withNonCash(['非實支'], false), null);
+  /*
+   * ★★★ 沒有標籤時是 `[]` 不是 null。
+   *   `expenses.tags` 是 `not null default '{}'` —— 寫 null 進去
+   *   **每一次存檔都會失敗**，而且是整個支出頁一起壞
+   *   （2026-09-03 踩過，使用者只是想改一個用途就撞上）。
+   */
+  test('★★★ 取消就拿掉，而且是空陣列不是 null', () => {
+    assert.deepEqual(withNonCash(['非實支'], false), []);
+    assert.notEqual(withNonCash(['非實支'], false), null, 'tags 欄位是 not null');
   });
 
   /*
@@ -56,6 +63,14 @@ describe('withNonCash —— 勾選框存回去（2026-09-03）', () => {
 
   test('重複勾不會變兩個', () => {
     assert.deepEqual(withNonCash(['非實支'], true), ['非實支']);
+  });
+
+  // ★ 每一種輸入都要回陣列 —— 回 null 的那一刻整頁就壞了
+  test('★ 任何輸入都回陣列', () => {
+    for (const [t, on] of [[null, false], [undefined, false], [[], false],
+                           [['非實支'], false], [null, true]] as const) {
+      assert.ok(Array.isArray(withNonCash(t as any, on)), `${t} / ${on} 要回陣列`);
+    }
   });
 
   test('存回去的結果 isNonCash 讀得出來', () => {

@@ -375,10 +375,13 @@ export default function ExpensesPage() {
        */
       starred: !!edit.starred,
       /*
-       * ★ 勾選框已經把 `edit.tags` 改好了（走 `withNonCash`，會保留其他標籤），
-       *   這裡只要把空陣列收成 null —— 讓「沒有標籤」只有一種形狀。
+       * ★★★ 一定要是陣列，**不能是 null** ——
+       *   `expenses.tags` 是 `not null default '{}'`（migration_206）。
+       *   寫 null 會讓**每一次存檔**都失敗:
+       *   `null value in column "tags" violates not-null constraint`
+       *   （2026-09-03 我就是這樣把支出頁弄壞的）。
        */
-      tags: edit.tags?.length ? edit.tags : null,
+      tags: edit.tags ?? [],
       payment_method: edit.payment_method || null,
       /*
        * 現金以外都要記錄錢從哪個帳戶/哪張卡出去;現金沒有帳戶,清成 null。
@@ -1176,7 +1179,7 @@ export default function ExpensesPage() {
               */}
               <label className="flex items-start gap-2 rounded-lg bg-mor-bluelight/50 px-3 py-2.5">
                 <input type="checkbox" className="mt-0.5" checked={isNonCash(edit.tags)}
-                  onChange={(e) => setEdit({ ...edit, tags: withNonCash(edit.tags, e.target.checked) ?? undefined })} />
+                  onChange={(e) => setEdit({ ...edit, tags: withNonCash(edit.tags, e.target.checked) })} />
                 <span className="text-sm">
                   <span className="font-medium text-mor-slate">{TAG_NON_CASH}</span>
                   <span className="block text-xs text-gray-500 mt-0.5">
