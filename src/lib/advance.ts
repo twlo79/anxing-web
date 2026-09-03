@@ -26,10 +26,17 @@
 /** 一列暫付。欄位名跟資料庫一致 —— 中間多一層對照表只會多一個出錯的地方。 */
 export type Advance = {
   id?: string;
-  category: '押金' | '保證金' | '其他';
+  /**
+   * ★ 型別從 `CATEGORIES` 推導，不要再手寫一次字串聯集 ——
+   *   2026-09-03 加「零用金」時就是兩邊各一份而漏掉這裡，tsc 才擋下來。
+   *   往下再加一種時只要改 `CATEGORIES`。
+   */
+  category: (typeof CATEGORIES)[number];
   counterparty: string;
   usage: string;
   estate_id?: string | null;
+  /** 用途的種類:'estate' | 'office'（migration_212）。跟 estate_id 一起才完整。 */
+  purpose_type?: string | null;
   amount: number;
   paid_on?: string | null;
   /** 從哪個帳戶付出去的。收回時錢要回到同一個（2026-09-02 使用者指定）。 */
@@ -51,7 +58,52 @@ export type Advance = {
 };
 
 /** 2026-09-02 使用者:「類別有其他」。跟 migration_202 的 check 約束一致。 */
-export const CATEGORIES = ['押金', '保證金', '其他'] as const;
+export const CATEGORIES = ['押金', '保證金', '零用金', '其他'] as const;
+
+/**
+ * 用途的種類（migration_212）。
+ *
+ * ★★★ 跟 `expenses.purpose_type` **同一套語意** —— 兩頁的「用途」
+ *   必須是同一個意思，不然使用者要記兩套（CLAUDE.md 統一用語）。
+ *
+ * ★ 安幸辦公室不是物業，`estates` 裡沒有它。塞一筆進去的話
+ *   它會出現在每一個物業下拉、每一張物業損益裡 —— 而它不出租。
+ */
+export const PURPOSE_OFFICE = 'office';
+export const PURPOSE_ESTATE = 'estate';
+export const OFFICE_LABEL = '安幸辦公室';
+
+/** 用途那一格要顯示什麼。★ 沒填就是「—」，不要編一個出來。 */
+export function purposeLabel(
+  purposeType: string | null | undefined,
+  estateId: string | null | undefined,
+  estateName: (id: string) => string | undefined,
+): string {
+  if (purposeType === PURPOSE_OFFICE) return OFFICE_LABEL;
+  return (estateId ? estateName(estateId) : '') || '—';
+}
+
+/**
+ * 下拉選到某個值時，`purpose_type` 與 `estate_id` 該長什麼樣。
+ *
+ * ★★ 兩個欄位一起才構成「用途」，所以**一定要一起算**。
+ *   分開設的話會出現 `office` 配一個 estate_id 的矛盾列 ——
+ *   畫面顯示其中一個、報表讀另一個，而兩邊都不會叫
+ *   （migration_210 那次就是這個形狀）。資料庫也有 `ap_purpose_chk` 擋。
+ */
+export function purposeFromSelect(v: string): { purpose_type: string; estate_id: string | null } {
+  return v === PURPOSE_OFFICE
+    ? { purpose_type: PURPOSE_OFFICE, estate_id: null }
+    : { purpose_type: PURPOSE_ESTATE, estate_id: v || null };
+}
+
+/** 下拉現在該選哪一個。 */
+export function purposeToSelect(
+  purposeType: string | null | undefined,
+  estateId: string | null | undefined,
+): string {
+  return purposeType === PURPOSE_OFFICE ? PURPOSE_OFFICE : (estateId ?? '');
+}
 
 /**
  * 狀態。

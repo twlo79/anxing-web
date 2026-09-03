@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   statusOf, STATUS_LABEL, forfeitedOf, needsForfeitExpense, isOutstanding,
   validateAdvance, validateRefund, statsOf, defaultRefundAccount, refundAccountWarning, type Advance,
+  CATEGORIES, purposeFromSelect, purposeToSelect, purposeLabel,
 } from './advance.ts';
 
 const A = (o: Partial<Advance> = {}): Advance => ({
@@ -282,5 +283,53 @@ describe('短收的差額要選會計科目', () => {
   test('空白字串不算選了', () => {
     assert.equal(validateRefund(A({ forfeit_account_code: '   ' })),
       '沒收回的 2000 要記成支出 —— 請選會計科目');
+  });
+});
+
+describe('用途:物業 or 安幸辦公室（migration_212，2026-09-03）', () => {
+  const nameOf = (id: string) => ({ e1: '正隆', e2: '時兆' } as Record<string, string>)[id];
+
+  test('類別多了零用金', () => {
+    assert.ok((CATEGORIES as readonly string[]).includes('零用金'));
+    // ★ 舊的三種不能掉 —— 掉了的話既有資料的類別會變成非法值
+    for (const c of ['押金', '保證金', '其他']) {
+      assert.ok((CATEGORIES as readonly string[]).includes(c), c + ' 不見了');
+    }
+  });
+
+  test('選物業:兩個欄位一起算', () => {
+    assert.deepEqual(purposeFromSelect('e1'), { purpose_type: 'estate', estate_id: 'e1' });
+  });
+
+  /*
+   * ★★★ 選辦公室時 estate_id **一定要清成 null**。
+   *   留著舊值的話就是一列自相矛盾的資料（office 卻掛著物業），
+   *   畫面顯示其中一個、報表讀另一個，兩邊都不會叫。
+   */
+  test('★★★ 選辦公室會把物業清掉', () => {
+    assert.deepEqual(purposeFromSelect('office'), { purpose_type: 'office', estate_id: null });
+  });
+
+  test('選「—」就是都沒填', () => {
+    assert.deepEqual(purposeFromSelect(''), { purpose_type: 'estate', estate_id: null });
+  });
+
+  test('顯示:辦公室、物業、沒填', () => {
+    assert.equal(purposeLabel('office', null, nameOf), '安幸辦公室');
+    assert.equal(purposeLabel('estate', 'e1', nameOf), '正隆');
+    assert.equal(purposeLabel('estate', null, nameOf), '—');
+    assert.equal(purposeLabel(null, null, nameOf), '—');
+  });
+
+  // ★ 物業被刪掉之後 estate_id 還在但查不到名字 —— 要回「—」不是空字串
+  test('查不到名字的物業回「—」', () => {
+    assert.equal(purposeLabel('estate', '不存在的id', nameOf), '—');
+  });
+
+  test('存進去再讀出來，下拉會選回同一個', () => {
+    for (const v of ['e1', 'office', '']) {
+      const p = purposeFromSelect(v);
+      assert.equal(purposeToSelect(p.purpose_type, p.estate_id), v, v + ' 來回要一致');
+    }
   });
 });

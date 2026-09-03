@@ -42,6 +42,7 @@ import {
   statusOf, STATUS_LABEL, forfeitedOf, statsOf, validateAdvance,
   defaultRefundAccount, refundAccountWarning, needsForfeitExpense,
   CATEGORIES, type Advance, type AdvanceStatus,
+  purposeFromSelect, purposeToSelect, purposeLabel, PURPOSE_OFFICE, OFFICE_LABEL,
 } from '@/lib/advance';
 
 const fmt = (n: number) => Math.round(Number(n) || 0).toLocaleString('en-US');
@@ -62,12 +63,14 @@ const STATUS_CLASS: Record<AdvanceStatus, string> = {
 const CAT_CLASS: Record<string, string> = {
   押金:   'bg-mor-bluelight text-mor-slate',
   保證金: 'bg-purple-50 text-purple-700',
+  // ★ 零用金給琥珀（migration_212）。少了這一列不會報錯，只是變成沒有底色的白字
+  零用金: 'bg-amber-50 text-amber-700',
   其他:   'bg-gray-100 text-gray-600',
 };
 
 const CTRL = 'h-11 md:h-9 rounded-lg border border-gray-300 px-2 text-sm bg-white';
 
-type Row = Advance & { id: string; estate_id: string | null; created_at?: string };
+type Row = Advance & { id: string; estate_id: string | null; purpose_type?: string | null; created_at?: string };
 
 const blank = (): Advance => ({
   category: '押金', counterparty: '', usage: '', amount: 0,
@@ -233,7 +236,12 @@ export function AdvanceList({
       category: edit.category,
       counterparty: edit.counterparty.trim(),
       usage: edit.usage.trim(),
-      estate_id: edit.estate_id || null,
+      /*
+       * ★★ 用途是**兩個欄位**（purpose_type ＋ estate_id），一定要一起寫。
+       *   分開設會出現 office 卻掛著物業的矛盾列（`ap_purpose_chk` 會擋，
+       *   但擋下來的錯誤訊息使用者看不懂）。算式在 lib，有測試。
+       */
+      ...purposeFromSelect(purposeToSelect(edit.purpose_type, edit.estate_id)),
       amount: Number(edit.amount),
       /*
        * ★ 空字串要轉成 null。日期欄留空時 input 給的是 ''，
@@ -314,11 +322,23 @@ export function AdvanceList({
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-mor-line bg-white/45 text-left">
-              <th className="px-3 py-2.5">對象</th>
-              <th className="px-3 py-2.5">用途</th>
-              <th className="px-3 py-2.5">類別</th>
-              <th className="px-3 py-2.5 text-right">暫付款</th>
+              {/*
+                ══════════ 欄序跟支出頁一致（2026-09-03 使用者指定）══════════
+
+                支出頁是「支出日 → 項目 → 金額 → 會計科目 → 用途」，
+                這裡是「出款日 → 項目 → 金額 → 類別 → 用途」——
+                前五欄同一個閱讀順序。
+
+                ★ 改版前是「對象」開頭，兩張表切過去要重新找一次欄位。
+                ★★ 「對象」往後移，不是拿掉 —— 它是暫付才有的
+                  （錢放在誰那裡），支出頁沒有對應欄。
+              */}
               <th className="px-3 py-2.5">出款日</th>
+              <th className="px-3 py-2.5">項目</th>
+              <th className="px-3 py-2.5 text-right">金額</th>
+              <th className="px-3 py-2.5">類別</th>
+              <th className="px-3 py-2.5">用途</th>
+              <th className="px-3 py-2.5">對象</th>
               <th className="px-3 py-2.5">收回日</th>
               <th className="px-3 py-2.5 text-right">實收回</th>
               <th className="px-3 py-2.5">狀態</th>
@@ -327,10 +347,10 @@ export function AdvanceList({
           </thead>
           <tbody>
             {loading && (
-              <tr><td colSpan={9} className="px-3 py-6 text-center text-gray-400">讀取中⋯</td></tr>
+              <tr><td colSpan={10} className="px-3 py-6 text-center text-gray-400">讀取中⋯</td></tr>
             )}
             {!loading && shown.length === 0 && (
-              <tr><td colSpan={9} className="px-3 py-6 text-center text-gray-400">
+              <tr><td colSpan={10} className="px-3 py-6 text-center text-gray-400">
                 {rows.length === 0
                   ? '還沒有暫付。請款單填完在下方勾「這是暫支款」，確認出款後會出現在這裡。'
                   : '這個篩選沒有資料'}
@@ -341,20 +361,19 @@ export function AdvanceList({
               const lost = forfeitedOf(r);
               return (
                 <tr key={r.id} className="border-b border-mor-line/40 last:border-0">
-                  <td className="px-3 py-2.5">{r.counterparty}</td>
-                  <td className="px-3 py-2.5">
-                    {r.usage}
-                    {r.estate_id && (
-                      <span className="ml-1 text-xs text-gray-400">{estateName[r.estate_id] ?? ''}</span>
-                    )}
-                  </td>
+                  <td className="px-3 py-2.5 text-gray-500 whitespace-nowrap">{r.paid_on ?? '—'}</td>
+                  {/* ★ 物業不再擠在項目後面當灰字 —— 它有自己的「用途」欄了 */}
+                  <td className="px-3 py-2.5">{r.usage}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">{fmt(r.amount)}</td>
                   <td className="px-3 py-2.5">
                     <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${CAT_CLASS[r.category] ?? ''}`}>
                       {r.category}
                     </span>
                   </td>
-                  <td className="px-3 py-2.5 text-right tabular-nums">{fmt(r.amount)}</td>
-                  <td className="px-3 py-2.5 text-gray-500">{r.paid_on ?? '—'}</td>
+                  <td className="px-3 py-2.5 text-gray-600 whitespace-nowrap">
+                    {purposeLabel(r.purpose_type, r.estate_id, (id) => estateName[id])}
+                  </td>
+                  <td className="px-3 py-2.5">{r.counterparty}</td>
                   <td className="px-3 py-2.5 text-gray-500">{r.refunded_on ?? '—'}</td>
                   <td className="px-3 py-2.5 text-right tabular-nums">
                     {r.refunded_amount == null ? '—' : fmt(r.refunded_amount)}
@@ -397,16 +416,26 @@ export function AdvanceList({
                   onChange={(e) => setEdit({ ...edit, counterparty: e.target.value })}
                   placeholder="王大明／台北市政府" className={CTRL} /></label>
 
-              <label className="flex flex-col gap-1 sm:col-span-2"><span className="text-xs text-gray-500">用途</span>
+              {/*
+                ★★★ 這一欄本來叫「用途」，2026-09-03 改叫「項目」——
+                  因為「用途」讓給了下面那個下拉（跟支出頁一致:用途＝物業）。
+                  同一個詞在兩頁不同意思是最難查的一種錯，而它不會報錯。
+              */}
+              <label className="flex flex-col gap-1 sm:col-span-2"><span className="text-xs text-gray-500">項目</span>
                 <input value={edit.usage}
                   onChange={(e) => setEdit({ ...edit, usage: e.target.value })}
-                  placeholder="安幸辦公室租賃／114 年清潔標案" className={CTRL} /></label>
+                  placeholder="辦公室租賃／零用金撥補／114 年清潔標案" className={CTRL} /></label>
 
-              <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">物業（選填）</span>
-                <select value={edit.estate_id ?? ''}
-                  onChange={(e) => setEdit({ ...edit, estate_id: e.target.value || null })}
+              {/*
+                用途（migration_212）。★ 安幸辦公室**不是物業** ——
+                `estates` 裡沒有它，所以用 purpose_type 分辨，跟支出頁同一套。
+              */}
+              <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">用途（選填）</span>
+                <select value={purposeToSelect(edit.purpose_type, edit.estate_id)}
+                  onChange={(e) => setEdit({ ...edit, ...purposeFromSelect(e.target.value) })}
                   className={CTRL}>
                   <option value="">—</option>
+                  <option value={PURPOSE_OFFICE}>{OFFICE_LABEL}</option>
                   {estates.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
                 </select></label>
 
