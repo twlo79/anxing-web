@@ -203,3 +203,50 @@ describe('cleanItemName —— 畫面與寫入用同一支（2026-09-03）', () 
     assert.equal(LABOR_ITEM_NAME, '房務人事費');
   });
 });
+
+describe('amount_override —— 直接指定金額（migration_215，2026-09-03）', () => {
+  const J = (o: any = {}) => ({
+    work_date: '2026-08-14', work_type: '清潔', property_id: 'p1',
+    label: '4B3', staffIds: ['s1'], units: 0.17, points: 0, unknownPoints: 0, ...o,
+  });
+  const price = () => 9000;
+
+  /*
+   * ★★★ 這是這個欄位存在的理由:9000/6 = 1,500，
+   *   而 1/6 用兩位小數的間數表達不出來（0.17 × 9000 = 1,530）。
+   */
+  test('★★★ 有覆寫就用覆寫，不用間數 × 單價', () => {
+    const { rows } = cleaningCosts([J({ amountOverride: 1500 })], price);
+    assert.equal(rows[0].amount, 1500, '不是 0.17 × 9000 = 1530');
+    assert.equal(rows[0].fixedAmount, true);
+  });
+
+  test('沒覆寫就照公式', () => {
+    const { rows } = cleaningCosts([J()], price);
+    assert.equal(rows[0].amount, 1530);
+    assert.equal(rows[0].fixedAmount, false);
+  });
+
+  // ★ null 與 undefined 都是「沒覆寫」，0 才是「這份工不用錢」
+  test('★ 覆寫成 0 是真的 0，不是「沒覆寫」', () => {
+    assert.equal(cleaningCosts([J({ amountOverride: null })], price).rows[0].amount, 1530);
+    assert.equal(cleaningCosts([J({ amountOverride: undefined })], price).rows[0].amount, 1530);
+    // 金額 0 的不產生支出（既有規則），所以這裡會被濾掉
+    assert.equal(cleaningCosts([J({ amountOverride: 0 })], price).rows.length, 0);
+  });
+
+  /*
+   * ★★ 沒設單價的房源，只要有覆寫金額就該算得出來 ——
+   *   「這份工要付多少」是人講的，不需要單價。
+   */
+  test('★★ 沒設單價但有覆寫 → 還是算得出來', () => {
+    const { rows, unpriced } = cleaningCosts([J({ amountOverride: 1500 })], () => null);
+    assert.equal(unpriced.length, 0, '不該被列進算不出錢');
+    assert.equal(rows[0]?.amount, 1500);
+  });
+
+  test('★★★ 項目名稱不印 ×N —— 印了會跟金額對不起來', () => {
+    assert.equal(cleanItemName('4B3', 0.17, true), '房務清潔 4B3');
+    assert.equal(cleanItemName('4B3', 0.17, false), '房務清潔 4B3 ×0.17');
+  });
+});

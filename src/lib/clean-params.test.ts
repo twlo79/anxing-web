@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   parseBeds, parsePoints, parsePrice, parseLabor,
   laborMode, canEditEstateLabor, canEditRoomLabor, laborLockMsg,
-  cleanGaps, hasGap, parseUnits,
+  cleanGaps, hasGap, parseUnits, parseAmount,
 } from './clean-params.ts';
 
 describe('parse* —— 四個參數的驗證（2026-09-03）', () => {
@@ -168,4 +168,19 @@ describe('parseUnits —— 這份工算幾間（2026-09-03）', () => {
     assert.equal(parseUnits('-1').ok, false);
     assert.equal(parseUnits('兩間').ok, false);
   });
+});
+
+describe('parseAmount —— 直接指定金額（2026-09-03）', () => {
+  // ★★★ 留空 = 用公式算；填 0 = 這份工不用錢。兩者不同
+  test('★★★ 留空 null、填 0 是 0', () => {
+    assert.deepEqual(parseAmount(''), { ok: true, value: null });
+    assert.deepEqual(parseAmount('0'), { ok: true, value: 0 });
+  });
+
+  test('1500 收得下，千分位也收', () => {
+    assert.deepEqual(parseAmount('1500'), { ok: true, value: 1500 });
+    assert.deepEqual(parseAmount('1,500'), { ok: true, value: 1500 });
+  });
+
+  test('負數擋掉', () => assert.equal(parseAmount('-1').ok, false));
 });

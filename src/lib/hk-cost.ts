@@ -45,8 +45,10 @@ export type CostRow = {
   units: number;
   /** 每一間多少錢 */
   price: number;
-  /** units × price，四捨五入到元 */
+  /** units × price，四捨五入到元。★ 有 `amount_override` 時就是那個值 */
   amount: number;
+  /** 這筆是不是人工指定金額的（migration_215）。影響項目名稱要不要印 ×N */
+  fixedAmount?: boolean;
 };
 
 /** 沒辦法算錢的那些，要在畫面上列出來讓人去補。 */
@@ -81,7 +83,13 @@ export function cleaningCosts(
       continue;
     }
     const price = priceOf(j.property_id);
-    if (price == null) {
+    /*
+     * ★★★ 有覆寫金額就不需要單價（migration_215）——
+     *   「這份工要付 1,500」是人直接講的，不經過任何乘法。
+     *   少了這個條件，正隆多間那三筆會被判成「沒設單價」而掉出去，
+     *   而它們明明已經有金額了。
+     */
+    if (price == null && j.amountOverride == null) {
       unpriced.push({ work_date: j.work_date, label: j.label,
                       units: j.units, reason: '沒設單價' });
       continue;
@@ -91,14 +99,29 @@ export function cleaningCosts(
      *   （migration_198 的 units_override）要乘進去。
      *   正隆整棟一次 4 間就是 4 × 9,000。
      */
-    const amount = Math.round(j.units * Number(price));
+    /*
+     * ★★★ 有指定金額就用它（migration_215，2026-09-03 使用者選 B）。
+     *
+     *   起因:正隆一份工掃三間、工作量算一半 → 每間 9000/6 = 1,500。
+     *   而 1/6 = 0.1666… 用「間數 × 單價」表達不出來 ——
+     *   間數存兩位小數，0.17 算出來是 1,530。
+     *
+     * ★★ 代價要知道:金額與「間數 × 單價」從此**可能不一致**。
+     *   這正是 CLAUDE.md 那條「推導值存成欄位」在警告的形狀 ——
+     *   差別是這裡的覆寫是**人明確填的**，不是程式算完存起來的，
+     *   而且只有填了才生效（null 一律走公式）。
+     */
+    const amount = j.amountOverride != null
+      ? Math.round(Number(j.amountOverride))
+      : Math.round(j.units * Number(price));
     // ★ 金額 0 的不產生。免費的清掃記一筆 $0 只會讓支出頁多一列雜訊
     if (amount === 0) continue;
     rows.push({
       key: `${j.work_date}|${j.property_id}|${j.work_type}`,
       work_date: j.work_date, property_id: j.property_id,
       label: j.label, work_type: j.work_type,
-      units: j.units, price: Number(price), amount,
+      units: j.units, price: Number(price ?? 0), amount,
+      fixedAmount: j.amountOverride != null,
     });
   }
   return { rows, unpriced };
@@ -195,10 +218,18 @@ export function costTotal(rows: { amount: number }[]): number {
  * 這是刻意的（已經對過的帳不該無聲變動），但要知道會有兩種名字並存。
  */
 
-/** 清潔費。★ `units` 是 1 的時候不印 —— 「房務清潔 1485 ×1」是雜訊。 */
-export function cleanItemName(label: string, units: number): string {
+/**
+ * 清潔費。★ `units` 是 1 的時候不印 —— 「房務清潔 1485 ×1」是雜訊。
+ *
+ * ★★★ **金額是人工指定的時候也不印**（`fixedAmount`，migration_215）。
+ *   印了會變成「×0.17」配一筆 1,500 —— 而 0.17 × 9,000 是 1,530。
+ *   一個看得懂的人會停下來算，然後以為系統錯了。
+ *   ×N 這個後綴的意思是「金額是這樣乘出來的」，不是就不該印。
+ */
+export function cleanItemName(label: string, units: number, fixedAmount = false): string {
   const u = Number(units);
-  const suffix = u !== 1 && Number.isFinite(u) ? ` ×${Number(u.toFixed(2))}` : '';
+  const suffix = !fixedAmount && u !== 1 && Number.isFinite(u)
+    ? ` ×${Number(u.toFixed(2))}` : '';
   return `房務清潔 ${label ?? ''}`.trimEnd() + suffix;
 }
 

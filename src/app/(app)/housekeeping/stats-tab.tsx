@@ -9,7 +9,7 @@ import {
   cleaningCosts, laborCosts, lastDayOf, costTotal, cleanItemName, LABOR_ITEM_NAME,
 } from '@/lib/hk-cost';
 import { TAG_NON_CASH } from '@/lib/expense-tags';
-import { parseUnits } from '@/lib/clean-params';
+import { parseUnits, parseAmount } from '@/lib/clean-params';
 // ★ useRef 的同步閘門 —— useState 是非同步的,連點兩下會兩筆都送出去
 import { useOnce } from '@/lib/once';
 import { sharePreview, previewText } from '@/lib/hk-crew';
@@ -54,6 +54,8 @@ type Wi = {
    *   實際上那天在正隆掃了四間，而使用者未必知道是哪四間房號。
    */
   units_override?: number | null; points_override?: number | null;
+  /** 這一份工的清潔費直接指定（migration_215）。null = 間數 × 單價 */
+  amount_override?: number | null;
   /**
    * 這一列是從哪個行事曆事件長出來的（migration_188）。
    *
@@ -139,10 +141,10 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
    *   送出時才走 `parseUnits`。
    */
   const [adding, setAdding] = useState<
-    { date: string; staffIds: string[]; code: string; type: string; units: string } | null>(null);
+    { date: string; staffIds: string[]; code: string; type: string; units: string; amt: string } | null>(null);
   /** 就地編輯某個房源格 */
   const [editItem, setEditItem] = useState<
-    { id: string; staffId: string; code: string; type: string; units: string } | null>(null);
+    { id: string; staffId: string; code: string; type: string; units: string; amt: string } | null>(null);
 
   function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 4000); }
 
@@ -322,6 +324,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
     staff_id: i.staff_id,
     // ★★★ 這兩行少了的話 migration_198 等於沒做:欄位存進去了，但算的時候看不到
     units_override: i.units_override ?? null,
+    amount_override: i.amount_override ?? null,
     points_override: i.points_override ?? null,
     // ★ 只給日誌顯示用,不參與計算 —— 主檔對不到的房源沒有 property_id,
     //   但日誌上要看得到使用者當初打了什麼
@@ -428,7 +431,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
         //   —— 那一欄讀的是 estate_id（2026-09-03）
         estate_id: estIdByProp[r.property_id] ?? null,
         // ★ 使用者在預覽裡改過就用他的。空字串當成沒改 —— 不讓項目變空白
-        item_name: nameBy[r.key]?.trim() || cleanItemName(r.label, r.units),
+        item_name: nameBy[r.key]?.trim() || cleanItemName(r.label, r.units, r.fixedAmount),
         key_job: r.key,
       }));
       const laborRows = gen.lab.map((r) => mk({
@@ -633,6 +636,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
      * ★ **不要用 0 當「沒填」** —— 0 是合法輸入（「這一筆不算間數，只記點數」）。
      */
     unitsOv: number | null = null, pointsOv: number | null = null,
+    amtOv: number | null = null,
   ): Promise<boolean> {
     const ok = staffIds.filter((id) => canAddItem(date, id));
     const skipped = staffIds.length - ok.length;
@@ -655,6 +659,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
       period, work_date: date, property_code: code || null,
       work_type: type, staff_id, source: 'manual',
       units_override: unitsOv, points_override: pointsOv,
+      amount_override: amtOv,
     }));
     const { data, error } = await supabase.from('hk_work_item').insert(rows).select('*');
     if (error) { flash('新增失敗:' + error.message); return false; }
@@ -680,11 +685,14 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
      */
     const u = parseUnits(editItem.units);
     if (!u.ok) return flash(u.error);
+    const a = parseAmount(editItem.amt);
+    if (!a.ok) return flash(a.error);
     const patch: any = {
       property_code: editItem.code || null,
       work_type: editItem.type,
       staff_id: editItem.staffId,
       units_override: u.value,
+      amount_override: a.value,
       source: cur?.source === 'manual' ? 'manual' : 'timetree_edited',
     };
     setItems((xs) => xs.map((x) => (x.id === editItem.id ? { ...x, ...patch } : x)));
@@ -1274,7 +1282,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                     {gen.rows.map((r) => (
                       <tr key={r.key} className="border-t border-mor-line/60">
                         <td className="px-2 py-1 text-gray-500">{r.work_date}</td>
-                        {nameCell(r.key, cleanItemName(r.label, r.units))}
+                        {nameCell(r.key, cleanItemName(r.label, r.units, r.fixedAmount))}
                         <td className="px-2 py-1 text-gray-600">{estateById[r.property_id] ?? '—'}</td>
                         <td className="px-2 py-1 text-gray-600">{propNameById[r.property_id] ?? '—'}</td>
                         <td className="px-2 py-1 text-gray-500">房務清潔</td>
@@ -1486,6 +1494,14 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                                     title="這一份工算幾間。留空＝一間（合掃自動各 0.5）"
                                     className={`${inp} w-14 text-center`} />
                                 </span>
+                                <span className="inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5">
+                                  <span className="text-[11px] text-amber-700">金額</span>
+                                  <input value={editItem.amt} inputMode="decimal" placeholder="自動"
+                                    onChange={(e) => setEditItem({ ...editItem, amt: e.target.value })}
+                                    onKeyDown={(e) => { if (e.key === 'Enter') saveItem(); if (e.key === 'Escape') setEditItem(null); }}
+                                    title="這一份工的清潔費直接指定。留空＝間數 × 單價"
+                                    className={`${inp} w-20 text-right`} />
+                                </span>
                                 <button onClick={saveItem} className="text-xs text-mor-blue underline">存</button>
                                 <button onClick={() => setEditItem(null)} className="text-xs text-gray-400 underline">取消</button>
                                 <button onClick={() => { setEditItem(null); delItem(it); }} className="text-xs text-red-500 underline">刪除</button>
@@ -1495,7 +1511,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
 
                           return (
                             <span key={it.id}
-                              onClick={() => setEditItem({ id: it.id, staffId: it.staff_id, code: it.property_code ?? '', type: it.work_type, units: it.units_override == null ? '' : String(it.units_override) })}
+                              onClick={() => setEditItem({ id: it.id, staffId: it.staff_id, code: it.property_code ?? '', type: it.work_type, units: it.units_override == null ? '' : String(it.units_override), amt: it.amount_override == null ? '' : String(it.amount_override) })}
                               className="group inline-flex items-center rounded text-xs pl-1.5 pr-0.5 py-0.5 border-l-4 cursor-pointer hover:brightness-95"
                               style={{
                                 backgroundColor: s?.color ? `#${s.color}` : '#f3f4f6',
@@ -1546,7 +1562,9 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                                     //   用 Enter 的人會發現間數沒存進去而不知道為什麼
                                     const u = parseUnits(adding.units);
                                     if (!u.ok) { flash(u.error); return; }
-                                    addItems(d, adding.staffIds, adding.code, adding.type, u.value);
+                                    const a = parseAmount(adding.amt);
+                                    if (!a.ok) { flash(a.error); return; }
+                                    addItems(d, adding.staffIds, adding.code, adding.type, u.value, null, a.value);
                                     setAdding({ ...adding, code: '' });   // 連續新增:存檔後停在輸入器
                                   }
                                   if (e.key === 'Escape') setAdding(null);
@@ -1568,12 +1586,28 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                                   title="這一份工算幾間。留空＝一間（合掃自動各 0.5）"
                                   className={`${inp} w-14 text-center`} />
                               </span>
+                              {/*
+                                ★★★ 金額（migration_215）。留空＝間數 × 單價。
+                                  用途:一份工掃三間、工作量算一半 → 每間 9000/6 = 1,500，
+                                  而 1/6 用兩位小數的間數表達不出來。
+                                ★ 琥珀底跟綠色的間數分開 —— 填了它就**蓋過**左邊那格的算式，
+                                  兩個看起來一樣的話會以為是同一種東西。
+                              */}
+                              <span className="inline-flex items-center gap-1 rounded-lg bg-amber-50 px-1.5 py-0.5">
+                                <span className="text-[11px] text-amber-700">金額</span>
+                                <input value={adding.amt} inputMode="decimal" placeholder="自動"
+                                  onChange={(e) => setAdding({ ...adding, amt: e.target.value })}
+                                  title="這一份工的清潔費直接指定。留空＝間數 × 單價"
+                                  className={`${inp} w-20 text-right`} />
+                              </span>
                               <button
                                 onClick={() => {
                                   if (adding.code && adding.staffIds.length) {
                                     const u = parseUnits(adding.units);
                                     if (!u.ok) return flash(u.error);
-                                    addItems(d, adding.staffIds, adding.code, adding.type, u.value);
+                                    const a = parseAmount(adding.amt);
+                                    if (!a.ok) return flash(a.error);
+                                    addItems(d, adding.staffIds, adding.code, adding.type, u.value, null, a.value);
                                     // ★ 間數留著不清 —— 拆多間時三筆常常是同一個數字
                                     setAdding({ ...adding, code: '' });
                                   }
@@ -1645,7 +1679,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                               if (!s) return flash('當日所有人員都是休假狀態,要先清除休假才能新增房源');
                               /* ★ 預設勾一個人 —— 九成的情況是一個人掃一間，
                                    一個都不勾的話每次都要先按一下 */
-                              setAdding({ date: d, staffIds: [s.id], code: '', type: '退房清潔', units: '' });
+                              setAdding({ date: d, staffIds: [s.id], code: '', type: '退房清潔', units: '', amt: '' });
                             }}
                             className="w-5 h-5 rounded border border-dashed border-gray-300 text-gray-400 text-xs leading-none hover:border-mor-blue hover:text-mor-blue"
                             title="新增房源">+</button>

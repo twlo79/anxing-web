@@ -32,6 +32,8 @@ export type PayrollRow = {
    *   實際上那天在正隆掃了四間，而使用者未必知道是哪四間房號。
    */
   units_override?: number | null;
+  /** 這一份工的清潔費直接指定（migration_215）。null = 用 間數 × 單價 算 */
+  amount_override?: number | null;
   /**
    * 這一列的打掃點數（migration_198）。null／undefined = 照房源的點數算。
    *
@@ -307,6 +309,13 @@ export type LogEntry = {
   units: number;
   points: number;
   unknownPoints: number;
+  /**
+   * 這一份工的清潔費直接指定（migration_215）。null = 用 間數 × 單價 算。
+   *
+   * ★★★ 合掃的每一列都帶同一個值，所以**取其中一個不是加總** ——
+   *   加起來的話兩個人合掃就變兩倍。
+   */
+  amountOverride?: number | null;
 };
 
 /**
@@ -340,6 +349,12 @@ export function estateLog(
       work_date: r.work_date, work_type: r.work_type,
       property_id: r.property_id ?? null, label: r.label ?? '',
       staffIds: [], units: 0, points: 0, unknownPoints: 0,
+      /*
+       * ★★ 金額覆寫**取一個不是加總**。合掃是兩列同一份工，
+       *   兩列都帶著同一個「這份工要付 1,500」——
+       *   加起來就變 3,000，而畫面上只是「比較貴」。
+       */
+      amountOverride: r.amount_override ?? null,
     };
     // ★ 同一個人在同一份工上重複指派時 eachShare 已經去過重了，
     //   這裡再擋一次是為了「同一份工被拆成兩筆但人相同」的舊資料

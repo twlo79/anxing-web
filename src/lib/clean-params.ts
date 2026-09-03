@@ -150,3 +150,15 @@ export const hasGap = (g: CleanGap) => !!(g.beds.length || g.points.length || g.
  *   多的位數存進去會被資料庫默默四捨五入。
  */
 export const parseUnits = (raw: string) => parseNum(raw, 2, '間數');
+
+/**
+ * 「這一份工的清潔費直接指定多少」（`hk_work_item.amount_override`）。
+ *
+ * ★★★ 留空 = null = **用「間數 × 單價」算**。填了才蓋過公式。
+ *   0 是「這份工不用錢」—— 跟留空不同，而畫面上都是空格子。
+ *
+ * ★ 用途:一份工掃三間、工作量算一半 → 每間 9000/6 = 1,500。
+ *   1/6 用兩位小數的間數表達不出來（0.17 × 9000 = 1,530），
+ *   所以金額要能直接講（2026-09-03 使用者選 B）。
+ */
+export const parseAmount = (raw: string) => parseNum(raw, 2, '金額');
