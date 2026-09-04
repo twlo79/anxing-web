@@ -188,6 +188,16 @@ const NAV: { href: string; label: string; icon: string; roles: string[]; group?:
    * 都不撞 —— 側邊欄收合成只剩圖示時要分得出來。
    */
   { href: '/otherbooks', label: '其他收支帳', icon: '🗂️', group: '支出與帳務', roles: ['accountant', 'super_admin'] },
+  /*
+   * 稅務管理（migration_217）。營業稅的進項、銷項與每期結算。
+   *
+   * 只給會計以上 —— 報稅是會計的事，而 `tax_*` 兩張表的 RLS
+   * 也是這三個角色。選單與 RLS 一致，藏起來不是為了安全，是為了不騙人。
+   *
+   * 放在財務儀錶板前面:它跟支出、帳戶是同一組「錢的帳」，
+   * 而儀錶板是那一組的總結，該留在最後。
+   */
+  { href: '/tax', label: '稅務管理', icon: '🧮', group: '支出與帳務', roles: ['accountant', 'manager', 'super_admin'] },
   { href: '/dashboard', label: '財務儀錶板', icon: '📊', group: '支出與帳務', roles: ['accountant', 'manager', 'super_admin'] },
   // 客戶管理跟房務、評價、清潔是同一組:都是「人在現場會用到的」。
   // 上面那半段是錢(訂單、契約、營收、請款、押金、支出、儀表板)。
