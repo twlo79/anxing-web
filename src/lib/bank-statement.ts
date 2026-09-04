@@ -122,6 +122,19 @@ export type Statement = {
   /** footer 的「總計 2,085,031 2,138,901」。null 表示這份沒有那一行。 */
   totalDebit: number | null;
   totalCredit: number | null;
+  /**
+   * 表頭那一列（序號／交易說明／支出金額／存入金額／帳面餘額／備註票據號碼）
+   * 有沒有讀到。
+   *
+   * ★★★ 這是「一筆都沒有」時唯一分得出兩件事的東西（2026-09-04）:
+   *
+   *     表頭讀到了 ＋ 總計 0／0 → **這段期間真的沒有交易**（元大的空對帳單）
+   *     表頭讀不到             → 版面不認得,解析失敗
+   *
+   * 兩種在畫面上都是「0 筆」。沒有這個旗標就只能一律當成失敗 ——
+   * 於是查一段沒有進出的期間,系統會說「版面可能跟已知的元大格式不同」。
+   */
+  sawHeader: boolean;
   txns: Txn[];
 };
 
@@ -372,6 +385,8 @@ export function parseStatement(words: Word[]): Statement {
    * 而且金額判斷全部正確、只是少了 166 筆,總計才對不上。
    */
   let cols: Cols | null = null;
+  /** 表頭至少出現過一次。**不隨頁面重設** —— 坑②:表頭只印在第 1 頁。 */
+  let sawHeader = false;
   const txns: Txn[] = [];
   let totals: { debit: number; credit: number } | null = null;
 
@@ -380,6 +395,7 @@ export function parseStatement(words: Word[]): Statement {
     const found = readColumns(row);
     if (found) {
       cols = found;
+      sawHeader = true;
       continue; // 表頭那一列本身不是資料
     }
     if (!cols) continue; // 表頭之前的抬頭區
@@ -428,6 +444,7 @@ export function parseStatement(words: Word[]): Statement {
     periodTo: mPeriod ? toIso(mPeriod[2]) : null,
     totalDebit: totals ? totals.debit : null,
     totalCredit: totals ? totals.credit : null,
+    sawHeader,
     txns,
   };
 }
@@ -446,11 +463,27 @@ function pickTotals(row: Word[], cols: Cols): { debit: number; credit: number } 
   if (amts.length > 0) {
     let debit = 0;
     let credit = 0;
+    /*
+     * ★★ 判斷「有沒有讀到」用**落在欄位裡**,不用**值是不是 0**（2026-09-04）。
+     *
+     * 原本寫 `if (debit || credit)` —— 而「總計 0 0」兩邊都是 0,
+     * 那個條件是 false:座標明明讀對了卻被丟掉,靠底下的文字退路救回來。
+     * 退路碰巧給出一樣的答案,所以從來沒有人發現。
+     *
+     * 而「總計 0 0」正是**空對帳單**的長相,那一份完全靠這兩個 0
+     * 才分得出「真的沒有交易」與「解析失敗」——不能靠運氣。
+     */
+    let hit = false;
     for (const w of amts) {
-      if (w.x1 <= cols.debitCredit) debit = toNum(w.text);
-      else if (w.x1 <= cols.creditBalance) credit = toNum(w.text);
+      if (w.x1 <= cols.debitCredit) {
+        debit = toNum(w.text);
+        hit = true;
+      } else if (w.x1 <= cols.creditBalance) {
+        credit = toNum(w.text);
+        hit = true;
+      }
     }
-    if (debit || credit) return { debit, credit };
+    if (hit) return { debit, credit };
   }
   // 整列被黏成一塊時座標救不了,退回讀文字
   const m = /總計\s*([\d,]+)\s+([\d,]+)/.exec(row.map((w) => w.text).join(' '));
@@ -642,6 +675,49 @@ export function openingBalance(txns: Txn[]): number | null {
 }
 
 /**
+ * 這份是不是「這段期間真的沒有交易」的空對帳單?
+ *
+ * ============================================================
+ * 【為什麼要跟「解析失敗」分開】
+ * （2026-09-04 使用者:「當 0 筆內容時 只更新日期」）
+ *
+ * 查詢期間短就會拿到一份沒有任何交易的對帳單 —— 例如只查昨天到今天:
+ *
+ *     序號 交易日 帳務日 交易說明 交易行庫 支出金額 存入金額 帳面餘額 備註票據號碼
+ *                                     總計        0        0
+ *
+ * **那一份是好的。** 舊版一律當成「解析不出交易明細 —— 版面可能跟已知的
+ * 元大格式不同」,於是:
+ *
+ *   · 會計以為系統壞了 —— 而 PDF 明明是網銀當天下載的
+ *   · 那份唯一的用處（「到 09/04 為止帳上沒有動」）拿不到
+ *
+ *
+ * ============================================================
+ * 【三個條件,缺一不可】
+ *
+ *   ① 表頭讀到了  → 版面就是元大那一套,不是不認得的東西
+ *   ② 總計 0／0   → **銀行自己說**這段期間沒有任何進出
+ *   ③ 帳號讀到了  → 不然不知道要更新誰的日期
+ *
+ * ②是關鍵:真的漏讀了交易,總計不會是 0（金額不可能全部是 0）。
+ * 「表頭認得 ＋ 銀行說 0 ＋ 我們也讀到 0 筆」三者一致時,
+ * 一筆都沒有是**事實**,不是症狀。
+ *
+ * 反過來,①漏掉的話,任何一份剛好印著「總計 0 0」的東西都會被放行 ——
+ * 而放行的代價是拿它去更新某個帳戶的對帳日期。
+ */
+export function isEmptyPeriod(st: Statement): boolean {
+  return (
+    st.txns.length === 0 &&
+    st.sawHeader &&
+    st.totalDebit === 0 &&
+    st.totalCredit === 0 &&
+    !!st.accountNo
+  );
+}
+
+/**
  * 三道驗證。**全部都是「擋」,沒有警告。**
  *
  * 三份真實對帳單全部一次通過 —— 所以沒過就代表解析器真的錯了,
@@ -656,8 +732,19 @@ export function validate(st: Statement): Problem[] {
     p.push({ code: 'no_account', level: 'block', message: '這份 PDF 找不到帳號 —— 是元大的對帳單嗎？' });
   }
   if (t.length === 0) {
-    p.push({ code: 'empty', level: 'block', message: '解析不出任何交易 —— 版面可能改了' });
-    return p; // 沒有資料,後面幾項驗了也沒意義
+    /*
+     * ★★★ 「真的沒有交易」不是錯（2026-09-04）。
+     *
+     * 表頭認得、銀行的總計是 0／0 —— 那是一份空對帳單,放行。
+     * 匯入端看到 0 筆會**只更新對帳日期,不動餘額**（見 route.ts）。
+     *
+     * 兩條路都在這裡結束:餘額鏈、序號、總計相符這三道
+     * 在 0 筆時都沒有東西可以驗。
+     */
+    if (!isEmptyPeriod(st)) {
+      p.push({ code: 'empty', level: 'block', message: '解析不出任何交易 —— 版面可能改了' });
+    }
+    return p;
   }
 
   /*

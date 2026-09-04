@@ -105,7 +105,7 @@ const ACC: AccountLike[] = [
 ];
 const st = (accountNo: string | null): Statement => ({
   accountNo, branch: '元大中崙', periodFrom: '2025-01-01', periodTo: '2025-06-30',
-  totalDebit: 0, totalCredit: 0, txns: [],
+  totalDebit: 0, totalCredit: 0, sawHeader: true, txns: [],
 });
 
 describe('帳戶比對', () => {

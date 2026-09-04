@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
   parseStatement, validate, readColumns, openingBalance,
-  accountMatches, digitsOnly, txnKey,
+  accountMatches, digitsOnly, txnKey, isEmptyPeriod,
   type Word, type Statement,
 } from './bank-statement.ts';
 import { looksCombined } from './pdf-words.ts';
@@ -859,5 +859,124 @@ describe('摘要', () => {
       st.txns.some((t) => t.txnDate && t.txnDate !== t.postDate),
       '沒有任何一筆的交易日與帳務日不同 —— 上一行沒讀到?',
     );
+  });
+});
+
+// ============================================================
+// 空對帳單:這段期間真的沒有交易
+// ============================================================
+/*
+ * ══════════════════════════════════════════════════════════
+ * ★★★ 【0 筆有兩種,而畫面上長得一模一樣】（2026-09-04）
+ *
+ * 使用者拿網銀下載的 09/03~09/04 交易明細上傳,系統回:
+ *
+ *     「解析不出交易明細 —— 版面可能跟已知的元大格式不同。」
+ *
+ * 版面沒有不同。**那兩天真的沒有任何進出**,PDF 上只有一行:
+ *
+ *     總計   0   0
+ *
+ * 舊版的判斷是 `if (st.txns.length === 0) 失敗` —— 一句話把
+ * 「銀行說沒有交易」跟「我們讀不懂這份 PDF」壓成同一件事。
+ *
+ * ★★ 而這種錯**特別貴**:它把一份好的證據說成壞的。
+ *   會計看到那句話會去找工程師,工程師去看版面,而版面沒問題。
+ *
+ * ★ 分辨的關鍵是**銀行自己印的總計**:真的漏讀了交易,
+ *   總計不會是 0（金額不可能全部是 0）。所以
+ *   「表頭認得 ＋ 銀行說 0 ＋ 我們讀到 0 筆」三者一致 = 事實。
+ * ══════════════════════════════════════════════════════════
+ */
+
+describe('★★★ 空對帳單：0 筆是事實，不是症狀', () => {
+  const EMPTY = load('70564-empty');
+  const es = parseStatement(EMPTY);
+
+  test('抬頭照樣讀得到 —— 空的也要知道是誰的、哪一段', () => {
+    assert.equal(es.accountNo, '20992000170564');
+    assert.equal(es.periodFrom, '2026-09-03');
+    assert.equal(es.periodTo, '2026-09-04');
+  });
+
+  test('★★ 「總計 0 0」要讀成 0，不可以是 null', () => {
+    // null 的話 validate 會報 no_total，而 isEmptyPeriod 也認不出來 ——
+    // 於是這份好的對帳單還是被擋掉，只是換一個理由
+    assert.equal(es.totalDebit, 0);
+    assert.equal(es.totalCredit, 0);
+  });
+
+  test('★★★ 表頭讀到了 —— 分辨兩種 0 筆全靠它', () => {
+    assert.equal(es.sawHeader, true);
+    assert.equal(es.txns.length, 0);
+  });
+
+  test('★★★ validate 一項都不報，isEmptyPeriod 認得', () => {
+    assert.deepEqual(validate(es), []);
+    assert.equal(isEmptyPeriod(es), true);
+  });
+
+  test('★★ 座標整體位移之後結論不變', () => {
+    for (const d of [-0.9, -0.5, 0.5, 0.9]) {
+      const s = parseStatement(EMPTY.map((w) => ({ ...w, top: w.top + d })));
+      assert.equal(isEmptyPeriod(s), true, `平移 ${d}pt 之後就認不得了`);
+    }
+  });
+
+  // ── 三個「不可以放行」──────────────────────────────
+
+  test('★★★ 表頭讀不到 → 不是空對帳單，是解析失敗', () => {
+    // 少一個表頭 = 版面不認得。這時「總計 0 0」不足以放行 ——
+    // 不擋的話，任何一份剛好印著那四個字的 PDF 都會被當成空對帳單,
+    // 拿去把某個帳戶的對帳日期往前推
+    const s = parseStatement(EMPTY.filter((w) => w.text !== '帳面餘額'));
+    assert.equal(s.sawHeader, false);
+    assert.equal(isEmptyPeriod(s), false);
+    assert.ok(validate(s).some((p) => p.code === 'empty' && p.level === 'block'));
+  });
+
+  test('★★★ 總計不是 0 卻一筆都沒有 → 擋（那才是真的漏讀）', () => {
+    const s: Statement = JSON.parse(JSON.stringify(es));
+    s.totalDebit = 46_000;
+    assert.equal(isEmptyPeriod(s), false);
+    assert.ok(validate(s).some((p) => p.code === 'empty' && p.level === 'block'));
+  });
+
+  test('★★ 讀不到帳號的空對帳單也要擋 —— 不知道要更新誰', () => {
+    const s: Statement = JSON.parse(JSON.stringify(es));
+    s.accountNo = null;
+    assert.equal(isEmptyPeriod(s), false);
+    const codes = validate(s).map((p) => p.code);
+    assert.ok(codes.includes('no_account'));
+    assert.ok(codes.includes('empty'));
+  });
+
+  test('★★ 表頭被切碎時寧可擋下來', () => {
+    /*
+     * `shatter` 把「支出金額」切成「支出」「金額」，`readColumns` 就找不到了。
+     *
+     * 這一條**不是在要求它認得**，是在釘住「認不得的時候往哪一邊倒」——
+     * 倒向擋下來。空對帳單被擋掉只是白跑一趟；
+     * 認錯了則是拿一份不明的 PDF 去更新帳戶的對帳日期。
+     */
+    assert.equal(isEmptyPeriod(parseStatement(shatter(EMPTY))), false);
+  });
+
+  // ── 有交易的那三份不受影響 ────────────────────────
+
+  test('★★ 有交易的對帳單永遠不是「空的」', () => {
+    for (const e of EXPECT) {
+      assert.equal(isEmptyPeriod(S[e.tail]), false, e.tail);
+      assert.equal(S[e.tail].sawHeader, true, `${e.tail} 表頭`);
+    }
+  });
+
+  test('★★★ 把有交易那份的 txns 清空 → 照樣要擋', () => {
+    // 這是「解析器漏讀了整份」的樣子:總計還在,但一筆都沒有。
+    // 放行的話餘額會停在上一份，而實際上帳戶動過 —— 而且不會報錯
+    const s: Statement = JSON.parse(JSON.stringify(S['70564']));
+    s.txns = [];
+    assert.equal(isEmptyPeriod(s), false);
+    assert.ok(validate(s).some((p) => p.code === 'empty' && p.level === 'block'));
   });
 });

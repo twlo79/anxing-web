@@ -2,7 +2,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { pdfToWords, looksCombined, describeWords, PDF_COMBINED_MESSAGE } from '@/lib/pdf-words';
-import { parseStatement, validate, type Statement, type Problem } from '@/lib/bank-statement';
+import { parseStatement, validate, isEmptyPeriod, type Statement, type Problem } from '@/lib/bank-statement';
 
 /**
  * 上傳對帳單。
@@ -86,7 +86,17 @@ export default function UploadPanel({
         const st = parseStatement(words);
         const problems = validate(st);
 
-        if (st.txns.length === 0) {
+        /*
+         * ★★★ 0 筆有兩種（2026-09-04 使用者:「當 0 筆內容時 只更新日期」）:
+         *
+         *   這段期間真的沒有交易 → **好的對帳單**，照樣讓它進來
+         *   版面不認得           → 才是失敗
+         *
+         * 分辨在 `isEmptyPeriod`:表頭認得 ＋ 銀行印的總計是 0／0。
+         * 不分的話，只要查一段沒有進出的期間，系統就說「版面可能改了」——
+         * 而那句話是假的，PDF 是好的，壞的是這個判斷。
+         */
+        if (st.txns.length === 0 && !isEmptyPeriod(st)) {
           bad.push({
             file: f.name,
             error: looksCombined(words)
@@ -131,9 +141,19 @@ export default function UploadPanel({
         out.push({
           file: r.file,
           ok: true,
-          text:
-            `${j.account.name}　${j.period.from} ~ ${j.period.to}　` +
-            `新增 ${j.inserted} 筆、重複 ${j.duplicate} 筆　餘額 ${money(j.closingBalance)}`,
+          /*
+            0 筆的時候不要印「新增 0 筆、重複 0 筆」—— 那讀起來像沒做事。
+            實際上做了一件事:對帳日期往前推了。**就寫那件事。**
+
+            餘額印「維持」而不是印一個新數字，因為它不是這份 PDF 說的，
+            是上一份接過來的。沒有上一份就整個不印（`money(null)` 會是 $NaN）。
+          */
+          text: j.empty
+            ? `${j.account.name}　${j.period.from} ~ ${j.period.to}　` +
+              '沒有交易 —— 只更新對帳日期' +
+              (j.closingBalance == null ? '' : `　餘額維持 ${money(j.closingBalance)}`)
+            : `${j.account.name}　${j.period.from} ~ ${j.period.to}　` +
+              `新增 ${j.inserted} 筆、重複 ${j.duplicate} 筆　餘額 ${money(j.closingBalance)}`,
         });
       } catch (e) {
         out.push({ file: r.file, ok: false, text: (e as Error).message });
@@ -236,6 +256,16 @@ export default function UploadPanel({
                   {'　'}
                   {st.periodFrom} ~ {st.periodTo}　{st.txns.length} 筆
                 </div>
+                {/*
+                  0 筆而且通過檢查 = 這段期間銀行說沒有任何進出。
+                  **要寫出「按下去會發生什麼事」** —— 只顯示「0 筆」的話，
+                  人不知道確認到底有沒有用，多半就不按了。
+                */}
+                {!bad && !last && (
+                  <div className="mt-0.5 text-blue-700">
+                    這段期間沒有交易 —— 匯入只會把對帳日期更新到 {st.periodTo}，餘額不變。
+                  </div>
+                )}
                 {!bad && last && (
                   <div className="mt-0.5 text-gray-600">
                     期末餘額 <span className="font-medium">{money(last.balance)}</span>

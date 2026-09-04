@@ -125,15 +125,49 @@ export async function POST(req: Request) {
 
   const plan = planImport(account.id, st.txns, existing);
 
-  // ── 4. 寫入 ──────────────────────────────────────
-  const last = st.txns[st.txns.length - 1];
+  // ── 4. 期末餘額 ──────────────────────────────────
+  /*
+   * ★★★ 0 筆的時候**只更新日期,餘額原封不動**
+   *     （2026-09-04 使用者:「當 0 筆內容時 只更新日期」）。
+   *
+   * 空對帳單沒有「最後一筆」可以拿餘額,而卡片上那個數字讀的是
+   * 「period_to 最新那一份的 closing_balance」（見 accounts/page.tsx）。
+   *
+   * 這裡若寫 null,卡片會從有數字變成沒數字 —— 只是查了一段沒有進出的
+   * 期間,錢卻不見了,而且 `totalBalance` 會把這個帳戶算成「還沒上傳」,
+   * 連總額都少一塊。
+   *
+   * 所以**把上一份的期末餘額接過來**:銀行說這段期間沒有動,
+   * 那餘額本來就跟上一份一樣。日期往前走,數字留在原地 —— 那正是要的。
+   *
+   * ★★ 「上一份」限定 `period_to <= 這一份的 period_to` ——
+   *   補傳一份舊的空期間時,不可以把後來那份的餘額抄到過去,
+   *   那會讓歷史上的某一天顯示成未來才有的餘額。
+   */
+  const last = st.txns.length > 0 ? st.txns[st.txns.length - 1] : null;
+  let closing: number | null = last ? last.balance : null;
+  if (!last) {
+    const { data: prev } = await db
+      .from('bank_statements')
+      .select('closing_balance')
+      .eq('account_id', account.id)
+      .lte('period_to', st.periodTo)
+      .not('closing_balance', 'is', null)
+      .order('period_to', { ascending: false })
+      .limit(1);
+    const c = prev?.[0]?.closing_balance;
+    // 一份都沒有 → 留 null。**不要填 0** —— 「不知道」跟「帳上有 0 元」是兩件事
+    closing = c == null ? null : Number(c);
+  }
+
+  // ── 5. 寫入 ──────────────────────────────────────
   const { data: stmt, error: sErr } = await db
     .from('bank_statements')
     .insert({
       account_id: account.id,
       period_from: st.periodFrom,
       period_to: st.periodTo,
-      closing_balance: last.balance,
+      closing_balance: closing,
       total_debit: st.totalDebit,
       total_credit: st.totalCredit,
       parsed_count: st.txns.length,
@@ -213,7 +247,13 @@ export async function POST(req: Request) {
     inserted,
     duplicate: plan.duplicate.length,
     selfDuplicate: plan.selfDuplicate.length,
-    closingBalance: last.balance,
+    closingBalance: closing,
+    /**
+     * 這份是不是空對帳單。前端拿它決定要說「新增 N 筆」還是
+     * 「沒有交易 —— 只更新對帳日期」——
+     * 「新增 0 筆、重複 0 筆」讀起來像沒做事,而其實日期推進了。
+     */
+    empty: st.txns.length === 0,
     warnings: warns.map((w) => w.message),
   });
 }
