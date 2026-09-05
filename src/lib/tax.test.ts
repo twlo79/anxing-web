@@ -1,7 +1,7 @@
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  taxPeriodOf, periodRange, periodLabel, prevPeriod, nextPeriod, recentPeriods,
+  taxPeriodOf, periodRange, periodLabel, prevPeriod, nextPeriod, recentPeriods, periodOptions,
   activeInvoices, sumTax, sumNet, invoiceCounts,
   settle, periodFigures, carryChainBreaks,
   parseOutUpload, buildItemMap, toDateOnly, uploadError,
@@ -53,6 +53,32 @@ describe('期別 —— 雙月，起月一定是奇數（2026-09-04）', () => {
 
   test('最近幾期由新到舊', () => {
     assert.deepEqual(recentPeriods('202607', 4), ['202607', '202605', '202603', '202601']);
+  });
+
+  /*
+   * ★★★ 下拉要含**未來的期別**（2026-09-05 使用者:「下下一期 11月甚麼時候出現」）。
+   *   只往回數的話，9-10 月期在的時候 11-12 月期根本不在清單裡 ——
+   *   而發票是隨時開的:9 月就可能開出 11 月才要申報的那一張，
+   *   那時候使用者選不到那一期，只能選錯期或先擺著。
+   */
+  test('★★★ 選項含未來兩期，而且由新到舊', () => {
+    assert.deepEqual(periodOptions('202609', 3, 2),
+      ['202701', '202611', '202609', '202607', '202605']);
+  });
+
+  test('★ 未來的期別會跨年', () => {
+    assert.deepEqual(periodOptions('202611', 1, 2).slice(0, 3),
+      ['202703', '202701', '202611']);
+  });
+
+  // ★ forward 給 0 就退回原本只有過去的行為
+  test('forward = 0 等於 recentPeriods', () => {
+    assert.deepEqual(periodOptions('202609', 3, 0), recentPeriods('202609', 3));
+  });
+
+  test('沒有重複的期別', () => {
+    const o = periodOptions('202609', 12, 2);
+    assert.equal(new Set(o).size, o.length);
   });
 });
 

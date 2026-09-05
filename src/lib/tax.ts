@@ -100,6 +100,34 @@ export function recentPeriods(from: TaxPeriod, n: number): TaxPeriod[] {
   return out;
 }
 
+/**
+ * 期別下拉的選項:**未來幾期 ＋ 這一期 ＋ 過去幾期**，由新到舊。
+ *
+ * ============================================================
+ * 【★★★ 為什麼要有未來的期別】（2026-09-05 使用者:「下下一期 11月甚麼時候出現」）
+ *
+ * 原本只列 `recentPeriods()` —— 那是**只往回數**的，
+ * 所以今天（9-10 月期）在的話，11-12 月期根本不在下拉裡。
+ *
+ * 而發票是**隨時開的**:9 月就可能開出 11 月才要申報的發票，
+ * 那時候使用者選不到那一期，只能先擺著或選錯期。
+ *
+ * ★ 未來只放兩期。放太多的話下拉最上面全是空的期別，
+ *   而人是從上往下讀的 —— 第一眼看到的應該是「現在這一期」。
+ *
+ * ★★ 已經在資料庫裡的期別由呼叫端另外併進來
+ *   （結算過的舊期可能比 `back` 還早）。
+ */
+export function periodOptions(
+  now: TaxPeriod, back = 12, forward = 2,
+): TaxPeriod[] {
+  const out: TaxPeriod[] = [];
+  let f = now;
+  for (let i = 0; i < forward && f; i++) { f = nextPeriod(f); if (f) out.push(f); }
+  out.reverse();                              // 未來的也要由新到舊
+  return [...out, ...recentPeriods(now, back)];
+}
+
 
 /* ============================================================
  * 下拉選項（照舊 Excel 的「清單」分頁）
