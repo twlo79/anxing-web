@@ -900,7 +900,72 @@ const nameOf = (c: Contract) =>
         <TrashLink table="contracts" label="契約" />
       </div>
 
-      <div className="rounded-xl glass overflow-x-auto">
+      {/*
+        ══════════ 手機版 ══════════
+        （2026-09-05 使用者:「表單要不要收納起來 / 閱讀好像不是重點 /
+          主要是查詢後 可以彈出資訊」）
+
+        ★★★ 桌機那張表有六欄、`min-w-[640px]` —— iPhone 直式只有 390px，
+          要左右拉將近一倍。而**拉到右邊就看不到房號了**:
+          你看著一個「本期未收」卻不知道那是誰。
+
+        ★★ 所以手機上只留**認得出是哪一筆**的三個訊號:
+          房源＋租戶、租金、收租狀態。其餘全部在抽屜裡
+          （點一下開，跟桌機同一個抽屜、同一份程式）。
+
+        ★ 「收租」那顆維持可點且 `stopPropagation` —— 它是手機上
+          最常按的動作，不該逼人先開抽屜再找。
+      */}
+      <div className="md:hidden space-y-2 mb-4">
+        {loading ? (
+          <div className="text-center text-gray-400 py-10">載入中…</div>
+        ) : filtered.length === 0 ? (
+          <div className="rounded-xl glass px-6 py-10 text-center text-gray-400">尚無契約</div>
+        ) : filtered.map((c: any) => {
+          const step = STEP_OF[c.cadence] || 1;
+          const per = c.amount_per_period || (c.monthly_rent || 0) * step;
+          const lt = curLT[c.id];
+          const st = statusOf(c);
+          return (
+            <div key={`m-${c.id}`} onClick={() => setDetail(c)}
+              className={`rounded-xl glass px-3 py-2.5 cursor-pointer active:bg-mor-sand/40
+                          ${c.active ? '' : 'opacity-50'}`}>
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="font-medium truncate">{c.room || c.tenant_name || '（未命名）'}</span>
+                    <span className="text-[11px] text-gray-400">{c.estates?.name}</span>
+                    {st === 'expired' && <span className="rounded px-1.5 py-0.5 text-[10px] bg-amber-50 text-amber-600">已到期</span>}
+                    {st === 'disabled' && <span className="rounded px-1.5 py-0.5 text-[10px] bg-gray-100 text-gray-500">已停用</span>}
+                  </div>
+                  <div className="text-[11px] text-gray-600 mt-1 truncate">{c.tenant_name ?? '—'}</div>
+                  <div className="text-[11px] text-gray-400 mt-0.5 tabular-nums">
+                    {c.start_date ?? '—'} ~ {c.end_date ?? '—'}
+                  </div>
+                </div>
+                <div className="shrink-0 text-right">
+                  <div className="font-bold tabular-nums">${fmt(per)}</div>
+                  <div className="text-[11px] text-gray-400">{CAD_LABEL[c.cadence] ?? c.cadence}</div>
+                  {/* ★ 收租標籤照樣點得開，不要被整列的 onClick 吃掉 */}
+                  <div className="mt-1" onClick={(e) => e.stopPropagation()}>
+                    {lt ? (
+                      <button onClick={() => setCollect(c)}
+                        className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                          lt.paid ? 'bg-mor-greenlight text-mor-green' : 'bg-orange-50 text-orange-600'}`}>
+                        {c.cadence === 'monthly' ? '本月' : '本期'}{lt.paid ? '已收' : '未收'}
+                      </button>
+                    ) : (
+                      <span className="text-[11px] text-gray-300">本期無應收</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="hidden md:block rounded-xl glass overflow-x-auto">
         <table className="w-full min-w-[640px] text-sm">
           <thead>
             <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-white/45">

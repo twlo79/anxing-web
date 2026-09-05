@@ -1331,9 +1331,29 @@ export default function ShortTermPage() {
                 </div>
                 <div className="shrink-0 text-right">
                   <div className="font-bold tabular-nums">{fmt(o.amount)}</div>
-                  <span className={`inline-block mt-1 rounded px-1.5 py-0.5 text-[11px] font-medium ${STATUS_CLASS[st]}`}>
-                    {STATUS_LABEL[st]}
-                  </span>
+                  {/*
+                    ★★ 狀態標籤本身就是「收款」的入口（2026-09-05）。
+                      桌機的操作欄有「收款」那顆，手機沒有 —— 於是手機上
+                      要收一筆款得先開抽屜再找，而那是最常做的一件事。
+                    ★ 平台代收（isExempt）的不給點:那些錢不經過我們的手，
+                      點開收款視窗只會讓人以為有東西要填。
+                    ★★★ `stopPropagation` —— 不擋的話會連整列的 onClick
+                      一起觸發，收款視窗跟抽屜同時打開。
+                  */}
+                  {isExempt(o) ? (
+                    <span className={`inline-block mt-1 rounded px-1.5 py-0.5 text-[11px] font-medium ${STATUS_CLASS[st]}`}>
+                      {STATUS_LABEL[st]}
+                    </span>
+                  ) : (
+                    <button onClick={(e) => {
+                      e.stopPropagation();
+                      if (!canCollect) return flash(collectDeniedMsg('這筆訂單的款'));
+                      setCollect(o);
+                    }}
+                      className={`inline-block mt-1 rounded px-1.5 py-0.5 text-[11px] font-medium ${STATUS_CLASS[st]}`}>
+                      {STATUS_LABEL[st]}
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
