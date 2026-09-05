@@ -11,6 +11,10 @@ import {
   OUT_SHEET, OUT_DETAIL_SHEET,
   type TaxInvoice, type TaxKind, type PeriodRow, type ParsedUpload,
 } from '@/lib/tax';
+import {
+  importable, importError, importSummary, toRows, pickedOf, splitTax,
+  type ExpenseSrc, type InvoiceDraft,
+} from '@/lib/tax-from-expense';
 import { useOnce } from '@/lib/once';
 import StatCard from '@/components/StatCard';
 import { Tabs, TabShell } from '@/components/Tabs';
@@ -237,6 +241,100 @@ export default function TaxPage() {
     } finally { setBusy(false); }
   }
   const [doImport] = useOnce(importInner);
+
+  /* ══════════════════════════════════════════════════════════
+   * 從支出帶入進項（migration_220 / 2026-09-05）
+   * ══════════════════════════════════════════════════════════
+   *
+   * 【★★★ 這是預填，不是答案】
+   *
+   * `expenses` 沒有稅額欄、沒有未稅欄，所以稅額是用
+   * `金額 ÷ 1.05` 反推的 —— 而反推對**免稅**是錯的
+   * （房租、保險、薪資、國外服務沒有 5% 進項稅）。
+   *
+   * 三層緩衝:憑證號碼不合統一發票格式的不預設勾、
+   * 每一列的稅額都可以改、`source` 存成 `expense` 之後查得出來源。
+   *
+   * 規則與測試在 `lib/tax-from-expense.ts`（29 個測試）。
+   */
+  const [pick, setPick] = useState<InvoiceDraft[] | null>(null);
+  const [pickErr, setPickErr] = useState<string | null>(null);
+
+  async function openFromExpense() {
+    if (closed) return flash('這一期已經結算，要帶入請先取消結算');
+    setBusy(true);
+    setPickErr(null);
+    try {
+      /*
+       * ★ 只撈這一期的（使用者指定「支出轉入要在同月」）。
+       *   `importable()` 也會再濾一次期別 —— 這裡先用日期範圍縮小查詢，
+       *   那邊才是判定。兩層做的事不一樣:一層省流量，一層保證正確。
+       *
+       * ★★ 廠商與統編走 `request_id` → `purchase_requests`。
+       *   支出表本身沒有這兩欄（2026-09-05 查證）。
+       *   接不到的就是 null，畫面留空讓人補。
+       */
+      const { data, error } = await supabase.from('expenses')
+        .select('id, spent_on, item_name, amount, voucher_no, note, estate_id, property_id,'
+          + ' purchase_requests(payee_company, payee_tax_id)')
+        .gte('spent_on', from).lte('spent_on', to)
+        .not('voucher_no', 'is', null)
+        .order('spent_on');
+      if (error) return flash('讀不到支出：' + error.message);
+
+      const rows: ExpenseSrc[] = (data ?? []).map((e: any) => ({
+        id: e.id, spent_on: e.spent_on, item_name: e.item_name,
+        amount: Number(e.amount) || 0,
+        voucher_no: e.voucher_no, note: e.note,
+        estate_id: e.estate_id, property_id: e.property_id,
+        payee_company: e.purchase_requests?.payee_company ?? null,
+        payee_tax_id: e.purchase_requests?.payee_tax_id ?? null,
+      }));
+
+      /*
+       * ★★★ 已經帶過的不能再出現。
+       *   帶兩次的話進項稅額憑空多一份，而 401 上只會顯示成
+       *   「應繳比較少」—— 沒有任何地方會叫。
+       * ★ 用**整家公司**的紀錄，不是只有這一期 ——
+       *   同一筆支出被帶到別期去過的話，這裡也不該再出現。
+       */
+      const { data: taken } = await supabase.from('tax_invoice')
+        .select('expense_id')
+        .eq('company_tax_id', COMPANY.taxId)
+        .not('expense_id', 'is', null);
+
+      const ds = importable(rows, period, COMPANY.taxId,
+        (taken ?? []).map((t: any) => t.expense_id));
+      if (!ds.length) {
+        return flash('這一期沒有可以帶入的支出（要有憑證號碼，而且還沒帶過）');
+      }
+      setPick(ds);
+    } finally { setBusy(false); }
+  }
+
+  async function importExpenseInner() {
+    if (!pick || busy) return;
+    const err = importError(pick);
+    if (err) { setPickErr(err); return; }
+    setBusy(true);
+    try {
+      const { data, error } = await supabase.from('tax_invoice')
+        .insert(toRows(pick)).select('id');
+      if (error) return flash('帶入失敗：' + error.message);
+      /*
+       * ★★ 一定要數影響列數。RLS 擋下的 insert 不會這樣回，
+       *   但寫少了幾列的話合計就少了幾筆稅額，而畫面看起來很正常。
+       */
+      if ((data?.length ?? 0) !== toRows(pick).length) {
+        return flash(`要帶 ${toRows(pick).length} 筆，實際只進去 ${data?.length ?? 0} 筆`
+          + ' —— 先不要結算，找管理員');
+      }
+      setPick(null);
+      await load();
+      flash(`已帶入 ${data!.length} 筆進項發票`);
+    } finally { setBusy(false); }
+  }
+  const [doImportExpense] = useOnce(importExpenseInner);
 
   /* ══════════ 抽屜:檢視 / 編輯 / 新增 ══════════ */
   const [detail, setDetail] = useState<TaxInvoice | null>(null);
@@ -493,6 +591,100 @@ export default function TaxPage() {
         </div>
       </div>
 
+      {/* ══════════ 從支出帶入 ══════════ */}
+      {pick && (
+        <div className="mb-3 rounded-lg bg-white border border-mor-line overflow-hidden">
+          <div className="px-3 py-2 border-b border-mor-line">
+            <div className="text-sm font-medium">從支出帶入進項發票</div>
+            <div className="text-[11px] text-gray-500 mt-0.5">
+              {periodLabel(period)}・有填憑證號碼、還沒帶過的支出
+            </div>
+          </div>
+
+          <div className="max-h-80 overflow-y-auto">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-gray-50 text-gray-500 text-left">
+                <tr>
+                  <th className="px-2 py-1.5 w-8"></th>
+                  <th className="px-2 py-1.5 w-20">日期</th>
+                  <th className="px-2 py-1.5">項目</th>
+                  <th className="px-2 py-1.5 w-28">憑證號碼</th>
+                  <th className="px-2 py-1.5 w-14">稅碼</th>
+                  <th className="px-2 py-1.5 w-20 text-right">金額</th>
+                  <th className="px-2 py-1.5 w-24 text-right">稅額</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pick.map((d, i) => (
+                  <tr key={d.expense_id} className="border-t border-mor-line/60">
+                    <td className="px-2 py-1.5">
+                      <input type="checkbox" checked={d.picked}
+                        onChange={() => setPick(pick.map((x, n) =>
+                          n === i ? { ...x, picked: !x.picked } : x))} />
+                    </td>
+                    <td className="px-2 py-1.5 text-gray-600 whitespace-nowrap">{d.invoice_date.slice(5)}</td>
+                    <td className="px-2 py-1.5 max-w-0 truncate" title={d.item_name}>{d.item_name}</td>
+                    <td className={`px-2 py-1.5 whitespace-nowrap ${d.tax_code === 'X' ? 'text-amber-700' : ''}`}>
+                      {d.invoice_no}
+                    </td>
+                    {/*
+                      ★ 稅碼看得到才知道為什麼那一列沒勾。
+                        只把勾勾拿掉的話，使用者會以為是系統漏了。
+                    */}
+                    <td className="px-2 py-1.5">
+                      <span className={`rounded px-1.5 py-0.5 ${d.tax_code === 'X'
+                        ? 'bg-amber-50 text-amber-700' : 'bg-mor-bluelight text-mor-slate'}`}>
+                        {d.tax_code}
+                      </span>
+                    </td>
+                    <td className="px-2 py-1.5 text-right whitespace-nowrap">{fmt(d.total_amount)}</td>
+                    <td className="px-2 py-1.5 text-right">
+                      {/*
+                        ★★ 稅額可以改 —— 反推對免稅是錯的（房租、保險、薪資）。
+                          銷售額跟著動，讓 net + tax 永遠等於 total，
+                          不然資料庫的 amount_chk 會擋下來而訊息看不懂。
+                      */}
+                      <input type="number" min="0" max={d.total_amount}
+                        value={String(d.tax_amount)}
+                        onChange={(e) => {
+                          const t = Math.max(0, Math.round(Number(e.target.value) || 0));
+                          setPick(pick.map((x, n) => n === i
+                            ? { ...x, tax_amount: t, net_amount: x.total_amount - t } : x));
+                        }}
+                        className="w-20 rounded border border-mor-line px-1.5 py-0.5 text-right" />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {pickErr && (
+            <div className="px-3 py-2 text-xs text-red-700 bg-red-50 border-t border-red-200">{pickErr}</div>
+          )}
+          {/*
+            ★★★ 這一段是這個功能唯一的警語，所以要講清楚代價。
+              稅額是反推的 —— 免稅品項（房租、保險、薪資）沒有 5% 進項稅。
+          */}
+          <div className="px-3 py-1.5 text-[11px] text-gray-500 border-t border-mor-line leading-relaxed">
+            稅額是用「金額 ÷ 1.05」反推的，免稅的品項要自己改成 0。
+            憑證號碼不是統一發票格式的預設不勾（稅碼 X）。
+          </div>
+          <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-t border-mor-line">
+            <span className="text-[11px] text-gray-600">{importSummary(pick)}</span>
+            <div className="ml-auto flex gap-2">
+              <button onClick={() => { setPick(null); setPickErr(null); }}
+                className={`${BTN} ${SECONDARY}`}>取消</button>
+              <button onClick={() => void doImportExpense()}
+                disabled={busy || !pickedOf(pick).length}
+                className={`${BTN} ${PRIMARY} disabled:opacity-40`}>
+                {busy ? '帶入中…' : `帶入 ${pickedOf(pick).length} 筆`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ══════════ 上傳預覽 ══════════ */}
       {previewErr && (
         <div className="mb-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-800">{previewErr}</div>
@@ -551,13 +743,23 @@ export default function TaxPage() {
               )}
             </div>
             <div className="ml-auto flex items-center gap-2">
-              {/* ★ 上傳只在銷項 —— 進項是手 key。而它是這一頁**唯一**的主要動作 */}
+              {/*
+                ★ 兩個分頁的第一顆都是「把資料帶進來」，位置一樣。
+                  銷項的來源是平台下載的 excel，進項的來源是支出頁 ——
+                  進項沒有 excel 可以上傳，而那些資料本來就在系統裡。
+              */}
               {kind === 'out' && (
                 <label className={`${BTN} ${PRIMARY} cursor-pointer ${closed ? 'opacity-40 pointer-events-none' : ''}`}>
                   ⬆ 上傳發票 excel
                   <input type="file" accept=".xlsx,.xls" className="hidden"
                     onChange={(e) => { void onFile(e.target.files?.[0] ?? null); e.target.value = ''; }} />
                 </label>
+              )}
+              {kind === 'in' && (
+                <button onClick={() => void openFromExpense()} disabled={closed || busy}
+                  className={`${BTN} ${PRIMARY} disabled:opacity-40`}>
+                  ⬆ 從支出帶入
+                </button>
               )}
               <button onClick={openNew} disabled={closed} className={`${BTN} ${SECONDARY}`}>＋ 新增一筆</button>
               <button onClick={exportXlsx} disabled={shown.length === 0} className={`${BTN} ${EXPORT_TONE}`}>⬇ 下載 Excel</button>
