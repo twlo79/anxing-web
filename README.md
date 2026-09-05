@@ -90,9 +90,10 @@ Next.js 14 (App Router) + Supabase(Auth + PostgreSQL + RLS)。
 | | 契約 | 🤝 | `/contracts` | 管家以上 |
 | | 暫收管理 | 🏦 | `/deposits` | 管家以上（管家唯讀） |
 | | 營收表 | 🤑 | `/revenues` | 會計以上 |
-| **支出與帳務** | 請款單控管 | 🧾 | `/purchases` | 管家以上 |
+| **支出** | 請款單控管 | 🧾 | `/purchases` | 管家以上 |
 | | 支出明細 | 💸 | `/expenses` | 會計以上 |
-| | 帳戶明細 | 💰 | `/accounts` | 會計以上 |
+| | 稅務管理 | 🧮 | `/tax` | 會計以上 |
+| **財務管理** | 帳戶明細 | 💰 | `/accounts` | 會計以上 |
 | | 其他收支帳 | 🗂️ | `/otherbooks` | 會計、總管理員 |
 | | 財務儀錶板 | 📊 | `/dashboard` | 會計以上 |
 | **客戶經營** | 客戶管理 | 👥 | `/customers` | 管家以上 |
@@ -1049,7 +1050,7 @@ where conrelid = 'public.attachments'::regclass and conname = 'att_one_parent';
 | **防呆說明** | 開關旁加 ⓘ,列出實際檢查的七項與顏色的意思。原本只有 `title`,手機沒有 hover 就等於不存在 | — |
 | **專案 skill** | `.claude/skills/` 三支:UI 規矩、Supabase 讀寫、寫 migration | — |
 | **加費憑證修好** | `attachments.order_id` **從來沒建成過**,加費憑證壞了六天而畫面顯示「沒有附件」。`migration_172` 的自檢**當時就印出來了,沒有人讀**（見 9.1 ⑦） | 180 |
-| **側邊選單分組** | 17 項切成每天／收入／支出與帳務／經營 ＋ 分隔線,標題可收合（記在 `localStorage`）。★ **目前所在的那一群一律展開** | — |
+| **側邊選單分組** | 18 項切成每天／收入／支出／財務管理／經營 ＋ 分隔線,標題可收合（記在 `localStorage`）。★ **目前所在的那一群一律展開** | — |
 | **記帳流程進 README** | 第四節改寫成「照人的動作」:收入五步、支出七步、誰在哪一步按哪顆按鈕 | — |
 
 ---

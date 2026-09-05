@@ -43,7 +43,7 @@ import {
 } from '@/lib/pet-fee';
 import { payStatus, remaining, isExempt, STATUS_LABEL, STATUS_CLASS, STATUS_FILTER } from '@/lib/order-payment';
 import { softDelete } from '@/lib/trash';
-import { feeFilterOptions, feeFilterPredicate, feeSourceConflict, ONEOFF_SOURCES, FEE_F_ALL, FEE_F_RENT } from '@/lib/order-filter';
+import { feeFilterOptions, feeFilterPredicate, feeFilterOnSearch, feeSourceConflict, ONEOFF_SOURCES, FEE_F_ALL, FEE_F_RENT } from '@/lib/order-filter';
 import TrashLink from '@/components/TrashLink';
 import { checkDates, checkPrice, checkRequired, lookbackFrom, type PastOrder } from '@/lib/order-check';
 import MoneyInput from '@/components/MoneyInput';
@@ -1216,8 +1216,16 @@ export default function ShortTermPage() {
           <RangeInput from={fromD} to={toD}
             onChange={(f, t) => { setFromD(f); setToD(t); }} />
         </div>
+        {/*
+          ★★★ 打關鍵字時費用類別自動放寬到「全部」（2026-09-05 使用者指定）。
+            預設是「房租」，而找某一筆時那一筆可能是清潔費、加費、押金退款 ——
+            卡在房租的話**找不到就是找不到**，而畫面只顯示「共 0 筆」，
+            不會說是因為還開著那個篩選。
+          ★ 關鍵字清空後再按搜尋就回房租。規則在 `feeFilterOnSearch`（有測試）。
+        */}
         <FilterSearch value={kwIn} onChange={setKwIn}
-          onSubmit={() => setKw(kwIn.trim())} placeholder="房客／房源" />
+          onSubmit={() => { const k = kwIn.trim(); setKw(k); setFeeF(feeFilterOnSearch(k)); }}
+          placeholder="房客／房源" />
         {/*
           「清除」回到**預設值**,不是回到「全部」——
           費用類別的預設是房租,清成「全部」的話會變成一個他從來沒選過的狀態,

@@ -1,7 +1,7 @@
-import test from 'node:test';
+import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  feeFilterOptions, feeFilterPredicate, feeFilterLabel, feeSourceConflict,
+  feeFilterOptions, feeFilterPredicate, feeFilterLabel, feeFilterOnSearch, feeSourceConflict,
   ONEOFF_SOURCES, FEE_F_ALL, FEE_F_RENT, FEE_F_ONEOFF,
 } from './order-filter.ts';
 import { FEE_TYPES } from './fee-types.ts';
@@ -72,4 +72,36 @@ test('一般來源配房租是正常的', () => {
 
 test('沒選來源就不算衝突 —— 那是預設狀態，不該一進頁面就跳警告', () => {
   assert.equal(feeSourceConflict('', FEE_F_RENT), false);
+});
+
+describe('feeFilterOnSearch —— 打關鍵字時放寬費用類別（2026-09-05）', () => {
+  /*
+   * ★★★ 費用類別預設是「房租」，而打關鍵字的意思是「我要找某一筆」——
+   *   那一筆可能是清潔費、加費、押金退款。維持在房租的話**找不到就是找不到**，
+   *   畫面只顯示「共 0 筆」，不會說是因為還開著那個篩選。
+   */
+  test('★★★ 有關鍵字 → 全部', () => {
+    assert.equal(feeFilterOnSearch('Christy'), FEE_F_ALL);
+    assert.equal(feeFilterOnSearch('14B2'), FEE_F_ALL);
+  });
+
+  /*
+   * ★ 關鍵字清空後再按搜尋 → 回預設的房租。
+   *   不回的話會卡在「全部 ＋ 沒有關鍵字」，
+   *   而使用者只會覺得「訂單怎麼變這麼多」，找不到是哪個開關造成的。
+   */
+  test('★ 沒有關鍵字 → 回預設的房租', () => {
+    assert.equal(feeFilterOnSearch(''), FEE_F_RENT);
+    assert.equal(feeFilterOnSearch('   '), FEE_F_RENT, '只有空白也算沒填');
+  });
+
+  test('null / undefined 不會爆', () => {
+    assert.equal(feeFilterOnSearch(null as any), FEE_F_RENT);
+    assert.equal(feeFilterOnSearch(undefined as any), FEE_F_RENT);
+  });
+
+  // ★ 前後空白不影響判斷 —— 畫面送進來的是 trim 過的，但這支自己也要擋
+  test('前後有空白的關鍵字算有填', () => {
+    assert.equal(feeFilterOnSearch('  Erin  '), FEE_F_ALL);
+  });
 });

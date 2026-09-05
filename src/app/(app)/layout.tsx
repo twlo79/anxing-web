@@ -19,7 +19,7 @@ const COLLAPSE_KEY = 'anxing.nav.collapsed';
  *
  * 「設定」跟上面四群**不是同一種東西**:
  *
- *   每日工作 / 收入 / 支出與帳務 / 客戶經營  —— 每天在做的事
+ *   每日工作 / 收入 / 支出 / 財務管理 / 客戶經營  —— 每天在做的事
  *   設定                                    —— 設定完就不再碰的東西
  *
  * 前四群之間是「換一個主題」,設定之前是「換一個層級」。
@@ -149,7 +149,7 @@ const NAV: { href: string; label: string; icon: string; roles: string[]; group?:
   // 🤑 是整份選單裡**唯一的一張臉** —— 收合成只剩 icon 時最好認的就是它。
   // 💰 讓給帳戶明細（2026-08-19 使用者指定）。
   { href: '/revenues', label: '營收表', icon: '🤑', group: '收入', roles: ['accountant', 'manager', 'super_admin'] },
-  { href: '/purchases', label: '請款單控管', icon: '🧾', group: '支出與帳務', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/purchases', label: '請款單控管', icon: '🧾', group: '支出', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   /*
    * 【💸 而不是 💰】（2026-08-19 使用者要求「其中一個放錢」）
    *
@@ -159,7 +159,19 @@ const NAV: { href: string; label: string; icon: string; roles: string[]; group?:
    * 💸 是「錢長翅膀飛走」,那就是支出的意思本身,
    * 而且外形是長方形紙鈔＋翅膀,跟 💰 那個圓袋子分得開。
    */
-  { href: '/expenses', label: '支出明細', icon: '💸', group: '支出與帳務', roles: ['accountant', 'manager', 'super_admin'] },
+  { href: '/expenses', label: '支出明細', icon: '💸', group: '支出', roles: ['accountant', 'manager', 'super_admin'] },
+  /*
+   * 稅務管理（migration_217）。營業稅的進項、銷項與每期結算。
+   *
+   * 只給會計以上 —— 報稅是會計的事，而 `tax_*` 兩張表的 RLS
+   * 也是這三個角色。選單與 RLS 一致，藏起來不是為了安全，是為了不騙人。
+   *
+   * ★★★ 位置很要緊:`groupNav()` 是用「**連續相同**」切群的。
+   *   這一項本來排在「其他收支帳」與「財務儀錶板」中間 ——
+   *   那會把「支出」切成兩段，畫面上出現兩個「支出」標題
+   *   （2026-09-05 分組時抓到）。所以它要緊接在支出明細後面。
+   */
+  { href: '/tax', label: '稅務管理', icon: '🧮', group: '支出', roles: ['accountant', 'manager', 'super_admin'] },
   /*
    * 帳戶管理（migration_142）。三個銀行帳戶的流水鏡像。
    *
@@ -177,7 +189,7 @@ const NAV: { href: string; label: string; icon: string; roles: string[]; group?:
    *   📒 → 💰（2026-08-19 使用者指定）這一頁是三個銀行帳戶裡「現在有多少錢」,
    *                        錢袋比帳本直接。原本佔著 💰 的營收表改用 🤑。
    */
-  { href: '/accounts', label: '帳戶明細', icon: '💰', group: '支出與帳務', roles: ['accountant', 'manager', 'super_admin'] },
+  { href: '/accounts', label: '帳戶明細', icon: '💰', group: '財務管理', roles: ['accountant', 'manager', 'super_admin'] },
   /*
    * 其他收支帳 —— 愛皮（旅行社）與洪鯊（投資公司）的收支（migration_159）。
    *
@@ -187,18 +199,8 @@ const NAV: { href: string; label: string; icon: string; roles: string[]; group?:
    * 🗂️ 是「另一本帳」的意思。跟 🏦 押金、🤑 營收、💸 支出、💰 帳戶
    * 都不撞 —— 側邊欄收合成只剩圖示時要分得出來。
    */
-  { href: '/otherbooks', label: '其他收支帳', icon: '🗂️', group: '支出與帳務', roles: ['accountant', 'super_admin'] },
-  /*
-   * 稅務管理（migration_217）。營業稅的進項、銷項與每期結算。
-   *
-   * 只給會計以上 —— 報稅是會計的事，而 `tax_*` 兩張表的 RLS
-   * 也是這三個角色。選單與 RLS 一致，藏起來不是為了安全，是為了不騙人。
-   *
-   * 放在財務儀錶板前面:它跟支出、帳戶是同一組「錢的帳」，
-   * 而儀錶板是那一組的總結，該留在最後。
-   */
-  { href: '/tax', label: '稅務管理', icon: '🧮', group: '支出與帳務', roles: ['accountant', 'manager', 'super_admin'] },
-  { href: '/dashboard', label: '財務儀錶板', icon: '📊', group: '支出與帳務', roles: ['accountant', 'manager', 'super_admin'] },
+  { href: '/otherbooks', label: '其他收支帳', icon: '🗂️', group: '財務管理', roles: ['accountant', 'super_admin'] },
+  { href: '/dashboard', label: '財務儀錶板', icon: '📊', group: '財務管理', roles: ['accountant', 'manager', 'super_admin'] },
   // 客戶管理跟房務、評價、清潔是同一組:都是「人在現場會用到的」。
   // 上面那半段是錢(訂單、契約、營收、請款、押金、支出、儀表板)。
   // 客戶資料原本散在訂單 guest_name 與契約 tenant_name 兩邊,

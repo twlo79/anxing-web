@@ -42,6 +42,30 @@ export function feeFilterOptions(feeTypes: readonly string[]): { value: string; 
   ];
 }
 
+/**
+ * 按下搜尋時，費用類別要變成什麼。
+ *
+ * ============================================================
+ * 【★★★ 為什麼打關鍵字要自動放寬到「全部」】
+ * （2026-09-05 使用者:「輸入關鍵字搜尋時 費用變全部搜尋」）
+ *
+ * 費用類別的預設是**房租** —— 那是九成的時候要看的東西。
+ *
+ * 但打關鍵字的意思是「我要找某一筆」，而那一筆可能是清潔費、
+ * 加費、押金退款。維持在「房租」的話**找不到就是找不到**，
+ * 而畫面只會顯示「共 0 筆」—— 它不會說是因為你還卡在房租那個篩選。
+ *
+ * ★ 關鍵字清空後再按搜尋 → 回到預設的房租。
+ *   不回的話會卡在「全部 ＋ 沒有關鍵字」，
+ *   而使用者只會覺得「訂單怎麼變這麼多」，找不到是哪個開關造成的。
+ *
+ * ★★ 寫成純函式而不是在 `onSubmit` 裡 inline —— 這條規則有兩個方向
+ *   （有字 → 全部、沒字 → 房租），inline 的三元運算式測不到。
+ */
+export function feeFilterOnSearch(keyword: string): string {
+  return (keyword ?? '').trim() ? FEE_F_ALL : FEE_F_RENT;
+}
+
 /** 選單的值 → 要怎麼篩。畫面、合計、匯出三處都用這一份。 */
 export function feeFilterPredicate(v: string): FeePredicate {
   if (!v) return { kind: 'none' };
