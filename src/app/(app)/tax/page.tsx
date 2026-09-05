@@ -487,13 +487,23 @@ export default function TaxPage() {
 
   return (
     <div className="p-4 md:p-6 max-w-[1400px] mx-auto">
-      {/* ★ 金額上標題 —— 跟帳戶明細一致（2026-09-05 使用者指定） */}
+      {/*
+        ★★ 標題照**帳戶明細**的寫法（2026-09-05 過審）。
+
+          原本是 `<h1 className="text-xl font-semibold">稅務管理 $123,254</h1>` ——
+          兩個毛病:
+            ① 手寫 `text-xl` 比全站的 `h1` 小一階，只有這一頁不一樣
+            ② **金額塞在 `<h1>` 裡面**，所以標題跟金額同一個大小，
+               看不出哪個是重點
+
+          帳戶明細是「`<h1>` ＋ 分開的 `stat-num-lg`」，照抄。
+          `tabular-nums` 讓數字等寬 —— 切期別時金額不會左右跳。
+      */}
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-4">
-        <h1 className="text-xl font-semibold text-mor-slate">
-          稅務管理 <span className="ml-1 tabular-nums">${fmt(headline.amount)}</span>
-        </h1>
+        <h1 className="mb-0">稅務管理</h1>
+        <span className="stat-num-lg font-bold tabular-nums">${fmt(headline.amount)}</span>
         <span className={`rounded px-2 py-0.5 text-xs font-medium ${headline.cls}`}>{headline.label}</span>
-        <span className="text-sm text-gray-400">{COMPANY.name}　{COMPANY.taxId}</span>
+        <span className="text-uisub text-gray-500">{COMPANY.name}　{COMPANY.taxId}</span>
         <select value={period} onChange={(e) => setPeriod(e.target.value)}
           className="ml-auto rounded-lg border border-gray-300 px-2 py-1.5 text-sm">
           {periodOpts.map((p) => <option key={p} value={p}>{periodLabel(p)}</option>)}
@@ -519,77 +529,6 @@ export default function TaxPage() {
           sub={prevCarry == null ? '沒有上一期 —— 期初手填' : `從 ${periodLabel(prevPeriod(period))} 帶入`} />
       </div>
 
-      {/* ══════════ 結算 ══════════ */}
-      <div className="rounded-xl glass p-4 mb-4">
-        <div className="flex items-baseline justify-between mb-2">
-          <div className="text-sm font-medium text-mor-slate">結算試算</div>
-          <div className="text-[11px] text-gray-400">照 401 申報書的順序</div>
-        </div>
-        <table className="w-full text-sm">
-          <tbody>
-            <tr><td className="py-1">銷項稅額</td>
-              <td className="py-1 w-32 text-right tabular-nums">{fmt(fig.outTax)}</td>
-              <td className="py-1 pl-4 text-[11px] text-gray-400 hidden md:table-cell">作廢的不算</td></tr>
-            <tr><td className="py-1">減：進項稅額</td>
-              <td className="py-1 text-right tabular-nums">({fmt(fig.inTax)})</td>
-              <td className="py-1 pl-4 hidden md:table-cell" /></tr>
-            <tr><td className="py-1">減：上期累積留抵</td>
-              <td className="py-1 text-right tabular-nums">
-                {/*
-                  ★★★ 上期留抵**唯讀** —— 它一律等於上一期的累積留抵。
-                    只有第一期（沒有上一期）才給填期初，而且結算後鎖住。
-                */}
-                {prevCarry == null && !closed
-                  ? (
-                    <input value={carryDraft}
-                      onChange={(e) => setCarryDraft(e.target.value)}
-                      onBlur={() => void saveCarryIn(carryDraft)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-                      className="w-28 rounded border border-gray-300 px-1.5 py-0.5 text-right tabular-nums" />
-                  )
-                  : `(${fmt(fig.carryIn)})`}
-              </td>
-              <td className="py-1 pl-4 text-[11px] hidden md:table-cell">
-                {prevCarry == null
-                  ? <span className="text-amber-700">沒有上一期 —— 期初留抵手填一次，離開欄位就存</span>
-                  : <span className="text-mor-blue">唯讀，上期結算帶入</span>}
-              </td></tr>
-            <tr className="border-t border-mor-line font-medium">
-              <td className="py-2">本期應繳稅額</td>
-              <td className="py-2 text-right tabular-nums">
-                {fig.payable > 0 ? fmt(fig.payable) : <span className="text-gray-300">—</span>}
-              </td>
-              <td className="py-2 pl-4 text-[11px] text-gray-400 hidden md:table-cell">
-                {fig.payable > 0 ? '' : '算出來是負的，沒有要繳'}
-              </td></tr>
-            <tr className="font-medium text-mor-green">
-              <td className="py-1">本期累積留抵稅額</td>
-              <td className="py-1 text-right tabular-nums">
-                {fig.payable > 0 ? <span className="text-gray-300">—</span> : fmt(fig.carryOut)}
-              </td>
-              <td className="py-1 pl-4 text-[11px] hidden md:table-cell">
-                {fig.payable > 0 ? '' : '結轉下期'}
-              </td></tr>
-          </tbody>
-        </table>
-        <div className="flex flex-wrap items-center gap-3 mt-3 pt-3 border-t border-mor-line">
-          {closed ? (
-            <>
-              <span className="rounded-full bg-mor-greenlight text-mor-green px-3 py-1 text-xs font-medium">
-                已結算{cur.closed_at ? `　${String(cur.closed_at).slice(0, 10)}` : ''}
-              </span>
-              <button onClick={() => void reopen()} className="text-xs text-gray-500 underline">取消結算</button>
-              <span className="text-[11px] text-gray-500">數字已凍結 —— 補登發票不會動到已申報的數</span>
-            </>
-          ) : (
-            <>
-              <button onClick={() => void doClose()} disabled={busy || !!loadErr}
-                className={`${BTN} ${PRIMARY} px-4 py-2 text-sm`}>結算本期</button>
-              <span className="text-[11px] text-gray-500">結算之後數字凍結，再改發票不會動到已申報的數</span>
-            </>
-          )}
-        </div>
-      </div>
 
       {/* ══════════ 從支出帶入 ══════════ */}
       {pick && (
@@ -839,6 +778,86 @@ export default function TaxPage() {
           </div>
         </div>
       </TabShell>
+
+      {/* ══════════ 結算（★ 2026-09-05 從發票清單上面搬到下面）══════════
+
+          順序是「看發票 → 結算 → 歷期」。放在發票上面等於還沒看數字
+          就先問要不要結算 —— 而結算是**凍結**的動作，
+          按下去之後補登發票不會再改到申報數。
+
+          ★ 歷期表就在正下方:結算完的留抵會結轉下一期，
+            按完往下看一眼就對得到那一列。
+      */}
+      <div className="rounded-xl glass p-4 mb-4">
+        <div className="flex items-baseline justify-between mb-2">
+          <div className="text-sm font-medium text-mor-slate">結算試算</div>
+          <div className="text-[11px] text-gray-400">照 401 申報書的順序</div>
+        </div>
+        <table className="w-full text-sm">
+          <tbody>
+            <tr><td className="py-1">銷項稅額</td>
+              <td className="py-1 w-32 text-right tabular-nums">{fmt(fig.outTax)}</td>
+              <td className="py-1 pl-4 text-[11px] text-gray-400 hidden md:table-cell">作廢的不算</td></tr>
+            <tr><td className="py-1">減：進項稅額</td>
+              <td className="py-1 text-right tabular-nums">({fmt(fig.inTax)})</td>
+              <td className="py-1 pl-4 hidden md:table-cell" /></tr>
+            <tr><td className="py-1">減：上期累積留抵</td>
+              <td className="py-1 text-right tabular-nums">
+                {/*
+                  ★★★ 上期留抵**唯讀** —— 它一律等於上一期的累積留抵。
+                    只有第一期（沒有上一期）才給填期初，而且結算後鎖住。
+                */}
+                {prevCarry == null && !closed
+                  ? (
+                    <input value={carryDraft}
+                      onChange={(e) => setCarryDraft(e.target.value)}
+                      onBlur={() => void saveCarryIn(carryDraft)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                      className="w-28 rounded border border-gray-300 px-1.5 py-0.5 text-right tabular-nums" />
+                  )
+                  : `(${fmt(fig.carryIn)})`}
+              </td>
+              <td className="py-1 pl-4 text-[11px] hidden md:table-cell">
+                {prevCarry == null
+                  ? <span className="text-amber-700">沒有上一期 —— 期初留抵手填一次，離開欄位就存</span>
+                  : <span className="text-mor-blue">唯讀，上期結算帶入</span>}
+              </td></tr>
+            <tr className="border-t border-mor-line font-medium">
+              <td className="py-2">本期應繳稅額</td>
+              <td className="py-2 text-right tabular-nums">
+                {fig.payable > 0 ? fmt(fig.payable) : <span className="text-gray-300">—</span>}
+              </td>
+              <td className="py-2 pl-4 text-[11px] text-gray-400 hidden md:table-cell">
+                {fig.payable > 0 ? '' : '算出來是負的，沒有要繳'}
+              </td></tr>
+            <tr className="font-medium text-mor-green">
+              <td className="py-1">本期累積留抵稅額</td>
+              <td className="py-1 text-right tabular-nums">
+                {fig.payable > 0 ? <span className="text-gray-300">—</span> : fmt(fig.carryOut)}
+              </td>
+              <td className="py-1 pl-4 text-[11px] hidden md:table-cell">
+                {fig.payable > 0 ? '' : '結轉下期'}
+              </td></tr>
+          </tbody>
+        </table>
+        <div className="flex flex-wrap items-center gap-3 mt-3 pt-3 border-t border-mor-line">
+          {closed ? (
+            <>
+              <span className="rounded-full bg-mor-greenlight text-mor-green px-3 py-1 text-xs font-medium">
+                已結算{cur.closed_at ? `　${String(cur.closed_at).slice(0, 10)}` : ''}
+              </span>
+              <button onClick={() => void reopen()} className="text-xs text-gray-500 underline">取消結算</button>
+              <span className="text-[11px] text-gray-500">數字已凍結 —— 補登發票不會動到已申報的數</span>
+            </>
+          ) : (
+            <>
+              <button onClick={() => void doClose()} disabled={busy || !!loadErr}
+                className={`${BTN} ${PRIMARY} px-4 py-2 text-sm`}>結算本期</button>
+              <span className="text-[11px] text-gray-500">結算之後數字凍結，再改發票不會動到已申報的數</span>
+            </>
+          )}
+        </div>
+      </div>
 
       {/* ══════════ 歷期 ══════════ */}
       <div className="mt-6">

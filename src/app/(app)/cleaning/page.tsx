@@ -342,13 +342,31 @@ export default function CleaningPage() {
 
         ★ 篩選是「我要看哪些」,動作是「我要做什麼」—— 兩件事,兩行。
       */}
+      {/*
+        ★★ 這三顆**手機版不出現**（2026-09-05 使用者:「手機版這些不用」）。
+
+          手機上它們是第二次出現:
+            · 兩張表單 → 畫面最上面已經有一組藍底大按鈕（`md:hidden`,拇指按得到）
+            · 下載 Excel → 收在「篩選」那張摺疊卡裡
+
+          同一顆按鈕在一個畫面上出現兩次，使用者會停下來想「這兩個一樣嗎」。
+
+        ★ 留 `FilterCount` —— 那是「現在看到幾筆」，桌機手機都要。
+
+        ★★ 用 `hidden md:contents` 不是 `hidden md:flex`:
+          `contents` 讓這個 div **自己不生成盒子**，三顆按鈕直接變成
+          `ActionRow` 的子元素 —— 不然它們會被包成一格，`ml-auto` 那類
+          排版就對不上了（跟 `purchases` 頁同一種寫法）。
+      */}
       <ActionRow>
         <div className="mr-auto md:mr-0"><FilterCount n={total} /></div>
-        <a href={FORM_HOUSEKEEPER} target="_blank" rel="noreferrer"
-          className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 whitespace-nowrap">📋 管家檢查表</a>
-        <a href={FORM_ROOMSERVICE} target="_blank" rel="noreferrer"
-          className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 whitespace-nowrap">🧹 房務清潔表</a>
-        <ExportButton onClick={exportCsv} disabled={exporting || total === 0} busy={exporting} />
+        <div className="hidden md:contents">
+          <a href={FORM_HOUSEKEEPER} target="_blank" rel="noreferrer"
+            className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 whitespace-nowrap">📋 管家檢查表</a>
+          <a href={FORM_ROOMSERVICE} target="_blank" rel="noreferrer"
+            className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 whitespace-nowrap">🧹 房務清潔表</a>
+          <ExportButton onClick={exportCsv} disabled={exporting || total === 0} busy={exporting} />
+        </div>
       </ActionRow>
 
       {/* 手機卡片版 */}

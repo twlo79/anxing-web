@@ -59,14 +59,18 @@ Write-Host "    Build 通過" -ForegroundColor Green
 # 想連那些一起推，自己下 git add -A 再跑這支。
 Step 4 "加入變更"
 git add -u                                    # 已追蹤檔案的修改與刪除
-foreach ($p in @("src", "supabase", "public", ".github", "docs", "archive")) {
+foreach ($p in @("src", "supabase", "public", ".github", "docs", "archive", "scripts")) {
     if (Test-Path $p) { git add $p }
 }
 # 根目錄要進版控的檔案逐一列出。
+# ★ 2026-09-05 加了 scripts/ 與 CLAUDE.md —— 同一個坑又踩了兩次:
+#   scripts/ 裡是三支**備份腳本**(backup-db / fetch-backup / register-backup-task),
+#   而它們只存在這台電腦上 —— 硬碟掛了連還原的工具一起沒了。
+#   CLAUDE.md 是累積了半年的踩坑筆記,換台機器就從零開始。
 # 這支腳本自己曾經不在清單裡 —— 於是它從來沒被 commit 過:
 # 改了它、推了程式,腳本本身留在本機,換台機器就沒了,
 # 而且 git status 一直顯示 ?? 也沒人覺得奇怪。
-foreach ($f in @("deploy.ps1", "smoke-test.ps1", ".gitattributes", ".gitignore", "README.md",
+foreach ($f in @("deploy.ps1", "smoke-test.ps1", ".gitattributes", ".gitignore", "README.md", "CLAUDE.md",
                  "package.json", "package-lock.json", "tsconfig.json",
                  "next.config.mjs", "postcss.config.mjs", "tailwind.config.ts")) {
     if (Test-Path $f) { git add $f }
