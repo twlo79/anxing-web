@@ -5,9 +5,14 @@ import { isFilled, validateDemand, estateIdToSave } from '@/lib/demand';
 import { useProfile } from '@/lib/profile';
 import { ReqMark } from '@/components/Req';
 import {
-  demandProgress, progressText, DEMAND_STATUS_CLASS, ITEM_STATUS_LABEL,
+  demandProgress, progressText, demandClass, ITEM_STATUS_LABEL,
+  manualStatusOptions, manualStatusPatch, manualStatusNote, isOrphanRequested,
   type DemandItemStatus,
 } from '@/lib/purchase-demand';
+import {
+  isTakeable, toRequestItems, linkBackPlan, canMarkDone, markDoneConfirm,
+} from '@/lib/demand-to-request';
+import { useRouter } from 'next/navigation';
 
 /**
  * 採購需求（房務管理的第三個分頁）。
@@ -100,6 +105,166 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
   const [edit, setEdit] = useState<
     { note: string; ship_to: string; ship_floor: string; items: Item[] } | null>(null);
   const [saving, setSaving] = useState(false);
+
+  /*
+   * ══════════ 接到請款單（2026-09-05）══════════
+   *
+   * ★★★ 這條路本來就設計好了（migration_140 有關聯欄位、單頭彙總、
+   *   已請款鎖住、駁回自動退回）—— **但前端從來沒有寫過 `requested`**。
+   *   資料庫裡一共只有 1 筆項目、狀態 `pending`，證實它沒被走過。
+   *
+   * 兩條路:
+   *   A 走請款單  勾項目 → 建草稿（金額留空）→ 詢價 → 填金額 → 送審
+   *   B 直接買    勾項目 → 標為已採購（零用金，不產生請款單）
+   */
+  const router = useRouter();
+  const [msg, setMsg] = useState('');
+  function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 4000); }
+  /** 勾選的需求項目 id。★ 跨單勾選沒有意義 —— 一張請款單對一張需求單 */
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [acting, setActing] = useState(false);
+
+  const togglePick = (id: string) => setPicked((s) => {
+    const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n;
+  });
+  /** 這一張單被勾了幾項（勾選是全域的，畫面上要按單算） */
+  const pickedIn = (d: Demand) => d.items.filter((i) => i.id && picked.has(i.id));
+
+  /**
+   * A · 建請款單（草稿，金額留空）。
+   *
+   * ★★★ 三段都要數影響列數 —— RLS 擋下的 INSERT／UPDATE
+   *   **回成功且影響 0 列**（CLAUDE.md）。中間斷掉的話會變成
+   *   「請款單建好了但需求單還顯示未採購」，而兩邊都不會叫。
+   */
+  async function makeRequest(d: Demand) {
+    if (acting) return;
+    const pick = pickedIn(d).filter((i) => isTakeable(i.status));
+    if (!pick.length) return flash('先勾要進請款的項目');
+    setActing(true);
+    try {
+      /*
+       * ① 開一張草稿請款單。
+       *
+       * ★★★ `req_no` 是 `not null` 而且**沒有觸發器會填** ——
+       *   要先呼叫 `next_req_no()` 這支 RPC 拿號碼。
+       *   請款頁本來就是這樣做的（`purchases/page.tsx:1045`）——
+       *   不照抄的話 insert 會被 not-null 擋下來。
+       */
+      const { data: no, error: ne } = await supabase.rpc('next_req_no');
+      if (ne || !no) return flash('拿不到請款單號：' + (ne?.message ?? '沒有回傳'));
+
+      const { data: pr, error: e1 } = await supabase.from('purchase_requests')
+        .insert({
+          req_no: no,
+          requester_id: profile?.id ?? null,
+          status: 'draft',
+          note: `從採購需求 ${d.demand_no ?? ''} 帶入`.trim(),
+        }).select('id, req_no').single();
+      if (e1 || !pr) return flash('建不出請款單：' + (e1?.message ?? '沒有回傳'));
+
+      // ② 帶項目進去。★ 金額是 null 不是 0（migration_218）
+      const drafts = toRequestItems(pick as any);
+      const { data: items, error: e2 } = await supabase.from('purchase_request_items')
+        .insert(drafts.map((x) => ({
+          request_id: pr.id, item_name: x.item_name, amount: x.amount,
+          purpose_type: x.purpose_type, estate_id: x.estate_id,
+          note: x.note, sort: x.sort,
+        }))).select('id');
+      if (e2) return flash('項目帶不進去：' + e2.message);
+      if ((items?.length ?? 0) !== drafts.length) {
+        return flash(`要帶 ${drafts.length} 項，實際只進去 ${items?.length ?? 0} 項 —— 先不要送審，找管理員`);
+      }
+
+      // ③ 回寫需求項目:狀態 → 已進請款、記住是哪一列請款項目
+      const plan = linkBackPlan(drafts, (items ?? []).map((x: any) => x.id));
+      let linked = 0;
+      for (const p of plan) {
+        const { data, error } = await supabase.from('purchase_demand_items')
+          .update({ status: 'requested', request_item_id: p.requestItemId })
+          .eq('id', p.demandItemId).select('id');
+        if (error) { flash('回寫需求單失敗：' + error.message); break; }
+        linked += data?.length ?? 0;
+      }
+      /*
+       * ★★ 回寫少了要講。少了的那幾項會留在「未採購」，
+       *   下次又被帶進另一張請款單 —— 同一筆錢請兩次。
+       */
+      if (linked !== plan.length) {
+        flash(`請款單 ${pr.req_no ?? ''} 建好了，但只回寫了 ${linked}/${plan.length} 項 —— `
+            + '沒回寫的那幾項還是「未採購」，不要再帶一次');
+      }
+      setPicked(new Set());
+      await load();
+      // ★ 直接跳過去填金額 —— 不跳的話使用者得自己找那張單，而它是草稿、排在最後
+      router.push('/purchases');
+    } finally { setActing(false); }
+  }
+
+  /**
+   * B · 標為已採購（零用金直接買，不產生請款單）。
+   *
+   * ★ 已進請款的不給按 —— 那條路的完成要跟著請款單走
+   *   （`canMarkDone` 擋，按鈕也不顯示）。
+   */
+  async function markDone(d: Demand) {
+    if (acting) return;
+    const pick = pickedIn(d).filter(canMarkDone);
+    if (!pick.length) return flash('先勾要標記的項目');
+    if (!confirm(markDoneConfirm(pick.map((i) => i.item_name)))) return;
+    setActing(true);
+    try {
+      const ids = pick.map((i) => i.id!).filter(Boolean);
+      const { data, error } = await supabase.from('purchase_demand_items')
+        .update({ status: 'done' }).in('id', ids).select('id');
+      if (error) return flash('改不動：' + error.message);
+      if ((data?.length ?? 0) !== ids.length) {
+        return flash(`要改 ${ids.length} 項，實際只改到 ${data?.length ?? 0} 項 —— 可能是權限`);
+      }
+      setPicked(new Set());
+      await load();
+      flash(`已標記 ${ids.length} 項為已採購`);
+    } finally { setActing(false); }
+  }
+
+  /*
+   * C · 會計手動改單一項目的狀態（2026-09-05 使用者要求）。
+   *
+   * ============================================================
+   * 【這是逃生口，不是主要路徑】
+   *
+   * 平常狀態由觸發器維護：送審翻已採購、駁回退回、刪掉請款單退回
+   * （migration_219）。這裡給那三條路都沒涵蓋到的情況用 ——
+   * 東西臨時改成零用金買了、需求取消了、或是 219 之前卡住的舊資料。
+   *
+   * ★★ 退回開放狀態時**一定要清掉 `request_item_id`**
+   *   （`manualStatusPatch` 負責，理由在 purchase-demand.ts）。
+   *   不清的話那一項可以被再帶一次 ——
+   *   同一筆錢出現在兩張請款單上，而總額只是「比較大」。
+   *
+   * ★ 影響列數要數。`pdi_write` 只放行會計以上，
+   *   RLS 擋下的 UPDATE **回成功且 0 列**（CLAUDE.md）——
+   *   不數的話畫面會顯示成功，重新整理才跳回原值。
+   */
+  async function setItemStatus(i: Demand['items'][number], to: DemandItemStatus) {
+    if (acting || !i.id || to === i.status) return;
+    const hadRequest = !!i.request_item_id;
+    const note = manualStatusNote(to, hadRequest);
+    if (note && !confirm(
+      `把「${i.item_name}」改成「${ITEM_STATUS_LABEL[to]}」？\n\n${note}`
+    )) return;
+
+    setActing(true);
+    try {
+      const { data, error } = await supabase.from('purchase_demand_items')
+        .update(manualStatusPatch(to, hadRequest))
+        .eq('id', i.id).select('id');
+      if (error) return flash('改不動：' + error.message);
+      if (!data?.length) return flash('沒有改到任何一列 —— 可能是權限');
+      await load();
+      flash(`「${i.item_name}」改成${ITEM_STATUS_LABEL[to]}`);
+    } finally { setActing(false); }
+  }
 
   useEffect(() => {
     supabase.from('estates').select('id, name').eq('active', true).order('sort')
@@ -246,6 +411,14 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
 
   return (
     <div className="px-4 md:px-0">
+      {/*
+        ★ 訊息放在動作發生的地方附近 —— 建請款單／標為已採購的結果
+          要看得到（CLAUDE.md:錯誤訊息跳在頁面最上方而使用者在下半部操作,
+          他按了鈕、什麼都沒發生,結論是「按鈕壞了」）。
+      */}
+      {msg && (
+        <div className="mb-3 rounded-lg bg-mor-bluelight text-mor-slate px-3 py-2 text-sm">{msg}</div>
+      )}
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <div className="text-xs text-gray-400 mr-auto">
           共 {rows.length} 張
@@ -283,8 +456,10 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                     <span className="text-xs text-gray-500">{d.requester_name ?? '—'}</span>
                   )}
                   <span className="text-xs text-gray-400">{d.requested_on}</span>
+                  {/* ★ 用 demandClass 不是 DEMAND_STATUS_CLASS[p.status] ——
+                      「已採購」是顯示字，不在那四個 status 值裡（migration_219） */}
                   <span className={`ml-auto inline-block rounded-md px-2 py-0.5 text-xs font-medium
-                                    ${DEMAND_STATUS_CLASS[p.status]}`}>
+                                    ${demandClass(p)}`}>
                     {p.label}
                   </span>
                   <span className="w-full text-xs text-gray-500">
@@ -299,8 +474,49 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
 
                 {isOpen && (
                   <div className="border-t border-mor-line/60 divide-y divide-mor-line/40">
+                    {/*
+                      ★★★ 動作列只給會計以上（2026-09-05）。
+                        房務提需求的人不該建請款單 —— `purchase_requests`
+                        的 RLS 也是這樣寫的。藏起來不是為了安全，是為了不騙人:
+                        看得到卻按不動的按鈕比沒有那顆按鈕更糟。
+                    */}
+                    {seesAll && (
+                      <div className="flex flex-wrap items-center gap-2 px-4 py-2 bg-mor-sand/25">
+                        <span className="text-xs text-gray-500">
+                          {pickedIn(d).length
+                            ? `已勾 ${pickedIn(d).length} 項`
+                            : '勾選要處理的項目'}
+                        </span>
+                        <div className="ml-auto flex gap-2">
+                          <button onClick={() => void makeRequest(d)}
+                            disabled={acting || !pickedIn(d).filter((i) => isTakeable(i.status)).length}
+                            className="rounded-lg bg-mor-slate text-white px-3 py-1.5 text-xs font-medium disabled:opacity-40">
+                            建請款單
+                          </button>
+                          {/* ★ 零用金直接買的那條路。不產生請款單 —— 確認視窗會講 */}
+                          <button onClick={() => void markDone(d)}
+                            disabled={acting || !pickedIn(d).filter(canMarkDone).length}
+                            className="rounded-lg border border-mor-slate/50 bg-white text-mor-slate px-3 py-1.5 text-xs font-medium disabled:opacity-40">
+                            標為已採購
+                          </button>
+                        </div>
+                      </div>
+                    )}
                     {d.items.map((i) => (
                       <div key={i.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-sm">
+                        {/*
+                          ★★ 已經被領走的不給勾 —— 再帶一次會變成兩張請款單
+                            請同一筆錢，而總額只是「比較大」，沒有地方會叫。
+                        */}
+                        {seesAll && (
+                          isTakeable(i.status)
+                            ? (
+                              <input type="checkbox" checked={!!i.id && picked.has(i.id)}
+                                onChange={() => i.id && togglePick(i.id)}
+                                onClick={(e) => e.stopPropagation()} />
+                            )
+                            : <span className="w-[13px]" aria-hidden />
+                        )}
                         <span className="font-medium">{i.item_name}</span>
                         <span className="text-xs rounded bg-mor-sand px-1.5 py-0.5">
                           {i.purpose_type === 'office' ? '安幸辦公室' : estateName[i.estate_id] ?? '—'}
@@ -312,13 +528,40 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                             onClick={(e) => e.stopPropagation()}
                             className="text-xs text-mor-slate underline">建議連結</a>
                         )}
-                        <span className="ml-auto text-xs text-gray-500">
-                          {ITEM_STATUS_LABEL[i.status]}
+                        <span className="ml-auto flex items-center gap-1.5 text-xs text-gray-500">
                           {/*
                             買了沒的答案就在這裡 —— 不用去請款頁查。
                             房務連請款頁的選單都沒有。
                           */}
-                          {i.request_no && <span className="ml-1 text-mor-slate">{i.request_no}</span>}
+                          {i.request_no && <span className="text-mor-slate">{i.request_no}</span>}
+                          {/*
+                            ★★ 卡住的那種要標出來:狀態說已進請款，卻接不到任何請款項目。
+                              不標的話它看起來就是一筆正常的「已進請款」，而它永遠不會前進
+                              （migration_219 之前刪掉請款單就會產生這種）。
+                          */}
+                          {isOrphanRequested(i) && (
+                            <span className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700"
+                              title="狀態是已進請款，但接不到任何請款單。改成「未採購」就能重新帶進請款單。">
+                              接不到單
+                            </span>
+                          )}
+                          {seesAll
+                            ? (
+                              /*
+                               * ★ 逃生口。平常狀態由觸發器維護（送審翻已採購、駁回退回、
+                               *   刪掉請款單退回），這裡給那三條路沒涵蓋到的情況用。
+                               */
+                              <select value={i.status}
+                                disabled={acting || !i.id}
+                                onClick={(e) => e.stopPropagation()}
+                                onChange={(e) => i.id && void setItemStatus(i, e.target.value as DemandItemStatus)}
+                                className="rounded-lg border border-mor-line bg-white px-1.5 py-0.5 text-xs disabled:opacity-40">
+                                {manualStatusOptions(i).map((s) => (
+                                  <option key={s} value={s}>{ITEM_STATUS_LABEL[s]}</option>
+                                ))}
+                              </select>
+                            )
+                            : ITEM_STATUS_LABEL[i.status]}
                         </span>
                       </div>
                     ))}

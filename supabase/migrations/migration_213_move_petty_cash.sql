@@ -135,14 +135,36 @@ select '3. 用途是不是安幸辦公室',
             then '✅' else '❌ 用途不對' end
 
 union all
--- ★★ 刪除有沒有留下軌跡。錢的紀錄被刪一定要查得到（migration_72）
--- ★ 欄位是 `at` 不是 `changed_at`（migration_72）——
---   憑印象寫欄位名今天已經錯過兩次（record_migration、schema_migrations.name）
-select '4. data_audit 有沒有記到這次刪除',
-       (select count(*)::text from public.data_audit
-         where table_name = 'expenses' and action = 'delete'
-           and at > now() - interval '10 minutes'),
-       '≥1 才對。0 的話 data_audit 的觸發器可能沒掛上'
+/*
+ * ★★ 刪除有沒有留下軌跡。錢的紀錄被刪一定要查得到（migration_72）。
+ *
+ * ★★★ 這一條原本寫成「最近十分鐘有沒有 expenses 的刪除」，那是錯的
+ *   （2026-09-05 抓到）。兩個毛病：
+ *
+ *   ① 它問的是「**這次跑**做了什麼」，而這支是冪等的 ——
+ *      第二次跑會走「找不到那筆支出，不做事」直接 return，
+ *      於是這一格變成 0，看起來像稽核壞了。實際上 213 早在 09-03
+ *      就跑過，紀錄好端端地在。我花了兩輪查詢在追一個不存在的 bug。
+ *   ② 「十分鐘內」會隨時間過期。一個會自己變成紅字的檢查等於沒有檢查。
+ *
+ *   自檢要問「**結果對不對**」，不是「這次跑發生了什麼」
+ *   （CLAUDE.md：自檢的基準值依賴這支正在改的東西）。
+ *
+ * ★ `user_id` 是 null 很正常 —— 從 SQL Editor 跑的沒有登入者。
+ *   `data_audit_log()` 的 DELETE 與 INSERT 分支照記，
+ *   只有 UPDATE 那一段會在 uid 為 null 時跳過。
+ */
+select '4. 那一筆的刪除有沒有被記到',
+       coalesce((select label || '｜刪於 ' || at::date::text
+                   from public.data_audit
+                  where table_name = 'expenses' and action = 'delete'
+                    and label like '%零用金撥補%'
+                  order by at desc limit 1), '（沒有這筆刪除紀錄）'),
+       case when exists (select 1 from public.data_audit
+                          where table_name = 'expenses' and action = 'delete'
+                            and label like '%零用金撥補%')
+            then '✅ 查得到那筆 30,000 是什麼時候被誰刪的'
+            else '❌ 沒有軌跡 —— data_audit 的觸發器可能沒掛上' end
 
 union all
 select '5. 這一支有沒有被記錄',

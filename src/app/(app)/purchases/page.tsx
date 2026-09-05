@@ -3,6 +3,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import StatCard from '@/components/StatCard';
 import { AddButton, ExportButton } from '@/components/Actions';
 import { Tabs } from '@/components/Tabs';
+import { submitBlockedBy, requestTotal } from '@/lib/demand-to-request';
 import {
   FilterBar, Field, FilterSelect, FilterSearch, FilterClear, FilterCount,
   ActionRow, FILTER_CTRL,
@@ -43,7 +44,8 @@ import { refundPerms as depPerms, cancelPatch } from '@/lib/deposit-refund';
 import { CATEGORIES as ADVANCE_CATEGORIES } from '@/lib/advance';
 
 type Item = {
-  id?: string; request_id?: string; item_name: string; amount: number;
+  /** ★★★ `amount` 可以是 null =「還沒填」，**不是 0**（migration_218） */
+  id?: string; request_id?: string; item_name: string; amount: number | null;
   account_code: string | null; purpose_type: string; estate_id: string | null;
   /** 選填。用途是物業層級,這欄再細到房間 —— 之後要追單一房源的花費才有依據。 */
   property_id?: string | null;
@@ -157,7 +159,17 @@ const ADV_CATEGORIES = ADVANCE_CATEGORIES;
  * 現在導到站內同一張表（`purchase_demands`，migration_140 / 141），
  * `?new=1` 會直接把新增視窗打開，少一次點擊。
  */
-const PURCHASE_FORM_URL = '/housekeeping?tab=demand&new=1';
+/*
+ * ★ 停在**清單**，不帶 `new=1`（2026-09-05 使用者選）。
+ *
+ *   原本是 `?tab=demand&new=1` —— 按了直接彈出「新增需求」視窗。
+ *   那顆按鈕的名字叫「採購單」，而它做的事是「提一筆新需求」，
+ *   會計要的卻是「從已經提過的裡面挑幾筆進請款」。
+ *
+ *   提新需求的人是房務與管家,他們本來就從房務管理進去 ——
+ *   繞到請款單頁按這顆的只有會計。
+ */
+const PURCHASE_FORM_URL = '/housekeeping?tab=demand';
 const ST_LABEL: Record<string, string> = { draft: '草稿', pending: '待核可', approved: '已核可', rejected: '已駁回' };
 const ST_COLOR: Record<string, string> = {
   draft: 'bg-gray-100 text-gray-600', pending: 'bg-amber-50 text-amber-700',
@@ -611,6 +623,9 @@ export default function PurchasesPage() {
     r.status === 'approved' && !r.purchased_on
     && (!needsPlan(r.payment_method) || !!r.planned_transfer_on)), [filtered]);
   const sum = (xs: Req[]) => xs.reduce((a, r) => a + (Number(r.total_amount) || 0), 0);
+  /** 這張單有幾項還沒填金額（migration_218）。合計不含它們 */
+  const unpricedOf = (r: Req) =>
+    (r.purchase_request_items ?? []).filter((i) => i.amount == null).length;
 
   /* ══════════════════════════════════════════════════════
    * 待核可佇列 —— 請款單與押金退款合成同一份清單
@@ -813,8 +828,15 @@ export default function PurchasesPage() {
     return Object.values(m).sort((a, b) => a.date.localeCompare(b.date) || a.acct.localeCompare(b.acct));
   }, [schedule]);
 
+  /*
+   * ★★★ 金額是 `null`（待填）不是 0（migration_218）。
+   *
+   *   0 在請款單上是合法的值（贈品、換貨、對方吸收）。
+   *   新開一列給 0 的話，「還沒填」跟「真的 0 元」在畫面上一模一樣 ——
+   *   送審擋不住、兩層核可都不會發現、付款出去少一筆錢。
+   */
   function blankItem(): Item {
-    return { item_name: '', amount: 0, amount_original: 0, account_code: null, purpose_type: 'estate', estate_id: null, property_id: null, note: null, sort: 0, voucher_no: null, no_voucher: false };
+    return { item_name: '', amount: null, amount_original: null, account_code: null, purpose_type: 'estate', estate_id: null, property_id: null, note: null, sort: 0, voucher_no: null, no_voucher: false };
   }
 
   function openNew() {
@@ -847,15 +869,43 @@ export default function PurchasesPage() {
   const fxRate = Number(edit?.fx_rate) || 1;
   const editSubtotal = useMemo(() => items.reduce((a, i) => a + (Number(i.amount_original) || 0), 0), [items]);
   const editTotal = useMemo(() => Math.round(editSubtotal * fxRate), [editSubtotal, fxRate]);
+  /*
+   * ★★ 還沒填金額的項數。把 null 當 0 加總的話，合計看起來是一個
+   *   完整的數字 —— 而它少了還沒填的那幾筆，沒有人會發現。
+   *   ★ 空白列（名稱也沒填）不算 —— 那是還沒用到的一行，不是待填。
+   */
+  const editUnpriced = useMemo(() => requestTotal(
+    items.filter((i) => i.item_name.trim() || i.amount_original != null)
+      // 表單編輯的是原幣別金額,`amount` 是換算後的結果
+      .map((i) => ({ amount: i.amount_original }))).unpriced, [items]);
 
   async function save(submit: boolean) {
     if (!edit || !me) return;
-    const clean = items.filter((i) => i.item_name.trim() || Number(i.amount_original) > 0);
+    const clean = items.filter((i) => i.item_name.trim() || i.amount_original != null);
     if (!clean.length) return flashErr('至少要有一個請款項目');
     for (const i of clean) {
       if (!i.item_name.trim()) return flashErr('每個項目都要填名稱');
-      if (!(Number(i.amount_original) > 0)) return flashErr(`「${i.item_name}」請填金額`);
       if (i.purpose_type === 'estate' && !i.estate_id) return flashErr(`「${i.item_name}」請選擇用途`);
+    }
+    /*
+     * ★★★ 金額改成**送審才擋**（migration_218 / 2026-09-05）。
+     *
+     * 原本這裡是 `if (!(Number(i.amount_original) > 0)) return flashErr('請填金額')`，
+     * 而那條**連存草稿都擋**。從採購需求帶進來的項目金額是空的（還在詢價），
+     * 於是會計一按存檔就被退回，訊息還是「請填金額」——
+     * 看起來像他自己漏填，而系統根本不讓他存。
+     *
+     * 檔頭第 910 行本來就寫著「草稿可以先不填金額，送審就要填」，
+     * 那個承諾在金額欄上一直沒有兌現。
+     *
+     * ★ 代價：真的填 0 的項目現在送審會過（以前 `> 0` 連 0 都擋）。
+     *   那是 218 的設計選擇 —— 贈品、換貨本來就是合法的 0 元，
+     *   而現在畫面上 0 跟空白分得開了，看得見就擋得住。
+     */
+    if (submit) {
+      const blocked = submitBlockedBy(
+        clean.map((i) => ({ item_name: i.item_name, amount: i.amount_original })));
+      if (blocked) { alert(blocked); return flashErr(blocked.split('\n')[0]); }
     }
     /*
      * 一張單只能有一本帳（migration_159）。
@@ -1077,8 +1127,21 @@ export default function PurchasesPage() {
       // 換算在這裡一次做完,資料庫不會有「一半換過一半沒換」的中間狀態。
       const payload = clean.map((i, idx) => ({
         request_id: reqId, item_name: i.item_name.trim(),
-        amount_original: Number(i.amount_original) || 0,
-        amount: Math.round((Number(i.amount_original) || 0) * (edit.currency === 'TWD' ? 1 : fxRate)),
+        /*
+         * ★★★ 待填要存成 null，**不能存成 0**（migration_218）。
+         *
+         *   原本兩行都是 `Number(i.amount_original) || 0` ——
+         *   從採購需求帶進來的空金額一存檔就變成 0，
+         *   而 0 是合法值（贈品、換貨）。等於這條路每次存檔
+         *   都把「還沒問到價」偷偷改成「確認是免費的」，
+         *   然後送審擋不住、兩層核可都不會發現。
+         *
+         * ★ `sync_pr_total()` 用 `sum(amount)`，SQL 的 sum 忽略 null ——
+         *   所以單頭的 total_amount 會自動只加已填的那幾筆，不用另外處理。
+         */
+        amount_original: i.amount_original == null ? null : (Number(i.amount_original) || 0),
+        amount: i.amount_original == null ? null
+          : Math.round((Number(i.amount_original) || 0) * (edit.currency === 'TWD' ? 1 : fxRate)),
         account_code: i.account_code || null, purpose_type: i.purpose_type,
         estate_id: i.purpose_type === 'office' ? null : i.estate_id,
         // 辦公室沒有房源可言,清成 null;跟支出頁同一套規則
@@ -1442,7 +1505,14 @@ export default function PurchasesPage() {
           T(r.submitted_at ? r.submitted_at.slice(0, 10) : '', stCell),
           T(r.purchased_on ?? '', stCell),
           T(i?.item_name ?? '', stCell),
-          T(Math.round(Number(i?.amount) || 0), stNum),
+          /*
+           * ★★ 待填印「待填」不印 0（migration_218）。
+           *   這份 Excel 是會計拿去網銀匯款的那一份 ——
+           *   印 0 的話那一列看起來就是「不用付」，而它其實還在詢價。
+           * ★ 印字串，Excel 那格就不是數字,不會被加進小計。
+           */
+          i && i.amount == null ? T('待填', stCell)
+            : T(Math.round(Number(i?.amount) || 0), stNum),
           T(i?.account_code ? codeName[i.account_code] ?? i.account_code : '', stCell),
           T(i ? (i.purpose_type === 'office' ? '安幸辦公室'
           : i.purpose_type === OTHER_BIZ_PURPOSE ? BOOK_LABEL[toBook(r.book)]
@@ -1691,7 +1761,7 @@ export default function PurchasesPage() {
         </button>
         <a href={PURCHASE_FORM_URL}
           className="flex-1 h-12 rounded-xl border border-mor-line bg-white/85 font-medium flex items-center justify-center active:bg-mor-sand/60">
-          + 採購單
+          採購需求
         </a>
       </div>
 
@@ -2085,9 +2155,14 @@ export default function PurchasesPage() {
         */}
         <div className="hidden md:contents">
           <AddButton onClick={openNew}>填寫請款</AddButton>
-          {/* 採購單 = 房務管理的「採購需求」。次要樣式,不跟「填寫請款」搶 */}
+          {/*
+            ★ 正名成「採購需求」(2026-09-05)。
+              「採購單」這個字不在 CLAUDE.md 的用語表裡 ——
+              系統裡只有「採購需求」與「請款單」，第三個名字會讓人
+              以為那是另一件事。次要樣式,不跟「填寫請款」搶。
+          */}
           <a href={PURCHASE_FORM_URL}
-            className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 whitespace-nowrap">+ 採購單</a>
+            className="rounded-lg border border-mor-line bg-white px-4 py-1.5 font-medium hover:bg-mor-sand/60 whitespace-nowrap">採購需求</a>
         </div>
         <ExportButton onClick={exportXlsx} disabled={!rows.length && !deps.length} />
         <TrashLink table="purchase_requests" label="請款單" />
@@ -2204,6 +2279,15 @@ export default function PurchasesPage() {
                     ${fmt(r.total_amount)}
                     {r.currency && r.currency !== 'TWD' && (
                       <div className="text-[11px] font-normal text-gray-400">{r.currency} × {r.fx_rate}</div>
+                    )}
+                    {/*
+                      ★★ 總額少了還沒填的那幾筆要講出來（migration_218）。
+                        `sync_pr_total()` 用 sum(amount)，SQL 的 sum 忽略 null ——
+                        所以這個數字是「已填的那幾項的合計」，
+                        不講的話它看起來就是一張填完的單。
+                    */}
+                    {unpricedOf(r) > 0 && (
+                      <div className="text-[11px] font-normal text-amber-600">{unpricedOf(r)} 項待填</div>
                     )}
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap text-gray-600">
@@ -2673,8 +2757,11 @@ export default function PurchasesPage() {
                       <div className="flex justify-between gap-2">
                         <span className="font-medium">{i.item_name}</span>
                         <span className="shrink-0">
-                          {d.currency !== 'TWD' && <span className="text-xs text-gray-400 mr-1">{d.currency} {fmt(i.amount_original ?? 0)}</span>}
-                          NT$ {fmt(i.amount)}
+                          {/* ★ null = 還沒填。印 NT$ 0 的話跟「真的 0 元」分不開 */}
+                          {i.amount == null ? <span className="text-amber-600">待填</span> : (<>
+                            {d.currency !== 'TWD' && <span className="text-xs text-gray-400 mr-1">{d.currency} {fmt(i.amount_original ?? 0)}</span>}
+                            NT$ {fmt(i.amount)}
+                          </>)}
                         </span>
                       </div>
                       <div className="text-xs text-gray-500 mt-0.5">
@@ -2849,11 +2936,19 @@ export default function PurchasesPage() {
                             </span>
                             {/* 值用字串保存,不是 Number(0) —— 否則欄位永遠顯示 0,
                                 打字時新數字會接在 0 後面變成 0500。空字串才能被直接取代。 */}
+                            {/*
+                              ★★★ 空白 = **待填**（null），不是 0（migration_218）。
+                                原本 `=== 0 || == null` 兩種都印空白 ——
+                                真的填 0 的項目在畫面上看起來就是沒填。
+                                清空欄位寫回 null 不是 0，理由同上。
+                            */}
                             <input disabled={readOnly} type="number" inputMode="decimal" min="0"
-                              value={it.amount_original === 0 || it.amount_original == null ? '' : it.amount_original}
-                              placeholder="金額"
-                              onChange={(e) => setItems(items.map((x, i) => i === idx ? { ...x, amount_original: e.target.value === '' ? 0 : Number(e.target.value) } : x))}
-                              className="w-full h-12 md:h-auto bg-white rounded-lg border border-mor-line pl-9 pr-2 md:py-1.5 text-right disabled:bg-gray-50" />
+                              value={it.amount_original == null ? '' : String(it.amount_original)}
+                              placeholder="待填"
+                              onChange={(e) => setItems(items.map((x, i) => i === idx ? { ...x, amount_original: e.target.value === '' ? null : Number(e.target.value) } : x))}
+                              className={`w-full h-12 md:h-auto bg-white rounded-lg pl-9 pr-2 md:py-1.5 text-right border disabled:bg-gray-50
+                                ${it.amount_original == null && it.item_name.trim()
+                                  ? 'border-amber-300 placeholder:text-amber-600' : 'border-mor-line'}`} />
                           </div>
                           {!readOnly && items.length > 1 &&
                             <button onClick={() => setItems(items.filter((_, i) => i !== idx))} aria-label="刪除項目"
@@ -3049,16 +3144,31 @@ export default function PurchasesPage() {
                   </div>
 
                   <div className="mt-2 flex items-center justify-between text-sm">
-                    <div className={editTotal < FREE_THRESHOLD ? 'text-mor-green text-xs' : 'text-amber-600 text-xs'}>
-                      {editTotal < FREE_THRESHOLD
-                        ? `未達 NT$${fmt(FREE_THRESHOLD)},送出後直接核可`
-                        : `達 NT$${fmt(FREE_THRESHOLD)} 以上,需主管與總經理各核可一次`}
-                    </div>
+                    {/*
+                      ★★ 有待填時不講核可門檻。
+                        那句話是拿 editTotal 算的，而合計少了還沒填的那幾筆 ——
+                        十項有八項沒填價時它會很有信心地說「直接核可」。
+                        送審擋得住所以不會真的錯放，但填單過程中那是誤導。
+                    */}
+                    {editUnpriced > 0 ? (
+                      <div className="text-amber-600 text-xs">
+                        還有 {editUnpriced} 項沒填金額,總額還不是最後的數字
+                      </div>
+                    ) : (
+                      <div className={editTotal < FREE_THRESHOLD ? 'text-mor-green text-xs' : 'text-amber-600 text-xs'}>
+                        {editTotal < FREE_THRESHOLD
+                          ? `未達 NT$${fmt(FREE_THRESHOLD)},送出後直接核可`
+                          : `達 NT$${fmt(FREE_THRESHOLD)} 以上,需主管與總經理各核可一次`}
+                      </div>
+                    )}
                     <div className="text-right">
                       {edit.currency !== 'TWD' && (
                         <div className="text-xs text-gray-500">{edit.currency} {fmt(editSubtotal)} × {fxRate || '—'}</div>
                       )}
                       <div className="font-bold">總額 NT$ {fmt(editTotal)}</div>
+                      {editUnpriced > 0 && (
+                        <div className="text-xs font-normal text-amber-600">另有 {editUnpriced} 項待填</div>
+                      )}
                     </div>
                   </div>
                 </div>
