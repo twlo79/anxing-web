@@ -7,6 +7,7 @@ import {
   sumTax, sumNet, sumTotal, invoiceCounts,
   settle, periodFigures, carryChainBreaks,
   parseOutUpload, buildItemMap, uploadError, invoiceError, amountMismatch,
+  invoiceDateRange, invoiceDateError,
   TAX_CATEGORIES, TAX_CODES, TAX_CODE_HINT, TAX_ITEM_NAMES,
   OUT_SHEET, OUT_DETAIL_SHEET,
   type TaxInvoice, type TaxKind, type PeriodRow, type ParsedUpload,
@@ -266,8 +267,15 @@ export default function TaxPage() {
     setPickErr(null);
     try {
       /*
-       * ★ 只撈這一期的（使用者指定「支出轉入要在同月」）。
-       *   `importable()` 也會再濾一次期別 —— 這裡先用日期範圍縮小查詢，
+       * ★★ 撈**可補登的整段區間**（2026-09-05 使用者改的，原本只有同一期）。
+       *   範圍跟手 key 那一側共用 `invoiceDateRange(period, 'in')` ——
+       *   該年度 1/1 ～ 該期最後一天。
+       *
+       *   ★ 兩側一定要用同一支函式算。各寫一次的話會出現
+       *     「手 key 填得進去、帶入卻看不到那一筆」，
+       *     而使用者只會覺得系統漏了資料。
+       *
+       *   `importable()` 會再濾一次同一個區間 —— 這裡是縮小查詢範圍，
        *   那邊才是判定。兩層做的事不一樣:一層省流量，一層保證正確。
        *
        * ★★ 廠商與統編走 `request_id` → `purchase_requests`。
@@ -277,7 +285,8 @@ export default function TaxPage() {
       const { data, error } = await supabase.from('expenses')
         .select('id, spent_on, item_name, amount, voucher_no, note, estate_id, property_id,'
           + ' purchase_requests(payee_company, payee_tax_id)')
-        .gte('spent_on', from).lte('spent_on', to)
+        .gte('spent_on', invoiceDateRange(period, 'in')[0])
+        .lte('spent_on', invoiceDateRange(period, 'in')[1])
         .not('voucher_no', 'is', null)
         .order('spent_on');
       if (error) return flash('讀不到支出：' + error.message);
@@ -342,7 +351,15 @@ export default function TaxPage() {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Partial<TaxInvoice> | null>(null);
   const [tried, setTried] = useState(false);
-  const draftErr = draft ? invoiceError(draft) : null;
+  /*
+   * ★★ 日期範圍另外驗一次 —— `<input type="date">` 的 `min`/`max`
+   *   **擋不住手動輸入**:它只把欄位標成 invalid，值照樣寫進 state
+   *   然後存進資料庫。而存錯期別的發票會讓兩期的申報數同時錯。
+   */
+  const draftErr = draft
+    ? (invoiceError(draft)
+       ?? invoiceDateError(draft.invoice_date, period, draft.kind ?? kind))
+    : null;
   const mismatch = draft ? amountMismatch(draft) : null;
 
   function openNew() {
@@ -535,8 +552,9 @@ export default function TaxPage() {
         <div className="mb-3 rounded-lg bg-white border border-mor-line overflow-hidden">
           <div className="px-3 py-2 border-b border-mor-line">
             <div className="text-sm font-medium">從支出帶入進項發票</div>
+            {/* ★ 講出實際區間 —— 使用者要看得出「為什麼 3 月的也在這裡」 */}
             <div className="text-[11px] text-gray-500 mt-0.5">
-              {periodLabel(period)}・有填憑證號碼、還沒帶過的支出
+              申報在 {periodLabel(period)}・支出日期 {invoiceDateRange(period, 'in')[0]} ~ {invoiceDateRange(period, 'in')[1]}・有憑證號碼且還沒帶過
             </div>
           </div>
 
@@ -982,7 +1000,17 @@ export default function TaxPage() {
               <>
                 <div className="px-6 py-4 grid grid-cols-2 gap-3 text-xs">
                   <label className="flex flex-col gap-1"><span>日期<Req /></span>
-                    <input type="date" value={draft.invoice_date ?? ''} min={from} max={to}
+                    {/*
+                      ★★ 進項放寬到**同年度**（2026-09-05 使用者指定）——
+                        「1-2 月可以選 2026 1-2、11-12 月可以選 2026 1-12」。
+                        用途是補登:漏掉的進項晚幾期才發現，要補在現在這一期
+                        申報，但發票日期是當初開的那一天。
+                      ★ 銷項不放寬（使用者選）—— 開票日就決定申報期。
+                      ★★★ 上限一律是該期最後一天，不能填未來的。
+                    */}
+                    <input type="date" value={draft.invoice_date ?? ''}
+                      min={invoiceDateRange(period, draft.kind ?? kind)[0]}
+                      max={invoiceDateRange(period, draft.kind ?? kind)[1]}
                       onChange={(e) => setDraft({ ...draft, invoice_date: e.target.value })}
                       className={`rounded-lg border px-2 py-1.5 ${reqCls(tried && !draft.invoice_date)}`} /></label>
                   <label className="flex flex-col gap-1"><span>發票號碼<Req /></span>

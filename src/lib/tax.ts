@@ -63,6 +63,62 @@ export function periodRange(p: TaxPeriod): [string, string] {
 }
 
 /**
+ * 一張發票的**日期**可以落在哪個區間（2026-09-05 使用者指定）。
+ *
+ * ============================================================
+ * 【進項放寬到同年度，銷項維持當期】
+ *
+ *   進項  該年度 1/1 ～ 該期最後一天
+ *   銷項  該期第一天 ～ 該期最後一天（不變）
+ *
+ * 使用者的原話:「1-2 月可以選 2026 1-2 發票、11-12 月可以選 2026 1-12 發票」。
+ *
+ * ★ 為什麼進項要放寬:**補登**。漏掉的進項發票晚幾期才發現，
+ *   要補在現在這一期申報，但發票日期是當初開的那一天。
+ *   鎖在當期的話，那張發票就永遠登不進來 ——
+ *   而它代表的是真的可以扣抵的稅額。
+ *
+ * ★★ 為什麼銷項不放寬（使用者選）:銷項是我方開出去的，
+ *   開票日就決定了申報期，沒有「補在後面那期」這回事。
+ *   放寬只會讓人有機會把數字放進錯的期別。
+ *
+ * ★★★ 不能往後 —— 上限一律是**該期最後一天**。
+ *   未來的發票申報在這一期，那一期的數字就是錯的，
+ *   而它會一路錯到留抵結轉的下一期。
+ *
+ * ★ 台灣的營業稅期別不跨年（1-2、3-4 ⋯ 11-12），
+ *   所以 `from` 與 `to` 一定同年，年度直接取 `to` 的前四碼。
+ */
+export function invoiceDateRange(p: TaxPeriod, kind: TaxKind): [string, string] {
+  const [from, to] = periodRange(p);
+  if (!from || !to) return ['', ''];
+  if (kind === 'out') return [from, to];
+  return [`${to.slice(0, 4)}-01-01`, to];
+}
+
+/**
+ * 發票日期超出可選範圍時的訊息。`null` = 沒問題。
+ *
+ * ★ HTML 的 `min` / `max` **擋不住手動輸入** —— 它只把欄位標成 invalid，
+ *   值照樣會被寫進 state 然後存進資料庫。所以要另外驗一次。
+ */
+export function invoiceDateError(
+  dateStr: string | null | undefined, p: TaxPeriod, kind: TaxKind,
+): string | null {
+  const d = (dateStr ?? '').trim();
+  if (!d) return null;                       // 沒填是 `invoiceError` 的事
+  const [lo, hi] = invoiceDateRange(p, kind);
+  if (!lo || !hi) return null;
+  if (d < lo || d > hi) {
+    return kind === 'out'
+      ? `銷項發票的日期要在本期內（${lo} ~ ${hi}）`
+      : `進項發票的日期要在 ${lo} ~ ${hi} 之間`
+        + '（同年度可以補登，但不能填未來的日期）';
+  }
+  return null;
+}
+
+/**
  * 期別 → 畫面上的字。`'202607'` → `'115年7-8月期'`。
  *
  * ★ 民國年 = 西元 − 1911。報稅的東西一律用民國 —— 財政部的檔案、

@@ -5,7 +5,7 @@ import {
   activeInvoices, sumTax, sumNet, invoiceCounts,
   settle, periodFigures, carryChainBreaks,
   parseOutUpload, buildItemMap, toDateOnly, uploadError,
-  invoiceError, amountMismatch,
+  invoiceError, amountMismatch, invoiceDateRange, invoiceDateError,
   OUT_COL, OUT_VOID_STATUS,
   type TaxInvoice, type PeriodRow,
 } from './tax.ts';
@@ -442,5 +442,77 @@ describe('★★★ 真檔對得上（115年7-8月期）', () => {
     const wrong = settle(REAL.allTax, REAL.inTax, 0).carryOut;
     const right = settle(REAL.activeTax, REAL.inTax, 0).carryOut;
     assert.equal(right - wrong, REAL.voidedTax);
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// 發票日期的可選範圍（2026-09-05）
+// ══════════════════════════════════════════════════════════
+
+describe('invoiceDateRange —— 進項放寬到同年度，銷項維持當期', () => {
+  /*
+   * 使用者的原話:「1-2 月可以選 2026 1-2 發票、
+   *              11-12 月可以選 2026 1-12 發票」。
+   */
+  test('★★★ 進項:1-2 月期 → 整個 1-2 月', () => {
+    assert.deepEqual(invoiceDateRange('202601', 'in'), ['2026-01-01', '2026-02-28']);
+  });
+
+  test('★★★ 進項:11-12 月期 → 整年 1-12 月', () => {
+    assert.deepEqual(invoiceDateRange('202611', 'in'), ['2026-01-01', '2026-12-31']);
+  });
+
+  test('進項:7-8 月期 → 1/1 ~ 8/31', () => {
+    assert.deepEqual(invoiceDateRange('202607', 'in'), ['2026-01-01', '2026-08-31']);
+  });
+
+  // ★★ 銷項不放寬（使用者選）—— 開票日就決定申報期
+  test('★★ 銷項還是鎖在當期', () => {
+    assert.deepEqual(invoiceDateRange('202611', 'out'), ['2026-11-01', '2026-12-31']);
+    assert.deepEqual(invoiceDateRange('202607', 'out'), ['2026-07-01', '2026-08-31']);
+  });
+
+  test('閏年的 2 月底是 29', () => {
+    assert.equal(invoiceDateRange('202801', 'in')[1], '2028-02-29');
+  });
+
+  test('壞掉的期別回空字串，不會爆', () => {
+    assert.deepEqual(invoiceDateRange('' as any, 'in'), ['', '']);
+  });
+});
+
+describe('invoiceDateError —— HTML 的 min/max 擋不住手打', () => {
+  /*
+   * ★ `<input type="date" min max>` 只把欄位標成 invalid，
+   *   值照樣寫進 state 然後存進資料庫。所以要另外驗一次。
+   */
+  test('★★★ 進項可以補登同年度稍早的', () => {
+    assert.equal(invoiceDateError('2026-03-15', '202611', 'in'), null);
+  });
+
+  test('★★★ 不能填未來的 —— 那一期的數字會錯到下一期', () => {
+    assert.match(invoiceDateError('2026-12-01', '202607', 'in')!, /2026-01-01 ~ 2026-08-31/);
+  });
+
+  test('進項不能跨年往前', () => {
+    assert.ok(invoiceDateError('2025-12-31', '202611', 'in'));
+  });
+
+  test('★★ 銷項填別期的要擋，訊息講「本期」', () => {
+    assert.match(invoiceDateError('2026-03-15', '202611', 'out')!, /本期/);
+  });
+
+  test('銷項填本期內的放行', () => {
+    assert.equal(invoiceDateError('2026-11-30', '202611', 'out'), null);
+  });
+
+  test('沒填日期不是這一支的事（invoiceError 管）', () => {
+    assert.equal(invoiceDateError('', '202611', 'in'), null);
+    assert.equal(invoiceDateError(null, '202611', 'in'), null);
+  });
+
+  test('邊界:期末當天可以，隔一天不行', () => {
+    assert.equal(invoiceDateError('2026-08-31', '202607', 'in'), null);
+    assert.ok(invoiceDateError('2026-09-01', '202607', 'in'));
   });
 });

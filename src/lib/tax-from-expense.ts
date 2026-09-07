@@ -49,7 +49,7 @@
 
 // ★ 副檔名要寫出來 —— `node --experimental-strip-types` 不做副檔名解析
 //   （`audit-orders.ts` 本來就這樣寫，照抄）
-import { taxPeriodOf, type TaxPeriod } from './tax.ts';
+import { invoiceDateRange, type TaxPeriod } from './tax.ts';
 
 /** 一筆支出（只取帶得過去的欄位）。 */
 export type ExpenseSrc = {
@@ -168,10 +168,26 @@ export function toInvoiceDraft(
  *
  * ★★ 三道過濾:
  *   ① 沒有憑證號碼的不出現 —— 沒有發票號碼就不是發票
- *   ② `spent_on` 不在這一期的不出現（使用者指定「要在同月」）
+ *   ② `spent_on` 不在**可補登的區間**內的不出現（見下）
  *   ③ 已經帶過的不出現（`takenIds`）——
  *      帶兩次的話進項稅額憑空多一份，而 401 上只顯示成「應繳比較少」。
  *      資料庫的 `tax_invoice_expense_uniq` 也擋，但那時已經按下去了。
+ *
+ * ============================================================
+ * 【★★ 區間放寬到同年度】（2026-09-05 使用者改的）
+ *
+ * 原本是 `taxPeriodOf(spent_on) === period` —— **只有同一期**。
+ * 現在跟手 key 那一側同一條規則:`invoiceDateRange(period, 'in')`，
+ * 也就是**該年度 1/1 ～ 該期最後一天**。
+ *
+ * ★ 兩側用同一支函式算，不要各寫一次。
+ *   不然會出現「手 key 填得進去、帶入卻看不到那一筆」——
+ *   而使用者只會覺得系統漏了資料
+ *   （CLAUDE.md:同一條規則在三個地方各寫一次）。
+ *
+ * ★★★ 帶進來的 `period` 是**畫面選的那一期**，不是從 `spent_on` 推的。
+ *   補登就是這個意思:3 月的發票、申報在 11-12 月期。
+ *   `toInvoiceDraft()` 收的就是傳進來的 period，不用另外處理。
  *
  * ★ 合格式的排前面 —— 那些是預設勾起來的，讓人一眼看完再往下捲。
  */
@@ -180,10 +196,12 @@ export function importable(
   takenIds: Iterable<string> = [],
 ): InvoiceDraft[] {
   const taken = new Set(takenIds);
+  const [lo, hi] = invoiceDateRange(period, 'in');
+  if (!lo || !hi) return [];
   return (rows ?? [])
     .filter((e) => (e.voucher_no ?? '').trim())
     .filter((e) => !taken.has(e.id))
-    .filter((e) => taxPeriodOf(e.spent_on) === period)
+    .filter((e) => e.spent_on >= lo && e.spent_on <= hi)
     .map((e) => toInvoiceDraft(e, period, companyTaxId))
     .sort((a, b) => Number(b.picked) - Number(a.picked)
       || a.invoice_date.localeCompare(b.invoice_date));
