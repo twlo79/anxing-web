@@ -1,4 +1,4 @@
--- migration_223：採購需求單可以刪（進回收桶）
+-- migration_224：採購需求單可以刪（進回收桶）
 --
 -- ============================================================
 -- 【為什麼現在刪不掉】（2026-09-07 使用者:「可以刪 採購單」）
@@ -75,7 +75,7 @@ returns table (tbl text, min_role text) language sql immutable as $fn$
     ('payment_accounts', 'accountant'), ('payee_presets', 'accountant'),
     ('hk_work_item', 'manager'), ('hk_event', 'manager'), ('cleaning_records', 'manager'),
     ('reviews', 'manager'), ('customers', 'manager'), ('announcements', 'manager'),
-    -- ★ 採購需求（migration_223）。整張單與單一項目都要能刪
+    -- ★ 採購需求（migration_224）。整張單與單一項目都要能刪
     ('purchase_demands', 'accountant'), ('purchase_demand_items', 'accountant'),
     ('attachments', 'any')
   ) v(tbl, min_role);
@@ -84,13 +84,13 @@ $fn$;
 comment on function public.trash_deletable_tables() is
   '哪些表可以走 soft_delete，以及最低角色。沒列在這裡的表一律不能刪（預設拒絕）。'
   'orders 於 migration_167 降到 housekeeper。'
-  'purchase_demands / purchase_demand_items 於 migration_223 加入 —— '
+  'purchase_demands / purchase_demand_items 於 migration_224 加入 —— '
   '這兩張表沒有稽核觸發器，回收桶是唯一留得下「誰刪的、原本是什麼」的地方。';
 
 -- ── 記錄執行 ───────────────────────────────────────
 do $do$ begin
   if to_regprocedure('public.record_migration(text)') is not null then
-    perform public.record_migration('223_demand_trash');
+    perform public.record_migration('224_demand_trash');
   end if;
 end $do$;
 
