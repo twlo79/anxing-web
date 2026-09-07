@@ -17,6 +17,8 @@ import { guessLink, rankNames } from '@/lib/hk-link';
 type Staff = {
   id: string; source_names: string[]; code: string; name: string;
   count_mode: 'rooms' | 'hours' | 'none'; count_cleans: boolean;
+  /** 時薪（migration_226）。只有「計時數」的人用得到。 */
+  hourly_rate?: number | string | null;
   color: string | null; color_text: string | null; color_bar: string | null;
   leave_prefix: string | null; active: boolean; sort: number;
   staff_id: string | null;
@@ -207,6 +209,7 @@ export default function HkSettingsPage() {
                 <th className={th}>顯示名</th><th className={th}>代號</th>
                 <th className={th}>對應 ERP 員工</th>
                 <th className={th}>排班表上的名稱</th><th className={th}>計法</th>
+                <th className={th}>時薪</th>
                 <th className={th}>計打掃次數</th><th className={th}>休假前綴</th>
                 <th className={th}>顏色</th><th className={th}>啟用</th>
               </tr></thead>
@@ -258,6 +261,25 @@ export default function HkSettingsPage() {
                         <select value={s.count_mode} onChange={(e) => patch('hk_staff', 'id', s.id, { count_mode: e.target.value as any }, setStaff)} className={inp}>
                           {Object.entries(MODE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                         </select>
+                      </td>
+                      {/*
+                        ★★ 時薪只給「計時數」的人填（migration_226）。
+                          其他人顯示「—」而不是一個空的輸入框 ——
+                          能填卻沒有作用的欄位，填了的人會以為薪資設定好了。
+
+                        ★★★ 這個數字**直接乘出每個月的房務支出**（時數 × 時薪）。
+                          沒填的話那個人的工時會被列進產生預覽的
+                          「算不出支出」，不會安靜地消失。
+                      */}
+                      <td className={td}>
+                        {s.count_mode === 'hours' ? (
+                          <input type="number" min="0" step="1"
+                            value={s.hourly_rate ?? ''}
+                            onChange={(e) => patch('hk_staff', 'id', s.id, {
+                              hourly_rate: e.target.value === '' ? null : Number(e.target.value),
+                            } as any, setStaff)}
+                            placeholder="500" className={`${inp} w-20`} />
+                        ) : <span className="text-gray-300">—</span>}
                       </td>
                       <td className={td}>
                         <input type="checkbox" checked={s.count_cleans} onChange={(e) => patch('hk_staff', 'id', s.id, { count_cleans: e.target.checked }, setStaff)} />

@@ -102,11 +102,32 @@ export function cleaningCosts(
   jobs: LogEntry[],
   priceOf: (propertyId: string) => number | null | undefined,
   splitsOf?: Map<string, SplitLine[]>,
+  /**
+   * 不產生清潔費的 job key（`日期|房源|工作類型`）。
+   *
+   * ★★★ 時薪人員（劉姐）**一個人**做完的那幾份工（2026-09-07 使用者選「取代」）。
+   *   她是按小時計酬,那幾間的成本已經由 `hk-hourly.ts` 的工時支出承擔了 ——
+   *   這裡再算一次清潔費就是同一份工付兩次,而兩筆的 key 不同、
+   *   唯一索引擋不住,帳面上也完全看不出來。
+   *
+   * ★★ 合掃的**不在這個集合裡**。14B3 是庭玉跟劉姐一起做的,
+   *   庭玉按間計酬,砍掉她的清潔費等於少發她的錢
+   *   （使用者:「合掃 各算各的」）。清單由 `hourlyOnlyKeys()` 產生。
+   */
+  excludeKeys?: ReadonlySet<string>,
 ): { rows: CostRow[]; unpriced: Unpriced[] } {
   const rows: CostRow[] = [];
   const unpriced: Unpriced[] = [];
 
   for (const j of jobs ?? []) {
+    /*
+     * ★ 排除要在**最前面** —— 擺在拆帳後面的話,
+     *   拆過的時薪工作照樣會產生清潔費。
+     */
+    if (j.property_id
+        && excludeKeys?.has(`${j.work_date}|${j.property_id}|${j.work_type}`)) {
+      continue;
+    }
     /*
      * ══════════ 拆帳:一份工記到好幾間 ══════════
      * （2026-09-03 使用者:「我想要在表單上呈現一項 然後支出拆成多間」）

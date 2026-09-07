@@ -22,6 +22,13 @@ export type HkStaff = {
   source_names: string[];
   count_mode: 'rooms' | 'hours' | 'none';
   count_cleans: boolean;
+  /**
+   * 時薪（migration_226）。**只有 `count_mode === 'hours'` 的人用得到。**
+   *
+   * ★ null = 還沒設。產生支出時那個人會被列進「算不出來」讓人去補,
+   *   而不是當成 0 安靜跳過 —— 後者會讓他整個月從支出裡消失。
+   */
+  hourly_rate?: number | string | null;
   color: string | null; color_text?: string | null; color_bar?: string | null;
   leave_prefix: string | null;
 };

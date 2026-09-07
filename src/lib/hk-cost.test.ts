@@ -477,3 +477,47 @@ describe('missingEstateMsg —— 要唸出是哪幾筆', () => {
     assert.match(missingEstateMsg([{ item_name: '人事費' }])!, /人事費/);
   });
 });
+
+// ── 時薪人員做的工不產生清潔費（2026-09-07）────────
+
+import { hourlyOnlyKeys } from './hk-hourly.ts';
+
+describe('★★★ 時薪人員一個人做完的工，不產生清潔費', () => {
+  const price = () => 1000;
+  const jobs: any[] = [
+    // 劉姐一個人做的 —— 成本由她的工時支出承擔
+    { work_date: '2026-08-30', property_id: 'p1', work_type: '退房',
+      label: '14B5', staffIds: ['liu'], units: 1, points: 0, unknownPoints: 0 },
+    // 庭玉＋劉姐合掃 —— 庭玉按間計酬，清潔費原價照算
+    { work_date: '2026-08-01', property_id: 'p2', work_type: '退房',
+      label: '14B3', staffIds: ['ting', 'liu'], units: 1, points: 0, unknownPoints: 0 },
+    // 只有庭玉 —— 完全不受影響
+    { work_date: '2026-08-02', property_id: 'p3', work_type: '退房',
+      label: 'A09', staffIds: ['ting'], units: 1, points: 0, unknownPoints: 0 },
+  ];
+  const ex = hourlyOnlyKeys(jobs, new Set(['liu']));
+
+  test('★★★ 劉姐獨做的那間不產生', () => {
+    const { rows } = cleaningCosts(jobs, price, undefined, ex);
+    assert.equal(rows.some((r) => r.property_id === 'p1'), false);
+  });
+
+  test('★★★ 合掃那間照算，而且是原價不打折', () => {
+    // 打折的話庭玉的錢會默默少掉 —— 那份工對她沒有變便宜
+    const { rows } = cleaningCosts(jobs, price, undefined, ex);
+    const r = rows.find((x) => x.property_id === 'p2');
+    assert.ok(r);
+    assert.equal(r.amount, 1000);
+  });
+
+  test('★ 只有間數人員的完全不受影響', () => {
+    const { rows } = cleaningCosts(jobs, price, undefined, ex);
+    assert.ok(rows.some((r) => r.property_id === 'p3'));
+  });
+
+  test('★★ 不傳排除清單時，行為跟以前一字不差', () => {
+    // 既有的呼叫端沒給第四個參數 —— 那條路必須完全沒變
+    const a = cleaningCosts(jobs, price);
+    assert.equal(a.rows.length, 3);
+  });
+});
