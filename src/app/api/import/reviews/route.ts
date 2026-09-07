@@ -4,6 +4,8 @@ import { notifyImport } from '@/lib/push';
 import { reviewLine, importBody, importTitle } from '@/lib/notify-text';
 // Supabase 一次只回 1000 列且不報錯 —— 「哪些已存在」查不全會覆蓋既有翻譯
 import { fetchIn } from '@/lib/fetch-all';
+// 日文漢字跟中文共用同一個 unicode 區間 —— 判斷「是不是中文」只有一個地方寫
+import { isChinese, needsTranslation } from '@/lib/lang';
 
 export const dynamic = 'force-dynamic';
 
@@ -171,7 +173,6 @@ export async function POST(req: Request) {
       .select('airbnb_review_id, comment, property_id').in('airbnb_review_id', chunk).range(f, t));
   const prevComment = new Map(prevRows.map((r) => [r.airbnb_review_id, r.comment as string | null]));
   prevRows.forEach((r) => prevProp.set(r.airbnb_review_id, (r.property_id as string | null) ?? null));
-  const hasCJK = (t: string | null | undefined) => !!t && /[\u4e00-\u9fff]/.test(t);
 
   const unmatched: Record<string, number> = {};
   const guessedByOrder: string[] = [];
@@ -198,7 +199,7 @@ export async function POST(req: Request) {
       checkout_date: co,
       nights: m.nights ?? null,
       overall_rating: m.rating,
-      comment: hasCJK(prevComment.get(String(m.id))) ? prevComment.get(String(m.id)) : (m.localized || m.comment || null),
+      comment: isChinese(prevComment.get(String(m.id))) ? prevComment.get(String(m.id)) : (m.localized || m.comment || null),
       comment_original: m.comment || null,
       comment_language: m.lang || null,
       rating_checkin: c.CHECKIN ?? null,
@@ -238,7 +239,7 @@ export async function POST(req: Request) {
 
   // 這批匯入後,留言仍非中文(需要翻譯)的清單:rid=airbnb_review_id, src=待翻原文
   const needTranslation = records
-    .filter((r) => r.comment && !hasCJK(r.comment))
+    .filter((r) => needsTranslation(r.comment))
     .map((r) => ({ rid: r.airbnb_review_id, src: r.comment_original || r.comment }));
 
   // 三層都解析不出房源的,列出來讓呼叫端知道(否則會靜默留 null)

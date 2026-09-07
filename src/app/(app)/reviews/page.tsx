@@ -9,6 +9,7 @@ import {
   SUMMARY_HEADER, DETAIL_HEADER, type DetailRow,
 } from '@/lib/manager-xlsx';
 import { fetchAll } from '@/lib/fetch-all';
+import { isChinese } from '@/lib/lang';
 import {
   STAR_BAR_DARK, STAR_BAR_LIGHT, STAR_TRACK_DARK, STAR_TRACK_LIGHT,
   STAR_GLYPH, STAR_GLYPH_EMPTY,
@@ -114,9 +115,9 @@ function hasNegative(r: Review) {
 
 // 留言顯示:有中文的欄位優先(不信任 comment_language,因為多筆標記錯誤)
 function displayComment(r: Review) {
-  const hasCJK = (s?: string | null) => !!s && /[\u4e00-\u9fff]/.test(s);
-  if (hasCJK(r.comment)) return r.comment;
-  if (hasCJK(r.comment_original)) return r.comment_original;
+  // \u5169\u908a\u90fd\u4e0d\u662f\u4e2d\u6587\u6642\u7167\u539f\u6587\u986f\u793a \u2014\u2014 \u90a3\u662f\u9084\u6c92\u7ffb\u5230\u7684,\u4e0d\u662f\u58de\u6389\u7684
+  if (isChinese(r.comment)) return r.comment;
+  if (isChinese(r.comment_original)) return r.comment_original;
   return r.comment ?? r.comment_original ?? null;
 }
 

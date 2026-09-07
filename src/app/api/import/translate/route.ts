@@ -1,5 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
+// 日文漢字跟中文共用同一個 unicode 區間 —— 判斷「是不是中文」只有一個地方寫
+import { isChinese, needsTranslation } from '@/lib/lang';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,7 +15,6 @@ export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: CORS });
 }
 
-const hasCJK = (t: string | null | undefined) => !!t && /[一-鿿]/.test(t);
 const auth = (req: Request) => !!process.env.IMPORT_KEY && req.headers.get('x-import-key') === process.env.IMPORT_KEY;
 const db = () => createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!);
 
@@ -32,8 +33,8 @@ export async function GET(req: Request) {
     if (data.length < 1000) break;
   }
   const pending = rows
-    .filter((r) => r.comment && r.comment.trim() && !hasCJK(r.comment))
-    .map((r) => ({ rid: r.airbnb_review_id, src: hasCJK(r.comment_original) ? r.comment : (r.comment_original || r.comment) }))
+    .filter((r) => needsTranslation(r.comment))
+    .map((r) => ({ rid: r.airbnb_review_id, src: isChinese(r.comment_original) ? r.comment : (r.comment_original || r.comment) }))
     .slice(0, limit);
   return NextResponse.json({ pending, count: pending.length }, { headers: CORS });
 }
@@ -48,8 +49,8 @@ export async function POST(req: Request) {
   const failed: string[] = [];
   for (const it of items) {
     const rid = it?.rid ?? it?.id;
-    // 僅接受含中文的翻譯,避免誤寫回英文
-    if (!rid || !it?.comment || !hasCJK(it.comment)) { if (rid) failed.push(String(rid)); continue; }
+    // 僅接受中文譯文,避免誤寫回英文 —— 也擋掉「原文照抄」的日文
+    if (!rid || !isChinese(it?.comment)) { if (rid) failed.push(String(rid)); continue; }
     const { error } = await supabase.from('reviews').update({ comment: it.comment, comment_language: 'zh-TW' }).eq('airbnb_review_id', String(rid));
     if (error) failed.push(String(rid)); else updated++;
   }
