@@ -150,3 +150,71 @@ describe('撤銷要清掉什麼', () => {
     assert.equal(cancelPatch().refund_status, 'none');
   });
 });
+
+// ── 應退金額的顯示（2026-09-07）─────────────────────
+
+import { refundView, refundNote } from './deposit-refund.ts';
+
+/**
+ * ★★★ 清單印錯金額不會報錯 —— 只會讓核可的人按下去的數字
+ *   跟真正匯出去的不一樣。這一組就是釘那個。
+ */
+describe('★★★ refundView —— 清單要印應退，不是押金原額', () => {
+  test('★★★ 使用者那一筆：押金 10,000、加費 900 → 應退 9,100', () => {
+    const v = refundView({ amount: 10000, refund_amount: 9100 });
+    assert.equal(v.amount, 9100);      // 清單、核可、分享都用它
+    assert.equal(v.original, 10000);
+    assert.equal(v.deducted, 900);
+  });
+
+  test('★★★ refund_amount 是 null → 當成全額，不是 0', () => {
+    /*
+     * null = 舊資料或還沒走過送審。當成 0 的話一整批舊押金會顯示 $0,
+     * 而那看起來像「這筆不用退」—— 然後就真的沒人退了。
+     */
+    const v = refundView({ amount: 20000, refund_amount: null });
+    assert.equal(v.amount, 20000);
+    assert.equal(v.deducted, 0);
+  });
+
+  test('沒有 refund_amount 這個欄位也一樣當全額', () => {
+    assert.equal(refundView({ amount: 20000 }).amount, 20000);
+  });
+
+  test('★ 沒扣過的 deducted 是 0 —— 畫面靠它決定要不要多印一行', () => {
+    assert.equal(refundView({ amount: 20000, refund_amount: 20000 }).deducted, 0);
+  });
+
+  test('資料庫回字串（numeric）也要吃', () => {
+    const v = refundView({ amount: '10000.00', refund_amount: '9100.00' });
+    assert.equal(v.amount, 9100);
+    assert.equal(v.deducted, 900);
+  });
+
+  test('壞值不要變 NaN —— 一個 NaN 會讓整列印成 $NaN', () => {
+    assert.equal(refundView({ amount: null }).amount, 0);
+    assert.equal(refundView({ amount: 'abc' as never }).amount, 0);
+  });
+});
+
+describe('refundNote —— 金額底下那行小字', () => {
+  const f = (n: number) => n.toLocaleString('en-US');
+
+  test('★★ 印的是算式，不是「已扣加費」四個字', () => {
+    // 核可的人要判斷的正是「9,100 對不對」，而判斷需要 10,000 跟 900
+    assert.equal(
+      refundNote(refundView({ amount: 10000, refund_amount: 9100 }), f),
+      '押金 10,000・扣加費 900');
+  });
+
+  test('★★★ 沒扣過回 null —— 每一筆都印的話這個訊號就沒用了', () => {
+    assert.equal(refundNote(refundView({ amount: 20000, refund_amount: 20000 }), f), null);
+    assert.equal(refundNote(refundView({ amount: 20000, refund_amount: null }), f), null);
+  });
+
+  test('★ 應退比押金大（不該發生）也要印出來，不可以吞掉', () => {
+    const s = refundNote(refundView({ amount: 10000, refund_amount: 10500 }), f);
+    assert.ok(s);
+    assert.match(s, /多出 500/);
+  });
+});

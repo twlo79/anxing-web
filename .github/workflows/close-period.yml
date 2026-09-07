@@ -1,0 +1,72 @@
+# ══════════════════════════════════════════════════════════════
+# 每日自動關帳（migration_223，2026-09-07）
+#
+# 每月 5 號把上個月的短租訂單鎖起來，之後改不動也刪不掉。
+#
+# ★★ 為什麼每天跑而不是只在 5 號跑：
+#   cron 寫 `0 20 5 * *` 的話，那一天 GitHub Actions 塞車或掛掉
+#   就整個月都不會關 —— 而**沒有人會發現**，因為沒有東西會叫。
+#
+#   每天跑 ＋ 冪等的函式（關過了就什麼都不做）＝ 漏跑一天隔天補上。
+#   判斷「今天該不該關」全部在 `close_due_periods()` 裡，
+#   這裡不重複那套條件。
+#
+# ★ 需要一個 secret：`IMPORT_KEY`（跟六支 import 端點共用的那把）。
+#   沒設的話這支會回 401，而 job 會紅 —— 那是對的，
+#   靜默失敗才是要避免的。
+# ══════════════════════════════════════════════════════════════
+
+name: 每日自動關帳
+
+on:
+  schedule:
+    # ★ cron 是 UTC。台灣時間 05:00 = UTC 21:00（前一天）。
+    #   刻意排在備份（04:00）之後一小時 —— 關帳前先有一份備份，
+    #   關錯了還原得回來。
+    - cron: '0 21 * * *'
+  # ★ 手動也要能跑。「我這個月提早結完想現在鎖起來」不該等到明天。
+  workflow_dispatch:
+
+concurrency:
+  group: close-period
+  cancel-in-progress: false
+
+jobs:
+  close:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 呼叫關帳端點
+        env:
+          IMPORT_KEY: ${{ secrets.IMPORT_KEY }}
+          SITE: https://justwork.estia.com.tw
+        run: |
+          set -euo pipefail
+          if [ -z "${IMPORT_KEY}" ]; then
+            echo "❌ 沒有設定 IMPORT_KEY secret —— 到 Settings → Secrets 補上"
+            exit 1
+          fi
+
+          # ★ 把 HTTP 狀態碼跟 body 分開拿。只看 body 的話，
+          #   401／500 會被當成「跑完了」而 job 顯示綠色。
+          code=$(curl -s -o /tmp/out.json -w '%{http_code}' \
+            -X POST "${SITE}/api/close-period" \
+            -H "x-import-key: ${IMPORT_KEY}")
+
+          echo "HTTP ${code}"
+          cat /tmp/out.json
+          echo
+
+          if [ "${code}" != "200" ]; then
+            echo "❌ 關帳端點回 ${code}"
+            exit 1
+          fi
+
+          # ★ 把「做了什麼」印在 job 摘要上 —— 不用點進 log 就看得到
+          #   今天是關了、還是因為沒到 5 號而跳過。
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          d = json.load(open('/tmp/out.json'))
+          print('### 每日自動關帳')
+          print()
+          print(d.get('summary') or '（沒有回傳說明）')
+          PY

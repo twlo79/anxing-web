@@ -40,7 +40,7 @@ import {
 } from '@/lib/purchase-pay';
 // 排匯款／確認退款日 —— 押金管理頁用同一支，兩邊的規則不會漂走
 import DepositRefundStep, { type StepMode } from '@/components/DepositRefundStep';
-import { refundPerms as depPerms, cancelPatch } from '@/lib/deposit-refund';
+import { refundPerms as depPerms, cancelPatch, refundView, refundNote } from '@/lib/deposit-refund';
 import { CATEGORIES as ADVANCE_CATEGORIES } from '@/lib/advance';
 
 type Item = {
@@ -649,7 +649,15 @@ export default function PurchasesPage() {
     /** pending = 還在等票;approved = 兩票到齊,等著把錢付出去 */
     stage: 'pending' | 'approved';
     id: string; who: string; what: string; meta: string;
-    amount: number; since: string;
+    amount: number;
+    /**
+     * 金額底下那一行小字。**只有押金扣過加費才有值**（2026-09-07）。
+     *
+     * ★★ 請款單永遠是 null —— 它的金額就是金額,沒有「原本多少」這回事。
+     *   給它一行小字的話,兩種單的金額欄長得不一樣而沒有理由。
+     */
+    amountSub?: string | null;
+    since: string;
     mgrAt: string | null; admAt: string | null;
     mine: boolean;              // 這一筆缺的正好是我這一票
     /**
@@ -723,7 +731,18 @@ export default function PurchasesPage() {
           d.payee_name ? `退至 ${d.payee_name}` : '',
           d.returned_method ? DEP_METHOD[d.returned_method] ?? d.returned_method : '',
         ].filter(Boolean).join('・'),
-        amount: Number(d.amount) || 0,
+        /*
+         * ★★★ 印**應退**不是押金原額（2026-09-07 使用者:「這筆應該顯示 9100」）。
+         *
+         *   加費從押金扣（migration_157）之後，要匯出去的是 `refund_amount`。
+         *   這裡印 `amount` 的話，核可的人看到 10,000 就按核可,
+         *   而實際匯出去的是 9,100 —— 抽屜裡早就印對了,
+         *   所以只有點開抽屜的人才會發現兩邊對不上。
+         *
+         * ★ 規則在 `lib/deposit-refund` 的 `refundView`,抽屜與這裡共用同一支。
+         */
+        amount: refundView(d).amount,
+        amountSub: refundNote(refundView(d), (n) => fmt(n)),
         since: d.created_at,
         mgrAt: d.manager_approved_at, admAt: d.admin_approved_at,
         mine: d.refund_status === 'pending'
@@ -1842,6 +1861,9 @@ export default function PurchasesPage() {
                       </div>
                       <div className="text-right shrink-0">
                         <div className="font-bold">${fmt(p.amount)}</div>
+                        {p.amountSub && (
+                          <div className="text-[11px] text-gray-400">{p.amountSub}</div>
+                        )}
                         <div className="text-[11px] text-gray-400 mt-1">
                           {p.freePass ? <div>未達門檻免核</div> : (<>
                             {/* ★ 手機這份原本沒有分免主管票,跟桌機那份對不起來 */}
@@ -1926,7 +1948,16 @@ export default function PurchasesPage() {
                         </div>
                         <div className="text-[11px] text-gray-400">{p.meta}</div>
                       </td>
-                      <td className="px-3 py-2.5 text-right font-medium whitespace-nowrap">${fmt(p.amount)}</td>
+                      <td className="px-3 py-2.5 text-right font-medium whitespace-nowrap">
+                        <div>${fmt(p.amount)}</div>
+                        {/*
+                          ★ 只有扣過加費才有這一行（見 refundNote）。
+                            每一列都印的話這個訊號就沒有意義了。
+                        */}
+                        {p.amountSub && (
+                          <div className="text-[11px] font-normal text-gray-400">{p.amountSub}</div>
+                        )}
+                      </td>
                       <td className="px-3 py-2.5 text-[11px] whitespace-nowrap">
                         {p.freePass ? <span className="text-gray-400">未達門檻免核</span> : (<>
                           {/* 愛皮洪鯊免主管票（migration_160）—— 要寫出來,

@@ -15,6 +15,10 @@ import { findListingOwner, listingOwnerHint } from '@/lib/listing-owner';
 import { useProfile } from '@/lib/profile';
 import { softDelete } from '@/lib/trash';
 import { Tabs } from '@/components/Tabs';
+import {
+  ymOf, ymLabel, ymOptions, nextCloseYm, closeConfirm, reopenConfirm,
+  type LockRow,
+} from '@/lib/period-lock';
 
 type Staff = { id: string; name: string; aliases: string[]; staff_type: string; active: boolean; sort: number; role?: string; email?: string | null; auth_uid?: string | null };
 type Estate = { id: string; name: string; manager: string | null; sort: number; active: boolean };
@@ -145,7 +149,7 @@ const METHOD_LABEL: Record<string, string> = { transfer: '匯款', credit_card: 
 const TAB_LABEL = {
   people: '權限管理', estates: '物業與負責人', accounts: '收付款帳號',
   payees: '常用帳號', props: '房源管理', clean: '清潔計算',
-  sync: '同步建議', audit: '編輯紀錄',
+  sync: '同步建議', audit: '編輯紀錄', close: '關帳',
 } as const;
 type TabKey = keyof typeof TAB_LABEL;
 
@@ -161,7 +165,11 @@ type TabKey = keyof typeof TAB_LABEL;
  * 所以只開跟付款直接相關的兩張主檔：收付款帳號、常用帳號。
  * 物業負責人、房源、編輯紀錄仍然只有總經理看得到。
  */
-const ACCOUNTANT_TABS: TabKey[] = ['accounts', 'payees'];
+/*
+ * ★ 關帳給會計（2026-09-07 使用者:「在權限管理 會計可以關帳」）。
+ *   它不碰角色，只鎖訂單 —— 跟上面那段擔心的事無關。
+ */
+const ACCOUNTANT_TABS: TabKey[] = ['accounts', 'payees', 'close'];
 
 /** 編輯紀錄裡的表名要講人話 —— 沒人記得 purchase_request_items 是什麼 */
 const AUDIT_TABLE: Record<string, string> = {
@@ -279,7 +287,7 @@ const ROLE_OF: Record<string, string> = {
 
 export default function AdminPage() {
   const supabase = useMemo(() => createClient(), []);
-  const { role, loading: loadingProfile } = useProfile();
+  const { role, profile, loading: loadingProfile } = useProfile();
   const [staff, setStaff] = useState<Staff[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [estates, setEstates] = useState<Estate[]>([]);
@@ -311,6 +319,19 @@ export default function AdminPage() {
   const [openTen, setOpenTen] = useState<string | null>(null);
   const [tenDraft, setTenDraft] = useState<{ staff_id: string; start_date: string }>(
     { staff_id: '', start_date: '' });
+
+  /*
+   * ══════════ 關帳（migration_223，2026-09-07）══════════
+   *
+   * 規則全部在 `lib/period-lock.ts` 與資料庫的觸發器裡 ——
+   * 這一頁只負責「按下去」跟「看得到現在鎖了哪幾個月」。
+   */
+  const [locks, setLocks] = useState<LockRow[]>([]);
+  /** 每個月有幾張短租訂單（給確認訊息用 —— 要講「會鎖住幾張」） */
+  const [ymCount, setYmCount] = useState<Record<string, number>>({});
+  /** 每個月有幾筆同步被擋下來還沒處理 */
+  const [pendCount, setPendCount] = useState<Record<string, number>>({});
+  const [closeBusy, setCloseBusy] = useState(false);
 
   const [audits, setAudits] = useState<Audit[]>([]);
   const [auditTable, setAuditTable] = useState('');
@@ -422,6 +443,74 @@ export default function AdminPage() {
     setIssueOrders(found);
   }, [supabase]);
   useEffect(() => { if (tab === 'sync') loadSync(); }, [tab, loadSync]);
+
+  /* ══════════ 關帳:讀 ══════════ */
+  const loadLocks = useCallback(async () => {
+    const [lk, od, pd] = await Promise.all([
+      supabase.from('period_lock').select('*').order('ym', { ascending: false }),
+      /*
+       * ★ 只撈判定要用的兩欄。`orders` 有兩千多列，
+       *   `select('*')` 會把整張表拉下來（README 9.1:預設最多回 1000 列）。
+       * ★★ 這裡只是給確認訊息「會鎖住幾張」用的近似值 ——
+       *   真正的守門在資料庫觸發器，不靠這個數字。
+       */
+      supabase.from('orders').select('checkout, imported_via')
+        .not('checkout', 'is', null).neq('imported_via', 'contract').limit(5000),
+      supabase.from('order_lock_pending').select('ym').eq('resolved', false),
+    ]);
+    if (lk.error) { setMsg('讀不到關帳紀錄：' + lk.error.message); return; }
+    setLocks((lk.data ?? []) as LockRow[]);
+
+    const c: Record<string, number> = {};
+    for (const o of (od.data ?? []) as { checkout: string }[]) {
+      const y = ymOf(o.checkout); if (y) c[y] = (c[y] ?? 0) + 1;
+    }
+    setYmCount(c);
+
+    const pc: Record<string, number> = {};
+    for (const r of (pd.data ?? []) as { ym: string }[]) pc[r.ym] = (pc[r.ym] ?? 0) + 1;
+    setPendCount(pc);
+  }, [supabase]);
+  useEffect(() => { if (tab === 'close') loadLocks(); }, [tab, loadLocks]);
+
+  /* ══════════ 關帳:關 / 開 ══════════ */
+  async function setLock(ym: string, lock: boolean) {
+    if (closeBusy) return;
+    const n = ymCount[ym] ?? 0;
+    if (!confirm(lock ? closeConfirm(ym, n) : reopenConfirm(ym, n))) return;
+    setCloseBusy(true);
+    try {
+      /*
+       * ★★ 手動關的 `auto` 一律 false —— 畫面上分得開「排程關的」
+       *   跟「人關的」。而 `reopened_at` 有值的話排程就**不會**
+       *   自動關回去（見 `close_due_periods()`）。
+       */
+      const now = new Date().toISOString();
+      /*
+       * ★ 兩種情況寫的是**同一組欄位**，只是值不同。
+       *   分成兩個形狀不同的物件的話，PostgREST 的批次 upsert
+       *   會取欄位聯集、缺的填 null（CLAUDE.md），而 tsc 也會抱怨。
+       */
+      const patch = {
+        ym,
+        locked: lock,
+        auto: lock ? false : (locks.find((l) => l.ym === ym)?.auto ?? false),
+        locked_at: lock ? now : (locks.find((l) => l.ym === ym)?.locked_at ?? null),
+        locked_by: lock ? (profile?.id ?? null) : null,
+        // ★★ 打開的時間留著 —— close_due_periods() 靠它判斷「被人打開過」，
+        //   打開過的不自動關回去。關帳時清掉，那個月才回到「排程管得到」。
+        reopened_at: lock ? null : now,
+        reopened_by: lock ? null : (profile?.id ?? null),
+      };
+      const { data, error } = await supabase.from('period_lock')
+        .upsert(patch, { onConflict: 'ym' }).select('ym');
+      if (error) { setMsg((lock ? '關帳失敗：' : '打開失敗：') + error.message); return; }
+      if (!data?.length) { setMsg('回成功但沒寫進去 —— 可能是權限'); return; }
+      await loadLocks();
+      setMsg(lock ? `${ymLabel(ym)} 已關帳` : `${ymLabel(ym)} 已打開，改完記得關回去`);
+    } finally { setCloseBusy(false); }
+  }
+
 
   /**
    * 套用一條建議 —— 把 Airbnb 的值寫進訂單。
@@ -1749,6 +1838,88 @@ export default function AdminPage() {
           );
         })()}
       </section>
+      )}
+
+      {/*
+        ══════════ 關帳（migration_223，2026-09-07）══════════
+
+        ★★ 判定是**退房日落在哪個月**，而且只鎖短租訂單 ——
+          契約的月租單放行（它會隨契約重算，鎖了會讓改契約失敗）。
+
+        ★ 每月 5 號由排程自動關上個月。這裡是「提早關」與「打開來改」的入口。
+      */}
+      {tab === 'close' && (
+        <div className="rounded-xl glass overflow-hidden">
+          <div className="px-4 py-3 border-b border-mor-line text-xs text-gray-500 leading-relaxed">
+            關帳之後，那個月<b className="text-mor-slate">退房</b>的短租訂單就改不動也刪不掉。
+            契約的月租單不受影響。每月 5 號清晨自動關上個月，隨時可以再打開。
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[640px]">
+              <thead>
+                <tr className="bg-gray-50 text-gray-500 text-left">
+                  <th className="px-4 py-2.5 w-28">月份</th>
+                  <th className="px-4 py-2.5 w-24">短租訂單</th>
+                  <th className="px-4 py-2.5">狀態</th>
+                  <th className="px-4 py-2.5 w-44">關帳時間</th>
+                  <th className="px-4 py-2.5 text-right w-28">動作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ymOptions(new Date().toISOString().slice(0, 10)).map((ym) => {
+                  const row = locks.find((l) => l.ym === ym);
+                  const on = !!row?.locked;
+                  const pend = pendCount[ym] ?? 0;
+                  return (
+                    <tr key={ym} className="border-t border-mor-line/60">
+                      <td className="px-4 py-2.5 whitespace-nowrap">{ymLabel(ym)}</td>
+                      <td className="px-4 py-2.5 text-gray-600 whitespace-nowrap">{ymCount[ym] ?? 0} 張</td>
+                      <td className="px-4 py-2.5">
+                        <span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${
+                          on ? 'bg-mor-greenlight text-mor-green' : 'bg-gray-100 text-gray-600'}`}>
+                          {on ? '已關' : '未關'}
+                        </span>
+                        {/* ★ 排程關的跟人關的要分得開 —— 出事時查得到是誰做的 */}
+                        {on && (
+                          <span className="ml-1 rounded-md bg-gray-100 text-gray-500 px-1.5 py-0.5 text-[11px]">
+                            {row?.auto ? '自動' : '手動'}
+                          </span>
+                        )}
+                        {/*
+                          ★★ 同步被擋下來的筆數。不顯示的話那些異動就消失了 ——
+                            而它們正是「關帳期間外面發生了什麼」的唯一紀錄。
+                        */}
+                        {pend > 0 && (
+                          <span className="ml-1 rounded-md bg-amber-50 text-amber-700 px-1.5 py-0.5 text-[11px]">
+                            {pend} 筆待處理
+                          </span>
+                        )}
+                        {!on && row?.reopened_at && (
+                          <span className="ml-1 text-[11px] text-amber-700">
+                            打開過 —— 排程不會自動關回去
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 text-gray-500 text-xs whitespace-nowrap">
+                        {on
+                          ? (row?.locked_at ? row.locked_at.slice(0, 16).replace('T', ' ') : '—')
+                          : <span className="text-gray-400">{ymLabel(nextCloseYm(ym))} 5 號自動關</span>}
+                      </td>
+                      <td className="px-4 py-2.5 text-right">
+                        <button onClick={() => void setLock(ym, !on)} disabled={closeBusy}
+                          className={`rounded-lg px-3 py-1 text-xs font-medium whitespace-nowrap disabled:opacity-40 ${
+                            on ? 'border border-mor-slate/50 bg-white text-mor-slate hover:bg-mor-bluelight'
+                               : 'bg-mor-slate text-white hover:bg-mor-slatedark'}`}>
+                          {on ? '重新打開' : '關帳'}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
 
       {tab === 'sync' && (

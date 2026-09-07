@@ -9,6 +9,7 @@ import FilterToggle from '@/components/FilterToggle';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, type SortState } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
+import { isLocked, lockedMsg, ymOf, type Ym } from '@/lib/period-lock';
 import { useOnce } from '@/lib/once';
 import { titleCaseName } from '@/lib/name-format';
 import { useOpenFromUrl } from '@/lib/open-from-url';
@@ -62,6 +63,11 @@ type Order = {
    * 合著存的話「一般 100,000 ＋ 寵物 30,000」變成 130,000，項目消失。
    */
   pet_deposit?: number | null;
+  /**
+   * 怎麼進系統的:`'contract'` = 契約產的月租單、`'manual'` = 手動建、
+   * 其餘是匯入。★ 關帳判定要用它 —— **月租單不鎖**（migration_223）。
+   */
+  imported_via?: string | null;
   /**
    * 收款。paid_amount 是 order_payments 的合計,由觸發器維護（migration_84）——
    * 前端只讀不寫,狀態一律用 lib/order-payment 的 payStatus() 算,不另外存欄位。
@@ -171,6 +177,22 @@ const SORT_DB_COL: Record<string, string> = {
 
 export default function ShortTermPage() {
   const supabase = useMemo(() => createClient(), []);
+
+  /*
+   * ══════════ 已關帳的月份（migration_223，2026-09-07）══════════
+   *
+   * ★★ 這裡只是為了**早一點講** —— 讓使用者按下去之前就知道會被擋，
+   *   而不是送出之後收到一句看不懂的 SQL 例外。
+   *   真正擋得住的是資料庫的 `trg_orders_period_lock`。
+   *
+   * ★ 讀失敗就當成「沒有任何月份關帳」。少擋一次看得到（存檔時觸發器會擋），
+   *   而多擋一次會讓人改不了本來該改得動的單，卻找不到原因。
+   */
+  const [lockedYms, setLockedYms] = useState<Ym[]>([]);
+  useEffect(() => {
+    supabase.from('period_lock').select('ym').eq('locked', true)
+      .then(({ data }) => setLockedYms(((data ?? []) as { ym: string }[]).map((r) => r.ym)));
+  }, [supabase]);
   const [estates, setEstates] = useState<Estate[]>([]);
   const [detail, setDetail] = useState<Order | null>(null);
   const [rows, setRows] = useState<Order[]>([]);
@@ -860,6 +882,22 @@ export default function ShortTermPage() {
       invoice_required: !!edit.invoice_required,
       invoice_title: edit.invoice_required ? (edit.invoice_title?.trim() || null) : null,
       invoice_tax_id: edit.invoice_required ? (edit.invoice_tax_id?.trim() || null) : null };
+    /*
+     * ★★★ 關帳擋阻（migration_223）。
+     *
+     *   資料庫的觸發器才是真的守門，這裡是**早一點講** ——
+     *   送出去撞觸發器的話會收到一句 SQL 例外，而使用者只會覺得「存不了」。
+     *
+     *   ★ 用 `alert` 不是 flash:flash 跳在頁面上方、幾秒就消失，
+     *     而編輯抽屜在畫面右側。擋阻一定要看得見
+     *     （CLAUDE.md:錯誤訊息跳在頁面最上方，2026-09-02 記過）。
+     */
+    {
+      const lockMsg = lockedMsg(
+        { checkout: edit.checkout, imported_via: edit.imported_via }, lockedYms);
+      if (lockMsg) { alert(lockMsg); return; }
+    }
+
     let orderId = edit.id;
     if (edit.id) {
       const { error } = await supabase.from('orders').update(payload).eq('id', edit.id);
@@ -1556,8 +1594,20 @@ export default function ShortTermPage() {
               */}
               <div className="sticky bottom-0 bg-white border-t border-mor-line px-6 py-3 flex flex-wrap gap-2"
                 style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
-                <button onClick={() => { setDetail(null); openEdit(d); }}
-                  className="flex-1 min-w-[6rem] h-11 rounded-lg bg-mor-slate text-white text-sm font-medium hover:bg-mor-slatedark">編輯</button>
+                {/*
+                  ★★ 已關帳的不給編輯（migration_223）。
+                    **不是把按鈕變灰就算了** —— 灰掉的按鈕不會告訴人為什麼。
+                    改成一句話講清楚是哪個月關的、去哪裡開。
+                */}
+                {isLocked({ checkout: d.checkout, imported_via: d.imported_via }, lockedYms) ? (
+                  <div className="flex-1 min-w-[6rem] h-11 rounded-lg bg-gray-100 text-gray-500 text-xs
+                                  flex items-center justify-center px-2 text-center leading-tight">
+                    🔒 {ymOf(d.checkout).slice(0, 4)}-{ymOf(d.checkout).slice(4)} 已關帳
+                  </div>
+                ) : (
+                  <button onClick={() => { setDetail(null); openEdit(d); }}
+                    className="flex-1 min-w-[6rem] h-11 rounded-lg bg-mor-slate text-white text-sm font-medium hover:bg-mor-slatedark">編輯</button>
+                )}
                 {!isExempt(d) && (
                   <button onClick={() => {
                     if (!canCollect) return flash(collectDeniedMsg('這筆訂單的款'));

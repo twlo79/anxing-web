@@ -17,6 +17,10 @@ import {
   splitDraft, parseSplitLines, planSplit, splitBlockedReason,
   inheritedFields, SPLIT_INHERITED,
 } from '@/lib/demand-split';
+import {
+  itemDeleteBlocked, demandDeleteBlocked, itemDeleteConfirm, demandDeleteConfirm,
+} from '@/lib/demand-delete';
+import { softDelete } from '@/lib/trash';
 import { useRouter } from 'next/navigation';
 
 /**
@@ -400,6 +404,52 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
     } finally { setActing(false); }
   }
 
+  /**
+   * 刪一個項目。**進回收桶,可復原**（migration_223）。
+   *
+   * ★★★ 已經被請款單領走的一定要先擋 —— 資料庫那邊擋不住這個
+   *   （`trash_can_delete` 只看表跟角色）。刪掉之後那張請款單的錢照付,
+   *   但「當初為了買什麼」不見了,而請款單那一頁看不出來少了東西。
+   */
+  async function delItem(i: Demand['items'][number]) {
+    if (acting || !i.id) return;
+    const bad = itemDeleteBlocked(i);
+    if (bad) return flash(bad);
+    if (!confirm(itemDeleteConfirm(i))) return;
+    setActing(true);
+    try {
+      const r = await softDelete(supabase, 'purchase_demand_items', i.id);
+      flash(r.message);
+      if (r.ok) await load();
+    } finally { setActing(false); }
+  }
+
+  /**
+   * 刪整張單。
+   *
+   * ★★ 子列不用自己刪 —— `trash_collect_children()` 照外鍵自己收
+   *   （migration_107）,復原時也一起回來。
+   *
+   * ★★★ 但正因為它會自己收,**檢查要逐項做**:
+   *   一張單五項、其中一項被請款單領走,只看整張單的狀態是看不出來的
+   *   （狀態是彙總）,而刪下去會把那一項一起帶走。
+   */
+  async function delDemand(d: Demand) {
+    if (acting) return;
+    const bad = demandDeleteBlocked(d.items);
+    if (bad) return flash(bad);
+    if (!confirm(demandDeleteConfirm(d.demand_no, d.items))) return;
+    setActing(true);
+    try {
+      const r = await softDelete(supabase, 'purchase_demands', d.id);
+      flash(r.message);
+      if (r.ok) {
+        setOpen((x) => { const n = new Set(x); n.delete(d.id); return n; });
+        await load();
+      }
+    } finally { setActing(false); }
+  }
+
   useEffect(() => {
     supabase.from('estates').select('id, name').eq('active', true).order('sort')
       .then(({ data }) => setEstates(data ?? []));
@@ -636,6 +686,20 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                             className="rounded-lg border border-mor-slate/50 bg-white text-mor-slate px-3 py-1.5 text-xs font-medium disabled:opacity-40">
                             標為已採購
                           </button>
+                          {/*
+                            ★★ 刪整張單（migration_223）。**放在最右邊、用紅字**——
+                              它跟左邊兩顆是不同性質的動作,擺在一起而長得一樣的話,
+                              手滑的代價差很多。
+
+                            ★ 不勾選也按得到 —— 刪的是整張單,不是勾起來的那幾項。
+                              確認視窗會把底下幾項全部念出來。
+                          */}
+                          <button onClick={() => void delDemand(d)}
+                            disabled={acting}
+                            title={demandDeleteBlocked(d.items) ?? '整張單移到回收桶，可以復原'}
+                            className="rounded-lg border border-red-200 bg-white text-red-500 px-3 py-1.5 text-xs font-medium disabled:opacity-40">
+                            刪除整張
+                          </button>
                         </div>
                       </div>
                     )}
@@ -750,6 +814,21 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                                          text-xs text-mor-slate hover:bg-mor-sand
                                          disabled:opacity-40">
                               拆開
+                            </button>
+                          )}
+                          {/*
+                            ★ 刪這一項。跟「拆開」一樣:不能刪的**不把按鈕灰掉**,
+                              按下去說原因（是哪一張請款單領走的、要去哪裡退）。
+                          */}
+                          {seesAll && i.id && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); void delItem(i); }}
+                              disabled={acting}
+                              title={itemDeleteBlocked(i) ?? '這一項移到回收桶，可以復原'}
+                              className="rounded-lg border border-red-200 bg-white px-1.5 py-0.5
+                                         text-xs text-red-500 hover:bg-red-50
+                                         disabled:opacity-40">
+                              刪除
                             </button>
                           )}
                           {seesAll

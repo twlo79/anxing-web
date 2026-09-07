@@ -177,3 +177,82 @@ export const cancelPatch = () => ({
   refund_amount: null,
   rejected_by: null, rejected_at: null, reject_reason: null,
 });
+
+// ── 應退金額怎麼顯示 ──────────────────────────────
+
+/**
+ * 清單上那個金額該印多少。
+ *
+ * ============================================================
+ * 【★★★ 為什麼不能印 `amount`】（2026-09-07 使用者:「這筆應該顯示 9100」）
+ *
+ * 加費從押金扣（migration_157）之後，**應退不再等於押金**:
+ *
+ *     押金            10,000
+ *     其他－寵物費      −400
+ *     其他－寵物費      −500
+ *     ─────────────────────
+ *     應退             9,100   ← 真正要匯出去的錢
+ *
+ * 而請款審核清單印的是 `amount`（押金原額 10,000）——
+ * 核可的人看到 10,000 就按核可，實際匯出去的卻是 9,100。
+ *
+ * ★★ 這個錯**不會報錯**。抽屜裡早就印對了（它讀 refund_amount），
+ *   所以只有「點開抽屜的人」才會發現清單跟明細對不上，
+ *   而按核可的人多半不會點開。
+ *
+ * ★ 兩邊各寫一份判斷是這個錯的來源。所以規則寫在這裡，兩邊都叫它。
+ *
+ *
+ * ============================================================
+ * 【`refund_amount` 是 null 的時候要當成全額】
+ *
+ * null 代表「舊資料，或還沒走過送審」—— 那時候沒有加費可扣，
+ * 應退就是押金本身。當成 0 的話，一整批舊押金會在清單上顯示 $0，
+ * 而那看起來像「這筆不用退」。
+ */
+export type RefundView = {
+  /** 清單、核可、分享都用這個 —— **應退，不是押金原額**。 */
+  amount: number;
+  /** 押金原額。只有扣過才需要印出來。 */
+  original: number;
+  /**
+   * 加費扣掉多少。
+   *
+   * ★ 0 就是沒扣，畫面**不要多印那一行** ——
+   *   每一筆都印「扣加費 0」的話，這個訊號就沒有意義了,
+   *   而真正扣過的那幾筆會混在裡面看不出來。
+   */
+  deducted: number;
+};
+
+function num(v: number | string | null | undefined): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.round(n) : 0;
+}
+
+export function refundView(
+  d: { amount: number | string | null; refund_amount?: number | string | null },
+): RefundView {
+  const original = num(d.amount);
+  // ★ null / undefined = 還沒送審或舊資料 → 全額退，不是 0
+  const amount = d.refund_amount == null ? original : num(d.refund_amount);
+  return { amount, original, deducted: original - amount };
+}
+
+/**
+ * 金額底下那一行小字。**沒扣過就回 null**，那一列就不會多一行。
+ *
+ * ★★ 印的是**算式**不是結論。核可的人要判斷的正是「9,100 對不對」，
+ *   而判斷需要看到 10,000 跟 900 —— 只寫「已扣加費」的話，
+ *   他還是得點開抽屜才知道扣了多少。
+ *
+ * ★ 應退比押金大是不該發生的（加費不會是負的）。真的發生時**照樣印出來** ——
+ *   當成沒扣而不印的話，那筆異常會安靜地消失在清單裡。
+ */
+export function refundNote(v: RefundView, fmt: (n: number) => string): string | null {
+  if (v.deducted === 0) return null;
+  return v.deducted > 0
+    ? `押金 ${fmt(v.original)}・扣加費 ${fmt(v.deducted)}`
+    : `押金 ${fmt(v.original)}・應退多出 ${fmt(-v.deducted)}`;
+}
