@@ -13,6 +13,10 @@ import {
 import {
   isTakeable, toRequestItems, linkBackPlan, canMarkDone, markDoneConfirm,
 } from '@/lib/demand-to-request';
+import {
+  splitDraft, parseSplitLines, planSplit, splitBlockedReason,
+  inheritedFields, SPLIT_INHERITED,
+} from '@/lib/demand-split';
 import { useRouter } from 'next/navigation';
 
 /**
@@ -135,6 +139,12 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
   /** 勾選的需求項目 id。★ 跨單勾選沒有意義 —— 一張請款單對一張需求單 */
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [acting, setActing] = useState(false);
+  /**
+   * 正在拆的那一項。`text` 是框裡的內容 ——
+   * **一行一項**,第一行留給原本那一列。
+   */
+  const [split, setSplit] = useState<
+    { demandId: string; item: Demand['items'][number]; text: string } | null>(null);
 
   const togglePick = (id: string) => setPicked((s) => {
     const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n;
@@ -303,6 +313,89 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
         .update(clean).eq('id', i.id).select('id');
       if (error) return flash('改不動：' + error.message);
       if (!data?.length) return flash('沒有改到任何一列 —— 可能是權限');
+      await load();
+    } finally { setActing(false); }
+  }
+
+  /**
+   * 打開拆開視窗。
+   *
+   * ★★ 不能拆的**不要把按鈕灰掉就算了** —— 這一頁自己寫過:
+   *   「一顆灰掉而不解釋的按鈕,使用者會以為是系統壞了而一直點」。
+   *   所以按得下去,按了之後告訴他為什麼不行、以及要先做什麼。
+   */
+  function openSplit(demandId: string, i: Demand['items'][number]) {
+    if (!i.id) return;
+    const bad = splitBlockedReason(i);
+    if (bad) return flash(bad);
+    setSplit({ demandId, item: i, text: splitDraft(i.item_name) });
+  }
+
+  /**
+   * 真的拆下去。
+   *
+   * ★★★ 第一列走 `update`,**不是刪掉重建**。
+   *   重建的話那一列的 id 會變,而 id 一變:稽核紀錄接不起來、
+   *   已經填好的平台與兩個日期要重寫、任何指著舊 id 的東西全斷。
+   *   換一個品名而已,不需要換一列。
+   *
+   * ★★ 除了品名,其餘欄位**全部照抄**（`SPLIT_INHERITED`）——
+   *   尤其是狀態:拆一張「已採購」的單,新增的幾列若回到待採購,
+   *   那張單會從「全部採購完」變回「還有 2 項待採購」,
+   *   而東西早就買回來了,會計會照著那個數字再買一次。
+   */
+  async function doSplit() {
+    if (!split || acting || !split.item.id) return;
+    const r = planSplit(split.text);
+    if ('error' in r) return flash(r.error);
+    const { keep, add } = r.plan;
+
+    setActing(true);
+    try {
+      const { data: up, error: e1 } = await supabase.from('purchase_demand_items')
+        .update({ item_name: keep }).eq('id', split.item.id).select('id');
+      if (e1) return flash('改不動：' + e1.message);
+      if (!up?.length) return flash('沒有改到任何一列 —— 可能是權限');
+
+      if (add.length > 0) {
+        /*
+         * ★ 空字串要轉成 null。`estate_id` 是 uuid 欄,塞 '' 會被資料庫退,
+         *   而錯誤訊息是一句 SQL 例外,看的人不知道發生什麼事。
+         *   `office` 一律 null（見 lib/demand.ts 的 estateIdToSave）。
+         */
+        const src = {
+          demand_id: split.demandId,
+          spec: split.item.spec.trim() || null,
+          purpose_type: split.item.purpose_type,
+          estate_id: split.item.purpose_type === 'office'
+            ? null : (split.item.estate_id || null),
+          buy_link: split.item.buy_link.trim() || null,
+          status: split.item.status,
+          platform: split.item.platform ?? null,
+          eta: split.item.eta ?? null,
+          purchased_on: split.item.purchased_on ?? null,
+        };
+        const rows = add.map((item_name) => ({
+          ...inheritedFields(src, SPLIT_INHERITED), item_name,
+        }));
+        const { data: ins, error: e2 } = await supabase
+          .from('purchase_demand_items').insert(rows).select('id');
+        /*
+         * ★★ 這裡失敗的時候**第一列已經改名了**。訊息一定要講出現在的狀態 ——
+         *   只說「失敗」的話,人會再拆一次,而那一次的起點是已經被切過的品名,
+         *   於是又切掉一半。
+         */
+        if (e2) {
+          await load();
+          return flash(`品名已改成「${keep}」，但其餘 ${add.length} 項沒有新增成功：${e2.message}`);
+        }
+        if ((ins?.length ?? 0) !== rows.length) {
+          await load();
+          return flash(`預期新增 ${rows.length} 項，實際 ${ins?.length ?? 0} 項 —— 可能是權限`);
+        }
+      }
+      setSplit(null);
+      flash(add.length > 0 ? `已拆成 ${add.length + 1} 項` : '品名已更新');
       await load();
     } finally { setActing(false); }
   }
@@ -640,6 +733,25 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                               接不到單
                             </span>
                           )}
+                          {/*
+                            ★ 拆開（2026-09-07 使用者:「研究可以手動拆開採購單」）。
+                              填單的人常把三樣東西打在同一個品名裡,
+                              而建立之後**這是全站唯一改得動品名的地方**。
+
+                            ★★ 不能拆的不把按鈕灰掉 —— 按得下去,按了說原因。
+                              灰掉而不解釋的按鈕,人會以為系統壞了而一直點。
+                          */}
+                          {seesAll && i.id && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); openSplit(d.id, i); }}
+                              disabled={acting}
+                              title={splitBlockedReason(i) ?? '把這一項拆成好幾項，或改品名'}
+                              className="rounded-lg border border-mor-line bg-white px-1.5 py-0.5
+                                         text-xs text-mor-slate hover:bg-mor-sand
+                                         disabled:opacity-40">
+                              拆開
+                            </button>
+                          )}
                           {seesAll
                             ? (
                               /*
@@ -668,6 +780,70 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* ── 拆開視窗 ──────────────────────────────── */}
+      {/*
+        ★★★ 為什麼要有這個框,而不是按一下就照空白切完
+        （2026-09-07 使用者選「跳出可編輯的框，確認才寫」）:
+
+          衛生紙*1箱 除霉劑*12瓶 洗衣精*2瓶   → 按空白切剛好對
+          衛生紙 大包裝 *1箱                  → 按空白切變三項
+
+        而切錯之後**沒有還原鍵** —— 三列已經各自有 id 了,要收回去得一列一列刪。
+        所以程式只猜一個起點,人看過、改完、按確認才寫。
+      */}
+      {split && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-end md:items-center justify-center"
+          onClick={() => !acting && setSplit(null)}>
+          <div onClick={(e) => e.stopPropagation()}
+            className="bg-white w-full md:w-[560px] md:max-w-[95vw] max-h-[92vh] overflow-auto
+                       rounded-t-2xl md:rounded-2xl shadow-xl">
+            <div className="sticky top-0 bg-white z-10 flex items-center justify-between px-4 py-3
+                            border-b border-mor-line">
+              <span className="font-medium">拆開項目</span>
+              <div className="flex gap-2">
+                <button onClick={() => setSplit(null)} disabled={acting}
+                  className="rounded-lg border border-mor-line px-3 py-1.5 text-sm">取消</button>
+                <button onClick={doSplit}
+                  disabled={acting || parseSplitLines(split.text).length === 0}
+                  title={parseSplitLines(split.text).length === 0 ? '至少要留一行' : ''}
+                  className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium
+                             disabled:opacity-40 disabled:cursor-not-allowed">
+                  {acting ? '處理中…' : '確認'}
+                </button>
+              </div>
+            </div>
+
+            <div className="p-4 space-y-3">
+              <div className="text-xs text-gray-500">
+                原本：<span className="text-gray-700">{split.item.item_name}</span>
+              </div>
+              <textarea
+                value={split.text}
+                onChange={(e) => setSplit((x) => x && ({ ...x, text: e.target.value }))}
+                rows={6} spellCheck={false}
+                className="w-full rounded-lg border border-mor-line px-2 py-1.5 text-sm
+                           font-mono leading-relaxed" />
+              {/*
+                ★ 把「會發生什麼事」寫出來。只放一個框的話,
+                  人不知道第一行為什麼特別,也不知道狀態會不會跟著走 ——
+                  而那正是他最怕改壞的東西。
+              */}
+              <p className="text-xs text-gray-500 leading-relaxed">
+                <b>一行一項。</b>已經先照空白切好了，可以自己改字、把兩行併回一行、或再加一行。
+              </p>
+              <p className="text-xs text-gray-400 leading-relaxed">
+                第一行留在原本那一列（<b>狀態與已填的平台、到貨日、採購日都不會動</b>）；
+                其餘幾行是新增的，物業、規格、建議連結、平台、兩個日期與狀態
+                <b>全部照抄</b>這一項現在的值。
+              </p>
+              <p className="text-xs text-mor-slate">
+                會變成 <b>{parseSplitLines(split.text).length}</b> 項。
+              </p>
+            </div>
+          </div>
         </div>
       )}
 
