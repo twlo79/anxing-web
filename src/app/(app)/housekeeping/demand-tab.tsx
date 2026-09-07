@@ -7,6 +7,7 @@ import { ReqMark } from '@/components/Req';
 import {
   demandProgress, progressText, demandClass, ITEM_STATUS_LABEL,
   manualStatusOptions, manualStatusPatch, manualStatusNote, isOrphanRequested,
+  PURCHASE_PLATFORMS,
   type DemandItemStatus,
 } from '@/lib/purchase-demand';
 import {
@@ -60,6 +61,17 @@ type Item = {
   buy_link: string;
   status: DemandItemStatus;
   request_item_id?: string | null;
+  /*
+   * 平台與兩個日期（migration_222）。三個都可以留空 ——
+   * 必填的話人會亂填，而亂填的資料比空著更糟:
+   * 空的看得出來沒填，填錯的看起來像真的。
+   */
+  /** 在哪買的。清單在 `PURCHASE_PLATFORMS`，畫面只給選不給打字 */
+  platform?: string | null;
+  /** 預計到貨。★ 已詢價時就填得了 —— 廠商講幾天到就先寫上去 */
+  eta?: string | null;
+  /** 東西哪一天買的。★ 跟請款單的出款日不同，零用金那條路沒有請款單 */
+  purchased_on?: string | null;
   /** 這一項被哪張請款單領走。只在讀取時帶進來，存檔不寫 */
   request_no?: string | null;
 };
@@ -266,6 +278,35 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
     } finally { setActing(false); }
   }
 
+  /*
+   * D · 改平台／預計到貨／採購日（migration_222）。
+   *
+   * ★ 這三欄**不受 `trg_pdi_lock` 管**（它只鎖品名、數量、物業、規格）——
+   *   已經轉成請款單的項目還是補得了到貨日，那正是要的行為。
+   *
+   * ★★ 一樣要數影響列數。`pdi_write` 只放行會計以上，
+   *   RLS 擋下的 UPDATE 回成功且 0 列（CLAUDE.md）。
+   *
+   * ★ 空字串存成 null —— 清空日期欄時不要留一個 '' 進資料庫，
+   *   `date` 欄位收到空字串會直接報型別錯誤。
+   */
+  async function setItemField(
+    i: Demand['items'][number],
+    patch: { platform?: string | null; eta?: string | null; purchased_on?: string | null },
+  ) {
+    if (acting || !i.id) return;
+    const clean = Object.fromEntries(
+      Object.entries(patch).map(([k, v]) => [k, (v ?? '') === '' ? null : v]));
+    setActing(true);
+    try {
+      const { data, error } = await supabase.from('purchase_demand_items')
+        .update(clean).eq('id', i.id).select('id');
+      if (error) return flash('改不動：' + error.message);
+      if (!data?.length) return flash('沒有改到任何一列 —— 可能是權限');
+      await load();
+    } finally { setActing(false); }
+  }
+
   useEffect(() => {
     supabase.from('estates').select('id, name').eq('active', true).order('sort')
       .then(({ data }) => setEstates(data ?? []));
@@ -279,6 +320,7 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                profiles(name),
                purchase_demand_items(
                  id, item_name, spec, purpose_type, estate_id, buy_link, status, request_item_id,
+                 platform, eta, purchased_on,
                  purchase_request_items(purchase_requests(req_no))
                )`)
       .order('requested_on', { ascending: false })
@@ -299,6 +341,8 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
         id: i.id, item_name: i.item_name, spec: i.spec ?? '',
         purpose_type: i.purpose_type === 'office' ? 'office' : 'estate',
         estate_id: i.estate_id ?? '', buy_link: i.buy_link ?? '', status: i.status,
+        platform: i.platform ?? null, eta: i.eta ?? null,
+        purchased_on: i.purchased_on ?? null,
         request_item_id: i.request_item_id,
         request_no: i.purchase_request_items?.purchase_requests?.req_no ?? null,
       })),
@@ -527,6 +571,57 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                           <a href={i.buy_link} target="_blank" rel="noreferrer"
                             onClick={(e) => e.stopPropagation()}
                             className="text-xs text-mor-slate underline">建議連結</a>
+                        )}
+                        {/*
+                          ★★ 平台與兩個日期（migration_222）。
+                            順序照使用者指定:**平台在到貨前面**。
+
+                          ★ 三個都只有會計以上改得動 —— 跟狀態下拉同一組權限。
+                            房務與管家看得到值，但那是唯讀的文字。
+
+                          ★★★ 平台**只給下拉不給打字**。自由打字的話
+                            「蝦皮」跟「蝦皮購物」會變成兩個平台，而報表分不開
+                            —— 資料庫那一欄刻意沒有 check（多一個平台不該要
+                            一支 migration），所以擋錯字的責任在這裡。
+                        */}
+                        {seesAll ? (
+                          <span className="flex items-center gap-1.5 text-xs">
+                            <select value={i.platform ?? ''}
+                              disabled={acting || !i.id}
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={(e) => i.id && void setItemField(i, { platform: e.target.value })}
+                              className="rounded-lg border border-mor-line bg-white px-1.5 py-0.5 text-xs disabled:opacity-40">
+                              <option value="">平台</option>
+                              {PURCHASE_PLATFORMS.map((p) => <option key={p} value={p}>{p}</option>)}
+                              {/* ★ 舊資料的值不在清單裡也要選得回來，不然一改就掉 */}
+                              {i.platform && !PURCHASE_PLATFORMS.includes(i.platform as never) && (
+                                <option value={i.platform}>{i.platform}</option>
+                              )}
+                            </select>
+                            <label className="flex items-center gap-1 rounded-lg border border-mor-line bg-white px-1.5 py-0.5">
+                              <span className="text-gray-400">到貨</span>
+                              <input type="date" value={i.eta ?? ''}
+                                disabled={acting || !i.id}
+                                onClick={(e) => e.stopPropagation()}
+                                onChange={(e) => i.id && void setItemField(i, { eta: e.target.value })}
+                                className="bg-transparent text-xs w-[7.5rem] disabled:opacity-40" />
+                            </label>
+                            <label className="flex items-center gap-1 rounded-lg border border-mor-line bg-white px-1.5 py-0.5">
+                              <span className="text-gray-400">採購</span>
+                              <input type="date" value={i.purchased_on ?? ''}
+                                disabled={acting || !i.id}
+                                onClick={(e) => e.stopPropagation()}
+                                onChange={(e) => i.id && void setItemField(i, { purchased_on: e.target.value })}
+                                className="bg-transparent text-xs w-[7.5rem] disabled:opacity-40" />
+                            </label>
+                          </span>
+                        ) : (
+                          /* 唯讀那一側:沒填的整格不出現，不要印一排「—」 */
+                          <span className="flex items-center gap-1.5 text-xs text-gray-500">
+                            {i.platform && <span className="rounded bg-mor-sand px-1.5 py-0.5">{i.platform}</span>}
+                            {i.eta && <span>到貨 {i.eta.slice(5)}</span>}
+                            {i.purchased_on && <span>採購 {i.purchased_on.slice(5)}</span>}
+                          </span>
                         )}
                         <span className="ml-auto flex items-center gap-1.5 text-xs text-gray-500">
                           {/*

@@ -237,6 +237,22 @@ describe('手動改狀態（2026-09-05）', () => {
     assert.equal(isOrphanRequested(free), false);
   });
 
+  /*
+   * ★★★ 2026-09-07 修的誤報。
+   *   零用金直接買產生的正是「已採購 ＋ 沒有請款單」——
+   *   那是正常的，不是卡住。使用者看到橘標問「接不到單是什麼意思？」
+   *   誤報比不報更糟:它讓人開始懷疑一批本來沒問題的資料。
+   */
+  test('★★★ 已採購但沒有請款單是零用金那條路，不是孤兒', () => {
+    assert.equal(isOrphanRequested(
+      { status: 'done' as DemandItemStatus, request_item_id: null }), false);
+  });
+
+  test('已採購而且接得到請款單，當然也不是孤兒', () => {
+    assert.equal(isOrphanRequested(
+      { status: 'done' as DemandItemStatus, request_item_id: 'r1' }), false);
+  });
+
   test('解除關聯要先講', () => {
     assert.match(manualStatusNote('pending', true)!, /解除.*關聯/);
   });

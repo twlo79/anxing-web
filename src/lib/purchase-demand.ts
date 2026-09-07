@@ -81,6 +81,23 @@ export const ITEM_STATUS_LABEL: Record<DemandItemStatus, string> = {
 /** 單頭顯示成「已採購」時的樣式。★ 綠色全站保留給「已收／通過／完成」 */
 export const DEMAND_PAID_CLASS = 'bg-mor-greenlight text-mor-green';
 
+/**
+ * 採購平台（2026-09-07 使用者：「蝦皮 酷澎 淘寶 好事多」）。
+ *
+ * ★★★ **這裡是唯一的清單**。資料庫那一欄是純 `text`、沒有 check ——
+ *   多一個平台就是在這個陣列加一行，不用 migration。
+ *   （加約束的話「以後在哪買」這個決定就被綁在資料庫上，
+ *     而那是這個月就會變的事。）
+ *
+ * ★ 代價:沒有約束就擋不住錯字，「蝦皮」跟「蝦皮購物」會變成兩個平台
+ *   而報表分不開。緩衝是畫面上**只給下拉、不給自由打字**。
+ *
+ * ★ 順序照常用程度排 —— 下拉不用捲就選得到最常用的那個。
+ */
+export const PURCHASE_PLATFORMS = ['蝦皮', '酷澎', '淘寶', '好事多'] as const;
+
+export type PurchasePlatform = typeof PURCHASE_PLATFORMS[number];
+
 export type DemandItemLike = {
   status: DemandItemStatus;
   item_name?: string | null;
@@ -274,9 +291,24 @@ export function manualStatusNote(
  *
  * ★★ 這是 ① 那個洞留下的資料。畫面上要標出來，
  *   不然它看起來就是一筆正常的「已進請款」，而它永遠不會前進。
+ *
+ * ============================================================
+ * 【★★★ `done` 不算 —— 2026-09-07 修的誤報】
+ *
+ * 原本寫成 `(status === 'requested' || status === 'done') && !request_item_id`，
+ * 而**零用金直接買**那條路產生的正是「已採購 ＋ 沒有請款單」——
+ * 完全正常的資料被標成「接不到單」。
+ *
+ * 使用者手動把一項改成「已採購」之後就看到那個橘標，
+ * 問「接不到單是什麼意思？」——**誤報比不報更糟**，
+ * 它讓人開始懷疑一批本來沒問題的資料。
+ *
+ * ★ 只有 `requested` 才算卡住:那個狀態的定義就是
+ *   「已經進了某一張請款單」，接不到單就是自相矛盾。
+ *   `done` 沒有這個矛盾 —— 它可以是零用金買的。
  */
 export function isOrphanRequested(
   i: { status: DemandItemStatus; request_item_id?: string | null },
 ): boolean {
-  return (i.status === 'requested' || i.status === 'done') && !i.request_item_id;
+  return i.status === 'requested' && !i.request_item_id;
 }
