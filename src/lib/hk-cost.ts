@@ -312,3 +312,71 @@ export function cleanItemName(label: string, units: number, fixedAmount = false)
  *   名字裡再寫一次只是把同一件事講兩遍，而兩邊不同步時就變成矛盾。
  */
 export const LABOR_ITEM_NAME = '房務人事費';
+
+/* ══════════════════════════════════════════════════════════
+ * 產生支出前補上物業（2026-09-07）
+ * ══════════════════════════════════════════════════════════
+ *
+ * 【★★★ 為什麼需要這一步】
+ *
+ * `expenses` 有一條 check：
+ *
+ *     exp_purpose_chk:
+ *       (purpose_type = 'office' and estate_id is null)
+ *       or (purpose_type = 'estate' and estate_id is not null)
+ *
+ * 而房務支出一律是 `purpose_type = 'estate'` ——
+ * **`estate_id` 是 null 的話整批 insert 都會被擋掉**，
+ * 錯誤訊息是一句看不懂的 `violates check constraint "exp_purpose_chk"`。
+ *
+ * 人事費那一側特別容易中:`laborCosts()` 寫的是
+ * `estate_id: c.estate_id ?? null` —— 成本設定只填房源沒填物業時就是 null。
+ *
+ * 【★★ 補不到的**不猜一個填進去**】
+ *
+ * 猜錯的話那筆錢會掛在別的物業頭上，而報表看起來完全正常 ——
+ * 沒有任何地方會叫（CLAUDE.md:「對不上的不猜。少填一個看得到、
+ * 補得回來；填錯一個沒有人會發現」）。
+ *
+ * 所以補不到的**挑出來、不產生、告訴人是哪幾筆**。
+ */
+
+/** 補完物業的結果。`missing` 是補不到的那幾筆，不要送去 insert。 */
+export type EstateFill<T> = { ok: T[]; missing: T[] };
+
+/**
+ * 用房源去查物業，補進 `estate_id`。
+ *
+ * @param estateOf 房源 id → 物業 id。查不到回 undefined
+ */
+export function fillEstate<
+  T extends { estate_id?: string | null; property_id?: string | null },
+>(rows: T[], estateOf: (propertyId: string) => string | undefined): EstateFill<T> {
+  const ok: T[] = [];
+  const missing: T[] = [];
+  for (const r of rows ?? []) {
+    // 已經有物業就不動 —— 別讓查表覆蓋掉明確填好的值
+    const est = r.estate_id || (r.property_id ? estateOf(r.property_id) : undefined) || null;
+    if (est) ok.push({ ...r, estate_id: est });
+    else missing.push(r);
+  }
+  return { ok, missing };
+}
+
+/**
+ * 補不到物業時要顯示的一句話。`null` = 沒有補不到的。
+ *
+ * ★ 要唸出**是哪幾筆**。「有 3 筆沒有物業」在 73 列的預覽裡等於沒說。
+ */
+export function missingEstateMsg(
+  missing: { label?: string | null; item_name?: string | null }[],
+  maxNames = 5,
+): string | null {
+  const xs = missing ?? [];
+  if (!xs.length) return null;
+  const names = xs.map((r) => (r.label ?? r.item_name ?? '').trim() || '（沒填房源）');
+  return `這 ${xs.length} 筆查不到物業，**這次不會產生**：`
+    + names.slice(0, maxNames).join('、')
+    + (names.length > maxNames ? ` 等 ${names.length} 筆` : '')
+    + '\n去房源設定把它們的物業補上，再回來按一次。';
+}

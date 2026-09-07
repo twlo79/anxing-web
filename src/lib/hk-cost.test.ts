@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   cleaningCosts, laborCosts, lastDayOf, costTotal,
   type LaborCost, cleanItemName, LABOR_ITEM_NAME,
+  fillEstate, missingEstateMsg,
 } from './hk-cost.ts';
 import { estateLog, type PayrollRow, type LogEntry } from './hk-payroll.ts';
 import { indexSplits, type SplitLine } from './work-split.ts';
@@ -392,5 +393,87 @@ describe('amount_override —— 直接指定金額（migration_215，2026-09-03
   test('★★★ 項目名稱不印 ×N —— 印了會跟金額對不起來', () => {
     assert.equal(cleanItemName('4B3', 0.17, true), '房務清潔 4B3');
     assert.equal(cleanItemName('4B3', 0.17, false), '房務清潔 4B3 ×0.17');
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// 產生支出前補上物業（2026-09-07）
+// ══════════════════════════════════════════════════════════
+
+describe('fillEstate —— exp_purpose_chk 擋的就是 estate_id 是 null', () => {
+  const estateOf = (pid: string) => ({ p1: 'e1', p2: 'e2' } as Record<string, string>)[pid];
+
+  /*
+   * ★★★ 這是 2026-09-07 那次「沒產生到支出」的第二個原因。
+   *   laborCosts() 寫的是 `estate_id: c.estate_id ?? null` ——
+   *   成本設定只填房源沒填物業時就是 null，
+   *   而整批 insert 會被 exp_purpose_chk 擋掉，
+   *   錯誤訊息是一句看不懂的 violates check constraint。
+   */
+  test('★★★ 用房源補得到物業', () => {
+    const r = fillEstate([{ property_id: 'p1', estate_id: null }], estateOf);
+    assert.equal(r.ok.length, 1);
+    assert.equal(r.ok[0].estate_id, 'e1');
+    assert.equal(r.missing.length, 0);
+  });
+
+  // ★ 已經填好的不要被查表覆蓋掉
+  test('★ 已經有物業就不動它', () => {
+    const r = fillEstate([{ property_id: 'p1', estate_id: 'eX' }], estateOf);
+    assert.equal(r.ok[0].estate_id, 'eX');
+  });
+
+  /*
+   * ★★ 補不到的**不猜一個填進去**。猜錯的話那筆錢會掛在
+   *   別的物業頭上，而報表看起來完全正常。
+   */
+  test('★★ 查不到物業的挑出來，不放進 ok', () => {
+    const r = fillEstate([
+      { property_id: 'p1', estate_id: null },
+      { property_id: 'p9', estate_id: null },   // 不在表裡
+      { property_id: null, estate_id: null },   // 連房源都沒有
+    ], estateOf);
+    assert.deepEqual(r.ok.map((x) => x.estate_id), ['e1']);
+    assert.equal(r.missing.length, 2);
+  });
+
+  test('空清單不會爆', () => {
+    assert.deepEqual(fillEstate([], estateOf), { ok: [], missing: [] });
+  });
+
+  test('空字串的 estate_id 當成沒有', () => {
+    const r = fillEstate([{ property_id: 'p1', estate_id: '' }], estateOf);
+    assert.equal(r.ok[0].estate_id, 'e1');
+  });
+});
+
+describe('missingEstateMsg —— 要唸出是哪幾筆', () => {
+  test('沒有補不到的就不囉嗦', () => {
+    assert.equal(missingEstateMsg([]), null);
+  });
+
+  // ★ 「有 3 筆沒有物業」在 73 列的預覽裡等於沒說
+  test('★ 列出名字與筆數', () => {
+    const m = missingEstateMsg([{ label: '13A5' }, { label: '4B3' }])!;
+    assert.match(m, /2 筆/);
+    assert.match(m, /13A5/);
+    assert.match(m, /4B3/);
+  });
+
+  test('★ 要講「這次不會產生」，不然使用者以為它們也進去了', () => {
+    assert.match(missingEstateMsg([{ label: 'x' }])!, /不會產生/);
+  });
+
+  test('太多筆只列前五個，但筆數是全部', () => {
+    const m = missingEstateMsg(Array.from({ length: 9 }, (_, i) => ({ label: `r${i}` })))!;
+    assert.match(m, /等 9 筆/);
+  });
+
+  test('沒填房源的顯示成「（沒填房源）」', () => {
+    assert.match(missingEstateMsg([{ label: '  ' }])!, /沒填房源/);
+  });
+
+  test('人事費那側用 item_name', () => {
+    assert.match(missingEstateMsg([{ item_name: '人事費' }])!, /人事費/);
   });
 });

@@ -7,6 +7,7 @@ import { cleanCounts, filterItems, buildLookup, matchProperty, type HkStaff, typ
 import { payroll, byEstate, estateLog, dailyUnits, fmtUnits } from '@/lib/hk-payroll';
 import {
   cleaningCosts, laborCosts, lastDayOf, costTotal, cleanItemName, LABOR_ITEM_NAME,
+  fillEstate, missingEstateMsg,
 } from '@/lib/hk-cost';
 import { TAG_NON_CASH } from '@/lib/expense-tags';
 import { parseUnits, parseAmount } from '@/lib/clean-params';
@@ -628,9 +629,24 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
         key_labor: r.key,
       }));
 
+      /*
+       * ★★★ 補上物業，補不到的挑掉（2026-09-07）。
+       *
+       *   `exp_purpose_chk` 規定 `purpose_type='estate'` 時
+       *   `estate_id` 不能是 null，而 `laborCosts()` 寫的是
+       *   `estate_id: c.estate_id ?? null` —— 成本設定只填房源
+       *   沒填物業時就是 null，**整批 insert 都會被擋掉**。
+       *
+       *   ★ 補不到的不猜一個填進去（那筆錢會掛在別的物業頭上而沒人會發現），
+       *     挑出來、不產生、把名字講出來。規則在 `lib/hk-cost.ts`。
+       */
+      const fixClean = fillEstate(cleanRows, (pid) => estIdByProp[pid]);
+      const fixLabor = fillEstate(laborRows, (pid) => estIdByProp[pid]);
+      const missMsg = missingEstateMsg([...fixClean.missing, ...fixLabor.missing]);
+
       let made = 0;
       for (const [rows, conflict] of [
-        [cleanRows, 'hk_job_key'], [laborRows, 'hk_labor_key'],
+        [fixClean.ok, 'hk_job_key'], [fixLabor.ok, 'hk_labor_key'],
       ] as const) {
         if (!rows.length) continue;
         const { data, error } = await supabase.from('expenses')
@@ -657,9 +673,17 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
        * ★★ `made` 是**真的新增**的筆數。全部都已經產生過的話會是 0 ——
        *   那不是失敗，要講清楚，不然使用者會一直按。
        */
+      /*
+       * ★★ 有挑掉的就**留在面板裡**，不要關掉也不要只 flash ——
+       *   關掉的話使用者以為 73 筆全進去了，而其實少了 3 筆。
+       */
+      if (missMsg) {
+        setGenErr((made === 0 ? '沒有新增任何一筆。\n' : `已產生 ${made} 筆。\n`) + missMsg);
+        return;
+      }
       flash(made === 0
         ? '這個月的支出都已經產生過了，沒有新增任何一筆'
-        : `已產生 ${made} 筆支出（共 $${costTotal([...cleanRows, ...laborRows]).toLocaleString('en-US')}）`);
+        : `已產生 ${made} 筆支出（共 $${costTotal([...fixClean.ok, ...fixLabor.ok]).toLocaleString('en-US')}）`);
       setGenOpen(false);
     } finally { setGenBusy(false); }
   }
