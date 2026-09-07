@@ -540,6 +540,8 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
    */
   const [openEstate, setOpenEstate] = useState<string | null>(null);
   const [genBusy, setGenBusy] = useState(false);
+  /** 產生失敗的原因。★ 留在面板裡不用 flash —— 理由見 `generateInner()` */
+  const [genErr, setGenErr] = useState<string | null>(null);
 
   /**
    * 產生本月的房務支出。
@@ -590,6 +592,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
   }
 
   async function generateInner() {
+    setGenErr(null);
     if (!gen.rows.length && !gen.lab.length) return flash('沒有可以產生的支出');
     setGenBusy(true);
     try {
@@ -633,7 +636,21 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
         const { data, error } = await supabase.from('expenses')
           .upsert(rows, { onConflict: conflict, ignoreDuplicates: true })
           .select('id');
-        if (error) { flash('產生失敗：' + error.message); return; }
+        /*
+         * ★★★ 錯誤要留在**面板裡**，不能只有 flash（2026-09-07）。
+         *
+         *   flash 跳在頁面最上方、2.5 秒就消失，而這個面板在下半部 ——
+         *   使用者按了鈕、畫面沒動、訊息沒看到，結論是「沒產生到支出」。
+         *
+         *   這個功能**從上線到現在一次都沒成功過**（`hk_job_key` 有值的
+         *   是 0 筆），原因是兩個唯一索引是 partial 的、`ON CONFLICT`
+         *   對不到（migration_221 修）。而那半年裡每一次失敗
+         *   都有訊息，只是沒有人看得到。
+         *
+         *   ★ CLAUDE.md 2026-09-02 記過同一條:
+         *     「訊息要出現在動作發生的地方」。
+         */
+        if (error) { setGenErr('產生失敗：' + error.message); return; }
         made += data?.length ?? 0;
       }
       /*
@@ -1188,7 +1205,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
               所以這裡不用再判斷一次 —— 判斷兩次的話，哪天上面改了下面沒改，
               就會出現「看得到但按了沒用」。
           */}
-          <button onClick={() => setGenOpen(true)}
+          <button onClick={() => { setGenErr(null); setGenOpen(true); }}
             className="rounded-lg border border-mor-line px-3 py-1.5 text-sm text-gray-600 hover:bg-mor-sand/60">
             產生本月支出
           </button>
@@ -1716,6 +1733,17 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
             已經產生過的不會再產生一次。
             <b>改了單價之後重按，舊的那筆不會跟著改</b> —— 要改金額請到支出頁。
           </div>
+
+          {/*
+            ★★★ 失敗原因留在按鈕正上方（2026-09-07）。
+              原本只走 flash —— 跳在頁面最上方、2.5 秒消失，
+              而這個面板在下半部。使用者看到的是「按了沒反應」。
+          */}
+          {genErr && (
+            <div className="mt-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-800 leading-relaxed">
+              {genErr}
+            </div>
+          )}
 
           <div className="flex items-center gap-2 mt-3">
             <button onClick={doGenerate} disabled={genBusy || gen.total === 0}
