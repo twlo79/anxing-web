@@ -86,8 +86,12 @@ export default function DeferralPanel({
    * 【為什麼是全刪重建，不是逐筆比對】
    * 逐筆比對要處理「改日期」「改金額」「刪一筆再加一筆」三種路徑，
    * 而資料庫那條等式在中途一定會短暫不成立。
-   * 全刪重建只有一條路徑，而且觸發器是 deferrable —— 交易結束才驗，
-   * 中間怎麼進出都沒關係。
+   * 全刪重建只有一條路徑。
+   *
+   * ★★★ 但「觸發器是 deferrable 所以中間怎麼進出都沒關係」**只在
+   *   同一個交易裡成立**。這一段以前是三次 `supabase.from()` 呼叫，
+   *   而 PostgREST 每個請求各自一個交易 —— 中間那一步必爆
+   *   （2026-09-08 修，改走 `set_expense_deferral` RPC）。
    */
   async function save() {
     const chk = checkDeferral(gross, paidOn, lines);
@@ -116,24 +120,33 @@ export default function DeferralPanel({
     )) return;
 
     setBusy(true);
-    // 先刪舊子單。母單此刻的 amount 還是舊值,等式暫時不成立 ——
-    // 沒關係,觸發器延到交易結束才驗。
-    // 硬刪除,不進回收桶 —— 子單是母單金額拆出來的,每改一次遞延就整組重算。
-    const del = await supabase.from('expenses').delete().eq('parent_expense_id', expense.id);
-    if (del.error) { setBusy(false); return flash('清除舊明細失敗:' + del.error.message); }
-
-    const up = await supabase.from('expenses')
-      .update({ deferred: true, gross_amount: gross, amount: own }).eq('id', expense.id);
-    if (up.error) { setBusy(false); return flash('儲存失敗:' + up.error.message); }
-
-    if (kids.length) {
-      // 其餘欄位由 migration_88 的觸發器從母單繼承,前端不用一個一個複製 ——
-      // 複製的話總有一天會漏掉新加的欄位,而漏掉不會報錯,只會歸錯類。
-      const ins = await supabase.from('expenses').insert(
-        kids.map((k) => ({ parent_expense_id: expense.id, spent_on: k.on, amount: k.amount })));
-      if (ins.error) { setBusy(false); return flash('建立明細失敗:' + ins.error.message); }
-    }
+    /*
+     * ★★★ 走 RPC，**不要在這裡拆成三次呼叫**（migration_228，2026-09-08）。
+     *
+     *   原本是「刪子單 → 改母單 → 建子單」三次 `supabase.from()`，
+     *   而這裡的舊註解寫著「沒關係,觸發器延到交易結束才驗」——
+     *   **那個假設是錯的**。
+     *
+     *   `trg_expense_deferral_sum` 是 `deferrable initially deferred`，
+     *   延到的是**一個交易**的結尾。而 PostgREST 每個請求各自一個交易 ——
+     *   所以第二步（改母單）自己 commit 時，子單還沒建，
+     *   `母單 40880 + 子單 0 ≠ 實付 76650`，必爆。
+     *
+     *   ★ 這個功能**只要需要拆子單就從來沒成功過**。
+     *     不用拆的時候 own == gross，等式剛好成立，所以一直沒被發現。
+     *
+     * ★★ 也不能改成「先建子單再改母單」:那樣中間會有一批
+     *   指向非遞延母單的子單，它們會以獨立支出出現在支出頁上 ——
+     *   **那筆錢被算兩次**，而第二步失敗的話它們就永遠留著。
+     */
+    const { error } = await supabase.rpc('set_expense_deferral', {
+      p_parent: expense.id,
+      p_gross: gross,
+      p_own: own,
+      p_kids: kids.map((k) => ({ on: k.on, amount: k.amount })),
+    });
     setBusy(false);
+    if (error) return flash('儲存失敗:' + error.message);
     flash('已設定遞延認列');
     onChanged();
   }
@@ -144,11 +157,14 @@ export default function DeferralPanel({
       `取消遞延認列?\n\n所有子單會被刪除,這筆 $${fmt(gross)} 會全部認列在 ${paidOn}。`
     )) return;
     setBusy(true);
-    // 硬刪除,不進回收桶 —— 取消遞延就是把拆分收回母單,子單不該能單獨復原
-    // （復原一張子單會讓母子金額對不上,觸發器會擋,但那時人已經一頭霧水）。
-    await supabase.from('expenses').delete().eq('parent_expense_id', expense.id);
-    const { error } = await supabase.from('expenses')
-      .update({ deferred: false, gross_amount: null, amount: gross }).eq('id', expense.id);
+    /*
+     * ★ 取消也走 RPC，理由同上 —— 分兩次的話「先刪子單」那一步
+     *   自己 commit 時母單還是 deferred，`own ≠ gross`，一樣會爆。
+     *
+     * ★★ 子單是硬刪不進回收桶:取消遞延就是把拆分收回母單，
+     *   子單不該能單獨復原（復原一張會讓母子金額對不上）。
+     */
+    const { error } = await supabase.rpc('clear_expense_deferral', { p_parent: expense.id });
     setBusy(false);
     if (error) return flash('取消失敗:' + error.message);
     setOn(false);

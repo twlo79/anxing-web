@@ -316,8 +316,21 @@ export default function TaxPage() {
        *   接不到的就是 null，畫面留空讓人補。
        */
       const { data, error } = await supabase.from('expenses')
+        /*
+         * ★★★ 外鍵要指名（2026-09-07 修）。
+         *
+         *   `expenses` 有**兩條**外鍵指向 `purchase_requests`:
+         *     request_id      → expenses_request_id_fkey      這筆支出來自哪張請款單
+         *     fee_request_id  → expenses_fee_request_id_fkey  匯款手續費（migration_83）
+         *
+         *   只寫表名的話 PostgREST 不知道要走哪一條,整個查詢**直接拒絕**:
+         *     "Could not embed because more than one relationship was found"
+         *
+         * ★ 走 `request_id` 那一條 —— 我們要的是「這筆支出的廠商是誰」,
+         *   而手續費那條指的是另一張單。
+         */
         .select('id, spent_on, item_name, amount, voucher_no, note, estate_id, property_id,'
-          + ' purchase_requests(payee_company, payee_tax_id)')
+          + ' purchase_requests!expenses_request_id_fkey(payee_company, payee_tax_id)')
         .gte('spent_on', invoiceDateRange(period, 'in')[0])
         .lte('spent_on', invoiceDateRange(period, 'in')[1])
         .not('voucher_no', 'is', null)
