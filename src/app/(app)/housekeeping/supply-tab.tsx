@@ -1,6 +1,8 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
+import Req from '@/components/Req';
+import { newItemError, needsInitTxn } from '@/lib/supply-item';
 import { useProfile } from '@/lib/profile';
 import {
   KIND_LABEL, KIND_BUTTON, txnRow, txnError, previewAfter, negativeWarn,
@@ -190,11 +192,18 @@ export default function SupplyTab({ onMsg }: { onMsg: (t: string, err?: boolean)
 
   /* ══════════ 新增品項 ══════════ */
   const [add, setAdd] = useState<
-    { name: string; spec: string; vendor: string; expire_on: string; init: string } | null>(null);
+    { on: string; name: string; spec: string; vendor: string; expire_on: string; init: string }
+    | null>(null);
 
   async function saveItem() {
     if (!add || busy) return;
-    if (!add.name.trim()) { onMsg('要填物資名稱', true); return; }
+    /*
+     * ★ 驗證在 `lib/supply-item.ts`,**跟按鈕的 disabled 共用同一支**。
+     *   兩份各寫一次遲早會漂,而漂掉的症狀是「按鈕亮著卻送不出去」
+     *   或「填好了按鈕還是灰的」—— 兩種都只會讓人覺得系統壞了。
+     */
+    const bad = newItemError(add);
+    if (bad) { onMsg(bad, true); return; }
     setBusy(true);
     try {
       const { data, error } = await supabase.from('supply_item')
@@ -215,11 +224,15 @@ export default function SupplyTab({ onMsg }: { onMsg: (t: string, err?: boolean)
         return;
       }
       // 初始庫存是一筆 init 流水,不是欄位
-      const n = Number(add.init);
-      if (Number.isFinite(n) && n > 0) {
+      if (needsInitTxn(add.init)) {
         const { error: e2 } = await supabase.from('supply_txn').insert({
-          item_id: data!.id, kind: 'init', qty: n,
-          happened_on: today(), note: '初始庫存', created_by: profile?.id ?? null,
+          item_id: data!.id, kind: 'init', qty: Number(add.init),
+          /*
+           * ★★ 用表單填的日期，不是 today()（2026-09-07 使用者:
+           *   「表單最上方 必填 日期」）。寫死今天的話,
+           *   補建上個月的庫存會整批記到今天,而庫存歷史從此對不上。
+           */
+          happened_on: add.on, note: '初始庫存', created_by: profile?.id ?? null,
         });
         if (e2) { onMsg('品項建好了，但初始庫存沒寫進去：' + e2.message, true); }
       }
@@ -239,7 +252,7 @@ export default function SupplyTab({ onMsg }: { onMsg: (t: string, err?: boolean)
         <span className="text-xs text-gray-500">{rows.length} 個品項</span>
         <div className="ml-auto flex gap-2">
           {canEditItem && (
-            <button onClick={() => setAdd({ name: '', spec: '', vendor: '', expire_on: '', init: '' })}
+            <button onClick={() => setAdd({ on: today(), name: '', spec: '', vendor: '', expire_on: '', init: '' })}
               className="rounded-lg bg-mor-slate text-white px-3 py-1.5 text-xs font-medium hover:bg-mor-slatedark">
               ＋ 新增品項
             </button>
@@ -437,10 +450,17 @@ export default function SupplyTab({ onMsg }: { onMsg: (t: string, err?: boolean)
           <div className="w-full max-w-sm rounded-xl bg-white p-4" onClick={(e) => e.stopPropagation()}>
             <div className="font-medium mb-3">新增品項</div>
             <div className="flex flex-col gap-2 text-sm">
-              <label className="flex flex-col gap-1">物資名稱
+              {/*
+                ★★ 日期放**最上面**（2026-09-07 使用者指定）。它決定初始庫存
+                  記在哪一天 —— 擺在最後的話，人填完數量就按建立了。
+              */}
+              <label className="flex flex-col gap-1">日期<Req />
+                <input type="date" value={add.on}
+                  onChange={(e) => setAdd({ ...add, on: e.target.value })} className={inp} /></label>
+              <label className="flex flex-col gap-1">物資名稱<Req />
                 <input value={add.name} onChange={(e) => setAdd({ ...add, name: e.target.value })}
                   className={inp} placeholder="衛生紙" /></label>
-              <label className="flex flex-col gap-1">規格型號
+              <label className="flex flex-col gap-1">規格型號<Req />
                 <input value={add.spec} onChange={(e) => setAdd({ ...add, spec: e.target.value })}
                   className={inp} placeholder="大包裝／12 卷" /></label>
               <label className="flex flex-col gap-1">廠商
@@ -449,9 +469,14 @@ export default function SupplyTab({ onMsg }: { onMsg: (t: string, err?: boolean)
               <label className="flex flex-col gap-1">效期
                 <input type="date" value={add.expire_on}
                   onChange={(e) => setAdd({ ...add, expire_on: e.target.value })} className={inp} /></label>
-              <label className="flex flex-col gap-1">初始庫存
+              {/*
+                ★★★ 初始庫存**必填但可以是 0**。「現在沒有」是一個答案,
+                  「還沒填」不是 —— 而 `Number('')` 是 0,兩者混在一起的話
+                  沒填會被當成填了 0（見 lib/supply-item.ts）。
+              */}
+              <label className="flex flex-col gap-1">初始庫存<Req />
                 <input type="number" min="0" value={add.init}
-                  onChange={(e) => setAdd({ ...add, init: e.target.value })} className={inp} placeholder="0" /></label>
+                  onChange={(e) => setAdd({ ...add, init: e.target.value })} className={inp} placeholder="沒有就填 0" /></label>
             </div>
             {/* ★ 同物業同名同規格只能一筆 —— 先講，撞到才講就晚了 */}
             <div className="mt-2 text-[11px] text-gray-400 leading-relaxed">
@@ -460,8 +485,13 @@ export default function SupplyTab({ onMsg }: { onMsg: (t: string, err?: boolean)
             <div className="mt-3 flex gap-2">
               <button onClick={() => setAdd(null)}
                 className="flex-1 rounded-lg border border-mor-line px-3 py-1.5 text-sm">取消</button>
-              <button onClick={() => void saveItem()} disabled={busy}
-                className="flex-1 rounded-lg bg-mor-slate text-white px-3 py-1.5 text-sm font-medium disabled:opacity-40">
+              {/*
+                沒填完就鎖住。**但滑鼠移上去要說得出為什麼** ——
+                一顆灰掉而不解釋的按鈕，使用者會以為是系統壞了而一直點。
+              */}
+              <button onClick={() => void saveItem()} disabled={busy || !!newItemError(add)}
+                title={newItemError(add) ?? ''}
+                className="flex-1 rounded-lg bg-mor-slate text-white px-3 py-1.5 text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed">
                 {busy ? '建立中…' : '建立'}
               </button>
             </div>

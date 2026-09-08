@@ -4,7 +4,7 @@ import * as XLSX from 'xlsx-js-style';
 import { createClient } from '@/lib/supabase';
 import {
   taxPeriodOf, periodRange, periodLabel, prevPeriod, nextPeriod, periodOptions,
-  sumTax, sumNet, sumTotal, invoiceCounts,
+  sumTax, sumNet, sumTotal, invoiceCounts, activeInvoices,
   settle, periodFigures, carryChainBreaks,
   parseOutUpload, buildItemMap, uploadError, invoiceError, amountMismatch,
   invoiceDateRange, invoiceDateError,
@@ -57,7 +57,24 @@ import Req, { reqCls } from '@/components/Req';
  * ★ 目前只做安幸。愛皮（93509086）的資料表欄位留著了，
  *   之後要加只要在這裡多一個選單（2026-09-04 使用者:「安幸的 報稅」）。
  */
-const COMPANY = { taxId: '83684417', name: '安幸有限公司' };
+/**
+ * 兩家公司（2026-09-07 使用者:「分兩個 1. 安幸 2. 愛皮旅行社 93509086」）。
+ *
+ * ★★ 兩家的資料**本來就是分開的** —— `tax_invoice` 與 `tax_period`
+ *   從 migration_217 起就有 `company_tax_id`，每一支查詢也都帶著它。
+ *   所以這裡只是把寫死的那一個換成可選,**不用 migration**。
+ *
+ * ★★★ 兩家的留抵鏈也各自獨立。`periodsAll` 只撈當前這一家 ——
+ *   混在一起的話「上期留抵」會接到另一家的數字,
+ *   而那個錯不會叫,只會讓其中一家每期都多繳或少繳。
+ *
+ * ★ 愛皮**沒有「從支出帶入」**（使用者指定）。支出表是安幸的帳,
+ *   帶進愛皮的進項等於把別家的成本拿來扣自己的稅。
+ */
+const COMPANIES = [
+  { taxId: '83684417', name: '安幸有限公司', fromExpense: true },
+  { taxId: '93509086', name: '愛皮旅行社',   fromExpense: false },
+] as const;
 
 /** 主要動作。★ 一頁只有一個 —— 這一頁是「上傳發票 excel」。 */
 const PRIMARY = 'bg-mor-slate text-white hover:bg-mor-slatedark';
@@ -91,6 +108,14 @@ export default function TaxPage() {
    */
   const [loadErr, setLoadErr] = useState<string | null>(null);
 
+  /*
+   * ★ 用 taxId 當 state 而不是整個物件 —— 物件每次 render 都是新的參考,
+   *   放進 useCallback 的 deps 會讓 load 每次都重跑。
+   */
+  const [taxId, setTaxId] = useState<string>(COMPANIES[0].taxId);
+  const COMPANY = useMemo(
+    () => COMPANIES.find((c) => c.taxId === taxId) ?? COMPANIES[0], [taxId]);
+
   const load = useCallback(async () => {
     setLoading(true);
     const [inv, per] = await Promise.all([
@@ -109,7 +134,7 @@ export default function TaxPage() {
     setLoadErr(null);
     setRows((inv.data ?? []) as TaxInvoice[]);
     setPeriodsAll((per.data ?? []) as PeriodRow[]);
-  }, [supabase, period]);
+  }, [supabase, period, COMPANY.taxId]);
   useEffect(() => { void load(); }, [load]);
 
   useEffect(() => {
@@ -262,6 +287,14 @@ export default function TaxPage() {
   const [pickErr, setPickErr] = useState<string | null>(null);
 
   async function openFromExpense() {
+    /*
+     * ★★ 按鈕已經藏起來了,這裡再擋一次 —— 藏起來擋不住
+     *   「切換公司之前就打開的舊畫面」。同一頁上兩家共用這支函式,
+     *   而它會用當下的 COMPANY 寫入。
+     */
+    if (!COMPANY.fromExpense) {
+      return flash(`${COMPANY.name}的進項不從支出帶入 —— 支出表是安幸的帳`);
+    }
     if (closed) return flash('這一期已經結算，要帶入請先取消結算');
     setBusy(true);
     setPickErr(null);
@@ -315,7 +348,13 @@ export default function TaxPage() {
       const ds = importable(rows, period, COMPANY.taxId,
         (taken ?? []).map((t: any) => t.expense_id));
       if (!ds.length) {
-        return flash('這一期沒有可以帶入的支出（要有憑證號碼，而且還沒帶過）');
+        /*
+         * ★ 講「這個年度」不是「這一期」（2026-09-07）。
+         *   `invoiceDateRange(period,'in')` 撈的是**當年 1/1 ～ 本期末**
+         *   （02be8bb 放寬的）,說成「這一期」的話,
+         *   人會以為要切到那個月份去帶,而切過去也還是同一批。
+         */
+        return flash('這個年度沒有可以帶入的支出（要有憑證號碼，而且還沒帶過）');
       }
       setPick(ds);
     } finally { setBusy(false); }
@@ -520,7 +559,17 @@ export default function TaxPage() {
         <h1 className="mb-0">稅務管理</h1>
         <span className="stat-num-lg font-bold tabular-nums">${fmt(headline.amount)}</span>
         <span className={`rounded px-2 py-0.5 text-xs font-medium ${headline.cls}`}>{headline.label}</span>
-        <span className="text-uisub text-gray-500">{COMPANY.name}　{COMPANY.taxId}</span>
+        {/*
+          ★★ 換公司等於換一整套帳。用下拉不是分頁 ——
+            分頁會讓人以為兩邊是同一份資料的兩個視角,而它們毫無關係。
+        */}
+        <select value={taxId} onChange={(e) => setTaxId(e.target.value)}
+          className="rounded-lg border border-gray-300 px-2 py-1 text-sm">
+          {COMPANIES.map((c) => (
+            <option key={c.taxId} value={c.taxId}>{c.name}</option>
+          ))}
+        </select>
+        <span className="text-uisub text-gray-500">{COMPANY.taxId}</span>
         <select value={period} onChange={(e) => setPeriod(e.target.value)}
           className="ml-auto rounded-lg border border-gray-300 px-2 py-1.5 text-sm">
           {periodOpts.map((p) => <option key={p} value={p}>{periodLabel(p)}</option>)}
@@ -539,8 +588,17 @@ export default function TaxPage() {
 
       {/* ══════════ 卡片（三張 —— 本期留抵／應繳已經在標題）══════════ */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+        {/*
+          ★ 未稅總額（2026-09-07 使用者:「銷項 後面寫未稅總額」）。
+            401 申報書上填的是**銷售額**，稅額是它算出來的 ——
+            只印稅額的話，對申報書時還要自己反推一次。
+
+          ★★ 用 `sumNet(activeInvoices(...))`，跟稅額同一批來源 ——
+            作廢的三張兩邊都不算,不然兩個數字兜不起來。
+        */}
         <StatCard label="銷項稅額" value={`$${fmt(fig.outTax)}`}
-          sub={`${outCounts.active} 張${outCounts.voided ? `・作廢 ${outCounts.voided} 張不算` : ''}`} />
+          sub={`未稅 $${fmt(sumNet(activeInvoices(outRows)))}`
+            + `　${outCounts.active} 張${outCounts.voided ? `・作廢 ${outCounts.voided} 張不算` : ''}`} />
         <StatCard label="進項稅額" value={`$${fmt(fig.inTax)}`} sub={`${inCounts.active} 筆`} />
         <StatCard label="上期累積留抵" value={`$${fmt(fig.carryIn)}`}
           sub={prevCarry == null ? '沒有上一期 —— 期初手填' : `從 ${periodLabel(prevPeriod(period))} 帶入`} />
@@ -712,7 +770,14 @@ export default function TaxPage() {
                     onChange={(e) => { void onFile(e.target.files?.[0] ?? null); e.target.value = ''; }} />
                 </label>
               )}
-              {kind === 'in' && (
+              {/*
+                ★★★ 只有安幸有這顆（2026-09-07 使用者:「愛皮…進項 沒有從支出帶入」）。
+                  支出表是安幸的帳 —— 帶進愛皮的進項等於拿別家的成本扣自己的稅。
+
+                ★ 用**藏起來**不是變灰。灰掉的話愛皮的人會一直問
+                  「為什麼這顆按不動」，而答案是「這家永遠不會有」。
+              */}
+              {kind === 'in' && COMPANY.fromExpense && (
                 <button onClick={() => void openFromExpense()} disabled={closed || busy}
                   className={`${BTN} ${PRIMARY} disabled:opacity-40`}>
                   ⬆ 從支出帶入
