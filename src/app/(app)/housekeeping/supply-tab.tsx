@@ -449,18 +449,25 @@ export default function SupplyTab({ onMsg }: { onMsg: (t: string, err?: boolean)
           onClick={() => setAdd(null)}>
           <div className="w-full max-w-sm rounded-xl bg-white p-4" onClick={(e) => e.stopPropagation()}>
             <div className="font-medium mb-3">新增品項</div>
+            {/*
+              ★★★ 每個標籤都用 <span className="flex items-center"> 把文字跟星號包起來。
+                外層 label 是 `flex flex-col` —— 直接寫「日期<Req />」的話，
+                文字與星號會變成**兩個 flex item**，星號自己掉到下一行
+                （2026-09-08 使用者:「* 不要換行」）。
+                全站其他表單本來就是這樣寫的，這裡是漏掉的。
+            */}
             <div className="flex flex-col gap-2 text-sm">
               {/*
                 ★★ 日期放**最上面**（2026-09-07 使用者指定）。它決定初始庫存
                   記在哪一天 —— 擺在最後的話，人填完數量就按建立了。
               */}
-              <label className="flex flex-col gap-1">日期<Req />
+              <label className="flex flex-col gap-1"><span className="flex items-center">日期<Req /></span>
                 <input type="date" value={add.on}
                   onChange={(e) => setAdd({ ...add, on: e.target.value })} className={inp} /></label>
-              <label className="flex flex-col gap-1">物資名稱<Req />
+              <label className="flex flex-col gap-1"><span className="flex items-center">物資名稱<Req /></span>
                 <input value={add.name} onChange={(e) => setAdd({ ...add, name: e.target.value })}
                   className={inp} placeholder="衛生紙" /></label>
-              <label className="flex flex-col gap-1">規格型號<Req />
+              <label className="flex flex-col gap-1"><span className="flex items-center">規格型號<Req /></span>
                 <input value={add.spec} onChange={(e) => setAdd({ ...add, spec: e.target.value })}
                   className={inp} placeholder="大包裝／12 卷" /></label>
               <label className="flex flex-col gap-1">廠商
@@ -474,7 +481,7 @@ export default function SupplyTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                   「還沒填」不是 —— 而 `Number('')` 是 0,兩者混在一起的話
                   沒填會被當成填了 0（見 lib/supply-item.ts）。
               */}
-              <label className="flex flex-col gap-1">初始庫存<Req />
+              <label className="flex flex-col gap-1"><span className="flex items-center">初始庫存<Req /></span>
                 <input type="number" min="0" value={add.init}
                   onChange={(e) => setAdd({ ...add, init: e.target.value })} className={inp} placeholder="沒有就填 0" /></label>
             </div>
