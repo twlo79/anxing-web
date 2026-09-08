@@ -5,6 +5,7 @@ import { useProfile } from '@/lib/profile';
 import CalendarTab from './calendar-tab';
 import StatsTab from './stats-tab';
 import DemandTab from './demand-tab';
+import SupplyTab from './supply-tab';
 
 /**
  * 房務管理：行事曆 · 排班統計
@@ -51,7 +52,16 @@ import DemandTab from './demand-tab';
  * 發現東西用完的那些人。放在他們每天會來的頁面底下，
  * 比獨立一頁更容易被想起來。
  */
-const TAB_LABEL = { calendar: '行事曆', stats: '排班統計', demand: '採購需求' } as const;
+/*
+ * 【備品管理排第四】（2026-09-07 使用者:「多一個 tab 備品管理」）
+ *
+ * 跟採購需求一樣**全員可見** —— 取用備品的正是每天在現場的那些人。
+ * 排在採購需求後面:先發現東西快用完（採購需求），
+ * 再處理櫃子裡的進出（備品管理）。
+ */
+const TAB_LABEL = {
+  calendar: '行事曆', stats: '排班統計', demand: '採購需求', supply: '備品管理',
+} as const;
 type TabKey = keyof typeof TAB_LABEL;
 
 export default function HousekeepingPage() {
@@ -62,7 +72,7 @@ export default function HousekeepingPage() {
   const [tab, setTab] = useState<TabKey>(() => {
     if (typeof window === 'undefined') return 'calendar';
     const t = new URLSearchParams(window.location.search).get('tab');
-    return t === 'demand' || t === 'stats' ? (t as TabKey) : 'calendar';
+    return t === 'demand' || t === 'stats' || t === 'supply' ? (t as TabKey) : 'calendar';
   });
   const [msg, setMsg] = useState<{ t: string; err?: boolean } | null>(null);
 
@@ -98,8 +108,8 @@ export default function HousekeepingPage() {
    * 不是靠這裡少給一個分頁。
    */
   const tabs: TabKey[] = canEdit
-    ? ['calendar', 'stats', 'demand']
-    : ['calendar', 'demand'];
+    ? ['calendar', 'stats', 'demand', 'supply']
+    : ['calendar', 'demand', 'supply'];
 
   /**
    * 成功訊息四秒後消失，失敗的不會。
@@ -150,7 +160,9 @@ export default function HousekeepingPage() {
         （排班統計會改資料，切走再切回來時舊狀態可能已經過期。）
       */}
       {/* canEdit 還沒載到之前 tab 不可能是 stats，載到之後若被降權也會退回行事曆 */}
-      {tab === 'demand'
+      {tab === 'supply'
+        ? <SupplyTab onMsg={(t, err) => setMsg({ t, err })} />
+        : tab === 'demand'
         ? <DemandTab onMsg={(t, err) => setMsg({ t, err })} />
         : tab === 'stats' && canEdit
           ? <StatsTab onGoCalendar={() => setTab('calendar')} />

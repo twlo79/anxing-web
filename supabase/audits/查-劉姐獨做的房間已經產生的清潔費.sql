@@ -112,11 +112,30 @@ order by e.spent_on, p.name;
  */
 
 -- 確認第一段的清單沒問題之後，把底下整個 do 區塊的註解拿掉再執行。
+--
+-- ★★★ 但先讀這一段（2026-09-07 踩到的坑）:
+--
+--   `soft_delete()` 權限不夠時**不會報錯**，它回傳
+--   `{ok:false, code:'NO_PERM'}`。第一版這裡寫 `perform public.soft_delete(...)`
+--   —— 而 `perform` 會把回傳值**直接丟掉**。
+--
+--   結果是 6 筆全部被拒絕，卻照樣印出「共刪除 6 筆，合計 $20920」。
+--   人看了訊息以為刪完了，回頭查才發現一筆都沒少。
+--
+-- ★★ 被拒絕的原因是 **SQL Editor 沒有登入身分**:`current_role_of()` 是 null，
+--   而 `trash_can_delete()` 是綁角色的（migration_107 的預設拒絕）。
+--   所以**這一段在 SQL Editor 裡多半跑不動** ——
+--   在支出頁刪比較快，那裡你是登入的。
+--
+-- ★ 底下這一版會接住 ok 並且在有失敗時整個 rollback，
+--   不會再出現「訊息說刪了、實際沒刪」。
 /*
 do $do$
 declare
-  r record;
-  n int := 0;
+  r     record;
+  res   jsonb;
+  n     int := 0;
+  fail  int := 0;
   total numeric := 0;
 begin
   for r in
@@ -144,14 +163,31 @@ begin
                           || '|' || j.work_type
      where j.n_staff > 0 and j.n_staff = j.n_hourly
   loop
-    perform public.soft_delete('expenses', r.id,
-                               '劉姐獨做，改由時薪支出承擔（migration_226）');
-    n := n + 1;
-    total := total + coalesce(r.amount, 0);
-    raise notice '刪除 % % $%', r.spent_on, r.item_name, r.amount;
+    -- ★★★ 用 `res :=` 不是 `perform` —— perform 會把 {ok:false} 丟掉
+    res := public.soft_delete('expenses', r.id,
+                              '劉姐獨做，改由時薪支出承擔（migration_226）');
+
+    if coalesce((res->>'ok')::boolean, false) then
+      n := n + 1;
+      total := total + coalesce(r.amount, 0);
+      raise notice '✓ 刪除 % % $%', r.spent_on, r.item_name, r.amount;
+    else
+      fail := fail + 1;
+      raise notice '✗ 刪不掉 % % —— %', r.spent_on, r.item_name,
+                   coalesce(res->>'message', res::text);
+    end if;
   end loop;
 
-  -- ★ 印出筆數與金額。跟第一段的合計對不起來就是中間有東西變了
+  /*
+   * ★★ 有任何一筆失敗就整個 rollback。
+   *   刪一半最糟:帳上一部分換成時薪、一部分還是清潔費,
+   *   而兩種都「看起來正常」,事後沒有人分得出哪幾天處理過。
+   */
+  if fail > 0 then
+    raise exception '% 筆刪不掉（成功 % 筆已一併回復）。'
+      '多半是 SQL Editor 沒有登入身分 —— 請改在支出頁刪。', fail, n;
+  end if;
+
   raise notice '── 共刪除 % 筆，合計 $% ──', n, total;
 end $do$;
 */

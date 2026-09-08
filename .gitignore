@@ -73,3 +73,7 @@ sync-backups/
 
 # 本機的 agent 設定，不是專案的一部分
 .claude/
+
+# Cowork 產出的暫存資料夾與 TimeTree 的本機同步檔（都不該進版控）
+Claude outputs/
+timetree-sync/

@@ -7,7 +7,7 @@
  * ============================================================
  * 【★★★ 上一版錯在哪：表名不是 accounts，是 bank_accounts】
  *
- *     ERROR: 42P01: relation "public.accounts" does not exist
+ *     ERROR: 42P01: relation "public.bank_accounts" does not exist
  *
  * ★ 這個錯**很便宜** —— 它當場就炸，而且指著行號。
  *   真正貴的是底下那兩個:它們不會炸,只會讓新的那張卡少一半功能,
@@ -48,6 +48,17 @@
  * 而那個錯**不會叫** —— 明細照樣顯示,只是名字掛在錯的錢上面。
  *
  * 所以這一支**先數,不是剛好一列就中止**。
+ *
+ * ============================================================
+ * 【★ 表名是 `bank_accounts` 不是 `accounts`】（2026-09-08 踩到）
+ *
+ * 第一版寫成 `public.accounts` —— 那是**前端變數的名字**
+ * （`accounts/page.tsx` 裡的 `const accounts`），不是資料表。
+ * 實際的表叫 `bank_accounts`，現金帳戶也放在裡面，靠 `kind` 分。
+ *
+ * 症狀是 `relation "public.accounts" does not exist`，整支中止。
+ * 這次很吵所以立刻發現 —— 但「照畫面上的字推資料庫的名字」
+ * 的安靜版本，就是 CLAUDE.md 上那幾條坑。
  *
  * 【怎麼跑】整份貼進 Supabase SQL Editor，看最後那張自檢表。
  */
