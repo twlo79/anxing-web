@@ -17,9 +17,14 @@ import {
 // ★ useRef 的同步閘門 —— useState 是非同步的,連點兩下會兩筆都送出去
 import { useOnce } from '@/lib/once';
 import {
-  hourlyRows, hourlyOnlyKeys, hourlyItemName,
-  type HourlyRow, type HourlySkip,
+  hourlyRows, hourlyOnlyKeys,
+  type HourlySkip,
 } from '@/lib/hk-hourly';
+import {
+  cleaningIncome, laborIncome, hourlyExpense, sideTotal,
+  OFFICE_NAME, LABOR_BILL_TO_OFFICE, CODE_SALARY, CODE_LABOR_REV,
+  type HkEntry,
+} from '@/lib/hk-entries';
 import { sharePreview, previewText } from '@/lib/hk-crew';
 import {
   reparsePreview, visibleRows, dismissedCount, prefillFromEvent,
@@ -598,7 +603,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
 
   async function generateInner() {
     setGenErr(null);
-    if (!gen.rows.length && !gen.lab.length && !gen.hr.length) {
+    if (!gen.rows.length && !gen.lab.length && !gen.hr.length && !gen.income.length) {
       return flash('沒有可以產生的支出');
     }
     setGenBusy(true);
@@ -649,12 +654,20 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
        */
       const hourRows = gen.hr.map((r) => ({
         ...mk({
-          spent_on: r.spent_on, amount: r.amount,
+          spent_on: r.on, amount: r.amount,
+          /*
+           * ★★★ 記在**安幸辦公室**，不是被打掃的那間房（2026-09-07 改）。
+           *   記在房源上的話，物業付過那間房的清潔費之後，
+           *   同一份工又被記了一次成本 —— 而劉姐是安幸的人，不是物業的。
+           *   房號留在項目名稱裡（`劉姐 2.5 小時 × $500・14B3`）。
+           */
           property_id: r.property_id,
-          estate_id: estIdByProp[r.property_id] ?? null,
-          item_name: nameBy[r.key]?.trim() || hourlyItemName(r),
+          estate_id: office.estateId,
+          item_name: nameBy[r.key]?.trim() || r.item_name,
           key_job: r.key,
         }),
+        // ★ 科目是薪資勞務，不是房務清潔 —— mk() 給的那個要蓋掉
+        account_code: r.account_code,
         payment_method: 'transfer',
         pay_account: '8088',
         tags: [] as string[],
@@ -683,6 +696,52 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
       const fixHour = fillEstate(hourRows, (pid) => estIdByProp[pid]);
       const missMsg = missingEstateMsg(
         [...fixClean.missing, ...fixLabor.missing, ...fixHour.missing]);
+
+      /*
+       * ══════════ 收入：寫進 orders（一次性收入）══════════
+       *
+       * ★★★ 冪等靠 `orders.order_key` 的唯一索引（`orders_order_key_key`）——
+       *   那張表沒有 `hk_job_key`，支出那套的索引在這裡用不上。
+       *   key 是 `HKREV|…` / `HKLABREV|…`，前綴讓兩張表對得出誰是誰。
+       *
+       * ★★ **不寫 `account_code`** —— 訂單的科目由 `sync_order_account`
+       *   觸發器從 `fee_type` 推（migration_229 才把兩個名目加進去）。
+       *   寫進來會被覆寫，而寫一個馬上被蓋掉的值只會讓下一個人以為它有作用。
+       */
+      let incMade = 0;
+      if (gen.income.length > 0) {
+        if (!office.propId || !office.estateId) {
+          setGenErr(`找不到「${OFFICE_NAME}」這個房源 —— migration_228 還沒跑，`
+            + '收入沒有地方可以掛。支出照常產生，但這一批先不寫。');
+        } else {
+          const orderRows = gen.income.map((r) => ({
+            order_key: r.key,
+            source: 'oneoff',
+            estate_id: office.estateId,
+            property_id: office.propId,
+            property_raw: OFFICE_NAME,
+            // ★ 房客欄放**付錢的物業** —— 不然營收頁上一整排長一樣
+            guest_name: r.payer || null,
+            // ★ 打掃日當天，0 晚（使用者:「日期 當日如 8/1~8/1」）
+            checkin: r.on, checkout: r.on, nights: 0,
+            amount: r.amount, deposit: 0,
+            fee_type: r.account_code === CODE_LABOR_REV ? '人事費' : '房務清潔',
+            item_name: r.item_name,
+            // ★ 房務是安幸的帳。寫死 'anxing' 不引 DEFAULT_BOOK —— 這一頁沒有換帳本的概念
+            book: 'anxing',
+            imported_via: 'manual',
+          }));
+          const { data, error } = await supabase.from('orders')
+            .upsert(orderRows, { onConflict: 'order_key', ignoreDuplicates: true })
+            .select('id');
+          if (error) {
+            setGenErr('收入寫不進去：' + error.message
+              + '（支出的部分不受影響，可以單獨重按）');
+          } else {
+            incMade = data?.length ?? 0;
+          }
+        }
+      }
 
       let made = 0;
       for (const [rows, conflict] of [
@@ -770,6 +829,27 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
     return () => { alive = false; };
   }, [genOpen, supabase]);
 
+  /**
+   * 安幸辦公室那個物業與房源（migration_228 建的）。
+   *
+   * ★ 不用另外查一次 —— 上面那支 `properties` 查詢本來就會把它載回來,
+   *   它現在是一個正常的房源。
+   *
+   * ★★ 找不到就是 migration_228 沒跑。**不要靜靜地把收入丟掉** ——
+   *   產生時會擋下來並講原因（見 generateInner）。
+   */
+  const office = useMemo(() => {
+    const pid = Object.entries(propNameById).find(([, n]) => n === OFFICE_NAME)?.[0] ?? null;
+    return { propId: pid, estateId: pid ? (estIdByProp[pid] ?? null) : null };
+  }, [propNameById, estIdByProp]);
+
+  /** 人事費要對安幸開收入的物業 id（名字寫死在 lib，見那裡的說明）。 */
+  const laborPairEstates = useMemo(
+    () => new Set(Object.entries(estNameById)
+      .filter(([, n]) => LABOR_BILL_TO_OFFICE.includes(n))
+      .map(([id]) => id)),
+    [estNameById]);
+
   const gen = useMemo(() => {
     const jobs = [...estateLogs.values()].flat();
     /*
@@ -789,9 +869,40 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
       jobs, (pid) => priceById[pid], splitIdx, skipKeys);
     const lab = laborCosts(labor as any, period);
     const hr = hourlyRows(days as any, jobs, hourStaff as any);
-    return { rows, unpriced, lab, hr: hr.rows, hrSkipped: hr.skipped,
-             total: costTotal(rows) + costTotal(lab) + costTotal(hr.rows) };
-  }, [estateLogs, priceById, labor, period, splitIdx, hourStaff, days]);
+
+    /*
+     * ══════════ 成對分錄（2026-09-07）══════════
+     *
+     * 一份工現在是一組:
+     *   物業支出（rows,上面算好的） ＋ 安幸收入（同額反向）
+     *   劉姐做的再多一筆「安幸辦公室 薪資勞務」
+     *
+     * ★★★ 收入的金額**直接取支出那筆**,不重算 ——
+     *   重算的話兩邊會漂,而漂掉的症狀是「收入跟支出差幾百塊」,
+     *   兩邊看起來都很正常。規則在 lib/hk-entries.ts,有測試。
+     */
+    const income: HkEntry[] = [
+      ...cleaningIncome(rows as any, office.propId, (pid) => estateById[pid ?? ''] ?? ''),
+      ...laborIncome(lab as any, laborPairEstates, office.propId,
+                     (id) => estNameById[id] ?? ''),
+    ];
+    /*
+     * ★★★ 劉姐的工資從「房源支出」改成「安幸辦公室支出／薪資勞務」。
+     *   記在房源上的話,物業付過那間房的清潔費之後,
+     *   同一份工又被記了一次成本 —— 而她是安幸的人,不是物業的。
+     */
+    const hrOffice = hourlyExpense(
+      hr.rows, (pid) => propNameById[pid] ?? '',
+      hr.rows.map((r) => ({ key: r.key, property_id: r.property_id })),
+      office.propId);
+
+    return { rows, unpriced, lab, hr: hrOffice, hrSkipped: hr.skipped, income,
+             // ★ 收入與支出**分開加**。加在一起是一個沒有意義的數字
+             expTotal: costTotal(rows) + costTotal(lab) + costTotal(hrOffice),
+             incTotal: sideTotal(income, 'income'),
+             total: costTotal(rows) + costTotal(lab) + costTotal(hrOffice) };
+  }, [estateLogs, priceById, labor, period, splitIdx, hourStaff, days,
+      office.propId, estateById, estNameById, propNameById, laborPairEstates]);
   /** 這次預覽裡有幾筆是已經產生過的。 */
   const doneNum = useMemo(
     () => [...gen.rows, ...gen.lab, ...gen.hr].filter((r) => doneKeys.has(r.key)).length,
@@ -1537,15 +1648,36 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
               )}
               <tr className="border-t border-mor-line font-medium">
                 <td className="py-2">
-                  合計
+                  支出合計
                   <span className="ml-2 text-xs text-gray-400 font-normal">
-                    {gen.rows.length + gen.lab.length + gen.hr.length} 筆支出
+                    {gen.rows.length + gen.lab.length + gen.hr.length} 筆
                   </span>
                 </td>
                 <td className="py-2 text-right tabular-nums text-base">
-                  ${gen.total.toLocaleString('en-US')}
+                  ${gen.expTotal.toLocaleString('en-US')}
                 </td>
               </tr>
+              {/*
+                ★★★ 收入**另外一列，不跟支出相加**（2026-09-07）。
+                  加在一起是一個沒有意義的數字 —— 一邊是安幸賺的、
+                  一邊是物業付的與安幸付的，方向不同。
+
+                ★ 兩者相減才是這門生意的毛利，但那是報表的事，
+                  不在這個「要產生什麼」的預覽裡算。
+              */}
+              {gen.income.length > 0 && (
+                <tr className="border-t border-mor-line font-medium">
+                  <td className="py-2 text-mor-green">
+                    安幸收入
+                    <span className="ml-2 text-xs text-gray-400 font-normal">
+                      {gen.income.length} 筆・記在{OFFICE_NAME}
+                    </span>
+                  </td>
+                  <td className="py-2 text-right tabular-nums text-base text-mor-green">
+                    ${gen.incTotal.toLocaleString('en-US')}
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
 
@@ -1562,7 +1694,8 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
           <div className="mt-3">
             <button onClick={() => setGenRowsOpen(!genRowsOpen)}
               className="text-xs text-mor-blue underline">
-              {genRowsOpen ? '收起明細' : `看這 ${gen.rows.length + gen.lab.length + gen.hr.length} 筆支出長什麼樣子`}
+              {genRowsOpen ? '收起明細'
+                : `看這 ${gen.rows.length + gen.lab.length + gen.hr.length + gen.income.length} 筆長什麼樣子`}
             </button>
             {genRowsOpen && (
               <div className="mt-2 rounded-lg border border-mor-line overflow-hidden">
@@ -1646,17 +1779,38 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                         —— 它是真的匯出去的錢，另外兩種是內部成本認列。
                         全部長一樣的話，核帳的人分不出哪幾筆真的動到現金。
                     */}
+                    {/*
+                      ★★ 收入列用藍底，跟三種支出分得開 ——
+                        同一張表裡混著兩個方向的錢,不標的話核帳的人
+                        會把它們一起加起來。
+                    */}
+                    {gen.income.map((r) => (
+                      <tr key={r.key} className="border-t border-mor-line/60 bg-mor-bluelight/40">
+                        <td className="px-2 py-1 text-gray-500">{r.on}</td>
+                        {nameCell(r.key, r.item_name)}
+                        <td className="px-2 py-1 text-gray-600">{OFFICE_NAME}</td>
+                        <td className="px-2 py-1 text-gray-600">{OFFICE_NAME}</td>
+                        <td className="px-2 py-1 text-gray-500">
+                          {r.account_code === CODE_LABOR_REV ? '人事費' : '房務清潔'}
+                        </td>
+                        <td className="px-2 py-1">
+                          <span className="rounded bg-mor-bluelight text-mor-slate px-1.5 py-0.5">
+                            收入・向 {r.payer || '？'} 收
+                          </span>
+                        </td>
+                        <td className="px-2 py-1 text-gray-400">—</td>
+                        <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap text-mor-slate">
+                          ${r.amount.toLocaleString('en-US')}
+                        </td>
+                      </tr>
+                    ))}
                     {gen.hr.map((r) => (
                       <tr key={r.key} className="border-t border-mor-line/60 bg-mor-greenlight/40">
-                        <td className="px-2 py-1 text-gray-500">{r.spent_on}</td>
-                        {nameCell(r.key, hourlyItemName(r))}
-                        <td className="px-2 py-1 text-gray-600">
-                          {estateById[r.property_id] ?? '—'}
-                        </td>
-                        <td className="px-2 py-1 text-gray-600">
-                          {propNameById[r.property_id] ?? '—'}
-                        </td>
-                        <td className="px-2 py-1 text-gray-500">房務清潔</td>
+                        <td className="px-2 py-1 text-gray-500">{r.on}</td>
+                        {nameCell(r.key, r.item_name)}
+                        <td className="px-2 py-1 text-gray-600">{OFFICE_NAME}</td>
+                        <td className="px-2 py-1 text-gray-600">{OFFICE_NAME}</td>
+                        <td className="px-2 py-1 text-gray-500">薪資勞務</td>
                         <td className="px-2 py-1 text-gray-400">—</td>
                         <td className="px-2 py-1 text-mor-green whitespace-nowrap">匯款 8088</td>
                         <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap">
@@ -1901,7 +2055,9 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
           <div className="flex items-center gap-2 mt-3">
             <button onClick={doGenerate} disabled={genBusy || gen.total === 0}
               className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium hover:bg-mor-slatedark disabled:opacity-40">
-              {genBusy ? '產生中⋯' : `產生 ${gen.rows.length + gen.lab.length + gen.hr.length} 筆支出`}
+              {genBusy ? '產生中⋯'
+                : `產生 ${gen.rows.length + gen.lab.length + gen.hr.length} 筆支出`
+                  + (gen.income.length ? ` ＋ ${gen.income.length} 筆收入` : '')}
             </button>
             <button onClick={() => setGenOpen(false)}
               className="text-xs text-gray-500 underline">取消</button>

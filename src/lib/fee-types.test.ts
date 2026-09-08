@@ -25,9 +25,22 @@ test('★ 兩份清單的「其他」都在最後', () => {
   assert.equal(ONEOFF_FEE_TYPES[ONEOFF_FEE_TYPES.length - 1], '其他');
 });
 
-test('保證金沒有重複出現', () => {
+test('★★ 一次性收入的清單裡沒有任何重複', () => {
+  /*
+   * ONEOFF_FEE_TYPES 是「FEE_TYPES 去掉其他」＋「只屬於它的」＋「其他」拼出來的。
+   * 哪天有人把同一個名目同時加進兩份清單,它就會在下拉裡出現兩次 ——
+   * 而兩個一模一樣的選項，人選了哪一個都對，只是看起來像壞掉。
+   *
+   * ★ 原本這裡寫的是 `ONEOFF_ONLY_FEE_TYPES.length === 1`（只有保證金）。
+   *   那把「現在剛好幾個」當成規則了 —— migration_229 加房務清潔與人事費時
+   *   就壞在這裡。真正要防的是重複，不是數量。
+   */
+  const seen = new Set<string>();
+  for (const t of ONEOFF_FEE_TYPES) {
+    assert.equal(seen.has(t), false, `「${t}」在一次性收入的清單裡出現兩次`);
+    seen.add(t);
+  }
   assert.equal(ONEOFF_FEE_TYPES.filter((t) => t === '保證金').length, 1);
-  assert.equal(ONEOFF_ONLY_FEE_TYPES.length, 1);
 });
 
 test('★ 只有一次性收入才有的科目,不能出現在契約固定加費的預設裡', () => {
