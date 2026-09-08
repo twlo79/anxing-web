@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   linesTotal, parentAmount, childLines, checkDeferral,
-  deferralLabel, childLabel,
+  deferralLabel, childLabel, shortDate,
   recognizedTotal, paidTotal, paidCell,
   type DeferralLine, type ExpenseRow,
 } from './deferral.ts';
@@ -94,15 +94,38 @@ test('認列日都不早於出款日 → 沒有提示', () => {
 
 // ── 顯示文字 ───────────────────────────────────────
 
-test('紅字要同時有實付總額與本期 —— 只有本期的話發票對不上', () => {
-  const s = deferralLabel(10000, 5000);
-  assert.match(s, /實付 \$10,000/);
-  assert.match(s, /本期 \$5,000/);
+test('★★★ 母單那行要同時有實付總額與本期 —— 只有本期的話發票對不上', () => {
+  /*
+   * 釘的是「兩個數字都在」,不是那一行長什麼樣 ——
+   * 文案可以改，會計拿發票搜得到不能改。
+   */
+  const s = deferralLabel(76650, 40880);
+  assert.match(s, /76,650/);
+  assert.match(s, /40,880/);
 });
 
-test('childLabel 指回母單的日期', () => {
-  assert.equal(childLabel('2026-08-08', '房租'), '↳ 遞延自 2026-08-08 房租');
-  assert.equal(childLabel('2026-08-08', null), '↳ 遞延自 2026-08-08');
+test('★ 母單那行不再帶「遞延認列」四個字，也不再是紅字用語（2026-09-08）', () => {
+  // 那四個字改由項目欄的標籤講。同一件事在同一列講兩次是雜訊
+  assert.equal(deferralLabel(76650, 40880).includes('遞延'), false);
+});
+
+test('shortDate 去掉年份', () => {
+  assert.equal(shortDate('2026-09-07'), '09/07');
+  assert.equal(shortDate(''), '');
+  assert.equal(shortDate('2026-09'), '');      // 不是完整日期就不要猜
+});
+
+test('childLabel 是標籤文字，帶母單日期', () => {
+  assert.equal(childLabel('2026-09-07'), '遞延子單・母單 09/07');
+});
+
+test('★★ 母單不在這一頁時只回「遞延子單」—— 不留開口的尾巴', () => {
+  /*
+   * 母單在別的月份時 spent_on 是空的。
+   * 回「遞延子單・母單 」的話畫面上會是一個講到一半的標籤，
+   * 而那看起來像資料壞了。
+   */
+  assert.equal(childLabel(''), '遞延子單');
 });
 
 // ── 認列支出 vs 實際支出 ───────────────────────────

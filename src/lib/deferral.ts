@@ -126,19 +126,52 @@ export function checkDeferral(gross: number, paidOn: string, lines: DeferralLine
 const money = (n: number) => Math.round(n).toLocaleString('en-US');
 
 /**
- * 母單那一列的紅字。
+ * 母單那一列，金額底下的第二行。
  *
- * 一定要同時講出「實付總額」與「本期認列」——
- * 只顯示本期的話,會計拿 10,000 的發票對不上任何一列。
+ * ★★★ 一定要同時講出「實付總額」與「本期認列」——
+ *   只顯示本期的話,會計拿 76,650 的發票對不上任何一列。
+ *
+ * ★ 2026-09-08 拿掉開頭的「遞延認列・」四個字,並且**從紅字改成灰字**:
+ *   ① 那四個字現在由項目欄的「遞延母單」標籤講,同一件事不講兩次
+ *   ② 紅色在這個系統裡是「錯了」的訊號（防呆、必填、孤兒）,
+ *      而遞延是正常的會計處理。用紅色會讓人以為這一列有問題
+ *
+ * ★ 不帶 `$` —— 旁邊金額欄本來就沒有,帶了兩個數字看起來不像同一種東西。
  */
 export function deferralLabel(gross: number, thisPeriod: number): string {
-  return `遞延認列・實付 $${money(gross)}・本期 $${money(thisPeriod)}`;
+  return `實付 ${money(gross)} ／ 本期 ${money(thisPeriod)}`;
 }
 
-/** 子單那一列的說明，點了可以回母單。 */
-export function childLabel(paidOn: string, itemName: string | null): string {
-  return `↳ 遞延自 ${paidOn} ${itemName ?? ''}`.trim();
+/**
+ * `2026-09-07` → `09/07`。
+ *
+ * ★ 標籤裡不放年份 —— 母子單一定在同一年附近,
+ *   而標籤每多四個字就把項目名稱往左擠一次。
+ * ★ 空字串照樣回空字串,呼叫端自己決定要不要顯示（見 childLabel）。
+ */
+export function shortDate(on: string): string {
+  return /^\d{4}-\d{2}-\d{2}$/.test(on) ? on.slice(5).replace('-', '/') : '';
 }
+
+/**
+ * 子單那一列的標籤文字，點了可以回母單。
+ *
+ * ★★★ 2026-09-08 從「↳ 遞延自 2026-09-07」改成標籤（使用者選 A 案）。
+ *   舊版是一段藍色底線文字,擠在**項目名稱前面** ——
+ *   於是一列的開頭不是「這筆在做什麼」而是它的來歷。
+ *   標籤移到名稱後面,跟旁邊的「請款」標籤同一種語言。
+ *
+ * ★★ 母單**不在這一頁的資料裡**時（它在別的月份）`paidOn` 會是空的。
+ *   那時只回「遞延子單」,不要回「遞延子單・母單 」那種尾巴開口的字串 ——
+ *   呼叫端也要記得那種情況不能點（點了跳不過去）。
+ */
+export function childLabel(paidOn: string): string {
+  const d = shortDate(paidOn);
+  return d ? `遞延子單・母單 ${d}` : '遞延子單';
+}
+
+/** 母單那一列的標籤文字。 */
+export const PARENT_CHIP = '遞延母單';
 
 /**
  * 遞延之後，支出有兩個數字，兩個都要看得到。

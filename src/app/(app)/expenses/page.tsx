@@ -16,7 +16,7 @@ import { createClient } from '@/lib/supabase';
 import { useProfile } from '@/lib/profile';
 import Receipts, { type ReceiptsHandle } from '@/components/Receipts';
 import DeferralPanel from '@/components/DeferralPanel';
-import { deferralLabel, childLabel, recognizedTotal, paidTotal, paidCell } from '@/lib/deferral';
+import { deferralLabel, childLabel, PARENT_CHIP, recognizedTotal, paidTotal, paidCell } from '@/lib/deferral';
 import { softDelete } from '@/lib/trash';
 import { voucherBrief, isMultiVoucher } from '@/lib/voucher';
 import { DEFAULT_BOOK } from '@/lib/book';
@@ -791,28 +791,59 @@ export default function ExpensesPage() {
                 className="border-b border-mor-line/60 hover:bg-mor-bluelight/30 cursor-pointer">
                 <td className="px-3 py-2 whitespace-nowrap">{r.spent_on}</td>
                 <td className="px-3 py-2">
-                  {/* 子單縮排並標明來自哪一張母單,點了跳到母單 */}
-                  {r.parent_expense_id && (
-                    <button onClick={(e) => { e.stopPropagation(); const p = byId[r.parent_expense_id!]; if (p) setEdit(p); }}
-                      className="mr-1 text-[11px] text-mor-blue underline hover:text-mor-slate"
-                      title="回到母單修改">
-                      {childLabel(byId[r.parent_expense_id]?.spent_on ?? '', null)}
-                    </button>
-                  )}
+                  {/*
+                    ★★★ 遞延的母子標記一律**放在項目名稱後面**（2026-09-08 使用者選 A 案）。
+
+                      舊版把「↳ 遞延自 2026-09-07」擺在名稱**前面**,
+                      於是一列的開頭不是「這筆在做什麼」而是它的來歷 ——
+                      而使用者掃這一欄要找的是前者。
+
+                    ★ 標籤的樣子跟旁邊的「請款」一致 —— 同一欄裡三種標記
+                      長成三個樣子的話，看的人得先學會分辨它們。
+                  */}
                   {r.item_name}
                   {r.non_operating && <NonOpTag />}
                   {isNonCash(r.tags) && <HkTag />}
                   {r.source_item_id && <span className="ml-2 inline-block rounded-md bg-mor-bluelight text-mor-slate px-1.5 py-0.5 text-[10px]">請款</span>}
+                  {/* 母單 —— 沙色，跟子單的藍色分得開 */}
+                  {r.deferred && (
+                    <span className="ml-2 inline-block rounded-md border border-[#ddd5c6] bg-mor-sand text-gray-600 px-1.5 py-0.5 text-[10px] align-middle">
+                      {PARENT_CHIP}
+                    </span>
+                  )}
+                  {/*
+                    子單 —— 點了跳到母單。
+                    ★★ 母單**不在這一頁的資料裡**時（它在別的月份）不能做成按鈕:
+                      看起來可以點、點了什麼都不會發生,那比沒有連結更糟。
+                      那時退成一個不能點的標籤,文字也只剩「遞延子單」。
+                  */}
+                  {r.parent_expense_id && (byId[r.parent_expense_id] ? (
+                    <button onClick={(e) => { e.stopPropagation(); setEdit(byId[r.parent_expense_id!]); }}
+                      title="回到母單修改"
+                      className="ml-2 inline-block rounded-md border border-[#c9dcf0] bg-white text-mor-slate hover:bg-mor-bluelight px-1.5 py-0.5 text-[10px] align-middle">
+                      {childLabel(byId[r.parent_expense_id]!.spent_on)} ↗
+                    </button>
+                  ) : (
+                    <span className="ml-2 inline-block rounded-md border border-[#ddd5c6] bg-mor-sand text-gray-600 px-1.5 py-0.5 text-[10px] align-middle"
+                      title="母單不在目前的篩選範圍裡（多半在別的月份）">
+                      {childLabel('')}
+                    </span>
+                  ))}
                 </td>
                 <td className="px-3 py-2 text-right font-medium">
                   {fmt(r.amount)}
                   {/*
-                    遞延母單的紅字。**一定要同時講出實付總額**——
+                    遞延母單的第二行。**一定要同時講出實付總額**——
                     母單的 amount 可能是 0,只顯示本期的話,
-                    會計拿 10,000 的發票會搜不到任何一列。
+                    會計拿 76,650 的發票會搜不到任何一列。
+
+                    ★★ 2026-09-08 從紅字改灰字。紅色在這個系統裡是
+                      「錯了」的訊號（防呆、必填、孤兒），而遞延是正常的
+                      會計處理 —— 紅色會讓人以為這一列出了問題。
+                      「這是遞延」由項目欄的標籤講。
                   */}
                   {r.deferred && (
-                    <div className="text-[11px] font-normal text-red-500 whitespace-nowrap">
+                    <div className="text-[11px] font-normal text-gray-500 whitespace-nowrap">
                       {deferralLabel(Number(r.gross_amount) || 0, Number(r.amount) || 0)}
                     </div>
                   )}
