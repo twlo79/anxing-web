@@ -1398,7 +1398,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
           */}
           <button onClick={() => { setGenErr(null); setGenOpen(true); }}
             className="rounded-lg border border-mor-line px-3 py-1.5 text-sm text-gray-600 hover:bg-mor-sand/60">
-            產生本月支出
+            產生收支
           </button>
         </div>
       </div>

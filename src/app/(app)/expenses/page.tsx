@@ -569,7 +569,7 @@ export default function ExpensesPage() {
           <span className="block text-sm mb-2">只看<b>真的付錢出去</b>的支出。</span>
           <span className="block border-t border-mor-line pt-2 text-uisub text-gray-600 leading-relaxed">
             <span className="block">1. 記了帳但錢還沒匯出去的，會帶 <HkTag /> 標籤（付款方式是「無」）</span>
-            <span className="block">2. 目前是排班統計按「產生本月支出」的那幾十筆</span>
+            <span className="block">2. 目前是排班統計按「產生收支」的那幾十筆</span>
             <span className="block">3. 打開開關，那些就不列出來</span>
           </span>
           <span className="block mt-2 pt-2 border-t border-mor-line text-xs text-gray-400 leading-relaxed">
