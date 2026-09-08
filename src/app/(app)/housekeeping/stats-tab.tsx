@@ -1829,10 +1829,19 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                         <td className="px-2 py-1 text-gray-500">
                           {r.account_code === CODE_LABOR_REV ? '人事費' : '房務清潔'}
                         </td>
-                        <td className="px-2 py-1">
-                          <span className="rounded bg-mor-bluelight text-mor-slate px-1.5 py-0.5">
-                            收入・向 {r.payer || '？'} 收
-                          </span>
+                        {/*
+                          ★★ 用途欄**不用標籤**（2026-09-08 使用者:「這些不用標籤」）。
+
+                            藍底標籤在這一欄裡塞不下,每一列都斷成兩行 ——
+                            而這一整批有幾十列,等於整張表被撐高一倍。
+                            支出那三種列的用途欄本來就是純文字,標籤是這一欄唯一的例外。
+
+                          ★ 「收入・」三個字也拿掉:整列已經是藍底、金額也是藍字,
+                            那件事講過了。留下來的是這一欄真正要回答的問題 ——
+                            **這筆是向誰收的**。
+                        */}
+                        <td className="px-2 py-1 text-mor-slate whitespace-nowrap">
+                          向 {r.payer || '？'} 收
                         </td>
                         <td className="px-2 py-1 text-gray-400">—</td>
                         <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap text-mor-slate">
