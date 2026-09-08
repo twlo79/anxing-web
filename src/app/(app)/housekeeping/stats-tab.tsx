@@ -710,23 +710,52 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
        */
       let incMade = 0;
       if (gen.income.length > 0) {
-        if (!office.propId || !office.estateId) {
-          setGenErr(`找不到「${OFFICE_NAME}」這個房源 —— migration_228 還沒跑，`
+        /*
+         * ★★★ 只需要**物業**，不需要房源（2026-09-08 使用者指定的欄位配置）。
+         *
+         *   `orders.property_id` 與 `property_raw` 都允許空白 ——
+         *   契約加費那邊也是只掛物業（見 contracts/page.tsx 的 saveFee）。
+         *
+         * ★ 但支出那邊**還是要** `office.propId`（劉姐的工資記在
+         *   安幸辦公室這個房源上），所以那個房源不能刪。
+         */
+        if (!office.estateId) {
+          setGenErr(`找不到「${OFFICE_NAME}」這個物業 —— migration_228 還沒跑，`
             + '收入沒有地方可以掛。支出照常產生，但這一批先不寫。');
         } else {
           const orderRows = gen.income.map((r) => ({
             order_key: r.key,
             source: 'oneoff',
             estate_id: office.estateId,
-            property_id: office.propId,
-            property_raw: OFFICE_NAME,
+            /*
+             * ★★★ 房源留空（2026-09-08 使用者:「房源：空白」）。
+             *
+             *   填「安幸辦公室」的話,營收清單的房源欄會是一整排同樣四個字,
+             *   而房源下拉會多一個根本不存在的房間 —— 兩個都是噪音。
+             *
+             * ★ 房號改走 `note`,清單上看得到的則是 `item_name`
+             *   （「房務清潔 14B3」）。
+             */
+            property_id: null as string | null,
+            property_raw: null as string | null,
             // ★ 房客欄放**付錢的物業** —— 不然營收頁上一整排長一樣
             guest_name: r.payer || null,
+            // ★ 備註放房號（使用者:「備註：房號 房源」）。人事費那幾筆沒有房號 → null
+            note: r.room || null,
             // ★ 打掃日當天，0 晚（使用者:「日期 當日如 8/1~8/1」）
             checkin: r.on, checkout: r.on, nights: 0,
             amount: r.amount, deposit: 0,
             fee_type: r.account_code === CODE_LABOR_REV ? '人事費' : '房務清潔',
-            item_name: r.item_name,
+            /*
+             * ★★ 預覽裡改過的名稱**要用**（2026-09-08 修）。
+             *   原本這裡寫死 `r.item_name`,於是那一格可以編輯、
+             *   改完按下去卻寫進舊的值 —— 沒有錯誤訊息,
+             *   使用者只會覺得「我明明改了」。三種支出那邊都吃 nameBy,
+             *   收入漏掉是抄的時候掉的。
+             *
+             * ★ 空字串當成沒填 → null,不讓項目變成空白字串。
+             */
+            item_name: nameBy[r.key]?.trim() || r.item_name || null,
             // ★ 房務是安幸的帳。寫死 'anxing' 不引 DEFAULT_BOOK —— 這一頁沒有換帳本的概念
             book: 'anxing',
             imported_via: 'manual',
@@ -1789,7 +1818,14 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                         <td className="px-2 py-1 text-gray-500">{r.on}</td>
                         {nameCell(r.key, r.item_name)}
                         <td className="px-2 py-1 text-gray-600">{OFFICE_NAME}</td>
-                        <td className="px-2 py-1 text-gray-600">{OFFICE_NAME}</td>
+                        {/*
+                          ★ 房源**故意留空**（2026-09-08）—— 寫進去的就是空的。
+                            預覽跟實際寫入不一樣的話，核完帳的人到營收頁會以為系統寫錯。
+                          ★ 房號在備註（滑上去看得到），清單上則看 項目 那一欄。
+                        */}
+                        <td className="px-2 py-1 text-gray-400" title={r.room ? `備註：${r.room}` : undefined}>
+                          {r.room ? `（空白・備註 ${r.room}）` : '—'}
+                        </td>
                         <td className="px-2 py-1 text-gray-500">
                           {r.account_code === CODE_LABOR_REV ? '人事費' : '房務清潔'}
                         </td>

@@ -47,6 +47,28 @@ describe('★★★ 清潔那一對：安幸收入 ＋ 物業支出，同額反�
     assert.ok(inc.every((r) => r.property_id === OFFICE && r.office));
   });
 
+  test('★★ 房號帶在 room 上 —— 訂單的備註欄靠它（2026-09-08）', () => {
+    /*
+     * 收入列的房源欄是空的,房號只剩兩個地方:
+     *   ① `item_name`（營收清單上看得到）
+     *   ② `note` ← 這一條釘的就是它的來源
+     * room 掉了的話,備註會全部變空白而畫面上完全看不出來 ——
+     * 只有事後有人問「這 730 是哪一間」時才會發現。
+     */
+    const inc = cleaningIncome(cost, OFFICE, payerOf);
+    assert.deepEqual(inc.map((r) => r.room), ['14B3', 'A09']);
+    // 項目也要留著房號 —— 兩邊各有各的用途，不是重複
+    assert.equal(inc[0].item_name, '14B3');
+  });
+
+  test('★ 人事費那一對沒有房號 —— room 是 undefined，備註會是 null', () => {
+    const lab = laborIncome(
+      [{ key: 'L1', spent_on: '2026-08-31', estate_id: 'e1', amount: 200000 }],
+      new Set(['e1']), OFFICE, () => '正隆');
+    assert.equal(lab.length, 1);
+    assert.equal(lab[0].room, undefined);
+  });
+
   test('科目是房務清潔（migration_228 改成 both 才選得到）', () => {
     assert.ok(cleaningIncome(cost, OFFICE, payerOf).every((r) => r.account_code === CODE_CLEAN));
   });
@@ -58,9 +80,14 @@ describe('★★★ 清潔那一對：安幸收入 ＋ 物業支出，同額反�
     assert.equal(inc.length, 0);
   });
 
-  test('項目名稱帶房號，日期就是打掃日', () => {
+  test('★★ 項目只放房號，不重複科目名（2026-09-08）', () => {
+    /*
+     * 營收清單的標籤是「科目・項目」,科目已經是「房務清潔」——
+     * 項目再帶一次就變成「房務清潔・房務清潔 14B3」。
+     */
     const inc = cleaningIncome(cost, OFFICE, payerOf);
-    assert.equal(inc[0].item_name, '房務清潔 14B3');
+    assert.equal(inc[0].item_name, '14B3');
+    assert.equal(inc[0].item_name.includes('房務清潔'), false);
     assert.equal(inc[0].on, '2026-08-01');
   });
 });

@@ -92,6 +92,22 @@ export type HkEntry = {
    * ★ 支出沒有這個概念,留 undefined。
    */
   payer?: string;
+  /**
+   * 這一筆是哪一間房的工。寫進訂單的「備註」欄
+   * （2026-09-08 使用者:「備註：房號 房源」）。
+   *
+   * ★★ 收入列的房源欄是**空的** —— 安幸辦公室不是真的房間,
+   *   填進去只會讓營收頁一整排長一樣、房源下拉多一個假房號。
+   *   所以房號改走備註。
+   *
+   * ★ 備註**不在營收清單上**（`revenue_recognitions` 沒有 `note`,
+   *   只有點開單筆的抽屜才讀得到訂單本體）——
+   *   所以 `item_name` 那邊**也要留著房號**，那一欄清單上看得到。
+   *   兩邊都寫不是重複,是「清單上看得到」與「明細查得到」兩件事。
+   *
+   * ★ 人事費那一對沒有房號,留 undefined。
+   */
+  room?: string;
 };
 
 /** 一份工（`estateLog()` 攤平後取用得到的欄位）。 */
@@ -134,12 +150,23 @@ export function cleaningIncome(
       key: `HKREV|${r.key}`,
       side: 'income' as const,
       on: r.work_date,
-      item_name: `房務清潔 ${r.label || ''}`.trim(),
+      /*
+       * ★★★ 項目**只放房號**，不要再前綴「房務清潔」（2026-09-08）。
+       *
+       *   營收清單的來源標籤是 `oneoffLabel()` = 「科目・項目」,
+       *   而科目已經是「房務清潔」了 ——
+       *   帶前綴會變成「一次性收入・房務清潔・房務清潔 14B3」。
+       *
+       * ★ 房源欄留空之後，這一欄是房號在營收清單上**唯一的出口**
+       *   （備註在 `orders` 上，認列表沒有那一欄）。
+       */
+      item_name: (r.label || '').trim(),
       amount: r.amount,
       account_code: CODE_CLEAN,
       property_id: officeId,
       office: true,
       payer: payerOf(r.property_id),
+      room: r.label || undefined,
     }));
 }
 
@@ -165,7 +192,8 @@ export function laborIncome(
       key: `HKLABREV|${r.key}`,
       side: 'income' as const,
       on: r.spent_on,
-      item_name: `人事費 ${estateName(r.estate_id!) || ''}`.trim(),
+      // ★ 同上：科目已經是「人事費」，項目放物業名 → 「人事費・正隆」
+      item_name: (estateName(r.estate_id!) || '').trim(),
       amount: r.amount,
       account_code: CODE_LABOR_REV,
       property_id: officeId,
