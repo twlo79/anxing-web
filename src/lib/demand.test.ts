@@ -1,7 +1,8 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  isFilled, isComplete, validateDemand, estateIdToSave, type DemandItemLike,
+  isFilled, isComplete, validateDemand, estateIdToSave, newItemRow,
+  type DemandItemLike, type DemandItemDraft,
 } from './demand.ts';
 
 const estate = (name = '衛生紙', id = 'e1'): DemandItemLike =>
@@ -112,5 +113,55 @@ describe('estateIdToSave', () => {
   test('★ 辦公室即使 estate_id 還留著也回 null', () => {
     const dirty: DemandItemLike = { item_name: 'x', purpose_type: 'office', estate_id: 'e1' };
     assert.equal(estateIdToSave(dirty), null);
+  });
+});
+
+// ── 新增時寫進去的那一列（2026-09-09）────────────────────
+
+describe('★★★ newItemRow —— 表單收的每一欄都要寫進去', () => {
+  const D = (o: Partial<DemandItemDraft> = {}): DemandItemDraft => ({
+    item_name: ' 冷氣檔板 ', purpose_type: 'office', estate_id: '',
+    spec: ' 2個 ', buy_link: ' https://www.momoshop.com.tw/abc ', ...o,
+  });
+
+  test('★★★ buy_link 要寫進去 —— 它從上線到現在一次都沒存過', () => {
+    /*
+     * 表單有輸入框、列表也有顯示「建議連結」的程式碼，
+     * 中間的 insert 少寫了一行 —— 於是連結永遠是空的，
+     * 而畫面上只是「沒有連結」，看起來像使用者沒填。
+     * 2026-09-09 使用者:「沒顯示連結」。
+     */
+    assert.equal(newItemRow(D(), 'd1').buy_link, 'https://www.momoshop.com.tw/abc');
+  });
+
+  test('★★★ 表單收的四欄一個都不能少', () => {
+    // 下次再加一欄，這一條會提醒你這裡也要加
+    const r = newItemRow(D(), 'd1');
+    for (const k of ['item_name', 'spec', 'buy_link', 'purpose_type', 'estate_id', 'demand_id']) {
+      assert.ok(k in r, `少了 ${k}`);
+    }
+  });
+
+  test('★★ 空字串一律寫 null —— 「沒填」只能有一種形狀', () => {
+    const r = newItemRow(D({ spec: '   ', buy_link: '' }), 'd1');
+    assert.equal(r.spec, null);
+    assert.equal(r.buy_link, null);
+  });
+
+  test('★ 前後空白要去掉 —— 貼上網址常常帶一個空格', () => {
+    assert.equal(newItemRow(D(), 'd1').item_name, '冷氣檔板');
+    assert.equal(newItemRow(D(), 'd1').spec, '2個');
+  });
+
+  test('★★★ 安幸辦公室的 estate_id 一定是 null', () => {
+    assert.equal(newItemRow(D({ purpose_type: 'office', estate_id: 'e1' }), 'd1').estate_id, null);
+  });
+
+  test('★★ 物業的 estate_id 照寫', () => {
+    assert.equal(newItemRow(D({ purpose_type: 'estate', estate_id: 'e1' }), 'd1').estate_id, 'e1');
+  });
+
+  test('demand_id 要帶上', () => {
+    assert.equal(newItemRow(D(), 'd-99').demand_id, 'd-99');
   });
 });

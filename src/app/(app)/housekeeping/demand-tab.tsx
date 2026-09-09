@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
-import { isFilled, validateDemand, estateIdToSave } from '@/lib/demand';
+import { isFilled, validateDemand, newItemRow } from '@/lib/demand';
 import { useProfile } from '@/lib/profile';
 import { ReqMark } from '@/components/Req';
 import {
@@ -115,7 +115,20 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
   const supabase = useMemo(() => createClient(), []);
   const { profile } = useProfile();
   const role = profile?.role ?? '';
-  /** 會計以上看得到全部；其餘只看得到自己提的（RLS 也擋，這裡只是不要白撈） */
+  /**
+   * 會計以上才有**動作**（轉請款、標完成、刪除、改平台、勾選）。
+   *
+   * ★★ 2026-09-09 起**讀取不再靠這個** —— migration_233 把
+   *   `pd_read` / `pdi_read` 放寬成「任何員工都看得到」，
+   *   所以房務與管家看得到全部的單，只是動不了。
+   *
+   *   放寬的理由:兩個房務同時提同一箱衛生紙，原本沒有任何地方擋得住；
+   *   而且只看得到自己的話，新人第一次打開是「共 0 張」＋一個空白框,
+   *   看起來就是壞掉（2026-09-09 使用者就是這樣撞上的）。
+   *
+   * ★ 名字沒有改成 `canAct` 是因為它散在十幾個地方 ——
+   *   改名的風險大於它帶來的清楚。這段註解負責講清楚它現在的意思。
+   */
   const seesAll = ['accountant', 'manager', 'super_admin'].includes(role);
 
   const [rows, setRows] = useState<Demand[]>([]);
@@ -548,18 +561,14 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
       .select('id').single();
     if (error || !d) { setSaving(false); return onMsg('建立失敗：' + (error?.message ?? ''), true); }
 
-    const { error: e2 } = await supabase.from('purchase_demand_items').insert(
-      items.map((i) => ({
-        demand_id: d.id, item_name: i.item_name.trim(), spec: i.spec.trim() || null,
-        purpose_type: i.purpose_type,
-        /*
-         * ★★ office 一定寫 null，不是空字串也不是留著上一次的物業。
-         *   互斥約束（`pdi_purpose_one_of`）會擋，但擋下來的訊息看不懂 ——
-         *   而且真正的傷害是「沒擋住」的那種寫法:報表照 estate_id 分組，
-         *   一筆同時算進辦公室與那個物業，兩邊都對不上。
-         */
-        estate_id: estateIdToSave(i),
-      })));
+    /*
+     * ★★★ 這一列長什麼樣寫在 `lib/demand.ts` 的 `newItemRow()`（有測試）。
+     *   原本在這裡手拼，而 `buy_link` **從上線到現在一次都沒被寫進去** ——
+     *   表單有那個框、列表也有顯示「建議連結」的程式碼，
+     *   中間少了一行，於是連結永遠是空的（2026-09-09 使用者:「沒顯示連結」）。
+     */
+    const { error: e2 } = await supabase.from('purchase_demand_items')
+      .insert(items.map((i) => newItemRow(i, d.id)));
     setSaving(false);
     if (e2) {
       /*
@@ -639,9 +648,13 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                 })}
                   className="w-full flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-left hover:bg-mor-sand/30">
                   <span className="font-medium text-sm">{d.demand_no ?? '（未編號）'}</span>
-                  {seesAll && (
-                    <span className="text-xs text-gray-500">{d.requester_name ?? '—'}</span>
-                  )}
+                  {/*
+                    ★★★ 「誰提的」**每個人都要看得到**（2026-09-09）。
+                      原本只給會計以上看 —— 但放寬讀取之後，
+                      房務會看到一堆單卻不知道是誰提的，
+                      而「知道是誰提的」正是避免重複提的那個資訊。
+                  */}
+                  <span className="text-xs text-gray-500">{d.requester_name ?? '—'}</span>
                   <span className="text-xs text-gray-400">{d.requested_on}</span>
                   {/* ★ 用 demandClass 不是 DEMAND_STATUS_CLASS[p.status] ——
                       「已採購」是顯示字，不在那四個 status 值裡（migration_219） */}
