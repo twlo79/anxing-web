@@ -58,7 +58,7 @@ describe('★★★ 清潔那一對：安幸收入 ＋ 物業支出，同額反�
     const inc = cleaningIncome(cost, OFFICE, payerOf);
     assert.deepEqual(inc.map((r) => r.room), ['14B3', 'A09']);
     // 項目也要留著房號 —— 兩邊各有各的用途，不是重複
-    assert.equal(inc[0].item_name, '14B3');
+    assert.ok(inc[0].item_name.includes('14B3'));
   });
 
   test('★ 人事費那一對沒有房號 —— room 是 undefined，備註會是 null', () => {
@@ -80,14 +80,17 @@ describe('★★★ 清潔那一對：安幸收入 ＋ 物業支出，同額反�
     assert.equal(inc.length, 0);
   });
 
-  test('★★ 項目只放房號，不重複科目名（2026-09-08）', () => {
+  test('★★★ 項目跟支出那一筆同名（2026-09-09 使用者:「收入 也叫 房務清潔 房源」）', () => {
     /*
-     * 營收清單的標籤是「科目・項目」,科目已經是「房務清潔」——
-     * 項目再帶一次就變成「房務清潔・房務清潔 14B3」。
+     * 成對的兩筆在兩張表上要對得起來 —— 名字不一樣的話
+     * 核帳的人得自己猜哪一筆配哪一筆。
+     *
+     * ★ 用的是同一支 `cleanItemName()`，不是各拼各的字串。
+     * ★★ 營收清單那個「房務清潔・房務清潔 14B3」的重複
+     *   是在 `oneoffLabel()` 修的，不是把兩邊名字弄得不一樣。
      */
     const inc = cleaningIncome(cost, OFFICE, payerOf);
-    assert.equal(inc[0].item_name, '14B3');
-    assert.equal(inc[0].item_name.includes('房務清潔'), false);
+    assert.equal(inc[0].item_name, '房務清潔 14B3');
     assert.equal(inc[0].on, '2026-08-01');
   });
 });

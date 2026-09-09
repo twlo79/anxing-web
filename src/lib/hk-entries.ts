@@ -46,6 +46,8 @@
  */
 
 /** 會計科目。三個都在 `account_codes` 裡（migration_228）。 */
+import { cleanItemName } from './hk-cost.ts';
+
 export const CODE_CLEAN = 'hk_cleaning';   // 房務清潔（kind=both，收支兩端共用）
 export const CODE_SALARY = 'salary';       // 薪資勞務（支出）
 export const CODE_LABOR_REV = 'hk_labor';  // 人事費（收入）
@@ -132,6 +134,8 @@ export function cleaningIncome(
   costRows: {
     key: string; work_date: string; amount: number; label: string;
     property_id: string | null;
+    /** 給 `cleanItemName()` 用 —— 沒帶就不印「×N」 */
+    units?: number; fixedAmount?: boolean;
   }[],
   officeId: string | null,
   /**
@@ -151,16 +155,19 @@ export function cleaningIncome(
       side: 'income' as const,
       on: r.work_date,
       /*
-       * ★★★ 項目**只放房號**，不要再前綴「房務清潔」（2026-09-08）。
+       * ★★★ 項目名稱**跟支出那一筆一模一樣**（2026-09-09 使用者:
+       *   「收入 也叫 房務清潔 房源」）。
        *
-       *   營收清單的來源標籤是 `oneoffLabel()` = 「科目・項目」,
-       *   而科目已經是「房務清潔」了 ——
-       *   帶前綴會變成「一次性收入・房務清潔・房務清潔 14B3」。
+       *   同一支 `cleanItemName()` 產生,不是各拼各的字串 ——
+       *   成對的兩筆在兩張表上要對得起來,名字不一樣的話
+       *   核帳的人得自己猜哪一筆配哪一筆。
        *
-       * ★ 房源欄留空之後，這一欄是房號在營收清單上**唯一的出口**
-       *   （備註在 `orders` 上，認列表沒有那一欄）。
+       * ★ 我 2026-09-08 一度把收入這邊改成只放房號,理由是
+       *   營收清單的標籤會變成「房務清潔・房務清潔 14B3」。
+       *   那個重複改在 `oneoffLabel()` 修（科目與項目開頭相同就不重印），
+       *   不是把兩邊的名字弄得不一樣。
        */
-      item_name: (r.label || '').trim(),
+      item_name: cleanItemName(r.label, Number(r.units), r.fixedAmount),
       amount: r.amount,
       account_code: CODE_CLEAN,
       property_id: officeId,
@@ -192,8 +199,8 @@ export function laborIncome(
       key: `HKLABREV|${r.key}`,
       side: 'income' as const,
       on: r.spent_on,
-      // ★ 同上：科目已經是「人事費」，項目放物業名 → 「人事費・正隆」
-      item_name: (estateName(r.estate_id!) || '').trim(),
+      // ★ 同上：跟支出那一筆對得起來（2026-09-09 使用者:「收入 也叫 人事費 房源」）
+      item_name: `人事費 ${estateName(r.estate_id!) || ''}`.trim(),
       amount: r.amount,
       account_code: CODE_LABOR_REV,
       property_id: officeId,

@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  hourlyOnlyJob, hourlyOnlyKeys, splitEvenly, hourlyRows, hourlyItemName,
+  splitEvenly, hourlyRows, hourlyItemName,
 } from './hk-hourly.ts';
 
 /**
@@ -19,47 +19,6 @@ import {
 const LIU = 'liu';          // 時薪
 const TING = 'ting';        // 間數
 const HOURLY = new Set([LIU]);
-
-describe('★★★ 哪幾份工要從清潔費排除', () => {
-  test('★★★ 只有劉姐做的 → 排除（取代）', () => {
-    assert.equal(hourlyOnlyJob(
-      { work_date: '2026-08-30', property_id: 'p1', work_type: '退房', staffIds: [LIU] },
-      HOURLY), true);
-  });
-
-  test('★★★ 庭玉＋劉姐合掃 → 不排除，清潔費原價照算', () => {
-    /*
-     * 2026-09-07 使用者:「合掃 各算各的」「劉姐一樣用時數算錢」。
-     * 砍掉或打折的話庭玉的錢會默默少掉 —— 那份工對按間計酬的她
-     * 沒有因為旁邊多一個人而變便宜。
-     */
-    assert.equal(hourlyOnlyJob(
-      { work_date: '2026-08-01', property_id: 'p1', work_type: '退房', staffIds: [TING, LIU] },
-      HOURLY), false);
-  });
-
-  test('★★ 沒指派任何人的工不排除 —— 排掉的話那間房的成本會消失', () => {
-    assert.equal(hourlyOnlyJob(
-      { work_date: '2026-08-01', property_id: 'p1', work_type: '退房', staffIds: [] },
-      HOURLY), false);
-  });
-
-  test('★★★ key 的格式要跟 cleaningCosts 一模一樣', () => {
-    // 差一個字元就等於沒排除到,而症狀是「劉姐的房間付了兩次」
-    const keys = hourlyOnlyKeys([
-      { work_date: '2026-08-30', property_id: 'p1', work_type: '退房', staffIds: [LIU] },
-      { work_date: '2026-08-01', property_id: 'p2', work_type: '退房', staffIds: [TING, LIU] },
-    ], HOURLY);
-    assert.deepEqual([...keys], ['2026-08-30|p1|退房']);
-  });
-
-  test('沒房源的工不進排除清單 —— 它本來就不會產生清潔費', () => {
-    const keys = hourlyOnlyKeys([
-      { work_date: '2026-08-29', property_id: null, work_type: '退房', staffIds: [LIU] },
-    ], HOURLY);
-    assert.equal(keys.size, 0);
-  });
-});
 
 describe('★★★ splitEvenly —— 攤分要湊得回總數', () => {
   test('★★★ 除不盡時加起來仍然等於原數', () => {

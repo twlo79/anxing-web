@@ -133,7 +133,20 @@ export function oneoffLabel(r: RevRow): string {
    *   兩邊一起變才不會出現「篩選器有這一項、清單卻是另一個字」
    *   —— 所以只能改這裡，不能在畫面上另外處理。
    */
-  return r.item_name ? `${code}・${r.item_name}` : code;
+  const item = (r.item_name ?? '').trim();
+  if (!item) return code;
+  /*
+   * ★★ 項目本身就以科目開頭時**不要再印一次**（2026-09-09）。
+   *
+   *   房務清潔的項目是「房務清潔 14B3」（跟支出那一筆同名，
+   *   刻意的 —— 成對的兩筆要對得起來），
+   *   照舊拼的話標籤會變成「一次性收入・房務清潔・房務清潔 14B3」。
+   *
+   * ★ 修在這裡而不是把項目名稱改短:名字是給**兩張表對帳**用的,
+   *   重複只是這一個標籤的顯示問題。
+   */
+  if (item === code || item.startsWith(`${code} `)) return item;
+  return `${code}・${item}`;
 }
 
 /** 一次性收入依「科目・項目」彙總,金額大到小。 */

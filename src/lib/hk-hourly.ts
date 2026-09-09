@@ -84,35 +84,18 @@ export type HourlySkip = {
   reason: '沒有房源' | '沒設時薪';
 };
 
-/**
- * 這一份工是不是「只有時薪人員」做的。
+/*
+ * ══════════════════════════════════════════════════════
+ * 【這裡曾經有 hourlyOnlyJob() / hourlyOnlyKeys()，2026-09-09 移除】
  *
- * ★ 沒有指派任何人的工**不算** —— 那種是資料還沒補完,
- *   排除掉的話那間房的成本會直接消失,而畫面上看不出來。
- */
-export function hourlyOnlyJob(j: HourlyJob, hourlyIds: ReadonlySet<string>): boolean {
-  return j.staffIds.length > 0 && j.staffIds.every((id) => hourlyIds.has(id));
-}
-
-/**
- * 要從清潔費排除的 job key。
+ * 它們的用途是「把劉姐獨做的那幾份工從清潔費裡排除」。
+ * 那在舊模型（工資記在房源上）是對的，在成對分錄的新模型裡是錯的 ——
+ * 完整理由寫在 `hk-cost.ts` 的 `cleaningCosts()` 裡面。
  *
- * ★★★ key 的格式必須跟 `cleaningCosts()` 算出來的那一個**一模一樣**
- *   （`日期|房源|工作類型`）—— 差一個字元就等於沒排除到,
- *   而症狀是「劉姐的房間付了兩次」,帳面上完全正常。
+ * ★ 不留著「以防萬一」:一支沒有人呼叫的排除函式，
+ *   下一個看到它的人會以為那是現行規則而把它接回去。
+ * ══════════════════════════════════════════════════════
  */
-export function hourlyOnlyKeys(
-  jobs: HourlyJob[], hourlyIds: ReadonlySet<string>,
-): Set<string> {
-  const out = new Set<string>();
-  for (const j of jobs ?? []) {
-    if (!j.property_id) continue;              // 沒房源的本來就不會產生清潔費
-    if (hourlyOnlyJob(j, hourlyIds)) {
-      out.add(`${j.work_date}|${j.property_id}|${j.work_type}`);
-    }
-  }
-  return out;
-}
 
 /**
  * 把一個整數平均分成 n 份，**加起來剛好等於原數**。

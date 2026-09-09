@@ -478,46 +478,51 @@ describe('missingEstateMsg —— 要唸出是哪幾筆', () => {
   });
 });
 
-// ── 時薪人員做的工不產生清潔費（2026-09-07）────────
+// ── 時薪人員做的工**照樣**產生清潔費（2026-09-09 改）────────
 
-import { hourlyOnlyKeys } from './hk-hourly.ts';
-
-describe('★★★ 時薪人員一個人做完的工，不產生清潔費', () => {
+describe('★★★ 時薪人員（劉姐）獨做的工，清潔費照算', () => {
+  /*
+   * 2026-09-07 曾經有一條「劉姐獨做的不產生清潔費」的排除，
+   * 2026-09-09 拿掉了 —— 理由在 hk-cost.ts 的 cleaningCosts() 裡。
+   *
+   * 一句話:她的工資記在**安幸辦公室**，物業付的是清潔費，兩件事互不相干。
+   * 排除留著的話「安幸付了工資卻沒有向任何人收錢」，
+   * 而畫面上只是少了幾列，總額看起來很正常。
+   *
+   * ★★★ 這一組測試釘的就是「不要再排除回去」。
+   */
   const price = () => 1000;
   const jobs: any[] = [
-    // 劉姐一個人做的 —— 成本由她的工時支出承擔
+    // 劉姐一個人做的
     { work_date: '2026-08-30', property_id: 'p1', work_type: '退房',
       label: '14B5', staffIds: ['liu'], units: 1, points: 0, unknownPoints: 0 },
-    // 庭玉＋劉姐合掃 —— 庭玉按間計酬，清潔費原價照算
+    // 庭玉＋劉姐合掃
     { work_date: '2026-08-01', property_id: 'p2', work_type: '退房',
       label: '14B3', staffIds: ['ting', 'liu'], units: 1, points: 0, unknownPoints: 0 },
-    // 只有庭玉 —— 完全不受影響
+    // 只有庭玉
     { work_date: '2026-08-02', property_id: 'p3', work_type: '退房',
       label: 'A09', staffIds: ['ting'], units: 1, points: 0, unknownPoints: 0 },
   ];
-  const ex = hourlyOnlyKeys(jobs, new Set(['liu']));
 
-  test('★★★ 劉姐獨做的那間不產生', () => {
-    const { rows } = cleaningCosts(jobs, price, undefined, ex);
-    assert.equal(rows.some((r) => r.property_id === 'p1'), false);
-  });
-
-  test('★★★ 合掃那間照算，而且是原價不打折', () => {
-    // 打折的話庭玉的錢會默默少掉 —— 那份工對她沒有變便宜
-    const { rows } = cleaningCosts(jobs, price, undefined, ex);
-    const r = rows.find((x) => x.property_id === 'p2');
-    assert.ok(r);
+  test('★★★ 劉姐獨做的那間也要產生 —— 物業還是要付清潔費', () => {
+    const { rows } = cleaningCosts(jobs, price);
+    const r = rows.find((x) => x.property_id === 'p1');
+    assert.ok(r, '劉姐獨做的房間沒有產生清潔費 —— 排除規則被加回去了');
     assert.equal(r.amount, 1000);
   });
 
-  test('★ 只有間數人員的完全不受影響', () => {
-    const { rows } = cleaningCosts(jobs, price, undefined, ex);
-    assert.ok(rows.some((r) => r.property_id === 'p3'));
+  test('★★ 三份工三筆，一筆都不能少', () => {
+    const { rows } = cleaningCosts(jobs, price);
+    assert.equal(rows.length, 3);
   });
 
-  test('★★ 不傳排除清單時，行為跟以前一字不差', () => {
-    // 既有的呼叫端沒給第四個參數 —— 那條路必須完全沒變
-    const a = cleaningCosts(jobs, price);
-    assert.equal(a.rows.length, 3);
+  test('★★★ 合掃那間照算原價，不因為旁邊有時薪人員而打折', () => {
+    const { rows } = cleaningCosts(jobs, price);
+    assert.equal(rows.find((x) => x.property_id === 'p2')?.amount, 1000);
+  });
+
+  test('★ 只有間數人員的完全不受影響', () => {
+    const { rows } = cleaningCosts(jobs, price);
+    assert.ok(rows.some((r) => r.property_id === 'p3'));
   });
 });

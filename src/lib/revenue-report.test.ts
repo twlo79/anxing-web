@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   type RevRow, sum, classOf, skeleton, roomLines, reconcile,
   inEstateBlock, isOffice, isCompany, estateOf, ROOM_NONE, itemLabel, oneoffItems, ONEOFF_LABEL,
-  isOneoffSource, rentOnly,
+  isOneoffSource, rentOnly, oneoffLabel,
 } from './revenue-report.ts';
 
 /**
@@ -226,4 +226,38 @@ test('rentOnly：打開時濾掉一次性', () => {
 
 test('rentOnly：全部都是一次性時回空陣列，不是 undefined', () => {
   assert.deepEqual(rentOnly([{ source: 'oneoff' }], true), []);
+});
+
+
+// ── 一次性收入的標籤：科目與項目不要重複（2026-09-09）────────
+
+describe('oneoffLabel —— 項目本身就以科目開頭時不重印', () => {
+  const R = (fee: string | null, item: string | null) =>
+    ({ source: 'oneoff', fee_type: fee, item_name: item } as unknown as RevRow);
+
+  test('★★★ 房務清潔：項目已經帶科目，不要變成「房務清潔・房務清潔 14B3」', () => {
+    assert.equal(oneoffLabel(R('房務清潔', '房務清潔 14B3')), '房務清潔 14B3');
+  });
+
+  test('★★ 人事費同理', () => {
+    assert.equal(oneoffLabel(R('人事費', '人事費 正隆')), '人事費 正隆');
+  });
+
+  test('項目跟科目一模一樣時只印一次', () => {
+    assert.equal(oneoffLabel(R('房務清潔', '房務清潔')), '房務清潔');
+  });
+
+  test('★ 一般的一次性收入照舊拼「科目・項目」', () => {
+    assert.equal(oneoffLabel(R('清潔費', '洗衣機')), '清潔費・洗衣機');
+  });
+
+  test('★★ 只是開頭幾個字剛好相同不算 —— 要整個詞加空白才算', () => {
+    // 「清潔費用分攤」不是以「清潔費 」開頭，該照舊拼
+    assert.equal(oneoffLabel(R('清潔費', '清潔費用分攤')), '清潔費・清潔費用分攤');
+  });
+
+  test('沒有項目時只印科目，不留「・」的尾巴', () => {
+    assert.equal(oneoffLabel(R('管理費', null)), '管理費');
+    assert.equal(oneoffLabel(R('管理費', '   ')), '管理費');
+  });
 });

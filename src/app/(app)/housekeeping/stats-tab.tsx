@@ -17,7 +17,7 @@ import {
 // ★ useRef 的同步閘門 —— useState 是非同步的,連點兩下會兩筆都送出去
 import { useOnce } from '@/lib/once';
 import {
-  hourlyRows, hourlyOnlyKeys,
+  hourlyRows,
   type HourlySkip,
 } from '@/lib/hk-hourly';
 import {
@@ -889,13 +889,22 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
      *   砍掉等於少發她的錢（使用者:「合掃 各算各的」「劉姐一樣用時數算錢」）。
      *   規則與 key 格式在 `lib/hk-hourly.ts`,兩邊共用同一支才不會漂。
      */
-    const hourlyIds = new Set(hourStaff.map((s) => s.id));
-    const skipKeys = hourlyOnlyKeys(jobs, hourlyIds);
-
+    /*
+     * ══════════ 清潔費：**每一份有房源的工都算**（2026-09-09 改）══════════
+     *
+     * 這裡曾經先算一份 `hourlyOnlyKeys()` 把劉姐獨做的那幾份工排除掉。
+     * 拿掉了 —— 成對分錄之後她的工資記在安幸辦公室，不是物業，
+     * 所以物業照樣要付那間房的清潔費。完整理由在 `lib/hk-cost.ts`。
+     *
+     * 一份工現在固定產生三筆:
+     *   ① 物業      支出  房務清潔（間數計）
+     *   ② 安幸辦公室 收入  房務清潔（間數計，與 ① 同額反向）
+     *   ③ 安幸辦公室 支出  薪資勞務（時薪計，只有時薪人員才有）
+     */
     // ★ 第三個參數是拆帳。拆過的那幾份工不走「間數 × 單價」，
     //   也不會進 unpriced —— 「正隆多間」根本查不到單價
     const { rows, unpriced } = cleaningCosts(
-      jobs, (pid) => priceById[pid], splitIdx, skipKeys);
+      jobs, (pid) => priceById[pid], splitIdx);
     const lab = laborCosts(labor as any, period);
     const hr = hourlyRows(days as any, jobs, hourStaff as any);
 
