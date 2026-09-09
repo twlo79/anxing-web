@@ -251,3 +251,41 @@ export function newItemPurpose(
  * ★ 一條規則三個地方用，就必須有名字。
  */
 export const needsManagerVote = (book: string | null | undefined) => !isOtherBook(book);
+
+/* ══════════════════════════════════════════════════════════
+ * 安幸代墊（migration_236 / 237）
+ * ══════════════════════════════════════════════════════════
+ *
+ * 【這是什麼】
+ * 愛皮或洪鯊要花錢，而錢從**安幸的戶頭**出去。
+ *
+ *     安幸   暫付款（資產）  類別=代墊  for_book=aipi   ← 不記費用
+ *     愛皮   支出                      book=aipi        ← 費用記這裡
+ *     還款   暫付收回                                    ← 不記收入
+ *
+ * 【★★★ 為什麼要有這兩支函式而不是在畫面上判斷】
+ *
+ * `advance_for_book` 與 `book` **必須相等** —— 兩個欄位講同一件事:
+ * 「費用記在哪一本」與「誰要還錢」。不一致的話會指向不同的公司,
+ * 而資料庫那層只會 raise 一句看不懂的訊息。
+ *
+ * ★ 把「勾了之後填什麼」變成一支函式，畫面就**沒有辦法**造出不一致的組合。
+ */
+
+/** 這本帳會不會有「安幸代墊」的問題。安幸自己的錢不用跟自己借。 */
+export const canLend = (book: string | null | undefined) => isOtherBook(book);
+
+/**
+ * 勾選「安幸代墊」之後，`advance_for_book` 該填什麼。
+ *
+ * ★★ 一律回**這張單的帳本**，不讓人自己挑 ——
+ *   挑錯的話「費用記在愛皮、錢要洪鯊還」，而兩邊的數字都看起來合理。
+ *
+ * ★ 安幸自己的單勾不起來（回 null）—— 那是防呆不是限制:
+ *   安幸的錢付安幸的費用，本來就沒有代墊這回事。
+ */
+export function lendFor(
+  book: string | null | undefined, on: boolean,
+): string | null {
+  return on && canLend(book) ? toBook(book) : null;
+}

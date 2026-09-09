@@ -6,6 +6,7 @@ import {
   incomeFieldsHidden, incomePartyLabel,
   checkIncomeBook, misbookedItems, allowedPurposes, withBook, hasDeposit, newItemPurpose,
   needsManagerVote,
+  canLend, lendFor,
 } from './book.ts';
 
 /**
@@ -246,4 +247,42 @@ test('★★ 沒帶 book 當成安幸 —— 要主管票（放行錯了等於�
 
 test('認不出來的值也當成安幸,寧可多一票', () => {
   assert.equal(needsManagerVote('不存在的帳本'), true);
+});
+
+// ── 安幸代墊（migration_236 / 237）────────────────────────
+
+describe('★★★ 安幸代墊：advance_for_book 不可能跟 book 不一致', () => {
+  test('★★★ 勾了就是這張單的帳本，不讓人自己挑', () => {
+    /*
+     * 挑錯的話「費用記在愛皮、錢要洪鯊還」——
+     * 而兩邊的數字都看起來合理，只有結算時對不起來。
+     */
+    assert.equal(lendFor('aipi', true), 'aipi');
+    assert.equal(lendFor('hongsha', true), 'hongsha');
+  });
+
+  test('★★★ 安幸自己的單勾不起來 —— 自己的錢不用跟自己借', () => {
+    assert.equal(lendFor('anxing', true), null);
+    assert.equal(lendFor(null, true), null);      // null 當成安幸
+  });
+
+  test('沒勾就是 null', () => {
+    assert.equal(lendFor('aipi', false), null);
+  });
+
+  test('★★ canLend 跟 isOtherBook 是同一條規則 —— 不要各寫一份', () => {
+    for (const b of ['aipi', 'hongsha']) assert.equal(canLend(b), true, b);
+    assert.equal(canLend('anxing'), false);
+    assert.equal(canLend(null), false);
+    // 認不得的值當成安幸（跟 toBook 同一條規則）
+    assert.equal(canLend('mystery'), false);
+  });
+
+  test('★★★ 勾起來之後，兩個欄位必定相等', () => {
+    // 這是資料庫那條 raise 的前端版本：讓畫面沒有辦法造出不一致的組合
+    for (const b of ['anxing', 'aipi', 'hongsha', null, 'mystery']) {
+      const v = lendFor(b, true);
+      if (v !== null) assert.equal(v, toBook(b), `${b} 的代墊帳本對不起來`);
+    }
+  });
 });

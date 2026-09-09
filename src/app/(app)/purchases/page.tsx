@@ -31,6 +31,7 @@ import DepositFees from '@/components/DepositFees';
  */
 import {
   OTHER_BIZ_PURPOSE, OTHER_BOOKS, BOOK_LABEL, DEFAULT_BOOK, newItemPurpose, needsManagerVote,
+  canLend, lendFor,
 
   misbookedItems, toBook, isOtherBook, bookLabel, type Book,
 } from '@/lib/book';
@@ -96,6 +97,8 @@ type Req = {
    * ★ 勾在**整張單**不是項目（2026-09-02 使用者指定）。
    */
   advance_category?: string | null;
+  /** 安幸代墊給哪一本帳（migration_236）。必定等於 book —— 見 lib/book.lendFor */
+  advance_for_book?: string | null;
   advance_usage?: string | null;
   currency: string; fx_rate: number;
   purchase_request_items?: Item[];
@@ -1085,6 +1088,8 @@ export default function PurchasesPage() {
          *   而約束擋下來的訊息是約束名稱，沒人看得懂。
          */
         advance_category: edit.advance_category || null,
+        // ★ 一律由 lendFor 決定，畫面沒有辦法造出「跟 book 不一致」的組合
+        advance_for_book: lendFor(edit.book, !!edit.advance_for_book),
         advance_usage: edit.advance_category ? (edit.advance_usage?.trim() || null) : null,
         /*
          * 送審中或已核可被編輯:退回草稿。
@@ -3433,7 +3438,10 @@ export default function PurchasesPage() {
                   */}
                   <div className="rounded-lg border border-mor-line p-3">
                     <label className="flex items-start gap-2 text-sm cursor-pointer">
-                      <input type="checkbox" disabled={readOnly} className="mt-1"
+                      {/* ★ 已經勾了代墊就不能再勾暫支 —— 兩者互斥，
+                          資料庫那層會 raise，這裡先擋住讓人不用看那句訊息 */}
+                      <input type="checkbox" className="mt-1"
+                        disabled={readOnly || !!edit.advance_for_book}
                         checked={!!edit.advance_category}
                         onChange={(e) => setEdit({
                           ...edit,
@@ -3474,6 +3482,54 @@ export default function PurchasesPage() {
                       </div>
                     )}
                   </div>
+
+                  {/*
+                    ══════════ 安幸代墊（migration_236 / 237）══════════
+
+                    ★★★ **只在愛皮／洪鯊的單上出現**。安幸自己的錢付安幸的費用，
+                      沒有代墊這回事 —— 出現一個永遠不該勾的選項只會讓人想試試看。
+
+                    ★★ 勾了之後填什麼**不讓人挑**（`lendFor`）:一律是這張單的帳本。
+                      挑錯的話「費用記在愛皮、錢要洪鯊還」，而兩邊數字都看起來合理。
+
+                    ★ 跟暫支款互斥。同時設的話語意矛盾 ——
+                      暫支＝這筆錢會收回來、不產生支出;
+                      代墊＝產生別本帳的支出，安幸這邊記一筆應收。
+                      資料庫那層會 raise，這裡先擋一次讓訊息看得懂。
+                  */}
+                  {canLend(edit.book) && (
+                    <div className="rounded-lg border border-mor-line p-3">
+                      <label className={`flex items-start gap-2 text-sm ${
+                        edit.advance_category ? 'opacity-50' : 'cursor-pointer'}`}>
+                        <input type="checkbox" className="mt-1"
+                          disabled={readOnly || !!edit.advance_category}
+                          checked={!!edit.advance_for_book}
+                          onChange={(e) => setEdit({
+                            ...edit,
+                            advance_for_book: lendFor(edit.book, e.target.checked),
+                          })} />
+                        <span>
+                          <span>這筆錢由<b>安幸代墊</b>（{BOOK_LABEL[toBook(edit.book)]}之後還）</span>
+                          <span className="block text-xs text-gray-500 mt-0.5">
+                            {edit.advance_category
+                              ? '已經勾了暫支款 —— 兩者不能同時。暫支是「錢會收回來、不產生支出」，代墊是「產生別本帳的支出」。'
+                              : <>費用記在<b>{BOOK_LABEL[toBook(edit.book)]}</b>的帳上，
+                                安幸這邊記一筆<span className="text-amber-700">暫付款（不算費用）</span>，
+                                收回時沖銷。</>}
+                          </span>
+                        </span>
+                      </label>
+                      {!!edit.advance_for_book && (
+                        <div className="mt-2 pl-6 text-xs text-gray-400 leading-relaxed">
+                          確認出款後會產生<span className="text-gray-600">兩邊</span>：
+                          {BOOK_LABEL[toBook(edit.book)]}的支出（每個項目一筆），
+                          以及<span className="text-gray-600">暫收付管理 → 暫付</span>一列
+                          （類別「代墊」、對象「{BOOK_LABEL[toBook(edit.book)]}」、金額帶合計）。
+                          收回時錢要回到這張單的付款帳戶。
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">備註</span>
                     <textarea disabled={readOnly} value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })}
