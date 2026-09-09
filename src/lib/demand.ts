@@ -122,6 +122,55 @@ export type DemandItemDraft = DemandItemLike & {
   buy_link: string;
 };
 
+/**
+ * 把貼進來的購買連結補成完整網址。
+ *
+ * ============================================================
+ * 【★★★ 為什麼一定要補】（2026-09-09）
+ *
+ * 使用者從網址列複製常常帶不到 `https://`（`www.momoshop.com.tw/...`）。
+ * 那樣的字串放進 `<a href>`，瀏覽器會當成**相對路徑** ——
+ * 點下去跳到 `justwork.estia.com.tw/www.momoshop.com.tw/...`。
+ *
+ * ★★ 症狀是「按了沒反應」或跳到一個 404，而**連結看起來是好的**:
+ *   藍色、有底線、滑鼠變成手。沒有任何東西說它壞了。
+ *
+ * ★ 補在**存檔**的時候，不是顯示的時候 —— 顯示端補的話,
+ *   資料庫裡留下的還是壞的，匯出、複製給廠商時一樣不能用。
+ *
+ * ============================================================
+ * 【不猜的那幾種】
+ *
+ *   已經有 http:// 或 https://  → 原樣
+ *   `//example.com`             → 補 `https:`
+ *   看起來不像網址（沒有點）      → **原樣留著**，不要硬補
+ *     ★ 有人可能貼的是店名或料號。補成 `https://某某五金行`
+ *       只會產生一個一定連不上的連結，而那比沒有連結更難查。
+ */
+export function normalizeUrl(v: string | null | undefined): string | null {
+  const t = (v ?? '').trim();
+  if (!t) return null;
+  if (/^https?:\/\//i.test(t)) return t;
+  if (t.startsWith('//')) return 'https:' + t;
+  // ★ 沒有點的一律不補 —— 那多半不是網址
+  return /\./.test(t) && !/\s/.test(t) ? 'https://' + t : t;
+}
+
+/**
+ * 這個值**點得下去嗎**。
+ *
+ * ★★★ 顯示端一定要問這一句。2026-09-09 線上就有一筆
+ *   `DM-202609-004` 的「連結」是**「酷彭」**（店名）——
+ *   而畫面把它畫成一個藍色有底線、滑鼠變手的「建議連結」，
+ *   點下去什麼都不會發生。
+ *
+ * ★★ 那不是使用者填錯:「哪裡買」本來就可能是店名。
+ *   錯的是畫面**假裝它是連結**。
+ */
+export function isUrl(v: string | null | undefined): boolean {
+  return /^https?:\/\//i.test((v ?? '').trim());
+}
+
 /** 新增採購需求時，一個項目要寫進 `purchase_demand_items` 的那一列。 */
 export function newItemRow(i: DemandItemDraft, demandId: string) {
   return {
@@ -130,7 +179,8 @@ export function newItemRow(i: DemandItemDraft, demandId: string) {
     // ★ 空字串一律寫 null —— 「沒填」只能有一種形狀，
     //   不然查詢時要同時比 `is null` 與 `= ''`，而漏掉一種不會報錯
     spec: i.spec.trim() || null,
-    buy_link: i.buy_link.trim() || null,
+    // ★ 補成完整網址 —— 少了 https:// 的會被當成相對路徑（見 normalizeUrl）
+    buy_link: normalizeUrl(i.buy_link),
     purpose_type: i.purpose_type,
     /*
      * ★★ office 一定寫 null，不是空字串也不是留著上一次的物業。

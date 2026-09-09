@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
-import { isFilled, validateDemand, newItemRow } from '@/lib/demand';
+import { isFilled, validateDemand, newItemRow, isUrl } from '@/lib/demand';
 import { useProfile } from '@/lib/profile';
 import { ReqMark } from '@/components/Req';
 import {
@@ -737,11 +737,26 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                         </span>
                         {/* 規格說明裡就有大概數量 —— 沒有獨立的數量欄（migration_141） */}
                         {i.spec && <span className="text-xs text-gray-400">{i.spec}</span>}
-                        {i.buy_link && (
+                        {/*
+                          ★★★ **只有真的是網址才做成連結**（2026-09-09）。
+                            線上有一筆的「連結」是「酷彭」—— 店名。
+                            畫成藍色有底線、滑鼠變手的樣子，點下去什麼都不會發生
+                            （使用者:「這建議連結是甚麼？出不去耶」）。
+
+                          ★ 不是網址的照樣顯示 —— 那是有用的資訊（去哪裡買），
+                            只是它不該長得像可以點。
+                        */}
+                        {i.buy_link && (isUrl(i.buy_link) ? (
                           <a href={i.buy_link} target="_blank" rel="noreferrer"
                             onClick={(e) => e.stopPropagation()}
+                            title={i.buy_link}
                             className="text-xs text-mor-slate underline">建議連結</a>
-                        )}
+                        ) : (
+                          <span className="text-xs rounded bg-mor-sand text-gray-600 px-1.5 py-0.5"
+                            title="這裡填的不是網址，所以點不了">
+                            {i.buy_link}
+                          </span>
+                        ))}
                         {/*
                           ★★ 平台與兩個日期（migration_222）。
                             順序照使用者指定:**平台在到貨前面**。
@@ -1018,7 +1033,7 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                     <input value={it.spec} onChange={(e) => setItem(idx, { spec: e.target.value })}
                       placeholder="規格說明／大概數量" className={`${inp} flex-1 min-w-[8rem]`} />
                     <input value={it.buy_link} onChange={(e) => setItem(idx, { buy_link: e.target.value })}
-                      placeholder="建議採購連結（蝦皮、露天…）" className={`${inp} flex-1 min-w-[10rem]`} />
+                      placeholder="哪裡買 —— 貼網址或寫店名" className={`${inp} flex-1 min-w-[10rem]`} />
                   </div>
                 </div>
               ))}

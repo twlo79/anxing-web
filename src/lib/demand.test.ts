@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  isFilled, isComplete, validateDemand, estateIdToSave, newItemRow,
+  isFilled, isComplete, validateDemand, estateIdToSave, newItemRow, normalizeUrl, isUrl,
   type DemandItemLike, type DemandItemDraft,
 } from './demand.ts';
 
@@ -163,5 +163,91 @@ describe('★★★ newItemRow —— 表單收的每一欄都要寫進去', () 
 
   test('demand_id 要帶上', () => {
     assert.equal(newItemRow(D(), 'd-99').demand_id, 'd-99');
+  });
+});
+
+// ── 購買連結要補成完整網址（2026-09-09）──────────────────
+
+describe('★★★ normalizeUrl —— 少了 https:// 的連結按了沒反應', () => {
+  test('★★★ 從網址列複製常常帶不到 https://', () => {
+    /*
+     * `www.momoshop.com.tw/...` 放進 <a href> 會被當成相對路徑，
+     * 點下去跳到 justwork.estia.com.tw/www.momoshop...
+     * 而連結看起來是好的：藍色、有底線、滑鼠變成手。
+     */
+    assert.equal(normalizeUrl('www.momoshop.com.tw/goods.php?i=1'),
+      'https://www.momoshop.com.tw/goods.php?i=1');
+  });
+
+  test('★★ 已經完整的原樣不動', () => {
+    assert.equal(normalizeUrl('https://shopee.tw/x'), 'https://shopee.tw/x');
+    assert.equal(normalizeUrl('http://a.com'), 'http://a.com');
+    assert.equal(normalizeUrl('HTTPS://A.COM'), 'HTTPS://A.COM');
+  });
+
+  test('★ 協定相對的補 https:', () => {
+    assert.equal(normalizeUrl('//example.com/a'), 'https://example.com/a');
+  });
+
+  test('★★★ 看起來不像網址的**不要硬補**', () => {
+    /*
+     * 有人貼的是店名或料號。補成 `https://某某五金行` 只會產生
+     * 一個一定連不上的連結 —— 那比沒有連結更難查。
+     */
+    assert.equal(normalizeUrl('大潤發'), '大潤發');
+    assert.equal(normalizeUrl('料號 A-123'), '料號 A-123');
+  });
+
+  test('空的回 null，不是空字串 —— 「沒填」只能有一種形狀', () => {
+    assert.equal(normalizeUrl(''), null);
+    assert.equal(normalizeUrl('   '), null);
+    assert.equal(normalizeUrl(null), null);
+    assert.equal(normalizeUrl(undefined), null);
+  });
+
+  test('★★ 前後空白要去掉 —— 貼上網址常常帶一個空格', () => {
+    assert.equal(normalizeUrl('  https://a.com  '), 'https://a.com');
+  });
+
+  test('★★★ newItemRow 要用它 —— 不然存進去的還是壞的', () => {
+    const r = newItemRow({
+      item_name: '衛生紙', purpose_type: 'estate', estate_id: 'e1',
+      spec: '', buy_link: 'www.pchome.com.tw/x',
+    }, 'd1');
+    assert.equal(r.buy_link, 'https://www.pchome.com.tw/x');
+  });
+});
+
+describe('★★★ isUrl —— 顯示端要問「點得下去嗎」', () => {
+  test('★★★ 店名不是網址 —— 線上真的有一筆是「酷彭」', () => {
+    /*
+     * 畫面把它畫成藍色有底線、滑鼠變手的「建議連結」，
+     * 點下去什麼都不會發生。那不是使用者填錯 ——
+     * 「哪裡買」本來就可能是店名，錯的是畫面假裝它是連結。
+     */
+    assert.equal(isUrl('酷彭'), false);
+    assert.equal(isUrl('大潤發 民權店'), false);
+  });
+
+  test('完整網址才算', () => {
+    assert.equal(isUrl('https://a.com'), true);
+    assert.equal(isUrl('http://a.com'), true);
+    assert.equal(isUrl('HTTPS://A.COM'), true);
+  });
+
+  test('★★ 少了協定的不算 —— 那正是會被當成相對路徑的那種', () => {
+    assert.equal(isUrl('www.momoshop.com.tw/x'), false);
+    assert.equal(isUrl('//example.com'), false);
+  });
+
+  test('空的不算', () => {
+    assert.equal(isUrl(''), false);
+    assert.equal(isUrl(null), false);
+    assert.equal(isUrl(undefined), false);
+  });
+
+  test('★★★ normalizeUrl 之後就該點得下去（除非它本來就不是網址）', () => {
+    assert.equal(isUrl(normalizeUrl('www.momoshop.com.tw/x')), true);
+    assert.equal(isUrl(normalizeUrl('酷彭')), false);
   });
 });
