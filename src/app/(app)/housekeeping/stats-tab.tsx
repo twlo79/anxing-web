@@ -25,6 +25,8 @@ import {
   OFFICE_NAME, LABOR_BILL_TO_OFFICE, CODE_SALARY, CODE_LABOR_REV,
   type HkEntry,
 } from '@/lib/hk-entries';
+import { pairCheck } from '@/lib/hk-pair-check';
+import { previewExportText, type ExportLine } from '@/lib/hk-preview-export';
 import { sharePreview, previewText } from '@/lib/hk-crew';
 import {
   reparsePreview, visibleRows, dismissedCount, prefillFromEvent,
@@ -882,14 +884,6 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
   const gen = useMemo(() => {
     const jobs = [...estateLogs.values()].flat();
     /*
-     * ★★★ 時薪人員（劉姐）**一個人**做完的工不產生清潔費
-     *   （2026-09-07 使用者選「取代」）—— 那幾間的成本改由她的工時支出承擔。
-     *
-     * ★★ 合掃的不排除。14B3 是庭玉跟劉姐一起做的,庭玉按間計酬,
-     *   砍掉等於少發她的錢（使用者:「合掃 各算各的」「劉姐一樣用時數算錢」）。
-     *   規則與 key 格式在 `lib/hk-hourly.ts`,兩邊共用同一支才不會漂。
-     */
-    /*
      * ══════════ 清潔費：**每一份有房源的工都算**（2026-09-09 改）══════════
      *
      * 這裡曾經先算一份 `hourlyOnlyKeys()` 把劉姐獨做的那幾份工排除掉。
@@ -934,13 +928,98 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
       hr.rows.map((r) => ({ key: r.key, property_id: r.property_id })),
       office.propId);
 
-    return { rows, unpriced, lab, hr: hrOffice, hrSkipped: hr.skipped, income,
+    /*
+     * ══════════ 產生前的模擬檢查（2026-09-09 使用者:「模擬檢查」「用觸發的邏輯檢查」）
+     *
+     * ★★★ 吃的就是**上面剛算好、待會要寫進去的那三批**,不重算一次。
+     *   重算就是第二份實作,兩份規則遲早會漂 ——
+     *   而漂掉的症狀是「檢查說沒問題，實際產出不一樣」，比沒有檢查更糟。
+     *
+     * ★ 規則與訊息在 `lib/hk-pair-check.ts`（有測試）。這裡只是呼叫。
+     */
+    const check = pairCheck({
+      clean: rows, labor: lab as any, income,
+      pairEstates: laborPairEstates,
+      allEstateNames: Object.values(estNameById),
+      officeId: office.propId,
+    });
+
+    return { rows, unpriced, lab, hr: hrOffice, hrSkipped: hr.skipped, income, check,
              // ★ 收入與支出**分開加**。加在一起是一個沒有意義的數字
              expTotal: costTotal(rows) + costTotal(lab) + costTotal(hrOffice),
              incTotal: sideTotal(income, 'income'),
              total: costTotal(rows) + costTotal(lab) + costTotal(hrOffice) };
   }, [estateLogs, priceById, labor, period, splitIdx, hourStaff, days,
       office.propId, estateById, estNameById, propNameById, laborPairEstates]);
+
+  /*
+   * ══════════ 把整批預覽複製起來（2026-09-09 使用者:「把預覽導給你檢查」）
+   *
+   * ★★★ 預覽是**還沒寫進資料庫**的東西，任何 SQL 都查不到它 ——
+   *   要讓別人看這一批長什麼樣，只有從畫面導出來一條路。
+   *   截圖不行:七十幾列會被切成五、六張圖，而且沒辦法加總比對。
+   *
+   * ★ 文字怎麼排在 `lib/hk-preview-export.ts`（有測試）。
+   *   這裡只負責把 id 換成看得懂的名字。
+   */
+  const exportText = useCallback(() => {
+    const est = (pid: string | null | undefined) => estateById[pid ?? ''] ?? '';
+    const room = (pid: string | null | undefined) => propNameById[pid ?? ''] ?? '';
+    const clean: ExportLine[] = gen.rows.map((r) => ({
+      date: r.work_date, estate: est(r.property_id), room: r.label || room(r.property_id),
+      item: nameBy[r.key]?.trim() || cleanItemName(r.label, r.units, r.fixedAmount),
+      // ★ 人工指定金額的間數／單價給 null —— 「0 × $0」是算不出答案的算式
+      units: r.fixedAmount ? null : r.units, price: r.fixedAmount ? null : r.price,
+      amount: r.amount,
+      extra: r.fromSplit ? `拆自「${r.splitOf}」` : '',
+    }));
+    const labor: ExportLine[] = gen.lab.map((r) => ({
+      date: r.spent_on, estate: estNameById[r.estate_id ?? ''] ?? est(r.property_id),
+      room: room(r.property_id), item: nameBy[r.key]?.trim() || LABOR_ITEM_NAME,
+      units: null, price: null, amount: r.amount, extra: '',
+    }));
+    const hour: ExportLine[] = gen.hr.map((r) => ({
+      date: r.on, estate: OFFICE_NAME, room: OFFICE_NAME,
+      item: nameBy[r.key]?.trim() || r.item_name,
+      units: null, price: null, amount: r.amount, extra: '匯款 8088',
+    }));
+    const income: ExportLine[] = gen.income.map((r) => ({
+      date: r.on, estate: OFFICE_NAME, room: '',
+      item: nameBy[r.key]?.trim() || r.item_name,
+      units: null, price: null, amount: r.amount,
+      extra: `向 ${r.payer || '？'} 收${r.room ? `・備註 ${r.room}` : ''}`,
+    }));
+    return previewExportText({
+      period, now: new Date().toLocaleDateString('sv-SE'), check: gen.check,
+      clean, labor, hour, income,
+      unpriced: gen.unpriced.map((u) => ({
+        date: u.work_date, label: u.label, units: u.units, reason: u.reason,
+      })),
+    });
+  }, [gen, nameBy, estateById, estNameById, propNameById, period]);
+
+  /*
+   * ★★ 剪貼簿失敗要有退路。
+   *   `navigator.clipboard` 在非 https、舊瀏覽器、或使用者拒絕權限時會丟例外,
+   *   而那時候按鈕**看起來按了沒反應** —— 比沒有這顆按鈕更糟。
+   *   退路是下載成 .txt，至少東西拿得到。
+   */
+  async function copyPreview() {
+    const text = exportText();
+    try {
+      await navigator.clipboard.writeText(text);
+      flash(`已複製 ${text.split('\n').length} 行 —— 貼上就可以請人檢查`);
+    } catch {
+      const url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `房務預覽_${period}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+      flash('複製不了（瀏覽器擋住剪貼簿），已改成下載 .txt');
+    }
+  }
+
   /** 這次預覽裡有幾筆是已經產生過的。 */
   const doneNum = useMemo(
     () => [...gen.rows, ...gen.lab, ...gen.hr].filter((r) => doneKeys.has(r.key)).length,
@@ -1720,6 +1799,56 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
           </table>
 
           {/*
+            ══════════ 模擬檢查（2026-09-09）══════════
+
+            ★★★ **不擋按鈕**。它是提醒不是判決 ——
+              真的有例外情況時，擋住會讓人完全做不了事，
+              而那時候他只會覺得系統壞了。
+
+            ★★ 放在摘要**正下方**，不是頁面最上方 ——
+              按鈕在這一區，訊息也要在這一區。
+              跳在最上方的訊息，在畫面下半部操作的人看不到（2026-09-02 踩過）。
+
+            ★ 沒有東西要產生時整條不出現 —— 一個「✅ 0 筆都對」是雜訊。
+          */}
+          {(gen.income.length > 0 || gen.rows.length > 0) && (
+            <div className={`mt-3 rounded-lg px-3 py-2 text-xs leading-relaxed border ${
+              gen.check.ok
+                ? 'bg-mor-greenlight border-mor-green/25 text-mor-greendark'
+                : 'bg-red-50 border-red-200 text-red-700'}`}>
+              <div className="font-medium">
+                {gen.check.ok ? '✅ 模擬檢查通過' : '❌ 模擬檢查沒過 —— 產生之前先看一下'}
+              </div>
+              {/*
+                ★ 算式攤開寫。只說「通過」的話，下次數字看起來怪的時候
+                  沒有人知道它當初到底比了什麼。
+              */}
+              <div className="mt-0.5 tabular-nums">
+                收入 {gen.check.actualCount} 筆
+                {gen.check.actualCount === gen.check.expectCount ? ' ＝ ' : ' ／ 應該是 '}
+                清潔費 {gen.check.cleanExpect} ＋ 成對人事費 {gen.check.laborExpect}
+                　|　${gen.check.actualAmount.toLocaleString('en-US')}
+                {gen.check.actualAmount === gen.check.expectAmount ? ' ＝ ' : ' ／ 應該是 '}
+                ${gen.check.expectAmount.toLocaleString('en-US')}
+              </div>
+              {gen.check.issues.map((x, i) => (
+                <div key={i} className={`mt-1 ${x.level === 'warn' ? 'text-gray-500' : ''}`}>
+                  {x.level === 'warn' ? '・' : '‣ '}{x.text}
+                </div>
+              ))}
+              {/*
+                時薪工資刻意不在算式裡 —— 那是安幸付給員工的錢，不是向誰收的。
+                不寫這一句的話，看的人會拿支出合計去減，然後發現對不起來。
+              */}
+              {gen.hr.length > 0 && (
+                <div className="mt-1 text-gray-500">
+                  ・時薪工資 {gen.hr.length} 筆不在算式裡 —— 那是安幸付出去的錢，沒有對應收入。
+                </div>
+              )}
+            </div>
+          )}
+
+          {/*
             ★★★ 逐筆列出**支出長什麼樣子**（2026-09-02 使用者:「可以有預覽 支出 的樣子嗎？」）。
 
               只給總額的話，按下去等於簽一張看不到明細的單 ——
@@ -2112,6 +2241,17 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
               {genBusy ? '產生中⋯'
                 : `產生 ${gen.rows.length + gen.lab.length + gen.hr.length} 筆支出`
                   + (gen.income.length ? ` ＋ ${gen.income.length} 筆收入` : '')}
+            </button>
+            {/*
+              ★ 複製整批預覽。放在「產生」旁邊 —— 要檢查的人就是站在
+                「按不按下去」這個決定前面的人。
+              ★★ 不做成主色按鈕:它不是這一頁的目的，是產生之前的一道保險。
+            */}
+            <button onClick={() => void copyPreview()}
+              disabled={gen.total === 0}
+              title="把整批預覽複製成文字，可以貼給別人檢查"
+              className="rounded-lg border border-mor-line px-3 py-1.5 text-sm text-gray-600 hover:bg-mor-sand/60 disabled:opacity-40">
+              複製預覽
             </button>
             <button onClick={() => setGenOpen(false)}
               className="text-xs text-gray-500 underline">取消</button>
