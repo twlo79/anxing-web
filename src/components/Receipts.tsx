@@ -92,6 +92,21 @@ const Receipts = forwardRef<ReceiptsHandle, {
    */
   inheritFromRequestId?: string | null;
   /**
+   * 借看**單一請款項目**的憑證（`attachments.request_item_id`）。
+   *
+   * ★★★ 2026-09-09 補的。原本只借「整張請款單」那一層,
+   *   而請款單的憑證有兩種掛法（見那一頁的「共同憑證」勾選框）:
+   *
+   *     勾了共同憑證   → 一張發票掛在整張單上   `request_id`
+   *     沒勾（預設）   → 每個項目各自上傳       `request_item_id`
+   *
+   *   支出頁只借第一種,於是**逐項上傳的那些在支出頁全部看不到** ——
+   *   而畫面上只是「沒有憑證」，看起來像當初沒上傳。
+   *   實際查下去:9/8 的七筆電費、9/7 的郵資停車費關稅…全部都有圖，
+   *   只是掛在項目那一層（2026-09-09 使用者:「上傳圖片檔案不見了」）。
+   */
+  inheritFromItemId?: string | null;
+  /**
    * 圖載好之後回報給上層（2026-08-22，請款單的共同憑證）。
    *
    * ★ 為什麼要這個 callback，而不是讓上層自己再查一次:
@@ -104,7 +119,8 @@ const Receipts = forwardRef<ReceiptsHandle, {
    *   症狀是整頁不停閃爍，而且沒有任何錯誤訊息。
    */
   onImages?: (imgs: { path: string; url: string; name: string | null }[]) => void;
-}>(function Receipts({ kind, parentId, canEdit = true, label = '憑證', inheritFromRequestId, onImages }, ref) {
+}>(function Receipts({ kind, parentId, canEdit = true, label = '憑證',
+  inheritFromRequestId, inheritFromItemId, onImages }, ref) {
   const supabase = createClient();
   const [rows, setRows] = useState<Att[]>([]);
   const [inherited, setInherited] = useState<Att[]>([]);
@@ -181,18 +197,42 @@ const Receipts = forwardRef<ReceiptsHandle, {
 
   useEffect(() => { load(); }, [load]);
 
-  // 母單（請款單）上的憑證。只顯示，不能在支出頁刪 —— 那是請款單的東西。
+  /*
+   * 母單（請款單）上的憑證。只顯示，不能在支出頁刪 —— 那是請款單的東西。
+   *
+   * ★★★ **兩層都要借**（2026-09-09）:整張單的 ＋ 這一項自己的。
+   *   請款單的憑證有兩種掛法，只借一種的話另一種在支出頁完全看不到，
+   *   而畫面上只是「沒有憑證」—— 看起來像當初沒上傳。
+   *
+   * ★★ 分兩次查、不用 `.or()` 拼字串:少一個參數時 or 條件會變成
+   *   `request_id.eq.undefined`，PostgREST 會回錯誤而整段變成空的。
+   *   分開查的話某一邊沒有就是沒有，另一邊照樣拿得到。
+   *
+   * ★ 兩邊可能撈到同一筆（理論上不會，`att_one_parent` 擋著），
+   *   還是照 id 去重 —— 重複的縮圖會讓人以為傳了兩張。
+   */
   useEffect(() => {
     (async () => {
-      if (!inheritFromRequestId) { setInherited([]); return; }
-      const { data, error } = await supabase.from('attachments')
-        .select('id, path, file_name, mime_type, size_bytes, created_at')
-        .eq('request_id', inheritFromRequestId).order('created_at');
+      if (!inheritFromRequestId && !inheritFromItemId) { setInherited([]); return; }
+      const COLS = 'id, path, file_name, mime_type, size_bytes, created_at';
+      const [a, b] = await Promise.all([
+        inheritFromRequestId
+          ? supabase.from('attachments').select(COLS)
+              .eq('request_id', inheritFromRequestId).order('created_at')
+          : Promise.resolve({ data: [], error: null } as any),
+        inheritFromItemId
+          ? supabase.from('attachments').select(COLS)
+              .eq('request_item_id', inheritFromItemId).order('created_at')
+          : Promise.resolve({ data: [], error: null } as any),
+      ]);
       // ★ 同上:失敗要說話,不要當成「母單沒有憑證」
-      if (error) { setErr('讀不到母單的憑證：' + error.message); setInherited([]); return; }
-      setInherited(data ?? []);
+      const e = a.error ?? b.error;
+      if (e) { setErr('讀不到母單的憑證：' + e.message); setInherited([]); return; }
+      const seen = new Map<string, Att>();
+      for (const r of [...(a.data ?? []), ...(b.data ?? [])] as Att[]) seen.set(r.id, r);
+      setInherited([...seen.values()]);
     })();
-  }, [supabase, inheritFromRequestId]);
+  }, [supabase, inheritFromRequestId, inheritFromItemId]);
 
   // 私有 bucket 看不到就是看不到，每張圖都要換一次簽名網址。
   // 一小時到期 —— 對話框開著看發票的情境綽綽有餘。

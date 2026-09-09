@@ -975,8 +975,10 @@ export default function ExpensesPage() {
                 {row('備註', d.note ? <span className="whitespace-pre-wrap">{d.note}</span> : '—')}
 
                 <div className="mt-3">
+                  {/* ★★ 兩層都借：整張請款單的 ＋ 這一項自己的（2026-09-09）*/}
                   <Receipts kind="exp" parentId={d.id} canEdit={false} label="憑證圖片"
-                    inheritFromRequestId={d.request_id ?? null} />
+                    inheritFromRequestId={d.request_id ?? null}
+                    inheritFromItemId={d.source_item_id ?? null} />
                 </div>
               </div>
 
@@ -1227,7 +1229,8 @@ export default function ExpensesPage() {
                 <DeferralPanel expense={edit} canEdit onChanged={() => { setEdit(null); setTried(false); load(); }} />
               )}
               <Receipts ref={receiptsRef} kind="exp" parentId={edit.id || null} label="憑證圖片"
-                inheritFromRequestId={edit.request_id ?? null} />
+                inheritFromRequestId={edit.request_id ?? null}
+                inheritFromItemId={edit.source_item_id ?? null} />
             </div>
             {/*
               抽屜底部:刪除放**最左邊**、跟儲存隔開（2026-08-19）。
