@@ -1,5 +1,5 @@
 import {
-  CODE_CLEAN, CODE_LABOR_REV, LABOR_BILL_TO_OFFICE, OFFICE_NAME,
+  CODE_CLEAN, CODE_LABOR_REV, LABOR_BILL_TO_OFFICE,
   type HkEntry,
 } from './hk-entries.ts';
 
@@ -36,10 +36,9 @@ import {
  *
  *   ① 清潔費筆數／金額配不起來
  *   ② 人事費筆數／金額配不起來
- *   ③ 找不到安幸辦公室 → 收入沒地方掛
- *   ④ **`LABOR_BILL_TO_OFFICE` 裡的物業名字對不到任何物業**
+ *   ③ **`LABOR_BILL_TO_OFFICE` 裡的物業名字對不到任何物業**
  *
- * ④ 是寫死名字的代價（見 `hk-entries.ts`）:物業一改名，
+ * ③ 是寫死名字的代價（見 `hk-entries.ts`）:物業一改名，
  * 那個 Set 就是空的 → 應該成對的人事費一筆都不產生收入，
  * 而 ① ② 通通會通過（兩邊都是 0，配得起來）。
  * **少的是一筆 20 萬，畫面上完全看不出來。**
@@ -119,8 +118,6 @@ export function pairCheck(input: {
   pairEstates: ReadonlySet<string>;
   /** 現有的所有物業名稱 —— 用來驗 `LABOR_BILL_TO_OFFICE` 對不對得到 */
   allEstateNames: readonly string[];
-  /** 安幸辦公室那個房源的 id。`null` = 找不到 */
-  officeId: string | null;
   /** 時薪工資對應的那幾份工。給下面「三筆規則」用 */
   hourJobs?: HourJob[];
   /** 有產生清潔費的那幾份工。同上 */
@@ -137,14 +134,14 @@ export function pairCheck(input: {
   const incClean = (input.income ?? []).filter((r) => r.account_code === CODE_CLEAN);
   const incLabor = (input.income ?? []).filter((r) => r.account_code === CODE_LABOR_REV);
 
-  // ── ③ 收入有沒有地方掛 ────────────────────────────
-  if (!input.officeId && (input.income ?? []).length > 0) {
-    issues.push({
-      level: 'error',
-      text: `找不到「${OFFICE_NAME}」這個房源 —— 收入沒有地方可以掛，這一批寫不進去。`,
-    });
-  }
-
+  /*
+   * ── ③ 這裡曾經檢查「找得到安幸辦公室那個房源嗎」，2026-09-09 拿掉 ──
+   *
+   *   migration_235 之後收入**不掛任何房源**（`purpose_type='office'`）,
+   *   所以沒有那個東西可以找不到了。
+   *   留著會變成一個永遠成立的檢查 —— 那比沒有檢查更糟,
+   *   因為它會讓人以為「有在看」。
+   */
   // ── ④ 寫死的物業名字還對得到嗎（最危險的一條）──────
   const known = new Set(input.allEstateNames ?? []);
   const lost = LABOR_BILL_TO_OFFICE.filter((n) => !known.has(n));

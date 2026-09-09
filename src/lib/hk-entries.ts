@@ -123,8 +123,11 @@ export type JobLike = {
 /**
  * 清潔那一對:安幸收入 ＋ 物業支出，**同額反向**。
  *
- * @param costRows `cleaningCosts()` 算好的物業支出（已經排除劉姐獨做的那幾份工）
- * @param officeId 安幸辦公室那個房源的 id
+ * @param costRows `cleaningCosts()` 算好的物業支出
+ *
+ * ★★★ 2026-09-09 起 `property_id` 一律 `null`（migration_235）——
+ *   安幸辦公室不再是一個假物業/假房源,它是 `purpose_type='office'`。
+ *   收入掛在「用途」上，不掛任何房源。
  *
  * ★★ 直接吃 `cleaningCosts` 的結果,不重算一次金額 ——
  *   重算的話兩邊遲早會漂,而漂掉的症狀是「收入跟支出對不起來」,
@@ -137,7 +140,6 @@ export function cleaningIncome(
     /** 給 `cleanItemName()` 用 —— 沒帶就不印「×N」 */
     units?: number; fixedAmount?: boolean;
   }[],
-  officeId: string | null,
   /**
    * 這一份工是向誰收的（物業名稱）。
    *
@@ -170,7 +172,7 @@ export function cleaningIncome(
       item_name: cleanItemName(r.label, Number(r.units), r.fixedAmount),
       amount: r.amount,
       account_code: CODE_CLEAN,
-      property_id: officeId,
+      property_id: null,
       office: true,
       payer: payerOf(r.property_id),
       room: r.label || undefined,
@@ -190,7 +192,6 @@ export function cleaningIncome(
 export function laborIncome(
   labRows: { key: string; spent_on: string; estate_id: string | null; amount: number }[],
   pairEstates: ReadonlySet<string>,
-  officeId: string | null,
   estateName: (id: string) => string,
 ): HkEntry[] {
   return (labRows ?? [])
@@ -203,7 +204,7 @@ export function laborIncome(
       item_name: `人事費 ${estateName(r.estate_id!) || ''}`.trim(),
       amount: r.amount,
       account_code: CODE_LABOR_REV,
-      property_id: officeId,
+      property_id: null,
       office: true,
       payer: estateName(r.estate_id!),
     }));
@@ -226,7 +227,6 @@ export function hourlyExpense(
   }[],
   roomName: (propertyId: string) => string,
   rooms: { key: string; property_id: string }[],
-  officeId: string | null,
 ): HkEntry[] {
   const roomOf = new Map(rooms.map((r) => [r.key, r.property_id]));
   return (hrRows ?? []).map((r) => {
@@ -241,7 +241,7 @@ export function hourlyExpense(
         + (room ? `・${room}` : ''),
       amount: r.amount,
       account_code: CODE_SALARY,
-      property_id: officeId,
+      property_id: null,
       office: true,
     };
   });

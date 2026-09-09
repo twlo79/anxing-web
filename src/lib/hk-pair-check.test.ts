@@ -20,7 +20,6 @@ import {
  *   而不是「產生器產出的東西配不配得起來」。
  */
 
-const OFFICE = 'office-prop';
 const ESTATES = ['正隆', '時兆', '復興'];
 
 const CLEAN = [
@@ -37,13 +36,13 @@ const payerOf = (pid: string | null) => ({ p1: '時兆', p2: '開封' }[pid ?? '
 
 /** 真正的產生器產出的收入 —— 正常情況下的那一批。 */
 const realIncome = (): HkEntry[] => [
-  ...cleaningIncome(CLEAN, OFFICE, payerOf),
-  ...laborIncome(LABOR, PAIR, OFFICE, estName),
+  ...cleaningIncome(CLEAN, payerOf),
+  ...laborIncome(LABOR, PAIR, estName),
 ];
 
 const run = (o: Partial<Parameters<typeof pairCheck>[0]> = {}) => pairCheck({
   clean: CLEAN, labor: LABOR, income: realIncome(),
-  pairEstates: PAIR, allEstateNames: ESTATES, officeId: OFFICE, ...o,
+  pairEstates: PAIR, allEstateNames: ESTATES, ...o,
 });
 
 describe('★★★ 產生前的模擬檢查', () => {
@@ -91,7 +90,7 @@ describe('★★★ 產生前的模擬檢查', () => {
     const r = run({
       allEstateNames: ['正隆企業', '時兆', '復興'],   // 正隆被改名了
       pairEstates: new Set<string>(),                 // 於是配對集合是空的
-      income: cleaningIncome(CLEAN, OFFICE, payerOf), // 人事費收入一筆都沒有
+      income: cleaningIncome(CLEAN, payerOf), // 人事費收入一筆都沒有
     });
     assert.equal(r.ok, false);
     const msg = r.issues.filter((i) => i.level === 'error').map((i) => i.text).join('\n');
@@ -103,21 +102,6 @@ describe('★★★ 產生前的模擬檢查', () => {
     assert.equal(run().issues.some((i) => i.text.includes('找不到物業')), false);
   });
 
-  test('★★ 找不到安幸辦公室 → 錯', () => {
-    const r = run({ officeId: null });
-    assert.equal(r.ok, false);
-    assert.match(r.issues.map((i) => i.text).join('\n'), /收入沒有地方可以掛/);
-  });
-
-  test('★ 沒有任何收入要寫時，找不到辦公室也不用叫', () => {
-    // 這個月一份工都沒有 —— 那不是錯，是沒事做
-    const r = pairCheck({
-      clean: [], labor: [], income: [],
-      pairEstates: PAIR, allEstateNames: ESTATES, officeId: null,
-    });
-    assert.equal(r.issues.some((i) => i.text.includes('沒有地方可以掛')), false);
-  });
-
   test('★★ 金額 0 的清潔費不產生收入 —— 是提醒不是錯', () => {
     /*
      * 人明確填 0 是「這一間這次不用錢」。
@@ -125,7 +109,7 @@ describe('★★★ 產生前的模擬檢查', () => {
      */
     const clean = [...CLEAN,
       { key: '2026-08-03|p3|清潔', work_date: '2026-08-03', amount: 0, label: 'B01', property_id: 'p3' }];
-    const r = run({ clean, income: [...cleaningIncome(clean, OFFICE, payerOf), ...laborIncome(LABOR, PAIR, OFFICE, estName)] });
+    const r = run({ clean, income: [...cleaningIncome(clean, payerOf), ...laborIncome(LABOR, PAIR, estName)] });
     assert.equal(r.ok, true);
     const warn = r.issues.filter((i) => i.level === 'warn').map((i) => i.text).join('\n');
     assert.match(warn, /1 筆清潔費金額是 0/);
@@ -141,7 +125,7 @@ describe('★★★ 產生前的模擬檢查', () => {
   test('★ 收入多出來（有收入沒支出）也要抓到', () => {
     const extra: HkEntry = {
       key: 'HKREV|幽靈', side: 'income', on: '2026-08-09', item_name: '房務清潔 X',
-      amount: 500, account_code: CODE_CLEAN, property_id: OFFICE, office: true,
+      amount: 500, account_code: CODE_CLEAN, property_id: null, office: true,
     };
     const r = run({ income: [...realIncome(), extra] });
     assert.equal(r.ok, false);
@@ -150,7 +134,7 @@ describe('★★★ 產生前的模擬檢查', () => {
   test('空輸入不炸', () => {
     const r = pairCheck({
       clean: [], labor: [], income: [],
-      pairEstates: new Set(), allEstateNames: ESTATES, officeId: OFFICE,
+      pairEstates: new Set(), allEstateNames: ESTATES,
     });
     assert.equal(r.ok, true);
     assert.equal(r.expectCount, 0);

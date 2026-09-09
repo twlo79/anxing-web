@@ -9,7 +9,7 @@ import { fetchAll } from '@/lib/fetch-all';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, roomKey, type SortState, type SortCols } from '@/lib/sortable';
 import {
-  isOffice, isCompany, inEstateBlock, estateOf, guestOf, roomOf,
+  isOffice, isCompany, isHkOffice, inEstateBlock, estateOf, guestOf, roomOf,
   itemLabel, oneoffItems, oneoffLabel, skeleton, reconcile, SHORT_SOURCES, ROOM_NONE, ONEOFF_LABEL,
 } from '@/lib/revenue-report';
 // 【結算】區塊的算法（有測試）—— 這一頁只負責排版
@@ -35,6 +35,8 @@ type Row = {
   oid: string | null;
   source: string; estate_id: string | null; estate_name: string | null;
   property_raw: string | null; guest_name: string | null; checkin: string; checkout: string;
+  /** 掛不掛物業（migration_235）。舊資料是 null，判斷會退回舊的 source 列舉 */
+  purpose_type?: string | null;
   period_start: string | null; period_end: string | null; fee_type?: string | null;
   /** 一次性收入的項目(洗衣機/垃圾代收費…)。會計科目底下再細一層。 */
   item_name?: string | null;
@@ -124,6 +126,7 @@ export default function RevenuesPage() {
     return (data ?? []).map((r) => ({
       order_id: r.id, oid: r.order_id ?? null, source: r.source, estate_id: r.estate_id, estate_name: r.estate_name,
       property_raw: r.property_raw, guest_name: r.guest_name, checkin: r.checkin, checkout: r.checkout,
+      purpose_type: r.purpose_type ?? null,
       period_start: r.period_start ?? pstart, period_end: r.period_end ?? pend, fee_type: r.fee_type ?? null, item_name: r.item_name ?? null,
       total_amount: Number(r.total_amount ?? 0), total_nights: r.total_nights ?? 0,
       month_nights: r.month_nights ?? 0, month_amount: Number(r.month_amount),
@@ -245,7 +248,13 @@ export default function RevenuesPage() {
   const byEstate = useMemo(() => {
     const m: Record<string, number> = {};
     for (const r of filtered) {
-      const k = r.estate_name ?? (r.source === 'company' ? '公司登記(無物業)' : r.source === 'other' ? '其他' : '無物業');
+      /*
+       * ★ 用 `estateOf()` 不要自己拼 —— 安幸辦公室的收入沒有 estate_name，
+       *   自己拼的話會落到「無物業」那一格，看起來像資料漏填。
+       */
+      const k = r.estate_name
+        ?? (r.source === 'company' ? '公司登記(無物業)'
+          : r.source === 'other' ? '其他' : estateOf(r));
       m[k] = (m[k] || 0) + Number(r.month_amount);
     }
     return Object.entries(m).sort((a, b) => b[1] - a[1]);
@@ -255,8 +264,9 @@ export default function RevenuesPage() {
   // 否則 200 多間全部列出來根本找不到。
   const roomOptions = useMemo(() => Array.from(new Set(
     rows.filter((r) => !estateFilter || (r.estate_name ?? '無') === estateFilter)
-        // 辦公室與公司登記的房號不列進下拉 —— 表格上不顯示,篩選卻篩得到會很奇怪
-        .filter((r) => !isOffice(r) && !isCompany(r))
+        // 辦公室、公司登記、房務收入的房號不列進下拉 ——
+        // 表格上不顯示,篩選卻篩得到會很奇怪
+        .filter((r) => !isOffice(r) && !isCompany(r) && !isHkOffice(r))
         .map((r) => r.property_raw ?? '').filter(Boolean)
   )).sort(), [rows, estateFilter]);
 
@@ -380,7 +390,7 @@ export default function RevenuesPage() {
       A.push(blank(nC));
 
       // ── 依物業(不含辦公室與公司登記)──
-      A.push([T('【依物業】不含辦公室出租與公司登記', stGroup), ...Array(nC - 1).fill(T('', stGroup))]);
+      A.push([T('【依物業】不含辦公室出租、公司登記與房務收入', stGroup), ...Array(nC - 1).fill(T('', stGroup))]);
       sk.estates.forEach((e) => A.push(line(e, (r) => inEstateBlock(r) && estateOf(r) === e, stCell, '　')));
       A.push(line('物業小計', inEstateBlock, stSubtotal));
       A.push(blank(nC));
@@ -390,6 +400,21 @@ export default function RevenuesPage() {
       sk.offices.forEach((g) => A.push(line(g, (r) => isOffice(r) && guestOf(r) === g, stCell, '　')));
       A.push(line('辦公室小計', isOffice, stSubtotal));
       A.push(blank(nC));
+
+      /*
+        ── 房務收入（2026-09-09，migration_235）──
+        ★★★ 安幸向物業收的服務費。**不掛物業房源**，所以不能算進物業小計 ——
+          算進去的話「這個物業帶進多少錢」會多出安幸自己賺的那一塊。
+        ★★ 依**付錢的物業**分列（客戶欄），跟辦公室出租同一種做法 ——
+          「安幸這個月從正隆賺了多少」是這一段唯一的用途。
+        ★ 沒有房務收入的月份整段不印。
+      */
+      if (sk.hkPayers.length > 0) {
+        A.push([T('【房務收入】向物業收，不掛物業房源', stGroup), ...Array(nC - 1).fill(T('', stGroup))]);
+        sk.hkPayers.forEach((g) => A.push(line(g, (r) => isHkOffice(r) && guestOf(r) === g, stCell, '　')));
+        A.push(line('房務收入小計', isHkOffice, stSubtotal));
+        A.push(blank(nC));
+      }
 
       // ── 公司登記 ──
       A.push([T('【公司登記】不掛物業房源', stGroup), ...Array(nC - 1).fill(T('', stGroup))]);
@@ -553,6 +578,7 @@ export default function RevenuesPage() {
       const inEst = md.rows.filter(inEstateBlock);
       const offs0 = md.rows.filter(isOffice);
       const coms0 = md.rows.filter(isCompany);
+      const hk0 = md.rows.filter(isHkOffice);
       const estList = Array.from(new Set(inEst.map(estateOf))).sort(eSort);
 
       /*
@@ -584,6 +610,12 @@ export default function RevenuesPage() {
       S.push(sub('物業小計', inEst, stSubtotal));
       S.push(sub('　租辦公室', offs0, stCell));
       S.push(sub('　公司登記', coms0, stCell));
+      /*
+       * ★★★ 房務收入（2026-09-09）。**跟上面三段並列，不含在物業小計裡** ——
+       *   那是安幸向物業收的服務費，不是任何一棟樓帶進來的錢。
+       *   漏了這一列的話總營收會對不上（`reconcile()` 會叫）。
+       */
+      if (hk0.length > 0) S.push(sub('　房務收入', hk0, stCell));
       // 其他收入(清潔費、取消費、垃圾代收…)已經含在物業小計裡,
       // 這一列是「其中有多少」,不是另外加上去的 —— 標題寫清楚免得被重複加總。
       S.push(sub('　其中:其他收入', md.rows.filter((r) => r.source === 'oneoff'), stCell));
@@ -591,7 +623,7 @@ export default function RevenuesPage() {
       S.push(mblank(MC));
 
       // ── 依房源 ──
-      S.push([T('【依房源】不含辦公室出租與公司登記', stGroup), ...Array(MC - 1).fill(T('', stGroup))]);
+      S.push([T('【依房源】不含辦公室出租、公司登記與房務收入', stGroup), ...Array(MC - 1).fill(T('', stGroup))]);
       for (const e of estList) {
         const grp = inEst.filter((r) => estateOf(r) === e);
         // 房號自然排序,空的排最後 —— 那些是整棟或漏填,不該卡在房號中間

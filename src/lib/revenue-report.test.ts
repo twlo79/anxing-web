@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   type RevRow, sum, classOf, skeleton, roomLines, reconcile,
   inEstateBlock, isOffice, isCompany, estateOf, ROOM_NONE, itemLabel, oneoffItems, ONEOFF_LABEL,
-  isOneoffSource, rentOnly, oneoffLabel,
+  isOneoffSource, rentOnly, oneoffLabel, isHkOffice, OFFICE_NAME,
 } from './revenue-report.ts';
 
 /**
@@ -259,5 +259,68 @@ describe('oneoffLabel —— 項目本身就以科目開頭時不重印', () => 
   test('沒有項目時只印科目，不留「・」的尾巴', () => {
     assert.equal(oneoffLabel(R('管理費', null)), '管理費');
     assert.equal(oneoffLabel(R('管理費', '   ')), '管理費');
+  });
+});
+
+// ── 收入的「用途」軸（migration_235）─────────────────────
+
+describe('★★★ purpose_type：這筆收入掛不掛物業', () => {
+  const R = (o: Partial<RevRow>): RevRow => ({
+    source: 'oneoff', estate_name: null, property_raw: null, guest_name: '時兆',
+    month_amount: 730, ...o,
+  } as RevRow);
+
+  test('★★★ 有 purpose_type 就看它，不再列舉 source', () => {
+    assert.equal(inEstateBlock(R({ purpose_type: 'estate' })), true);
+    assert.equal(inEstateBlock(R({ purpose_type: 'office' })), false);
+  });
+
+  test('★★★ 沒有 purpose_type 的舊資料退回舊判斷，答案一樣', () => {
+    /*
+     * 前端先上線、migration 還沒跑的那幾分鐘會走這條路。
+     * 兩條路對既有資料必須算出同一個答案，否則兩種環境的營收會不同。
+     */
+    assert.equal(inEstateBlock(R({ source: 'airbnb' })), true);
+    assert.equal(inEstateBlock(R({ source: 'office' })), false);
+    assert.equal(inEstateBlock(R({ source: 'company' })), false);
+    assert.equal(inEstateBlock(R({ source: 'oneoff' })), true);   // 舊行為
+  });
+
+  test('★★★ 辦公室出租與房務收入是兩個東西 —— 只有後者算房務', () => {
+    /*
+     * source='office'（辦公室出租）跟 purpose_type='office'（安幸辦公室）
+     * 名字撞在一起。兩者的 purpose_type 都是 office（都不掛物業），
+     * 但區塊要分開，不然同一筆錢會被算進兩段。
+     */
+    assert.equal(isHkOffice(R({ source: 'oneoff', purpose_type: 'office' })), true);
+    assert.equal(isHkOffice(R({ source: 'office', purpose_type: 'office' })), false);
+    assert.equal(isHkOffice(R({ source: 'company', purpose_type: 'office' })), false);
+  });
+
+  test('★★★ 四段相加要等於總營收 —— 房務收入不補進去會差一截', () => {
+    const rows = [
+      R({ source: 'airbnb', purpose_type: 'estate', estate_name: '正隆', month_amount: 1000 }),
+      R({ source: 'office', purpose_type: 'office', month_amount: 200 }),
+      R({ source: 'company', purpose_type: 'office', month_amount: 300 }),
+      R({ source: 'oneoff', purpose_type: 'office', month_amount: 730 }),   // 房務收入
+    ];
+    assert.equal(reconcile(rows), null, '四段沒蓋滿 —— 對帳會出現差額');
+  });
+
+  test('★★ 安幸辦公室的物業欄寫「安幸辦公室」，不是「無物業」', () => {
+    // 它有明確的歸屬，只是那個歸屬不是一棟樓。寫「無物業」看起來像漏填
+    assert.equal(estateOf(R({ purpose_type: 'office' })), OFFICE_NAME);
+    assert.equal(estateOf(R({ purpose_type: 'estate' })), '無物業');
+  });
+
+  test('★★ 房務收入依付錢的物業分列（客戶欄）', () => {
+    const sk = skeleton([
+      R({ source: 'oneoff', purpose_type: 'office', guest_name: '正隆' }),
+      R({ source: 'oneoff', purpose_type: 'office', guest_name: '時兆' }),
+      R({ source: 'airbnb', purpose_type: 'estate', estate_name: '正隆' }),
+    ], (a, b) => a.localeCompare(b));
+    assert.deepEqual(sk.hkPayers, ['時兆', '正隆'].sort((a, b) => a.localeCompare(b)));
+    // ★ 房務那幾筆不可以同時出現在物業段
+    assert.deepEqual(sk.estates, ['正隆']);
   });
 });

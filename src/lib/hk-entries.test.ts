@@ -17,7 +17,6 @@ import {
  *   ④ 人事費全部成對     → 安幸憑空多出幾筆本來不是它收的錢
  */
 
-const OFFICE = 'office-prop';
 
 describe('★★★ 清潔那一對：安幸收入 ＋ 物業支出，同額反向', () => {
   const cost = [
@@ -31,20 +30,20 @@ describe('★★★ 清潔那一對：安幸收入 ＋ 物業支出，同額反�
      * 重算的話兩邊遲早會漂,而漂掉的症狀是「收入跟支出對不起來」——
      * 金額都很正常,只是差幾百塊,沒有人查得出來。
      */
-    const inc = cleaningIncome(cost, OFFICE, payerOf);
+    const inc = cleaningIncome(cost, payerOf);
     assert.deepEqual(inc.map((r) => r.amount), [9000, 730]);
     assert.equal(sideTotal(inc, 'income'), 9730);
   });
 
   test('★★★ key 要有 HKREV 前綴 —— 不然跟支出的 key 一模一樣', () => {
-    const inc = cleaningIncome(cost, OFFICE, payerOf);
+    const inc = cleaningIncome(cost, payerOf);
     assert.equal(inc[0].key, 'HKREV|2026-08-01|p1|清潔');
     assert.notEqual(inc[0].key, cost[0].key);
   });
 
-  test('★★ 收入一律掛安幸辦公室，不是房源', () => {
-    const inc = cleaningIncome(cost, OFFICE, payerOf);
-    assert.ok(inc.every((r) => r.property_id === OFFICE && r.office));
+  test('★★★ 收入不掛任何房源 —— 它掛在用途上（migration_235）', () => {
+    const inc = cleaningIncome(cost, payerOf);
+    assert.ok(inc.every((r) => r.property_id === null && r.office));
   });
 
   test('★★ 房號帶在 room 上 —— 訂單的備註欄靠它（2026-09-08）', () => {
@@ -55,7 +54,7 @@ describe('★★★ 清潔那一對：安幸收入 ＋ 物業支出，同額反�
      * room 掉了的話,備註會全部變空白而畫面上完全看不出來 ——
      * 只有事後有人問「這 730 是哪一間」時才會發現。
      */
-    const inc = cleaningIncome(cost, OFFICE, payerOf);
+    const inc = cleaningIncome(cost, payerOf);
     assert.deepEqual(inc.map((r) => r.room), ['14B3', 'A09']);
     // 項目也要留著房號 —— 兩邊各有各的用途，不是重複
     assert.ok(inc[0].item_name.includes('14B3'));
@@ -64,19 +63,19 @@ describe('★★★ 清潔那一對：安幸收入 ＋ 物業支出，同額反�
   test('★ 人事費那一對沒有房號 —— room 是 undefined，備註會是 null', () => {
     const lab = laborIncome(
       [{ key: 'L1', spent_on: '2026-08-31', estate_id: 'e1', amount: 200000 }],
-      new Set(['e1']), OFFICE, () => '正隆');
+      new Set(['e1']), () => '正隆');
     assert.equal(lab.length, 1);
     assert.equal(lab[0].room, undefined);
   });
 
   test('科目是房務清潔（migration_228 改成 both 才選得到）', () => {
-    assert.ok(cleaningIncome(cost, OFFICE, payerOf).every((r) => r.account_code === CODE_CLEAN));
+    assert.ok(cleaningIncome(cost, payerOf).every((r) => r.account_code === CODE_CLEAN));
   });
 
   test('★ 金額 0 的不產生收入 —— 支出那邊也不會有', () => {
     const inc = cleaningIncome(
       [{ key: 'k', work_date: '2026-08-01', amount: 0, label: 'x', property_id: 'p1' }],
-      OFFICE, payerOf);
+      payerOf);
     assert.equal(inc.length, 0);
   });
 
@@ -89,7 +88,7 @@ describe('★★★ 清潔那一對：安幸收入 ＋ 物業支出，同額反�
      * ★★ 營收清單那個「房務清潔・房務清潔 14B3」的重複
      *   是在 `oneoffLabel()` 修的，不是把兩邊名字弄得不一樣。
      */
-    const inc = cleaningIncome(cost, OFFICE, payerOf);
+    const inc = cleaningIncome(cost, payerOf);
     assert.equal(inc[0].item_name, '房務清潔 14B3');
     assert.equal(inc[0].on, '2026-08-01');
   });
@@ -105,25 +104,25 @@ describe('★★★ 人事費：只有指定的那個物業成對', () => {
 
   test('★★★ 只有正隆產生收入，其餘五筆維持現狀', () => {
     // 全部成對的話，安幸的收入會憑空多出那幾筆 —— 而那本來不是安幸收的錢
-    const inc = laborIncome(lab, new Set(['zl']), OFFICE, nameOf);
+    const inc = laborIncome(lab, new Set(['zl']), nameOf);
     assert.equal(inc.length, 1);
     assert.equal(inc[0].amount, 200000);
     assert.match(inc[0].item_name, /正隆/);
   });
 
   test('科目是人事費（收入），不是薪資勞務', () => {
-    const inc = laborIncome(lab, new Set(['zl']), OFFICE, nameOf);
+    const inc = laborIncome(lab, new Set(['zl']), nameOf);
     assert.equal(inc[0].account_code, CODE_LABOR_REV);
     assert.notEqual(inc[0].account_code, CODE_SALARY);
   });
 
   test('key 有自己的前綴，跟清潔收入分得開', () => {
-    const inc = laborIncome(lab, new Set(['zl']), OFFICE, nameOf);
+    const inc = laborIncome(lab, new Set(['zl']), nameOf);
     assert.match(inc[0].key, /^HKLABREV\|/);
   });
 
   test('沒有指定任何物業就一筆收入都不產生', () => {
-    assert.equal(laborIncome(lab, new Set(), OFFICE, nameOf).length, 0);
+    assert.equal(laborIncome(lab, new Set(), nameOf).length, 0);
   });
 });
 
@@ -144,25 +143,28 @@ describe('★★★ 劉姐的工資記在安幸辦公室，不是房源', () => 
     /*
      * 物業已經付過那間房的清潔費了。工資再記到房源上,
      * 那間房的成本就變成「清潔費 ＋ 劉姐工資」,而她的工資是安幸的成本。
+     *
+     * ★★★ migration_235 之後房源一律 null —— 安幸辦公室不再是假房源,
+     *   它是 `purpose_type='office'`。`office: true` 就是那個標記。
      */
-    const out = hourlyExpense(hr, roomName, rooms, OFFICE);
-    assert.ok(out.every((r) => r.property_id === OFFICE && r.office));
+    const out = hourlyExpense(hr, roomName, rooms);
+    assert.ok(out.every((r) => r.property_id === null && r.office));
   });
 
   test('★★ 科目是薪資勞務，不是房務清潔', () => {
-    const out = hourlyExpense(hr, roomName, rooms, OFFICE);
+    const out = hourlyExpense(hr, roomName, rooms);
     assert.ok(out.every((r) => r.account_code === CODE_SALARY));
   });
 
   test('★ 房號留在項目名稱裡 —— 金額歸安幸，但查得到花在哪幾間', () => {
-    const out = hourlyExpense(hr, roomName, rooms, OFFICE);
+    const out = hourlyExpense(hr, roomName, rooms);
     assert.equal(out[0].item_name, '劉姐 2.5 小時 × $500・14B3');
     assert.equal(out[1].item_name, '劉姐 4 小時 × $500・14B5');
   });
 
   test('★★ 攤過的要印攤後的時數，不是當天的總時數', () => {
     // 印 5 小時而金額只有 1,250 的話，看的人會以為時薪被算錯了
-    const out = hourlyExpense(hr, roomName, rooms, OFFICE);
+    const out = hourlyExpense(hr, roomName, rooms);
     assert.match(out[0].item_name, /2\.5 小時/);
     // ★ 用「劉姐 5 小時」整段比,不能只比「5 小時」——
     //   後者會 match 到「2.5 小時」裡的那個 5（第一版就是這樣自己騙自己）
@@ -170,7 +172,7 @@ describe('★★★ 劉姐的工資記在安幸辦公室，不是房源', () => 
   });
 
   test('key 沿用 hourlyRows 的，不重新編', () => {
-    const out = hourlyExpense(hr, roomName, rooms, OFFICE);
+    const out = hourlyExpense(hr, roomName, rooms);
     assert.equal(out[0].key, 'HR|2026-08-01|liu|p1');
   });
 });
@@ -180,11 +182,11 @@ describe('★ 收入與支出分開加', () => {
     const rows = [
       ...cleaningIncome(
         [{ key: 'k1', work_date: '2026-08-01', amount: 9000, label: 'a', property_id: 'p1' }],
-        OFFICE, () => '時兆'),
+        () => '時兆'),
       ...hourlyExpense(
         [{ key: 'HR|x', spent_on: '2026-08-01', staff_name: '劉姐',
            hours: 4, rate: 500, amount: 2000, share: 1 }],
-        () => '', [], OFFICE),
+        () => '', []),
     ];
     assert.equal(sideTotal(rows, 'income'), 9000);
     assert.equal(sideTotal(rows, 'expense'), 2000);
@@ -223,19 +225,19 @@ describe('★★ 兩個新名目要進一次性收入的清單', () => {
 describe('★★ 收入要看得出是向誰收的', () => {
   test('★★ 房客欄放物業名稱 —— 不然營收頁一整排長一樣', () => {
     /*
-     * 收入列的房源都是「安幸辦公室」。不寫付款方的話,
+     * 收入列沒有房源。不寫付款方的話,
      * 只看得到「房務清潔 A09」,看不出這 730 是向時兆還是向開封收的。
      */
     const inc = cleaningIncome(
       [{ key: 'k', work_date: '2026-08-02', amount: 730, label: 'A09', property_id: 'p2' }],
-      OFFICE, (id) => (id === 'p2' ? '開封' : ''));
+      (id) => (id === 'p2' ? '開封' : ''));
     assert.equal(inc[0].payer, '開封');
   });
 
   test('人事費收入也要帶物業名稱', () => {
     const inc = laborIncome(
       [{ key: '202608|zl', spent_on: '2026-08-31', estate_id: 'zl', amount: 200000 }],
-      new Set(['zl']), OFFICE, () => '正隆');
+      new Set(['zl']), () => '正隆');
     assert.equal(inc[0].payer, '正隆');
   });
 });

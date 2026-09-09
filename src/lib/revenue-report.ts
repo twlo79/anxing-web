@@ -26,6 +26,22 @@ export type RevRow = {
   fee_type?: string | null;
   /** 一次性收入的項目(洗衣機/垃圾代收費…)。會計科目底下再細一層。 */
   item_name?: string | null;
+  /**
+   * 這筆收入**掛不掛物業**（migration_235）。`estate` / `office` / `other_biz`。
+   *
+   * ★★★ 跟 `source='office'` 是**兩個不同的軸**，名字剛好撞在一起:
+   *
+   *     source        這是哪一種收入   辦公室出租 / 公司登記 / 一次性 / 短租…
+   *     purpose_type  掛不掛物業       estate（掛）/ office（安幸自己）
+   *
+   *   辦公室出租、公司登記、房務收入三者的 purpose_type 都是 `office`
+   *   （都不掛物業），但 source 分別是 office / company / oneoff ——
+   *   所以報表的三個區塊照舊分得開。
+   *
+   * ★ 選填:migration_235 之前的資料沒有這一欄，
+   *   底下的判斷會退回舊的 source 列舉（見 `inEstateBlock`）。
+   */
+  purpose_type?: string | null;
 };
 
 /**
@@ -70,12 +86,61 @@ export const srcLabel = (s: string) => SOURCE_LABEL[s] ?? s;
 /** 認列表裡實際會出現的來源。partner 在寫入時已歸到 airbnb,airbnb_cancelled 歸到 oneoff。 */
 export const SHORT_SOURCES = ['airbnb', 'agoda', 'private'];
 
+/** 辦公室**出租** —— 安幸把辦公室租給別人的租金。不是「安幸辦公室」。 */
 export const isOffice = (r: RevRow) => r.source === 'office';
 export const isCompany = (r: RevRow) => r.source === 'company';
-/** 物業段:辦公室與公司登記以外的全部 */
-export const inEstateBlock = (r: RevRow) => !isOffice(r) && !isCompany(r);
 
-export const estateOf = (r: RevRow) => r.estate_name ?? '無物業';
+/** 安幸辦公室（總部）自己的收入 —— 房務清潔、人事費那一類。 */
+export const OFFICE_NAME = '安幸辦公室';
+
+/**
+ * 安幸辦公室自己的收入（房務清潔、人事費…）。
+ *
+ * ★★ 條件裡要**排除辦公室出租與公司登記** —— 那兩種的 purpose_type
+ *   也是 `office`（同樣不掛物業），但它們各自有獨立的區塊。
+ *   不排除的話同一筆錢會被算進兩段，而三段相加就對不上總營收。
+ */
+export const isHkOffice = (r: RevRow) =>
+  r.purpose_type === 'office' && !isOffice(r) && !isCompany(r);
+
+/**
+ * 這筆收入算不算在「依物業」那一段裡。
+ *
+ * ============================================================
+ * 【★★★ 為什麼從列舉 source 改成看 purpose_type】（2026-09-09）
+ *
+ * 舊寫法是 `!isOffice(r) && !isCompany(r)` —— 它想問的是
+ * 「這筆收入掛不掛物業」，但問不到那個欄位，只好把不掛的那幾種列出來。
+ *
+ * ★★ 結果是**每多一種不掛物業的收入，這一行就要多一個 `&&`**，
+ *   而漏加不會報錯 —— 那筆錢會安靜地混進某個物業的小計。
+ *   房務收入就是第三種（migration_228 那次我用假物業繞過去，
+ *   於是安幸辦公室變成第九棟樓）。
+ *
+ * ★ migration_235 給 orders 與認列表加了 `purpose_type`，
+ *   這一行從此不用再改。
+ *
+ * ============================================================
+ * 【為什麼保留舊路當退路】
+ *
+ * 這一欄是 2026-09-09 才加的。前端先上線、migration 還沒跑的那幾分鐘，
+ * `purpose_type` 會是 undefined —— 那時候退回舊的列舉，數字完全不變。
+ *
+ * ★ 兩條路對既有資料**答案一模一樣**（migration_235 自檢第 ③ 條驗過），
+ *   所以這個退路不會讓兩種環境算出不同的營收。
+ */
+export const inEstateBlock = (r: RevRow) =>
+  r.purpose_type ? r.purpose_type === 'estate' : (!isOffice(r) && !isCompany(r));
+
+/**
+ * 這一列的物業名稱。
+ *
+ * ★★ 安幸辦公室的收入**沒有物業**（`estate_name` 是 null），
+ *   但畫面上不能寫「無物業」—— 那看起來像資料漏填。
+ *   它有明確的歸屬，只是那個歸屬不是一棟樓。
+ */
+export const estateOf = (r: RevRow) =>
+  r.estate_name ?? (r.purpose_type === 'office' ? OFFICE_NAME : '無物業');
 export const guestOf = (r: RevRow) => r.guest_name ?? '未填客戶';
 /**
  * 房源空值的顯示。
@@ -182,6 +247,11 @@ export function skeleton(allRows: RevRow[], estateOrder: (a: string, b: string) 
     estates: uniq(allRows.filter(inEstateBlock).map(estateOf)).sort(estateOrder),
     offices: uniq(allRows.filter(isOffice).map(guestOf)).sort(),
     companies: uniq(allRows.filter(isCompany).map(guestOf)).sort(),
+    /*
+     * ★★ 房務收入依**付錢的物業**分列 —— 那個值放在「客戶」欄
+     *   （產生時寫的是「向誰收」）。跟辦公室出租同一種做法。
+     */
+    hkPayers: uniq(allRows.filter(isHkOffice).map(guestOf)).sort(estateOrder),
   };
 }
 
@@ -209,7 +279,18 @@ export function roomLines(allRows: RevRow[], estate: string) {
  */
 export function reconcile(rows: RevRow[]): { total: number; parts: number; diff: number } | null {
   const total = sum(rows);
-  const parts = sum(rows, inEstateBlock) + sum(rows, isOffice) + sum(rows, isCompany);
+  /*
+   * ★★★ **四段**，不是三段（2026-09-09 加了房務收入）。
+   *
+   *   migration_235 之前房務收入的 source 是 oneoff、沒有 purpose_type,
+   *   所以它落在 `inEstateBlock` 裡 —— 三段就蓋得完。
+   *   235 之後它被排除在物業段之外，**不補上第四段的話這裡永遠差一截**,
+   *   而畫面上會是一個沒有人知道從哪來的差額。
+   *
+   * ★ 這支函式就是為了抓這種事而存在的。新增一種區塊就要回來加一項。
+   */
+  const parts = sum(rows, inEstateBlock) + sum(rows, isOffice)
+    + sum(rows, isCompany) + sum(rows, isHkOffice);
   return total === parts ? null : { total, parts, diff: total - parts };
 }
 

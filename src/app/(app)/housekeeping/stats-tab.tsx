@@ -673,14 +673,21 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
            *   記在房源上的話，物業付過那間房的清潔費之後，
            *   同一份工又被記了一次成本 —— 而劉姐是安幸的人，不是物業的。
            *   房號留在項目名稱裡（`劉姐 2.5 小時 × $500・14B3`）。
+           *
+           * ★★★ 2026-09-09（migration_235）:改用 `purpose_type='office'`,
+           *   物業與房源都留空 —— 這是支出頁本來就有的「安幸辦公室」寫法
+           *   （migration_212）。以前掛的那個假物業已經刪掉了。
+           *   `exp_purpose_chk` 規定 office 時 estate_id 必須是 null。
            */
-          property_id: r.property_id,
-          estate_id: office.estateId,
+          property_id: null,
+          estate_id: null,
           item_name: nameBy[r.key]?.trim() || r.item_name,
           key_job: r.key,
         }),
         // ★ 科目是薪資勞務，不是房務清潔 —— mk() 給的那個要蓋掉
         account_code: r.account_code,
+        // ★★ 用途也要蓋掉：mk() 給的是 'estate'
+        purpose_type: 'office',
         payment_method: 'transfer',
         pay_account: '8088',
         tags: [] as string[],
@@ -732,14 +739,21 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
          * ★ 但支出那邊**還是要** `office.propId`（劉姐的工資記在
          *   安幸辦公室這個房源上），所以那個房源不能刪。
          */
-        if (!office.estateId) {
-          setGenErr(`找不到「${OFFICE_NAME}」這個物業 —— migration_228 還沒跑，`
-            + '收入沒有地方可以掛。支出照常產生，但這一批先不寫。');
-        } else {
+        {
           const orderRows = gen.income.map((r) => ({
             order_key: r.key,
             source: 'oneoff',
-            estate_id: office.estateId,
+            /*
+             * ★★★ 用途＝安幸辦公室，物業與房源都留空（migration_235）。
+             *
+             *   以前是掛在一個假物業上 —— 那讓營收的「依物業」多出一棟
+             *   不是樓的樓，而用途下拉也會出現兩個同名的「安幸辦公室」。
+             *
+             * ★ 這一組值跟支出那邊**完全一樣**（`purpose_type='office'`
+             *   時 estate_id 必須是 null）。收支兩側從此用同一組用途值。
+             */
+            purpose_type: 'office',
+            estate_id: null as string | null,
             /*
              * ★★★ 房源留空（2026-09-08 使用者:「房源：空白」）。
              *
@@ -871,19 +885,18 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
     return () => { alive = false; };
   }, [genOpen, supabase]);
 
-  /**
-   * 安幸辦公室那個物業與房源（migration_228 建的）。
+  /*
+   * ══════════════════════════════════════════════════════
+   * 【這裡曾經查「安幸辦公室那個物業與房源」，2026-09-09 移除】
    *
-   * ★ 不用另外查一次 —— 上面那支 `properties` 查詢本來就會把它載回來,
-   *   它現在是一個正常的房源。
+   * migration_228 為了讓房務收入的訂單有地方掛，建了一個
+   * **名叫安幸辦公室的假物業與假房源**。
    *
-   * ★★ 找不到就是 migration_228 沒跑。**不要靜靜地把收入丟掉** ——
-   *   產生時會擋下來並講原因（見 generateInner）。
+   * migration_235 給 `orders` 加了 `purpose_type` 之後就不需要了 ——
+   * 收入寫 `purpose_type='office'`、物業房源都留空，
+   * 那兩列已經被刪掉。所以這裡沒有東西要查。
+   * ══════════════════════════════════════════════════════
    */
-  const office = useMemo(() => {
-    const pid = Object.entries(propNameById).find(([, n]) => n === OFFICE_NAME)?.[0] ?? null;
-    return { propId: pid, estateId: pid ? (estIdByProp[pid] ?? null) : null };
-  }, [propNameById, estIdByProp]);
 
   /** 人事費要對安幸開收入的物業 id（名字寫死在 lib，見那裡的說明）。 */
   const laborPairEstates = useMemo(
@@ -925,9 +938,8 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
      *   兩邊看起來都很正常。規則在 lib/hk-entries.ts,有測試。
      */
     const income: HkEntry[] = [
-      ...cleaningIncome(rows as any, office.propId, (pid) => estateById[pid ?? ''] ?? ''),
-      ...laborIncome(lab as any, laborPairEstates, office.propId,
-                     (id) => estNameById[id] ?? ''),
+      ...cleaningIncome(rows as any, (pid: string | null) => estateById[pid ?? ''] ?? ''),
+      ...laborIncome(lab as any, laborPairEstates, (id: string) => estNameById[id] ?? ''),
     ];
     /*
      * ★★★ 劉姐的工資從「房源支出」改成「安幸辦公室支出／薪資勞務」。
@@ -935,9 +947,8 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
      *   同一份工又被記了一次成本 —— 而她是安幸的人,不是物業的。
      */
     const hrOffice = hourlyExpense(
-      hr.rows, (pid) => propNameById[pid] ?? '',
-      hr.rows.map((r) => ({ key: r.key, property_id: r.property_id })),
-      office.propId);
+      hr.rows, (pid: string) => propNameById[pid] ?? '',
+      hr.rows.map((r) => ({ key: r.key, property_id: r.property_id })));
 
     /*
      * ══════════ 產生前的模擬檢查（2026-09-09 使用者:「模擬檢查」「用觸發的邏輯檢查」）
@@ -952,7 +963,6 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
       clean: rows, labor: lab as any, income,
       pairEstates: laborPairEstates,
       allEstateNames: Object.values(estNameById),
-      officeId: office.propId,
       /*
        * ★★★ 三筆規則要的是 `hr.rows` —— **還沒換成安幸辦公室之前**的那一批。
        *   `hrOffice` 的 property_id 已經全部是安幸辦公室了，那時候比不出東西。
@@ -971,7 +981,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
              incTotal: sideTotal(income, 'income'),
              total: costTotal(rows) + costTotal(lab) + costTotal(hrOffice) };
   }, [estateLogs, priceById, labor, period, splitIdx, hourStaff, days,
-      office.propId, estateById, estNameById, propNameById, laborPairEstates]);
+      estateById, estNameById, propNameById, laborPairEstates]);
 
   /*
    * ══════════ 把整批預覽複製起來（2026-09-09 使用者:「把預覽導給你檢查」）
@@ -1000,7 +1010,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
       units: null, price: null, amount: r.amount, extra: '',
     }));
     const hour: ExportLine[] = gen.hr.map((r) => ({
-      date: r.on, estate: OFFICE_NAME, room: OFFICE_NAME,
+      date: r.on, estate: OFFICE_NAME, room: '',
       item: nameBy[r.key]?.trim() || r.item_name,
       units: null, price: null, amount: r.amount, extra: '匯款 8088',
     }));
@@ -2131,8 +2141,9 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                       <tr key={r.key} className="border-t border-mor-line/60 bg-mor-greenlight/40">
                         <td className="px-2 py-1 text-gray-500">{r.on}</td>
                         {nameCell(r.key, r.item_name)}
+                        {/* 用途＝安幸辦公室；房源留空（migration_235 起不掛房源）*/}
                         <td className="px-2 py-1 text-gray-600">{OFFICE_NAME}</td>
-                        <td className="px-2 py-1 text-gray-600">{OFFICE_NAME}</td>
+                        <td className="px-2 py-1 text-gray-400">—</td>
                         <td className="px-2 py-1 text-gray-500">薪資勞務</td>
                         <td className="px-2 py-1 text-gray-400">—</td>
                         <td className="px-2 py-1 text-mor-green whitespace-nowrap">匯款 8088</td>
