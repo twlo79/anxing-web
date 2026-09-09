@@ -162,4 +162,75 @@ describe('★★★ 產生前的模擬檢查', () => {
     assert.equal(realIncome().filter((x) => x.account_code === CODE_LABOR_REV).length, 1);
     assert.equal(r.laborActual, 1);
   });
+
+  /* ══════════ 三筆規則（2026-09-09）══════════ */
+
+  const HOUR = [
+    { spent_on: '2026-08-01', property_id: 'p1', staff_name: '劉姐', hours: 2.5 },
+    { spent_on: '2026-08-16', property_id: 'p9', staff_name: '劉姐', hours: 9.5 },
+  ];
+  const roomName = (id: string | null) => ({ p1: '14B3', p9: '復興' }[id ?? ''] ?? '');
+
+  test('★★★ 劉姐做的每一間都要有清潔費 —— 有工資沒清潔費就是錯', () => {
+    /*
+     * 2026-09-08 抓到的那個 bug 的形狀:
+     * 「劉姐 有產生支出，但沒有房源請款」——
+     * 安幸付了工資，卻沒有向物業收錢。
+     *
+     * 當時是人工比對發現的，而人工比對不會有第二次。
+     */
+    const r = run({
+      hourJobs: HOUR,
+      // 只有 p1 產生了清潔費，p9（復興）沒有
+      cleanJobs: [{ work_date: '2026-08-01', property_id: 'p1' }],
+      roomName,
+    });
+    assert.equal(r.ok, false);
+    const msg = r.issues.filter((i) => i.level === 'error').map((i) => i.text).join('\n');
+    assert.match(msg, /有工資、沒有清潔費/);
+    assert.match(msg, /2026-08-16 復興 劉姐 9.5 小時/);
+    assert.equal(msg.includes('14B3'), false);   // 有配到的不要列
+  });
+
+  test('★★★ 兩間都有清潔費就通過', () => {
+    const r = run({
+      hourJobs: HOUR,
+      cleanJobs: [
+        { work_date: '2026-08-01', property_id: 'p1' },
+        { work_date: '2026-08-16', property_id: 'p9' },
+      ],
+      roomName,
+    });
+    assert.equal(r.ok, true, r.issues.map((i) => i.text).join(' / '));
+  });
+
+  test('★★ 反過來不必 —— 別人做的工只有兩筆，那是對的', () => {
+    /*
+     * 清潔費比時薪多是**正常**的:那幾間是按間計酬的人做的。
+     * 反過來當成錯的話，每個月都會亮紅字而其實沒事。
+     */
+    const r = run({
+      hourJobs: [HOUR[0]],
+      cleanJobs: [
+        { work_date: '2026-08-01', property_id: 'p1' },
+        { work_date: '2026-08-13', property_id: 'p9' },   // 別人做的
+        { work_date: '2026-08-20', property_id: 'p2' },
+      ],
+      roomName,
+    });
+    assert.equal(r.ok, true);
+  });
+
+  test('★ 沒有時薪人員的月份不檢查這一條', () => {
+    const r = run({ hourJobs: [], cleanJobs: [], roomName });
+    assert.equal(r.issues.some((i) => i.text.includes('有工資、沒有清潔費')), false);
+  });
+
+  test('★ 工資沒對到房源的不算 —— 那是另一個問題（hourlyRows 會另外挑出來）', () => {
+    const r = run({
+      hourJobs: [{ spent_on: '2026-08-05', property_id: null, staff_name: '劉姐', hours: 3 }],
+      cleanJobs: [], roomName,
+    });
+    assert.equal(r.issues.some((i) => i.text.includes('有工資、沒有清潔費')), false);
+  });
 });

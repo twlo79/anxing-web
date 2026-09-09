@@ -27,6 +27,7 @@ import {
 } from '@/lib/hk-entries';
 import { pairCheck } from '@/lib/hk-pair-check';
 import { previewExportText, type ExportLine } from '@/lib/hk-preview-export';
+import { planUndo, REV_PREFIX, LABREV_PREFIX, type UndoPlan } from '@/lib/hk-undo';
 import { sharePreview, previewText } from '@/lib/hk-crew';
 import {
   reparsePreview, visibleRows, dismissedCount, prefillFromEvent,
@@ -287,6 +288,16 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
    * 所以那幾列鎖起來標「已產生」，改名請到支出頁。
    */
   const [doneKeys, setDoneKeys] = useState<Set<string>>(new Set());
+  /*
+   * 撤銷這批（2026-09-09 使用者:「多一個功能 產生後的可以撤銷」）。
+   *
+   * ★ 兩段式:先查出來給人看（`undoPlan`），確認了才刪。
+   *   直接一個 confirm 就刪的話，人不知道自己在刪什麼 ——
+   *   而這一按是七十幾列。
+   */
+  const [undoPlan, setUndoPlan] = useState<UndoPlan | null>(null);
+  const [undoBusy, setUndoBusy] = useState(false);
+  const [undoMsg, setUndoMsg] = useState<string | null>(null);
   const [doneLoading, setDoneLoading] = useState(false);
 
   /*
@@ -942,6 +953,16 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
       pairEstates: laborPairEstates,
       allEstateNames: Object.values(estNameById),
       officeId: office.propId,
+      /*
+       * ★★★ 三筆規則要的是 `hr.rows` —— **還沒換成安幸辦公室之前**的那一批。
+       *   `hrOffice` 的 property_id 已經全部是安幸辦公室了，那時候比不出東西。
+       */
+      hourJobs: hr.rows.map((r) => ({
+        spent_on: r.spent_on, property_id: r.property_id,
+        staff_name: r.staff_name, hours: r.hours,
+      })),
+      cleanJobs: rows.map((r) => ({ work_date: r.work_date, property_id: r.property_id })),
+      roomName: (id) => propNameById[id ?? ''] ?? '',
     });
 
     return { rows, unpriced, lab, hr: hrOffice, hrSkipped: hr.skipped, income, check,
@@ -1019,6 +1040,125 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
       flash('複製不了（瀏覽器擋住剪貼簿），已改成下載 .txt');
     }
   }
+
+  /**
+   * 這個月已經產生過幾筆。**撤銷鍵只在大於 0 的時候出現** ——
+   * 沒產生過還給一顆「撤銷」，按下去只會說「沒有東西可以撤銷」。
+   */
+  const madeCount = useMemo(
+    () => [...gen.rows, ...gen.lab, ...gen.hr].filter((r) => doneKeys.has(r.key)).length,
+    [gen, doneKeys]);
+
+  /**
+   * 這個月這一批的所有冪等鍵，以及每個鍵**現在**該叫什麼名字。
+   *
+   * ★ 名稱拿來判斷「產生之後有沒有被改過」。跟導出用的是同一套算法。
+   */
+  const batchKeys = useCallback(() => {
+    const m = new Map<string, string>();
+    for (const r of gen.rows) {
+      m.set(r.key, nameBy[r.key]?.trim() || cleanItemName(r.label, r.units, r.fixedAmount));
+    }
+    for (const r of gen.lab) m.set(r.key, nameBy[r.key]?.trim() || LABOR_ITEM_NAME);
+    for (const r of gen.hr) m.set(r.key, nameBy[r.key]?.trim() || r.item_name);
+    return m;
+  }, [gen, nameBy]);
+
+  /**
+   * 查出這個月產生過什麼，**先不刪**。
+   *
+   * ★★★ 用 `.in()` 一批一批查，不用 `.or()` 拼字串 ——
+   *   鍵裡面有 `|` 和 `:`，自己拼 PostgREST 的 or 條件遲早會踩到跳脫,
+   *   而踩到的症狀是**查回來少幾筆**，於是那幾筆撤不掉、留在帳上。
+   */
+  async function openUndo() {
+    setUndoMsg(null);
+    setUndoBusy(true);
+    try {
+      const names = batchKeys();
+      const keys = [...names.keys()];
+      if (!keys.length) { setUndoBusy(false); return setUndoMsg('這個月沒有可以撤銷的批次'); }
+
+      const CH = 100;
+      const exps: any[] = [];
+      const ords: any[] = [];
+      for (let i = 0; i < keys.length; i += CH) {
+        const part = keys.slice(i, i + CH);
+        const [a, b, c] = await Promise.all([
+          supabase.from('expenses')
+            .select('id, hk_job_key, hk_labor_key, item_name, amount, spent_on, deferred, parent_expense_id')
+            .in('hk_job_key', part),
+          supabase.from('expenses')
+            .select('id, hk_job_key, hk_labor_key, item_name, amount, spent_on, deferred, parent_expense_id')
+            .in('hk_labor_key', part),
+          supabase.from('orders')
+            .select('id, order_key, item_name, amount, checkin, paid')
+            .in('order_key', part.flatMap((k) => [REV_PREFIX + k, LABREV_PREFIX + k])),
+        ]);
+        /*
+         * ★★ 任何一段查失敗就**整個中止**，不要拿半份清單去刪 ——
+         *   查回來少幾筆的話，那幾筆會被當成「沒產生過」而留在帳上，
+         *   而畫面會說「已撤銷 70 筆」。
+         */
+        for (const r of [a, b, c]) {
+          if (r.error) throw new Error(r.error.message);
+        }
+        exps.push(...(a.data ?? []), ...(b.data ?? []));
+        ords.push(...(c.data ?? []));
+      }
+      // 同一筆支出可能同時被兩支查詢撈到（理論上不會，但撈重了會刪兩次）
+      const uniq = [...new Map(exps.map((e) => [e.id, e])).values()];
+
+      const plan = planUndo({
+        expenses: uniq as any, orders: ords as any,
+        keys: new Set(keys), expectedName: (k) => names.get(k),
+      });
+      if (plan.rows.length === 0) {
+        setUndoMsg('這個月還沒有產生過任何一筆 —— 沒有東西可以撤銷');
+      } else {
+        setUndoPlan(plan);
+      }
+    } catch (e: any) {
+      setUndoMsg('查詢失敗：' + (e?.message ?? String(e)) + '（一筆都沒有刪）');
+    } finally {
+      setUndoBusy(false);
+    }
+  }
+
+  /**
+   * 真的刪。**逐筆走 `soft_delete()`** —— 進回收桶，可以復原。
+   *
+   * ★★★ 不用 `.delete()` 直接刪:回收桶是唯一留得下
+   *   「誰刪的、原本是什麼」的地方，而撤銷整批正是最需要那個紀錄的動作。
+   *
+   * ★★ 失敗的要**數出來並且講**。RLS 擋下來的刪除會回成功且影響 0 列,
+   *   `softDelete()` 已經把那種情況翻成 `ok:false` —— 這裡只要不要吞掉它。
+   */
+  async function runUndo() {
+    const plan = undoPlan;
+    if (!plan) return;
+    setUndoBusy(true);
+    let done = 0;
+    const failed: string[] = [];
+    for (const r of plan.rows) {
+      const res = await softDelete(
+        supabase, r.kind === 'expense' ? 'expenses' : 'orders', r.id,
+        `撤銷房務產生批次 ${period}`);
+      if (res.ok) done += 1;
+      else failed.push(`${r.label}（${res.message}）`);
+    }
+    setUndoBusy(false);
+    setUndoPlan(null);
+    // ★ 撤掉的鍵要從「已產生」清單裡拿掉，不然預覽還以為它們存在
+    if (done > 0) {
+      const gone = new Set(plan.rows.filter((r) => r.kind === 'expense').map((r) => r.key));
+      setDoneKeys((old) => new Set([...old].filter((k) => !gone.has(k))));
+    }
+    setUndoMsg(failed.length === 0
+      ? `已撤銷 ${done} 筆，全部在回收桶裡（設定 → 回收桶 可以復原）`
+      : `撤銷了 ${done} 筆，有 ${failed.length} 筆刪不掉：\n${failed.slice(0, 5).join('\n')}`);
+  }
+
 
   /** 這次預覽裡有幾筆是已經產生過的。 */
   const doneNum = useMemo(
@@ -2253,9 +2393,80 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
               className="rounded-lg border border-mor-line px-3 py-1.5 text-sm text-gray-600 hover:bg-mor-sand/60 disabled:opacity-40">
               複製預覽
             </button>
+            {/*
+              ★ 撤銷只在真的產生過的時候出現。紅色外框不是紅底 ——
+                它是可逆的（進回收桶），不是那種按下去就沒了的動作。
+            */}
+            {madeCount > 0 && (
+              <button onClick={() => void openUndo()} disabled={undoBusy}
+                title="把這個月產生的支出與收入一起移到回收桶"
+                className="rounded-lg border border-red-300 text-red-600 px-3 py-1.5 text-sm hover:bg-red-50 disabled:opacity-40">
+                {undoBusy ? '處理中⋯' : '撤銷這批'}
+              </button>
+            )}
             <button onClick={() => setGenOpen(false)}
               className="text-xs text-gray-500 underline">取消</button>
           </div>
+
+          {/*
+            ══════════ 撤銷的確認（2026-09-09）══════════
+
+            ★★★ **兩段式**:先查出來給人看，確認了才刪。
+              一個 confirm 就刪的話，人不知道自己在刪什麼 —— 而這一按是七十幾列。
+
+            ★★ 被動過的那幾筆**列出來**（使用者選「照刪，但先讓我看過」）。
+              不擋下來的理由:擋住的話它們會變成孤兒 ——
+              成對的另一半被刪了，它自己留在帳上，比整批刪掉更難查。
+          */}
+          {undoPlan && (
+            <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-xs leading-relaxed">
+              <div className="font-medium text-red-800">撤銷 {period} 這一批？</div>
+              <div className="mt-1 tabular-nums text-red-700">
+                支出 {undoPlan.expCount} 筆　${undoPlan.expAmount.toLocaleString('en-US')}
+                <span className="mx-2 text-red-300">|</span>
+                收入 {undoPlan.incCount} 筆　${undoPlan.incAmount.toLocaleString('en-US')}
+              </div>
+              {undoPlan.touched.length > 0 && (
+                <div className="mt-2">
+                  <div className="text-red-800 font-medium">
+                    ★ 其中 {undoPlan.touched.length} 筆產生之後被動過，也會一起刪：
+                  </div>
+                  <ul className="mt-1 max-h-40 overflow-y-auto overscroll-contain space-y-0.5 text-red-700">
+                    {undoPlan.touched.slice(0, 30).map((r) => (
+                      <li key={r.id}>
+                        {r.label}　${r.amount.toLocaleString('en-US')}
+                        <span className="text-red-500">　—— {r.touched}</span>
+                      </li>
+                    ))}
+                    {undoPlan.touched.length > 30 && (
+                      <li className="text-red-500">…還有 {undoPlan.touched.length - 30} 筆</li>
+                    )}
+                  </ul>
+                </div>
+              )}
+              <div className="mt-2 text-gray-500">
+                全部移到回收桶，可以復原（設定 → 回收桶）。撤銷之後再按「產生收支」會重新長回來。
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <button onClick={() => void runUndo()} disabled={undoBusy}
+                  className="rounded-lg bg-red-600 text-white px-3 py-1.5 text-xs font-medium hover:bg-red-700 disabled:opacity-40">
+                  {undoBusy ? '撤銷中⋯' : `確認撤銷 ${undoPlan.rows.length} 筆`}
+                </button>
+                <button onClick={() => setUndoPlan(null)} disabled={undoBusy}
+                  className="text-xs text-gray-500 underline">取消</button>
+              </div>
+            </div>
+          )}
+
+          {/*
+            ★ 撤銷的結果留在面板裡不用 flash —— 跟產生失敗同一個理由:
+              flash 跳在頁面最上方、2.5 秒消失，而這個面板在下半部。
+          */}
+          {undoMsg && (
+            <div className="mt-2 rounded-lg bg-mor-sand/60 border border-mor-line px-3 py-2 text-xs text-gray-700 whitespace-pre-wrap">
+              {undoMsg}
+            </div>
+          )}
         </div>
       )}
 

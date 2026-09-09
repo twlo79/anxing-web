@@ -93,6 +93,25 @@ const SHOW = 3;
 const brief = (xs: string[]) =>
   xs.slice(0, SHOW).join('、') + (xs.length > SHOW ? `…等 ${xs.length} 筆` : '');
 
+/**
+ * 一筆時薪工資對應的那份工（`hourlyRows()` 的輸出，**還沒換成安幸辦公室之前**）。
+ *
+ * ★★★ 要的是**真正被打掃的那間房**,不是工資記在哪。
+ *   `hourlyExpense()` 之後 property_id 已經變成安幸辦公室了,那時候比不出東西。
+ */
+export type HourJob = {
+  spent_on: string;
+  property_id: string | null;
+  staff_name: string;
+  hours: number;
+};
+
+/** 一份會產生清潔費的工（`cleaningCosts()` 的輸出）。 */
+export type CleanJob = {
+  work_date: string;
+  property_id: string | null;
+};
+
 export function pairCheck(input: {
   clean: CleanLike[];
   labor: LaborLike[];
@@ -102,6 +121,12 @@ export function pairCheck(input: {
   allEstateNames: readonly string[];
   /** 安幸辦公室那個房源的 id。`null` = 找不到 */
   officeId: string | null;
+  /** 時薪工資對應的那幾份工。給下面「三筆規則」用 */
+  hourJobs?: HourJob[];
+  /** 有產生清潔費的那幾份工。同上 */
+  cleanJobs?: CleanJob[];
+  /** 房源 id → 名稱。只給訊息用 */
+  roomName?: (id: string | null) => string;
 }): PairResult {
   const issues: PairIssue[] = [];
 
@@ -168,6 +193,42 @@ export function pairCheck(input: {
         level: 'error',
         text: `人事費筆數對得起來，但金額不一樣：支出 $${a.toLocaleString('en-US')}`
           + `／收入 $${b.toLocaleString('en-US')}。`,
+      });
+    }
+  }
+
+  /*
+   * ── ★★★ 三筆規則（2026-09-09 使用者講清楚的）────────
+   *
+   *   劉姐的工單    → 三筆：安幸收入 ＋ 物業支出 ＋ 安幸支出（時薪）
+   *   其他人的工單  → 兩筆：安幸收入 ＋ 物業支出
+   *
+   * ★★★ 所以**有工資就一定要有清潔費**。
+   *   反過來不必 —— 別人做的工只有兩筆，那是對的。
+   *
+   * ★★ 這正是 2026-09-08 抓到的那個 bug 的形狀:
+   *   「劉姐有產生支出，但沒有房源請款」。
+   *   當時是人工比對發現的 —— 而人工比對不會有第二次。
+   *
+   * ★ 比的是「同一天 ＋ 同一間房」。工作類型不比 ——
+   *   工資是按天算的,一天在同一間房不會有兩種工作類型各算一次錢。
+   */
+  const hj = input.hourJobs ?? [];
+  if (hj.length > 0) {
+    const cleaned = new Set(
+      (input.cleanJobs ?? [])
+        .filter((j) => j.property_id)
+        .map((j) => `${j.work_date}|${j.property_id}`));
+    const nameOf = input.roomName ?? ((id: string | null) => id ?? '');
+    const orphan = hj.filter(
+      (h) => h.property_id && !cleaned.has(`${h.spent_on}|${h.property_id}`));
+    if (orphan.length > 0) {
+      issues.push({
+        level: 'error',
+        text: `有工資、沒有清潔費（應該三筆卻只有一筆）：`
+          + brief(orphan.map(
+            (h) => `${h.spent_on} ${nameOf(h.property_id)} ${h.staff_name} ${h.hours} 小時`))
+          + '。那幾間房安幸付了工資，卻沒有向物業收錢。',
       });
     }
   }

@@ -262,6 +262,10 @@ function twTime(iso: string | null | undefined): string {
 
 const TYPE_LABEL: Record<string, string> = { housekeeper: '管家', roomservice: '房務', manager: '經理', accountant: '會計', gm: '總經理', other: '其他' };
 const TYPE_OPTS = ['housekeeper', 'roomservice', 'manager', 'accountant', 'gm', 'other'];
+import {
+  orphanAction, orphanActionLabel, orphanConfirmText,
+} from '@/lib/orphan-account';
+
 const ROLE_LABEL: Record<string, string> = {
   super_admin: '總經理', manager: '主管', accountant: '會計',
   housekeeper: '管家', cleaner: '房務',
@@ -696,6 +700,60 @@ export default function AdminPage() {
     const linked = new Set(staff.map((s) => s.auth_uid).filter(Boolean));
     return profiles.filter((p) => !linked.has(p.id));
   }, [staff, profiles]);
+  /*
+   * ★★ 在職與離職**分成兩份名單**（2026-09-09 使用者:「把離職人冷凍起來」）。
+   *
+   *   原本混在一起、離職的只是 opacity-50 —— 但它照樣佔一列,
+   *   於是在職名單被切成好幾段（「月」插在唐跟芊之間）。
+   *   淡掉不等於不佔位置。
+   *
+   * ★ 順序維持原本的 `staff` 順序，只是分堆 —— 不要順手重排,
+   *   使用者記得誰在第幾列。
+   */
+  const activeStaff = useMemo(() => staff.filter((s) => s.active), [staff]);
+  const leftStaff = useMemo(() => staff.filter((s) => !s.active), [staff]);
+
+  /**
+   * 把孤兒登入帳號接回名冊。
+   *
+   * ★★★ 原本這裡沒有任何動作，畫面上寫的是「請執行補建 SQL(migration_31)」——
+   *   那是寫給開發者看的備忘，使用者看到只會問「我要做什麼」
+   *   （2026-09-09 就是這樣問的）。判斷規則在 `lib/orphan-account.ts`。
+   */
+  async function fixOrphan(pf: { id: string; name: string | null; role: string | null }) {
+    const a = orphanAction(pf, staff as any);
+    // ★ 同名太多時只說明、不動作 —— confirm 會讓人以為按確定就會做
+    if (a.kind === 'ambiguous') { alert(orphanConfirmText(pf, a)); return; }
+    if (!confirm(orphanConfirmText(pf, a))) return;
+
+    if (a.kind === 'link') {
+      /*
+       * ★★ 要檢查影響列數。RLS 擋下來的 UPDATE **回成功且影響 0 列** ——
+       *   不檢查的話畫面會說「已接上」而其實什麼都沒發生。
+       */
+      const { data, error } = await supabase.from('staff')
+        .update({ auth_uid: pf.id }).eq('id', a.staff.id).select('id');
+      if (error) return flash('接不上去:' + error.message);
+      if (!data?.length) return flash('接不上去 —— 影響 0 列，可能是權限不足');
+      flash(`已接到「${a.staff.name}」身上`); load();
+      return;
+    }
+
+    /*
+     * ★ 補進名冊時，職位要挑**權限跟這個帳號一樣**的那一個 ——
+     *   隨便給「管家」的話，一個總經理帳號會被降權，
+     *   而降權是靜靜發生的（changeStaffType 才會同步 profiles）。
+     */
+    const type = Object.keys(ROLE_OF).find((t) => ROLE_OF[t] === pf.role) ?? 'housekeeper';
+    const { data, error } = await supabase.from('staff').insert({
+      name: pf.name || '(未命名)', staff_type: type, role: ROLE_OF[type],
+      active: true, sort: 50, auth_uid: pf.id,
+    }).select('id');
+    if (error) return flash('補不進去:' + error.message);
+    if (!data?.length) return flash('補不進去 —— 影響 0 列，可能是權限不足');
+    flash('已補進名冊'); load();
+  }
+
   const [newStaffName, setNewStaffName] = useState('');
   const [newStaffType, setNewStaffType] = useState('housekeeper');
 
@@ -1073,7 +1131,7 @@ export default function AdminPage() {
                 </tr>
               </thead>
               <tbody>
-                {staff.map((s) => (
+                {activeStaff.map((s) => (
                   <tr key={s.id} className={`border-b border-mor-line/60 last:border-0 ${s.active ? '' : 'opacity-50'}`}>
                     <td className="px-4 py-2 font-medium">
                       <span className="group inline-flex items-center gap-1.5">
@@ -1128,18 +1186,134 @@ export default function AdminPage() {
             <button onClick={addStaff} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 font-medium hover:bg-mor-slatedark">+ 新增人員</button>
           </div>
         </div>
+        {/*
+          ══════════ 已離職（2026-09-09）══════════
+
+          ★★★ 預設**收起來**。標題就寫著幾人 —— 要恢復在職點開就有，
+            不用捲過整張表找那幾列灰色的。
+
+          ★★ 只留四欄。職位下拉本來就鎖住、狀態欄永遠是「離職」、
+            帳號欄多半是空的 —— 留著是空轉。
+
+          ★ 沒有離職的人整塊不出現。一個「已離職 0 人」是雜訊。
+        */}
+        {leftStaff.length > 0 && (
+          <details className="mt-3 rounded-xl border border-mor-line bg-white/60">
+            <summary className="cursor-pointer select-none px-4 py-2.5 text-sm text-gray-600">
+              已離職 <b>{leftStaff.length}</b> 人
+              <span className="text-xs text-gray-400">
+                　—— 紀錄保留、可查詢，不出現在上面的名單
+              </span>
+            </summary>
+            <div className="px-4 pb-3 overflow-x-auto">
+              <table className="w-full min-w-[420px] text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-gray-400 border-b border-mor-line">
+                    <th className="py-2">姓名</th>
+                    <th className="py-2">職位</th>
+                    <th className="py-2">帳號</th>
+                    <th className="py-2 text-right">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {leftStaff.map((s) => (
+                    <tr key={s.id} className="border-b border-mor-line/50 last:border-0 text-gray-500">
+                      <td className="py-2">
+                        {s.name}
+                        {s.aliases?.length ? <span className="ml-1 text-xs text-gray-400">({s.aliases.join('/')})</span> : null}
+                      </td>
+                      <td className="py-2">{TYPE_LABEL[s.staff_type ?? ''] ?? s.staff_type}</td>
+                      <td className="py-2 text-xs">
+                        {s.auth_uid ? s.email : <span className="text-gray-400">（沒有登入）</span>}
+                      </td>
+                      <td className="py-2 text-right">
+                        <button onClick={() => toggleActive(s)}
+                          className="text-xs text-mor-slate underline hover:text-mor-blue">恢復在職</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        )}
+
+        {/*
+          ══════════ 孤兒登入帳號（2026-09-09 改成可以直接處理）══════════
+
+          ★★★ 原本這裡只寫「請執行補建 SQL(migration_31)」——
+            那是寫給開發者的備忘。使用者看到只會問「我要做什麼、為什麼要跑 SQL」。
+
+          ★★ 這塊要講清楚**後果**:那個人登得進系統、帶著權限，
+            而這一頁看不到他、停不掉他。只講「未對應」不會有人覺得急。
+        */}
         {orphanAccounts.length > 0 && (
           <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm">
-            <div className="font-medium text-amber-800 mb-1">有 {orphanAccounts.length} 個登入帳號未對應到人員名冊</div>
-            <ul className="text-xs text-amber-700 space-y-0.5">
-              {orphanAccounts.map((p) => (
-                <li key={p.id}>{p.name || '(未命名)'} · {ROLE_LABEL[p.role] ?? p.role}</li>
-              ))}
+            <div className="font-medium text-amber-800">
+              有 {orphanAccounts.length} 個登入帳號沒有對應的人員
+            </div>
+            <div className="text-xs text-amber-700 mt-0.5">
+              這些帳號<b>登得進系統、帶著權限</b>，但在這一頁看不到、也停不掉。接回名冊之後就管得到。
+            </div>
+            <ul className="mt-2 space-y-1">
+              {orphanAccounts.map((pf) => {
+                const a = orphanAction(pf as any, staff as any);
+                return (
+                  <li key={pf.id} className="flex flex-wrap items-center gap-2 text-xs text-amber-800">
+                    <span className="font-medium">{pf.name || '(未命名)'}</span>
+                    <span className="text-amber-600">{ROLE_LABEL[pf.role ?? ''] ?? pf.role}</span>
+                    <button onClick={() => void fixOrphan(pf as any)}
+                      className={`rounded-md px-2 py-0.5 border ${
+                        a.kind === 'ambiguous'
+                          ? 'border-amber-300 text-amber-600'
+                          : 'border-amber-500 text-amber-800 hover:bg-amber-100'}`}>
+                      {orphanActionLabel(a)}
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
-            <p className="text-xs text-amber-600 mt-1.5">這些帳號可以登入,但無法在此頁編輯。請執行補建 SQL(migration_31)。</p>
           </div>
         )}
-        <p className="text-xs text-gray-400 mt-2">停用=離職:紀錄保留、可查詢,但從統計列表排除;總數仍計入營運總量。離職會同時停用網站登入(封鎖帳號),恢復在職則解除。權限由職位自動決定,不能單獨改:管家/房務→一般、經理→主管、會計→會計、總經理→super admin。各權限看得到的頁面:總經理=全部含設定;主管=營收/評價/清潔/訂單/請款/支出;會計=營收/請款/支出;一般=清潔/評價/訂單/請款。只有職位「管家」會出現在物業負責人下拉。</p>
+
+        {/*
+          ══════════ 說明（2026-09-09 從一段五句話拆開）══════════
+
+          ★★★ 原本是一個 <p> 塞了五件事，其中兩件本來就是**對照表** ——
+            寫成句子最難讀（使用者:「下面字好多 很混亂」）。
+
+          ★ 留在外面的只有「每次都要知道」的那一句。
+          ★★ 對照表收進 <details>：要查的時候找得到，不要一直擋在眼前
+            （跟防呆的相似姓名同一個做法）。
+        */}
+        <p className="text-xs text-gray-400 mt-3 leading-relaxed">
+          離職＝紀錄保留、可查詢，但從統計列表排除，同時封鎖網站登入。權限由職位自動決定，不能單獨改。
+        </p>
+        <details className="mt-2 rounded-lg border border-mor-line bg-white/60">
+          <summary className="cursor-pointer select-none px-3 py-2 text-xs text-gray-500">
+            職位 → 權限 → 看得到哪些頁
+          </summary>
+          <div className="px-3 pb-3">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-gray-400 border-b border-mor-line">
+                  <th className="py-1.5 font-medium">職位</th>
+                  <th className="py-1.5 font-medium">權限</th>
+                  <th className="py-1.5 font-medium">看得到的頁面</th>
+                </tr>
+              </thead>
+              <tbody className="text-gray-600">
+                <tr className="border-b border-mor-line/50"><td className="py-1.5">總經理</td><td>super admin</td><td>全部，含設定</td></tr>
+                <tr className="border-b border-mor-line/50"><td className="py-1.5">經理</td><td>主管</td><td>營收・評價・清潔・訂單・請款・支出</td></tr>
+                <tr className="border-b border-mor-line/50"><td className="py-1.5">會計</td><td>會計</td><td>營收・請款・支出</td></tr>
+                <tr><td className="py-1.5">管家 ／ 房務</td><td>一般</td><td>清潔・評價・訂單・請款</td></tr>
+              </tbody>
+            </table>
+            <p className="text-xs text-gray-400 mt-2">
+              只有職位「管家」會出現在物業負責人的下拉。離職的人數仍計入營運總量。
+            </p>
+          </div>
+        </details>
       </section>
       )}
 
