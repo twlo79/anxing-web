@@ -2,6 +2,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { softDelete } from '@/lib/trash';
+import { emptyReceiptText } from '@/lib/receipt-parents';
 
 /**
  * 憑證附件（發票、收據、單據照片）。
@@ -421,7 +422,19 @@ const Receipts = forwardRef<ReceiptsHandle, {
       )}
 
       {total === 0 ? (
-        <div className="text-xs text-gray-400">尚未上傳{canEdit ? '，手機可直接拍照' : ''}</div>
+        /*
+          ★★★ 空狀態要**分兩種說法**（2026-09-09）。
+            這筆如果來自請款單，憑證很可能在那邊 ——
+            一律說「尚未上傳」等於替使用者下了一個錯的結論，
+            而他會去重傳一張，於是同一張發票存了兩份。
+            文字在 `lib/receipt-parents.ts`（有測試）。
+        */
+        <div className="text-xs text-gray-400">
+          {emptyReceiptText({
+            fromRequest: !!(inheritFromRequestId || inheritFromItemId),
+            canEdit,
+          })}
+        </div>
       ) : (
         <div className="grid grid-cols-3 md:grid-cols-4 gap-2">
           {staged.map((s) => (
