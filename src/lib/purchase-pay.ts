@@ -52,7 +52,8 @@ export const PAY_OPTS = ['cash', 'transfer', 'credit_card', 'counter', 'autopay'
  *   會讓對帳的人以為那筆錢真的從元大 8088 匯出去了。
  */
 export const needsPayout = (m: string | null | undefined) =>
-  m === 'transfer' || m === 'credit_card' || m === 'counter' || m === 'autopay';
+  m === 'transfer' || m === 'credit_card' || m === 'counter' || m === 'autopay'
+  || m === 'cash';   // ★ 2026-09-09 加入，見底下 accountMethodsFor 的說明
 
 /**
  * 要不要**必填**廠商收款帳號。
@@ -92,7 +93,7 @@ export const acctWord = (m?: string | null) => (m === 'credit_card' ? '刷卡卡
 export const payLabel = (m: string | null | undefined) => (m ? PAY_LABEL[m] ?? m : '—');
 
 /**
- * 這種付款方式要從**哪一類帳號**裡挑（2026-08-25 使用者:「臨櫃、自動 沒出現帳本」）。
+ * 這種付款方式要從**哪幾類帳號**裡挑（2026-08-25 使用者:「臨櫃、自動 沒出現帳本」）。
  *
  * ============================================================
  * 【為什麼會是空的】
@@ -112,23 +113,49 @@ export const payLabel = (m: string | null | undefined) => (m ? PAY_LABEL[m] ?? m
  *
  * 所以是**對應**:付款方式 → 帳號類別。
  *
- *   信用卡        → 卡片
- *   其餘（匯款/臨櫃/自動繳款）→ 銀行帳戶
+ *   信用卡              → 卡片
+ *   現金                → 現金（正隆／安幸兩本）
+ *   臨櫃                → 銀行帳戶 ＋ 現金
+ *   匯款／自動繳款      → 銀行帳戶
+ *
+ * ============================================================
+ * 【★★★ 現金為什麼從「沒有帳戶」變成「有兩個」】（2026-09-09）
+ *
+ * 這支原本寫著「現金回空陣列 —— 現金沒有帳戶」，而那句話在
+ * migration_225 之前是對的:全公司只有一個現金水位，不用挑。
+ *
+ * 225 把它拆成**正隆-現金**與**安幸-現金**兩本。從那一刻起
+ * 「這筆現金從哪一本出去」變成一個有答案而且必須記下來的問題 ——
+ * 不記的話兩本的餘額永遠算不出來，而畫面上只會看到一個總數。
+ *
+ * ★ 但**不強制**（`pay_account` 照舊可以空）。既有的現金支出
+ *   全部沒有這一欄，強制的話使用者第一個動作就是改舊資料。
+ *
+ * ★★ 臨櫃**兩類都給**:臨櫃是「拿錢去銀行櫃檯繳」，
+ *   那筆錢可能是從帳戶領的、也可能是手上的現金
+ *   （2026-09-09 使用者指定）。
+ *
+ * ★★★ 回傳**陣列**不是單一值 —— 臨櫃有兩類。
+ *   維持單一值再在呼叫端補一個 or，就是把規則寫在兩個地方。
  */
-export const accountMethodFor = (m: string | null | undefined) =>
-  m === 'credit_card' ? 'credit_card' : 'transfer';
+export function accountMethodsFor(m: string | null | undefined): string[] {
+  if (m === 'credit_card') return ['credit_card'];
+  if (m === 'cash') return ['cash'];
+  if (m === 'counter') return ['transfer', 'cash'];
+  return ['transfer'];
+}
 
 /**
  * 這種付款方式可以選的帳號。
  *
- * ★ 現金回**空陣列**，不是全部 —— 現金沒有帳戶。
- *   回全部的話畫面會讓人挑一個，然後那筆現金就出現在元大的明細裡。
+ * ★ 不需要指定帳戶的方式（目前沒有）回**空陣列**，不是全部 ——
+ *   回全部的話畫面會讓人挑一個，然後那筆錢就出現在別的帳戶明細裡。
  */
 export function payAccountsFor<T extends { method: string }>(
   accounts: T[] | null | undefined,
   m: string | null | undefined,
 ): T[] {
   if (!needsPayout(m)) return [];
-  const want = accountMethodFor(m);
-  return (accounts ?? []).filter((a) => a.method === want);
+  const want = new Set(accountMethodsFor(m));
+  return (accounts ?? []).filter((a) => want.has(a.method));
 }
