@@ -115,7 +115,7 @@ export default function OtherBooksPage() {
         .eq('book', book).eq('source', OTHER_BIZ_SOURCE)
         .gte('checkin', from).lte('checkin', to).range(a, b)),
       fetchAll<Record<string, unknown>>((a, b) => supabase.from('expenses')
-        .select('id, spent_on, item_name, account_code, amount, note')
+        .select('id, spent_on, item_name, account_code, amount, note, request_id')
         .eq('book', book)
         .gte('spent_on', from).lte('spent_on', to).range(a, b)),
     ]);
@@ -152,6 +152,8 @@ export default function OtherBooksPage() {
         note: (e.note as string) ?? null,
         // 支出是錢已經出去才產生的紀錄，沒有「還沒付」這回事
         settled: true,
+        // ★ 請款單產生的:金額不給在這裡改（見 lib/other-book.ts 的 fromRequest）
+        fromRequest: !!e.request_id,
       })),
     ].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''));
 
@@ -180,6 +182,102 @@ export default function OtherBooksPage() {
   const expenseCodes = useMemo(() => codes.filter((c) => c.kind !== 'income'), [codes]);
   const nameOf = useCallback(
     (c: string | null) => (c ? codeName[c] ?? c : '未分類'), [codeName]);
+
+  /**
+   * 直接在列上改會計科目（2026-09-10 使用者:「這也要可以編輯」）。
+   *
+   * ============================================================
+   * 【★★★ 為什麼要能在這裡改】
+   *
+   * 從請款單產生的支出，科目常常是空的 —— 畫面上顯示「未分類」。
+   * 而在這之前**沒有任何一條路改得了它**:
+   * 這一頁的列是唯讀的，支出頁又看不到其他事業體的帳。
+   *
+   * 結果是三筆錢躺在「未分類」，而報表照科目分組 ——
+   * 它們哪一組都不屬於，看起來只是「比較少」。
+   *
+   * ============================================================
+   * 【★★ 為什麼是就地下拉，不是開一個編輯視窗】
+   *
+   * 要改的只有一格。開視窗要多兩次點擊（開、存），
+   * 而分類這件事通常是**一次改好幾筆** —— 開關視窗五次比改五格還累。
+   *
+   * ★ 只給下拉不給打字:科目是固定清單，自由打字會長出
+   *   「保險費」跟「保險 費」兩個科目，而報表分不開。
+   *
+   * ★★ 只有收入用 orders、支出用 expenses —— 兩張表，
+   *   所以要看 `kind` 決定 update 哪一張。寫死一張的話另一種
+   *   會**回成功且影響 0 列**（RLS 那條坑），畫面上像沒反應。
+   */
+  const [savingCode, setSavingCode] = useState<string | null>(null);
+
+  async function setCode(e: Entry, code: string) {
+    if (!canSee || savingCode) return;
+    const table = e.kind === 'income' ? 'orders' : 'expenses';
+    setSavingCode(`${e.kind}-${e.id}`);
+    /*
+     * ★★★ 一定要 `.select('id')` 數影響列數。
+     *   RLS 擋下來的 UPDATE **回成功且影響 0 列**（CLAUDE.md）——
+     *   不數的話畫面會樂觀更新成新科目，重新整理又跳回「未分類」，
+     *   而使用者的結論是「這個系統存不住東西」。
+     */
+    const { data, error } = await supabase.from(table)
+      .update({ account_code: code || null }).eq('id', e.id).select('id');
+    setSavingCode(null);
+    if (error) return setErr('改不動：' + error.message);
+    if (!data?.length) return setErr('沒有改到任何一列 —— 可能是權限');
+    setErr('');
+    // ★ 只換這一列，不整頁重載 —— 重載會把捲動位置與篩選重置掉
+    setRows((rs) => rs.map((r) =>
+      (r.kind === e.kind && r.id === e.id) ? { ...r, account_code: code || null } : r));
+  }
+
+  /* ══════════════ 打開來編輯（2026-09-10 使用者:「可以打開編輯然後儲存」）══════════════
+   *
+   * ★★★ 在這之前這一頁的每一列都是**唯讀**的，而其他事業體的支出
+   *   在支出頁也看不到 —— 所以打錯的日期、寫錯的項目、空的科目
+   *   **一條路都改不了**。三筆卡在「未分類」就是這樣來的。
+   *
+   * ★★ 金額分兩種:自己新增的改得動，請款單產生的**鎖住**。
+   *   請款單那邊還留著原始金額，在這裡改一個數字的話，
+   *   同一筆錢在兩張表上是兩個值 —— 而兩邊各自看起來都正常。
+   *
+   * ★ 鎖住的欄位要**說得出為什麼**。灰掉不解釋的話，
+   *   使用者的結論是「這個欄位壞了」。
+   */
+  const [row, setRow] = useState<Entry | null>(null);
+
+  async function saveRow() {
+    if (!row || busy) return;
+    if (!row.date) return setErr('請填日期');
+    if (!row.name.trim()) return setErr('請填項目');
+    if (!row.fromRequest && !(Number(row.amount) > 0)) return setErr('金額要大於 0');
+
+    setBusy(true); setErr('');
+    const isInc = row.kind === 'income';
+    const patch: Record<string, unknown> = {
+      [isInc ? 'checkin' : 'spent_on']: row.date,
+      item_name: row.name.trim(),
+      account_code: row.account_code || null,
+      note: row.note?.trim() || null,
+    };
+    if (isInc) patch.guest_name = row.party?.trim() || null;
+    // ★ 請款單產生的支出不寫金額 —— 兩邊會對不起來（見上面）
+    if (!row.fromRequest) patch.amount = Number(row.amount);
+
+    /*
+     * ★★★ 一定要 `.select('id')` 數影響列數。
+     *   RLS 擋下的 UPDATE **回成功且影響 0 列**（CLAUDE.md）——
+     *   不數的話畫面會說「已儲存」而那一列一動也沒動。
+     */
+    const { data, error } = await supabase.from(isInc ? 'orders' : 'expenses')
+      .update(patch).eq('id', row.id).select('id');
+    setBusy(false);
+    if (error) return setErr('儲存失敗：' + error.message);
+    if (!data?.length) return setErr('沒有改到任何一列 —— 可能是權限，或這一列已經被別人改過');
+    setRow(null);
+    load();
+  }
 
   /** 這個月的（列表與儀錶板都用它）。 */
   const cur = useMemo(() => {
@@ -469,7 +567,9 @@ export default function OtherBooksPage() {
                   </thead>
                   <tbody className="divide-y divide-mor-line/40">
                     {shown.map((e) => (
-                      <tr key={`${e.kind}-${e.id}`} className="even:bg-mor-sand/20 hover:bg-mor-sand/60">
+                      <tr key={`${e.kind}-${e.id}`}
+                        onClick={() => canSee && setRow({ ...e })}
+                        className="even:bg-mor-sand/20 hover:bg-mor-sand/60 cursor-pointer">
                         <td className="px-3 py-2 whitespace-nowrap text-gray-500">{e.date}</td>
                         <td className="px-3 py-2">
                           <div className="flex items-center gap-1.5">
@@ -485,7 +585,27 @@ export default function OtherBooksPage() {
                           </div>
                           {e.note && <div className="text-[11px] text-gray-400 truncate">{e.note}</div>}
                         </td>
-                        <td className="px-3 py-2 whitespace-nowrap text-gray-600">{nameOf(e.account_code)}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          {/*
+                            ★★ 沒分類的用琥珀色標出來 —— 它是**待辦**，
+                              不是一種分類。跟其他科目一樣印成灰字的話，
+                              三筆未分類混在十筆裡沒有人會發現。
+                          */}
+                          {/* ★ 就地改科目 —— 點下拉不要順便把編輯視窗打開 */}
+                          <select
+                            value={e.account_code ?? ''}
+                            disabled={savingCode === `${e.kind}-${e.id}`}
+                            onClick={(ev) => ev.stopPropagation()}
+                            onChange={(ev) => void setCode(e, ev.target.value)}
+                            className={`rounded border px-1.5 py-0.5 text-xs bg-white max-w-[9rem] ${
+                              e.account_code
+                                ? 'border-transparent text-gray-600 hover:border-mor-line'
+                                : 'border-amber-300 bg-amber-50 text-amber-700'}`}>
+                            <option value="">未分類</option>
+                            {(e.kind === 'income' ? incomeCodes : expenseCodes)
+                              .map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
+                          </select>
+                        </td>
                         <td className="px-3 py-2 whitespace-nowrap text-gray-600">{e.party ?? '—'}</td>
                         <td className={`px-3 py-2 text-right tabular-nums whitespace-nowrap ${
                           e.kind === 'income' ? '' : 'text-red-600'}`}>
@@ -504,6 +624,69 @@ export default function OtherBooksPage() {
         )}
         </div>
       </TabShell>
+
+      {/* ══════════════ 打開來編輯（2026-09-10）══════════════ */}
+      {row && (
+        <Modal title={`編輯${row.kind === 'income' ? '收入' : '支出'}・${BOOK_LABEL[book]}`}
+          onClose={() => { setRow(null); setErr(''); }}
+          onSave={saveRow} busy={busy} err={err}>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-gray-500 flex items-center">日期<Req /></span>
+              <input type="date" value={row.date ?? ''}
+                onChange={(e) => setRow({ ...row, date: e.target.value })} className={CTRL} />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-gray-500 flex items-center">會計科目<Req /></span>
+              <select value={row.account_code ?? ''}
+                onChange={(e) => setRow({ ...row, account_code: e.target.value || null })}
+                className={CTRL}>
+                <option value="">—</option>
+                {(row.kind === 'income' ? incomeCodes : expenseCodes)
+                  .map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 md:col-span-2">
+              <span className="text-xs text-gray-500 flex items-center">項目<Req /></span>
+              <input value={row.name}
+                onChange={(e) => setRow({ ...row, name: e.target.value })} className={CTRL} />
+            </label>
+            {row.kind === 'income' && (
+              <label className="flex flex-col gap-1">
+                <span className="text-xs text-gray-500">客戶／對象</span>
+                <input value={row.party ?? ''}
+                  onChange={(e) => setRow({ ...row, party: e.target.value })} className={CTRL} />
+              </label>
+            )}
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-gray-500 flex items-center">
+                金額{!row.fromRequest && <Req />}
+              </span>
+              {/*
+                ★★★ 請款單產生的支出**金額鎖住**。請款單那邊還留著原始金額，
+                  在這裡改一個數字的話，同一筆錢在兩張表上是兩個值 ——
+                  而兩邊各自看起來都正常，只有相減時差一截。
+                ★ 鎖住要**說得出為什麼**。一個灰掉而不解釋的欄位，
+                  使用者的結論是「這裡壞了」。
+              */}
+              <input type="number" inputMode="numeric" value={row.amount}
+                disabled={row.fromRequest}
+                onChange={(e) => setRow({ ...row, amount: Number(e.target.value) })}
+                className={`${CTRL} text-right disabled:bg-gray-100 disabled:text-gray-500`} />
+              {row.fromRequest && (
+                <span className="text-[11px] text-gray-400">
+                  這筆來自請款單 —— 金額要到那張單上改，兩邊才不會對不起來
+                </span>
+              )}
+            </label>
+            <label className="flex flex-col gap-1 md:col-span-2">
+              <span className="text-xs text-gray-500">備註</span>
+              <input value={row.note ?? ''}
+                onChange={(e) => setRow({ ...row, note: e.target.value })} className={CTRL} />
+            </label>
+          </div>
+        </Modal>
+      )}
 
       {/* ══════════════ 新增收入 ══════════════ */}
       {inc && (

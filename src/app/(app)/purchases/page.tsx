@@ -206,6 +206,18 @@ export default function PurchasesPage() {
   const [dating, setDating] = useState<Req | null>(null);
   const [dateVal, setDateVal] = useState('');
   const [dateAcct, setDateAcct] = useState('');
+  /**
+   * 確認出款時**當場改付款方式**（2026-09-10 使用者:
+   * 「連付款方式都可以在確認時修改，這樣就解決了」）。
+   *
+   * ★★★ 為什麼要能改:申請的時候寫「匯款」，實際出款卻是拿現金去繳 ——
+   *   而這是**出款當下才知道**的事。原本只能回頭去改整張單，
+   *   而已核可的單一改就要重新送審。
+   *
+   * ★★ 改了方式，可選的帳號也要跟著換（匯款只給銀行、現金只給現金、
+   *   臨櫃兩類都給）—— 規則在 `payAccountsFor`，這裡不重寫一份。
+   */
+  const [dateMethod, setDateMethod] = useState('');
   const [planning, setPlanning] = useState<Req | null>(null);
   const [planDate, setPlanDate] = useState('');
   const [planAcct, setPlanAcct] = useState('');
@@ -1471,10 +1483,29 @@ export default function PurchasesPage() {
     // 匯款/信用卡一定要記錄從哪個帳戶付出去。
     // 這個檢查放在「匯出」而不是「排匯款」—— 排匯款可以跳過,匯出不行,
     // 把必填綁在可跳過的步驟上,等於沒綁。
-    const needAcct = payMethodNeedsPayout(dating.payment_method);
-    if (needAcct && !dateAcct) return setDateErr(`請選擇${acctWord(dating.payment_method)}（我方）—— 沒有它就不知道錢從哪個帳戶出去。`);
+    /*
+     * ★★★ 判斷用的是**這個視窗裡選的方式**（`dateMethod`），
+     *   不是單子上原本那個。用舊值判斷的話會出現:
+     *   從匯款改成現金、帳號欄已經換成現金帳號了，
+     *   而檢查還在問「匯款帳號填了沒」—— 一個永遠過不了的檢查。
+     */
+    const method = dateMethod || dating.payment_method;
+    const needAcct = payMethodNeedsPayout(method);
+    if (needAcct && !dateAcct) return setDateErr(`請選擇${acctWord(method)}（我方）—— 沒有它就不知道錢從哪個帳戶出去。`);
     const patch: Record<string, unknown> = { purchased_on: dateVal };
     if (needAcct) patch.payout_account = dateAcct;
+    /*
+     * ★★ 方式沒變就**不寫進 patch**。每次都寫的話，
+     *   一個沒有人動過的欄位會出現在異動紀錄上，
+     *   日後查「誰把它改成現金的」會查到一堆假的異動。
+     *
+     * ★ 換掉方式而新方式不需要帳號（目前沒有這種）時要把 payout_account
+     *   清掉 —— 留著舊帳號的話帳上會出現「現金付款卻掛著銀行帳戶」。
+     */
+    if (method !== dating.payment_method) {
+      patch.payment_method = method;
+      if (!needAcct) patch.payout_account = null;
+    }
     /*
      * ★★ 要看改到幾列。RLS 擋下的 UPDATE 回成功且影響 0 列 ——
      * 只看 error 的話畫面會說「已確認出款」而那張單一動也沒動。
@@ -2911,7 +2942,7 @@ export default function PurchasesPage() {
                     className={`${btn} border border-mor-slate text-mor-slate`}>{d.planned_transfer_on ? '改付款計畫' : `排${dateWord(d.payment_method)}`}</button>
                 )}
                 {p.canDate && (
-                  <button onClick={() => { setDetail(null); setDating(d); setDateVal(d.purchased_on ?? d.planned_transfer_on ?? todayStr()); setDateAcct(d.payout_account ?? ''); setDateErr(''); }}
+                  <button onClick={() => { setDetail(null); setDating(d); setDateVal(d.purchased_on ?? d.planned_transfer_on ?? todayStr()); setDateAcct(d.payout_account ?? ''); setDateMethod(d.payment_method ?? ''); setDateErr(''); }}
                     className={`${btn} border border-mor-blue text-mor-blue`}>{d.purchased_on ? `改${dateWord(d.payment_method)}` : `確認${dateWord(d.payment_method)}`}</button>
                 )}
                 {p.canCancel && (
@@ -3662,14 +3693,34 @@ export default function PurchasesPage() {
                   {dateErr}
                 </div>
               )}
+              {/*
+                ★★★ 付款方式在這裡也改得動（2026-09-10）。
+                  申請時寫「匯款」、實際卻是拿現金去繳 —— 那是出款當下
+                  才知道的事，原本只能回頭改整張單，而已核可的單
+                  一改就要重新送審。
+                ★ 換了方式要把帳號清掉:匯款的銀行帳號留在一筆現金付款上，
+                  對帳時會對到一個沒有這筆錢的戶頭。
+              */}
+              <label className="block text-xs text-gray-500 pt-1">付款方式</label>
+              <select value={dateMethod || dating.payment_method || ''}
+                onChange={(e) => { setDateMethod(e.target.value); setDateAcct(''); setDateErr(''); }}
+                className="w-full rounded-lg border border-mor-line px-2 py-1.5">
+                {PAY_OPTS.map((m) => <option key={m} value={m}>{PAY_LABEL[m] ?? m}</option>)}
+              </select>
+              {(dateMethod && dateMethod !== dating.payment_method) && (
+                <div className="rounded-lg bg-mor-bluelight text-mor-slate px-3 py-2 text-xs">
+                  付款方式會從「{PAY_LABEL[dating.payment_method ?? ''] ?? '—'}」
+                  改成「{PAY_LABEL[dateMethod] ?? dateMethod}」，跟這次確認一起存。
+                </div>
+              )}
               {/* 匯款與信用卡必須記錄從哪個帳戶付出去,現金沒有帳戶所以不問 */}
-              {payMethodNeedsPayout(dating.payment_method) && (
+              {payMethodNeedsPayout(dateMethod || dating.payment_method) && (
                 <>
-                  <label className="block text-xs text-gray-500 pt-1">{acctWord(dating.payment_method)}(我方)<Req /></label>
+                  <label className="block text-xs text-gray-500 pt-1">{acctWord(dateMethod || dating.payment_method)}(我方)<Req /></label>
                   <select value={dateAcct} onChange={(e) => setDateAcct(e.target.value)}
                     className="w-full rounded-lg border border-mor-line px-2 py-1.5">
                     <option value="">請選擇</option>
-                    {payAccountsFor(payAccounts, dating.payment_method)
+                    {payAccountsFor(payAccounts, dateMethod || dating.payment_method)
                       .map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
                   </select>
                 </>

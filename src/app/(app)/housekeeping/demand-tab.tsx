@@ -1,9 +1,12 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
-import { isFilled, validateDemand, newItemRow, isUrl } from '@/lib/demand';
+import {
+  isFilled, validateDemand, missingLabels, newItemRow, isUrl,
+} from '@/lib/demand';
 import { useProfile } from '@/lib/profile';
 import { ReqMark } from '@/components/Req';
+import { submitGate, gateCls } from '@/lib/required';
 import {
   demandProgress, progressText, demandClass, ITEM_STATUS_LABEL,
   manualStatusOptions, manualStatusPatch, manualStatusNote, isOrphanRequested,
@@ -553,6 +556,13 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
 
   async function save() {
     if (!edit || !profile) return;
+    // ★ 按鈕沒有 disabled 了（aria-disabled 點得下去）—— 防連點在這裡
+    if (saving) return;
+    /*
+     * ★★ 先打開紅框再擋。按下去的意思就是「我覺得我填完了」——
+     *   那個意思要無條件被接收，不然使用者按了會覺得按鈕壞了。
+     */
+    setTried(true);
     /*
      * 【前端先擋，因為資料庫的錯誤訊息看不懂】
      *
@@ -594,7 +604,7 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
       await supabase.from('purchase_demands').delete().eq('id', d.id);
       return onMsg('項目儲存失敗：' + e2.message, true);
     }
-    setEdit(null);
+    setEdit(null); setTried(false);
     onMsg('採購需求已送出');
     load();
   }
@@ -622,6 +632,26 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
     [edit],
   );
   const canSubmit = blockReason === null;
+
+  /**
+   * 按過送出了沒 —— 紅框只在他表達「我填完了」之後才出現。
+   *
+   * ★★★ 2026-09-10:這一頁原本是**真的 `disabled`**，
+   *   於是使用者按下去**什麼都不會發生**（他回報「不能送耶」）——
+   *   按鈕是灰的、他也不知道是哪一格漏了。
+   *   全站其他六頁都改成「灰但按得下去」，唯獨漏了這一頁。
+   */
+  const [tried, setTried] = useState(false);
+  /**
+   * 這一列缺哪幾欄。★ 跟 `validateDemand` 同一支
+   *   （`missingLabels` 就是它內部用的那個），三個地方不會漂。
+   */
+  const itemMissing = (it: Item) => (tried ? missingLabels(it) : []);
+  /**
+   * 送出鈕的樣子。★ 這裡把 `blockReason` 直接當 title 用 ——
+   *   它已經是「第 2 項還沒填：產品規格、需要數量」這種完整的句子。
+   */
+  const gate = submitGate(blockReason ? [blockReason] : [], saving);
 
   const setItem = (idx: number, patch: Partial<Item>) =>
     setEdit((e) => e && ({ ...e, items: e.items.map((it, i) => (i === idx ? { ...it, ...patch } : it)) }));
@@ -1003,10 +1033,19 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                   沒填完就鎖住。**但滑鼠移上去要說得出為什麼** ——
                   一顆灰掉而不解釋的按鈕，使用者會以為是系統壞了而一直點。
                 */}
-                <button onClick={save} disabled={saving || !canSubmit}
+                {/*
+                  ★★★ `aria-disabled` 不是 `disabled`（2026-09-10）。
+                    真的 disabled 的話按下去**什麼都不會發生** ——
+                    使用者看到一顆灰按鈕、按了沒反應，結論是「壞了」。
+                    現在按得下去:按下去不送出，而是把沒填的格子全部標紅
+                    並在上方跳一句「第 N 項還沒填：…」。
+                  ★ 所以也不能用 `disabled:` 開頭的 class（那組只在真的
+                    disabled 時生效，會安靜地不作用）。
+                */}
+                <button onClick={save} aria-disabled={gate.blocked}
                   title={blockReason ?? ''}
-                  className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium
-                             disabled:opacity-40 disabled:cursor-not-allowed">
+                  className={`rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium
+                              ${gateCls(gate.dim)}`}>
                   {saving ? '送出中…' : '送出'}
                 </button>
               </div>
@@ -1030,8 +1069,14 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                     */}
                     <span className="relative flex-1">
                       <ReqMark />
+                      {/*
+                        ★★ 紅框只在按過送出之後才出現 —— 空表單一打開就整片紅
+                          那不是提示是指責（見 components/Req.tsx）。
+                      */}
                       <input value={it.item_name} onChange={(e) => setItem(idx, { item_name: e.target.value })}
-                        placeholder="品名" className={`${inp} w-full`} />
+                        placeholder="品名"
+                        className={`${inp} w-full ${
+                          itemMissing(it).includes('品名') ? 'border-red-400 bg-red-50' : ''}`} />
                     </span>
                     {edit.items.length > 1 && (
                       <button onClick={() => setEdit((e) => e && ({ ...e, items: e.items.filter((_, i) => i !== idx) }))}
@@ -1056,7 +1101,8 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                           if (v === 'office') setItem(idx, { purpose_type: 'office', estate_id: '' });
                           else setItem(idx, { purpose_type: 'estate', estate_id: v });
                         }}
-                        className={`${inp} w-32`}>
+                        className={`${inp} w-32 ${
+                          itemMissing(it).includes('用途') ? 'border-red-400 bg-red-50' : ''}`}>
                         <option value="">用途</option>
                         <option value="office">安幸辦公室</option>
                         {estates.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
@@ -1077,12 +1123,16 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                     <span className="relative flex-1 min-w-[8rem]">
                       <ReqMark />
                       <input value={it.spec} onChange={(e) => setItem(idx, { spec: e.target.value })}
-                        placeholder="產品規格" className={`${inp} w-full`} />
+                        placeholder="產品規格"
+                        className={`${inp} w-full ${
+                          itemMissing(it).includes('產品規格') ? 'border-red-400 bg-red-50' : ''}`} />
                     </span>
                     <span className="relative">
                       <ReqMark />
                       <input value={it.qty} onChange={(e) => setItem(idx, { qty: e.target.value })}
-                        placeholder="數量" className={`${inp} w-20`} />
+                        placeholder="數量"
+                        className={`${inp} w-20 ${
+                          itemMissing(it).includes('需要數量') ? 'border-red-400 bg-red-50' : ''}`} />
                     </span>
                     {/*
                       ★ 標題是「備註」不是「建議連結」（2026-09-10 使用者指定）——
@@ -1119,9 +1169,11 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="relative">
                   <ReqMark />
+                  {/* ★ 寄送地點也要標紅 —— 它跟項目一樣擋得住送出 */}
                   <select value={edit.ship_to}
                     onChange={(e) => setEdit((x) => x && ({ ...x, ship_to: e.target.value }))}
-                    className={`${inp} w-36`}>
+                    className={`${inp} w-36 ${
+                      tried && !edit.ship_to ? 'border-red-400 bg-red-50' : ''}`}>
                     <option value="">寄送地點</option>
                     {estates.map((e) => <option key={e.id} value={e.name}>{e.name}</option>)}
                     {SHIP_EXTRA.map((x) => <option key={x} value={x}>{x}</option>)}
