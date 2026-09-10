@@ -698,19 +698,51 @@ export default function AccountsPage() {
     balance: { type: 'number', get: (t) => Number(t.balance) || 0 },
   };
 
+  /**
+   * 一列流水的排序鍵。
+   *
+   * ============================================================
+   * 【★★★ 為什麼 seq 不能當第二順位】（2026-09-10）
+   *
+   * `seq` 是「**在那份對帳單裡的第幾列**」—— 每份 PDF 都從 1 開始數。
+   * 同一天的流水如果來自**兩份**對帳單，seq 就會撞號:
+   *
+   *   2026-09-08 元大 24145 的三筆，seq 是 3 / 14 / 15，
+   *   而實際先後是 11:00:50 / 11:00:55 / 15:01:17 ——
+   *   照 seq 排會把下午三點那筆排到早上十一點前面。
+   *
+   * ★★ 這一組鍵必須跟 `recalc_account_balances()`（migration_244）
+   *   **完全一致**。不一致的話畫面上那一列的餘額會跟它的位置對不起來，
+   *   而**每個數字單獨看都是對的** —— 只有拿去跟存摺逐行比對才發現得了。
+   *
+   * ★★★ 這個 bug 一共出現在**三個地方**，我一次只修一個:
+   *   ① 資料庫的餘額重算（migration_244）
+   *   ② 這一頁的兩個查詢（.order(...)）
+   *   ③ **這裡** —— 前端自己再排一次，把前兩個的成果蓋掉
+   *   改排序規則時要 grep `seq`，三個都要一起改。
+   *
+   * ★ null 用 `\uffff` 墊高 → 升冪時排最後，跟 recalc 的
+   *   `nulls last` 一致。用空字串的話會排最前面，那是反的。
+   */
+  const orderKey = (t: Txn) =>
+    `${t.post_date}|${t.txn_date ?? '\uffff'}|${t.txn_time ?? '\uffff'}`;
+
   const shown = useMemo(() => {
     const hit = filterTxns(txns, f);
     /*
-     * 同一天有好幾筆時，日期排序分不出先後 —— 用 seq 當第二順位。
-     * 不加的話同一天那幾筆的順序每次重新整理都可能不一樣。
+     * 同一天有好幾筆時，日期本身分不出先後 ——
+     * 用「交易日 ＋ 交易時間」當第二、三順位，seq 降到第四。
      */
     if (sort?.key === 'post_date') {
       const sign = sort.dir === 'asc' ? 1 : -1;
-      return [...hit].sort(
-        (a, b) =>
-          (a.post_date < b.post_date ? -1 : a.post_date > b.post_date ? 1 : 0) * sign ||
-          ((a.seq ?? 0) - (b.seq ?? 0)) * sign,
-      );
+      return [...hit].sort((a, b) => {
+        const ka = orderKey(a); const kb = orderKey(b);
+        return (ka < kb ? -1 : ka > kb ? 1 : 0) * sign
+          || ((a.seq ?? 0) - (b.seq ?? 0)) * sign
+          // ★ 完全平手時要有一個**穩定**的結果，不然每次重新整理
+          //   順序可能不一樣，而那比排錯更難查
+          || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0) * sign;
+      });
     }
     return sortRows(hit, sort, SORT_COLS);
     // eslint-disable-next-line react-hooks/exhaustive-deps
