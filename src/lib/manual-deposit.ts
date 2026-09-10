@@ -50,9 +50,25 @@ export function manualDepositMissing(d: ManualDepositDraft): string[] {
  * ★ 一次講完缺哪些，不要一次擋一個 ——
  *   使用者填三次才存得起來的話，第二次就會開始亂填。
  */
-export function manualDepositError(d: ManualDepositDraft): string | null {
+/**
+ * 缺的欄位**含金額**。
+ *
+ * ★★★ 2026-09-10 抽出來。原本「金額」只在 `manualDepositError()` 裡面
+ *   被 push 進去 —— 那份完整清單**只存在於那個函式的區域變數裡**，
+ *   畫面拿不到，所以金額欄永遠畫不出紅框。
+ *
+ * ★ 現在畫面的紅框、送出鈕的提示、擋下來的訊息用的是同一份答案。
+ *   三個地方各算一次的話，遲早出現「星號標了卻不擋」
+ *   或「擋了卻沒標」，而兩種都會讓使用者不再相信那個星號。
+ */
+export function manualDepositMissingAll(d: ManualDepositDraft): string[] {
   const missing = manualDepositMissing(d);
   if (!(Number(d.amount) > 0)) missing.push('金額');
+  return missing;
+}
+
+export function manualDepositError(d: ManualDepositDraft): string | null {
+  const missing = manualDepositMissingAll(d);
   if (missing.length) return `請填：${missing.join('、')}`;
 
   /*

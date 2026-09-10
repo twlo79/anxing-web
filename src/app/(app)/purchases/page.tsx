@@ -4,6 +4,7 @@ import StatCard from '@/components/StatCard';
 import { AddButton, ExportButton } from '@/components/Actions';
 import { Tabs } from '@/components/Tabs';
 import { submitBlockedBy, requestTotal } from '@/lib/demand-to-request';
+import { submitGate, gateCls } from '@/lib/required';
 import {
   FilterBar, Field, FilterSelect, FilterSearch, FilterClear, FilterCount,
   ActionRow, FILTER_CTRL,
@@ -900,6 +901,25 @@ export default function PurchasesPage() {
     items.filter((i) => i.item_name.trim() || i.amount_original != null)
       // 表單編輯的是原幣別金額,`amount` 是換算後的結果
       .map((i) => ({ amount: i.amount_original }))).unpriced, [items]);
+
+  /**
+   * 「送出審核」那一顆的閘門。
+   *
+   * ★★★ 只擋送審，**不擋存草稿** —— 草稿本來就允許不完整
+   *   （migration_218 修的就是這件事:從採購需求帶進來的金額是空的，
+   *   擋住的話會計一按存檔就被退回，訊息還說「請填金額」）。
+   *
+   * ★★ 灰掉但按得下去。按下去會跳出「這 N 項還沒填金額」並列出是哪幾項 ——
+   *   真的 disabled 的話那句話永遠不會出現，
+   *   使用者只看得到一顆灰按鈕（見 lib/required.ts 的 submitGate）。
+   *
+   * ★ 這裡故意只用 `submitBlockedBy` 一項。帳本、匯率、廠商帳號那幾條
+   *   是**條件式**的（只有匯款要帳號、只有外幣要匯率），
+   *   全部塞進 title 會變成一段沒有人讀得完的字。
+   *   它們照舊在 `save()` 裡擋，訊息也照舊講得出原因。
+   */
+  const submitGate2 = submitGate(
+    editUnpriced > 0 ? [`${editUnpriced} 項的金額`] : [], saving);
 
   async function save(submit: boolean) {
     if (!edit || !me) return;
@@ -3574,10 +3594,24 @@ export default function PurchasesPage() {
                 <button onClick={() => setEdit(null)}
                   className="h-12 md:h-auto flex-1 md:flex-none rounded-lg border border-gray-300 px-4 md:py-1.5 text-sm">關閉</button>
                 {!readOnly && <>
+                  {/*
+                    ★★★ 「儲存草稿」**刻意不擋**（2026-09-10 加閘門時再確認一次）。
+                      草稿本來就允許不完整 —— 從採購需求帶進來的項目金額是空的
+                      （還在詢價）。擋住的話會計一按存檔就被退回，
+                      而 migration_218 修的正是這件事。
+                  */}
                   <button onClick={() => save(false)} disabled={saving}
                     className="h-12 md:h-auto flex-1 md:flex-none rounded-lg border border-mor-line px-4 md:py-1.5 text-sm hover:bg-mor-sand/60 disabled:opacity-40">儲存草稿</button>
-                  <button onClick={() => save(true)} disabled={saving}
-                    className="h-12 md:h-auto flex-1 md:flex-none rounded-lg bg-mor-slate text-white px-4 md:py-1.5 text-sm font-medium hover:bg-mor-slatedark disabled:opacity-40">
+                  {/*
+                    ★★ 送審這一顆才擋。灰掉但**按得下去** ——
+                      按下去會跳出「這 N 項還沒填金額」並列出是哪幾項。
+                      真的 disabled 的話那句話永遠不會出現。
+                  */}
+                  <button onClick={() => save(true)}
+                    aria-disabled={submitGate2.blocked} title={submitGate2.title}
+                    className={`h-12 md:h-auto flex-1 md:flex-none rounded-lg bg-mor-slate text-white
+                                px-4 md:py-1.5 text-sm font-medium hover:bg-mor-slatedark
+                                ${gateCls(submitGate2.dim)}`}>
                     {saving ? '處理中…' : (editingApproved ? '重新送審' : '送出審核')}</button>
                 </>}
               </div>

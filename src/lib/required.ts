@@ -75,3 +75,68 @@ export function missingFields(fields: ReqField[]): string[] {
 export function missingMessage(missing: string[]): string {
   return `無法儲存,還沒填：${missing.join('、')}`;
 }
+
+/* ══════════════════════════════════════════════════════════
+ * 送出鈕的閘門
+ * ══════════════════════════════════════════════════════════
+ *
+ * 【★★★ 為什麼不能真的 disabled】（David 指定，2026-09-10）
+ *
+ * 使用者要的是兩件事:「沒填不能送出」＋「沒填的框要標紅」。
+ * 直覺是把按鈕 `disabled` —— **但那兩件事會互相打架**:
+ *
+ *   紅框是「按下儲存」之後才出現的（見 components/Req.tsx:
+ *   空表單一打開就整片紅，那是指責不是提示）。
+ *   按鈕真的 disabled 就按不下去 → `tried` 永遠是 false
+ *   → **紅框永遠不會出現**。
+ *
+ * 結果是一顆灰按鈕，而使用者不知道是哪一格漏了 ——
+ * 比現在還糟:現在至少按下去會跳一句話。
+ *
+ * ★★ 所以用 `aria-disabled` 而不是 `disabled`:
+ *   看起來是灰的、讀螢幕會念「已停用」、但**點得下去**。
+ *   點下去不送出，而是把 `tried` 打開 → 紅框全部亮起來 ＋ 跳訊息。
+ *
+ * ★ 這一條**不適用於 `saving`**。存檔進行中要用真的 `disabled` ——
+ *   那時候按下去該什麼都不發生，不是「告訴你缺什麼」。
+ */
+
+export type Gate = {
+  /** 擋不擋。true = 這一按不會送出，只會標紅 */
+  blocked: boolean;
+  /** 滑鼠停留時說的話。★ 一定要講出缺哪幾欄，不是「請填必填欄位」 */
+  title: string;
+  /** 要不要畫成灰的 */
+  dim: boolean;
+};
+
+/**
+ * 算出送出鈕現在該長什麼樣。
+ *
+ * @param missing 缺的欄位（`missingFields()` 的結果）
+ * @param busy    存檔進行中
+ *
+ * ★★ `busy` 時 `blocked` 也是 true —— 存檔中按第二次不該做任何事。
+ *   但那時候的 title 講的是「儲存中」，不是「還沒填」:
+ *   兩個都灰，理由不一樣，說出來的話就要不一樣。
+ */
+export function submitGate(missing: string[], busy = false): Gate {
+  if (busy) return { blocked: true, title: '儲存中⋯', dim: true };
+  if (missing.length) {
+    return {
+      blocked: true,
+      // ★ 跟 missingMessage 分開:那句是跳出來的訊息（要有「無法儲存」
+      //   才會顯示成紅色），這句是滑鼠停留的提示，短一點比較好讀
+      title: `還沒填：${missing.join('、')}`,
+      dim: true,
+    };
+  }
+  return { blocked: false, title: '', dim: false };
+}
+
+/**
+ * 灰掉的樣子。**不要用 `disabled:` 開頭的 Tailwind class** ——
+ * 那一組只在真的 `disabled` 時生效，而這裡刻意沒有 disabled。
+ */
+export const gateCls = (dim: boolean) =>
+  (dim ? 'opacity-40 cursor-not-allowed' : '');

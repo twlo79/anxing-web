@@ -4,6 +4,7 @@ import { AddButton, ExportButton, ActionBar } from '@/components/Actions';
 import { AuditButton, AuditBadges, AuditSummary } from '@/components/Audit';
 import { auditOrders, type AuditOrder } from '@/lib/audit-orders';
 import Req from '@/components/Req';
+import { submitGate, gateCls } from '@/lib/required';
 import Toast from '@/components/Toast';
 import FilterToggle from '@/components/FilterToggle';
 import * as XLSX from 'xlsx-js-style';
@@ -798,6 +799,16 @@ export default function ShortTermPage() {
   async function saveInner() {
     if (!edit) return;
     /*
+     * ★★★ `setTried` 放在最前面（2026-09-10）。
+     *   原本它在幾個 early return 的**後面** —— 帳本沒選、科目沒選的時候
+     *   直接 return 了，於是 `tried` 沒打開、紅框不會亮。
+     *   使用者按下去只看到一句話，而畫面上沒有任何一格被指出來。
+     *
+     * ★ 按鈕現在是「灰但按得下去」，按下去唯一的意義就是
+     *   「我覺得我填完了」—— 那個意思要**無條件**被接收。
+     */
+    setTried(true);
+    /*
      * 押金退了就不能改（migration_157）。
      *
      * ★ 資料庫的 trg_orders_lock_guard 才是真正的防線 ——
@@ -818,7 +829,6 @@ export default function ShortTermPage() {
         return flash('請選會計科目');
       }
     }
-    setTried(true);
     /*
      * 必填少一個就擋。
      *
@@ -1094,6 +1104,11 @@ export default function ShortTermPage() {
   }) : [], [edit?.source, edit?.estate_id, edit?.guest_name, edit?.checkin, edit?.checkout, revLines]);
   /** 這一格要不要畫紅框 */
   const err = (f: string) => tried && missing.includes(f);
+  /**
+   * 送出鈕的樣子。★★★ 灰掉但**按得下去** —— 真的 disabled 的話
+   * `tried` 打不開、紅框永遠不出現（見 lib/required.ts 的 submitGate）。
+   */
+  const gate = submitGate(missing, saveBusy);
 
   const totRevenue = useMemo(() => agg.reduce((a, o) => a + Number(o.amount || 0), 0), [agg]);
   const bySource = useMemo(() => { const m: Record<string, number> = {}; for (const o of agg) m[o.source] = (m[o.source] || 0) + Number(o.amount || 0); return m; }, [agg]);
@@ -2159,8 +2174,10 @@ export default function ShortTermPage() {
             </div>
             <div className="sticky bottom-0 bg-white border-t border-mor-line px-6 py-3 flex justify-end gap-2">
               <button onClick={() => setEdit(null)} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>
-              <button onClick={save} disabled={saveBusy}
-                className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium hover:bg-mor-slatedark disabled:opacity-50">
+              {/* ★ aria-disabled 不是 disabled —— 點得下去，點下去把紅框亮起來 */}
+              <button onClick={save} aria-disabled={gate.blocked} title={gate.title}
+                className={`rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium
+                            hover:bg-mor-slatedark ${gateCls(gate.dim)}`}>
                 {saveBusy ? '儲存中⋯' : '儲存'}</button>
             </div>
           </div>

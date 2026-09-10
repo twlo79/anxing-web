@@ -3,14 +3,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AddButton, ExportButton, ActionBar } from '@/components/Actions';
 import Req from '@/components/Req';
 import MoneyInput from '@/components/MoneyInput';
-import { missingFields, missingMessage } from '@/lib/required';
+import { missingFields, missingMessage, submitGate, gateCls } from '@/lib/required';
 import Toast from '@/components/Toast';
 import FilterToggle from '@/components/FilterToggle';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import { createClient } from '@/lib/supabase';
 import { titleCaseName } from '@/lib/name-format';
-import { manualDepositError } from '@/lib/manual-deposit';
+import { manualDepositError, manualDepositMissingAll } from '@/lib/manual-deposit';
 import { totalBuckets } from '@/lib/deposit-summary';
 import StatCard, { StatRow, StatTotal, StatGroup } from '@/components/StatCard';
 import { useAdvance, AdvanceStats, AdvanceList } from './advance-tab';
@@ -829,6 +829,15 @@ export default function DepositsPage() {
    */
   /** 按過「送出退款申請」了沒 —— 紅框只在他表達「我填完了」之後才出現 */
   const [triedRefund, setTriedRefund] = useState(false);
+  /**
+   * 手動暫收款那張表單按過儲存了沒。
+   *
+   * ★★★ 2026-09-10 補上。原本只有退款那一區有 `tried`，
+   *   手動暫收款這一段五個欄位都標了紅星、也擋得住，
+   *   **但一格都不會變紅** —— 按下去只跳一句話，
+   *   五格之中是哪一格漏了要自己數。
+   */
+  const [triedManual, setTriedManual] = useState(false);
   /** 退款申請缺哪些欄位。訊息與紅框用同一份答案 */
   /*
    * ★ 預計匯款日與安幸付款帳號**不在送審必填裡**（2026-08-22，比照請款單）。
@@ -844,6 +853,22 @@ export default function DepositsPage() {
     { label: '房客收款帳號', value: edit.payee_account },
     { label: '安幸付款方式', value: edit.returned_method },
   ]) : [];
+
+  /**
+   * 手動暫收款缺哪幾欄。★ 跟 `manualDepositError()` 同一份答案 ——
+   * 紅框、送出鈕提示、擋下來的訊息三個地方各算一次的話一定會漂。
+   */
+  const manualMissing = (edit && edit.is_manual)
+    ? manualDepositMissingAll({ ...edit, kind: edit.kind ?? 'deposit' })
+    : [];
+  /** 這一格要不要畫紅框 */
+  const mErr = (f: string) => triedManual && manualMissing.includes(f);
+  /**
+   * 「儲存」鈕的樣子。★★★ 灰掉但**按得下去** ——
+   * 真的 disabled 的話 `triedManual` 打不開、紅框永遠不出現
+   * （見 lib/required.ts 的 submitGate）。
+   */
+  const saveGate = submitGate(manualMissing, saving);
 
   async function submitRefund() {
     if (!edit) return;
@@ -994,8 +1019,12 @@ export default function DepositsPage() {
    */
   async function save() {
     if (!edit) return;
+    // ★ 按鈕沒有 disabled 了（aria-disabled 點得下去）—— 防連點在這裡
+    if (saving) return;
     const manual = !!edit.is_manual;
     if (manual) {
+      // ★★ 先打開紅框再擋。按下去的意思就是「我覺得我填完了」
+      setTriedManual(true);
       const err = manualDepositError({ ...edit, kind: edit.kind ?? 'deposit' });
       if (err) return flash(err);
     }
@@ -1042,7 +1071,7 @@ export default function DepositsPage() {
       : await supabase.from('deposits').insert(payload);
     setSaving(false);
     if (error) return flash('儲存失敗:' + error.message);
-    setEdit(null); setTriedRefund(false); flash('已儲存'); load();
+    setEdit(null); setTriedRefund(false); setTriedManual(false); flash('已儲存'); load();
   }
 
   async function del(d: Dep) {
@@ -2215,20 +2244,28 @@ export default function DepositsPage() {
                         判斷與理由都在 lib/manual-deposit.ts。
                   */}
                   <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">物業<Req /></span>
+                    {/*
+                        ★★ 紅框用 `reqCls()` 的同一組顏色（border-red-400 bg-red-50）。
+                          `mErr()` 只在按過儲存之後才為真 —— 空表單一打開就整片紅
+                          那不是提示是指責（見 components/Req.tsx）。
+                    */}
                     <select value={edit.estate_id ?? ''} onChange={(e) => setEdit({ ...edit, estate_id: e.target.value || null })}
-                      className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5">
+                      className={`h-12 md:h-auto bg-white rounded-lg border px-2 md:py-1.5 ${
+                        mErr('物業') ? 'border-red-400 bg-red-50' : 'border-mor-line'}`}>
                       <option value="">請選擇</option>
                       {estates.map((es) => <option key={es.id} value={es.id}>{es.name}</option>)}
                     </select></label>
                   <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">房源<Req /></span>
                     <input value={edit.room ?? ''} onChange={(e) => setEdit({ ...edit, room: e.target.value })}
                       placeholder="例:14B5"
-                      className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5" /></label>
+                      className={`h-12 md:h-auto bg-white rounded-lg border px-2 md:py-1.5 ${
+                        mErr('房源') ? 'border-red-400 bg-red-50' : 'border-mor-line'}`} /></label>
                   <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">姓名<Req /></span>
                     <input value={edit.guest_name ?? ''} onChange={(e) => setEdit({ ...edit, guest_name: e.target.value })}
                       /* 離開欄位才正規化 —— 見 shortterm 那邊的說明（migration_173） */
                       onBlur={(e) => setEdit({ ...edit, guest_name: titleCaseName(e.target.value) })}
-                      className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5" /></label>
+                      className={`h-12 md:h-auto bg-white rounded-lg border px-2 md:py-1.5 ${
+                        mErr('姓名') ? 'border-red-400 bg-red-50' : 'border-mor-line'}`} /></label>
                   <div className="flex gap-2">
                     <label className="flex flex-col gap-1 w-24"><span className="text-xs text-gray-500">幣別</span>
                       <select value={edit.currency} onChange={(e) => setEdit({ ...edit, currency: e.target.value })}
@@ -2238,7 +2275,8 @@ export default function DepositsPage() {
                     <label className="flex flex-col gap-1 flex-1 min-w-0"><span className="text-xs text-gray-500">金額<Req /></span>
                       <MoneyInput value={edit.amount || 0}
                         onChange={(n) => setEdit({ ...edit, amount: n })}
-                        className="h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 text-right" /></label>
+                        className={`h-12 md:h-auto bg-white rounded-lg border px-2 md:py-1.5 text-right ${
+                          mErr('金額') ? 'border-red-400 bg-red-50' : 'border-mor-line'}`} /></label>
                   </div>
 
                   {/*
@@ -2442,8 +2480,10 @@ export default function DepositsPage() {
               )}
               <button onClick={() => setEdit(null)}
                 className="h-12 md:h-auto flex-1 md:flex-none rounded-lg border border-gray-300 px-4 md:py-1.5 text-sm">取消</button>
-              <button onClick={save} disabled={saving}
-                className="h-12 md:h-auto flex-1 md:flex-none rounded-lg border border-mor-line px-4 md:py-1.5 text-sm hover:bg-mor-sand/60 disabled:opacity-40">
+              {/* ★ aria-disabled 不是 disabled —— 點得下去，點下去把紅框亮起來 */}
+              <button onClick={save} aria-disabled={saveGate.blocked} title={saveGate.title}
+                className={`h-12 md:h-auto flex-1 md:flex-none rounded-lg border border-mor-line
+                            px-4 md:py-1.5 text-sm hover:bg-mor-sand/60 ${gateCls(saveGate.dim)}`}>
                 {saving ? '儲存中…' : '儲存'}</button>
               {/* 送審是獨立動作 —— 「儲存」只是留著待辦,不該悄悄啟動審核流程 */}
               {edit.id && refundPerms(edit).canRequest && (

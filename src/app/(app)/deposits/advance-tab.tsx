@@ -37,9 +37,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import StatCard, { StatRow, StatGroup, StatTotal } from '@/components/StatCard';
 import MoneyInput from '@/components/MoneyInput';
+import Req from '@/components/Req';
+import { submitGate, gateCls } from '@/lib/required';
 import { useOnce } from '@/lib/once';
 import {
-  statusOf, STATUS_LABEL, forfeitedOf, statsOf, validateAdvance,
+  statusOf, STATUS_LABEL, forfeitedOf, statsOf, validateAdvance, advanceMissing,
   defaultRefundAccount, refundAccountWarning, needsForfeitExpense,
   CATEGORIES, type Advance, type AdvanceStatus,
   purposeFromSelect, purposeToSelect, purposeLabel, PURPOSE_OFFICE, OFFICE_LABEL,
@@ -79,10 +81,24 @@ const CTRL = 'h-11 md:h-9 rounded-lg border border-gray-300 px-2 text-sm bg-whit
  *
  * ★ 星號是紅的而且在字後面 —— 表單慣例，不用另外解釋。
  */
-function Req({ children }: { children: React.ReactNode }) {
+/**
+ * 標籤 ＋ 紅星。
+ *
+ * ★★★ 2026-09-10:這裡原本自己寫了一份**同名**的 `Req`，沒有 import
+ *   共用元件，而且簽名相反（吃 children）。兩個後果:
+ *
+ *   ① 它**沒有 `sr-only` 的「必填」** —— 讀螢幕的人只聽到「星號」，
+ *      而那正是共用元件的註解特別解決掉的問題。
+ *   ② 誰哪天把它換成共用的 `Req`，這四個標籤文字會**整個消失**
+ *      （共用版不吃 children），而 tsc 只會抱怨型別、
+ *      不會告訴你畫面上少了四個字。
+ *
+ * 現在改成薄薄一層包住共用元件 —— 用法不變，但星號是全站同一顆。
+ */
+function ReqLabel({ children }: { children: React.ReactNode }) {
   return (
-    <span className="text-xs text-gray-500">
-      {children}<span className="text-red-500 ml-0.5">*</span>
+    <span className="text-xs text-gray-500 flex items-center">
+      {children}<Req />
     </span>
   );
 }
@@ -246,6 +262,8 @@ export function AdvanceList({
 
   async function saveInner() {
     if (!edit) return;
+    // ★★ 先打開紅框再擋 —— 按下去的意思就是「我覺得我填完了」
+    setTried(true);
     const err = validateAdvance(edit);
     if (err) { setMsg(err); return; }
 
@@ -295,6 +313,18 @@ export function AdvanceList({
     await load();
   }
   const [save, saveBusy] = useOnce(saveInner);
+
+  /** 按過儲存了沒 —— 紅框只在他表達「我填完了」之後才出現 */
+  const [tried, setTried] = useState(false);
+  /** 缺哪幾欄。紅框、送出鈕提示、擋下來的訊息用同一份答案 */
+  const advMissing = edit ? advanceMissing(edit) : [];
+  /** 這一格要不要畫紅框 */
+  const aErr = (f: string) => tried && advMissing.includes(f);
+  /**
+   * 送出鈕的樣子。★★★ 灰掉但**按得下去** —— 真的 disabled 的話
+   * `tried` 打不開、紅框永遠不出現（見 lib/required.ts 的 submitGate）。
+   */
+  const gate = submitGate(advMissing, saveBusy);
 
   async function delOne(r: Row) {
     if (!confirm(`刪除「${r.counterparty}・${r.usage}」的 ${fmt(r.amount)}？`)) return;
@@ -430,22 +460,28 @@ export function AdvanceList({
 
                 ★★ 跟支出頁一致:那邊也是「項目」在最上面。
               */}
-              <label className="flex flex-col gap-1 sm:col-span-2"><Req>項目</Req>
+              <label className="flex flex-col gap-1 sm:col-span-2"><ReqLabel>項目</ReqLabel>
+                {/*
+                    ★★ 紅框只在按過儲存之後才出現 —— 空表單一打開就整片紅
+                      那不是提示是指責（見 components/Req.tsx）。
+                */}
                 <input value={edit.usage} autoFocus
                   onChange={(e) => setEdit({ ...edit, usage: e.target.value })}
-                  placeholder="辦公室租賃／零用金撥補／114 年清潔標案" className={CTRL} /></label>
+                  placeholder="辦公室租賃／零用金撥補／114 年清潔標案"
+                  className={`${CTRL} ${aErr('項目') ? 'border-red-400 bg-red-50' : ''}`} /></label>
 
-              <label className="flex flex-col gap-1"><Req>類別</Req>
+              <label className="flex flex-col gap-1"><ReqLabel>類別</ReqLabel>
                 <select value={edit.category}
                   onChange={(e) => setEdit({ ...edit, category: e.target.value as Advance['category'] })}
-                  className={CTRL}>
+                  className={`${CTRL} ${aErr('類別') ? 'border-red-400 bg-red-50' : ''}`}>
                   {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
                 </select></label>
 
-              <label className="flex flex-col gap-1"><Req>對象（錢付給誰）</Req>
+              <label className="flex flex-col gap-1"><ReqLabel>對象（錢付給誰）</ReqLabel>
                 <input value={edit.counterparty}
                   onChange={(e) => setEdit({ ...edit, counterparty: e.target.value })}
-                  placeholder="王大明／台北市政府" className={CTRL} /></label>
+                  placeholder="王大明／台北市政府"
+                  className={`${CTRL} ${aErr('對象') ? 'border-red-400 bg-red-50' : ''}`} /></label>
 
               {/*
                 用途（migration_212）。★ 安幸辦公室**不是物業** ——
@@ -460,9 +496,10 @@ export function AdvanceList({
                   {estates.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
                 </select></label>
 
-              <label className="flex flex-col gap-1"><Req>暫付款</Req>
+              <label className="flex flex-col gap-1"><ReqLabel>暫付款</ReqLabel>
                 <MoneyInput value={edit.amount} onChange={(n) => setEdit({ ...edit, amount: n })}
-                  className={`${CTRL} text-right`} /></label>
+                  className={`${CTRL} text-right ${
+                    aErr('暫付款') ? 'border-red-400 bg-red-50' : ''}`} /></label>
 
               <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">出款日</span>
                 <input type="date" value={edit.paid_on ?? ''}
@@ -569,8 +606,9 @@ export function AdvanceList({
             <div className="flex justify-end gap-2 mt-4">
               <button onClick={() => setEdit(null)}
                 className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>
-              <button onClick={save} disabled={saveBusy}
-                className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium hover:bg-mor-slatedark disabled:opacity-50">
+{/* ★ aria-disabled 不是 disabled —— 點得下去，點下去把紅框亮起來 */}
+                            <button onClick={save} aria-disabled={gate.blocked} title={gate.title}
+                className={`rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium hover:bg-mor-slatedark  ${gateCls(gate.dim)}`}>
                 {saveBusy ? '儲存中⋯' : '儲存'}</button>
             </div>
           </div>

@@ -172,6 +172,30 @@ export const isOutstanding = (a: Advance) => statusOf(a) === 'paid';
  *
  * ★★ 一次只回**第一個**錯誤。全部列出來會變成一段文章，而人只看第一行。
  */
+/**
+ * 缺哪幾個必填欄位（畫面順序）。
+ *
+ * ★★★ 2026-09-10 抽出來。`validateAdvance()` 一次只回**一句話**，
+ *   畫面拿不到「是哪幾格」—— 於是四個紅星底下一格都畫不出紅框，
+ *   使用者按了存不了、只看到一句話，要自己在四格裡找。
+ *
+ * ★★ 這裡**只管「有沒有填」**。格式錯（金額三位小數、類別不在清單裡）
+ *   還是留給 `validateAdvance()` —— 那不是「沒填」，
+ *   把它算成缺欄位的話紅框會指著一個明明填了東西的格子。
+ *
+ * ★ 標籤字要跟畫面上的一模一樣。2026-09-03「用途」改名叫「項目」時
+ *   訊息沒跟著改，變成「畫面說項目、報錯說用途」——
+ *   使用者會去找一個不存在的欄位。
+ */
+export function advanceMissing(a: Advance): string[] {
+  const out: string[] = [];
+  if (!a.usage?.trim()) out.push('項目');
+  if (!(CATEGORIES as readonly string[]).includes(a.category)) out.push('類別');
+  if (!a.counterparty?.trim()) out.push('對象');
+  if (!(Number(a.amount) > 0)) out.push('暫付款');
+  return out;
+}
+
 export function validateAdvance(a: Advance): string | null {
   if (!(CATEGORIES as readonly string[]).includes(a.category)) return '要選類別';
   if (!a.counterparty?.trim()) return '要填對象（錢付給誰）';

@@ -5,7 +5,7 @@ import { ActionRow, FilterCount, FieldSpacer, FilterSearch, FILTER_BTN_H } from 
 import { TAG_NON_CASH, TAG_NON_CASH_PG, isNonCash, withNonCash } from '@/lib/expense-tags';
 import Req from '@/components/Req';
 import MoneyInput from '@/components/MoneyInput';
-import { missingFields, missingMessage } from '@/lib/required';
+import { missingFields, missingMessage, submitGate, gateCls } from '@/lib/required';
 import Toast from '@/components/Toast';
 import FilterToggle from '@/components/FilterToggle';
 import ToggleInfo from '@/components/ToggleInfo';
@@ -320,9 +320,20 @@ export default function ExpensesPage() {
     { label: '用途物業', value: edit.estate_id, when: edit.purpose_type === 'estate' },
   ]) : [], [edit]);
   const err = (f: string) => tried && missing.includes(f);
+  /**
+   * 送出鈕現在該長什麼樣。
+   *
+   * ★★★ 灰掉但**按得下去**（David 指定，2026-09-10）——
+   *   真的 disabled 的話按不下去、`tried` 打不開、紅框永遠不會出現，
+   *   使用者只看得到一顆灰按鈕而不知道是哪一格漏了。
+   *   詳細理由在 `lib/required.ts` 的 submitGate。
+   */
+  const gate = submitGate(missing, saving);
 
   async function save() {
     if (!edit) return;
+    // ★ 按鈕沒有 disabled 了 —— 防連點的責任移到這裡
+    if (saving) return;
     setTried(true);
     /*
      * 必填一次講完。
@@ -1265,8 +1276,16 @@ export default function ExpensesPage() {
               )}
               <div className="flex-1" />
               <button onClick={() => setEdit(null)} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>
-              <button onClick={save} disabled={saving}
-                className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium hover:bg-mor-slatedark disabled:opacity-40">
+              {/*
+                ★★ `aria-disabled` 不是 `disabled`:看起來灰、讀螢幕會念
+                  「已停用」，但點得下去 —— 點下去不送出，而是把紅框全部
+                  亮起來並跳一句「還沒填：…」。
+                ★ 所以這裡也**不能**用 `disabled:opacity-40`（那組 class
+                  只在真的 disabled 時生效，會安靜地不作用）。
+              */}
+              <button onClick={save} aria-disabled={gate.blocked} title={gate.title}
+                className={`rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium
+                            hover:bg-mor-slatedark ${gateCls(gate.dim)}`}>
                 {saving ? '儲存中…' : '儲存'}</button>
             </div>
           </div>

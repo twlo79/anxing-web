@@ -2,7 +2,8 @@ import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   statusOf, STATUS_LABEL, forfeitedOf, needsForfeitExpense, isOutstanding,
-  validateAdvance, validateRefund, statsOf, defaultRefundAccount, refundAccountWarning, type Advance,
+  validateAdvance, advanceMissing, validateRefund, statsOf, defaultRefundAccount,
+  refundAccountWarning, type Advance,
   CATEGORIES, purposeFromSelect, purposeToSelect, purposeLabel,
 } from './advance.ts';
 
@@ -336,5 +337,40 @@ describe('用途:物業 or 安幸辦公室（migration_212，2026-09-03）', () 
       const p = purposeFromSelect(v);
       assert.equal(purposeToSelect(p.purpose_type, p.estate_id), v, v + ' 來回要一致');
     }
+  });
+});
+
+// ── 缺哪幾欄（2026-09-10，畫面要畫紅框）────────────────────
+
+describe('★★ advanceMissing —— 要知道是哪幾格，不是一句話', () => {
+  test('填齊了回空陣列', () => assert.deepEqual(advanceMissing(A()), []));
+
+  test('★★★ 四個都沒填 → 四個都列出來', () => {
+    /*
+     * validateAdvance() 一次只回一句話，畫面拿不到「是哪幾格」——
+     * 四個紅星底下一格都畫不出紅框，使用者要自己在四格裡找。
+     */
+    assert.deepEqual(
+      advanceMissing({ category: '' as never, counterparty: '', usage: '', amount: 0,
+        paid_on: '', refunded_on: null, refunded_amount: null, note: '' }),
+      ['項目', '類別', '對象', '暫付款']);
+  });
+
+  test('★★ 格式錯不算「沒填」', () => {
+    /*
+     * 金額三位小數是填了、但填錯 —— 算成缺欄位的話，
+     * 紅框會指著一個明明有數字的格子，而訊息說「還沒填」。
+     */
+    assert.deepEqual(advanceMissing(A({ amount: 100.005 })), []);
+    assert.match(validateAdvance(A({ amount: 100.005 })) ?? '', /小數點/);
+  });
+
+  test('★ 標籤要跟畫面上的一致（項目，不是用途）', () =>
+    assert.ok(advanceMissing(A({ usage: '  ' })).includes('項目')));
+
+  test('★ 跟 validateAdvance 不會互相矛盾 —— 有缺就一定擋得下來', () => {
+    const bad = A({ counterparty: '' });
+    assert.ok(advanceMissing(bad).length > 0);
+    assert.notEqual(validateAdvance(bad), null);
   });
 });

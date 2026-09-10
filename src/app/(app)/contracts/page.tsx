@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AddButton, ExportButton, ActionBar } from '@/components/Actions';
 import Req from '@/components/Req';
+import { submitGate, gateCls } from '@/lib/required';
 import MoneyInput from '@/components/MoneyInput';
 import { checkContractRequired } from '@/lib/order-check';
 import Toast from '@/components/Toast';
@@ -678,6 +679,11 @@ const nameOf = (c: Contract) =>
   }) : [];
   /** 這一格要不要畫紅框 */
   const err = (f: string) => tried && missing.includes(f);
+  /**
+   * 送出鈕的樣子。★★★ 灰掉但**按得下去** —— 真的 disabled 的話
+   * `tried` 打不開、紅框永遠不出現（見 lib/required.ts 的 submitGate）。
+   */
+  const gate = submitGate(missing, saveBusy);
 
   function blank(): Contract {
     return { id: '', estate_id: estates.find((e) => e.name === '正隆')?.id ?? null, room: '', tenant_name: '', phone: '', cadence: 'monthly', type: 'longterm', monthly_rent: 0, amount_per_period: 0, deposit: 0, start_date: '', end_date: '', pay_day: null, first_payment_date: '', paid: false, account: null, note: '', active: true, watch: false, display_name: '', earnest_only: false, earnest_amount: 0,
@@ -1393,8 +1399,10 @@ const nameOf = (c: Contract) =>
             </div>
             <div className="sticky bottom-0 bg-white border-t border-mor-line px-6 py-3 flex justify-end gap-2">
               <button onClick={() => setEdit(null)} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>
-              <button onClick={save} disabled={saveBusy}
-                className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium hover:bg-mor-slatedark disabled:opacity-50">
+              {/* ★ aria-disabled 不是 disabled —— 點得下去，點下去把紅框亮起來 */}
+              <button onClick={save} aria-disabled={gate.blocked} title={gate.title}
+                className={`rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium
+                            hover:bg-mor-slatedark ${gateCls(gate.dim)}`}>
                 {saveBusy ? '儲存中⋯' : '儲存'}</button>
             </div>
           </div>
