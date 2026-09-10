@@ -183,9 +183,34 @@ export default function UploadPanel({
     setResults(out);
     setReady([]);
     setSending(false);
-    const good = out.filter((o) => o.ok).length;
-    if (good > 0) await onDone(`匯入完成：${good} 份對帳單`);
-  }, [ready, onDone]);
+
+    const good = out.filter((o) => o.ok);
+    const bad = out.filter((o) => !o.ok);
+
+    /*
+     * ★★★ 全部成功就**關掉面板**（2026-09-10 使用者:
+     *   「步驟錯誤，按匯入才能匯入，然後跳出啊」）。
+     *
+     *   原本匯入完成之後面板照樣開著，而「確認匯入」那顆鈕還在 ——
+     *   使用者看到的是「我按了、跑完了、但畫面沒有結束」，
+     *   於是不確定到底成功了沒，也不知道還該不該再按一次。
+     *
+     * ★★ 摘要帶到頁面上的訊息列，**不要留在面板裡**:
+     *   面板關掉之後底下那張帳戶卡的餘額與筆數已經更新，
+     *   那才是他真正要看的東西。留在面板裡等於逼他自己關掉才看得到結果。
+     *
+     * ★ 有失敗的就**不關** —— 那幾筆的原因只有這裡看得到，
+     *   關掉就等於把唯一的線索丟掉。
+     */
+    if (good.length > 0) {
+      await onDone(
+        bad.length === 0
+          ? `匯入完成：${good.map((g) => g.text).join('；')}`
+          : `匯入完成 ${good.length} 份，${bad.length} 份失敗 —— 失敗的原因在上傳視窗裡`,
+      );
+    }
+    if (bad.length === 0 && good.length > 0) onClose();
+  }, [ready, onDone, onClose]);
 
   const isBlocked = (r: Ready) => r.problems.some((p) => p.level === 'block');
   const canSend = ready.length > 0 && !ready.some(isBlocked);
@@ -331,9 +356,20 @@ export default function UploadPanel({
           <button onClick={onClose} className="rounded-md border px-3 py-1.5 text-sm hover:bg-gray-50">
             關閉
           </button>
+          {/*
+            ★★ 灰掉的按鈕要說得出為什麼（CLAUDE.md）。
+              「確認匯入」在沒有檔案、或有檔案沒過檢查時都是灰的，
+              而那是兩件完全不同的事 —— 不講的話使用者只看到一顆壞掉的鈕。
+          */}
           <button
             onClick={send}
             disabled={!canSend || sending}
+            title={
+              sending ? '匯入中⋯'
+                : ready.length === 0 ? '還沒有可以匯入的檔案 —— 把 PDF 拖進上面那一格'
+                  : blocked.length > 0 ? `有 ${blocked.length} 份沒通過檢查，整批都不會匯入`
+                    : ''
+            }
             className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-gray-300"
           >
             {sending ? '匯入中⋯' : `確認匯入${ready.length ? `（${ready.length} 份）` : ''}`}
