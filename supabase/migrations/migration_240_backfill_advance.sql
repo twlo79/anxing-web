@@ -105,13 +105,28 @@ join _m240 m on m.req_no = r.req_no
 on conflict do nothing;                   -- ap_request_uniq：重跑不會變成兩列
 
 -- ── ③ 支出指回那筆暫付 ────────────────────────────────
+/*
+ * ★★★ 2026-09-10 修:一定要加**帳本條件**。
+ *
+ * 原本只用 `e.request_id = r.id` 接 —— 而一張請款單的支出不只一種:
+ *
+ *     項目支出   book = aipi     ← 愛皮的費用，該掛代墊
+ *     匯費       book = anxing   ← 安幸的郵電費，**不該掛**
+ *
+ * 少了這個條件，愛皮會被算成欠了一筆它沒欠的手續費（$15）。
+ * 錢沒有記錯，錯的是「誰欠誰」—— 而那種錯不會讓任何數字變紅。
+ *
+ * ★★ 這一行也讓這支變成**重跑安全**:沒有它的話，
+ *   240 跑第二次會把 migration_241 拆掉的匯費**重新掛回去**。
+ */
 update public.expenses e
    set advance_id = a.id
   from public.advance_payments a
   join public.purchase_requests r on r.id = a.request_id
   join _m240 m on m.req_no = r.req_no
  where e.request_id = r.id
-   and e.advance_id is null;
+   and e.advance_id is null
+   and coalesce(e.book, 'anxing') = coalesce(a.for_book, 'anxing');
 
 do $do$ begin
   if to_regprocedure('public.record_migration(text)') is not null then
@@ -149,41 +164,60 @@ select v.ord, v."檢查", v."結果", v."判定" from (
               then '✅' else '❌' end
 
   union all
-  select 3, '③★★★ 暫付總額 vs 支出總額',
+  select 3, '③★★★ 暫付總額 vs **同一本帳的**支出總額',
          '暫付 $' || coalesce((select sum(a.amount)::text from tgt t
                                 join public.advance_payments a on a.request_id = t.id), '0')
          || '　支出 $' || coalesce((select sum(e.amount)::text from tgt t
-                                     join public.expenses e on e.request_id = t.id), '0'),
+                                     join public.expenses e on e.request_id = t.id
+                                    where coalesce(e.book,'anxing') = coalesce(t.book,'anxing')), '0'),
          /*
           * ★★★ 這一條是整支最重要的。兩邊對不上的話，
           *   安幸記的應收跟愛皮記的費用是兩個數字 ——
           *   而**兩邊各自看起來都正常**，只有相減時差一截。
+          *
+          * ★★ 2026-09-10 修:右邊原本算「這張單的全部支出」，
+          *   而那含了記在安幸的匯費 —— **左右問的不是同一件事**，
+          *   所以必定差一個手續費。這是 CLAUDE.md 那條
+          *   「拿兩個問法不同的檢查互相比較」（2026-09-02）。
           */
          case when coalesce((select sum(a.amount) from tgt t
                               join public.advance_payments a on a.request_id = t.id), 0)
                  = coalesce((select sum(e.amount) from tgt t
-                              join public.expenses e on e.request_id = t.id), 0)
+                              join public.expenses e on e.request_id = t.id
+                             where coalesce(e.book,'anxing') = coalesce(t.book,'anxing')), 0)
               then '✅ 一致' else '❌ 對不上 —— 先不要往下走' end
 
   union all
-  select 4, '④ 三筆支出都指回暫付了',
+  -- ★ 分母只算「跟代墊同一本帳的」—— 安幸的匯費本來就不該接上
+  select 4, '④ 該接的支出都指回暫付了',
          (select count(*)::text from tgt t join public.expenses e on e.request_id = t.id
            where e.advance_id is not null) || ' / '
-         || (select count(*)::text from tgt t join public.expenses e on e.request_id = t.id),
-         case when not exists (select 1 from tgt t join public.expenses e on e.request_id = t.id
-                                where e.advance_id is null)
+         || (select count(*)::text from tgt t join public.expenses e on e.request_id = t.id
+              where coalesce(e.book,'anxing') = coalesce(t.book,'anxing')),
+         case when not exists (
+                select 1 from tgt t join public.expenses e on e.request_id = t.id
+                 where e.advance_id is null
+                   and coalesce(e.book,'anxing') = coalesce(t.book,'anxing'))
               then '✅' else '❌ 還有支出沒接上' end
 
   union all
   select 5, '⑤ 沒有重複產生支出',
-         (select count(*)::text from tgt t join public.expenses e on e.request_id = t.id) || ' 筆',
+         (select count(*)::text from tgt t join public.expenses e on e.request_id = t.id)
+         || ' 筆（含安幸的匯費）',
          /*
           * ★★ 觸發器的守衛是 `if old.purchased_on is null` —— 這兩張早就有
-          *   出款日，所以 update 不會再跑一次那一塊。這一條是**驗證那個判斷**，
-          *   不是裝飾:多產生一組的話帳直接雙倍，而總額只是「比較大」。
+          *   出款日，所以 update 不會再跑一次那一塊。這一條是**驗證那個判斷**:
+          *   多產生一組的話帳直接雙倍，而總額只是「比較大」。
+          *
+          * ★★★ 2026-09-10 修:原本寫死「應該是 3」，而那個 3 是我從一段
+          *   **加了日期篩選**的診斷查詢數出來的 —— 它濾掉了匯費。
+          *   於是這一條必定為紅，而實際上一筆重複都沒有產生。
+          *   基準值不可以來自一個問法不同的查詢（CLAUDE.md，2026-09-02）。
+          *
+          * ★ 改成上界:項目 ＋ 最多一筆匯費 = 4。真正要防的是「變成 7、8 筆」。
           */
-         case when (select count(*) from tgt t join public.expenses e on e.request_id = t.id) = 3
-              then '✅ 還是 3 筆' else '❌ 筆數變了 —— 立刻查' end
+         case when (select count(*) from tgt t join public.expenses e on e.request_id = t.id) <= 4
+              then '✅ 沒有重複產生' else '❌ 筆數變多了 —— 立刻查' end
 
   union all
   select 6, '⑥ 其他長得像的候選（不自動補，給人看）',
