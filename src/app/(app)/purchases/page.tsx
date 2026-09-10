@@ -43,7 +43,7 @@ import {
 // 排匯款／確認退款日 —— 押金管理頁用同一支，兩邊的規則不會漂走
 import DepositRefundStep, { type StepMode } from '@/components/DepositRefundStep';
 import { refundPerms as depPerms, cancelPatch, refundView, refundNote } from '@/lib/deposit-refund';
-import { CATEGORIES as ADVANCE_CATEGORIES } from '@/lib/advance';
+import { MANUAL_CATEGORIES as ADVANCE_CATEGORIES } from '@/lib/advance';
 
 type Item = {
   /** ★★★ `amount` 可以是 null =「還沒填」，**不是 0**（migration_218） */
@@ -152,6 +152,15 @@ const CURRENCIES = ['TWD', 'USD', 'JPY', 'CNY', 'EUR'];
  * 而漏掉的那邊不會報錯，只是下拉少一個選項（CLAUDE.md 的坑表）。
  * 資料庫那層由 `pr_advance_category_chk` 擋（migration_202）。
  */
+/**
+ * 暫支款的類別下拉。
+ *
+ * ★★★ 用 `MANUAL_CATEGORIES` 不是 `CATEGORIES` —— 「代墊」不能在這裡選。
+ *   這個下拉旁邊就是「安幸代墊」那個勾選框，而兩者互斥:
+ *   暫支＝這筆錢會收回來、**不產生支出**;
+ *   代墊＝產生別本帳的支出，安幸這邊記一筆應收。
+ *   把代墊列進來的話，同一件事有兩個入口而語意相反。
+ */
 const ADV_CATEGORIES = ADVANCE_CATEGORIES;
 /*
  * 採購單 = 房務管理底下的「採購需求」（2026-08-22 使用者指定）。
@@ -220,6 +229,17 @@ export default function PurchasesPage() {
   const [dateMethod, setDateMethod] = useState('');
   const [planning, setPlanning] = useState<Req | null>(null);
   const [planDate, setPlanDate] = useState('');
+  /**
+   * 排／修改付款計畫時**也能改付款方式**（2026-09-10）。
+   *
+   * ★★★ 兩個視窗都要有。原本只加在「確認出款」那個，
+   *   而使用者實際會先開的是這個 —— 一個功能只做了一半，
+   *   比沒做更容易讓人以為壞了（他回報「不能換付款方式耶」）。
+   *
+   * ★ 這裡改**不會產生支出** —— 這個視窗本來就只寫計畫欄位。
+   *   真正記帳是在「確認出款」那一步。
+   */
+  const [planMethod, setPlanMethod] = useState('');
   const [planAcct, setPlanAcct] = useState('');
 
   const [stF, setStF] = useState('');
@@ -1526,11 +1546,32 @@ export default function PurchasesPage() {
   async function savePlan() {
     if (!planning) return;
     if (!planDate) return flashErr('請選擇預定匯款日');
-    if (!planAcct) return flashErr('請選擇安幸付款帳號');
-    const { error } = await supabase.from('purchase_requests')
-      .update({ planned_transfer_on: planDate, payout_account: planAcct }).eq('id', planning.id);
+    /*
+     * ★★★ 判斷用**這個視窗裡選的方式**，不是單子上原本那個。
+     *   用舊值判斷的話會出現:方式已經改成現金、帳號欄也換成現金帳號了，
+     *   而檢查還在問「匯款帳號填了沒」—— 一個永遠過不了的檢查。
+     */
+    const method = planMethod || planning.payment_method;
+    const needAcct = payMethodNeedsPayout(method);
+    if (needAcct && !planAcct) return flashErr(`請選擇${acctWord(method)}（我方）`);
+
+    const patch: Record<string, unknown> = { planned_transfer_on: planDate };
+    patch.payout_account = needAcct ? planAcct : null;
+    /*
+     * ★ 方式沒變就不寫進 patch —— 每次都寫的話，一個沒有人動過的欄位
+     *   會出現在異動紀錄上，日後查「誰把它改成現金的」會查到一堆假異動。
+     */
+    if (method !== planning.payment_method) patch.payment_method = method;
+
+    /*
+     * ★★ 要看改到幾列。RLS 擋下的 UPDATE 回成功且影響 0 列 ——
+     *   只看 error 的話畫面會說「已排定」而那張單一動也沒動。
+     */
+    const { data, error } = await supabase.from('purchase_requests')
+      .update(patch).eq('id', planning.id).select('id');
     if (error) return flash('儲存失敗:' + error.message);
-    setPlanning(null); flash('已排定匯款'); load();
+    if (!data?.length) return flashErr('沒有改到任何一列 —— 可能是權限，或這張單的狀態變了');
+    setPlanning(null); flash('已排定'); load();
   }
 
   // 撤銷 = 移到回收桶（連同底下的請款項目）。已產生支出的單一律擋下 ——
@@ -2938,7 +2979,7 @@ export default function PurchasesPage() {
                     className={`${btn} border border-amber-400 text-amber-700`}>駁回</button>
                 )}
                 {p.canPlan && (
-                  <button onClick={() => { setDetail(null); setPlanning(d); setPlanDate(d.planned_transfer_on ?? todayStr()); setPlanAcct(d.payout_account ?? ''); }}
+                  <button onClick={() => { setDetail(null); setPlanning(d); setPlanDate(d.planned_transfer_on ?? todayStr()); setPlanAcct(d.payout_account ?? ''); setPlanMethod(d.payment_method ?? ''); }}
                     className={`${btn} border border-mor-slate text-mor-slate`}>{d.planned_transfer_on ? '改付款計畫' : `排${dateWord(d.payment_method)}`}</button>
                 )}
                 {p.canDate && (
@@ -3748,13 +3789,34 @@ export default function PurchasesPage() {
               <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">預定{dateWord(planning.payment_method)}</span>
                 <input type="date" value={planDate} onChange={(e) => setPlanDate(e.target.value)}
                   className="rounded-lg border border-mor-line px-2 py-1.5" /></label>
-              <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">{acctWord(planning.payment_method)}(我方)</span>
-                <select value={planAcct} onChange={(e) => setPlanAcct(e.target.value)}
+              {/*
+                ★★★ 付款方式在這裡也改得動（2026-09-10）。
+                  申請時寫「匯款」、排款時才發現要拿現金去繳 ——
+                  原本只能回頭改整張單，而已核可的單一改就要重新送審。
+                ★ 換了方式要清掉帳號:匯款的銀行帳號留在一筆現金付款上，
+                  對帳時會對到一個沒有這筆錢的戶頭。
+              */}
+              <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">付款方式</span>
+                <select value={planMethod || planning.payment_method || ''}
+                  onChange={(e) => { setPlanMethod(e.target.value); setPlanAcct(''); }}
                   className="rounded-lg border border-mor-line px-2 py-1.5">
-                  <option value="">請選擇</option>
-                  {payAccountsFor(payAccounts, planning.payment_method)
-                    .map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
+                  {PAY_OPTS.map((m) => <option key={m} value={m}>{PAY_LABEL[m] ?? m}</option>)}
                 </select></label>
+              {(planMethod && planMethod !== planning.payment_method) && (
+                <div className="rounded-lg bg-mor-bluelight text-mor-slate px-3 py-2 text-xs">
+                  付款方式會從「{PAY_LABEL[planning.payment_method ?? ''] ?? '—'}」
+                  改成「{PAY_LABEL[planMethod] ?? planMethod}」，跟這次儲存一起存。
+                </div>
+              )}
+              {payMethodNeedsPayout(planMethod || planning.payment_method) && (
+                <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">{acctWord(planMethod || planning.payment_method)}(我方)</span>
+                  <select value={planAcct} onChange={(e) => setPlanAcct(e.target.value)}
+                    className="rounded-lg border border-mor-line px-2 py-1.5">
+                    <option value="">請選擇</option>
+                    {payAccountsFor(payAccounts, planMethod || planning.payment_method)
+                      .map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
+                  </select></label>
+              )}
               <div className="text-xs text-gray-400">
                 金額 ${fmt(planning.total_amount)}
                 {planning.payee_account ? `・匯給 ${planning.payee_company ?? ''} ${planning.payee_account}` : ''}

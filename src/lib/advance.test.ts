@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   statusOf, STATUS_LABEL, forfeitedOf, needsForfeitExpense, isOutstanding,
   validateAdvance, advanceMissing, validateRefund, statsOf, defaultRefundAccount,
-  refundAccountWarning, type Advance,
+  refundAccountWarning, MANUAL_CATEGORIES, type Advance,
   CATEGORIES, purposeFromSelect, purposeToSelect, purposeLabel,
 } from './advance.ts';
 
@@ -372,5 +372,38 @@ describe('★★ advanceMissing —— 要知道是哪幾格，不是一句話',
     const bad = A({ counterparty: '' });
     assert.ok(advanceMissing(bad).length > 0);
     assert.notEqual(validateAdvance(bad), null);
+  });
+});
+
+// ── 類別清單（2026-09-10）────────────────────────────────
+
+describe('★★★ CATEGORIES 要跟資料庫的 check 一致', () => {
+  test('★★★ 代墊是合法類別', () => {
+    /*
+     * migration_236 把「代墊」加進資料庫的 check，而 TS 這邊沒跟著加。
+     * 後果有兩個，第二個很嚴重：
+     *   ① validateAdvance 說一筆完全正常的代墊「要選類別」
+     *   ② 下拉裡沒有這個值 → <select> 顯示成空白，
+     *      使用者隨手選一個，那一列就從代墊變成押金 ——
+     *      **存檔成功，沒有任何東西會叫**
+     */
+    assert.ok((CATEGORIES as readonly string[]).includes('代墊'));
+    assert.equal(validateAdvance(A({ category: '代墊' as never })), null);
+    assert.deepEqual(advanceMissing(A({ category: '代墊' as never })), []);
+  });
+
+  test('★★ 代墊不給人手動選 —— 它只由請款單的觸發器產生', () => {
+    /*
+     * 手動建一筆代墊的話，那筆錢對不到任何一張請款單、
+     * advance_id 是空的 —— 沖銷時找不到要沖哪一筆支出。
+     */
+    assert.ok(!(MANUAL_CATEGORIES as readonly string[]).includes('代墊'));
+  });
+
+  test('★ 可選的一定是合法的 —— 兩份清單不可以各走各的', () => {
+    for (const c of MANUAL_CATEGORIES) {
+      assert.ok((CATEGORIES as readonly string[]).includes(c), `${c} 不在 CATEGORIES 裡`);
+    }
+    assert.equal(MANUAL_CATEGORIES.length, CATEGORIES.length - 1);
   });
 });

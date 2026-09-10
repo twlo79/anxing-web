@@ -43,7 +43,7 @@ import { useOnce } from '@/lib/once';
 import {
   statusOf, STATUS_LABEL, forfeitedOf, statsOf, validateAdvance, advanceMissing,
   defaultRefundAccount, refundAccountWarning, needsForfeitExpense,
-  CATEGORIES, type Advance, type AdvanceStatus,
+  CATEGORIES, MANUAL_CATEGORIES, type Advance, type AdvanceStatus,
   purposeFromSelect, purposeToSelect, purposeLabel, PURPOSE_OFFICE, OFFICE_LABEL,
 } from '@/lib/advance';
 
@@ -474,7 +474,20 @@ export function AdvanceList({
                 <select value={edit.category}
                   onChange={(e) => setEdit({ ...edit, category: e.target.value as Advance['category'] })}
                   className={`${CTRL} ${aErr('類別') ? 'border-red-400 bg-red-50' : ''}`}>
-                  {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                  {/*
+                    ★★★ 「代墊」不在可選清單裡 —— 它只由請款單的觸發器產生。
+                      手動建一筆代墊的話，那筆錢對不到任何一張請款單、
+                      `advance_id` 是空的，沖銷時找不到要沖哪一筆支出。
+
+                    ★★ **但已經是代墊的那一列要把它顯示出來**。
+                      少了這個 option，`<select>` 會顯示成**空白** ——
+                      使用者隨手選一個，那一列就從代墊變成押金，
+                      而**存檔成功，沒有任何東西會叫**。
+                  */}
+                  {MANUAL_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                  {edit.category === '代墊' && (
+                    <option value="代墊">代墊（請款單產生，不要改）</option>
+                  )}
                 </select></label>
 
               <label className="flex flex-col gap-1"><ReqLabel>對象（錢付給誰）</ReqLabel>
