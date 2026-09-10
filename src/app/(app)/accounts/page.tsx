@@ -148,6 +148,13 @@ type Txn = {
  *   自由文字，那比沒有這一頁更危險（對帳的人會相信它）。
  *
  * 資料庫也擋（migration_166 的 trg_bank_txn_memo_only）——
+ *
+ * ★★★ 2026-09-10（migration_243）:那支守衛原本會**誤傷系統自己**。
+ *   匯入對帳單只做 INSERT，但 `trg_bank_txn_balance` 會在之後呼叫
+ *   `recalc_account_balances()` 重算餘額 —— 那是一個 UPDATE，
+ *   於是守衛跳出來說「銀行流水只能編輯摘要」，整份對帳單匯不進去。
+ *   現在深層呼叫（`pg_trigger_depth() > 1`）只准動 balance／balance_note。
+ *
  * 前端擋不住重新整理後的舊畫面，也擋不住直接打 API。
  */
 const money = (n: number | null | undefined) =>
