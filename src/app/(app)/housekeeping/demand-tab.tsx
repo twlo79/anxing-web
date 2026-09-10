@@ -53,8 +53,15 @@ import { useRouter } from 'next/navigation';
 type Item = {
   id?: string;
   item_name: string;
-  /** 規格說明。**大概數量寫在這裡**（migration_141 之後沒有數量欄） */
+  /**
+   * 產品規格（2026-09-10 起必填）。
+   *
+   * ★ 以前這一欄叫「規格說明／大概數量」，一個框裝兩件事。
+   *   拆開之後規格歸 `spec`、數量歸 `qty`，各自必填。
+   */
   spec: string;
+  /** 需要數量（2026-09-10 新增，必填）。**是文字** —— 「兩箱」也填得進來 */
+  qty: string;
   /**
    * 用途類別（migration_186）。
    *
@@ -65,7 +72,14 @@ type Item = {
    */
   purpose_type: 'estate' | 'office';
   estate_id: string;
-  /** 建議採購連結（蝦皮／露天等）。知道去哪買時填,會計省一趟詢價 */
+  /**
+   * 備註 —— 採購地點或連結（畫面上的標題，2026-09-10 使用者指定）。
+   *
+   * ★ 欄位名維持 `buy_link`（資料庫那一欄就叫這個）。改名要動
+   *   migration、拆單的抄欄位清單、讀取的 select…… 換來的只是名字好看。
+   * ★★ 值可能是網址、也可能只是店名 —— 顯示端要先問 `isUrl()`
+   *   才決定畫不畫成連結（2026-09-09「酷彭」那一筆）。
+   */
   buy_link: string;
   status: DemandItemStatus;
   request_item_id?: string | null;
@@ -107,7 +121,8 @@ type Demand = {
 const SHIP_EXTRA = ['安幸辦公室', '其他'];
 
 const blankItem = (): Item =>
-  ({ item_name: '', spec: '', purpose_type: 'estate', estate_id: '', buy_link: '', status: 'pending' });
+  ({ item_name: '', spec: '', qty: '', purpose_type: 'estate', estate_id: '',
+    buy_link: '', status: 'pending' });
 
 const inp = 'rounded-lg border border-gray-300 px-2 py-1.5 text-sm';
 
@@ -383,6 +398,7 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
         const src = {
           demand_id: split.demandId,
           spec: split.item.spec.trim() || null,
+          qty: split.item.qty.trim() || null,
           purpose_type: split.item.purpose_type,
           estate_id: split.item.purpose_type === 'office'
             ? null : (split.item.estate_id || null),
@@ -475,7 +491,7 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
       .select(`id, demand_no, requester_id, requested_on, note, status, ship_to, ship_floor,
                profiles(name),
                purchase_demand_items(
-                 id, item_name, spec, purpose_type, estate_id, buy_link, status, request_item_id,
+                 id, item_name, spec, qty, purpose_type, estate_id, buy_link, status, request_item_id,
                  platform, eta, purchased_on,
                  purchase_request_items(purchase_requests(req_no))
                )`)
@@ -494,7 +510,7 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
       ship_floor: d.ship_floor,
       status: d.status,
       items: (d.purchase_demand_items ?? []).map((i: any) => ({
-        id: i.id, item_name: i.item_name, spec: i.spec ?? '',
+        id: i.id, item_name: i.item_name, spec: i.spec ?? '', qty: i.qty ?? '',
         purpose_type: i.purpose_type === 'office' ? 'office' : 'estate',
         estate_id: i.estate_id ?? '', buy_link: i.buy_link ?? '', status: i.status,
         platform: i.platform ?? null, eta: i.eta ?? null,
@@ -592,11 +608,20 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
    * 這裡只負責「亮不亮」,save() 仍然要再驗一次:
    * 按鈕的 disabled 擋得住滑鼠,擋不住 Enter 鍵與程式呼叫。
    */
-  const canSubmit = useMemo(
-    // ★ 跟 save() 呼叫同一支（lib/demand.ts）—— 條件不可能再漂掉
-    () => !!edit && validateDemand(edit.items, edit.ship_to) === null,
+  /**
+   * 還不能送出的**理由**。可以送出時是 null。
+   *
+   * ★ 跟 save() 呼叫同一支（lib/demand.ts）—— 條件不可能再漂掉。
+   *
+   * ★★★ 2026-09-10 改成把理由留著。原本按鈕的 title 是一句寫死的
+   *   「品名、用途、寄送地點都要填」—— 欄位變成四個之後那句話會說謊，
+   *   而使用者會照著那句話檢查三個欄位、然後結論是「按鈕壞了」。
+   */
+  const blockReason = useMemo(
+    () => (edit ? validateDemand(edit.items, edit.ship_to) : '還沒開始填'),
     [edit],
   );
+  const canSubmit = blockReason === null;
 
   const setItem = (idx: number, patch: Partial<Item>) =>
     setEdit((e) => e && ({ ...e, items: e.items.map((it, i) => (i === idx ? { ...it, ...patch } : it)) }));
@@ -735,8 +760,15 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                         <span className="text-xs rounded bg-mor-sand px-1.5 py-0.5">
                           {i.purpose_type === 'office' ? '安幸辦公室' : estateName[i.estate_id] ?? '—'}
                         </span>
-                        {/* 規格說明裡就有大概數量 —— 沒有獨立的數量欄（migration_141） */}
                         {i.spec && <span className="text-xs text-gray-400">{i.spec}</span>}
+                        {/*
+                          ★★ 數量要**看得出是數量**。跟規格一樣灰灰一串的話，
+                            「50cm 2 支」讀起來像規格的一部分。
+                            所以加一個「×」—— 一個字就分得開。
+                        */}
+                        {i.qty && (
+                          <span className="text-xs text-gray-500 whitespace-nowrap">× {i.qty}</span>
+                        )}
                         {/*
                           ★★★ **只有真的是網址才做成連結**（2026-09-09）。
                             線上有一筆的「連結」是「酷彭」—— 店名。
@@ -750,7 +782,7 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                           <a href={i.buy_link} target="_blank" rel="noreferrer"
                             onClick={(e) => e.stopPropagation()}
                             title={i.buy_link}
-                            className="text-xs text-mor-slate underline">建議連結</a>
+                            className="text-xs text-mor-slate underline">備註連結</a>
                         ) : (
                           <span className="text-xs rounded bg-mor-sand text-gray-600 px-1.5 py-0.5"
                             title="這裡填的不是網址，所以點不了">
@@ -972,7 +1004,7 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                   一顆灰掉而不解釋的按鈕，使用者會以為是系統壞了而一直點。
                 */}
                 <button onClick={save} disabled={saving || !canSubmit}
-                  title={canSubmit ? '' : '品名、用途、寄送地點都要填'}
+                  title={blockReason ?? ''}
                   className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium
                              disabled:opacity-40 disabled:cursor-not-allowed">
                   {saving ? '送出中…' : '送出'}
@@ -983,8 +1015,8 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
             <div className="p-4 space-y-3">
               <p className="text-xs text-gray-400">
                 <span className="text-red-500">*</span> 是必填，填完「送出」才會亮。{' '}
-                <b className="text-gray-500">不用填金額與數量</b> —— 金額由會計詢價後在轉請款時填；
-                大概要幾個寫在「規格說明」裡就好。
+                <b className="text-gray-500">不用填金額</b> —— 由會計詢價後在轉請款時填。
+                數量寫<b className="text-gray-500">「2 個」「一箱」</b>都可以，講得出要多少就好。
                 用途選<b className="text-gray-500">物業</b>不是房號，採購多半是整棟共用的。
               </p>
 
@@ -1030,10 +1062,35 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                         {estates.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
                       </select>
                     </span>
-                    <input value={it.spec} onChange={(e) => setItem(idx, { spec: e.target.value })}
-                      placeholder="規格說明／大概數量" className={`${inp} flex-1 min-w-[8rem]`} />
+                    {/*
+                      ★★★ 2026-09-10 使用者把「規格說明／大概數量」拆成兩欄。
+                        一個框裝兩件事的結果是:有人只寫規格、有人只寫數量，
+                        會計看到「除霉劑 大瓶」不知道要買幾瓶，
+                        而畫面上那一格**是填了的** —— 看起來沒有任何問題。
+
+                      ★ 兩欄都必填。數量收**文字**不是數字 ——
+                        提需求的當下講的是「兩箱」，逼成數字只會得到一個假的 1。
+
+                      ★★ 數量框窄（w-20）、規格框寬:窄的框本身就在說
+                        「這裡只寫短短的」，比 placeholder 有用。
+                    */}
+                    <span className="relative flex-1 min-w-[8rem]">
+                      <ReqMark />
+                      <input value={it.spec} onChange={(e) => setItem(idx, { spec: e.target.value })}
+                        placeholder="產品規格" className={`${inp} w-full`} />
+                    </span>
+                    <span className="relative">
+                      <ReqMark />
+                      <input value={it.qty} onChange={(e) => setItem(idx, { qty: e.target.value })}
+                        placeholder="數量" className={`${inp} w-20`} />
+                    </span>
+                    {/*
+                      ★ 標題是「備註」不是「建議連結」（2026-09-10 使用者指定）——
+                        本來就有人填店名而不是網址，叫「連結」等於在說他填錯了。
+                    */}
                     <input value={it.buy_link} onChange={(e) => setItem(idx, { buy_link: e.target.value })}
-                      placeholder="哪裡買 —— 貼網址或寫店名" className={`${inp} flex-1 min-w-[10rem]`} />
+                      placeholder="備註 —— 採購地點或連結"
+                      className={`${inp} flex-1 min-w-[10rem]`} />
                   </div>
                 </div>
               ))}

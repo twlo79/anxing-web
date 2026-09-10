@@ -84,6 +84,11 @@ export const DEMAND_PAID_CLASS = 'bg-mor-greenlight text-mor-green';
 /**
  * 採購平台（2026-09-07 使用者：「蝦皮 酷澎 淘寶 好事多」）。
  *
+ * ★ 2026-09-10 使用者：「改成 好市多」—— 好事多 → 好市多（原本是錯字）。
+ *   上面那句保留原文，是為了讓「當初是誰、什麼時候講的」還看得到。
+ *   舊資料另外用 migration_238 改過去 —— 這一欄沒有 check，
+ *   舊值不會報錯，只會讓下拉**顯示空白**（比報錯難查）。
+ *
  * ★★★ **這裡是唯一的清單**。資料庫那一欄是純 `text`、沒有 check ——
  *   多一個平台就是在這個陣列加一行，不用 migration。
  *   （加約束的話「以後在哪買」這個決定就被綁在資料庫上，
@@ -94,7 +99,7 @@ export const DEMAND_PAID_CLASS = 'bg-mor-greenlight text-mor-green';
  *
  * ★ 順序照常用程度排 —— 下拉不用捲就選得到最常用的那個。
  */
-export const PURCHASE_PLATFORMS = ['蝦皮', '酷澎', '淘寶', '好事多'] as const;
+export const PURCHASE_PLATFORMS = ['蝦皮', '酷澎', '淘寶', '好市多'] as const;
 
 export type PurchasePlatform = typeof PURCHASE_PLATFORMS[number];
 

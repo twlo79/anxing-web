@@ -34,6 +34,25 @@ export type DemandItemLike = {
   purpose_type: 'estate' | 'office';
   /** office 時是空字串。 */
   estate_id: string;
+  /**
+   * 產品規格（2026-09-10 使用者指定必填）。
+   *
+   * ★★ 以前叫「規格說明／大概數量」，一個框裝兩件事 ——
+   *   於是有人只寫規格、有人只寫數量，會計兩種都要猜。
+   *   現在拆成 `spec` 與 `qty` 兩欄，各自必填。
+   */
+  spec: string;
+  /**
+   * 需要數量（2026-09-10 新增，必填）。
+   *
+   * ★★★ **是文字不是數字**。提需求的當下講的是「兩箱」「5 支」「一組」——
+   *   逼成數字欄的話，「一箱」只能填 1，而那個 1 是假的:
+   *   會計看到 1 會買一支。
+   *
+   * ★ 代價:加不起來。可以接受 —— 這一欄從來沒有人加總，
+   *   真正要算錢的是請款單那邊，那裡才有單價與數量。
+   */
+  qty: string;
 };
 
 /**
@@ -45,7 +64,27 @@ export type DemandItemLike = {
  *   送出後才發現少一項。
  */
 export function isFilled(i: DemandItemLike): boolean {
-  return !!(i.item_name.trim() || i.estate_id || i.purpose_type === 'office');
+  return !!(i.item_name.trim() || i.estate_id || i.purpose_type === 'office'
+    // ★ 2026-09-10 規格與數量也要算進來。漏掉的話「只打了規格」那一列
+    //   會被當成空白列丟掉 —— 跟上面 office 那條是同一個坑。
+    || i.spec?.trim() || i.qty?.trim());
+}
+
+/**
+ * 這一列**還缺哪幾欄**。回空陣列＝填完了。
+ *
+ * ★★★ 訊息要講**缺什麼**，不是「沒填完」。
+ *   四個欄位的一列，只說「沒填完」等於叫人自己一格一格看。
+ *
+ * ★ 順序照畫面上的順序 —— 使用者照著找的時候是由左到右。
+ */
+export function missingLabels(i: DemandItemLike): string[] {
+  const out: string[] = [];
+  if (!i.item_name.trim()) out.push('品名');
+  if (i.purpose_type !== 'office' && !i.estate_id) out.push('用途');
+  if (!i.spec?.trim()) out.push('產品規格');
+  if (!i.qty?.trim()) out.push('需要數量');
+  return out;
 }
 
 /**
@@ -55,9 +94,9 @@ export function isFilled(i: DemandItemLike): boolean {
  *   沿用舊的 `!i.estate_id` 判斷的話，選了辦公室永遠過不了。
  */
 export function isComplete(i: DemandItemLike): boolean {
-  if (!i.item_name.trim()) return false;
-  if (i.purpose_type === 'office') return true;
-  return !!i.estate_id;
+  // ★ 跟 missingLabels 同一份判斷 —— 兩邊各寫一次的話，
+  //   遲早出現「送得出去但訊息說還缺一欄」那種矛盾畫面
+  return missingLabels(i).length === 0;
 }
 
 /**
@@ -76,7 +115,9 @@ export function validateDemand(
   if (filled.length === 0) return '至少要填一個項目';
 
   const bad = filled.findIndex((i) => !isComplete(i));
-  if (bad >= 0) return `第 ${bad + 1} 項的品名與用途都要填`;
+  // ★ 2026-09-10 改成講出缺的那幾欄（原本固定寫「品名與用途」，
+  //   而欄位變成四個之後那句話會說謊）
+  if (bad >= 0) return `第 ${bad + 1} 項還沒填：${missingLabels(filled[bad]).join('、')}`;
 
   if (!shipTo) return '請選寄送地點';
   return null;
@@ -116,9 +157,14 @@ export function estateIdToSave(i: DemandItemLike): string | null {
  */
 
 export type DemandItemDraft = DemandItemLike & {
-  /** 規格說明。大概數量也寫在這裡（migration_141 之後沒有獨立數量欄） */
-  spec: string;
-  /** 建議購買連結 */
+  /**
+   * 備註 —— 採購地點或連結（2026-09-10 使用者改的標題）。
+   *
+   * ★ 欄位名還是 `buy_link`，因為資料庫那一欄叫這個名字。
+   *   為了改一個標題去改欄位名，要動 migration、觸發器、
+   *   拆單的抄欄位清單…… 而換來的只是名字好看一點。
+   *   ★★ 標題與欄位名不同的時候，**顯示端寫一次註解說清楚**就夠了。
+   */
   buy_link: string;
 };
 
@@ -179,6 +225,14 @@ export function newItemRow(i: DemandItemDraft, demandId: string) {
     // ★ 空字串一律寫 null —— 「沒填」只能有一種形狀，
     //   不然查詢時要同時比 `is null` 與 `= ''`，而漏掉一種不會報錯
     spec: i.spec.trim() || null,
+    /*
+     * ★★★ 2026-09-10 新增。加一欄的時候，**三個地方**都要跟著加:
+     *   ① 這裡（寫進去）② `SPLIT_INHERITED`（拆單時抄過去）
+     *   ③ 讀取的 select 欄位清單
+     *   —— 少了任何一個都不會報錯，只會安靜地變成空的
+     *   （`buy_link` 就是這樣少了半年，見上面那段）。
+     */
+    qty: i.qty.trim() || null,
     // ★ 補成完整網址 —— 少了 https:// 的會被當成相對路徑（見 normalizeUrl）
     buy_link: normalizeUrl(i.buy_link),
     purpose_type: i.purpose_type,

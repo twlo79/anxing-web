@@ -137,7 +137,7 @@ describe('★★★ splitBlockedReason —— 不能拆的要在按下去之前�
 describe('★★ 新增的那幾列要照抄原本的欄位', () => {
   const src = {
     demand_id: 'd-1', item_name: '衛生紙*1箱 除霉劑*12瓶',
-    spec: '大包裝', purpose_type: 'estate', estate_id: 'e-1',
+    spec: '大包裝', qty: '3 箱', purpose_type: 'estate', estate_id: 'e-1',
     buy_link: 'https://x', status: 'done',
     platform: '蝦皮', eta: '2026-09-10', purchased_on: '2026-09-04',
     request_item_id: null,
@@ -157,6 +157,11 @@ describe('★★ 新增的那幾列要照抄原本的欄位', () => {
     const got = inheritedFields(src, SPLIT_INHERITED);
     assert.equal(got.demand_id, 'd-1');
     assert.equal(got.spec, '大包裝');
+    /*
+     * ★★★ 2026-09-10 新增的 qty。漏抄的話拆出來那幾列數量是空的 ——
+     *   **不會報錯**，看起來像使用者當初沒填。
+     */
+    assert.equal(got.qty, '3 箱');
     assert.equal(got.purpose_type, 'estate');
     assert.equal(got.estate_id, 'e-1');
     assert.equal(got.buy_link, 'https://x');
@@ -180,7 +185,7 @@ describe('★ 從頭到尾走一次', () => {
   test('使用者那一列 → 三列，狀態全部維持已採購', () => {
     const item = {
       demand_id: 'd-1', item_name: '衛生紙*1箱 除霉劑*12瓶 洗衣精*2瓶',
-      spec: '', purpose_type: 'estate', estate_id: 'e-1', buy_link: '',
+      spec: '', qty: '', purpose_type: 'estate', estate_id: 'e-1', buy_link: '',
       status: 'done', platform: '蝦皮', eta: null, purchased_on: '2026-09-04',
       request_item_id: null,
     };

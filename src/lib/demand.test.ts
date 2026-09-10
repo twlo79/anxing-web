@@ -1,15 +1,21 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  isFilled, isComplete, validateDemand, estateIdToSave, newItemRow, normalizeUrl, isUrl,
+  isFilled, isComplete, missingLabels, validateDemand, estateIdToSave, newItemRow,
+  normalizeUrl, isUrl,
   type DemandItemLike, type DemandItemDraft,
 } from './demand.ts';
 
+/*
+ * ★ 2026-09-10 起 spec 與 qty 也是必填 —— 所以「完整的一列」的樣本
+ *   要帶著它們，不然底下每一條都會變成在測「缺規格」。
+ */
 const estate = (name = '衛生紙', id = 'e1'): DemandItemLike =>
-  ({ item_name: name, purpose_type: 'estate', estate_id: id });
+  ({ item_name: name, purpose_type: 'estate', estate_id: id, spec: '大包', qty: '2 箱' });
 const office = (name = '碳粉匣'): DemandItemLike =>
-  ({ item_name: name, purpose_type: 'office', estate_id: '' });
-const blank: DemandItemLike = { item_name: '', purpose_type: 'estate', estate_id: '' };
+  ({ item_name: name, purpose_type: 'office', estate_id: '', spec: 'CF283A', qty: '1 支' });
+const blank: DemandItemLike =
+  { item_name: '', purpose_type: 'estate', estate_id: '', spec: '', qty: '' };
 
 describe('isFilled', () => {
   test('全空的算沒填', () => assert.equal(isFilled(blank), false));
@@ -19,6 +25,12 @@ describe('isFilled', () => {
     assert.equal(isFilled({ ...blank, item_name: '衛生紙' }), true));
   test('只選了物業就算有填', () =>
     assert.equal(isFilled({ ...blank, estate_id: 'e1' }), true));
+
+  test('★ 只打了規格也算有填（2026-09-10）', () =>
+    assert.equal(isFilled({ ...blank, spec: '大包裝' }), true));
+
+  test('★ 只打了數量也算有填（2026-09-10）', () =>
+    assert.equal(isFilled({ ...blank, qty: '2 箱' }), true));
 
   test('★★★ 只選了安幸辦公室也算有填', () => {
     /*
@@ -47,6 +59,41 @@ describe('isComplete', () => {
 
   test('品名只有空白不算', () =>
     assert.equal(isComplete({ ...office(), item_name: '  ' }), false));
+
+  describe('★★★ 產品規格與需要數量都必填（2026-09-10）', () => {
+    /*
+     * 使用者:「1. 產品規格*  2. 需要數量*」
+     *
+     * 拆開之前一個框叫「規格說明／大概數量」，結果是有人只寫規格、
+     * 有人只寫數量 —— 而那一格**是填了的**，會計要問才問得出來。
+     */
+    test('沒填規格 → 不完整', () =>
+      assert.equal(isComplete({ ...estate(), spec: '' }), false));
+    test('沒填數量 → 不完整', () =>
+      assert.equal(isComplete({ ...estate(), qty: '' }), false));
+    test('只有空白也不算', () => {
+      assert.equal(isComplete({ ...estate(), spec: '  ' }), false);
+      assert.equal(isComplete({ ...estate(), qty: '　' }), false);
+    });
+    test('★ 辦公室也一樣要填 —— 不因為不用選物業就少兩欄', () =>
+      assert.equal(isComplete({ ...office(), qty: '' }), false));
+  });
+});
+
+describe('★★ missingLabels —— 訊息要講缺什麼', () => {
+  test('填完了就是空陣列', () => assert.deepEqual(missingLabels(estate()), []));
+
+  test('缺哪幾欄就列哪幾欄', () =>
+    assert.deepEqual(
+      missingLabels({ ...blank, purpose_type: 'estate' }),
+      ['品名', '用途', '產品規格', '需要數量']));
+
+  test('★★★ 辦公室不算缺「用途」—— 它本來就不用選物業', () =>
+    assert.deepEqual(missingLabels({ ...office(), spec: '', qty: '' }), ['產品規格', '需要數量']));
+
+  test('★ 順序照畫面由左到右 —— 使用者是照著找的', () =>
+    assert.deepEqual(
+      missingLabels({ ...estate(), item_name: '', qty: '' }), ['品名', '需要數量']));
 });
 
 describe('validateDemand', () => {
@@ -62,6 +109,17 @@ describe('validateDemand', () => {
   test('空白列會被忽略，不算「沒填完」', () => {
     // 表單預設就會多留一列空的 —— 那一列不該擋住送出
     assert.equal(validateDemand([estate(), blank], '正隆'), null);
+  });
+
+  test('★★ 錯誤訊息要講出缺的那幾欄（2026-09-10）', () => {
+    /*
+     * 原本固定寫「品名與用途都要填」。欄位變成四個之後那句話會說謊 ——
+     * 使用者照著檢查兩個欄位、都填了、按鈕還是灰的，
+     * 結論會是「按鈕壞了」。
+     */
+    const msg = validateDemand([{ ...estate(), qty: '' }], '正隆')!;
+    assert.match(msg, /需要數量/);
+    assert.doesNotMatch(msg, /品名/);
   });
 
   test('★ 錯誤訊息要帶第幾項', () => {
@@ -111,7 +169,8 @@ describe('estateIdToSave', () => {
   });
 
   test('★ 辦公室即使 estate_id 還留著也回 null', () => {
-    const dirty: DemandItemLike = { item_name: 'x', purpose_type: 'office', estate_id: 'e1' };
+    const dirty: DemandItemLike =
+      { item_name: 'x', purpose_type: 'office', estate_id: 'e1', spec: 's', qty: '1' };
     assert.equal(estateIdToSave(dirty), null);
   });
 });
@@ -121,7 +180,7 @@ describe('estateIdToSave', () => {
 describe('★★★ newItemRow —— 表單收的每一欄都要寫進去', () => {
   const D = (o: Partial<DemandItemDraft> = {}): DemandItemDraft => ({
     item_name: ' 冷氣檔板 ', purpose_type: 'office', estate_id: '',
-    spec: ' 2個 ', buy_link: ' https://www.momoshop.com.tw/abc ', ...o,
+    spec: ' 大片 ', qty: ' 2個 ', buy_link: ' https://www.momoshop.com.tw/abc ', ...o,
   });
 
   test('★★★ buy_link 要寫進去 —— 它從上線到現在一次都沒存過', () => {
@@ -134,23 +193,31 @@ describe('★★★ newItemRow —— 表單收的每一欄都要寫進去', () 
     assert.equal(newItemRow(D(), 'd1').buy_link, 'https://www.momoshop.com.tw/abc');
   });
 
-  test('★★★ 表單收的四欄一個都不能少', () => {
+  test('★★★ 表單收的每一欄一個都不能少', () => {
     // 下次再加一欄，這一條會提醒你這裡也要加
     const r = newItemRow(D(), 'd1');
-    for (const k of ['item_name', 'spec', 'buy_link', 'purpose_type', 'estate_id', 'demand_id']) {
+    for (const k of ['item_name', 'spec', 'qty', 'buy_link',
+      'purpose_type', 'estate_id', 'demand_id']) {
       assert.ok(k in r, `少了 ${k}`);
     }
   });
 
+  test('★★★ qty 要寫進去（2026-09-10 新增的欄位）', () => {
+    // buy_link 就是少寫這一行少了半年 —— 而畫面上只是「沒填」
+    assert.equal(newItemRow(D(), 'd1').qty, '2個');
+  });
+
   test('★★ 空字串一律寫 null —— 「沒填」只能有一種形狀', () => {
-    const r = newItemRow(D({ spec: '   ', buy_link: '' }), 'd1');
+    const r = newItemRow(D({ spec: '   ', qty: '', buy_link: '' }), 'd1');
     assert.equal(r.spec, null);
+    assert.equal(r.qty, null);
     assert.equal(r.buy_link, null);
   });
 
   test('★ 前後空白要去掉 —— 貼上網址常常帶一個空格', () => {
     assert.equal(newItemRow(D(), 'd1').item_name, '冷氣檔板');
-    assert.equal(newItemRow(D(), 'd1').spec, '2個');
+    assert.equal(newItemRow(D(), 'd1').spec, '大片');
+    assert.equal(newItemRow(D(), 'd1').qty, '2個');
   });
 
   test('★★★ 安幸辦公室的 estate_id 一定是 null', () => {
@@ -212,7 +279,7 @@ describe('★★★ normalizeUrl —— 少了 https:// 的連結按了沒反應
   test('★★★ newItemRow 要用它 —— 不然存進去的還是壞的', () => {
     const r = newItemRow({
       item_name: '衛生紙', purpose_type: 'estate', estate_id: 'e1',
-      spec: '', buy_link: 'www.pchome.com.tw/x',
+      spec: '', qty: '', buy_link: 'www.pchome.com.tw/x',
     }, 'd1');
     assert.equal(r.buy_link, 'https://www.pchome.com.tw/x');
   });

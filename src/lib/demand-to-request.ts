@@ -36,6 +36,8 @@ export type DemandItemSrc = {
   id: string;
   item_name: string;
   spec?: string | null;
+  /** 需要數量（migration_239）。**是文字** —— 「兩箱」也可能出現 */
+  qty?: string | null;
   purpose_type: 'estate' | 'office';
   estate_id?: string | null;
   status: DemandItemStatus;
@@ -68,9 +70,31 @@ export const takeableItems = <T extends { status: DemandItemStatus }>(items: T[]
   (items ?? []).filter((i) => isTakeable(i.status));
 
 /**
+ * 規格 ＋ 數量 → 請款項目的備註那一格。
+ *
+ * ★★★ **數量一定要帶過去**（2026-09-10）。這是整張需求單上
+ *   會計最需要的一個數字 —— 掉了的話他拿到的是「除霉劑・大瓶」，
+ *   要買幾瓶得回頭問提需求的人，而畫面上那一格**是有字的**，
+ *   看起來完全正常。
+ *
+ * ★ 用「×」接起來（`大瓶 × 3 瓶`），跟需求列表的顯示同一個樣子 ——
+ *   兩個畫面長得一樣，人才不用重新讀一次。
+ *
+ * ★ 只有一邊有值時不要留下孤零零的「×」。
+ */
+export function demandNote(
+  spec: string | null | undefined, qty: string | null | undefined,
+): string | null {
+  const s = (spec ?? '').trim();
+  const q = (qty ?? '').trim();
+  if (s && q) return `${s} × ${q}`;
+  return s || q || null;
+}
+
+/**
  * 需求項目 → 請款項目。
  *
- * ★ 規格（`spec`）寫進**備註**不是品名。
+ * ★ 規格與數量寫進**備註**不是品名。
  *   併進品名的話「衛生紙*1箱 大包裝」會被當成一個品項名稱，
  *   而請款單的品名是要印在單子上給人核的。
  *
@@ -88,7 +112,8 @@ export function toRequestItems(
     amount: null,
     purpose_type: i.purpose_type,
     estate_id: i.purpose_type === 'office' ? null : (i.estate_id || null),
-    note: (i.spec ?? '').trim() || null,
+    // ★★★ 規格 ＋ 數量。少帶數量的話會計要回頭問一次（見 demandNote）
+    note: demandNote(i.spec, i.qty),
     sort: startSort + n,
     fromDemandItemId: i.id,
   }));

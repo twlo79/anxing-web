@@ -22,9 +22,31 @@ tsc、測試、migration 自檢的結果。
 
 ### 4.5 migration 一律附可點開的檔案卡
 
-寫了 `.sql` 就用 `present_files` 給卡片，**不要只講檔名**。
+**寫完 `.sql` 的下一個動作就是送檔案卡，不要只講檔名。**
 「supabase/migrations/migration_185_xxx.sql」他得自己去資料夾裡找 ——
 而那個資料夾有十幾支長得很像的檔案（2026-08-31 連兩次「找不到 183」「找不到 185」）。
+
+**每一版都要送，不是只有第一版。**（David 指定，2026-09-10）
+
+改壞了、重寫了、修完 bug 再跑一次 —— **每一次都重送一張新的卡**。
+他是直接從那張卡複製去貼 SQL Editor 的，卡片停在舊版就等於叫他去貼一份已知會爆的東西。
+
+| 時機 | 動作 |
+|---|---|
+| 第一次寫好 | 送卡 |
+| 跑出錯、我改好了 | **再送一次**（同一個檔名沒關係，卡片要是新的）|
+| 只改了註解／自檢 | 也送 —— 他分不出哪一版是最新的 |
+
+★★★ **直接寫進他資料夾 ≠ 送到了。**
+用 device_bash 寫檔案，Outputs 面板**不會**多一張卡 ——
+那個面板列的是「送過的」，不是「寫過的」。
+2026-09-10 踩到:239 改了三版都直接寫進資料夾，
+他的 Outputs 停在 235／236／237，於是問「239 output 看不到」。
+**寫進資料夾之後還要再送一次，兩件事都要做。**
+
+★★ 自檢跑出來的表格，**看不到 = 整支回滾了**，不是「跑成功但沒輸出」。
+自檢在 `commit` 後面，成功就一定看得到。
+這件事 2026-09-10 被誤讀兩次 —— 每一支 migration 的自檢前面都要寫這句。
 
 ### 5. 推送（有要推的時候才給）
 
@@ -177,6 +199,7 @@ node --experimental-strip-types --test "src/**/*.test.ts"
 | **★★★ 憑對話紀錄判斷 migration 跑了沒** | 2026-09-05 我連續三次說「213／215／216 未跑」，而三支**都在 09-03 跑完了**。事實在 `schema_migrations`，不在我的摘要裡 —— 對話會被壓縮、會跨 session、會記錯。<br>★ 代價不只是白跑一趟:213 的自檢因此回了一個誤導的 0（見下一條），我花了**兩輪查詢在追一個不存在的 bug**。<br>★★ 規矩:要 David 跑任何一支之前，先請他跑 `select name from schema_migrations where name >= '210' order by name;`，或在那支自己的自檢裡放一列「這支跑過了沒」。**不要說「這支還沒跑」除非剛看過那張表。**<br>★★★ **「推了沒」也一樣**（2026-09-08 又踩一次）:我列了五項「同批未推」，而其中四項 David 早就 commit 了（`git log` 三行就看得到）。事實在 `git status` 與 `git log`，不在我的摘要裡。**要寫「未推」之前先跑一次 `git status --short`。** |
 | **★★★ PostgREST 的 `upsert` 對不到 partial 唯一索引** | `expenses_hk_job_uniq` 建成 `unique (hk_job_key) where hk_job_key is not null`，而前端寫 `upsert(rows, { onConflict: 'hk_job_key' })` —— PostgREST 只送得出**欄位名**，表達不出那個 WHERE，Postgres 直接丟 `there is no unique or exclusion constraint matching the ON CONFLICT specification`。<br>★ 結果是**房務支出這個功能從上線到現在一次都沒成功過**（`hk_job_key` 有值的是 0 筆），而使用者只說「沒產生到支出」。<br>★★ 錯誤**有被接到**，但走 `flash()` 跳在頁面最上方、2.5 秒消失，而那個面板在畫面下半部 —— 半年來每一次失敗都有訊息，只是沒有人看得到。<br>★★★ 拿掉 `onConflict` 也不行:PostgREST 沒有那個參數時會拿**主鍵**當衝突目標，而 `id` 每次都是新 uuid —— 永遠不衝突，按兩次就產生兩整組，比失敗更糟。要用 upsert 就**不能用 partial 索引**（唯一索引本來就允許多個 NULL，拿掉 WHERE 語意不變）（2026-09-07 踩到，migration_221 修）|
 | **★★★ `deferrable` 延到的是「交易」，不是「一連串請求」** | `trg_expense_deferral_sum` 是 `constraint trigger ... deferrable initially deferred`，設計是對的。但 `DeferralPanel` 把存檔拆成**三次 PostgREST 呼叫**（刪子單 → 改母單 → 建子單），而**每個請求各自一個交易** ——第二步自己 commit 時子單還沒建，`母單 40880 + 子單 0 ≠ 實付 76650`，必爆。<br>★ 那段程式的註解白紙黑字寫著「沒關係，觸發器延到交易結束才驗」——**假設從第一天就是錯的**，而遞延只要需要拆子單就從來沒成功過。<br>★★ 為什麼半年沒被發現:不用拆時 `own == gross`，第二步的等式剛好成立。**真正要用那個功能的時候才會撞到。**<br>★★★ 換順序解決不了 —— 先建子單的話中間會有一批指向非遞延母單的子單，它們以獨立支出出現在支出頁上，**那筆錢被算兩次**。要跨多個寫入守一條等式，就**包成一支 RPC**（migration_228）|
+| **★★★ 改欄位型別之前沒有先列出「掛在那一欄上的東西」** | migration_239 要把 `purchase_demand_items.qty` 從 `numeric` 轉成 `text`，**連死兩次，兩次都是同一類原因**:<br>　一版 直接 `alter ... type text using qty::text` → `42804 default for column "qty" cannot be cast automatically`<br>　二版 補了 `drop default`、也查了 view → `42883 operator does not exist: text > numeric`（那個 `>` 來自欄位上的 `check (qty > 0)`，型別一換 Postgres 拿新的 text 去重驗它）<br>★ 兩次的錯誤訊息**都不說是誰**:42883 只講「text > numeric」，不講那個 `>` 從哪來。所以「看訊息再補」是一條走不完的路 —— 撞一次補一個，補完還有下一個。<br>★★ 規矩:改型別前一次列完三樣 —— **① view/rule ② DEFAULT ③ check 約束**（還有 generated column）。view 擋住就**停下來報名字**，不要自己 drop 別人的東西;約束 drop 掉要把定義寫進 COMMENT 留底 —— 一條看門的規則安靜消失，比留著它更糟。<br>★★★ 掃約束用詞邊界 `~ '\mqty\M'` 不是 `ilike '%qty%'` —— 後者會掃到 `quantity_note` 之類的欄位，而**誤刪一條別的約束不會報錯**。<br>★ 還有一個順手的:`numeric::text` 會把 `3.00` 的尾零帶出來，畫面上「× 3.00 箱」看起來像壞掉，整數要收成 `3`（2026-09-10 踩過）|
 | **★★ 自檢問「這次跑做了什麼」而不是「結果對不對」** | migration_213 的第 4 列寫成「最近十分鐘有沒有 expenses 的刪除」。那支是冪等的 —— 第二次跑會走「找不到那筆，不做事」直接 return，於是那一格變成 0，看起來像稽核系統壞了。<br>★ 而且「十分鐘內」**會隨時間過期**。一個會自己變紅的檢查等於沒有檢查。<br>★★ 判斷法:把自檢跑第二次、第十次，答案該一模一樣。會變的那一條就是寫錯的那一條（2026-09-05 踩過）|
 
 ## 判斷原則

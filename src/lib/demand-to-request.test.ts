@@ -1,14 +1,14 @@
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  isTakeable, takeableItems, toRequestItems,
+  isTakeable, takeableItems, toRequestItems, demandNote,
   unpricedNames, submitBlockedBy, requestTotal, totalText,
   linkBackPlan, canMarkDone, markDoneConfirm,
   type DemandItemSrc, type DemandItemStatus,
 } from './demand-to-request.ts';
 
 const D = (o: Partial<DemandItemSrc> = {}): DemandItemSrc => ({
-  id: 'd1', item_name: '衛生紙*1箱', spec: '大包裝',
+  id: 'd1', item_name: '衛生紙*1箱', spec: '大包裝', qty: '2 箱',
   purpose_type: 'estate', estate_id: 'e1', status: 'pending', ...o,
 });
 
@@ -54,7 +54,19 @@ describe('toRequestItems —— 欄位怎麼對過去（2026-09-05）', () => {
   test('★ 規格進備註，不併進品名', () => {
     const r = toRequestItems([D()])[0];
     assert.equal(r.item_name, '衛生紙*1箱');
-    assert.equal(r.note, '大包裝');
+    assert.equal(r.note, '大包裝 × 2 箱');
+  });
+
+  test('★★★ 數量一定要帶進請款單（2026-09-10）', () => {
+    /*
+     * 這是整張需求單上會計最需要的一個數字。
+     * 掉了的話他拿到的是「除霉劑・大瓶」，要買幾瓶得回頭問 ——
+     * 而備註那一格**是有字的**，看起來完全正常。
+     *
+     * ★ 這一條釘的是「加了新欄位卻沒更新讀取端」那個坑
+     *   （buy_link 就是這樣少了半年）。
+     */
+    assert.match(toRequestItems([D({ spec: '大瓶', qty: '3 瓶' })])[0].note!, /3 瓶/);
   });
 
   /*
@@ -93,9 +105,29 @@ describe('toRequestItems —— 欄位怎麼對過去（2026-09-05）', () => {
     assert.equal(toRequestItems([D({ item_name: '  抹布  ' })])[0].item_name, '抹布');
   });
 
-  test('沒填規格時備註是 null 不是空字串', () => {
-    assert.equal(toRequestItems([D({ spec: '  ' })])[0].note, null);
+  test('規格與數量都沒填時，備註是 null 不是空字串', () => {
+    assert.equal(toRequestItems([D({ spec: '  ', qty: '' })])[0].note, null);
   });
+});
+
+describe('★★ demandNote —— 規格 ＋ 數量怎麼併', () => {
+  test('兩個都有 → 用「×」接起來（跟需求列表長得一樣）', () =>
+    assert.equal(demandNote('大瓶', '3 瓶'), '大瓶 × 3 瓶'));
+
+  test('★ 只有一邊有值時不要留下孤零零的「×」', () => {
+    assert.equal(demandNote('大瓶', ''), '大瓶');
+    assert.equal(demandNote('', '3 瓶'), '3 瓶');
+    assert.equal(demandNote(null, '3 瓶'), '3 瓶');
+  });
+
+  test('兩邊都空 → null，不是空字串', () => {
+    assert.equal(demandNote('', ''), null);
+    assert.equal(demandNote(null, undefined), null);
+    assert.equal(demandNote('  ', '　'), null);
+  });
+
+  test('前後空白清掉', () =>
+    assert.equal(demandNote('  大瓶 ', ' 3 瓶  '), '大瓶 × 3 瓶'));
 });
 
 describe('送審擋阻（2026-09-05）', () => {

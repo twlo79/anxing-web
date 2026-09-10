@@ -179,6 +179,9 @@ export function inheritedFields<T extends Record<string, unknown>>(
 
 /** 拆開時要從原本那一列抄過去的欄位。 */
 export const SPLIT_INHERITED = [
-  'demand_id', 'spec', 'purpose_type', 'estate_id', 'buy_link',
+  // ★★★ 加一欄到 purchase_demand_items 時，這裡要跟著加 ——
+  //   漏掉的話拆出來的那幾列那一欄是空的，而**不會報錯**:
+  //   看起來像使用者當初沒填（2026-09-10 加 qty 時的提醒）。
+  'demand_id', 'spec', 'qty', 'purpose_type', 'estate_id', 'buy_link',
   'status', 'platform', 'eta', 'purchased_on',
 ] as const;
