@@ -35,7 +35,41 @@ export const dynamic = 'force-dynamic';
 
 const CHUNK = 500;
 
+/**
+ * ★★★ 整支包一層 try/catch（2026-09-10）。
+ *
+ * 沒有這一層的話，任何**沒被預期到**的例外都會讓 Next 回一句
+ * **純文字** `Internal Server Error` —— 而前端做的是 `res.json()`，
+ * 於是畫面顯示：
+ *
+ *     Unexpected token 'I', "Internal S"... is not valid JSON
+ *
+ * ★★ 那句話跟真正的錯**完全無關**。使用者看到的是 JSON 解析錯誤，
+ *   而真相是資料庫回了什麼、或某個欄位是 undefined ——
+ *   一個把線索蓋掉的錯誤訊息，比沒有訊息更糟。
+ *
+ * ★ 這裡回的是 JSON，而且**帶上原始訊息**。
+ *   `error.message` 對使用者不一定看得懂，但他可以整句貼給人看，
+ *   而那正是他唯一能做的事。
+ */
 export async function POST(req: Request) {
+  try {
+    return await handle(req);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // ★ 伺服器 log 留完整堆疊 —— 畫面上只給訊息，堆疊對使用者沒有意義
+    console.error('[bank-import] 未預期的例外', e);
+    return NextResponse.json(
+      {
+        error: `匯入時發生未預期的錯誤：${msg}`,
+        hint: '這是程式的問題，不是這份 PDF 的問題。請把這句話整段回報。',
+      },
+      { status: 500 },
+    );
+  }
+}
+
+async function handle(req: Request) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !anon) return NextResponse.json({ error: '伺服器設定不全' }, { status: 500 });

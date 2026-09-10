@@ -133,9 +133,30 @@ export default function UploadPanel({
           headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
           body: JSON.stringify({ statement: r.statement, fileName: r.file }),
         });
-        const j = await res.json();
-        if (!res.ok) {
-          out.push({ file: r.file, ok: false, text: j.error ?? `失敗（${res.status}）` });
+        /*
+         * ★★★ **不要直接 `res.json()`**（2026-09-10）。
+         *
+         *   伺服器掛掉時 Next 回的是**純文字** `Internal Server Error`，
+         *   而 `res.json()` 會丟一個解析錯誤 —— 畫面顯示
+         *   「Unexpected token 'I', "Internal S"... is not valid JSON」。
+         *
+         * ★★ 那句話跟真正的錯完全無關，而它**蓋掉了唯一的線索**:
+         *   HTTP 狀態碼、以及伺服器那句純文字。
+         *   使用者看到那句只會以為是 PDF 有問題。
+         *
+         * ★ 先收成文字再試著解析。不是 JSON 就把狀態碼與前 200 字印出來 ——
+         *   看不懂沒關係，那是可以整句貼給人看的東西。
+         */
+        const raw = await res.text();
+        let j: any = null;
+        try { j = raw ? JSON.parse(raw) : null; } catch { /* 不是 JSON，往下走 */ }
+
+        if (!res.ok || j == null) {
+          const text = j?.error
+            ?? (raw
+              ? `伺服器回了 ${res.status}：${raw.slice(0, 200)}`
+              : `失敗（${res.status}，伺服器沒有回任何內容）`);
+          out.push({ file: r.file, ok: false, text });
           continue;
         }
         out.push({
