@@ -527,11 +527,30 @@ export default function AccountsPage() {
     const cb: Record<string, number | undefined> = {};
     await Promise.all(
       list.map(async (a) => {
+        /*
+         * ★★★ 排序要跟 `recalc_account_balances()` **完全一致**
+         *   （migration_244，2026-09-10）。
+         *
+         *   原本是 `post_date → seq`，而 `seq` 是
+         *   「**在那份對帳單裡的第幾列**」—— 每份 PDF 都從 1 開始數。
+         *   同一天的流水來自兩份對帳單時，seq 會撞號:
+         *   2026-09-08 元大 24145 的三筆是 seq 3 / 14 / 15，
+         *   而它們實際的先後是 11:00:50 / 11:00:55 / 15:01:17。
+         *
+         * ★★ 這一段的後果比「顯示順序怪」嚴重:它 `limit(1)` 挑出
+         *   「最後一筆」來當**現金帳戶的餘額**。挑錯列的話，
+         *   卡片上那個數字就是錯的 —— 而它看起來完全正常。
+         *
+         * ★ 降冪時 Postgres 預設 NULLS FIRST，剛好跟 recalc 的
+         *   `nulls last`（升冪）互為反序 —— 不用另外指定。
+         */
         const { data: t } = await supabase
           .from('bank_transactions')
           .select('post_date, balance')
           .eq('account_id', a.id)
           .order('post_date', { ascending: false })
+          .order('txn_date', { ascending: false })
+          .order('txn_time', { ascending: false })
           .order('seq', { ascending: false })
           .limit(1);
         const row = t?.[0] as { post_date: string; balance: number } | undefined;
@@ -557,7 +576,19 @@ export default function AccountsPage() {
           .from('bank_transactions')
           .select('id, account_id, txn_date, post_date, txn_time, description, counterparty, debit, credit, balance, bank_balance, balance_note, memo, ref_no, seq')
           .eq('account_id', accountId)
+          /*
+           * ★★★ 跟 `recalc_account_balances()` 同一組排序鍵
+           *   （migration_244）。兩邊不一致的話，畫面上那一列的餘額
+           *   會跟它的位置對不起來 —— 而**每個數字單獨看都是對的**，
+           *   只有拿去跟存摺逐行比對才發現得了。
+           *
+           * ★ 2026-09-08 就是這樣:資料庫裡三筆的餘額全對，
+           *   但畫面把 15:01 那筆排到 11:00 兩筆的下面，
+           *   使用者說「還是沒對上」。
+           */
           .order('post_date', { ascending: false })
+          .order('txn_date', { ascending: false })
+          .order('txn_time', { ascending: false })
           .order('seq', { ascending: false })
           .range(f, t),
       );
