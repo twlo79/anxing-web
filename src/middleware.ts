@@ -43,17 +43,45 @@ export async function middleware(request: NextRequest) {
 // 凡是不靠 cookie 驗證的路徑都必須排除,否則會拿到登入頁的 HTML 而不是預期的回應,
 // 而且狀態碼是 200 —— 呼叫端會以為成功,失敗完全沒有徵兆。
 //
-//   api/import  用 x-import-key 驗證
-//   api/push    subscribe 用 Bearer token、notify 用 x-push-key,兩者都不吃 cookie。
-//               漏掉這條的話 Supabase webhook 會被導去 /login,推播永遠不會發出。
-//   api/health  部署腳本在主機上 curl 它,手上不可能有登入 cookie。
-//               漏掉這條的話會拿到 307(導向 /login),CI 判定健康檢查失敗並回滾一次
-//               完全正常的部署 —— 2026-08-04 就這樣白回滾了一次。
+// ══════════════════════════════════════════════════════════
+// ★★★ 2026-09-11：改成排除**整個 `/api/`**，不再逐支列舉
+// ══════════════════════════════════════════════════════════
+//
+// 原本這裡列的是 `api/import|api/push|api/health` —— 一支一支加。
+// 而 2026-09-07 新增 `api/close-period`（每日自動關帳）時**沒有人回來改這一行**。
+//
+// 後果:GitHub Actions 每天打那支端點，每天被導去 /login，
+// **關帳從上線到現在一次都沒成功過**（`period_lock` 一列都沒有）。
+// 而且這支檔案上面那三行註解，白紙黑字警告的就是這件事。
+//
+// 同一天查出來還有兩支是一樣的狀況:
+//   api/notifications/purge   用 x-import-key
+//   api/sync/reconcile        用 x-import-key
+// 兩支也都打不通，只是還沒有人發現。
+//
+// ★★ 所以改成排除整個 `/api/`。**這是安全的** —— 2026-09-11 逐一查過，
+//   每一支 API 路由都自己驗身分，沒有一支靠 middleware 擋:
+//
+//     x-import-key      import/*（8 支）、close-period、notifications/purge、sync/reconcile
+//     x-push-key        push/notify
+//     Bearer ＋ 角色    admin/staff-account（要 super_admin）、push/subscribe
+//     Bearer            bank-statements/import（走呼叫者的 token，RLS 是唯一真相）
+//     不需要            health（部署腳本 curl 它）
+//
+// ★★★ 為什麼這樣比較好:逐支列舉要求「每次加新端點的人都記得回來改這裡」，
+//   而那件事已經失敗過一次了。排除整個 `/api/` 之後，
+//   **新端點預設就是通的**，而驗證責任留在它自己身上 —— 那本來就是它的事。
+//
+// ★ 代價:哪天有人寫了一支**忘記驗身分**的 API，它會直接對外開放。
+//   防線是 code review 與 RLS（資料庫那一層照樣擋）。
+//   拿「忘記驗身分」換掉「忘記開白名單」是划算的:
+//   前者寫的時候就看得見，後者是靜默的，而且症狀出現在別的地方。
+//
 //   manifest / sw.js / icons
 //               瀏覽器抓這些檔案時未必帶 cookie,被導走 PWA 就裝不起來。
 //               sw.js 另外還有 scope 限制,必須從網站根目錄提供。
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|api/import|api/push|api/health|manifest.webmanifest|sw.js|icons/|.*\\.(?:svg|png|jpg|ico)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|api/|manifest.webmanifest|sw.js|icons/|.*\\.(?:svg|png|jpg|ico)$).*)',
   ],
 };
