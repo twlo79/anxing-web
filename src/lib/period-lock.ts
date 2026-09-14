@@ -69,18 +69,36 @@ export function prevYmOf(today: string): Ym {
 /** 一張訂單（只取判定要用的欄位）。 */
 export type OrderLike = {
   checkout?: string | null;
-  /** `'contract'` = 契約產的月租單 —— **不鎖** */
+  /**
+   * `'contract'` = 契約產的月租單。
+   * ★ 2026-09-14 起**跟其他訂單一樣會被鎖**（migration_249）。
+   */
   imported_via?: string | null;
 };
 
 /**
  * 這張訂單**會不會**被關帳鎖到（不看那個月關了沒）。
  *
- * ★ 月租單永遠回 false。它會隨契約重算 —— 鎖了的話
- *   「改契約金額」會在舊月份上失敗，而訊息跟契約完全無關。
+ * ============================================================
+ * 【★★★ 2026-09-14：月租單不再例外】
+ *
+ * 原本是 `imported_via !== 'contract'` —— 月租單永遠回 false，
+ * 理由是「它會隨契約重算，鎖了的話改契約會在舊月份上失敗」。
+ *
+ * ★★ 那個顧慮是真的，但代價太大:2026-08 關帳之後，
+ *   一張 LT_3A3_202608 被收款、取消、再取消 —— **三次都成功**。
+ *   使用者 2026-09-14:「已關帳的不可以去改了，所有都不行。」
+ *
+ * ★★★ 顧慮改在**資料庫那一層**解決，不是靠「整類放行」:
+ *   `orders_period_lock_guard()` 用 `pg_trigger_depth()` 分辨
+ *   「人直接改」跟「產生器連帶重算」——
+ *   前者擋下來，後者不寫但記進 `order_lock_pending`。
+ *   所以改契約照樣存得進去，而舊月份不會被動到。
+ *
+ * ★ 這一支只管畫面。真正擋住寫入的是那支觸發器。
  */
 export function lockable(o: OrderLike): boolean {
-  return (o.imported_via ?? '') !== 'contract' && !!ymOf(o.checkout);
+  return !!ymOf(o.checkout);
 }
 
 /**
@@ -103,7 +121,9 @@ export function isLocked(o: OrderLike, lockedYms: Iterable<Ym>): boolean {
 export function lockedMsg(o: OrderLike, lockedYms: Iterable<Ym>): string | null {
   if (!isLocked(o, lockedYms)) return null;
   return `${ymLabel(ymOf(o.checkout))} 已經關帳，這張訂單改不動。`
-    + '要改的話請到權限管理 → 關帳，把那個月打開。';
+    // ★ 2026-09-14：開帳權限收到只剩會計與 super_admin（migration_249），
+    //   所以訊息要說「請會計」—— 叫主管自己去開，他會發現按鈕按不動
+    + '要改的話請會計到權限管理 → 關帳，把那個月打開。';
 }
 
 /**

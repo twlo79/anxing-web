@@ -51,13 +51,31 @@ describe('ym 換算（2026-09-07）', () => {
 
 describe('哪些訂單鎖得到', () => {
   /*
-   * ★★★ 月租單**永遠不鎖**（2026-09-07 使用者選）。
-   *   它會隨契約重算 —— 鎖了的話「改契約金額」會在舊月份上失敗，
-   *   而錯誤訊息跟契約完全無關。
+   * ★★★ 月租單**也要鎖**（2026-09-14 使用者:「已關帳的不可以去改了，所有都不行」）。
+   *
+   *   這一條原本是相反的（2026-09-07 選的「月租單永遠不鎖」）。
+   *   代價是 2026-08 關帳之後，LT_3A3_202608 被收款、取消、再取消 ——
+   *   **三次都成功，而且沒有任何提示**。
+   *
+   * ★ 原本那個顧慮（鎖了會害「改契約」在舊月份上失敗）改在資料庫解決:
+   *   `orders_period_lock_guard()` 用 pg_trigger_depth() 分辨
+   *   「人直接改」與「產生器重算」，後者不寫但記進 order_lock_pending。
    */
-  test('★★★ 契約月租單不鎖', () => {
-    assert.equal(lockable(O({ imported_via: 'contract' })), false);
-    assert.equal(isLocked(O({ imported_via: 'contract' }), ['202608']), false);
+  test('★★★ 契約月租單一樣鎖得到（migration_249 改掉了舊行為）', () => {
+    assert.equal(lockable(O({ imported_via: 'contract' })), true);
+    assert.equal(isLocked(O({ imported_via: 'contract' }), ['202608']), true);
+    assert.match(
+      lockedMsg(O({ imported_via: 'contract' }), ['202608']) ?? '',
+      /已經關帳/,
+      '要講得出被擋的理由');
+    // ★ 開帳權限只剩會計 —— 訊息要說得出去找誰
+    assert.match(
+      lockedMsg(O({ imported_via: 'contract' }), ['202608']) ?? '',
+      /會計/);
+  });
+
+  test('★ 沒關帳的月份照樣改得動 —— 別把所有月租單都鎖死', () => {
+    assert.equal(isLocked(O({ imported_via: 'contract' }), ['202607']), false);
   });
 
   test('短租訂單鎖得到', () => {
