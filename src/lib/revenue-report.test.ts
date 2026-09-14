@@ -313,6 +313,32 @@ describe('★★★ purpose_type：這筆收入掛不掛物業', () => {
     assert.equal(estateOf(R({ purpose_type: 'estate' })), '無物業');
   });
 
+  test('★★★ 掛著物業、但標記為安幸辦公室 → 顯示安幸辦公室（2026-09-14）', () => {
+    /*
+     * 使用者定的做法:安幸辦公室是**訂單上的標記**，不是一棟樓。
+     * 所以一筆收入可以是「發生在正隆的 B01，但錢算安幸的」——
+     *
+     *     estate_id / estate_name = 正隆   ← 房源仍屬正隆，沒有搬走
+     *     purpose_type            = office ← 但這筆錢算安幸的
+     *
+     * ★★ 舊的寫法是 `estate_name ?? (...)` —— estate_name 先贏，
+     *   於是這種資料會顯示「正隆」，正是使用者不要的結果。
+     *
+     * ★★★ 這一條同時釘住另一件事:分段（inEstateBlock）跟顯示名稱
+     *   必須用**同一個依據**。不然會出現「分在安幸辦公室那一段、
+     *   名字卻寫正隆」的矛盾 —— 而每個數字單獨看都是對的。
+     */
+    const r = R({ purpose_type: 'office', estate_name: '正隆' });
+    assert.equal(estateOf(r), OFFICE_NAME);
+    assert.equal(inEstateBlock(r), false, '不可以出現在依物業那一段');
+    assert.equal(isHkOffice(r), true, '要落在安幸辦公室那一段');
+  });
+
+  test('★ 一般訂單不受影響 —— 有物業就顯示物業', () => {
+    assert.equal(estateOf(R({ purpose_type: 'estate', estate_name: '正隆' })), '正隆');
+    assert.equal(inEstateBlock(R({ purpose_type: 'estate', estate_name: '正隆' })), true);
+  });
+
   test('★★ 房務收入依付錢的物業分列（客戶欄）', () => {
     const sk = skeleton([
       R({ source: 'oneoff', purpose_type: 'office', guest_name: '正隆' }),

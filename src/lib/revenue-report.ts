@@ -138,9 +138,34 @@ export const inEstateBlock = (r: RevRow) =>
  * ★★ 安幸辦公室的收入**沒有物業**（`estate_name` 是 null），
  *   但畫面上不能寫「無物業」—— 那看起來像資料漏填。
  *   它有明確的歸屬，只是那個歸屬不是一棟樓。
+ *
+ * ============================================================
+ * 【★★★ `purpose_type` 先贏，不是 `estate_name` 先贏】（2026-09-14）
+ *
+ * 原本寫成 `r.estate_name ?? (office ? OFFICE_NAME : '無物業')` ——
+ * 也就是「有物業名稱就用物業名稱」。那時候是對的，因為
+ * office 的 `estate_id` 一定是 null。
+ *
+ * ★★ 2026-09-14 使用者定了新的做法:**安幸辦公室是訂單上的一個標記，
+ *   不是一棟樓**。所以一筆收入可以同時是
+ *
+ *     estate_id    = 正隆      ← 這筆錢發生在正隆的房子裡
+ *     property_id  = B01       ← 服務/出租的是 B01（房源仍屬正隆）
+ *     purpose_type = 'office'  ← 但**這筆錢算安幸的**
+ *
+ *   這樣一間房永遠只屬於一個物業（不用搬、不用複製），
+ *   而「錢算誰的」是訂單層級的決定。
+ *
+ * ★★★ 舊的順序在這種資料上會顯示「正隆」—— 那正是使用者不要的。
+ *   所以 `purpose_type === 'office'` 一律回安幸辦公室，
+ *   **不管底下掛的是哪一棟**。
+ *
+ * ★ `inEstateBlock` 早就是照 `purpose_type` 判斷的，所以分段本來就對；
+ *   只有這個「顯示成什麼名字」跟它不一致。兩個判斷用同一個依據之後，
+ *   才不會出現「分在安幸辦公室那一段、名字卻寫正隆」的矛盾。
  */
 export const estateOf = (r: RevRow) =>
-  r.estate_name ?? (r.purpose_type === 'office' ? OFFICE_NAME : '無物業');
+  (r.purpose_type === 'office' ? OFFICE_NAME : (r.estate_name ?? '無物業'));
 export const guestOf = (r: RevRow) => r.guest_name ?? '未填客戶';
 /**
  * 房源空值的顯示。

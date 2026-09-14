@@ -102,6 +102,15 @@ type Order = {
   move_group?: string | null;
   /** 移房過程「B01>B03」（migration_246）。null = 沒移過 */
   move_chain?: string | null;
+  /**
+   * 這筆收入算誰的（migration_235）。`'estate'` ／ `'office'` ／ `'other_biz'`。
+   *
+   * ★★★ `'office'` ＝ **安幸辦公室**，而它**不是一棟樓** ——
+   *   訂單照樣掛著真實的物業與房源（正隆 B01），
+   *   只有「這筆錢算誰的」換成安幸。
+   *   這樣一間房永遠只屬於一個物業，不用搬也不用複製。
+   */
+  purpose_type?: string | null;
   properties?: { name: string } | null;
 };
 type Estate = { id: string; name: string; sort: number; active: boolean };
@@ -898,7 +907,18 @@ export default function ShortTermPage() {
     if (petErr) return flash(petErr);
     const rev = fromLines(revLines, 'revenue');
     const dep = fromLines(depLines, 'deposit');
-    const payload = { source: edit.source, estate_id: edit.estate_id, property_id: edit.property_id ?? null, property_raw: edit.property_raw, guest_name: edit.guest_name, checkin: edit.checkin || null, checkout: co || null, nights, amount: rev.twd, deposit: dep.twd, account: edit.account, note: edit.note,
+    const payload = {
+      /*
+       * ★★★ 這筆收入算誰的（2026-09-14）。
+       *   勾了「收入屬安幸辦公室」就寫 `'office'`，而 **estate_id 與
+       *   property_id 照舊留著真實的物業與房源** —— 換的只有歸屬。
+       *
+       * ★ 沒有值一律回 `'estate'`，不要寫 undefined:
+       *   那一欄是 `not null default 'estate'`，寫 undefined 在更新時
+       *   會被 PostgREST 忽略，於是「取消勾選」會**存不回去**而且不報錯。
+       */
+      purpose_type: edit.purpose_type === 'office' ? 'office' : 'estate',
+      source: edit.source, estate_id: edit.estate_id, property_id: edit.property_id ?? null, property_raw: edit.property_raw, guest_name: edit.guest_name, checkin: edit.checkin || null, checkout: co || null, nights, amount: rev.twd, deposit: dep.twd, account: edit.account, note: edit.note,
       // 只有一次性收入有會計科目。其他來源一律寫 null,不要留著切換來源前選的值 ——
       // 那會讓一筆 Airbnb 訂單帶著「水費」這種科目跑進營收報表。
       fee_type: edit.source === 'oneoff' ? (edit.fee_type || null) : null,
@@ -1051,7 +1071,16 @@ export default function ShortTermPage() {
       guest: o.guest_name, source: o.source, account: o.account, stays,
       // ★ 原本住哪、原本的備註 —— 兩個都會被下面的編輯蓋掉，先存起來
       origRooms: list.map((x) => (x.property_raw ?? '').trim()).filter(Boolean),
-      origNote: (o.note ?? null),
+      /*
+       * ★★★ 備註要拿**第一段**的，不是 `o` 的。
+       *
+       *   移房視窗可以從**任何一段**打開（`openMove` 會把整組載進來），
+       *   而 `patch.note` 是寫回第一段（`.eq('id', grp)`）。
+       *   這裡用 `o.note` 的話，從第二段打開就會把第二段的備註
+       *   複製到第一段上，**把第一段原本的備註蓋掉** ——
+       *   而蓋掉不會有任何提示。
+       */
+      origNote: (list[0]?.note ?? null),
     });
   }
   function moveWithAmounts(m: MoveState) {
@@ -1199,7 +1228,7 @@ export default function ShortTermPage() {
     );
   }
 
-  function blank(): Order { return { id: '', order_key: '', source: 'private', estate_id: null, property_id: null, property_raw: '', guest_name: '', checkin: '', checkout: '', nights: 0, amount: 0, deposit: 0, account: null, note: '', fx_revenue: [], fx_deposit: [], invoice_required: false, invoice_title: '', invoice_tax_id: '' }; }
+  function blank(): Order { return { id: '', order_key: '', source: 'private', estate_id: null, property_id: null, property_raw: '', guest_name: '', checkin: '', checkout: '', nights: 0, amount: 0, deposit: 0, account: null, note: '', fx_revenue: [], fx_deposit: [], invoice_required: false, invoice_title: '', invoice_tax_id: '', purpose_type: 'estate' }; }
 
   /** 目前缺哪些必填欄位。存檔要擋，畫面要畫紅框，用同一份答案。 */
   const missing = useMemo(() => edit ? checkRequired({
@@ -1886,6 +1915,40 @@ export default function ShortTermPage() {
                   <select value={edit.estate_id ?? ''} onChange={(e) => setEdit({ ...edit, estate_id: e.target.value || null, property_raw: null, property_id: null })} className={`rounded-lg border px-2 py-1.5 ${err('物業') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}><option value="">—</option>{estates.map((es) => <option key={es.id} value={es.id}>{es.name}{es.active ? '' : '(停用)'}</option>)}</select>
                 )}
               </label>
+              {/*
+                ── 收入屬安幸辦公室（2026-09-14 使用者指定）──────────────
+                
+                ★★★ 安幸辦公室**不是一棟樓，是訂單上的一個標記**。
+                
+                  物業照樣選正隆、房源照樣選 B01 —— 那間房本來就是正隆的，
+                  而且從頭到尾沒有搬過。勾這一格只改一件事:
+                  **這筆錢在營收報表上算誰的。**
+                
+                ★★ 為什麼不做成物業下拉裡的一個選項（像支出頁那樣）:
+                  那樣就得二選一 —— 選了安幸辦公室就選不了正隆，
+                  房源也跟著沒有著落。而這裡要的是**兩個都留著**。
+                
+                ★ 只有「其他事業體收入」時不顯示 —— 那種收入已經有自己的
+                  歸屬（愛皮／洪鯊），再勾一個安幸辦公室是矛盾的。
+              */}
+              {edit.source !== OTHER_BIZ_SOURCE && (
+                <label className="sm:col-span-2 flex items-start gap-2 rounded-lg border border-mor-line bg-mor-sand/40 px-3 py-2 cursor-pointer">
+                  <input type="checkbox" className="mt-0.5"
+                    checked={edit.purpose_type === 'office'}
+                    onChange={(e) => setEdit({ ...edit, purpose_type: e.target.checked ? 'office' : 'estate' })} />
+                  <span className="text-sm">
+                    這筆收入屬<b>安幸辦公室</b>
+                    <span className="block text-xs text-gray-500 mt-0.5">
+                      {edit.purpose_type === 'office'
+                        ? <>營收報表會把物業顯示成<b className="text-mor-slate">安幸辦公室</b>，
+                          這筆不會算進{edit.estate_id ? (estateName[edit.estate_id] ?? '該物業') : '任何物業'}的營收。
+                          房源與其他欄位照舊。</>
+                        : <>不勾就是一般收入，算進上面選的那個物業。
+                          勾了之後物業與房源<b>不會被改掉</b> —— 只有營收報表的歸屬換成安幸辦公室。</>}
+                    </span>
+                  </span>
+                </label>
+              )}
               {/*
                 房源非必填。
 
