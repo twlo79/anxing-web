@@ -20,6 +20,8 @@ import ContractFees, { type Rc } from '@/components/ContractFees';
 import { feeMonthly, leasePeriods, periodOf } from '@/lib/lease';
 import { dueDateOf, resolvePayDay, checkFirstDue, fmtDue, periodRange, fmtPeriodRange, rentMonthCount, checkContractDates } from '@/lib/due-date';
 import { keyBase, onlyKeyOf } from '@/lib/ltKey';
+// 「這筆收入算誰的」—— 畫面與存檔共用同一份規則（migration_247）
+import { contractPurpose, purposeLockedByType } from '@/lib/purpose';
 // 一期的應收與收齊判斷都走這支 —— 畫面、確認視窗、收款三處共用同一份算式
 import { periodTotal, type PeriodTotal } from '@/lib/period-total';
 import OrderPayments from '@/components/OrderPayments';
@@ -57,6 +59,19 @@ type Contract = {
   /** 外幣押金 [{cur,amt}]。台幣仍在 deposit —— 格式與 orders.fx_deposit 一致（migration_87）。 */
   fx_deposit?: { cur: string; amt: number }[] | null;
   concessions?: Concession[] | null;
+  /**
+   * 這張契約的收入算誰的（migration_247）。`'estate'` ／ `'office'` ／ `'other_biz'`。
+   *
+   * ★★★ `'office'` ＝ **安幸辦公室**，而它**不是一棟樓**。
+   *   物業照樣選正隆、房源照樣選 B01 —— 那間房本來就是正隆的，
+   *   從頭到尾沒有搬過。這一欄只改一件事:
+   *   **這筆錢在營收報表上算誰的。**
+   *
+   * ★★ 契約是這個標記的**唯一真相**。資料庫三支觸發器負責往下推:
+   *   底下的月租單、契約加費、契約折讓、以及營收認列全部跟著它走，
+   *   所以短租那頁對這些單是唯讀的。
+   */
+  purpose_type?: string | null;
 };
 /** 折讓約定：純文字備查，不影響金額。實際折讓走 oneoff 負數訂單。 */
 type Concession = { date: string; amount: number; note: string };
@@ -448,6 +463,19 @@ export default function ContractsPage() {
       invoice_note: edit.invoice_note || null,
       // 只留有填金額的，空白列不寫進去
       concessions: (((edit.concessions as any[]) ?? []).filter((cn: any) => Number(cn?.amount) > 0)),
+      /*
+       * ★★★ 一定要**明確寫值**，不能讓它變成 undefined（migration_247）。
+       *
+       *   PostgREST 對 undefined 的欄位是「不動」——
+       *   所以取消勾選時如果這裡是 undefined，畫面上勾掉了、
+       *   資料庫還是 'office'，而且不會報錯。
+       *   短租那頁同一行、同一個理由。
+       *
+       * ★★ 走 `contractPurpose()` 而不是直接看勾選框:
+       *   辦公室登記與公司登記**不管有沒有勾都是 office**，
+       *   而那條規則在畫面上也是它算的 —— 兩邊各寫一次就會不一致。
+       */
+      purpose_type: contractPurpose(edit),
     };
     let newId = edit.id as string | null;
     if (edit.id) {
@@ -687,7 +715,9 @@ const nameOf = (c: Contract) =>
 
   function blank(): Contract {
     return { id: '', estate_id: estates.find((e) => e.name === '正隆')?.id ?? null, room: '', tenant_name: '', phone: '', cadence: 'monthly', type: 'longterm', monthly_rent: 0, amount_per_period: 0, deposit: 0, start_date: '', end_date: '', pay_day: null, first_payment_date: '', paid: false, account: null, note: '', active: true, watch: false, display_name: '', earnest_only: false, earnest_amount: 0,
-      invoice_required: false, invoice_day: null, invoice_after_paid: true, invoice_title: '', invoice_tax_id: '', invoice_note: '', tax_free: false, concessions: [] };
+      invoice_required: false, invoice_day: null, invoice_after_paid: true, invoice_title: '', invoice_tax_id: '', invoice_note: '', tax_free: false, concessions: [],
+      // 預設算物業的。改類別成辦公室／公司登記時，contractPurpose() 會自動變 office
+      purpose_type: 'estate' };
   }
 
   return (
@@ -1049,6 +1079,15 @@ const nameOf = (c: Contract) =>
 
               <div className="px-6 py-4">
                 {row('類型', TYPE_LABEL[c.type] ?? c.type ?? '—')}
+                {/*
+                  ★ 只在「屬安幸辦公室」時才多這一列 —— 一般契約佔絕大多數，
+                    每張都寫一句「算物業的」只是把真正特別的那幾張蓋掉。
+                */}
+                {contractPurpose(c) === 'office' && row('營收歸屬',
+                  <span className="inline-flex items-center gap-1">
+                    <span className="px-1.5 py-0.5 rounded bg-mor-sand text-mor-slate text-xs font-medium">安幸辦公室</span>
+                    <span className="text-xs text-gray-400">（物業與房源照舊）</span>
+                  </span>)}
                 {row('租金', <span><span className="font-medium">${fmt(per)}</span> <span className="text-gray-500">/ {CAD_LABEL[c.cadence] ?? c.cadence}</span><div className="text-xs text-gray-400">對應月租 ${fmt(Math.round(per / step))}</div></span>)}
                 {/* 收退狀態在「押金管理」頁。帶契約 id 而不是押金 id —— 一張契約可能有多幣別押金。 */}
                 {row('押金', c.deposit ? <span>${fmt(c.deposit)}</span> : '—')}
@@ -1129,6 +1168,47 @@ const nameOf = (c: Contract) =>
                 <select value={edit.estate_id ?? ''} onChange={(e) => setEdit({ ...edit, estate_id: e.target.value || null, room: '' })} className={`rounded-lg border px-2 py-1.5 ${err('物業') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}><option value="">—</option>{estates.map((es) => <option key={es.id} value={es.id}>{es.name}</option>)}</select></label>
               <label className="flex flex-col gap-1"><span className="flex items-center">房源<Req /></span>
                 <select value={edit.room ?? ''} onChange={(e) => setEdit({ ...edit, room: e.target.value })} className={`rounded-lg border px-2 py-1.5 ${err('房源') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}><option value="">—</option>{properties.filter((x) => x.estate_id === edit.estate_id).map((x) => <option key={x.id} value={x.name}>{x.name}</option>)}</select></label>
+
+              {/*
+                ── 收入屬安幸辦公室（2026-09-14 使用者指定，migration_247）──
+
+                ★★★ 安幸辦公室**不是一棟樓，是契約上的一個標記**。
+
+                  物業照樣選正隆、房源照樣選 B01 —— 那間房本來就是正隆的，
+                  而且從頭到尾沒有搬過。勾這一格只改一件事:
+                  **這筆錢在營收報表上算誰的。**
+
+                ★★ 勾了之後底下**全部**跟著走:月租單、契約加費、契約折讓、
+                  以及營收認列。資料庫的觸發器負責推，所以短租那頁
+                  對這些單是唯讀的（在那裡改會被扳回來，而畫面不會說為什麼）。
+
+                ★ 辦公室登記與公司登記**鎖住且一定是勾的** ——
+                  那兩種本來就是安幸自己的生意，不是幫股東收的房租。
+                  規則寫在 lib/purpose.ts，資料庫那份在 migration_247 ③。
+              */}
+              <label className={`md:col-span-2 flex items-start gap-2 rounded-lg border border-mor-line px-3 py-2 ${purposeLockedByType(edit.type) ? 'bg-gray-50 cursor-default' : 'bg-mor-sand/40 cursor-pointer'}`}>
+                <input type="checkbox" className="mt-0.5"
+                  checked={contractPurpose(edit) === 'office'}
+                  disabled={purposeLockedByType(edit.type)}
+                  onChange={(e) => setEdit({ ...edit, purpose_type: e.target.checked ? 'office' : 'estate' })} />
+                <span className="text-sm">
+                  這筆收入屬<b>安幸辦公室</b>
+                  <span className="block text-xs text-gray-500 mt-0.5">
+                    {purposeLockedByType(edit.type)
+                      ? <>「{TYPE_LABEL[edit.type ?? ''] ?? edit.type}」本來就是安幸自己的生意，
+                        一定算安幸辦公室 —— 這一格不用勾也改不動。
+                        要算進物業的話請把上面的<b>類別</b>改成長租。</>
+                      : contractPurpose(edit) === 'office'
+                      ? <>營收報表會把物業顯示成<b className="text-mor-slate">安幸辦公室</b>，
+                        這張契約的租金<b>不會</b>算進{estates.find((es) => es.id === edit.estate_id)?.name ?? '上面選的物業'}的營收。
+                        物業、房源、收租、發票全部照舊。</>
+                      : <>不勾就是一般房租，算進上面選的那個物業。
+                        勾了之後物業與房源<b>不會被改掉</b> —— 只有營收報表的歸屬換成安幸辦公室，
+                        底下的月租單與加費會一起跟著改。</>}
+                  </span>
+                </span>
+              </label>
+
               <label className="flex flex-col gap-1"><span className="flex items-center">租戶<Req /></span>
                 <input value={edit.tenant_name ?? ''} onChange={(e) => setEdit({ ...edit, tenant_name: e.target.value })}
                   /* 離開欄位才正規化 —— 見 shortterm 那邊的說明（migration_173） */

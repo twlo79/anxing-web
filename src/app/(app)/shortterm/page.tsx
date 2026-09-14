@@ -111,6 +111,16 @@ type Order = {
    *   這樣一間房永遠只屬於一個物業，不用搬也不用複製。
    */
   purpose_type?: string | null;
+  /**
+   * 掛在哪張契約上。契約加費與折讓的 source 是 `oneoff`、但帶著 contract_id，
+   * 所以它們**會**出現在這一頁。
+   *
+   * ★★ 有值的話「收入屬安幸辦公室」那一格是**唯讀**的 ——
+   *   migration_247 之後契約是那個標記的唯一真相，
+   *   在這裡改會被觸發器扳回去，而畫面不會說為什麼。
+   *   勾得動卻存不住，比一開始就不給勾糟得多。
+   */
+  contract_id?: string | null;
   properties?: { name: string } | null;
 };
 type Estate = { id: string; name: string; sort: number; active: boolean };
@@ -1930,16 +1940,27 @@ export default function ShortTermPage() {
                 
                 ★ 只有「其他事業體收入」時不顯示 —— 那種收入已經有自己的
                   歸屬（愛皮／洪鯊），再勾一個安幸辦公室是矛盾的。
+
+                ★★★ 掛著契約的（契約加費、契約折讓）**唯讀**（migration_247）。
+                  那些單的用途由契約決定，資料庫的觸發器會把它扳回契約的值 ——
+                  這裡讓他勾得動的話，存下去看起來成功、重開又變回來，
+                  而畫面上沒有任何一句話解釋為什麼。
               */}
               {edit.source !== OTHER_BIZ_SOURCE && (
-                <label className="sm:col-span-2 flex items-start gap-2 rounded-lg border border-mor-line bg-mor-sand/40 px-3 py-2 cursor-pointer">
+                <label className={`sm:col-span-2 flex items-start gap-2 rounded-lg border border-mor-line px-3 py-2 ${edit.contract_id ? 'bg-gray-50 cursor-default' : 'bg-mor-sand/40 cursor-pointer'}`}>
                   <input type="checkbox" className="mt-0.5"
                     checked={edit.purpose_type === 'office'}
+                    disabled={!!edit.contract_id}
                     onChange={(e) => setEdit({ ...edit, purpose_type: e.target.checked ? 'office' : 'estate' })} />
                   <span className="text-sm">
                     這筆收入屬<b>安幸辦公室</b>
                     <span className="block text-xs text-gray-500 mt-0.5">
-                      {edit.purpose_type === 'office'
+                      {edit.contract_id
+                        ? <>這筆掛在契約上，用途<b>由契約決定</b>，在這裡改不了。
+                          要改請到<a href="/contracts" target="_blank" rel="noreferrer"
+                            className="text-mor-blue underline hover:text-mor-slate">契約頁</a>打開那張契約勾，
+                          底下所有的月租單與加費會一起跟著改。</>
+                        : edit.purpose_type === 'office'
                         ? <>營收報表會把物業顯示成<b className="text-mor-slate">安幸辦公室</b>，
                           這筆不會算進{edit.estate_id ? (estateName[edit.estate_id] ?? '該物業') : '任何物業'}的營收。
                           房源與其他欄位照舊。</>
