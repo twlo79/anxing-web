@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AddButton, ExportButton, ActionBar } from '@/components/Actions';
 import { AuditButton, AuditBadges, AuditSummary } from '@/components/Audit';
+import ToggleInfo from '@/components/ToggleInfo';
 import { auditOrders, type AuditOrder } from '@/lib/audit-orders';
 import Req from '@/components/Req';
 import { submitGate, gateCls } from '@/lib/required';
@@ -559,6 +560,14 @@ export default function ShortTermPage() {
    * 而且沒有任何跡象顯示它們不一致 —— 使用者只會相信其中一個。
    * 合成一份之後，之後加篩選條件只要改這裡。
    */
+  /**
+   * 只看移過房的（2026-09-14 使用者:「做一個移房的按鈕，只顯示有移房的」）。
+   *
+   * ★★ 走**伺服器端**篩選，跟其他條件一起（見 applyFilters）——
+   *   這一頁是伺服器端分頁，在前端過濾只會篩到當前這一頁，
+   *   而分頁數字還會是錯的。
+   */
+  const [movedOnly, setMovedOnly] = useState(false);
   const applyFilters = useCallback((q: any) => {
     if (src) q = q.eq('source', src);
     if (estF) q = q.eq('estate_id', estF);
@@ -596,13 +605,26 @@ export default function ShortTermPage() {
     // 費用類別。房租不是靠「fee_type 是空的」判斷,而是照資料庫
     // order_account_code() 的規則看來源 —— 兩邊用同一條規則,
     // 篩出來的筆數才會跟營收報表對得上。
+    /*
+     * ★★★ 只看移過房的。**兩個欄位都要收**:
+     *
+     *   `move_chain`  migration_246 之後的移房都有（含只改房號的）
+     *   `move_group`  246 之前拆成多段的舊移房只有這個
+     *
+     *   只篩 `move_chain` 的話，舊的多段移房會**安靜地不見** ——
+     *   而畫面只是筆數比較少，不會說為什麼。
+     *
+     * ★ 246 之前「只改房號、沒拆段」的那種救不回來（兩個欄位都沒有），
+     *   ⓘ 說明裡有講，不要讓人以為這個清單是完整的。
+     */
+    if (movedOnly) q = q.or('move_chain.not.is.null,move_group.not.is.null');
     const fp = feeFilterPredicate(feeF);
     const oneoffList = `(${ONEOFF_SOURCES.join(',')})`;
     if (fp.kind === 'rent') q = q.not('source', 'in', oneoffList);
     else if (fp.kind === 'oneoffAll') q = q.in('source', ONEOFF_SOURCES);
     else if (fp.kind === 'feeType') q = q.in('source', ONEOFF_SOURCES).eq('fee_type', fp.feeType);
     return q;
-  }, [src, estF, fromD, toD, kw, payF, feeF, invF]);
+  }, [src, estF, fromD, toD, kw, payF, feeF, invF, movedOnly]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -618,7 +640,7 @@ export default function ShortTermPage() {
     setRows((data as any) ?? []); setTotal(count ?? 0); setLoading(false);
   }, [supabase, applyFilters, sort, page]);
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { setPage(0); }, [src, kw, estF, fromD, toD, sort, payF, feeF, invF]);
+  useEffect(() => { setPage(0); }, [src, kw, estF, fromD, toD, sort, payF, feeF, invF, movedOnly]);
 
   const loadAgg = useCallback(async () => {
     let all: any[] = []; let from = 0;
@@ -1255,6 +1277,25 @@ export default function ShortTermPage() {
 
           ★ 固定在右上角的第二個好處:兩頁位置一樣,肌肉記憶帶得過去。
         */}
+        {/*
+          ★ 放在防呆**左邊**:防呆是「這批資料有沒有問題」，移房是
+            「只看某一類訂單」—— 兩個都是模式開關，但防呆更重要，
+            留在最右邊那個肌肉記憶的位置（訂單與營收兩頁一致）。
+
+          ★★ 用石板藍:跟列表上那個「移房」標籤同一個顏色，
+            一眼看得出開關跟標籤講的是同一件事。
+        */}
+        <ToggleInfo label="🔁 移房" on={movedOnly} onToggle={() => setMovedOnly((v) => !v)}
+          tone="slate" infoLabel="移房清單看得到什麼">
+          <span className="block text-xs text-gray-500 mb-2">
+            只列出<b>移過房</b>的訂單。房源後面會顯示過程，例如 <b>B01&gt;B03</b>。
+          </span>
+          <span className="block text-xs text-gray-500">
+            ★ 2026-09-14 之前<b>只改房號、沒有拆段</b>的那種移房，
+            當時沒有在訂單上留下任何記號 —— 這裡<b>看不到</b>，
+            要查只能到「異動紀錄」。<b>這份清單不是完整的歷史。</b>
+          </span>
+        </ToggleInfo>
         <AuditButton on={audit} onToggle={toggleAudit} busy={auditBusy} />
         {/* 訊息改成浮在最上層 —— 原本畫在這裡，會被 z-50 的編輯視窗蓋掉，
             存檔失敗時使用者看到的是「按了沒反應」 */}
