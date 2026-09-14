@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   type RevRow, sum, classOf, skeleton, roomLines, reconcile,
   inEstateBlock, isOffice, isCompany, estateOf, ROOM_NONE, itemLabel, oneoffItems, ONEOFF_LABEL,
-  isOneoffSource, rentOnly, oneoffLabel, isHkOffice, OFFICE_NAME,
+  isOneoffSource, rentOnly, oneoffLabel, isHkOffice, OFFICE_NAME, estateKeyOf,
 } from './revenue-report.ts';
 
 /**
@@ -337,6 +337,43 @@ describe('★★★ purpose_type：這筆收入掛不掛物業', () => {
   test('★ 一般訂單不受影響 —— 有物業就顯示物業', () => {
     assert.equal(estateOf(R({ purpose_type: 'estate', estate_name: '正隆' })), '正隆');
     assert.equal(inEstateBlock(R({ purpose_type: 'estate', estate_name: '正隆' })), true);
+  });
+
+  /*
+   * ══════════════════════════════════════════════════════════
+   * estateKeyOf —— 下拉／長條圖／篩選／匯出的分組名（2026-09-14）
+   *
+   * ★★★ 這幾條釘的是「報表本文說安幸辦公室、而篩選說正隆」那個矛盾。
+   *   營收頁原本在五個地方各拼一份 `r.estate_name ?? '無'`，
+   *   五份都是 estate_name 先贏，所以勾選過的訂單在下拉、長條圖、
+   *   篩選、匯出裡全部顯示成正隆 —— 而報表本文那三段是對的。
+   * ══════════════════════════════════════════════════════════
+   */
+  test('★★★ 分組名跟報表分段用同一個依據 —— 勾選過的訂單不會落在正隆', () => {
+    const r = R({ source: 'private', purpose_type: 'office', estate_name: '正隆' });
+    assert.equal(estateKeyOf(r), OFFICE_NAME);
+    assert.equal(estateKeyOf(r), estateOf(r), '分組名不可以跟顯示名稱不一致');
+    assert.equal(inEstateBlock(r), false);
+  });
+
+  test('★★ 四種安幸自己的收入，分組名都是安幸辦公室（使用者 2026-09-14 指定）', () => {
+    // 辦公室出租、公司登記、房務收入、新的勾選 —— 篩「安幸辦公室」四種都要撈到
+    assert.equal(estateKeyOf(R({ source: 'office', purpose_type: 'office' })), OFFICE_NAME);
+    assert.equal(estateKeyOf(R({ source: 'company', purpose_type: 'office' })), OFFICE_NAME);
+    assert.equal(estateKeyOf(R({ source: 'oneoff', purpose_type: 'office' })), OFFICE_NAME);
+    assert.equal(estateKeyOf(R({ source: 'longterm', purpose_type: 'office', estate_name: '正隆' })), OFFICE_NAME);
+  });
+
+  test('★ 其他事業體（愛皮／洪鯊）自成一組，不會被算進安幸辦公室', () => {
+    assert.equal(estateKeyOf(R({ source: 'other', purpose_type: 'other_biz', estate_name: '正隆' })), '其他');
+    // ★ 連 estate_name 有值也一樣 —— 它們的歸屬是事業體，不是那棟樓
+    assert.equal(estateKeyOf(R({ source: 'other' })), '其他');
+  });
+
+  test('★ 一般收入照舊，沒物業的統一叫「無物業」', () => {
+    assert.equal(estateKeyOf(R({ source: 'airbnb', purpose_type: 'estate', estate_name: '時兆' })), '時兆');
+    // 原本下拉寫「無」、長條圖寫「無物業」，看起來像兩個不同的東西
+    assert.equal(estateKeyOf(R({ source: 'airbnb', purpose_type: 'estate' })), '無物業');
   });
 
   test('★★ 房務收入依付錢的物業分列（客戶欄）', () => {

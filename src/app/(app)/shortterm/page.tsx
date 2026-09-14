@@ -20,7 +20,9 @@ import { useProfile } from '@/lib/profile';
 import { canCollect as roleCanCollect, collectDeniedMsg } from '@/lib/collect-perm';
 import { savedState, pinnedHint, hasAnyFilter, SAVED_TTL_MS, type SavedMark } from '@/lib/just-saved';
 import { FEE_TYPES, ONEOFF_FEE_TYPES, ONEOFF_PRESETS, presetOf } from '@/lib/fee-types';
-import { ONEOFF_LABEL } from '@/lib/revenue-report';
+// ★ OFFICE_NAME 從 lib 拿，不要在這裡再打一次「安幸辦公室」——
+//   兩邊各寫一份的話，哪天改名會變成同一個東西在兩頁叫不同名字
+import { ONEOFF_LABEL, OFFICE_NAME } from '@/lib/revenue-report';
 import RecurringPanel from '@/components/RecurringPanel';
 // 角色清單只留一份 —— 散在畫面各處的話，改了一處不會有東西提醒你其他處還是舊的
 import { canEditOrders, orderDeleteBlockedReason } from '@/lib/roles';
@@ -171,6 +173,17 @@ type MoveState = {
  *   而金額看起來完全正常。真的要加之前先想清楚。
  */
 const SRC = ['airbnb', 'agoda', 'private', 'oneoff', 'partner', 'airbnb_cancelled'];
+/*
+ * 物業篩選裡的「安幸辦公室」（2026-09-14 使用者指定）。
+ *
+ * ★★★ 它**不是一個 estate**，所以沒有 uuid 可以填 —— 這正是整個設計的重點:
+ *   安幸辦公室是訂單上的一個標記，不是第九棟樓（migration_234 那次
+ *   做成假物業，結果它每個月都在收房務清潔的錢，見 README 坑 D）。
+ *
+ * ★ 用一個不可能跟 uuid 相撞的哨兵值。選到它就改查 `purpose_type`，
+ *   不是 `estate_id`。
+ */
+const EST_F_OFFICE = '__office__';
 // 可手動新增的來源。other_biz = 愛皮／洪鯊的收入（migration_159）
 const MANUAL_SRC = ['private', 'oneoff', OTHER_BIZ_SOURCE];
 /*
@@ -589,7 +602,13 @@ export default function ShortTermPage() {
   const [movedOnly, setMovedOnly] = useState(false);
   const applyFilters = useCallback((q: any) => {
     if (src) q = q.eq('source', src);
-    if (estF) q = q.eq('estate_id', estF);
+    /*
+     * ★★ 安幸辦公室查的是 `purpose_type`，不是 `estate_id` ——
+     *   四種收入都撈（辦公室出租、公司登記、房務收入、勾選過的訂單），
+     *   跟營收報表「安幸辦公室」那幾段是同一個母體。
+     */
+    if (estF === EST_F_OFFICE) q = q.eq('purpose_type', 'office');
+    else if (estF) q = q.eq('estate_id', estF);
     if (toD) q = q.lte('checkin', toD);
     if (fromD) q = q.gte('checkout', fromD);
     if (kw) q = q.or(`guest_name.ilike.%${kw}%,property_raw.ilike.%${kw}%,note.ilike.%${kw}%`);
@@ -665,7 +684,8 @@ export default function ShortTermPage() {
     let all: any[] = []; let from = 0;
     while (true) {
       const q = applyFilters(
-        supabase.from('orders').select('source, estate_id, amount, deposit, fx_deposit').in('source', SRC));
+        // ★ purpose_type 不能漏 —— 少了它「依物業」的長條會把勾選過的訂單算進正隆
+        supabase.from('orders').select('source, estate_id, amount, deposit, fx_deposit, purpose_type').in('source', SRC));
       const { data } = await q.range(from, from + 999);
       const chunk = (data as any[]) ?? [];
       all = all.concat(chunk);
@@ -822,7 +842,8 @@ export default function ShortTermPage() {
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, '短租訂單');
       // 檔名帶上篩選條件,之後回頭找得出這份是什麼
-      const tag = [SRC_LABEL[src] ?? '', estF ? estateName[estF] ?? '' : '', fromD, toD, kw].filter(Boolean).join('_');
+      const estTag = estF === EST_F_OFFICE ? OFFICE_NAME : (estF ? estateName[estF] ?? '' : '');
+      const tag = [SRC_LABEL[src] ?? '', estTag, fromD, toD, kw].filter(Boolean).join('_');
       const d = new Date();
       const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
       XLSX.writeFile(wb, `短租訂單${tag ? '_' + tag : ''}_${stamp}.xlsx`);
@@ -1255,7 +1276,14 @@ export default function ShortTermPage() {
 
   const totRevenue = useMemo(() => agg.reduce((a, o) => a + Number(o.amount || 0), 0), [agg]);
   const bySource = useMemo(() => { const m: Record<string, number> = {}; for (const o of agg) m[o.source] = (m[o.source] || 0) + Number(o.amount || 0); return m; }, [agg]);
-  const byEstate = useMemo(() => { const m: Record<string, number> = {}; for (const o of agg) { const k = o.estate_id ? (estateName[o.estate_id] ?? '—') : '—'; m[k] = (m[k] || 0) + Number(o.amount || 0); } return Object.entries(m).sort((a, b) => b[1] - a[1]); }, [agg, estateName]);
+  /*
+   * ★★★ `purpose_type` 先看，`estate_id` 其次 —— 跟營收報表的
+   *   `estateKeyOf()` 同一個順序（lib/revenue-report.ts）。
+   *   反過來的話，勾了「收入屬安幸辦公室」的訂單（estate_id = 正隆）
+   *   會被算進正隆那一條，而它在營收報表上明明分在安幸辦公室。
+   *   同一筆錢在兩頁各說各話，而兩邊單獨看都像是對的。
+   */
+  const byEstate = useMemo(() => { const m: Record<string, number> = {}; for (const o of agg) { const k = o.purpose_type === 'office' ? OFFICE_NAME : (o.estate_id ? (estateName[o.estate_id] ?? '—') : '—'); m[k] = (m[k] || 0) + Number(o.amount || 0); } return Object.entries(m).sort((a, b) => b[1] - a[1]); }, [agg, estateName]);
   const pages = Math.max(1, Math.ceil(total / PAGE));
 
   /*
@@ -1366,7 +1394,8 @@ export default function ShortTermPage() {
         {/* ★ 捲軸拿掉（原本 max-h-44 只露四個物業）＋ 補上長條 */}
         <BarPanel title="依物業">
           {byEstate.length === 0 ? <BarEmpty /> : byEstate.map(([e, v]) => {
-            const id = estates.find((x) => x.name === e)?.id || '';
+            // 安幸辦公室沒有 estate id，用哨兵值
+            const id = e === OFFICE_NAME ? EST_F_OFFICE : (estates.find((x) => x.name === e)?.id || '');
             return (
               <BarRow key={e} tone="green" label={e} title={e}
                 pct={((v as number) / ((byEstate[0]?.[1] as number) || 1)) * 100}
@@ -1394,6 +1423,8 @@ export default function ShortTermPage() {
           <label className="block text-xs text-gray-500 mb-1">物業</label>
           <select value={estF} onChange={(e) => setEstF(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
             <option value="">全部</option>{estates.map((es) => <option key={es.id} value={es.id}>{es.name}{es.active ? '' : '(停用)'}</option>)}
+            {/* ★ 不是 estate，所以不在 estates 裡面 —— 單獨列一項（見 EST_F_OFFICE） */}
+            <option value={EST_F_OFFICE}>{OFFICE_NAME}</option>
           </select>
         </div>
         <div>

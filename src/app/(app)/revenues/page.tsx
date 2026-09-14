@@ -9,7 +9,7 @@ import { fetchAll } from '@/lib/fetch-all';
 import * as XLSX from 'xlsx-js-style';
 import { SortTh, sortRows, roomKey, type SortState, type SortCols } from '@/lib/sortable';
 import {
-  isOffice, isCompany, isHkOffice, inEstateBlock, estateOf, guestOf, roomOf,
+  isOffice, isCompany, isHkOffice, inEstateBlock, estateOf, estateKeyOf, guestOf, roomOf,
   itemLabel, oneoffItems, oneoffLabel, skeleton, reconcile, SHORT_SOURCES, ROOM_NONE, ONEOFF_LABEL,
 } from '@/lib/revenue-report';
 // 【結算】區塊的算法（有測試）—— 這一頁只負責排版
@@ -187,11 +187,19 @@ export default function RevenuesPage() {
   useEffect(() => { load(); }, [load]);
 
   const filtered = useMemo(() => rows.filter((r) => {
-    if (estateFilter && (r.estate_name ?? '無') !== estateFilter) return false;
+    // ★ 分組名走 estateKeyOf() —— 自己拼 `estate_name ?? '無'` 的話，
+    //   勾了「收入屬安幸辦公室」的訂單（estate_name = 正隆）會被篩成正隆，
+    //   而報表本文那三段早就把它分到安幸辦公室了（lib/revenue-report.ts）
+    if (estateFilter && estateKeyOf(r) !== estateFilter) return false;
     // 房源篩選只作用在物業段。辦公室與公司登記不掛房源,選了房號就不該出現
     if (roomFilter && (isOffice(r) || isCompany(r) || (r.property_raw ?? '') !== roomFilter)) return false;
     if (sourceFilter && r.source !== sourceFilter) return false;
-    if (kw) { const s = `${r.guest_name ?? ''}${r.property_raw ?? ''}${r.estate_name ?? ''}`; if (!s.includes(kw)) return false; }
+    /*
+     * ★ 搜尋字串裡**兩個都放**：`estate_name`（正隆）讓「這筆錢發生在哪」搜得到，
+     *   `estateKeyOf`（安幸辦公室）讓「這筆錢算誰的」也搜得到。
+     *   只放後者的話，打「正隆」會漏掉勾選過的那幾筆 —— 而那幾筆確實在正隆的房子裡。
+     */
+    if (kw) { const s = `${r.guest_name ?? ''}${r.property_raw ?? ''}${r.estate_name ?? ''}${estateKeyOf(r)}`; if (!s.includes(kw)) return false; }
     return true;
   }), [rows, estateFilter, roomFilter, sourceFilter, kw]);
 
@@ -249,21 +257,23 @@ export default function RevenuesPage() {
     const m: Record<string, number> = {};
     for (const r of filtered) {
       /*
-       * ★ 用 `estateOf()` 不要自己拼 —— 安幸辦公室的收入沒有 estate_name，
-       *   自己拼的話會落到「無物業」那一格，看起來像資料漏填。
+       * ★★★ 2026-09-14：這裡原本寫 `r.estate_name ?? (… estateOf(r))` ——
+       *   **estate_name 先贏**，而上面那行註解寫的是「用 estateOf() 不要自己拼」。
+       *   註解對、程式碼錯，於是勾了安幸辦公室的訂單被算進正隆那一條長條。
+       *   現在整頁五個地方共用 `estateKeyOf()`，規則只有一份。
        */
-      const k = r.estate_name
-        ?? (r.source === 'company' ? '公司登記(無物業)'
-          : r.source === 'other' ? '其他' : estateOf(r));
+      const k = estateKeyOf(r);
       m[k] = (m[k] || 0) + Number(r.month_amount);
     }
     return Object.entries(m).sort((a, b) => b[1] - a[1]);
   }, [filtered]);
-  const estateOptions = useMemo(() => Array.from(new Set(rows.map((r) => r.estate_name ?? "無"))).sort(), [rows]);
+  // ★ 下拉的選項也走同一支 —— 這就是「安幸辦公室」出現在物業下拉裡的原因。
+  //   用 estate_name 的話它永遠不會出現，而報表本文卻有那一段
+  const estateOptions = useMemo(() => Array.from(new Set(rows.map(estateKeyOf))).sort(), [rows]);
   // 房源選項跟著物業篩選連動 —— 選了物業就只列該物業的房源,
   // 否則 200 多間全部列出來根本找不到。
   const roomOptions = useMemo(() => Array.from(new Set(
-    rows.filter((r) => !estateFilter || (r.estate_name ?? '無') === estateFilter)
+    rows.filter((r) => !estateFilter || estateKeyOf(r) === estateFilter)
         // 辦公室、公司登記、房務收入的房號不列進下拉 ——
         // 表格上不顯示,篩選卻篩得到會很奇怪
         .filter((r) => !isOffice(r) && !isCompany(r) && !isHkOffice(r))
@@ -291,7 +301,7 @@ export default function RevenuesPage() {
        */
       const all = await fetchMonthRows(y, m);
       monthData.push({ ym: `${y}${String(m).padStart(2, '0')}`, y, m,
-        rows: estateFilter ? all.filter((r) => (r.estate_name ?? '無') === estateFilter) : all });
+        rows: estateFilter ? all.filter((r) => estateKeyOf(r) === estateFilter) : all });
     }
 
     // ===== 樣式 =====

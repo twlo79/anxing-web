@@ -166,6 +166,39 @@ export const inEstateBlock = (r: RevRow) =>
  */
 export const estateOf = (r: RevRow) =>
   (r.purpose_type === 'office' ? OFFICE_NAME : (r.estate_name ?? '無物業'));
+
+/** 其他事業體（愛皮／洪鯊）的收入。認列表裡的 source 是 `other`。 */
+export const OTHER_BIZ_SOURCE = 'other';
+export const OTHER_BIZ_NAME = '其他';
+
+/**
+ * 「依物業」那一組 UI 的分組名 —— 下拉、長條圖、篩選、匯出**共用這一支**。
+ *
+ * ============================================================
+ * 【★★★ 為什麼要有這一支，而不是各自寫 `r.estate_name ?? '無'`】（2026-09-14）
+ *
+ * 營收頁原本在**五個地方**各拼了一份分組名，而且拼法都不一樣：
+ *
+ *     篩選　　　`r.estate_name ?? '無'`
+ *     長條圖　　`r.estate_name ?? (company ? '公司登記(無物業)' : other ? '其他' : estateOf(r))`
+ *     下拉選項　`r.estate_name ?? '無'`
+ *     房源連動　`r.estate_name ?? '無'`
+ *     匯出　　　`r.estate_name ?? '無'`
+ *
+ * ★★★ 五份都是 **`estate_name` 先贏**，所以勾了「收入屬安幸辦公室」的訂單
+ *   （`estate_name = 正隆`、`purpose_type = office`）在這五個地方
+ *   全部顯示成**正隆** —— 而報表本文那三段早就正確地把它分到安幸辦公室了。
+ *   同一頁的兩個地方各說各話。
+ *
+ * ★★ 長條圖那一份上面還寫著「★ 用 `estateOf()` 不要自己拼」，
+ *   而它底下那行就是自己拼的。**註解是某個時間點的事實，不是現在的事實。**
+ *
+ * ★ 順便統一了三種空值標籤（`無` / `無物業` / `公司登記(無物業)`）——
+ *   原本下拉寫「無」、長條圖寫「無物業」，看起來像兩個不同的東西。
+ */
+export const estateKeyOf = (r: RevRow) =>
+  (r.source === OTHER_BIZ_SOURCE ? OTHER_BIZ_NAME : estateOf(r));
+
 export const guestOf = (r: RevRow) => r.guest_name ?? '未填客戶';
 /**
  * 房源空值的顯示。
