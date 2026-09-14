@@ -1,14 +1,19 @@
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  ymOf, ymLabel, prevYm, prevYmOf, lockable, isLocked, lockedMsg,
+  ymOf, ymLabel, prevYm, prevYmOf, lockable, isLocked, lockedMsg, lockYmOf,
   autoCloseDecision, ymOptions, closeConfirm, reopenConfirm, pendingLines,
   nextYm, nextCloseYm,
   CLOSE_DAY, type OrderLike,
 } from './period-lock.ts';
 
+/*
+ * ★ `checkin` 也要有預設。月租單算的是**期別起日**（migration_251），
+ *   少了它每一筆月租單都判不出月份 —— 而「判不出就不鎖」會讓測試
+ *   一片綠地通過一個什麼都不鎖的實作。
+ */
 const O = (o: Partial<OrderLike> = {}): OrderLike =>
-  ({ checkout: '2026-08-20', imported_via: 'airbnb', ...o });
+  ({ checkin: '2026-08-01', checkout: '2026-08-20', imported_via: 'airbnb', ...o });
 
 describe('ym 換算（2026-09-07）', () => {
   test('日期轉六碼', () => {
@@ -76,6 +81,40 @@ describe('哪些訂單鎖得到', () => {
 
   test('★ 沒關帳的月份照樣改得動 —— 別把所有月租單都鎖死', () => {
     assert.equal(isLocked(O({ imported_via: 'contract' }), ['202607']), false);
+  });
+
+  /*
+   * ══════════════════════════════════════════════════════════
+   * ★★★ 月租單算哪個月：**期別起日**，不是退房日（migration_251）
+   *
+   *   2026-09-14 使用者關了 2026-08，畫面上八月那一期還是能改：「沒鎖阿」。
+   *   原因是守衛算的是退房日 ——
+   *
+   *       第 1 期　2026/8/25 ~ 2026/9/24
+   *       order_key　LT_3A3_202608   ← 單號說它是八月的
+   *       checkin　　2026-08-25
+   *       checkout 　2026-09-25      ← 但退房日在九月
+   *
+   *   → 算成 202609，而關的是 202608，所以一路放行。
+   * ══════════════════════════════════════════════════════════
+   */
+  test('★★★ 跨月的月租單歸在「期別起日」那個月', () => {
+    const span = { imported_via: 'contract', checkin: '2026-08-25', checkout: '2026-09-25' };
+    assert.equal(lockYmOf(span), '202608', '單號是 LT_..._202608，就該算八月');
+    assert.equal(isLocked(span, ['202608']), true, '關了八月就要鎖住');
+    assert.equal(isLocked(span, ['202609']), false, '關九月不影響這一期');
+    assert.match(lockedMsg(span, ['202608']) ?? '', /2026-08/, '訊息要講對月份');
+  });
+
+  test('★ 短租照舊看退房日 —— 住完才算收入', () => {
+    const stay = { imported_via: 'manual', checkin: '2026-08-30', checkout: '2026-09-02' };
+    assert.equal(lockYmOf(stay), '202609');
+    assert.equal(isLocked(stay, ['202608']), false, '八月關帳不該鎖到九月退房的短租');
+    assert.equal(isLocked(stay, ['202609']), true);
+  });
+
+  test('★ 沒有期別起日的月租單不鎖 —— 判不出月份就不要用猜的', () => {
+    assert.equal(lockable({ imported_via: 'contract', checkout: '2026-09-25' }), false);
   });
 
   test('短租訂單鎖得到', () => {

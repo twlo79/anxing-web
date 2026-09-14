@@ -21,7 +21,7 @@ import { feeMonthly, leasePeriods, periodOf } from '@/lib/lease';
 import { dueDateOf, resolvePayDay, checkFirstDue, fmtDue, periodRange, fmtPeriodRange, rentMonthCount, checkContractDates } from '@/lib/due-date';
 import { keyBase, onlyKeyOf } from '@/lib/ltKey';
 // 關帳：畫面上擋住的判斷跟資料庫那支守衛走**同一份規則**（migration_249）
-import { isLocked, lockedMsg, type Ym } from '@/lib/period-lock';
+import { isLocked, lockedMsg, lockYmOf, type Ym } from '@/lib/period-lock';
 // 「這筆收入算誰的」—— 畫面與存檔共用同一份規則（migration_247）
 import { contractPurpose, purposeLockedByType } from '@/lib/purpose';
 // 一期的應收與收齊判斷都走這支 —— 畫面、確認視窗、收款三處共用同一份算式
@@ -1671,7 +1671,9 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
     const { data } = await supabase.from('orders')
       // ★ checkout 不能漏 —— 資料庫的關帳守衛就是用**退房日**判月份，
       //   前端少撈這一欄就判不出哪一期鎖住了（而且不會報錯，只會全部顯示可以按）
-      .select('id, order_key, paid, amount, paid_at, imported_via, paid_amount, checkout').like('order_key', `${base}%`);
+      // ★ checkin 也要 —— 月租單算的是**期別起日**那個月（migration_251）。
+      //   少了它每一張月租單都判不出月份，而「判不出就不鎖」是靜默放行
+      .select('id, order_key, paid, amount, paid_at, imported_via, paid_amount, checkin, checkout').like('order_key', `${base}%`);
     const m: Record<string, any> = {};
     onlyKeyOf(data as any[], base).forEach((o: any) => { m[o.order_key] = o; });
     setExisting(m);
@@ -2289,11 +2291,11 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                * ★ 一期可能跨好幾張單（季繳、年繳）。**任何一張**被鎖就整期鎖 ——
                *   收款是整期一起做的，放行一半只會做出半套資料。
                */
-              const lockedHere = [...os, ...pfees].some((o: any) => o
-                && isLocked({ checkout: o.checkout, imported_via: o.imported_via }, lockedYms));
+              const lockOf = (o: any) => ({
+                checkin: o?.checkin, checkout: o?.checkout, imported_via: o?.imported_via });
+              const lockedHere = [...os, ...pfees].some((o: any) => o && isLocked(lockOf(o), lockedYms));
               const lockMsg = lockedHere
-                ? ([...os, ...pfees].map((o: any) => o && lockedMsg(
-                    { checkout: o.checkout, imported_via: o.imported_via }, lockedYms))
+                ? ([...os, ...pfees].map((o: any) => o && lockedMsg(lockOf(o), lockedYms))
                     .find(Boolean) ?? '這一期已經關帳，改不動。')
                 : null;
               const lockKey = `L${i}`;
@@ -2304,8 +2306,9 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                *   （README 坑 A：同一條規則寫在兩個地方，只改了一邊）。
                */
               const frozen = lockedHere && !unlocked[lockKey];
+              // ★ 走 lockYmOf() —— 這裡自己 slice 一次的話，跟守衛用的規則會分家
               const lockYm = [...os, ...pfees]
-                .map((o: any) => (o?.checkout ? String(o.checkout).slice(0, 7).replace('-', '') : ''))
+                .map((o: any) => (o ? lockYmOf(lockOf(o)) : ''))
                 .find((y: string) => y && lockedYms.includes(y as Ym)) ?? '';
               const unlockIds = [...os, ...pfees].map((o: any) => o?.id).filter(Boolean);
               return (
@@ -2449,7 +2452,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                               setPeriodPaid(chunk, false);
                             }}
                             disabled={!!busy}
-                            className="rounded-lg bg-mor-greenlight text-mor-green px-2.5 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">退回未收</button>
+                            className="rounded-lg bg-mor-greenlight text-mor-green px-2.5 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">退回</button>
                         </div>
                       : <div className="flex items-center gap-1.5">
                           {/*
@@ -2755,14 +2758,14 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                         —— 而那不會報錯（README 坑 A）。
                     */}
                     {(() => {
-                      const xFrozen = !!o
-                        && isLocked({ checkout: (o as any).checkout, imported_via: (o as any).imported_via }, lockedYms)
-                        && !unlocked[`X${j}`];
+                      const xo = { checkin: (o as any)?.checkin, checkout: (o as any)?.checkout,
+                        imported_via: (o as any)?.imported_via };
+                      const xFrozen = !!o && isLocked(xo, lockedYms) && !unlocked[`X${j}`];
                       if (!xFrozen) return null;
-                      const xYm = (o as any).checkout ? String((o as any).checkout).slice(0, 7).replace('-', '') : '';
+                      const xYm = lockYmOf(xo);
                       return (
                         <div className="rounded-lg bg-gray-100 text-gray-600 px-2.5 py-1.5 text-[11px] flex items-center gap-2">
-                          <span>🔒 {lockedMsg({ checkout: (o as any).checkout, imported_via: (o as any).imported_via }, lockedYms)}</span>
+                          <span>🔒 {lockedMsg(xo, lockedYms)}</span>
                           {canCollect(myRole)
                             ? <button onClick={() => unlockPeriod(`X${j}`, xYm, [(o as any).id].filter(Boolean))}
                                 disabled={unlocking === `X${j}` || !xYm}
@@ -2773,7 +2776,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                         </div>
                       );
                     })()}
-                    {o && !(isLocked({ checkout: (o as any).checkout, imported_via: (o as any).imported_via }, lockedYms) && !unlocked[`X${j}`]) && (paid
+                    {o && !(isLocked({ checkin: (o as any).checkin, checkout: (o as any).checkout, imported_via: (o as any).imported_via }, lockedYms) && !unlocked[`X${j}`]) && (paid
                       ? <div className="flex items-center gap-1.5">
                           <span className="text-xs text-gray-600">收款日 <input type="date" value={paidAt || ''} onChange={(e) => setPeriodPaidAt(chunk, e.target.value)} className="rounded border border-gray-300 px-1.5 py-0.5 text-xs" /></span>
                           {/*
@@ -2801,7 +2804,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                               setPeriodPaid(chunk, false);
                             }}
                             disabled={!!busy}
-                            className="rounded-lg bg-mor-greenlight text-mor-green px-2.5 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">退回未收</button>
+                            className="rounded-lg bg-mor-greenlight text-mor-green px-2.5 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">退回</button>
                         </div>
                       : <div className="relative">
                           <button

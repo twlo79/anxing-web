@@ -68,6 +68,8 @@ export function prevYmOf(today: string): Ym {
 
 /** 一張訂單（只取判定要用的欄位）。 */
 export type OrderLike = {
+  /** 期別起日。月租單用它判月份 —— 見 `lockYmOf` */
+  checkin?: string | null;
   checkout?: string | null;
   /**
    * `'contract'` = 契約產的月租單。
@@ -75,6 +77,39 @@ export type OrderLike = {
    */
   imported_via?: string | null;
 };
+
+/**
+ * 這張單**算哪個月**。
+ *
+ * ============================================================
+ * 【★★★ 月租單看期別起日，不是退房日】（2026-09-14，migration_251）
+ *
+ * 原本一律看 `checkout`。短租沒問題 —— 住完才算收入。
+ * 但月租單的期間是**租約的月**，不是日曆月:
+ *
+ *     第 1 期　2026/8/25 ~ 2026/9/24
+ *     order_key　LT_3A3_202608        ← 單號說它是八月的
+ *     checkin　　2026-08-25
+ *     checkout　 2026-09-25           ← 退房日在**九月**
+ *
+ * ★★ 所以關了 2026-08 之後，那一期照樣改得動 —— 守衛算出來的是 202609。
+ *   使用者關了八月，看到八月那一期沒鎖:「沒鎖阿」。
+ *
+ * ★ 用 `checkin` 的月份跟 `order_key` 尾巴的 YYYYMM **一定相同** ——
+ *   `gen_contract_orders` 就是拿 `to_char(p_start,'YYYYMM')` 去組鍵的，
+ *   而 `checkin` 就是那個 `p_start`。所以這是「單號說它屬於哪個月」，
+ *   不是另外發明一套算法。
+ *
+ * ★★★ 代價要講清楚:一期跨兩個月時（8/25~9/24），
+ *   營收認列是**兩個月各算一部分**，而這裡只歸到一個月。
+ *   關八月 → 整期鎖住；關九月 → 這一期不受影響。
+ *   以「使用者看到的那張卡屬於哪一期」為準，因為他要鎖的是那張卡。
+ *
+ * ★ 資料庫那份在 migration_251 的 `orders_period_lock_guard()`，
+ *   兩邊必須一模一樣 —— 不一樣的話畫面說鎖住、資料庫放行（或反過來）。
+ */
+export const lockYmOf = (o: OrderLike): Ym =>
+  ((o.imported_via ?? '') === 'contract' ? ymOf(o.checkin) : ymOf(o.checkout));
 
 /**
  * 這張訂單**會不會**被關帳鎖到（不看那個月關了沒）。
@@ -98,7 +133,7 @@ export type OrderLike = {
  * ★ 這一支只管畫面。真正擋住寫入的是那支觸發器。
  */
 export function lockable(o: OrderLike): boolean {
-  return !!ymOf(o.checkout);
+  return !!lockYmOf(o);
 }
 
 /**
@@ -108,7 +143,7 @@ export function lockable(o: OrderLike): boolean {
  */
 export function isLocked(o: OrderLike, lockedYms: Iterable<Ym>): boolean {
   if (!lockable(o)) return false;
-  return new Set(lockedYms).has(ymOf(o.checkout));
+  return new Set(lockedYms).has(lockYmOf(o));
 }
 
 /**
@@ -120,7 +155,7 @@ export function isLocked(o: OrderLike, lockedYms: Iterable<Ym>): boolean {
  */
 export function lockedMsg(o: OrderLike, lockedYms: Iterable<Ym>): string | null {
   if (!isLocked(o, lockedYms)) return null;
-  return `${ymLabel(ymOf(o.checkout))} 已經關帳，這張訂單改不動。`
+  return `${ymLabel(lockYmOf(o))} 已經關帳，這張訂單改不動。`
     // ★ 2026-09-14：開帳權限收到只剩會計與 super_admin（migration_249），
     //   所以訊息要說「請會計」—— 叫主管自己去開，他會發現按鈕按不動
     + '要改的話請會計到權限管理 → 關帳，把那個月打開。';

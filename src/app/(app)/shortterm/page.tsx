@@ -991,8 +991,9 @@ export default function ShortTermPage() {
      *     （CLAUDE.md:錯誤訊息跳在頁面最上方，2026-09-02 記過）。
      */
     {
+      // ★ checkin 要一起傳 —— 月租單算的是**期別起日**那個月（migration_251）
       const lockMsg = lockedMsg(
-        { checkout: edit.checkout, imported_via: edit.imported_via }, lockedYms);
+        { checkin: edit.checkin, checkout: edit.checkout, imported_via: edit.imported_via }, lockedYms);
       if (lockMsg) { alert(lockMsg); return; }
     }
 
@@ -1807,23 +1808,29 @@ export default function ShortTermPage() {
                     **不是把按鈕變灰就算了** —— 灰掉的按鈕不會告訴人為什麼。
                     改成一句話講清楚是哪個月關的、去哪裡開。
                 */}
-                {isLocked({ checkout: d.checkout, imported_via: d.imported_via }, lockedYms) ? (
+                {isLocked({ checkin: d.checkin, checkout: d.checkout, imported_via: d.imported_via }, lockedYms) ? (
                   <div className="flex-1 min-w-[6rem] h-11 rounded-lg bg-gray-100 text-gray-500 text-xs
                                   flex items-center justify-center px-2 text-center leading-tight">
-                    🔒 {ymOf(d.checkout).slice(0, 4)}-{ymOf(d.checkout).slice(4)} 已關帳
+                    🔒 {lockedMsg({ checkin: d.checkin, checkout: d.checkout, imported_via: d.imported_via }, lockedYms)}
                   </div>
                 ) : (
                   <button onClick={() => { setDetail(null); openEdit(d); }}
                     className="flex-1 min-w-[6rem] h-11 rounded-lg bg-mor-slate text-white text-sm font-medium hover:bg-mor-slatedark">編輯</button>
                 )}
-                {!isExempt(d) && (
+                {/*
+                  ★★★ 收款與移房也要跟著鎖（2026-09-14 使用者:「訂單、契約、收款都要鎖」）。
+                    改版前只擋「編輯」，而**收款照樣按得下去** ——
+                    那顆改的是 paid / paid_at / order_payments，跟編輯一樣是動錢。
+                    只擋看起來最像「改資料」的那一顆，是按名字擋不是按性質擋（README 坑 F）。
+                */}
+                {!isExempt(d) && !isLocked({ checkin: d.checkin, checkout: d.checkout, imported_via: d.imported_via }, lockedYms) && (
                   <button onClick={() => {
                     if (!canCollect) return flash(collectDeniedMsg('這筆訂單的款'));
                     setDetail(null); setCollect(d);
                   }}
                     className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-green text-mor-green text-sm font-medium hover:bg-mor-greenlight">收款</button>
                 )}
-                {canMove && (
+                {canMove && !isLocked({ checkin: d.checkin, checkout: d.checkout, imported_via: d.imported_via }, lockedYms) && (
                   <button onClick={() => { setDetail(null); openMove(d); }}
                     className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-green text-mor-green text-sm font-medium hover:bg-mor-greenlight">移房</button>
                 )}
