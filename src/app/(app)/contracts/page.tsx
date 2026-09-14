@@ -20,6 +20,8 @@ import ContractFees, { type Rc } from '@/components/ContractFees';
 import { feeMonthly, leasePeriods, periodOf } from '@/lib/lease';
 import { dueDateOf, resolvePayDay, checkFirstDue, fmtDue, periodRange, fmtPeriodRange, rentMonthCount, checkContractDates } from '@/lib/due-date';
 import { keyBase, onlyKeyOf } from '@/lib/ltKey';
+// 關帳：畫面上擋住的判斷跟資料庫那支守衛走**同一份規則**（migration_249）
+import { isLocked, lockedMsg, type Ym } from '@/lib/period-lock';
 // 「這筆收入算誰的」—— 畫面與存檔共用同一份規則（migration_247）
 import { contractPurpose, purposeLockedByType } from '@/lib/purpose';
 // 一期的應收與收齊判斷都走這支 —— 畫面、確認視窗、收款三處共用同一份算式
@@ -1573,6 +1575,15 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
    *   一期一支查詢的話畫面會一格一格慢慢跳出數字。
    */
   const [payRows, setPayRows] = useState<Record<string, any[]>>({});
+  /*
+   * 已關帳的月份（migration_223/249）。
+   *
+   * ★ 一次撈完、整份留著 —— 十二期就查十二次的話，
+   *   收租視窗一打開會連續閃十二下。
+   * ★★ 撈不到（RLS 擋住、網路斷）就是**空集合** —— 也就是「都沒關帳」。
+   *   寧可讓他按下去被資料庫擋，也不要因為查不到就把整頁鎖死。
+   */
+  const [lockedYms, setLockedYms] = useState<Ym[]>([]);
   /** 展開明細的期別（用該期第一張單的 id 當 key）。一次只開一期。 */
   const [openPays, setOpenPays] = useState<string | null>(null);
 
@@ -1658,7 +1669,9 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
     // 房號空的契約鍵是 LTC_{契約id}_,不是 LT_{房號}_ —— 一律走 keyBase()
     const base = keyBase(c);
     const { data } = await supabase.from('orders')
-      .select('id, order_key, paid, amount, paid_at, imported_via, paid_amount').like('order_key', `${base}%`);
+      // ★ checkout 不能漏 —— 資料庫的關帳守衛就是用**退房日**判月份，
+      //   前端少撈這一欄就判不出哪一期鎖住了（而且不會報錯，只會全部顯示可以按）
+      .select('id, order_key, paid, amount, paid_at, imported_via, paid_amount, checkout').like('order_key', `${base}%`);
     const m: Record<string, any> = {};
     onlyKeyOf(data as any[], base).forEach((o: any) => { m[o.order_key] = o; });
     setExisting(m);
@@ -1688,6 +1701,76 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
     // c.id 也要在相依裡 —— 房號空的契約鍵是靠 id 組的,漏了就會沿用上一張契約的結果
   }, [supabase, c.room, c.id]);
   useEffect(() => { loadExisting(); }, [loadExisting]);
+
+  /*
+   * 已關帳的月份。收租視窗一開就撈一次。
+   *
+   * ★ 失敗不擋畫面 —— 空集合＝「都沒關帳」，最壞的情況是按下去被
+   *   資料庫的守衛擋住（migration_249），那句話本身就說得清楚該找誰。
+   *   反過來（查不到就整頁鎖死）會讓一次網路不順變成「系統壞了」。
+   */
+  useEffect(() => {
+    /*
+     * ★ 用 `await` 不用 `.then(({ data }) => …)` ——
+     *   加了 `.eq()` 之後那條鏈的回傳型別推不出來，
+     *   解構的 `data` 會變成隱含 any，`next build` 直接失敗。
+     *   這個檔案其他地方也都是 `const { data } = await …`。
+     */
+    (async () => {
+      const { data } = await supabase.from('period_lock').select('ym, locked').eq('locked', true);
+      setLockedYms(((data as any[]) ?? []).map((r) => r.ym as Ym));
+    })();
+  }, [supabase]);
+
+  /*
+   * ══════════ 會計在這一期按過「開鎖」了嗎（migration_250）══════════
+   *
+   * ★ 只存在這個視窗的記憶體裡。真正的授權在資料庫的 `period_unlock`，
+   *   這裡只是「按鈕要不要變成可按」——
+   *   就算有人改了這個 state，資料庫那關照樣擋（RLS 是唯一真相）。
+   */
+  const [unlocked, setUnlocked] = useState<Record<string, boolean>>({});
+  const [unlocking, setUnlocking] = useState<string | null>(null);
+
+  /**
+   * 開鎖：只開這一期、只開給按的人自己。
+   *
+   * ★★ `contract_id` 也要寫 —— 「＋加費」與「折讓」是**新增**一張單，
+   *   那時候還沒有 order id，守衛只認得出契約。
+   */
+  async function unlockPeriod(key: string, ym: string, orderIds: string[]) {
+    setUnlocking(key);
+    const { data: u } = await supabase.auth.getUser();
+    const uid = u?.user?.id ?? null;
+    const rows = (orderIds.length ? orderIds : [null as any]).map((oid) => ({
+      user_id: uid, ym, order_id: oid, contract_id: c.id, note: `收租畫面開鎖・${key}`,
+    }));
+    const { error } = await supabase.from('period_unlock').insert(rows);
+    setUnlocking(null);
+    if (error) {
+      // ★ 訊息要說得出「為什麼不行」。RLS 擋下來時 PostgREST 講的是 policy 名稱
+      alert('開鎖失敗:' + error.message + '\n\n只有會計能開鎖。');
+      return;
+    }
+    setUnlocked((m) => ({ ...m, [key]: true }));
+  }
+
+  /*
+   * ══════════ 離開就鎖回去（使用者 2026-09-14 指定）══════════
+   *
+   * ★★★ 這是**兩層**，缺一不可:
+   *     這裡的 delete   → 正常關視窗時立刻失效
+   *     expires_at 30 分 → 瀏覽器直接關掉、當機、斷線時的兜底
+   *
+   *   只靠前端的話，使用者把分頁關掉那把鎖就永遠開著，
+   *   而畫面上沒有任何地方看得出來 —— 那正是 223 那條
+   *   「被打開過的月份不自動關回去」造成的同一種問題。
+   */
+  useEffect(() => () => {
+    // ★ 同上:不解構回傳值，免得又推不出型別
+    void supabase.from('period_unlock').delete()
+      .eq('contract_id', c.id).like('note', '收租畫面開鎖・%');
+  }, [supabase, c.id]);
 
   /**
    * 只改本地那幾期的欄位,不整份重新載入。
@@ -1875,7 +1958,8 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
     // 固定加費不給在期別列上刪,刪了觸發器下次又會長回來。
     // paid 是「與租金一起收」需要的:確認收款要把該期的加費一併標記。
     const { data } = await supabase.from('orders')
-      .select('id, checkin, amount, fee_type, item_name, note, imported_via, paid, order_key, paid_amount')
+      // ★ checkout 要撈 —— 關帳鎖是用退房日判月份的（migration_249）
+      .select('id, checkin, checkout, amount, fee_type, item_name, note, imported_via, paid, order_key, paid_amount')
       .eq('contract_id', c.id).eq('source', 'oneoff').order('checkin');
     setFeeRows(data ?? []);
 
@@ -2190,6 +2274,40 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                 .flatMap((x: any) => payRows[x?.id] ?? [])
                 .sort((a: any, b: any) => String(a.paid_on).localeCompare(String(b.paid_on)));
               const payKey = os[0]?.id ?? `p${i}`;
+              /*
+               * ══════════ 這一期關帳了沒（2026-09-14 使用者指定）══════════
+               *
+               * ★★★ 使用者:「已關帳的不可以去改了，所有都不行。是 UI 就要擋住修改需求。」
+               *
+               *   資料庫那支守衛（migration_249）已經擋得住，但它是**按下去才擋** ——
+               *   按鈕看起來能按、按了跳一個錯誤，使用者會以為是系統壞了。
+               *
+               * ★★ 判斷走 `isLocked()`，跟 `orders_period_lock_guard()` **同一份規則**
+               *   （都是看退房日落在哪個月）。自己在這裡寫一份的話，
+               *   會出現「畫面讓你按、資料庫擋下來」或反過來的矛盾（README 坑 A）。
+               *
+               * ★ 一期可能跨好幾張單（季繳、年繳）。**任何一張**被鎖就整期鎖 ——
+               *   收款是整期一起做的，放行一半只會做出半套資料。
+               */
+              const lockedHere = [...os, ...pfees].some((o: any) => o
+                && isLocked({ checkout: o.checkout, imported_via: o.imported_via }, lockedYms));
+              const lockMsg = lockedHere
+                ? ([...os, ...pfees].map((o: any) => o && lockedMsg(
+                    { checkout: o.checkout, imported_via: o.imported_via }, lockedYms))
+                    .find(Boolean) ?? '這一期已經關帳，改不動。')
+                : null;
+              const lockKey = `L${i}`;
+              /*
+               * ★★★ 這一期現在能不能編輯。
+               *   **一個變數，所有按鈕都看它** —— 每顆按鈕各判一次的話，
+               *   哪天多一顆就會漏掉一顆，而漏掉的那顆不會報錯
+               *   （README 坑 A：同一條規則寫在兩個地方，只改了一邊）。
+               */
+              const frozen = lockedHere && !unlocked[lockKey];
+              const lockYm = [...os, ...pfees]
+                .map((o: any) => (o?.checkout ? String(o.checkout).slice(0, 7).replace('-', '') : ''))
+                .find((y: string) => y && lockedYms.includes(y as Ym)) ?? '';
+              const unlockIds = [...os, ...pfees].map((o: any) => o?.id).filter(Boolean);
               return (
                 <div key={i} className={`rounded-xl border px-4 py-2.5 text-sm ${allPaid ? 'border-mor-greenlight bg-mor-greenlight/30' : 'border-mor-line'}`}>
                   <div className="flex items-center justify-between">
@@ -2264,13 +2382,48 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                           <div className="mt-1 rounded-lg bg-amber-50 text-amber-800 px-2 py-1 text-[11px] leading-relaxed">
                             與契約不符：契約現值 {m.months} × ${fmt(m.rent)} = <b>${fmt(m.expect)}</b>，這一期記的是 ${fmt(m.now)}
                             {m.paidCount > 0 && <span className="text-amber-700/70">（{m.paidCount} 個月已收款，所以沒有自動更新）</span>}
-                            <button onClick={() => rebuildPeriod(chunk)} disabled={!!busy}
-                              className="ml-2 underline font-medium hover:text-amber-900 disabled:opacity-40">重算應收</button>
+                            {/* ★ 重算會改金額，跟收款同一類 —— 關帳就不給按 */}
+                            <button onClick={() => rebuildPeriod(chunk)} disabled={!!busy || frozen}
+                              title={frozen ? (lockMsg ?? '') : ''}
+                              className="ml-2 underline font-medium hover:text-amber-900 disabled:opacity-40 disabled:no-underline">重算應收</button>
                           </div>
                         );
                       })()}
                     </div>
-                    {os.length > 0 && (allPaid
+                    {/*
+                      ══════════ 已關帳的橫幅 ＋ 開鎖（2026-09-14 使用者指定）══════════
+
+                      ★★★ 使用者:「是 UI 就要擋住修改需求。」
+                        資料庫那層擋得住（migration_249/250），但那是**按下去才擋** ——
+                        按鈕看起來能按、按了跳錯誤，使用者會以為系統壞了。
+
+                      ★★ 鎖**所有人都看得到**，但只有會計按得動。
+                        藏起來的話管家不知道這件事做得到，只會改用 LINE 問，
+                        而那通訊息沒有人記得回（跟 lib/collect-perm.ts 同一個道理）。
+
+                      ★ 開了鎖之後橫幅不會消失，換成「開著」——
+                        不然他改完會忘記自己開過，而那正是要避免的狀態。
+                    */}
+                    {lockedHere && (
+                      <div className={`mb-2 rounded-lg px-2.5 py-1.5 text-[11px] leading-relaxed flex items-center justify-between gap-2 ${frozen ? 'bg-gray-100 text-gray-600' : 'bg-amber-50 text-amber-800'}`}>
+                        <span>
+                          {frozen
+                            ? <>🔒 {lockMsg}</>
+                            : <>🔓 這一期<b>已開鎖</b>，改得動 —— 關掉這個視窗就自動鎖回去。</>}
+                        </span>
+                        {frozen && (
+                          canCollect(myRole)
+                            ? <button
+                                onClick={() => unlockPeriod(lockKey, lockYm, unlockIds)}
+                                disabled={unlocking === lockKey || !lockYm}
+                                className="shrink-0 rounded-lg border border-gray-400 px-2.5 py-1 text-[11px] font-medium hover:bg-white disabled:opacity-40">
+                                {unlocking === lockKey ? '開鎖中⋯' : '🔓 開鎖'}
+                              </button>
+                            : <span className="shrink-0 text-gray-400">只有會計能開鎖</span>
+                        )}
+                      </div>
+                    )}
+                    {os.length > 0 && !frozen && (allPaid
                       ? <div className="flex items-center gap-1.5">
                           <span className="text-xs text-gray-600">收款日 <input type="date" value={paidAt || ''} onChange={(e) => setPeriodPaidAt(chunk, e.target.value)} className="rounded border border-gray-300 px-1.5 py-0.5 text-xs" /></span>
                           {/*
@@ -2523,8 +2676,17 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                       </div>
                     ) : (
                       <div className="flex items-center gap-3">
-                        <button onClick={() => setFeeDraft({ pi: i, date: `${first.y}-${String(first.m).padStart(2, '0')}-01`, label: '電費', amount: 0 })} className="text-xs text-mor-blue underline">+ 加費(認列營收)</button>
-                        <button onClick={() => setConcDraft({ pi: i, date: `${first.y}-${String(first.m).padStart(2, '0')}-01`, amount: 0, note: '', baseAmount: amount, priorDisc: discTotal })} className="text-xs text-orange-600 underline">− 折讓</button>
+                        {/*
+                          ★ 加費與折讓都是**新增一張帶 contract_id 的訂單** ——
+                            migration_250 的 INSERT 守衛擋的就是這種。
+                            前端一起擋，不然按下去才跳錯誤。
+                        */}
+                        <button onClick={() => setFeeDraft({ pi: i, date: `${first.y}-${String(first.m).padStart(2, '0')}-01`, label: '電費', amount: 0 })}
+                          disabled={frozen} title={frozen ? (lockMsg ?? '') : ''}
+                          className="text-xs text-mor-blue underline disabled:text-gray-400 disabled:no-underline disabled:cursor-not-allowed">+ 加費(認列營收)</button>
+                        <button onClick={() => setConcDraft({ pi: i, date: `${first.y}-${String(first.m).padStart(2, '0')}-01`, amount: 0, note: '', baseAmount: amount, priorDisc: discTotal })}
+                          disabled={frozen} title={frozen ? (lockMsg ?? '') : ''}
+                          className="text-xs text-orange-600 underline disabled:text-gray-400 disabled:no-underline disabled:cursor-not-allowed">− 折讓</button>
                       </div>
                     )}
                   </div>
@@ -2587,7 +2749,31 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                         );
                       })()}
                     </div>
-                    {o && (paid
+                    {/*
+                      ★ 延展期別跟一般期別**同一套規則**（migration_249/250）。
+                        漏掉這一塊的話，關帳之後一般期別鎖住、延展期別照樣改得動
+                        —— 而那不會報錯（README 坑 A）。
+                    */}
+                    {(() => {
+                      const xFrozen = !!o
+                        && isLocked({ checkout: (o as any).checkout, imported_via: (o as any).imported_via }, lockedYms)
+                        && !unlocked[`X${j}`];
+                      if (!xFrozen) return null;
+                      const xYm = (o as any).checkout ? String((o as any).checkout).slice(0, 7).replace('-', '') : '';
+                      return (
+                        <div className="rounded-lg bg-gray-100 text-gray-600 px-2.5 py-1.5 text-[11px] flex items-center gap-2">
+                          <span>🔒 {lockedMsg({ checkout: (o as any).checkout, imported_via: (o as any).imported_via }, lockedYms)}</span>
+                          {canCollect(myRole)
+                            ? <button onClick={() => unlockPeriod(`X${j}`, xYm, [(o as any).id].filter(Boolean))}
+                                disabled={unlocking === `X${j}` || !xYm}
+                                className="shrink-0 rounded-lg border border-gray-400 px-2.5 py-1 text-[11px] font-medium hover:bg-white disabled:opacity-40">
+                                {unlocking === `X${j}` ? '開鎖中⋯' : '🔓 開鎖'}
+                              </button>
+                            : <span className="shrink-0 text-gray-400">只有會計能開鎖</span>}
+                        </div>
+                      );
+                    })()}
+                    {o && !(isLocked({ checkout: (o as any).checkout, imported_via: (o as any).imported_via }, lockedYms) && !unlocked[`X${j}`]) && (paid
                       ? <div className="flex items-center gap-1.5">
                           <span className="text-xs text-gray-600">收款日 <input type="date" value={paidAt || ''} onChange={(e) => setPeriodPaidAt(chunk, e.target.value)} className="rounded border border-gray-300 px-1.5 py-0.5 text-xs" /></span>
                           {/*
