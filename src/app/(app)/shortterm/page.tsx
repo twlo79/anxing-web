@@ -99,6 +99,8 @@ type Order = {
   fx_revenue?: { cur: string; amt: number; rate: number }[];
   fx_deposit?: { cur: string; amt: number }[];
   move_group?: string | null;
+  /** 移房過程「B01>B03」（migration_246）。null = 沒移過 */
+  move_chain?: string | null;
   properties?: { name: string } | null;
 };
 type Estate = { id: string; name: string; sort: number; active: boolean };
@@ -124,7 +126,20 @@ type Fee = {
   deposit_id?: string | null;
 };
 type Stay = { room: string; estateId: string | null; propertyId: string | null; from: string };
-type MoveState = { grp: string; checkin: string; checkout: string; totalNights: number; totalAmount: number; guest: string | null; source: string; account: string | null; stays: Stay[] };
+type MoveState = {
+  grp: string; checkin: string; checkout: string;
+  totalNights: number; totalAmount: number;
+  guest: string | null; source: string; account: string | null; stays: Stay[];
+  /**
+   * 打開視窗**當下**的房號與備註（migration_246）。
+   *
+   * ★★★ `stays` 會被使用者改掉，所以「原本住哪」只能在開視窗時記下來。
+   *   少了它就算不出 `B01>B03` 的第一段 —— 而那正是使用者要看的東西。
+   */
+  origRooms: string[];
+  /** 原本的備註。★ 移房要**追加**不是覆蓋（見 doMove） */
+  origNote: string | null;
+};
 
 /*
  * 這一頁列哪些來源。
@@ -1009,7 +1024,13 @@ export default function ShortTermPage() {
     const checkin = list[0].checkin, checkout = list[list.length - 1].checkout;
     const totalNights = Math.max(1, Math.round((new Date(checkout).getTime() - new Date(checkin).getTime()) / 86400000));
     const totalAmount = list.reduce((a, x) => a + Number(x.amount || 0), 0);
-    setMove({ grp, checkin, checkout, totalNights, totalAmount, guest: o.guest_name, source: o.source, account: o.account, stays });
+    setMove({
+      grp, checkin, checkout, totalNights, totalAmount,
+      guest: o.guest_name, source: o.source, account: o.account, stays,
+      // ★ 原本住哪、原本的備註 —— 兩個都會被下面的編輯蓋掉，先存起來
+      origRooms: list.map((x) => (x.property_raw ?? '').trim()).filter(Boolean),
+      origNote: (o.note ?? null),
+    });
   }
   function moveWithAmounts(m: MoveState) {
     const segs = m.stays.map((s, i) => {
@@ -1034,7 +1055,6 @@ export default function ShortTermPage() {
     const err = moveErr(move);
     if (err) return flash(err);
     const segs = moveWithAmounts(move);
-    const chain = segs.map((s) => s.room).join('>');
     const grp = move.grp, isMulti = segs.length > 1;
     const s0 = segs[0];
     /*
@@ -1067,8 +1087,42 @@ export default function ShortTermPage() {
       }
     }
 
+    /*
+     * ★★★ 完整的移房鏈（migration_246）。
+     *
+     *   `chain` 只有**這次視窗裡的那幾段**。原本住哪不在裡面 ——
+     *   所以「只改房號、不拆段」的情況（B01 → B03）算出來的 chain
+     *   是「B03」，一段而已，看不出移過房。
+     *
+     * ★★ 把打開視窗當下的房號接在前面，重複的去掉:
+     *     B01 → B03          → ['B01','B03']
+     *     B01 → B01>B03（拆段）→ ['B01','B03']   （第一段沒變，不重複記）
+     */
+    const fullChain: string[] = [];
+    for (const r of [...(move.origRooms ?? []), ...segs.map((x) => x.room)]) {
+      const room = (r ?? '').trim();
+      if (room && room !== fullChain[fullChain.length - 1]) fullChain.push(room);
+    }
+    const moved = fullChain.length > 1;
+    const chainText = fullChain.join('>');
+
     const patch: any = { estate_id: s0.estateId, property_id: s0.propertyId, property_raw: s0.room, checkin: s0.from, checkout: s0.to, nights: s0.nights, amount: s0.amount, move_group: isMulti ? grp : null };
-    if (isMulti) patch.note = `移房 ${chain}`;
+
+    if (moved) {
+      patch.move_chain = chainText;
+      /*
+       * ★★★ 備註**追加**，不是覆蓋（2026-09-14 使用者指定）。
+       *
+       *   原本這裡是 `patch.note = \`移房 ${chain}\`` —— 直接蓋掉。
+       *   而備註是使用者手打的地方（Jasmine 那筆寫著「舊舊B1，移到B5」），
+       *   那句話是他自己的判斷，系統不該擦掉，而且**擦掉不會有任何提示**。
+       *
+       * ★★ 已經有同一條鏈就不再加一次 —— 移房視窗按兩次不該長出兩行。
+       */
+      const line = `移房 ${chainText}`;
+      const prev = (move.origNote ?? '').trim();
+      patch.note = prev.includes(line) ? prev : (prev ? `${prev}\n${line}` : line);
+    }
     const { error: e1 } = await supabase.from('orders').update(patch).eq('id', grp);
     if (e1) return flash('移房失敗:' + e1.message);
     // 硬刪除,不進回收桶 —— 移房是「把舊分段拆掉重組」,下面馬上重建。
@@ -1076,7 +1130,7 @@ export default function ShortTermPage() {
     await supabase.from('orders').delete().eq('move_group', grp).neq('id', grp);
     for (let i = 1; i < segs.length; i++) {
       const s = segs[i];
-      const { error } = await supabase.from('orders').insert({ order_key: `MOVE_${String(grp).slice(0, 8)}_${i}_${Date.now()}`, source: move.source, estate_id: s.estateId, property_id: s.propertyId, property_raw: s.room, guest_name: move.guest, checkin: s.from, checkout: s.to, nights: s.nights, amount: s.amount, deposit: 0, account: move.account, note: `移房 ${chain}`, move_group: grp, imported_via: 'manual' });
+      const { error } = await supabase.from('orders').insert({ order_key: `MOVE_${String(grp).slice(0, 8)}_${i}_${Date.now()}`, source: move.source, estate_id: s.estateId, property_id: s.propertyId, property_raw: s.room, guest_name: move.guest, checkin: s.from, checkout: s.to, nights: s.nights, amount: s.amount, deposit: 0, account: move.account, note: `移房 ${chainText}`, move_chain: chainText, move_group: grp, imported_via: 'manual' });
       if (error) return flash('建立分段失敗:' + error.message);
     }
     flash(isMulti ? `已移房,拆成 ${segs.length} 段` : '已更新'); setMove(null); load();
@@ -1094,6 +1148,34 @@ export default function ShortTermPage() {
    * 星號則是一開始就有：那是「這格待會要填」的預告，不是錯誤。
    */
   const [tried, setTried] = useState(false);
+
+  /**
+   * 房源那一格：房號 ＋（移過房的話）標籤與過程。
+   *
+   * ★★ 標籤與鏈**放在一起**（2026-09-14 使用者指定）——
+   *   只有標籤看不出移去哪，只有鏈看不出這是一件「發生過的事」。
+   *
+   * ★ 鏈是 `move_chain` 讀來的，不是從備註解析的 —— 備註是使用者
+   *   自由編輯的欄位，拿它當結構化資料哪天會安靜地不對（migration_246）。
+   */
+  function RoomCell({ o, className }: { o: Order; className?: string }) {
+    const chain = (o.move_chain ?? '').trim();
+    return (
+      <>
+        <span className={`inline-flex items-center gap-1 ${className ?? ''}`}>
+          <span className="truncate">{o.property_raw ?? o.properties?.name ?? '—'}</span>
+          {chain && (
+            <span className="shrink-0 rounded bg-mor-bluelight text-mor-slate px-1.5 py-0.5 text-[11px] font-medium">
+              移房
+            </span>
+          )}
+        </span>
+        {chain && (
+          <div className="text-[11px] text-mor-slate/80 tabular-nums whitespace-nowrap">{chain}</div>
+        )}
+      </>
+    );
+  }
 
   function blank(): Order { return { id: '', order_key: '', source: 'private', estate_id: null, property_id: null, property_raw: '', guest_name: '', checkin: '', checkout: '', nights: 0, amount: 0, deposit: 0, account: null, note: '', fx_revenue: [], fx_deposit: [], invoice_required: false, invoice_title: '', invoice_tax_id: '' }; }
 
@@ -1374,7 +1456,7 @@ export default function ShortTermPage() {
                       SRC_COLOR[o.source] ?? 'bg-gray-100 text-gray-600'}`}>
                       {SRC_LABEL[o.source] ?? o.source}
                     </span>
-                    <span className="font-medium truncate">{o.property_raw ?? '—'}</span>
+                    <RoomCell o={o} className="font-medium min-w-0" />
                   </div>
                   <div className="text-[11px] text-gray-600 mt-1 truncate">{o.guest_name ?? '—'}</div>
                   <div className="text-[11px] text-gray-400 mt-0.5 tabular-nums">
@@ -1469,7 +1551,7 @@ export default function ShortTermPage() {
                     ? SAVED_HL : 'hover:bg-mor-bluelight/30'}`}>
                 <td className="px-3 py-2 whitespace-nowrap"><span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${SRC_COLOR[o.source]}`}>{SRC_LABEL[o.source] ?? o.source}</span></td>
                 <td className="px-3 py-2 whitespace-nowrap">
-                  <div>{o.property_raw ?? o.properties?.name ?? '—'}</div>
+                  <RoomCell o={o} />
                   <div className="text-[11px] text-gray-400">{o.estate_id ? estateName[o.estate_id] ?? '' : ''}</div>
                 </td>
                 <td className="px-3 py-2 whitespace-nowrap">
@@ -2213,7 +2295,33 @@ export default function ShortTermPage() {
               })}
               <button type="button" onClick={addStay} className="text-xs text-mor-blue underline self-start">+ 增加移房</button>
               {err && <p className="text-xs text-red-500">{err}</p>}
-              <p className="text-xs text-gray-400">押金留在第 1 段。各段各自認列到應收,備註「移房 {segs.map((s) => s.room || '?').join('>')}」。</p>
+              {/*
+                ★★★ 這一行以前是**無條件**印的（2026-09-14 修）:
+                  「各段各自認列到應收，備註『移房 B03』」——
+                  而程式只有在**兩段以上**才寫備註（`if (isMulti)`）。
+                  使用者只改房號、不拆段的時候，畫面承諾了一件不會發生的事，
+                  他回報「沒備註阿」。**畫面說的話要跟程式做的事一致。**
+              */}
+              {(() => {
+                // ★ 跟 doMove 同一套算法：原本住哪 ＋ 這次的各段，去掉重複
+                const preview: string[] = [];
+                for (const r of [...(move.origRooms ?? []), ...segs.map((x) => x.room)]) {
+                  const room = (r ?? '').trim();
+                  if (room && room !== preview[preview.length - 1]) preview.push(room);
+                }
+                const chainText = preview.join('>');
+                return (
+                  <p className="text-xs text-gray-400">
+                    {segs.length > 1
+                      ? '押金留在第 1 段。各段各自認列到應收。'
+                      : '只改房號，不會拆段、金額不變。'}
+                    {preview.length > 1
+                      ? <>備註會<b className="text-gray-500">加上一行</b>「移房 {chainText}」——
+                        原本的備註留著，不會被蓋掉。</>
+                      : '房號沒有變，不會動到備註。'}
+                  </p>
+                );
+              })()}
             </div>
             <div className="sticky bottom-0 bg-white border-t border-mor-line px-6 py-3 flex justify-end gap-2">
               <button onClick={() => setMove(null)} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>
