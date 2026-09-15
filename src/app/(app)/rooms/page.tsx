@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { fetchAll } from '@/lib/fetch-all';
 import { FilterBar, Field, FilterSelect, FilterSearch, FilterClear, FilterCount } from '@/lib/filters';
@@ -69,6 +69,17 @@ export default function RoomStatusPage() {
   const [stays, setStays] = useState<Stay[]>([]);
   const [loading, setLoading] = useState(true);
 
+  /*
+   * ★★ 一進來就選好物業（使用者 2026-09-15：「預設物業選正隆」）。
+   *   排序第一個 —— 不是把「正隆」寫死在這裡。多一個物業的那天，
+   *   把它的 `sort` 調到前面就好，不用再改一次程式。
+   *
+   * ★ `load` 每換一次月份就會跑，所以只認第一次 ——
+   *   不然使用者切到「全部」再換個月份，畫面會自己跳回正隆。
+   */
+  const defaulted = useRef(false);
+  const defEst = estates[0]?.name ?? '';
+
   const days = daysInMonth(ym);
   const today = todayStr();
 
@@ -87,6 +98,10 @@ export default function RoomStatusPage() {
     const estById: Record<string, Est> = {};
     estList.forEach((e) => { estById[e.id] = e; });
     setEstates(estList);
+    if (!defaulted.current && estList.length) {
+      defaulted.current = true;
+      setEstF(estList[0].name);
+    }
 
     const allRooms: Room[] = ((ps ?? []) as any[]).map((p) => ({
       name: p.name as string,
@@ -169,7 +184,11 @@ export default function RoomStatusPage() {
     .map((x) => ({ room: x.room.name, days: overlaps(x.stays, ym) }))
     .filter((x) => x.days.length), [visible, ym]);
 
-  const active = !!(estF || kw || only);
+  /*
+   * ★ 預設的那個物業**不算篩選** —— 算的話篩選列一進來就亮著、
+   *   「清除」永遠可按，而按下去什麼都沒變（它本來就是預設值）。
+   */
+  const active = !!((estF && estF !== defEst) || kw || only);
 
   return (
     <div>
@@ -208,8 +227,9 @@ export default function RoomStatusPage() {
           </div>
         </Field>
         {/* ★ 清除也要把輸入框清掉 —— 只清 kw 的話框裡還留著字，看起來像沒生效 */}
+        {/* ★ 清除是回到「預設」，不是回到「全部」 */}
         <FilterClear active={active} onClear={() => {
-          setEstF(''); setKw(''); setKwInput(''); setOnly('');
+          setEstF(defEst); setKw(''); setKwInput(''); setOnly('');
         }} />
       </FilterBar>
 
@@ -251,14 +271,30 @@ export default function RoomStatusPage() {
             <tr>
               <th className="sticky left-0 top-0 z-30 bg-mor-sand border-b border-r border-mor-line
                              min-w-[150px] max-w-[150px] px-2.5 py-1.5 text-left font-semibold">房源</th>
+              {/*
+                ★★★ 「今天」畫在**表頭**，不是畫在格子上。
+                  原本是每一格 `c.day === today` 就加一條藍色左框 ——
+                  但有人住的那幾天會被合併成**一個** `td`（`colSpan`），
+                  那個 td 的 `day` 是**起日**不是今天，所以條件永遠不成立:
+                  結果只有空房那幾列畫得出來，看起來就是一條來路不明的藍線
+                  （使用者 2026-09-15：「中間藍色的是甚麼」）。
+
+                  表頭沒有合併問題，而且是 sticky 的 —— 捲到哪裡都看得到。
+                  「今天」兩個字取代星期，所以高度沒變。
+              */}
               {Array.from({ length: days }, (_, i) => i + 1).map((d) => {
                 const day = ymd(ym, d);
                 const w = weekdayOf(day);
+                const isToday = day === today;
                 return (
-                  <th key={d} className={`sticky top-0 z-20 bg-mor-sand border-b border-r border-mor-line
-                      min-w-[42px] py-1 text-center font-semibold ${isWeekend(day) ? 'text-[#C25B5B]' : ''}`}>
+                  <th key={d} className={`sticky top-0 z-20 border-b border-r border-mor-line
+                      min-w-[42px] py-1 text-center font-semibold
+                      ${isToday ? 'bg-mor-slate text-white'
+                                : `bg-mor-sand ${isWeekend(day) ? 'text-[#C25B5B]' : ''}`}`}>
                     {d}
-                    <div className="font-normal text-[10px] opacity-70">{WD[w]}</div>
+                    <div className={`font-normal text-[10px] ${isToday ? 'opacity-100' : 'opacity-70'}`}>
+                      {isToday ? '今天' : WD[w]}
+                    </div>
                   </th>
                 );
               })}
@@ -275,8 +311,7 @@ export default function RoomStatusPage() {
                 </td>
                 {cells.map((c: Cell) => {
                   const cls = `relative border-b border-r border-mor-line min-w-[42px]
-                    ${isWeekend(c.day) ? 'bg-mor-bg/50' : 'bg-white'}
-                    ${c.day === today ? 'shadow-[inset_2px_0_0_#41689B]' : ''}`;
+                    ${isWeekend(c.day) ? 'bg-mor-bg/50' : 'bg-white'}`;
                   if (c.type === 'free') return <td key={c.day} className={cls} />;
                   return (
                     <td key={c.day} colSpan={c.span} className={cls}>
