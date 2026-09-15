@@ -57,7 +57,7 @@ const todayStr = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
-type Est = { id: string; name: string; sort: number | null };
+type Est = { id: string; name: string; sort: number | null; active: boolean };
 
 export default function RoomStatusPage() {
   const supabase = useMemo(() => createClient(), []);
@@ -95,27 +95,47 @@ export default function RoomStatusPage() {
     const to = ymd(ym, daysInMonth(ym));
 
     const [{ data: es }, { data: ps }] = await Promise.all([
-      supabase.from('estates').select('id, name, sort').order('sort'),
-      // ★ 停用的房源不畫（使用者 2026-09-15：「物業只有正隆」）
+      supabase.from('estates').select('id, name, sort, active').order('sort'),
+      /*
+       * ★ 停用的房源不畫（使用者 2026-09-15：「物業只有正隆」）。
+       * ★★ 取消勾「排房表」的也不畫（migration_255）——
+       *   2B10 那種沒在出租、但支出記在它頭上的房源，
+       *   停用會讓它從房務、清潔、採購一起消失，而支出還要繼續記。
+       *   所以是兩個開關，不是一個。
+       */
       supabase.from('properties').select('id, name, estate_id')
-        .eq('active', true).order('name'),
+        .eq('active', true).eq('show_in_room_calendar', true).order('name'),
     ]);
-    const estList = (es ?? []) as Est[];
+    /*
+     * ★★★ 停用的物業不畫（使用者 2026-09-15：「我只需要這一頁不要顯示」）。
+     *   全站其他頁（採購、房務、評價、稅務、押金、清潔）本來就都
+     *   `.eq('active', true)` —— 只有這一頁漏掉，所以他明明關了還是看得到。
+     *   這是漏看現成的開關，不是缺一個新開關。
+     *
+     * ★★ 撈全部的物業，再自己篩 —— 不是在 query 上 `.eq(...)`。
+     *   停用的物業要能跟「根本沒設物業」分開:
+     *   前者是使用者自己按的，安靜不畫就對了；
+     *   後者是漏填，要跳出來叫他去補。查詢就篩掉的話兩者會混在一起，
+     *   而混在一起的結果是那條提示每天叫，久了就沒人看。
+     */
+    const estAll = (es ?? []) as Est[];
     const estById: Record<string, Est> = {};
-    estList.forEach((e) => { estById[e.id] = e; });
-    setEstates(estList);
-    if (!defaulted.current && estList.length) {
+    estAll.forEach((e) => { estById[e.id] = e; });
+
+    const shown = estAll.filter((e) => e.active);
+    setEstates(shown);
+    if (!defaulted.current && shown.length) {
       defaulted.current = true;
-      setEstF(estList[0].name);
+      setEstF(shown[0].name);
     }
 
-    const allRooms: Room[] = ((ps ?? []) as any[]).map((p) => ({
-      name: p.name as string,
-      estate: estById[p.estate_id]?.name ?? null,
-      estateSort: estById[p.estate_id]?.sort ?? null,
+    const ownEst = ((ps ?? []) as any[]).map((p) => ({
+      name: p.name as string, est: estById[p.estate_id] as Est | undefined,
     }));
-    setRooms(allRooms.filter((r) => r.estate));
-    setNoEstate(allRooms.filter((r) => !r.estate).map((r) => r.name));
+    setRooms(ownEst
+      .filter((r) => r.est?.active)
+      .map((r) => ({ name: r.name, estate: r.est!.name, estateSort: r.est!.sort })));
+    setNoEstate(ownEst.filter((r) => !r.est).map((r) => r.name));
 
     /*
      * ★★ 撈的是「跟這個月有交集」的，不是「起日在這個月」的 ——

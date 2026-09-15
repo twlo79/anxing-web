@@ -32,6 +32,14 @@ type Property = {
    */
   airbnb_listing_id: string | null;
   /**
+   * 排不排進「房源狀態」那張日曆（migration_255）。
+   *
+   * ★ 跟 `active` 是兩件事。2B10 沒在出租但支出記在它頭上 ——
+   *   停用會讓它從房務、清潔、採購一起消失，而支出還要繼續記。
+   *   這一欄管的範圍窄到一句話：**那張日曆畫不畫它**。
+   */
+  show_in_room_calendar?: boolean;
+  /**
    * 包含這個房源的上層房源。
    *
    *     開封2-1 → 開封2F → 開封整棟
@@ -361,7 +369,7 @@ export default function AdminPage() {
     const { data: pf } = await supabase.from('profiles').select('id, name, role, active');
     const { data: es } = await supabase.from('estates').select('*').order('sort').order('name');
     const { data: pr } = await supabase.from('properties')
-      .select('id, name, estate_id, airbnb_listing_id, parent_property_id, beds, clean_points, clean_price, active').order('name');
+      .select('id, name, estate_id, airbnb_listing_id, parent_property_id, beds, clean_points, clean_price, active, show_in_room_calendar').order('name');
     const { data: pa } = await supabase.from('payment_accounts').select('*').order('sort').order('code');
     const { data: lb } = await supabase.from('hk_labor_cost')
       .select('id, estate_id, property_id, monthly_amount, active, note');
@@ -397,6 +405,21 @@ export default function AdminPage() {
   }, [role, loadingProfile, load]);
 
   function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 2500); }
+
+  /*
+   * 這個物業的房源，**不排房的沉到最下面**（使用者 2026-09-15 選的 C 案）。
+   *
+   * ★ 上面那一段就是「真的會排的房」—— 平常看的是短的那一段。
+   * ★★ 代價寫在這裡給以後的自己:剛取消勾選的那一間會跳到最下面，
+   *   想反悔要捲下去找。這是使用者知情後選的，不是疏忽。
+   */
+  const propsOfEstate = useMemo(() => {
+    const xs = properties.filter((p) => p.estate_id === selEstate);
+    const on = xs.filter((p) => p.show_in_room_calendar !== false);
+    const off = xs.filter((p) => p.show_in_room_calendar === false);
+    return [...on, ...off];
+  }, [properties, selEstate]);
+  const propsOffCount = propsOfEstate.filter((p) => p.show_in_room_calendar === false).length;
 
   // ---- 編輯紀錄 ----
   // 只在切到那個分頁時才載,而且限 300 筆 —— 這張表會一直長,
@@ -1017,6 +1040,26 @@ export default function AdminPage() {
     flash('已更新'); load();
   }
   /**
+   * 整個物業的房源一起排／一起不排（migration_255）。
+   *
+   * ★ 一次 update 打完，不是前端跑迴圈 ——
+   *   74 間分 74 次送，斷在第 30 間的話畫面上一半勾一半沒勾，
+   *   而使用者看到的只是「有些沒生效」。
+   *
+   * ★★ 要確認。這一顆會動到幾十列，而按錯之後要一間一間點回來。
+   */
+  async function setEstateCalendar(on: boolean) {
+    const rows = properties.filter((p) => p.estate_id === selEstate);
+    if (!rows.length) return;
+    const est = estates.find((e) => e.id === selEstate)?.name ?? '這個物業';
+    if (!confirm(`把「${est}」的 ${rows.length} 間房源全部${on ? '排進' : '移出'}排房表?\n\n`
+      + '只影響「房源狀態」那張日曆,支出與其他頁面不受影響。')) return;
+    const { error } = await supabase.from('properties')
+      .update({ show_in_room_calendar: on }).in('id', rows.map((p) => p.id));
+    if (error) return flash('更新失敗:' + error.message);
+    flash(`已更新 ${rows.length} 間`); load();
+  }
+  /**
    * 把 listing_id 從原本的房源搬過來。
    *
    * 走 RPC 而不是前端做兩次 update —— 第一次成功、第二次失敗
@@ -1620,7 +1663,21 @@ export default function AdminPage() {
           <select value={selEstate} onChange={(e) => setSelEstate(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
             {estates.map((e) => <option key={e.id} value={e.id}>{e.name}{e.active ? '' : '(停用)'}</option>)}
           </select>
-          <span className="text-xs text-gray-400">共 {properties.filter((p) => p.estate_id === selEstate).length} 間</span>
+          <span className="text-xs text-gray-400">
+            共 {propsOfEstate.length} 間
+            {propsOffCount > 0 && <span className="text-amber-700">・{propsOffCount} 間不排房</span>}
+          </span>
+          {/*
+            ★ 整棟只記帳的物業用這一顆，不是在下面點 74 次。
+              做成文字連結放右邊 —— 它不是這一頁的主要動作，
+              做成按鈕會跟底下的「＋ 新增房源」搶眼睛。
+          */}
+          {propsOfEstate.length > 0 && (
+            <button onClick={() => setEstateCalendar(propsOffCount === propsOfEstate.length)}
+              className="ml-auto text-xs text-mor-slate underline hover:text-mor-blue whitespace-nowrap">
+              {propsOffCount === propsOfEstate.length ? '整個物業都排房' : '整個物業都不排房'}
+            </button>
+          )}
         </div>
         <div className="rounded-xl glass overflow-hidden">
           {/* 手機放不下這幾欄 —— 沒有這層捲軸容器，欄位會被壓到只剩幾個 px 而不是可以滑動 */}
@@ -1640,12 +1697,40 @@ export default function AdminPage() {
 
                       這一頁現在只回答「這棟有哪些房間、對到哪個 listing」。
                   */}
+                  {/*
+                    ★★ 自己一欄，不併進「操作」。
+                      「操作」裡面現在只有刪除 —— 把取消勾選擺在刪除旁邊，
+                      手滑的代價差太多。
+                    ★★★ 欄名寫「排房表」不是「顯示／隱藏」:
+                      「隱藏」沒說是在哪裡隱藏，三個月後看到會以為是全站都看不到。
+                  */}
+                  <th className="px-4 py-2.5 whitespace-nowrap">排房表</th>
                   <th className="px-4 py-2.5 text-right">操作</th>
                 </tr>
               </thead>
               <tbody>
-                {properties.filter((p) => p.estate_id === selEstate).map((p) => (
-                  <tr key={p.id} className="border-b border-mor-line/60 last:border-0">
+                {propsOfEstate.map((p, i) => (
+                  <Fragment key={p.id}>
+                  {/*
+                    ★ 分隔列只畫在**第一個**不排房的房源上面。
+                      `propsOfEstate` 已經把不排房的排到最後，
+                      所以「前一列還是排房的」就是交界。
+                  */}
+                  {p.show_in_room_calendar === false
+                    && (i === 0 || propsOfEstate[i - 1].show_in_room_calendar !== false) && (
+                    <tr>
+                      <td colSpan={5} className="bg-mor-sand px-4 py-1.5 text-xs text-[#7c6f5a]">
+                        ↓ 不排房（只記帳）・{propsOffCount} 間 —— 支出與報表照算，只是不畫在房源狀態那張日曆上
+                      </td>
+                    </tr>
+                  )}
+                  {/*
+                    ★ 不排房的那幾列用**底色**區分，不用 opacity ——
+                      opacity 加在 <tr> 上，裡面的勾勾也會一起變淡，
+                      而那顆勾正是要按回來的東西。
+                  */}
+                  <tr className={`border-b border-mor-line/60 last:border-0
+                    ${p.show_in_room_calendar === false ? 'bg-mor-sand/30' : ''}`}>
                     <td className="px-4 py-2">
                       <input defaultValue={p.name} onBlur={(ev) => { const v = ev.target.value.trim(); if (v && v !== p.name) updateProperty(p.id, { name: v }); }}
                         className="rounded-lg border border-gray-300 px-2 py-1 w-56" />
@@ -1774,13 +1859,29 @@ export default function AdminPage() {
                           .map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
                       </select>
                     </td>
+                    {/*
+                      ★ 勾勾＋文字。只有勾勾的話「勾起來是顯示還是隱藏」要用猜的，
+                        而猜錯不會有任何回饋 —— 那間房只是從排房表上不見了。
+                    */}
+                    <td className="px-4 py-2 whitespace-nowrap">
+                      <label className="inline-flex items-center gap-1.5 cursor-pointer"
+                        title="取消勾選:這間房不畫在「房源狀態」那張日曆上。支出、報表、房務、清潔、採購完全不受影響。">
+                        <input type="checkbox" checked={p.show_in_room_calendar !== false}
+                          onChange={() => updateProperty(p.id, { show_in_room_calendar: p.show_in_room_calendar === false })}
+                          className="h-4 w-4 accent-mor-slate" />
+                        <span className={`text-xs ${p.show_in_room_calendar === false ? 'text-gray-400' : 'text-gray-600'}`}>
+                          {p.show_in_room_calendar === false ? '不排房' : '排房'}
+                        </span>
+                      </label>
+                    </td>
                     <td className="px-4 py-2 text-right">
                       <button onClick={() => deleteProperty(p.id, p.name)} className="text-xs text-red-500 underline hover:text-red-700">刪除</button>
                     </td>
                   </tr>
+                  </Fragment>
                 ))}
-                {properties.filter((p) => p.estate_id === selEstate).length === 0 && (
-                  <tr><td colSpan={4} className="px-4 py-6 text-center text-gray-400">此物業尚無房源</td></tr>
+                {propsOfEstate.length === 0 && (
+                  <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-400">此物業尚無房源</td></tr>
                 )}
               </tbody>
             </table>
@@ -1792,7 +1893,10 @@ export default function AdminPage() {
           </div>
         </div>
         <p className="text-xs text-gray-400 mt-2">
-          直接點欄位即可修改(改完點空白處儲存)。改名不影響已連結的訂單/評價(用 ID 綁定)。
+          直接點欄位即可修改(改完點空白處儲存)。改名不影響已連結的訂單/評價(用 ID 綁定)。<br />
+          「排房表」只管<b className="text-gray-500">房源狀態</b>那張日曆畫不畫它 ——
+          取消勾選的房源，支出、報表、房務、清潔、採購一格都不變。
+          (整間房不做了是另一回事,那要停用。)
         </p>
         {/*
           沒對照的房源要主動講出來。這是唯一一種「訂單根本沒進系統」的
