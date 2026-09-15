@@ -15,7 +15,7 @@ import { useOnce } from '@/lib/once';
 import { titleCaseName } from '@/lib/name-format';
 import { earnestOnlyMissing, monthlyRentToSave } from '@/lib/earnest';
 import { useOpenFromUrl } from '@/lib/open-from-url';
-import { FEE_TYPES, ONEOFF_PRESETS, presetOf, feeLabel } from '@/lib/fee-types';
+import { FEE_TYPES, ONEOFF_PRESETS, presetOf, feeLabel, canInvoiceFee } from '@/lib/fee-types';
 import ContractFees, { type Rc } from '@/components/ContractFees';
 import { feeMonthly, leasePeriods, periodOf } from '@/lib/lease';
 import { dueDateOf, resolvePayDay, checkFirstDue, fmtDue, periodRange, fmtPeriodRange, rentMonthCount, checkContractDates } from '@/lib/due-date';
@@ -2712,11 +2712,14 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                        *   「要開發票的話，每一期到收租加一筆稅費」。
                        *   那一列以前只有「刪」，開出去的號碼**沒有地方存**。
                        *
+                       * ★★★ **只有稅費**（使用者 2026-09-15：「只有加稅費才能開發票喔」）。
+                       *   哪幾種開得了票寫在 `lib/fee-types` 的 `canInvoiceFee()` ——
+                       *   那是規則，不是版面，放在這裡就測不到（anxing-ui 第一節）。
                        * ★ 固定加費不給（維持「於上方調整」）—— 它是設定產生的，
                        *   這一列上的動作都會誤導人以為改得動。
-                       * ★ 折讓（負數）也不給 —— 那是折抵，不是一筆要開票的收入。
+                       * ★ 負數（折讓）不給 —— 那是折抵，不是一筆要開票的收入。
                        */
-                      const canInv = !auto && Number(f.amount) > 0;
+                      const canInv = !auto && Number(f.amount) > 0 && canInvoiceFee(f.fee_type);
                       const fInv = invRows.filter((v: any) => v.order_id === f.id);
                       const feeName = auto ? feeLabel(f.fee_type, f.item_name) : f.fee_type;
                       const feeYm = String(f.checkin ?? '').slice(0, 7);

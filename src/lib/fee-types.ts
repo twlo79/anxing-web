@@ -247,3 +247,25 @@ export function presetOf(
   const hit = list.find((p) => p.label === label);
   return hit ? { fee_type: hit.fee_type, item_name: hit.item_name } : null;
 }
+
+/**
+ * 哪幾種加費登得了發票號碼。
+ *
+ * ★★★ 使用者 2026-09-15：「只有加稅費才能開發票喔。」
+ *
+ * 【為什麼只有稅費】
+ * 契約勾了「價格未稅」的，租金本身不開發票 —— 要開就在那一期
+ * 加一筆**稅費**，那一筆才是發票的依據（見上面 FEE_TYPES 裡「稅費」那段）。
+ * 電費、清潔費、寵物費那些不是發票的依據，給它們一顆「開發票」
+ * 只會讓人以為每一筆加費都要各開一張。
+ *
+ * ★ 寫成清單而不是 `=== '稅費'`:哪天多一種開得了票的，
+ *   改這裡一行，而不是去畫面上找那個字串寫在哪幾個地方。
+ * ★★ 這是**收入面**的發票（我們開給房客）。支出那邊的進項發票是另一回事。
+ */
+export const INVOICEABLE_FEE_TYPES = ['稅費'] as const;
+
+/** 這筆加費登不登得了發票號碼。見 `INVOICEABLE_FEE_TYPES` */
+export function canInvoiceFee(fee_type: string | null | undefined): boolean {
+  return (INVOICEABLE_FEE_TYPES as readonly string[]).includes(fee_type ?? '');
+}

@@ -3,7 +3,38 @@ import assert from 'node:assert/strict';
 import {
   FEE_TYPES, ONEOFF_FEE_TYPES, ONEOFF_ONLY_FEE_TYPES,
   FEE_DEFAULT, CONTRACT_FEE_PRESETS, ONEOFF_PRESETS, presetOf, feeLabel,
+  INVOICEABLE_FEE_TYPES, canInvoiceFee,
 } from './fee-types.ts';
+
+describe('★★★ 只有稅費登得了發票（使用者 2026-09-15）', () => {
+  /*
+   * 未稅契約的租金本身不開發票 —— 要開就在那一期加一筆稅費，
+   * **那一筆才是發票的依據**。其他加費不是。
+   */
+  test('★★★ 稅費可以，電費、清潔費、寵物費都不行', () => {
+    assert.equal(canInvoiceFee('稅費'), true);
+    for (const t of ['電費', '清潔費', '其他', '保證金', '管理費', '折讓']) {
+      assert.equal(canInvoiceFee(t), false, `${t} 不該出現「開發票」`);
+    }
+  });
+
+  test('★★ 沒有 fee_type 的不給 —— 不要用猜的', () => {
+    assert.equal(canInvoiceFee(null), false);
+    assert.equal(canInvoiceFee(undefined), false);
+    assert.equal(canInvoiceFee(''), false);
+  });
+
+  test('★ 清單裡的每一種都必須是真的存在的科目', () => {
+    for (const t of INVOICEABLE_FEE_TYPES) {
+      assert.ok((FEE_TYPES as readonly string[]).includes(t),
+        `${t} 不在 FEE_TYPES 裡 —— 那個選項根本選不到`);
+    }
+  });
+
+  test('★★ 「稅費」是從選單選得到的（不然這條規則永遠用不上）', () => {
+    assert.deepEqual(presetOf('稅費'), { fee_type: '稅費', item_name: null });
+  });
+});
 
 test('★★ 保證金只出現在一次性收入,不在共用清單裡', () => {
   // 共用清單是「會重複發生的費用」:加費、契約固定加費、定期收費。
