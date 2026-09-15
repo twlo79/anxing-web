@@ -22,7 +22,7 @@ import { fetchAll } from '@/lib/fetch-all';
 import Receipts from '@/components/Receipts';
 import RefundFields, { METHOD_LABEL, METHOD_OPTS } from '@/components/RefundFields';
 import {
-  depLines, primaryText, extraLines, summaryText, hasDetail, sumByCurrency,
+  depLines, depPaidLines, depOwedLines, primaryText, extraLines, summaryText, hasDetail, sumByCurrency,
   lineText, lineKey, type DepLine,
 } from '@/lib/deposit-lines';
 import {
@@ -474,7 +474,7 @@ export default function DepositsPage() {
    *   而永遠是 0 的格子會讓人以為那個功能壞了。
    */
   const statsOf = useCallback((kind: 'deposit' | 'earnest') => {
-    const mk = () => ({ n: 0, cur: {} as Record<string, number> });
+    const mk = () => ({ n: 0, cur: {} as Record<string, number>, owed: {} as Record<string, number> });
     const s = {
       pending: mk(), held: mk(), returned: mk(), orphan: mk(),
       refund_pending: mk(), refund_approved: mk(),
@@ -489,13 +489,38 @@ export default function DepositsPage() {
       // 訂金才有的兩種出路（migration_174）
       forfeited: mk(), converted: mk(),
     };
-    const add = (t: { n: number; cur: Record<string, number> }, r: Dep) => {
-      t.n++;
-      for (const l of depLines(r)) t.cur[l.cur] = (t.cur[l.cur] ?? 0) + l.amt;
-    };
+    /*
+      * ══════════ 「已收」算實收，不是應收（2026-09-15 使用者指定）══════════
+      *
+      * ★★★ 使用者：「已收，部分收就算部分；部分押金的一樣歸類在已收。」
+      *
+      *   所以**歸類與筆數一個字都不動** —— 那一筆還是待在「已收」那一格、
+      *   還是算一筆。改的只有**金額**:加實際收到的，不是應收。
+      *
+      *   19B3 碩美應收 350,000、訂金轉入只進來 175,000，
+      *   原本整筆 350,000 被算進「已收 NT$17,613,395」——
+      *   而那張卡的標題寫著「**錢在我們手上**」。
+      *
+      * ★ 只有 `held` 這樣算。`pending` 本來就沒收到（實收是 0，加了等於不顯示），
+      *   `returned` 是已經出去的錢，兩者都該照應收算。
+      */
+     const add = (
+       t: { n: number; cur: Record<string, number>; owed?: Record<string, number> },
+       r: Dep, paidOnly = false,
+     ) => {
+       t.n++;
+       for (const l of (paidOnly ? depPaidLines(r as any) : depLines(r))) {
+         t.cur[l.cur] = (t.cur[l.cur] ?? 0) + l.amt;
+       }
+       // 尚欠另外記著 —— 卡片下面那行小字要用，不混進金額裡
+       if (paidOnly && t.owed) {
+         for (const l of depOwedLines(r as any)) t.owed[l.cur] = (t.owed[l.cur] ?? 0) + l.amt;
+       }
+     };
     for (const r of base) {
       if ((r.kind ?? 'deposit') !== kind) continue;
-      add(s[bucketOf(r) as 'pending' | 'held' | 'returned'], r);
+      const bk = bucketOf(r) as 'pending' | 'held' | 'returned';
+      add(s[bk], r, bk === 'held');
       if (r.forfeited_on) add(s.forfeited, r);
       if (r.converted_to_deposit_id) add(s.converted, r);
       // 以下兩組跟上面三類重疊,是故意的 —— 見 Status 的說明
@@ -525,6 +550,24 @@ export default function DepositsPage() {
 
   const fxLine = (cur: Record<string, number>) =>
     Object.entries(cur).filter(([c]) => c !== 'TWD').map(([c, v]) => `${c} ${fmt(v)}`).join('・');
+
+  /**
+   * 「尚欠 …」那行小字。**三張卡共用同一支**（2026-09-15）。
+   *
+   * ★★★ **外幣要列出來**（使用者 2026-09-15：「多幣別就顯示，額外列出來」）。
+   *   只寫台幣的話，USD 那幾筆會安靜地從「尚欠」裡消失 ——
+   *   而台幣數字完全正確，沒有任何跡象（migration_87 那次就是這樣，
+   *   這一頁第 464 行的註解白紙黑字寫著同一件事）。
+   *
+   * ★ 一毛都不欠就回空字串，卡片下面不會多一段沒有意義的字。
+   */
+  const owedLine = (owed?: Record<string, number>) => {
+    if (!owed) return '';
+    const twd = owed['TWD'] ?? 0;
+    const fx = fxLine(owed);
+    if (!twd && !fx) return '';
+    return `尚欠 ${twd ? `NT$ ${fmt(twd)}` : ''}${twd && fx ? '・' : ''}${fx}`;
+  };
 
   /*
    * 有沒有套用任何篩選。
@@ -1391,7 +1434,13 @@ export default function DepositsPage() {
         label="暫收款總計"
         value={`NT$ ${fmt(allStats.held.cur['TWD'] ?? 0)}`}
         sub={`${allStats.held.n} 筆・錢在我們手上${
-          fxLine(allStats.held.cur) ? `・${fxLine(allStats.held.cur)}` : ''}`} />
+          fxLine(allStats.held.cur) ? `・${fxLine(allStats.held.cur)}` : ''}${
+          /*
+            ★★★ 這個數字現在是**實收**（2026-09-15）。收一半的押金只算一半，
+              而少掉的那些在這裡講出來 —— 不講的話「錢在我們手上」那句話
+              跟數字是一致的，但沒有人知道還有多少在外面。
+          */
+          owedLine(allStats.held.owed) ? `・${owedLine(allStats.held.owed)}` : ''}`} />
 
       <div className="mb-3">
           <StatGroup label="訂金" tone="amber" />
@@ -1411,7 +1460,8 @@ export default function DepositsPage() {
             {([
               /* ★ 標題不再重複「訂金」—— 群組標題已經說了,每一列再寫一次是三次雜訊 */
               { k: 'pending',  title: '未付',   s: earnStats.pending,  sub: null },
-              { k: 'held',     title: '已收',   s: earnStats.held,     sub: null },
+              { k: 'held',     title: '已收',   s: earnStats.held,
+                sub: owedLine(earnStats.held.owed) || null },
               { k: 'returned', title: '已結案', s: earnStats.returned,
                 sub: [
                   earnStats.returned.n - earnStats.forfeited.n - earnStats.converted.n > 0
@@ -1455,11 +1505,17 @@ export default function DepositsPage() {
           const fx = fxLine(st.cur);
           /* ★ 已退押金裡混著移房 —— 那幾筆錢沒有出去。只留筆數,金額拿掉 */
           const moved = t.k === 'returned' && stats.moved.n > 0 ? `其中移房 ${stats.moved.n} 筆` : '';
+          /*
+           * ★★★ 「已收」現在算的是**實收**（2026-09-15）。
+           *   有收一半的話金額會比應收少，而少掉的那些**要講出來** ——
+           *   不講的話，看卡片的人只會覺得「這個月怎麼變少了」而找不到原因。
+           */
+          const owed = t.k === 'held' ? owedLine(st.owed) : '';
           return (
             <StatCard key={t.k}
               label={t.title}
               value={`NT$ ${fmt(st.cur['TWD'] ?? 0)}`}
-              sub={[`${st.n} 筆`, fx, moved].filter(Boolean).join('・')}
+              sub={[`${st.n} 筆`, fx, owed, moved].filter(Boolean).join('・')}
               active={statusF === t.k && kindF !== 'earnest'}
               muted={st.n === 0}
               onClick={() => { setKindF('deposit'); setStatusF(t.k); }} />

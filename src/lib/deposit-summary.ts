@@ -18,7 +18,21 @@
  *   同一列不會被算兩次。
  */
 
-export type Bucket = { n: number; cur: Record<string, number> };
+export type Bucket = {
+  n: number;
+  cur: Record<string, number>;
+  /**
+   * 這一格裡還**尚欠**多少（2026-09-15）。
+   *
+   * ★ 「已收」那格算的是**實收**，所以收一半的押金只貢獻一半金額。
+   *   少掉的那些要講得出來 —— 不講的話看卡片的人只會覺得
+   *   「這個月怎麼變少了」而找不到原因。
+   *
+   * ★★ 跟 `cur` 分開存，**不混進金額裡**:金額那一欄的意思是
+   *   「錢在我們手上多少」，把尚欠加回去就又變回應收了。
+   */
+  owed?: Record<string, number>;
+};
 
 /** 兩個（以上）分類合併成一個。逐幣別相加，不假設有哪些幣別。 */
 export function mergeBuckets(...bs: Bucket[]): Bucket {
@@ -28,6 +42,12 @@ export function mergeBuckets(...bs: Bucket[]): Bucket {
     out.n += b.n ?? 0;
     for (const [cur, amt] of Object.entries(b.cur ?? {})) {
       out.cur[cur] = (out.cur[cur] ?? 0) + amt;
+    }
+    // ★ 尚欠也要逐幣別合併 —— 漏了的話總計那張卡不會顯示尚欠，
+    //   而兩張分卡各自顯示，數字對不起來的責任就落到看的人身上
+    for (const [cur, amt] of Object.entries(b.owed ?? {})) {
+      out.owed = out.owed ?? {};
+      out.owed[cur] = (out.owed[cur] ?? 0) + amt;
     }
   }
   return out;

@@ -66,6 +66,63 @@ export function depLines(d: { lines?: DepLine[] | null; currency?: string | null
 
 export const isTwdLine = (l: DepLine) => l.cur === 'TWD';
 
+/**
+ * 這一筆**實際收到**多少（依幣別）。
+ *
+ * ============================================================
+ * 【★★★ 為什麼要有這一支】（2026-09-15）
+ *
+ * 統計卡的「已收」原本加的是 `depLines()` ＝ **應收**。
+ * 19B3 碩美的押金應收 350,000、訂金轉入只收了 175,000，
+ * 卻整筆 350,000 被算進「已收 NT$17,613,395」——
+ * 而那張卡的標題寫著「**錢在我們手上**」。
+ *
+ * ★ 使用者 2026-09-15：「已收，部分收就算部分；部分押金的一樣歸類在已收。」
+ *   所以**歸類不動**（還是算在已收那一格、筆數照算），
+ *   只有**金額**改成實收。
+ *
+ * ============================================================
+ * 【外幣為什麼照舊算應收】
+ *
+ * `received_amount` 是**一個數字**，沒有幣別 —— 抽屜上顯示的
+ * 「已收 $175,000」就是台幣。外幣沒有「收了一部分」的資料可用。
+ *
+ * ★ 所以外幣那幾行:有收款日就當作收到，沒有就當作沒收。
+ *   硬要按比例拆的話是**發明數字**，而發明出來的數字會進報表。
+ */
+export function depPaidLines(
+  d: Parameters<typeof depLines>[0] & {
+    received_amount?: number | null; received_on?: string | null;
+  },
+): DepLine[] {
+  const got = d.received_amount == null ? null : Math.max(0, num(d.received_amount));
+  return depLines(d).map((l) => {
+    if (!isTwdLine(l)) {
+      // 外幣:有收款日就算收到，沒有就算沒收
+      return { ...l, amt: d.received_on ? l.amt : 0 };
+    }
+    /*
+     * ★ `received_amount` 是 null 的舊資料退回「有收款日就是收滿」——
+     *   2026-09-15 查過，現在一筆都沒有，但匯入或補資料可能再造出來，
+     *   而那時候當成 0 會讓「已收」整批歸零。
+     */
+    if (got == null) return { ...l, amt: d.received_on ? l.amt : 0 };
+    // ★ 不超過應收。超收是另一件事，不該讓「已收」那格膨脹
+    return { ...l, amt: Math.min(l.amt, got) };
+  }).filter((l) => l.amt !== 0);
+}
+
+/** 這一筆還**尚欠**多少（依幣別）。`應收 − 實收`，不回負數。 */
+export function depOwedLines(
+  d: Parameters<typeof depPaidLines>[0],
+): DepLine[] {
+  const paid: Record<string, number> = {};
+  depPaidLines(d).forEach((l) => { paid[l.cur] = (paid[l.cur] ?? 0) + l.amt; });
+  return depLines(d)
+    .map((l) => ({ ...l, amt: Math.max(0, l.amt - (paid[l.cur] ?? 0)) }))
+    .filter((l) => l.amt !== 0);
+}
+
 /** 台幣那部分。等於 deposits.amount —— 兩者對不起來就是資料壞了。 */
 export function twdOf(d: Parameters<typeof depLines>[0]): number {
   return depLines(d).filter(isTwdLine).reduce((a, l) => a + l.amt, 0);
