@@ -40,20 +40,65 @@ export function checkRequired(o: {
   source: string;
   estate_id: string | null;
   guest_name: string | null;
-  checkin: string;
-  checkout: string;
+  checkin: string | null;
+  checkout: string | null;
   /** 換算成台幣的總額 */
   amount: number;
+  /**
+   * 這張單收了多少訂金（migration_257，使用者 2026-09-15：
+   * 「勾了訂金的可以先不填起訖」）。
+   */
+  earnest?: number | null;
 }): string[] {
   const miss: string[] = [];
   if (!o.source) miss.push('來源');
   if (!o.estate_id) miss.push('物業');
   if (!(o.guest_name ?? '').trim()) miss.push('房客');
-  if (!o.checkin) miss.push(o.source === 'oneoff' ? '日期' : '起日');
+
+  /*
+   * ══════════════════════════════════════════════════════════
+   * 訂金階段：收了訂金，但住哪幾天、多少錢都還沒定。
+   *
+   * ★★★ 判定要**同時**滿足「有訂金」與「日期是空的」。
+   *   只看有沒有訂金的話，一張日期填好的正常單只要收了訂金，
+   *   金額就變成不必填 —— 而金額 0 的住宿單會安靜地進報表變成免費入住。
+   *
+   * ★★ 金額也一起放行，不是只放日期。
+   *   訂金階段本來就是「還沒談定」—— 雪雪那兩張契約的每期租金就是 $0。
+   *   只放日期的話畫面會卡在「還沒填：金額」，而那個數字他填不出來。
+   *
+   * ★ 反過來:日期一旦填了，這張單就是正常單，金額照樣必填。
+   * ══════════════════════════════════════════════════════════
+   */
+  const noDates = !o.checkin || (o.source !== 'oneoff' && !o.checkout);
+  const earnestStage = Number(o.earnest ?? 0) > 0 && noDates;
+
+  if (!o.checkin && !earnestStage) miss.push(o.source === 'oneoff' ? '日期' : '起日');
   // 一次性收入畫面上沒有迄日欄位。要求他填一個看不到的欄位，他只會卡住
-  if (o.source !== 'oneoff' && !o.checkout) miss.push('迄日');
-  if (!(o.amount > 0)) miss.push('金額');
+  if (o.source !== 'oneoff' && !o.checkout && !earnestStage) miss.push('迄日');
+  if (!(o.amount > 0) && !earnestStage) miss.push('金額');
   return miss;
+}
+
+/**
+ * 這張單是不是「訂金階段」—— 收了訂金但日期還沒定（migration_257）。
+ *
+ * ★★★ 存檔時用它算 `orders.earnest_only`，**不是另外給使用者一個勾**。
+ *   使用者說的是「勾了訂金的可以先不填起訖」，所以畫面上只有訂金那一個勾，
+ *   訂金階段是**結果**不是另一個選項。
+ *
+ * ★★ 資料庫那條 CHECK 保證了反向:
+ *   `earnest_only or (checkin is not null and checkout is not null)`
+ *   —— 沒有日期就一定是訂金階段。兩邊合起來狀態才唯一。
+ *
+ * ★ 一次性收入沒有迄日欄位，所以只看起日。
+ */
+export function isEarnestStage(o: {
+  source?: string | null;
+  checkin?: string | null;
+  checkout?: string | null;
+}): boolean {
+  return !o.checkin || ((o.source ?? '') !== 'oneoff' && !o.checkout);
 }
 
 /**
@@ -144,8 +189,17 @@ export function checkContractRequired(c: {
  *               住宿訂單至少要一晚。
  */
 export function checkDates(
-  source: string, checkin: string, checkout: string,
+  source: string, checkin: string | null, checkout: string | null,
+  /**
+   * 訂金階段（migration_257）。真的話**整支不檢查** ——
+   * 沒有日期是合法狀態，不是漏填。
+   *
+   * ★ 由呼叫端傳進來，不要在這裡自己算 —— 判定規則在 checkRequired
+   *   那邊（有訂金 ＋ 沒日期），兩個地方各算一次就會有一天對不起來。
+   */
+  earnestStage = false,
 ): string | null {
+  if (earnestStage && !checkin && !checkout) return null;
   if (!checkin) return '請填起日';
   if (source === 'oneoff') return null;      // 只有一個日期欄位，畫面上沒有迄日
   if (!checkout) return '請填迄日';

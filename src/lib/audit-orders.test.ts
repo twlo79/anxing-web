@@ -76,6 +76,39 @@ test('房客、物業、金額沒填都算缺漏', () => {
   assert.match(r.byId['x'].notes.join(), /房客.*物業.*金額/);
 });
 
+/*
+ * ══════════════════════════════════════════════════════════
+ * ★★★ 訂金階段不算缺漏（migration_257）
+ *
+ * 收了訂金但住哪幾天、多少錢還沒定 —— 那是**正確狀態**。
+ * 不跳過的話，每一張訂金單都會被標成
+ * 「資料缺失:沒填 起日、迄日、金額」，
+ * 而那正是讓人開始忽略所有標記的東西。
+ * ══════════════════════════════════════════════════════════
+ */
+test('★★★ 訂金階段：沒日期、金額 0 都不算缺漏', () => {
+  const r = auditOrders([o({
+    id: 'x', earnest_only: true, checkin: null, checkout: null, nights: 0, amount: 0,
+  })]);
+  assert.deepEqual(issues(r, 'x'), [], '一個標記都不該有');
+});
+
+test('★★★ 沒有 earnest_only 就照舊標 —— 空日期不是隨便都放行', () => {
+  const r = auditOrders([o({ id: 'x', checkin: null, checkout: null, nights: 0, amount: 0 })]);
+  assert.ok(issues(r, 'x').includes('資料缺失'));
+  assert.match(r.byId['x'].notes.join(), /起日.*迄日.*金額/);
+});
+
+test('★★ 訂金階段照樣要有房客與物業 —— 那筆錢總要有歸屬', () => {
+  const r = auditOrders([o({
+    id: 'x', earnest_only: true, checkin: null, checkout: null, nights: 0, amount: 0,
+    guest_name: '', estate_id: null,
+  })]);
+  assert.ok(issues(r, 'x').includes('資料缺失'));
+  assert.match(r.byId['x'].notes.join(), /房客.*物業/);
+  assert.ok(!/起日|迄日|金額/.test(r.byId['x'].notes.join()), '日期與金額不該被列進去');
+});
+
 test('★ 房源沒填不算缺漏', () => {
   // 整棟出租、公區費用本來就沒有房號。算成缺漏的話每次驗算都會
   // 跳出一整排正常資料,而那會讓人開始忽略所有標記

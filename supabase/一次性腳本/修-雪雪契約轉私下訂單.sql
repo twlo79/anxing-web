@@ -1,11 +1,21 @@
 /*
- * 修-雪雪契約轉私下訂單.sql　2026-09-15
- * 14B1／14B3 兩張訂金階段的契約 → 兩張私下訂單，訂金跟著搬過去
+ * 修-雪雪契約轉私下訂單.sql　2026-09-15（第二版）
+ * 14B1／14B3 兩張訂金階段的契約 → 兩張訂金階段的私下訂單
  *
- * 【怎麼跑】
- *   ★★★ 先把下面「要填的」那四個日期填好，**再**整份貼進 SQL Editor。
- *   ★★  migration_256 要先跑完（這支會寫 orders.earnest_amount）。
- *   ★   沒填日期的話它會直接拒絕，什麼都不會動。
+ * 【怎麼跑】整份貼進 SQL Editor，看最後那張自檢表。
+ *   ★★ migration_256 與 257 都要先跑完。
+ *   ★  **不用填任何東西了** —— 257 之後訂單可以沒有日期。
+ *
+ * ══════════════════════════════════════════════════════════
+ * 【第一版為什麼要重寫】
+ *
+ * 第一版逼你填四個日期，因為當時 orders.checkin / checkout 是 NOT NULL。
+ * 那不是保守，是**把資料庫的限制轉嫁給使用者** ——
+ * 而你手上根本沒有那四個日期（雪雪還沒定住哪幾天）。
+ *
+ * migration_257 之後「訂金階段的訂單可以沒有日期」是合法狀態，
+ * 所以這一版直接照現況搬:沒有日期、金額 0、earnest_only = true。
+ * 日期定了之後回訂單頁補就好。
  *
  * ══════════════════════════════════════════════════════════
  * 【現況（2026-09-15 查過）】
@@ -16,21 +26,8 @@
  *   訂金 14B3　應收 210,000　已收 210,000　收款日 2026-09-01
  *
  *   兩張契約底下:沒有月租單、沒有收款紀錄、沒有營收認列、
- *   沒有固定加費、沒有發票。關帳的是 202608，訂金落在 202609。
- *
- * ★ 所以這是一次**乾淨的搬家** —— 沒有任何一段帳會掉。
- *
- * ══════════════════════════════════════════════════════════
- * 【★★★ 為什麼日期要你填，我不猜】
- *
- * 那兩張契約**沒有起訖日**（查出來是 ? ~ ?）。
- * 而 orders.checkin / checkout 是 NOT NULL —— 一定要有值。
- *
- * 隨便填的後果不是報錯，是**房源狀態那張日曆上多出兩段假的住宿**，
- * 而有人會照著它排房。
- *
- * ★ 如果你現在還不知道住哪幾天，那就先不要轉成訂單 ——
- *   把訂金留在契約上，等日期確定再搬。訂金本來就是「還沒定案」的狀態。
+ *   沒有固定加費、沒有發票。所以這是一次乾淨的搬家 ——
+ *   沒有任何一段帳會掉。
  *
  * ══════════════════════════════════════════════════════════
  * 【動作順序，以及為什麼是這個順序】
@@ -52,27 +49,13 @@
  * ══════════════════════════════════════════════════════════
  */
 
-begin;
+create temp table if not exists _fix_xue (ord int, name text, detail text, verdict text);
 
-create temp table _fix_xue (ord int, name text, detail text, verdict text);
+begin;
 
 do $do$
 declare
-  /* ────────── ★★★ 要填的：四個日期 ────────── */
-  v_14b1_in   date := null;   -- 14B1 入住日　例 date '2026-10-01'
-  v_14b1_out  date := null;   -- 14B1 退房日
-  v_14b3_in   date := null;   -- 14B3 入住日
-  v_14b3_out  date := null;   -- 14B3 退房日
-
-  /* 訂單總額（房租）。還沒談定就留 0 —— 訂金是另外一筆，不寫在這裡 */
-  v_14b1_amt  numeric := 0;
-  v_14b3_amt  numeric := 0;
-  /* ──────────────────────────────────────────── */
-
   r        record;
-  v_in     date;
-  v_out    date;
-  v_amt    numeric;
   v_oid    uuid;
   v_did    uuid;
   v_ear    numeric;
@@ -80,18 +63,6 @@ declare
   v_moved  int := 0;
   v_note   text := '';
 begin
-  if v_14b1_in is null or v_14b1_out is null
-     or v_14b3_in is null or v_14b3_out is null then
-    raise exception
-      '請先把腳本裡那四個日期填好（v_14b1_in / v_14b1_out / v_14b3_in / v_14b3_out）。'
-      '那兩張契約沒有起訖日，而訂單的日期是必填 —— 我不替你猜，'
-      '猜出來的日期會在房源狀態日曆上變成兩段假的住宿。';
-  end if;
-
-  if v_14b1_out <= v_14b1_in or v_14b3_out <= v_14b3_in then
-    raise exception '退房日要比入住日晚（同一天是 0 晚，那不是住宿）。';
-  end if;
-
   for r in
     select c.*, coalesce(c.display_name, c.tenant_name) as who
       from public.contracts c
@@ -100,37 +71,26 @@ begin
        and c.earnest_only
      order by c.room
   loop
-    if r.room = '14B1' then
-      v_in := v_14b1_in; v_out := v_14b1_out; v_amt := v_14b1_amt;
-    else
-      v_in := v_14b3_in; v_out := v_14b3_out; v_amt := v_14b3_amt;
-    end if;
-
-    /*
-     * ★ 關帳擋不擋。私下訂單算哪個月看退房日（migration_251）——
-     *   填到已關帳的月份的話，插入會被守衛擋掉而整支失敗。
-     *   與其讓人看到一句講訂單守衛的錯誤，不如在這裡先講清楚。
-     */
-    if public.is_period_locked(to_char(v_out, 'YYYYMM')) then
-      raise exception '% 的退房日 % 落在已關帳的 % —— 請改日期，或請會計先開帳。',
-        r.room, v_out, to_char(v_out, 'YYYY-MM');
-    end if;
-
     select p.id into v_pid from public.properties p
      where p.name = r.room and p.active limit 1;
 
-    /* ① 建訂單。earnest_amount 先 0 —— 理由見檔頭 */
+    /*
+     * ① 建訂單。
+     *   沒有日期、0 晚、金額 0、earnest_only = true ——
+     *   這四個要一起，`orders_earnest_dates_chk` 才過得了。
+     *   earnest_amount 先 0，理由見檔頭。
+     */
     insert into public.orders (
       order_key, source, estate_id, property_id, property_raw, guest_name,
-      checkin, checkout, nights, amount, deposit, earnest_amount,
+      checkin, checkout, nights, amount, deposit, earnest_amount, earnest_only,
       contract_id, imported_via, note)
     values (
-      'PV_' || to_char(v_in, 'YYYY-MM-DD') || '_' || r.room || '_'
-        || coalesce(r.who, '') || '_' || to_char(clock_timestamp(), 'YYYYMMDDHH24MISSMS'),
+      'PV_' || r.room || '_' || coalesce(r.who, '')
+        || '_' || to_char(clock_timestamp(), 'YYYYMMDDHH24MISSMS'),
       'private', r.estate_id, v_pid, r.room, r.who,
-      v_in, v_out, (v_out - v_in), coalesce(v_amt, 0), 0, 0,
+      null, null, 0, 0, 0, 0, true,
       null, 'manual',
-      '由訂金階段的契約轉入（' || to_char(current_date, 'YYYY-MM-DD') || '）')
+      '由訂金階段的契約轉入（' || to_char(current_date, 'YYYY-MM-DD') || '）・日期未定')
     returning id into v_oid;
 
     /* ② 訂金改掛到這張訂單 */
@@ -158,12 +118,11 @@ begin
     update public.orders set earnest_amount = v_ear where id = v_oid;
 
     /* ④ 契約進回收桶。此時它底下已經什麼都沒有 */
-    perform public.soft_delete('contracts', r.id, '轉為私下訂單');
+    perform public.soft_delete('contracts', r.id, '轉為訂金階段的私下訂單');
 
     v_moved := v_moved + 1;
     v_note := concat_ws('　／　', nullif(v_note, ''),
-      r.room || '：' || to_char(v_in, 'MM/DD') || '~' || to_char(v_out, 'MM/DD')
-        || '　訂金 $' || v_ear);
+      r.room || '：訂金 $' || v_ear || '（日期未定）');
   end loop;
 
   insert into _fix_xue values
@@ -181,16 +140,19 @@ select v.ord, v."檢查", v."結果", v."判定" from (
   select t.ord, t.name, t.detail, t.verdict from _fix_xue t
 
   union all
-  select 2, '② 新的私下訂單',
-         coalesce((select string_agg(o.property_raw || '　' || o.checkin || '~' || o.checkout
-                                     || '　訂金 $' || o.earnest_amount, '　／　' order by o.property_raw)
+  select 2, '② 新的私下訂單（訂金階段）',
+         coalesce((select string_agg(o.property_raw
+                                     || '　日期 ' || coalesce(o.checkin::text, '未定')
+                                     || '　訂金 $' || o.earnest_amount
+                                     || '　earnest_only=' || o.earnest_only,
+                                     '　／　' order by o.property_raw)
                      from public.orders o
                     where o.source = 'private' and coalesce(o.guest_name, '') like '%雪雪%'
                       and o.property_raw in ('14B1', '14B3')), '★ 一張都沒有'),
          case when (select count(*) from public.orders o
                      where o.source = 'private' and coalesce(o.guest_name, '') like '%雪雪%'
-                       and o.property_raw in ('14B1', '14B3')) = 2
-              then '✅ 兩張' else '❌' end
+                       and o.property_raw in ('14B1', '14B3') and o.earnest_only) = 2
+              then '✅ 兩張，都是訂金階段' else '❌' end
 
   union all
   /*
@@ -239,7 +201,22 @@ select v.ord, v."檢查", v."結果", v."判定" from (
               then '✅ 0 筆' else '❌ 順序做錯了' end
 
   union all
-  select 6, '⑥ 收尾', '自檢用 temp table，關掉分頁自己消失，不用清', '✅ 不留東西'
+  /*
+   * ⑥ 沒有生出營收。訂金不是收入 —— 它是暫收款。
+   *   生出來的話報表會多兩筆憑空出現的錢。
+   */
+  select 6, '⑥ 沒有生出營收認列',
+         (select count(*)::text || ' 列'
+            from public.revenue_recognitions r
+            join public.orders o on o.id = r.order_id
+           where coalesce(o.guest_name, '') like '%雪雪%'),
+         case when (select count(*) from public.revenue_recognitions r
+                     join public.orders o on o.id = r.order_id
+                    where coalesce(o.guest_name, '') like '%雪雪%') = 0
+              then '✅ 0 列（訂金不是收入）' else '❌ 憑空多出營收' end
+
+  union all
+  select 7, '⑦ 收尾', '自檢用 temp table，關掉分頁自己消失，不用清', '✅ 不留東西'
 
 ) as v(ord, "檢查", "結果", "判定")
 order by v.ord;

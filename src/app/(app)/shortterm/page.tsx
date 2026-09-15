@@ -50,7 +50,7 @@ import { payStatus, remaining, isExempt, STATUS_LABEL, STATUS_CLASS, STATUS_FILT
 import { softDelete } from '@/lib/trash';
 import { feeFilterOptions, feeFilterPredicate, feeFilterOnSearch, feeSourceConflict, ONEOFF_SOURCES, FEE_F_ALL, FEE_F_RENT } from '@/lib/order-filter';
 import TrashLink from '@/components/TrashLink';
-import { checkDates, checkPrice, checkRequired, lookbackFrom, type PastOrder } from '@/lib/order-check';
+import { checkDates, checkPrice, checkRequired, isEarnestStage, lookbackFrom, type PastOrder } from '@/lib/order-check';
 import MoneyInput from '@/components/MoneyInput';
 import RangeInput from '@/components/RangeInput';
 import { BarPanel, BarRow, BarEmpty } from '@/components/BarList';
@@ -59,7 +59,14 @@ import StatHero from '@/components/StatHero';
 
 type Order = {
   id: string; order_key: string; source: string; estate_id: string | null; property_id?: string | null; property_raw: string | null;
-  guest_name: string | null; checkin: string; checkout: string; nights: number;
+  /**
+   * ★★ 起訖日**可能是 null**（migration_257）—— 訂金階段的單還沒定日期。
+   *   資料庫那條 CHECK 保證了「沒有日期就一定是 earnest_only」，
+   *   所以正常單的日期照樣一定有值。要判斷就看 `earnest_only`，
+   *   不要每個用到日期的地方各自 `?? ''` —— 那會把「還沒定」
+   *   顯示成空白，跟「漏填」分不出來。
+   */
+  guest_name: string | null; checkin: string | null; checkout: string | null; nights: number;
   amount: number; deposit: number | null; account: string | null; note: string | null;
   /**
    * 寵物押金（migration_194）。跟 deposit 分開存 ——
@@ -77,6 +84,11 @@ type Order = {
    * ★ 只有台幣 —— 契約那邊的訂金也只有台幣。兩邊要一樣。
    */
   earnest_amount?: number | null;
+  /**
+   * 訂金階段：收了訂金但住哪幾天還沒定（migration_257）。
+   * **存檔時算出來的**，不是使用者另外勾的 —— 見 `isEarnestStage`。
+   */
+  earnest_only?: boolean | null;
   /**
    * 怎麼進系統的:`'contract'` = 契約產的月租單、`'manual'` = 手動建、
    * 其餘是匯入。★ 關帳判定要用它 —— **月租單不鎖**（migration_223）。
@@ -850,8 +862,14 @@ export default function ShortTermPage() {
           T(o.estate_id ? estateName[o.estate_id] ?? '' : '', stCell),
           T(o.property_raw ?? o.properties?.name ?? '', stCell),
           T(o.guest_name ?? '', stCell),
-          T(o.checkin ?? '', stCell),
-          T(o.checkout ?? '', stCell),
+          /*
+            ★ 訂金階段沒有日期（migration_257）→ 寫「未定」而不是留空格。
+              匯出去的表格上，空格讀起來是「這裡漏了」，而它其實是
+              「還沒定」—— 兩件事在 Excel 上一樣分不出來。
+              欄位數沒變，下游的表不受影響。
+          */
+          T(o.checkin ?? '未定', stCell),
+          T(o.checkout ?? '未定', stCell),
           T(Number(o.nights) || 0, stNum),
           T(Math.round(Number(o.amount) || 0), stNum),
           T(Math.round(Number(o.paid_amount) || 0), stNum),
@@ -947,8 +965,14 @@ export default function ShortTermPage() {
      * 一次把缺的全部講完 —— 一次講一個的話他要按四次儲存才知道總共缺什麼。
      */
     if (missing.length) return flash(`無法儲存,還沒填：${missing.join('、')}`);
+    /*
+     * ★★★ 訂金階段（migration_257）：收了訂金、日期還沒定 —— 整支日期檢查跳過。
+     *   判定跟 checkRequired 用**同一組條件**（有訂金 ＋ 沒日期），
+     *   兩邊各算一次的話會有一天對不起來:畫面說可以存、存檔時被擋。
+     */
+    const earnestStage = Number(earnest ?? 0) > 0 && isEarnestStage(edit);
     // 日期是「一定錯」的那一類,所以擋下來。金額偏低是「可能錯」,只提醒。
-    const dateErr = checkDates(edit.source, edit.checkin, edit.checkout);
+    const dateErr = checkDates(edit.source, edit.checkin, edit.checkout, earnestStage);
     if (dateErr) return flash(dateErr);
     const co = edit.source === 'oneoff' ? (edit.checkout || edit.checkin) : edit.checkout;
     const nights = (edit.checkin && co) ? Math.max(0, Math.round((new Date(co).getTime() - new Date(edit.checkin).getTime()) / 86400000)) : 0;
@@ -998,6 +1022,15 @@ export default function ShortTermPage() {
        *   （還沒收錢的刪掉、收過錢的標孤兒 —— 錢在我們手上，紀錄不能無聲消失）。
        */
       earnest_amount: earnest == null ? 0 : earnest,
+      /*
+       * ★★★ 訂金階段是**算出來的**，不是另外一個勾（migration_257）。
+       *   使用者說的是「勾了訂金的可以先不填起訖」—— 畫面上只有訂金那一個勾。
+       *
+       * ★ 資料庫那條 CHECK 保證反向（沒有日期就一定是 earnest_only），
+       *   所以這裡漏寫的話**存檔會被擋下來**，不會安靜地存成一張沒有日期
+       *   又沒有標記的單。兩邊合起來狀態才唯一。
+       */
+      earnest_only: !edit.checkin || !co,
       /*
        * 哪一家的錢（migration_159）。
        *
@@ -1297,6 +1330,19 @@ export default function ShortTermPage() {
     );
   }
 
+  /**
+   * 起訖日顯示。訂金階段沒有日期（migration_257）。
+   *
+   * ★★★ 寫「未定」而不是留空白。
+   *   `{o.checkin} ~ {o.checkout}` 在 null 的時候會畫出一個孤零零的
+   *   「 ~ 」—— 看起來像壞掉或漏填，而它其實是**正確而且刻意的狀態**。
+   *   「還沒定」與「漏填」在畫面上要分得出來（README 坑 D:標籤說謊）。
+   */
+  const dateRange = (o: { checkin: string | null; checkout: string | null }) =>
+    (o.checkin && o.checkout) ? `${o.checkin} ~ ${o.checkout}`
+      : (o.checkin || o.checkout) ? `${o.checkin ?? '未定'} ~ ${o.checkout ?? '未定'}`
+        : '日期未定';
+
   function blank(): Order { return { id: '', order_key: '', source: 'private', estate_id: null, property_id: null, property_raw: '', guest_name: '', checkin: '', checkout: '', nights: 0, amount: 0, deposit: 0, account: null, note: '', fx_revenue: [], fx_deposit: [], invoice_required: false, invoice_title: '', invoice_tax_id: '', purpose_type: 'estate',
     // ★ 0 而不是 null —— 欄位是 not null。新單預設沒收訂金，那一塊收著
     earnest_amount: 0 }; }
@@ -1305,9 +1351,18 @@ export default function ShortTermPage() {
   const missing = useMemo(() => edit ? checkRequired({
     source: edit.source, estate_id: edit.estate_id, guest_name: edit.guest_name,
     checkin: edit.checkin, checkout: edit.checkout, amount: totalTwd(revLines),
-  }) : [], [edit?.source, edit?.estate_id, edit?.guest_name, edit?.checkin, edit?.checkout, revLines]);
+    // ★ 訂金階段的必填規則不一樣（migration_257）—— 判定在 lib/order-check
+    earnest,
+  }) : [], [edit?.source, edit?.estate_id, edit?.guest_name, edit?.checkin, edit?.checkout,
+    revLines, earnest]);
   /** 這一格要不要畫紅框 */
   const err = (f: string) => tried && missing.includes(f);
+  /**
+   * 畫面上要不要放寬（星號、提示）。
+   * ★ 跟 `checkRequired` 用同一條規則:**訂金 > 0** 才算數 ——
+   *   勾了但金額還是 0 的時候不放寬，因為 0 元的訂金不是訂金。
+   */
+  const earnestStageUI = Number(earnest ?? 0) > 0;
   /**
    * 送出鈕的樣子。★★★ 灰掉但**按得下去** —— 真的 disabled 的話
    * `tried` 打不開、紅框永遠不出現（見 lib/required.ts 的 submitGate）。
@@ -1611,7 +1666,7 @@ export default function ShortTermPage() {
                   </div>
                   <div className="text-[11px] text-gray-600 mt-1 truncate">{o.guest_name ?? '—'}</div>
                   <div className="text-[11px] text-gray-400 mt-0.5 tabular-nums">
-                    {o.checkin} ~ {o.checkout}
+                    {dateRange(o)}
                     {o.nights ? `　${o.nights} 晚` : ''}
                   </div>
                 </div>
@@ -1711,7 +1766,7 @@ export default function ShortTermPage() {
                     <div className="mt-0.5"><AuditBadges entry={auditResult.byId[o.id]} /></div>
                   )}
                 </td>
-                <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-500">{o.checkin}~{o.checkout}</td>
+                <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-500">{dateRange(o)}</td>
                 <td className="px-3 py-2 text-right font-medium">${fmt(o.amount)}</td>
                 <td className="px-3 py-2 whitespace-nowrap">
                   {(() => {
@@ -1782,7 +1837,11 @@ export default function ShortTermPage() {
 
               <div className="px-6 py-4">
                 {row('來源', <span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${SRC_COLOR[d.source]}`}>{SRC_LABEL[d.source] ?? d.source}</span>)}
-                {row('訂單起訖', <span>{d.checkin} ~ {d.checkout}<span className="text-gray-400 ml-2">{d.nights} 晚</span></span>)}
+                {row('訂單起訖', <span>{dateRange(d)}
+                  {d.nights ? <span className="text-gray-400 ml-2">{d.nights} 晚</span> : null}
+                  {d.earnest_only && (
+                    <span className="ml-2 rounded bg-[#F6EFD5] text-[#8a6d1f] px-1.5 py-0.5 text-[11px]">訂金階段</span>
+                  )}</span>)}
                 {row('金額', <span className="font-medium">${fmt(d.amount)}</span>)}
                 {row('收款', (() => {
                   const st = payStatus(d);
@@ -2119,15 +2178,29 @@ export default function ShortTermPage() {
                   className={`rounded-lg border px-2 py-1.5 ${
                     err('房客') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} />
               </label>
-              <label className="flex flex-col gap-1"><span className="flex items-center">{edit.source === 'oneoff' || hideFields.dateRange ? '日期(認列月份)' : '起日'}<Req /></span>
-                <input type="date" value={edit.checkin} onChange={(e) => setEdit({ ...edit, checkin: e.target.value })}
+              {/*
+                ★★★ 收了訂金就不畫必填星號（migration_257，使用者 2026-09-15）。
+                  星號是「這格待會要填」的預告（anxing-ui 第二節）——
+                  可以不填的欄位掛著星號，等於預告一件不會發生的事。
+                  規則跟 checkRequired 是同一條（訂金 > 0 才算），
+                  所以勾了訂金但金額還是 0 的時候星號**還在**，那是對的:
+                  0 元的訂金不是訂金。
+              */}
+              <label className="flex flex-col gap-1"><span className="flex items-center">{edit.source === 'oneoff' || hideFields.dateRange ? '日期(認列月份)' : '起日'}{earnestStageUI ? null : <Req />}</span>
+                <input type="date" value={edit.checkin ?? ''} onChange={(e) => setEdit({ ...edit, checkin: e.target.value })}
                   className={`rounded-lg border px-2 py-1.5 ${
                     err('起日') || err('日期') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} /></label>
               {/* 其他事業體是一次性收入，只要一個日期（migration_159） */}
-              {edit.source !== 'oneoff' && !hideFields.dateRange && <label className="flex flex-col gap-1"><span className="flex items-center">迄日<Req /></span>
-                <input type="date" value={edit.checkout} onChange={(e) => setEdit({ ...edit, checkout: e.target.value })} className={`rounded-lg border px-2 py-1.5 ${
+              {edit.source !== 'oneoff' && !hideFields.dateRange && <label className="flex flex-col gap-1"><span className="flex items-center">迄日{earnestStageUI ? null : <Req />}</span>
+                <input type="date" value={edit.checkout ?? ''} onChange={(e) => setEdit({ ...edit, checkout: e.target.value })} className={`rounded-lg border px-2 py-1.5 ${
                 (edit.checkin && edit.checkout && edit.checkout <= edit.checkin) || err('迄日')
                   ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} /></label>}
+              {/* ★ 提示一行就好（anxing-ui 第五節）。不填會發生什麼要講出來 —— 不然沒人敢留空 */}
+              {earnestStageUI && isEarnestStage(edit) && (
+                <div className="col-span-2 -mt-1 text-xs text-[#8a6d1f]">
+                  訂金階段可以先不填日期與金額，之後定了再回來補。
+                </div>
+              )}
               {/* 日期填反在存檔前就講 —— 存檔才說的話他要重新想一次剛剛填了什麼 */}
               {edit.source !== 'oneoff' && edit.checkin && edit.checkout && edit.checkout <= edit.checkin && (
                 <div className="col-span-2 -mt-1 text-xs text-red-600">

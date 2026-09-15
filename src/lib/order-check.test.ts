@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   checkDates, checkPrice, checkRequired, checkContractRequired, lookbackFrom,
-  LOW_PRICE_RATIO, MIN_SAMPLE, type PastOrder,
+  isEarnestStage, LOW_PRICE_RATIO, MIN_SAMPLE, type PastOrder,
 } from './order-check.ts';
 
 /* ── 必填 ────────────────────────────────────── */
@@ -14,6 +14,75 @@ const full = {
 
 test('全部填齊沒有缺漏', () => {
   assert.deepEqual(checkRequired(full), []);
+});
+
+/*
+ * ══════════════════════════════════════════════════════════
+ * ★★★ 訂金階段：收了訂金但日期還沒定（migration_257）
+ *
+ * 使用者 2026-09-15：「勾了訂金的可以先不填起訖。」
+ *
+ * 雪雪在 14B1／14B3 各付了訂金，住哪幾天還沒定 ——
+ * 而那兩張契約的每期租金也是 $0，因為價格也還沒談。
+ * ══════════════════════════════════════════════════════════
+ */
+const earnestOnly = {
+  source: 'private', estate_id: 'e-1', guest_name: '雪雪',
+  checkin: '', checkout: '', amount: 0, earnest: 220000,
+};
+
+test('★★★ 有訂金＋沒日期 → 起訖與金額都不必填', () => {
+  assert.deepEqual(checkRequired(earnestOnly), []);
+});
+
+test('★★★ 沒有訂金就照舊擋 —— 空日期不是隨便都放行', () => {
+  assert.deepEqual(
+    checkRequired({ ...earnestOnly, earnest: 0 }).sort(),
+    ['金額', '起日', '迄日'].sort());
+  assert.deepEqual(
+    checkRequired({ ...earnestOnly, earnest: null }).sort(),
+    ['金額', '起日', '迄日'].sort());
+});
+
+/*
+ * ★★★ 這一條最重要:日期填好了就是正常單，金額照樣必填。
+ *   只看「有沒有訂金」的話，一張正常單只要收了訂金，
+ *   金額就變成不必填 —— 而金額 0 的住宿單會安靜地進報表變成免費入住。
+ */
+test('★★★ 日期填了就是正常單 —— 收了訂金也要填金額', () => {
+  assert.deepEqual(
+    checkRequired({ ...full, amount: 0, earnest: 220000 }), ['金額']);
+});
+
+test('★★ 只填了一個日期 → 還是算訂金階段（另一個不必填）', () => {
+  // 半填的狀態要能存起來,不然使用者填到一半被卡住就會亂填第二個日期
+  assert.deepEqual(checkRequired({ ...earnestOnly, checkin: '2026-10-01' }), []);
+});
+
+test('★ 一次性收入沒有迄日欄位 —— 只看起日', () => {
+  const oneoff = { ...earnestOnly, source: 'oneoff' };
+  assert.deepEqual(checkRequired(oneoff), [], '有訂金、沒起日 → 放行');
+  assert.deepEqual(
+    checkRequired({ ...oneoff, checkin: '2026-10-01' }), ['金額'],
+    '起日填了就是正常的一次性收入,金額必填');
+});
+
+test('★★ checkDates 在訂金階段整支不檢查', () => {
+  assert.equal(checkDates('private', '', '', true), null);
+  assert.equal(checkDates('private', '', ''), '請填起日', '沒傳旗標就照舊擋');
+  // 日期真的填錯還是要擋 —— 旗標只放行「兩個都空」
+  assert.ok(checkDates('private', '2026-10-05', '2026-10-01', true));
+});
+
+test('★★ isEarnestStage：少任何一個日期都算', () => {
+  assert.equal(isEarnestStage({ source: 'private', checkin: '', checkout: '' }), true);
+  assert.equal(isEarnestStage({ source: 'private', checkin: '2026-10-01', checkout: '' }), true);
+  assert.equal(isEarnestStage({ source: 'private', checkin: null, checkout: '2026-10-05' }), true);
+  assert.equal(
+    isEarnestStage({ source: 'private', checkin: '2026-10-01', checkout: '2026-10-05' }), false);
+  // 一次性收入沒有迄日欄位
+  assert.equal(isEarnestStage({ source: 'oneoff', checkin: '2026-10-01', checkout: null }), false);
+  assert.equal(isEarnestStage({ source: 'oneoff', checkin: '', checkout: null }), true);
 });
 
 test('★ 房客沒填要擋下來', () => {

@@ -95,6 +95,14 @@ export type AuditOrder = {
   parent_order_id?: string | null;
   /** 移房拆出來的段落。同一筆訂單被切成好幾段，不是重複 */
   move_group?: string | null;
+  /**
+   * 訂金階段（migration_257）：收了訂金，住哪幾天、多少錢都還沒定。
+   *
+   * ★★★ 沒有日期、金額是 0 —— 那是**正確狀態**，不是漏填。
+   *   不放這一欄的話，每一張訂金單都會被標成「資料缺失:沒填 起日、迄日、金額」，
+   *   而那正是讓人開始忽略所有標記的東西（見下面「缺漏」那段的原註解）。
+   */
+  earnest_only?: boolean | null;
 };
 
 /** 每晚單價低於同房源均價的幾成算低（使用者指定：6 成）。 */
@@ -267,9 +275,17 @@ export function auditOrders(
     const miss: string[] = [];
     if (!(o.guest_name ?? '').trim()) miss.push('房客');
     if (!o.estate_id) miss.push('物業');
-    if (!o.checkin) miss.push('起日');
-    if (!oneoff && !o.checkout) miss.push('迄日');
-    if (!(Number(o.amount) > 0)) miss.push('金額');
+    /*
+     * ★★★ 訂金階段不算缺日期與金額（migration_257）——
+     *   收了訂金但還沒定住哪幾天、多少錢，那是**正確狀態**。
+     *   房客與物業照算:訂金總要收在某個人、某個物業頭上，
+     *   那兩個空著的話那筆錢沒有歸屬（跟手動暫收款同一條規矩）。
+     */
+    if (!o.earnest_only) {
+      if (!o.checkin) miss.push('起日');
+      if (!oneoff && !o.checkout) miss.push('迄日');
+      if (!(Number(o.amount) > 0)) miss.push('金額');
+    }
     if (miss.length) add(o.id, '資料缺失', `沒填：${miss.join('、')}`);
 
     /*
