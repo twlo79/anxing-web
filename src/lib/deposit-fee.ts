@@ -130,6 +130,12 @@ export type DepCandidate = {
   contract_id?: string | null;
   room?: string | null;
   guest_name?: string | null;
+  /**
+   * 'deposit'（押金）或 'earnest'（訂金）。migration_174 加的，
+   * migration_256 之後**訂單也可能有訂金**，所以這裡必須看得到它。
+   * 沒給就當成押金 —— 舊資料與沒撈這一欄的呼叫端不受影響。
+   */
+  kind?: string | null;
 };
 
 export type PickResult =
@@ -151,6 +157,17 @@ export type PickResult =
  *   「對不上的不猜。少填一個看得到、補得回來;填錯一個沒有人會發現。」
  *
  * ★ 已退的押金不算候選 —— 錢匯出去了，扣不到。
+ *
+ * ★★★ **訂金不算候選**（2026-09-15，migration_256）。
+ *
+ *   256 之前一張訂單只能有一列 deposits（`dep_order_once_idx`），
+ *   所以「撈到的那一列」一定是押金。256 把索引放寬成
+ *   `(order_id, kind)`，訂單開始可能同時有押金與訂金兩列 ——
+ *   不濾掉的話這裡會變成「兩筆以上、不猜」，
+ *   而症狀是**「從押金扣」那個選項整個消失**，沒有任何錯誤訊息。
+ *
+ *   而且就算只撈到訂金那一列也不該用它:加費要扣的是押金。
+ *   訂金的出路是退款／沒收／轉押金，那是另一套（lib/earnest.ts）。
  */
 export function pickDeposit(
   deps: DepCandidate[],
@@ -158,7 +175,8 @@ export function pickDeposit(
 ): PickResult {
   const orderIds = [order.id, order.parent_order_id].filter(Boolean) as string[];
   const hit = (deps ?? []).filter((d) =>
-    !d.returned_on
+    (d.kind ?? 'deposit') !== 'earnest'
+    && !d.returned_on
     && ((d.order_id && orderIds.includes(d.order_id))
       || (!!order.contract_id && d.contract_id === order.contract_id)));
   if (hit.length === 1) return { kind: 'one', dep: hit[0] };

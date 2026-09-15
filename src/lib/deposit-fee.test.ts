@@ -134,6 +134,49 @@ describe('找對應的押金', () => {
     assert.equal((r as { n: number }).n, 2);
   });
 
+  /*
+   * ══════════════════════════════════════════════════════════
+   * ★★★ 訂金不算候選（2026-09-15，migration_256）
+   *
+   * 256 之前一張訂單只能有一列 deposits（dep_order_once_idx），
+   * 所以撈到的那一列一定是押金。256 把索引放寬成 (order_id, kind)，
+   * 訂單開始可能同時有押金與訂金。
+   *
+   * 不濾掉的話這裡會回「兩筆以上、不猜」，而症狀是
+   * **「從押金扣」那個選項整個消失** —— 沒有任何錯誤訊息。
+   * ══════════════════════════════════════════════════════════
+   */
+  test('★★★ 同一張單有押金也有訂金 → 還是唯一解，選到押金那筆', () => {
+    const r = pickDeposit([
+      { id: 'D1', amount: 10000, order_id: 'O1', kind: 'deposit' },
+      { id: 'E1', amount: 220000, order_id: 'O1', kind: 'earnest' },
+    ], order);
+    assert.equal(r.kind, 'one', '訂金不該把「從押金扣」弄消失');
+    assert.equal((r as { dep: { id: string } }).dep.id, 'D1');
+  });
+
+  test('★★ 只有訂金、沒有押金 → 沒有可扣的', () => {
+    // 加費要扣的是押金。訂金的出路是退款／沒收／轉押金，那是另一套
+    const r = pickDeposit([{ id: 'E1', amount: 220000, order_id: 'O1', kind: 'earnest' }], order);
+    assert.equal(r.kind, 'none');
+  });
+
+  test('★★ 沒給 kind 的當成押金 —— 舊資料與沒撈這一欄的呼叫端不受影響', () => {
+    assert.equal(pickDeposit([{ id: 'D1', amount: 10000, order_id: 'O1' }], order).kind, 'one');
+    assert.equal(
+      pickDeposit([{ id: 'D1', amount: 10000, order_id: 'O1', kind: null }], order).kind, 'one');
+  });
+
+  test('★ 契約那邊同樣要濾 —— 契約本來就可能押金訂金並存', () => {
+    const o = { id: 'O9', parent_order_id: null, contract_id: 'C1' };
+    const r = pickDeposit([
+      { id: 'D2', amount: 5000, contract_id: 'C1', kind: 'deposit' },
+      { id: 'E2', amount: 3000, contract_id: 'C1', kind: 'earnest' },
+    ], o);
+    assert.equal(r.kind, 'one');
+    assert.equal((r as { dep: { id: string } }).dep.id, 'D2');
+  });
+
   test('★ 已退的押金不算候選', () => {
     const r = pickDeposit(
       [{ id: 'D1', amount: 10000, order_id: 'O1', returned_on: '2026-08-20' }], order);

@@ -68,6 +68,16 @@ type Order = {
    */
   pet_deposit?: number | null;
   /**
+   * 訂金（台幣，migration_256）。跟 `contracts.earnest_amount` 同名同義。
+   *
+   * ★★ 跟 `deposit` 是**兩筆錢、兩列 deposits**，不是同一筆的兩半:
+   *   訂金有自己的一生（收 → 退款／沒收／轉押金，三條互斥），
+   *   擠在同一列的話「退訂金」會變成「退整張單的押金」。
+   *
+   * ★ 只有台幣 —— 契約那邊的訂金也只有台幣。兩邊要一樣。
+   */
+  earnest_amount?: number | null;
+  /**
    * 怎麼進系統的:`'contract'` = 契約產的月租單、`'manual'` = 手動建、
    * 其餘是匯入。★ 關帳判定要用它 —— **月租單不鎖**（migration_223）。
    */
@@ -370,6 +380,15 @@ export default function ShortTermPage() {
   const [petDep, setPetDep] = useState<number | null>(null);
   /** 金額欄鎖著。有預設值才鎖 —— 沒有預設可保護時鎖著只是多一次點擊。 */
   const [petLocked, setPetLocked] = useState(true);
+  /**
+   * 訂金（migration_256）。跟 petDep 同一個寫法:
+   *
+   *     null → 這張單沒收訂金，整塊不顯示
+   *     0    → 勾了「有收訂金」但還沒填金額
+   *
+   * ★★ 合成一個的話，勾起來之後那一塊會立刻消失（petDep 那邊的原註解）。
+   */
+  const [earnest, setEarnest] = useState<number | null>(null);
   /** 各物業的寵物預設金額（estate_fee_default，migration_193）。 */
   const [feeDefaults, setFeeDefaults] = useState<FeeDefault[]>([]);
   /*
@@ -415,6 +434,12 @@ export default function ShortTermPage() {
      */
     setPetDep(edit?.pet_deposit == null ? null : Number(edit.pet_deposit));
     setPetLocked(true);
+    /*
+     * ★ 訂金用 `> 0` 判斷要不要展開，不是 `!= null` ——
+     *   欄位是 `not null default 0`，所以沒收訂金的單讀出來是 0 而不是 null。
+     *   用 `!= null` 的話每一張單打開都會展開那一塊。
+     */
+    setEarnest(Number(edit?.earnest_amount ?? 0) > 0 ? Number(edit!.earnest_amount) : null);
     setFeeUnlocked(new Set());
     if (edit?.id) {
       supabase.from('orders').select('id, checkin, amount, fee_type, item_name, note, deposit_id').eq('parent_order_id', edit.id).eq('source', 'oneoff').then(({ data }) => setFees((data ?? []).map((f: any) => ({ id: f.id, date: f.checkin ?? '', deposit_id: f.deposit_id ?? null, /*
@@ -448,7 +473,13 @@ export default function ShortTermPage() {
     if (!edit?.id) { setOrderDeps([]); return; }
     let alive = true;
     supabase.from('deposits')
-      .select('id, amount, returned_on, order_id, contract_id, room, guest_name')
+      /*
+       * ★★★ `kind` 一定要撈（migration_256）。
+       *   256 之後一張訂單可能有押金與訂金兩列，而 pickDeposit 要靠 kind
+       *   把訂金濾掉 —— 不撈的話它看到兩列就回「many」，
+       *   而症狀是「從押金扣」那個選項整個消失，沒有任何錯誤訊息。
+       */
+      .select('id, amount, returned_on, order_id, contract_id, room, guest_name, kind')
       .eq('order_id', edit.id)
       .then(({ data }) => { if (alive) setOrderDeps((data ?? []) as DepCandidate[]); });
     return () => { alive = false; };
@@ -962,6 +993,12 @@ export default function ShortTermPage() {
        */
       pet_deposit: petDep == null ? null : petDep,
       /*
+       * ★★ 訂金寫 `0` 而不是 null —— 欄位是 `not null default 0`。
+       *   取消勾選就是 0，而 0 會讓 sync_order_earnest 把那一列收掉
+       *   （還沒收錢的刪掉、收過錢的標孤兒 —— 錢在我們手上，紀錄不能無聲消失）。
+       */
+      earnest_amount: earnest == null ? 0 : earnest,
+      /*
        * 哪一家的錢（migration_159）。
        *
        * ★ 不是「其他事業體收入」就一律寫回 anxing ——
@@ -1260,7 +1297,9 @@ export default function ShortTermPage() {
     );
   }
 
-  function blank(): Order { return { id: '', order_key: '', source: 'private', estate_id: null, property_id: null, property_raw: '', guest_name: '', checkin: '', checkout: '', nights: 0, amount: 0, deposit: 0, account: null, note: '', fx_revenue: [], fx_deposit: [], invoice_required: false, invoice_title: '', invoice_tax_id: '', purpose_type: 'estate' }; }
+  function blank(): Order { return { id: '', order_key: '', source: 'private', estate_id: null, property_id: null, property_raw: '', guest_name: '', checkin: '', checkout: '', nights: 0, amount: 0, deposit: 0, account: null, note: '', fx_revenue: [], fx_deposit: [], invoice_required: false, invoice_title: '', invoice_tax_id: '', purpose_type: 'estate',
+    // ★ 0 而不是 null —— 欄位是 not null。新單預設沒收訂金，那一塊收著
+    earnest_amount: 0 }; }
 
   /** 目前缺哪些必填欄位。存檔要擋，畫面要畫紅框，用同一份答案。 */
   const missing = useMemo(() => edit ? checkRequired({
@@ -1784,6 +1823,19 @@ export default function ShortTermPage() {
                     ))}
                   </span>
                 ) : '—')}
+                {/*
+                  ★★ 訂金要在這裡看得到（migration_256）—— 跟寵物押金同一個理由:
+                    唯讀抽屜是「不打開編輯也能確認這張單」的地方，
+                    漏掉的話使用者得點進編輯才知道有沒有收訂金。
+                  ★ 只有真的有才顯示。沒收訂金的單多一列「訂金 —」只是雜訊,
+                    而這個抽屜已經很長了。
+                */}
+                {Number(d.earnest_amount) > 0
+                  ? row('訂金', <span className="flex items-center gap-2">
+                      <span>${fmt(d.earnest_amount ?? 0)}</span>
+                      <span className="rounded bg-[#F6EFD5] text-[#8a6d1f] px-1.5 py-0.5 text-[11px]">訂金</span>
+                    </span>)
+                  : null}
                 {row('收款方式', d.account ?? '—')}
                 {d.fx_revenue?.length ? row('外幣營收', d.fx_revenue.map((f, i) => <div key={i}>{f.cur} {fmt(f.amt)} × {f.rate}</div>)) : null}
                 {d.fx_deposit?.length ? row('外幣押金', d.fx_deposit.map((f, i) => <div key={i}>{f.cur} {fmt(f.amt)}</div>)) : null}
@@ -2206,6 +2258,56 @@ export default function ShortTermPage() {
                 其他事業體照舊整個藏掉（hideFields.deposit）——
                 那兩家連「押金」這個概念都沒有。
               */}
+              {/*
+                ★★★ 訂金（migration_256，使用者 2026-09-15 指定「勾選以後填寫訂金，
+                  押金另外填，訂金再轉押金」）。
+
+                  【為什麼要勾才出現】
+                  絕大多數的單沒有訂金。欄位一直擺在那裡，遲早有人把押金填進去 ——
+                  而填錯的那一筆會在押金管理頁變成一筆「要退給誰」的錢。
+                  跟寵物押金同一個理由（那邊是「+ 寵物押金」才長出來）。
+
+                  【為什麼跟押金分開兩塊，不是併成一列】
+                  它們是**兩筆錢**:訂金有自己的一生（收 → 退款／沒收／轉押金，
+                  三條互斥），押金只有收與退。畫成一列的話
+                  「退訂金」看起來會像「退整張單的押金」。
+
+                  【這裡只填金額】
+                  收款日、收款方式、退款／沒收／轉押金全部在押金管理頁 ——
+                  跟押金同一條路（金額是訂單條件，收退是之後才發生的事）。
+                  兩件事混在同一個表單裡會讓「這張單成立了沒」
+                  跟「錢收到了沒」分不清楚。
+              */}
+              {edit.source !== 'oneoff' && !hideFields.deposit && hasDeposit(edit.source) && (
+                <div className="col-span-2 rounded-lg border border-mor-line p-3">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={earnest != null}
+                      onChange={(e) => setEarnest(e.target.checked ? 0 : null)} />
+                    這張單有收訂金
+                  </label>
+                  {earnest != null && (
+                    <>
+                      <div className="flex flex-wrap items-center gap-2 mt-2">
+                        <span className="w-24 h-11 md:h-8 rounded-lg bg-[#F6EFD5] text-[#8a6d1f]
+                                         text-xs font-medium flex items-center justify-center shrink-0">訂金</span>
+                        <MoneyInput value={earnest} onChange={(n) => setEarnest(n)}
+                          className="h-11 md:h-8 rounded-lg border border-mor-line px-2 text-sm
+                                     flex-1 min-w-[6rem] text-right bg-white" />
+                        {/* 新單還沒有 id，那一列訂金也還沒產生 —— 連過去只會看到空清單 */}
+                        {edit.id ? (
+                          <a href={`/deposits?order=${edit.id}`} target="_blank" rel="noreferrer"
+                            className="text-xs text-mor-blue underline hover:text-mor-slate">收退狀態 →</a>
+                        ) : null}
+                      </div>
+                      <p className="text-xs text-gray-400 mt-1.5 leading-relaxed">
+                        只填金額。收款日、收款方式，以及<b className="text-gray-500">退款／沒收／轉押金</b>
+                        都在「押金管理」頁 —— 填了金額就會自動出現在那裡。
+                        房客入住後要把訂金轉成押金，也是在那一頁按「轉押金」。
+                      </p>
+                    </>
+                  )}
+                </div>
+              )}
               {edit.source !== 'oneoff' && !hideFields.deposit && (
                 <MoneyLines mode="deposit" label="押金" lines={depLines} onChange={setDepLines}
                   disabled={!hasDeposit(edit.source)}
