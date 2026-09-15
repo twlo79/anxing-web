@@ -5,7 +5,7 @@ import { fetchAll } from '@/lib/fetch-all';
 import { FilterBar, Field, FilterSelect, FilterSearch, FilterClear, FilterCount } from '@/lib/filters';
 import {
   daysInMonth, ymd, isWeekend, weekdayOf, sortRooms, matchRoom,
-  rowOf, hasFreeDay, hasStay, overlaps,
+  rowOf, hasFreeDay, hasStay, overlaps, dropContractOrders,
   type Stay, type Room, type Cell,
 } from '@/lib/room-calendar';
 
@@ -23,6 +23,12 @@ import {
  * ★★ 房源清單來自 `properties`，**不是從訂單反推**。
  *   從訂單反推的話，「整個月都空著」的房間永遠不會出現在畫面上 ——
  *   而那正是最想看到的那幾間。
+ *
+ * ★★ 只畫**還在用**（`active`）而且**有設物業**的房源
+ *   （使用者 2026-09-15：「物業只有正隆」）。
+ *   停用的舊房源（舊-A5、C房…）不是今天要排的房，
+ *   混在裡面會讓人捲過三十列才找到真的那一間。
+ *   沒設物業的不是靜靜消失 —— 下面另外列出來，不然沒人會知道要去補。
  * ══════════════════════════════════════════════════════════
  */
 
@@ -58,6 +64,8 @@ export default function RoomStatusPage() {
 
   const [estates, setEstates] = useState<Est[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
+  /** 還在用、但沒設物業的房源名稱 —— 畫不出來，所以列出來 */
+  const [noEstate, setNoEstate] = useState<string[]>([]);
   const [stays, setStays] = useState<Stay[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -71,18 +79,22 @@ export default function RoomStatusPage() {
 
     const [{ data: es }, { data: ps }] = await Promise.all([
       supabase.from('estates').select('id, name, sort').order('sort'),
-      supabase.from('properties').select('id, name, estate_id').order('name'),
+      // ★ 停用的房源不畫（使用者 2026-09-15：「物業只有正隆」）
+      supabase.from('properties').select('id, name, estate_id')
+        .eq('active', true).order('name'),
     ]);
     const estList = (es ?? []) as Est[];
     const estById: Record<string, Est> = {};
     estList.forEach((e) => { estById[e.id] = e; });
     setEstates(estList);
 
-    setRooms(((ps ?? []) as any[]).map((p) => ({
+    const allRooms: Room[] = ((ps ?? []) as any[]).map((p) => ({
       name: p.name as string,
-      estate: estById[p.estate_id]?.name ?? '未分類',
+      estate: estById[p.estate_id]?.name ?? null,
       estateSort: estById[p.estate_id]?.sort ?? null,
-    })));
+    }));
+    setRooms(allRooms.filter((r) => r.estate));
+    setNoEstate(allRooms.filter((r) => !r.estate).map((r) => r.name));
 
     /*
      * ★★ 撈的是「跟這個月有交集」的，不是「起日在這個月」的 ——
@@ -93,7 +105,7 @@ export default function RoomStatusPage() {
      *   9/1 退房的單最後一晚是 8/31，跟九月沒有交集。
      */
     const { rows: os } = await fetchAll<any>((f, t) => supabase.from('orders')
-      .select('id, property_raw, guest_name, checkin, checkout, source, imported_via')
+      .select('id, property_raw, guest_name, checkin, checkout, source, imported_via, contract_id')
       .not('source', 'in', '(oneoff,airbnb_cancelled)')
       .lte('checkin', to).gt('checkout', from).range(f, t));
 
@@ -107,6 +119,7 @@ export default function RoomStatusPage() {
         id: `o${o.id}`, room: o.property_raw as string, kind: 'order' as const,
         start: o.checkin, end: o.checkout, guest: o.guest_name,
         tone: (o.source === 'private' ? 'private' : 'short') as Stay['tone'],
+        contractId: o.contract_id as string | null,
       }));
 
     const cStays: Stay[] = ((cs ?? []) as any[])
@@ -121,9 +134,15 @@ export default function RoomStatusPage() {
          *   畫成一般長租的話看起來像已經住進去了。
          */
         tone: (c.earnest_only ? 'earnest' : 'longterm') as Stay['tone'],
+        contractId: c.id as string,
       }));
 
-    setStays([...oStays, ...cStays]);
+    /*
+     * ★★★ 契約產生的月租單跟契約畫的是同一段期間 ——
+     *   兩筆都留的話每一間長租房的每一天都會被算成「重疊」
+     *   （2026-09-15 上線第一天的樣子）。規則與理由在 `dropContractOrders()`。
+     */
+    setStays(dropContractOrders([...oStays, ...cStays]));
     setLoading(false);
   }, [supabase, ym]);
   useEffect(() => { load(); }, [load]);
@@ -193,6 +212,19 @@ export default function RoomStatusPage() {
           setEstF(''); setKw(''); setKwInput(''); setOnly('');
         }} />
       </FilterBar>
+
+      {/*
+        ★★ 沒設物業的房源畫不出來（左邊那一欄要顯示物業、篩選也是按物業）。
+          但**靜靜不見**是最糟的做法 —— 有人新增了房源忘了選物業，
+          它就會從此不在任何一張排房表上，而沒有人會發現。
+      */}
+      {noEstate.length > 0 && (
+        <div className="mb-3 rounded-xl border border-mor-line bg-mor-sand/60 px-4 py-2.5 text-xs text-gray-600">
+          <b>{noEstate.length} 間房源沒有設定物業</b>，沒有畫在下面 ——
+          到「管理 → 物業與房源」把它們歸到物業底下就會出現：
+          <span className="ml-1 text-gray-500">{noEstate.join('、')}</span>
+        </div>
+      )}
 
       {dup.length > 0 && (
         <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800">

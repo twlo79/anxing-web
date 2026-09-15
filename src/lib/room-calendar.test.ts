@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   daysInMonth, addDays, daysBetween, isWeekend, lastNightOf, occupies,
   compareRoomName, sortRooms, matchRoom, rowOf, hasFreeDay, hasStay, overlaps,
+  dropContractOrders,
   type Stay, type Room,
 } from './room-calendar.ts';
 
@@ -50,6 +51,52 @@ describe('★★★ 兩種來源的「迄」邊界（使用者 2026-09-15 指定
   test('★ 日期缺一半就不佔任何一天 —— 不要用猜的', () => {
     assert.equal(occupies(S({ end: null }), '2026-09-14'), false);
     assert.equal(occupies(S({ start: null }), '2026-09-14'), false);
+  });
+});
+
+describe('★★★ 契約與它產生的月租單只能畫一筆（2026-09-15 的 bug）', () => {
+  /*
+   * 房源狀態頁上線第一天，「同一天有兩筆」的警示列出了**每一間長租房的每一天**。
+   * 不是資料壞掉 —— 是契約撈了一次、`gen_contract_orders` 產的月租單又撈了一次。
+   */
+  const contract = S({
+    id: 'c1', kind: 'contract', room: '10-1', tone: 'longterm',
+    start: '2026-07-01', end: '2027-06-30', contractId: 'C',
+  });
+  const monthly = S({
+    id: 'o1', kind: 'order', room: '10-1', tone: 'longterm',
+    start: '2026-09-01', end: '2026-10-01', contractId: 'C',
+  });
+
+  test('★★★ 同一張契約的月租單被丟掉 —— 整月不再天天算重疊', () => {
+    const kept = dropContractOrders([contract, monthly]);
+    assert.deepEqual(kept.map((s) => s.id), ['c1']);
+    assert.deepEqual(overlaps(kept, '2026-09'), [], '一天都不該重疊');
+    assert.deepEqual(overlaps([contract, monthly], '2026-09').length, 30,
+      '（沒修之前是整整三十天）');
+  });
+
+  test('★★★ 契約不在清單裡（停用、或不在這個月）→ 月租單要留著', () => {
+    // 丟掉的話，一間有人住的房間會在畫面上變成空的 —— 比多畫一筆嚴重得多
+    const kept = dropContractOrders([monthly]);
+    assert.deepEqual(kept.map((s) => s.id), ['o1']);
+  });
+
+  test('★★ 別張契約的月租單不受影響', () => {
+    const other = S({ id: 'o2', kind: 'order', room: '10-2', contractId: 'D' });
+    assert.deepEqual(dropContractOrders([contract, other]).map((s) => s.id), ['c1', 'o2']);
+  });
+
+  test('★★ 短租單沒有 contract_id —— 一筆都不准被掃到', () => {
+    const air = S({ id: 'o3', kind: 'order', contractId: null });
+    const air2 = S({ id: 'o4', kind: 'order' });   // 欄位根本沒給
+    assert.deepEqual(dropContractOrders([contract, air, air2]).map((s) => s.id),
+      ['c1', 'o3', 'o4']);
+  });
+
+  test('★ 沒有任何契約時原封不動', () => {
+    const xs = [S({ id: 'a' }), S({ id: 'b', contractId: 'C' })];
+    assert.deepEqual(dropContractOrders(xs).map((s) => s.id), ['a', 'b']);
   });
 });
 
@@ -106,7 +153,7 @@ describe('★★ 房源照順序排（使用者 2026-09-15）', () => {
 
   test('★ 沒有 sort 的物業排最後，不要卡在中間', () => {
     const rooms: Room[] = [
-      { name: 'X1', estate: '未分類', estateSort: null },
+      { name: 'X1', estate: '新光', estateSort: null },
       { name: 'B1', estate: '正隆', estateSort: 1 },
     ];
     assert.deepEqual(sortRooms(rooms).map((r) => r.name), ['B1', 'X1']);

@@ -40,11 +40,17 @@ export type Stay = {
   guest?: string | null;
   /** 畫成什麼顏色。short=短租、private=私下、longterm=長租、earnest=訂金 */
   tone: 'short' | 'private' | 'longterm' | 'earnest';
+  /**
+   * 契約的話是它自己的 id，月租單的話是它從哪張契約長出來的（`orders.contract_id`）。
+   * 只給 `dropContractOrders()` 用 —— 見那支的說明。
+   */
+  contractId?: string | null;
 };
 
 export type Room = {
   name: string;
-  estate: string;
+  /** 沒設物業的話是 null —— 畫面另外處理，不要用 '未分類' 混進來當成一個物業 */
+  estate: string | null;
   /** 物業在側邊的排序值（`estates.sort`）。小的排前面 */
   estateSort?: number | null;
 };
@@ -109,6 +115,36 @@ export function occupies(s: Stay, day: Ymd): boolean {
   // ★ 退房日就是入住日的當日單（加費、折讓）不佔任何一晚
   if (daysBetween(s.start, last) < 0) return false;
   return day >= s.start && day <= last;
+}
+
+/* ────────────────────────────────────────────────────────── */
+
+/**
+ * 契約產生的月租單，跟契約本身**畫的是同一段期間**。
+ *
+ * ★★★ 2026-09-15：房源狀態頁上線第一天，「同一天有兩筆」的警示把整頁塞滿 ——
+ *   每一間長租房、每一天都被列進去。原因不是資料壞掉，是我撈了兩次同一件事:
+ *
+ *       契約　　LT_南京10-1　9/1 ~ 2027/6/30      ← 一整段
+ *       月租單　LT_南京10-1_202609　9/1 ~ 10/1    ← `gen_contract_orders` 產的
+ *
+ *   兩筆疊在同一條線上，`overlaps()` 就每天都命中。
+ *
+ * ★ 留契約那一筆：它是一整段、一個房客，畫出來才是人看得懂的樣子。
+ *   月租單是**帳**（每個月一張、要收款要開發票），不是**住**。
+ *
+ * ★★ 只丟掉「它的契約真的在這個月的清單裡」那些。
+ *   契約被停用（`active = false`）或撈不到的時候，月租單是那間房唯一的資料 ——
+ *   一律丟掉的話，一間有人住的房間會在畫面上變成空的，
+ *   而空房正是這一頁最會被拿來做決定的格子。
+ */
+export function dropContractOrders(stays: readonly Stay[]): Stay[] {
+  const drawn = new Set<string>();
+  for (const s of stays) {
+    if (s.kind === 'contract' && s.contractId) drawn.add(s.contractId);
+  }
+  return stays.filter((s) =>
+    !(s.kind === 'order' && s.contractId && drawn.has(s.contractId)));
 }
 
 /* ────────────────────────────────────────────────────────── */
