@@ -1590,8 +1590,25 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
   const [payAsk, setPayAsk] = useState<
     { chunk: any[]; label: string; paidAt: string; t: PeriodTotal } | null>(null);
   const [concDraft, setConcDraft] = useState<{ pi: number; date: string; amount: number; note: string; baseAmount: number; priorDisc: number } | null>(null);
-  const [invMap, setInvMap] = useState<Record<string, any>>({});
-  const [invDraft, setInvDraft] = useState<{ id?: string; ym: string; date: string; no: string; note: string; label?: string } | null>(null);
+  /**
+   * 這份契約的所有發票，一次撈完在前端分。
+   *
+   * ★★ 原本是 `Record<ym, 發票>` —— 同一個 ym 開第二張（「+ 再開一張」）
+   *   會把第一張蓋掉，而畫面上那一張就這樣不見了。
+   *   註解寫著「會列出所有落在這一期的發票」，實際上做不到。改成陣列。
+   */
+  const [invRows, setInvRows] = useState<any[]>([]);
+  /**
+   * `orderId` / `amount`：加費列開的發票（2026-09-15）。
+   *
+   * ★ 未稅契約不走每期發票，稅費那一列才是那張發票的落腳處 ——
+   *   所以發票要掛在**那筆加費單**上，不是掛在那個月的月租單上。
+   *   沒給就照舊掛月租單（每期發票那條路）。
+   */
+  const [invDraft, setInvDraft] = useState<{
+    id?: string; ym: string; date: string; no: string; note: string; label?: string;
+    orderId?: string | null; amount?: number | null;
+  } | null>(null);
   const today = () => new Date().toISOString().slice(0, 10);
   const STEP = ({ monthly: 1, quarterly: 3, halfyear: 6, yearly: 12 } as any)[c.cadence] || 1;
   /*
@@ -2014,13 +2031,17 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
     loadFees();
   }
 
+  /**
+   * ★★★ 不再看 `c.invoice_required`（2026-09-15）。
+   *   **未稅契約的 `invoice_required` 一定是 false**（migration_204 的 check 擋著），
+   *   而稅費那一列的發票正好只發生在未稅契約上 ——
+   *   照舊 early return 的話，那張發票存得進去、讀不出來。
+   */
   const loadInvoices = useCallback(async () => {
-    if (!c.invoice_required) { setInvMap({}); return; }
-    const { data } = await supabase.from('invoices').select('*').eq('contract_id', c.id).eq('status', 'issued');
-    const m: Record<string, any> = {};
-    (data ?? []).forEach((v: any) => { m[v.ym] = v; });
-    setInvMap(m);
-  }, [supabase, c.id, c.invoice_required]);
+    const { data } = await supabase.from('invoices')
+      .select('*').eq('contract_id', c.id).eq('status', 'issued');
+    setInvRows(data ?? []);
+  }, [supabase, c.id]);
   useEffect(() => { loadInvoices(); }, [loadInvoices]);
 
   async function saveInvoice() {
@@ -2029,9 +2050,15 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
     if (!INV_NO_RE.test(no)) { alert('發票號碼格式應為 2 碼英文 + 8 碼數字,例 AB12345678'); return; }
     if (!invDraft.date) { alert('請填開票日期'); return; }
     const o = existing[kb + invDraft.ym];
+    /*
+     * ★★ 加費列開的發票掛在**那筆加費單**上（`orderId`），
+     *   月租單那條路照舊掛月租單。兩邊共用這一支，
+     *   差別只有掛在哪一張單、金額抓哪一筆。
+     */
     const payload = {
-      contract_id: c.id, order_id: o?.id ?? null, room: c.room, ym: invDraft.ym,
-      amount: Number(o?.amount || 0) || null,
+      contract_id: c.id, order_id: invDraft.orderId ?? o?.id ?? null,
+      room: c.room, ym: invDraft.ym,
+      amount: (invDraft.orderId ? Number(invDraft.amount || 0) : Number(o?.amount || 0)) || null,
       invoice_no: no, invoice_date: invDraft.date,
       title: c.invoice_title || c.tenant_name || null,
       tax_id: c.invoice_tax_id || null,
@@ -2087,8 +2114,17 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
   function invPeriodRows(chunk: any[], periodIndex: number, label: string, frozen = false) {
     if (!c.invoice_required) return null;
     const yms = chunk.map((m: any) => m.ym);
-    // 這一期已經開的發票（可能不只一張）
-    const list = yms.map((y: string) => invMap[y]).filter(Boolean);
+    /*
+     * 這一期已經開的發票（可能不只一張）。
+     *
+     * ★★★ 要把**加費列開的**排除掉（2026-09-15）——
+     *   它們的 ym 跟這一期一樣，只看 ym 的話稅費的發票會跑來這裡顯示一次，
+     *   而那會讓人以為「房租的發票開好了」。
+     *   判斷法：掛在月租單上（或舊資料沒掛單）的才是這一期的。
+     */
+    const monthlyIds = new Set(Object.values(existing).map((o: any) => o?.id).filter(Boolean));
+    const list = invRows.filter((v: any) => yms.includes(v.ym)
+      && (v.order_id == null || monthlyIds.has(v.order_id)));
     // 有任何一個月的訂單收款了就算可開（收費後開的契約）
     const os = chunk.map((m: any) => existing[kb + m.ym]).filter(Boolean);
     if (!os.length) return null;
@@ -2668,16 +2704,92 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                       // 刪掉之後觸發器下次重產又長回來,使用者會以為系統壞了。
                       // 要停止收費請到上面的「固定加費」按「停止收費」。
                       const auto = f.imported_via === 'contract_fee';
+                      /*
+                       * ★★★ 加費也能開發票（2026-09-15 使用者指定，B 案）。
+                       *
+                       *   未稅契約的「需要開發票」是被強制關掉的（migration_204 的 check），
+                       *   所以那一期**不會有發票列** —— 而契約設定裡寫的做法就是
+                       *   「要開發票的話，每一期到收租加一筆稅費」。
+                       *   那一列以前只有「刪」，開出去的號碼**沒有地方存**。
+                       *
+                       * ★ 固定加費不給（維持「於上方調整」）—— 它是設定產生的，
+                       *   這一列上的動作都會誤導人以為改得動。
+                       * ★ 折讓（負數）也不給 —— 那是折抵，不是一筆要開票的收入。
+                       */
+                      const canInv = !auto && Number(f.amount) > 0;
+                      const fInv = invRows.filter((v: any) => v.order_id === f.id);
+                      const feeName = auto ? feeLabel(f.fee_type, f.item_name) : f.fee_type;
+                      const feeYm = String(f.checkin ?? '').slice(0, 7);
                       return (
-                        <div key={f.id} className={`flex items-center justify-between text-xs py-0.5 ${Number(f.amount) < 0 ? 'text-orange-600' : 'text-gray-600'}`}>
-                          <span>
-                            · {auto ? feeLabel(f.fee_type, f.item_name) : f.fee_type} {Number(f.amount) < 0 ? '−' : ''}${fmt(Math.abs(Number(f.amount) || 0))}
-                            <span className="text-gray-400"> ({f.checkin})</span>
-                            {auto && <span className="ml-1 text-[10px] text-gray-400">固定</span>}
-                          </span>
-                          {auto
-                            ? <span className="text-[10px] text-gray-400">於上方「固定加費」調整</span>
-                            : <button onClick={() => delFee(f.id)} className="text-red-400 underline">刪</button>}
+                        <div key={f.id}>
+                          <div className={`flex items-center justify-between text-xs py-0.5 ${Number(f.amount) < 0 ? 'text-orange-600' : 'text-gray-600'}`}>
+                            <span>
+                              · {feeName} {Number(f.amount) < 0 ? '−' : ''}${fmt(Math.abs(Number(f.amount) || 0))}
+                              <span className="text-gray-400"> ({f.checkin})</span>
+                              {auto && <span className="ml-1 text-[10px] text-gray-400">固定</span>}
+                            </span>
+                            {auto
+                              ? <span className="text-[10px] text-gray-400">於上方「固定加費」調整</span>
+                              : (
+                                <span className="flex items-center gap-2 shrink-0">
+                                  {/* 一張都還沒開的時候才是「開發票」；開過了走底下那一行的「+ 再開一張」 */}
+                                  {canInv && !fInv.length && (
+                                    <button
+                                      onClick={() => setInvDraft({
+                                        ym: feeYm, date: today(), no: '', note: c.invoice_note ?? '',
+                                        label: `${feeName} $${fmt(Math.abs(Number(f.amount) || 0))}`,
+                                        orderId: f.id, amount: Number(f.amount) || 0,
+                                      })}
+                                      disabled={frozen} title={frozen ? (lockMsg ?? '') : ''}
+                                      className="rounded-lg bg-mor-slate text-white px-2 py-0.5 font-medium hover:bg-mor-slatedark disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed">
+                                      開發票
+                                    </button>
+                                  )}
+                                  {/*
+                                    ★★ 關帳之後「刪」也要灰掉。守衛本來就會擋（migration_249），
+                                      但一顆按得下去、按了跳錯誤的按鈕，使用者的結論是「系統壞了」。
+                                  */}
+                                  <button onClick={() => delFee(f.id)}
+                                    disabled={frozen} title={frozen ? (lockMsg ?? '') : ''}
+                                    className="text-red-400 underline disabled:text-gray-300 disabled:no-underline disabled:cursor-not-allowed">刪</button>
+                                </span>
+                              )}
+                          </div>
+                          {/*
+                            ★★★ 開好的號碼與日期**照常顯示**，只有「改」灰掉 ——
+                              跟每期發票那一列同一條規則（2026-09-15 使用者定的）：
+                              關帳鎖的是能不能改，而發票號碼是既成事實。
+                          */}
+                          {fInv.map((inv: any) => (
+                            <div key={inv.id} className="flex items-center justify-between gap-2 text-xs py-0.5 pl-3">
+                              <span className="text-gray-400 shrink-0">發票</span>
+                              <span className="flex items-center gap-2 min-w-0">
+                                <span className="rounded bg-mor-greenlight text-mor-green px-1.5 py-0.5 font-medium">{inv.invoice_no}</span>
+                                <span className="text-gray-400 whitespace-nowrap">{inv.invoice_date}</span>
+                                <button
+                                  onClick={() => setInvDraft({
+                                    id: inv.id, ym: inv.ym, date: inv.invoice_date, no: inv.invoice_no,
+                                    note: inv.note ?? '',
+                                    label: `${feeName} $${fmt(Math.abs(Number(f.amount) || 0))}`,
+                                    orderId: f.id, amount: Number(f.amount) || 0,
+                                  })}
+                                  disabled={frozen} title={frozen ? '這一期已關帳，發票改不動' : ''}
+                                  className="text-mor-blue underline shrink-0 disabled:text-gray-400 disabled:no-underline disabled:cursor-not-allowed">改</button>
+                              </span>
+                            </div>
+                          ))}
+                          {canInv && !!fInv.length && (
+                            <div className="pl-3 py-0.5">
+                              <button
+                                onClick={() => setInvDraft({
+                                  ym: feeYm, date: today(), no: '', note: c.invoice_note ?? '',
+                                  label: `${feeName} $${fmt(Math.abs(Number(f.amount) || 0))}`,
+                                  orderId: f.id, amount: Number(f.amount) || 0,
+                                })}
+                                disabled={frozen} title={frozen ? (lockMsg ?? '') : ''}
+                                className="text-xs text-mor-blue underline disabled:text-gray-400 disabled:no-underline disabled:cursor-not-allowed">+ 再開一張</button>
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -3021,7 +3133,8 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
               <div className="rounded-lg bg-amber-50/60 px-3 py-2 text-xs space-y-0.5">
                 <div className="text-gray-600">抬頭 <span className="font-medium text-gray-800">{c.invoice_title || c.tenant_name || '—'}</span></div>
                 <div className="text-gray-600">統編 <span className="font-medium text-gray-800">{c.invoice_tax_id || '—'}</span></div>
-                <div className="text-gray-600">金額 <span className="font-medium text-gray-800">${fmt(Number(existing[kb + invDraft.ym]?.amount || 0))}</span> <span className="text-gray-400">(參考,實際以平台開立為準)</span></div>
+                {/* ★ 加費列開的發票金額要抓那筆加費，不是那個月的月租單 */}
+                <div className="text-gray-600">金額 <span className="font-medium text-gray-800">${fmt(Number((invDraft.orderId ? invDraft.amount : existing[kb + invDraft.ym]?.amount) || 0))}</span> <span className="text-gray-400">(參考,實際以平台開立為準)</span></div>
               </div>
               <label className="flex flex-col gap-1 text-xs text-gray-500">開票日期
                 <input type="date" value={invDraft.date} onChange={(e) => setInvDraft({ ...invDraft, date: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm" /></label>
