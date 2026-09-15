@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   daysInMonth, addDays, daysBetween, isWeekend, lastNightOf, occupies,
   compareRoomName, sortRooms, matchRoom, rowOf, hasFreeDay, hasStay, overlaps,
-  dropContractOrders,
+  overlapRanges, dropContractOrders,
   type Stay, type Room,
 } from './room-calendar.ts';
 
@@ -255,5 +255,68 @@ describe('排版成一列格子', () => {
     ];
     assert.deepEqual(overlaps(dup, '2026-09'),
       ['2026-09-03', '2026-09-04', '2026-09-05']);
+  });
+});
+
+describe('★★★ 重疊要說得出「是哪兩筆」（使用者 2026-09-15：「？？」）', () => {
+  /*
+   * 10 月的 14B2 被列成「26、27、28、29、30、31 號」有兩筆，
+   * 使用者去契約清單搜 14B2 —— 只有一筆，然後就沒路可走了。
+   * 一條說「這裡有問題」卻不說是什麼的警示，比沒有還糟。
+   */
+  const contract = S({
+    id: 'c1', kind: 'contract', room: '14B2', tone: 'longterm',
+    guest: '金鋒行銷有限公司', start: '2026-10-01', end: '2029-09-30',
+  });
+  const air = S({
+    id: 'o1', kind: 'order', room: '14B2', tone: 'short',
+    guest: 'Roni', start: '2026-10-26', end: '2026-11-01',
+  });
+
+  test('★★★ 一段期間 ＋ 是哪幾筆，六天併成一段', () => {
+    const rs = overlapRanges([contract, air], '2026-10');
+    assert.equal(rs.length, 1, '六天是同一件事，不是六件');
+    assert.equal(rs[0].from, '2026-10-26');
+    assert.equal(rs[0].to, '2026-10-31');
+    assert.deepEqual(rs[0].stays.map((s) => s.guest).sort(),
+      ['Roni', '金鋒行銷有限公司']);
+    assert.deepEqual(rs[0].stays.map((s) => s.kind).sort(), ['contract', 'order']);
+  });
+
+  test('★★ 中途換了一筆 → 斷成兩段，不要黏成一大段', () => {
+    const base = S({ id: 'a', start: '2026-10-01', end: '2026-10-21' });
+    const x = S({ id: 'b', start: '2026-10-05', end: '2026-10-08' });   // 5~7
+    const y = S({ id: 'c', start: '2026-10-15', end: '2026-10-18' });   // 15~17
+    const rs = overlapRanges([base, x, y], '2026-10');
+    assert.deepEqual(rs.map((r) => [r.from, r.to]), [
+      ['2026-10-05', '2026-10-07'],
+      ['2026-10-15', '2026-10-17'],
+    ]);
+    assert.deepEqual(rs.map((r) => r.stays.map((s) => s.id)), [['a', 'b'], ['a', 'c']]);
+  });
+
+  test('★ 三筆疊在一起就三筆都列出來', () => {
+    const rs = overlapRanges([
+      S({ id: 'a', start: '2026-10-01', end: '2026-10-05' }),
+      S({ id: 'b', start: '2026-10-01', end: '2026-10-05' }),
+      S({ id: 'c', start: '2026-10-01', end: '2026-10-05' }),
+    ], '2026-10');
+    assert.deepEqual(rs[0].stays.map((s) => s.id), ['a', 'b', 'c']);
+  });
+
+  test('★ 沒重疊就是空陣列', () => {
+    assert.deepEqual(overlapRanges([contract], '2026-10'), []);
+    assert.deepEqual(overlapRanges([], '2026-10'), []);
+  });
+
+  test('★★ `overlaps()` 是從 `overlapRanges()` 攤平的 —— 兩邊答案不准不一樣', () => {
+    const xs = [contract, air];
+    const flat = overlapRanges(xs, '2026-10')
+      .flatMap((r) => {
+        const out: string[] = [];
+        for (let d = r.from; d <= r.to; d = addDays(d, 1)) out.push(d);
+        return out;
+      });
+    assert.deepEqual(overlaps(xs, '2026-10'), flat);
   });
 });

@@ -5,7 +5,7 @@ import { fetchAll } from '@/lib/fetch-all';
 import { FilterBar, Field, FilterSelect, FilterSearch, FilterClear, FilterCount } from '@/lib/filters';
 import {
   daysInMonth, ymd, isWeekend, weekdayOf, sortRooms, matchRoom,
-  rowOf, hasFreeDay, hasStay, overlaps, dropContractOrders,
+  rowOf, hasFreeDay, hasStay, overlapRanges, dropContractOrders,
   type Stay, type Room, type Cell,
 } from '@/lib/room-calendar';
 
@@ -41,6 +41,12 @@ const TONE: Record<Stay['tone'], { bar: string; label: string }> = {
   longterm: { bar: 'bg-mor-slate',  label: '長租契約' },
   earnest:  { bar: 'bg-[#C9A227]',  label: '訂金／未確認' },
 };
+
+/** 重疊清單裡標「這一筆是哪裡來的」—— 沒有這兩個字就不知道去哪一頁修 */
+const KIND: Record<Stay['kind'], string> = { contract: '契約', order: '訂單' };
+
+/** `2026-10-26` → `10/26`。年份在月份篩選上，這裡再寫一次只是雜訊 */
+const mdOf = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
 
 const thisYm = () => {
   const d = new Date();
@@ -181,8 +187,8 @@ export default function RoomStatusPage() {
 
   /** 同一間房同一天有兩筆 —— 資料有問題，列出來讓人去修 */
   const dup = useMemo(() => visible
-    .map((x) => ({ room: x.room.name, days: overlaps(x.stays, ym) }))
-    .filter((x) => x.days.length), [visible, ym]);
+    .flatMap((x) => overlapRanges(x.stays, ym).map((r) => ({ room: x.room.name, ...r }))),
+  [visible, ym]);
 
   /*
    * ★ 預設的那個物業**不算篩選** —— 算的話篩選列一進來就亮著、
@@ -246,15 +252,24 @@ export default function RoomStatusPage() {
         </div>
       )}
 
+      {/*
+        ★★★ 一行一段，而且**寫出是哪幾筆**（使用者 2026-09-15）。
+          原本只列「14B2 26、27、28、29、30、31 號」——
+          他去契約清單搜 14B2 只有一筆，就沒路可走了。
+          說得出「金鋒（契約）× Roni（訂單）」才修得動。
+      */}
       {dup.length > 0 && (
         <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800">
-          <b>同一天有兩筆的房源</b> —— 多半是重複訂單或移房沒收乾淨。
-          日曆上只畫其中一筆，所以這裡另外列出來：
-          <div className="mt-1">
+          <b>同一間房同時有兩筆</b> —— 日曆上只畫得下其中一筆，所以這裡列出來：
+          <div className="mt-1.5 space-y-1">
             {dup.map((d) => (
-              <span key={d.room} className="mr-3">
-                <b>{d.room}</b> {d.days.map((x) => x.slice(8)).join('、')} 號
-              </span>
+              <div key={`${d.room}/${d.from}`}>
+                <b>{d.room}</b>
+                <span className="ml-2">{mdOf(d.from)}{d.to === d.from ? '' : `～${mdOf(d.to)}`}</span>
+                <span className="ml-2">
+                  {d.stays.map((s) => `${s.guest || '（沒有名字）'}（${KIND[s.kind]}）`).join('　×　')}
+                </span>
+              </div>
             ))}
           </div>
         </div>

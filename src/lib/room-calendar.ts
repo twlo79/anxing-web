@@ -253,19 +253,53 @@ export function hasStay(cells: readonly Cell[]): boolean {
   return cells.some((c) => c.type === 'stay');
 }
 
+/** 一段「同一間房同時有兩筆以上」的期間，連同**是哪幾筆** */
+export type Overlap = { from: Ymd; to: Ymd; stays: Stay[] };
+
 /**
  * 同一間房在同一天有兩筆以上 —— 資料有問題。
  *
  * ★ 不在日曆上疊著畫（會變成一團看不懂的東西），
  *   而是列出來讓人去修。畫面安靜地只顯示其中一筆比較糟:
  *   看起來正常，而另一筆錢無聲消失在畫面外。
+ *
+ * ★★★ 回傳**是哪幾筆**，不是只回傳哪幾天（2026-09-15）。
+ *   原本只列「14B2 26、27、28、29、30、31 號」——
+ *   使用者去契約清單查 14B2，只有一筆，然後就沒路可走了。
+ *   一條說「這裡有問題」卻不說是什麼的警示，比沒有還糟:
+ *   它花掉注意力、留下一個查不動的問題，久了就沒有人再看它。
+ *
+ * ★ 同一組重疊的連續幾天併成一段 —— 六天各列一次只是把同一件事講六遍。
  */
-export function overlaps(stays: readonly Stay[], ym: string): Ymd[] {
+export function overlapRanges(stays: readonly Stay[], ym: string): Overlap[] {
   const n = daysInMonth(ym);
-  const out: Ymd[] = [];
+  const out: Overlap[] = [];
+  let cur: Overlap | null = null;
+  let curKey = '';
   for (let d = 1; d <= n; d++) {
     const day = ymd(ym, d);
-    if (stays.filter((s) => occupies(s, day)).length > 1) out.push(day);
+    const hit = stays.filter((s) => occupies(s, day));
+    if (hit.length < 2) { cur = null; curKey = ''; continue; }
+    // 「同一組」是看**哪幾筆**，不是看有幾筆 —— 中途換了一筆就要斷開成兩段
+    const key = hit.map((s) => s.id).slice().sort().join('|');
+    if (cur && key === curKey) { cur.to = day; continue; }
+    cur = { from: day, to: day, stays: hit };
+    curKey = key;
+    out.push(cur);
+  }
+  return out;
+}
+
+/**
+ * 哪幾天有重疊。
+ *
+ * ★ 從 `overlapRanges()` 攤平出來，不是自己再數一遍 ——
+ *   同一條規則寫兩次，改了一邊另一邊會安靜地留在舊答案。
+ */
+export function overlaps(stays: readonly Stay[], ym: string): Ymd[] {
+  const out: Ymd[] = [];
+  for (const r of overlapRanges(stays, ym)) {
+    for (let d = r.from; d <= r.to; d = addDays(d, 1)) out.push(d);
   }
   return out;
 }
