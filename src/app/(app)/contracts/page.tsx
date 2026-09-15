@@ -21,7 +21,7 @@ import { feeMonthly, leasePeriods, periodOf } from '@/lib/lease';
 import { dueDateOf, resolvePayDay, checkFirstDue, fmtDue, periodRange, fmtPeriodRange, rentMonthCount, checkContractDates } from '@/lib/due-date';
 import { keyBase, onlyKeyOf } from '@/lib/ltKey';
 // 關帳：畫面上擋住的判斷跟資料庫那支守衛走**同一份規則**（migration_249）
-import { isLocked, lockedMsg, lockYmOf, type Ym } from '@/lib/period-lock';
+import { isLocked, lockedMsg, lockYmOf, ymLabel, type Ym } from '@/lib/period-lock';
 // 「這筆收入算誰的」—— 畫面與存檔共用同一份規則（migration_247）
 import { contractPurpose, purposeLockedByType } from '@/lib/purpose';
 // 一期的應收與收齊判斷都走這支 —— 畫面、確認視窗、收款三處共用同一份算式
@@ -2078,7 +2078,13 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
    * migration_94 之前那些一個月一張的紀錄不會消失 ——
    * 藏起來的話帳面上有那張發票、畫面上查不到，對帳時沒有人說得出發生什麼事。
    */
-  function invPeriodRows(chunk: any[], periodIndex: number, label: string) {
+  /**
+   * @param frozen 這一期關帳鎖著（migration_249~251）。
+   *   ★★ **由呼叫端傳進來**，不要在這裡自己再算一次 ——
+   *     一般期別與延展期別的解鎖 key 不同（`L{i}` / `X{j}`），
+   *     在這裡算的話兩邊會用同一把 key，開了甲期會連乙期的發票一起解開。
+   */
+  function invPeriodRows(chunk: any[], periodIndex: number, label: string, frozen = false) {
     if (!c.invoice_required) return null;
     const yms = chunk.map((m: any) => m.ym);
     // 這一期已經開的發票（可能不只一張）
@@ -2098,8 +2104,14 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
             <span className="flex items-center gap-2 min-w-0">
               <span className="rounded bg-mor-greenlight text-mor-green px-1.5 py-0.5 font-medium">{inv.invoice_no}</span>
               <span className="text-gray-400 whitespace-nowrap">{inv.invoice_date}</span>
+              {/*
+                ★★★ 號碼與日期**照常顯示**（2026-09-15 使用者指定）——
+                  關帳鎖住的是「能不能改」，而發票號碼是既成事實，藏起來沒好處。
+                  只有「改」這顆灰掉。
+              */}
               <button onClick={() => setInvDraft({ id: inv.id, ym: inv.ym, date: inv.invoice_date, no: inv.invoice_no, note: inv.note ?? '', label })}
-                className="text-mor-blue underline shrink-0">改</button>
+                disabled={frozen} title={frozen ? '這一期已關帳，發票改不動' : ''}
+                className="text-mor-blue underline shrink-0 disabled:text-gray-400 disabled:no-underline disabled:cursor-not-allowed">改</button>
             </span>
           </div>
         ))}
@@ -2109,7 +2121,8 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
             <span className="text-gray-500">發票 第 {periodIndex + 1} 期</span>
             {canIssue ? (
               <button onClick={() => setInvDraft({ ym: headYm, date: today(), no: '', note: c.invoice_note ?? '', label })}
-                className="rounded-lg bg-mor-slate text-white px-2.5 py-1 font-medium hover:bg-mor-slatedark">開發票</button>
+                disabled={frozen} title={frozen ? '這一期已關帳，開不了發票' : ''}
+                className="rounded-lg bg-mor-slate text-white px-2.5 py-1 font-medium hover:bg-mor-slatedark disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed">開發票</button>
             ) : (
               <span className="rounded-lg bg-gray-100 text-gray-400 px-2.5 py-1" title="此契約設定為「收費後開」,需先確認入帳">尚未入帳</span>
             )}
@@ -2119,7 +2132,8 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
         {/* 已經有發票時才給「再開一張」—— 一張都還沒開的時候那顆按鈕叫「開發票」就好 */}
         {!!list.length && canIssue && (
           <button onClick={() => setInvDraft({ ym: headYm, date: today(), no: '', note: c.invoice_note ?? '', label })}
-            className="text-mor-blue underline">+ 再開一張</button>
+            disabled={frozen} title={frozen ? '這一期已關帳，開不了發票' : ''}
+            className="text-mor-blue underline disabled:text-gray-400 disabled:no-underline disabled:cursor-not-allowed">+ 再開一張</button>
         )}
       </div>
     );
@@ -2327,6 +2341,17 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                         <span className="text-gray-700">
                           {fmtPeriodRange(periodRange(c.start_date, c.cadence, i)) || `${first.label}${STEP > 1 ? `~${last.label}` : ''}`}
                         </span>
+                        {/*
+                          ★ 這一期關帳了沒，掛在期別後面（B 案）。
+                            開鎖之後不是拿掉，是換成「🔓 已開鎖」——
+                            拿掉的話他會忘記自己開過，而那正是要避免的狀態。
+                        */}
+                        {lockedHere && (
+                          <span className={`ml-1.5 inline-flex items-center gap-1 rounded-full border px-2 py-px text-[11px] font-semibold align-[1px] ${frozen ? 'border-gray-200 bg-gray-100 text-gray-500' : 'border-amber-200 bg-amber-100 text-amber-800'}`}
+                            title={frozen ? (lockMsg ?? '') : '關掉這個視窗就自動鎖回去'}>
+                            {frozen ? `🔒 ${ymLabel(lockYm)}` : '🔓 已開鎖'}
+                          </span>
+                        )}
                         {due ? <span className="ml-2 text-xs text-gray-400">應繳 {due}</span> : null}
                       </div>
                       {/*
@@ -2407,23 +2432,45 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                       ★ 開了鎖之後橫幅不會消失，換成「開著」——
                         不然他改完會忘記自己開過，而那正是要避免的狀態。
                     */}
-                    {lockedHere && (
-                      <div className={`mb-2 rounded-lg px-2.5 py-1.5 text-[11px] leading-relaxed flex items-center justify-between gap-2 ${frozen ? 'bg-gray-100 text-gray-600' : 'bg-amber-50 text-amber-800'}`}>
-                        <span>
-                          {frozen
-                            ? <>🔒 {lockMsg}</>
-                            : <>🔓 這一期<b>已開鎖</b>，改得動 —— 關掉這個視窗就自動鎖回去。</>}
-                        </span>
-                        {frozen && (
-                          canCollect(myRole)
-                            ? <button
-                                onClick={() => unlockPeriod(lockKey, lockYm, unlockIds)}
-                                disabled={unlocking === lockKey || !lockYm}
-                                className="shrink-0 rounded-lg border border-gray-400 px-2.5 py-1 text-[11px] font-medium hover:bg-white disabled:opacity-40">
-                                {unlocking === lockKey ? '開鎖中⋯' : '🔓 開鎖'}
-                              </button>
-                            : <span className="shrink-0 text-gray-400">只有會計能開鎖</span>
+                    {/*
+                      ══════════ 關帳的鎖（2026-09-15 使用者選 B 案）══════════
+
+                      ★★★ **版面一格都不動**，只有「退回／收款」那一顆換成鎖 ——
+                        使用者指定:「原本版面不變，只是退回變鎖就好，會計按了就可以開鎖。」
+
+                      ★★ 鎖**本身就是開鎖鈕**，不另外多一顆。
+                        改版前是「一條橫幅 ＋ 旁邊一顆開鎖」，佔掉一整行，
+                        而且橫幅那句話太長 —— 使用者:「鎖簡便一些，說明簡短點」。
+
+                      ★ 非會計按了在**下方**跳一行紅字，用 absolute 不佔高度
+                        （anxing-ui 第二節:提示出現時旁邊的欄位一格都不准動）。
+                        按鈕留著不藏 —— 藏了他不知道這件事做得到，只會改用 LINE 問。
+                    */}
+                    {frozen && (
+                      <div className="flex items-center gap-2">
+                        {/*
+                          ★★ 收款日**留著**，只是變成純文字（使用者:「要看得到繳款日期」）。
+                            改版前整排連同日期一起消失 —— 而那個日期是事實，藏起來沒好處。
+                        */}
+                        {allPaid && paidAt && (
+                          <span className="text-xs text-gray-600">收款日 <b className="tabular-nums font-semibold text-mor-ink">{paidAt}</b></span>
                         )}
+                        <div className="relative">
+                          <button
+                            onClick={() => (canCollect(myRole)
+                              ? unlockPeriod(lockKey, lockYm, unlockIds)
+                              : denyBtn(`k${i}`))}
+                            disabled={unlocking === lockKey || (canCollect(myRole) && !lockYm)}
+                            title={lockMsg ?? ''}
+                            className="rounded-lg border border-gray-300 bg-gray-100 text-gray-500 px-4 py-1.5 text-xs font-medium hover:bg-gray-200 disabled:opacity-40">
+                            {unlocking === lockKey ? '開鎖中⋯' : '🔒 開鎖'}
+                          </button>
+                          {denied === `k${i}` && (
+                            <div className="absolute top-full right-0 z-10 mt-1 whitespace-nowrap text-[11px] text-red-600">
+                              只有會計能開鎖
+                            </div>
+                          )}
+                        </div>
                       </div>
                     )}
                     {os.length > 0 && !frozen && (allPaid
@@ -2695,7 +2742,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                   </div>
                   {c.invoice_required && (
                     <div className="mt-1.5 border-t border-amber-200/60 pt-1.5">
-                      {invPeriodRows(chunk, i, `第 ${i + 1} 期 ${fmtPeriodRange(periodRange(c.start_date, c.cadence, i)) || first.label}`)}
+                      {invPeriodRows(chunk, i, `第 ${i + 1} 期 ${fmtPeriodRange(periodRange(c.start_date, c.cadence, i)) || first.label}`, frozen)}
                     </div>
                   )}
                 </div>
@@ -2763,16 +2810,29 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                       const xFrozen = !!o && isLocked(xo, lockedYms) && !unlocked[`X${j}`];
                       if (!xFrozen) return null;
                       const xYm = lockYmOf(xo);
+                      // ★ 跟一般期別**同一種長相** —— 兩邊不一樣的話，
+                      //   使用者會以為延展期別是另一種東西
                       return (
-                        <div className="rounded-lg bg-gray-100 text-gray-600 px-2.5 py-1.5 text-[11px] flex items-center gap-2">
-                          <span>🔒 {lockedMsg(xo, lockedYms)}</span>
-                          {canCollect(myRole)
-                            ? <button onClick={() => unlockPeriod(`X${j}`, xYm, [(o as any).id].filter(Boolean))}
-                                disabled={unlocking === `X${j}` || !xYm}
-                                className="shrink-0 rounded-lg border border-gray-400 px-2.5 py-1 text-[11px] font-medium hover:bg-white disabled:opacity-40">
-                                {unlocking === `X${j}` ? '開鎖中⋯' : '🔓 開鎖'}
-                              </button>
-                            : <span className="shrink-0 text-gray-400">只有會計能開鎖</span>}
+                        <div className="flex items-center gap-2">
+                          {paid && paidAt && (
+                            <span className="text-xs text-gray-600">收款日 <b className="tabular-nums font-semibold text-mor-ink">{paidAt}</b></span>
+                          )}
+                          <div className="relative">
+                            <button
+                              onClick={() => (canCollect(myRole)
+                                ? unlockPeriod(`X${j}`, xYm, [(o as any).id].filter(Boolean))
+                                : denyBtn(`kx${j}`))}
+                              disabled={unlocking === `X${j}` || (canCollect(myRole) && !xYm)}
+                              title={lockedMsg(xo, lockedYms) ?? ''}
+                              className="rounded-lg border border-gray-300 bg-gray-100 text-gray-500 px-4 py-1.5 text-xs font-medium hover:bg-gray-200 disabled:opacity-40">
+                              {unlocking === `X${j}` ? '開鎖中⋯' : '🔒 開鎖'}
+                            </button>
+                            {denied === `kx${j}` && (
+                              <div className="absolute top-full right-0 z-10 mt-1 whitespace-nowrap text-[11px] text-red-600">
+                                只有會計能開鎖
+                              </div>
+                            )}
+                          </div>
                         </div>
                       );
                     })()}
@@ -2822,7 +2882,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                         </div>)}
                   </div>
                   {c.invoice_required && (
-                    <div className="mt-1.5 border-t border-amber-200/60 pt-1.5">{invPeriodRows(chunk, j, `延展 第 ${j + 1} 期 ${mm.label}`)}</div>
+                    <div className="mt-1.5 border-t border-amber-200/60 pt-1.5">{invPeriodRows(chunk, j, `延展 第 ${j + 1} 期 ${mm.label}`, !!o && isLocked({ checkin: (o as any).checkin, checkout: (o as any).checkout, imported_via: (o as any).imported_via }, lockedYms) && !unlocked[`X${j}`])}</div>
                   )}
                 </div>
               );

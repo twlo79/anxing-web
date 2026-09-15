@@ -43,11 +43,22 @@
 
 begin;
 
-drop table if exists public._m252_test;
-create table public._m252_test (ord int, name text, detail text, verdict text);
+/*
+ * ★★★ `create temp table`，而且**不加 `on commit drop`**。
+ *
+ *   244 的自檢死在 `relation "_m244_before" does not exist` ——
+ *   當時的結論寫成「不要用暫存表」，於是 247~251 一律建 public 的一般表，
+ *   每支跑完都留一張要人手動 drop。**那個結論是錯的。**
+ *
+ *   死的原因是 `on commit drop`:那個選項叫 Postgres 在 commit 當下丟掉，
+ *   而自檢在 commit **之後**才跑。
+ *   純 `temp` 撐得過 commit，是**連線結束**才消失 ——
+ *   兩件事都解決:自檢讀得到，而且不會留在 public 裡。
+ */
+create temp table _m252_test (ord int, name text, detail text, verdict text);
 
 -- 改動前先記下來，自檢才有得比
-insert into public._m252_test
+insert into _m252_test
 select 0, '（改動前）period_lock_read 的條件',
        coalesce(pg_get_expr(polqual, polrelid), '（沒有這條 policy）'), 'ℹ'
   from pg_policy
@@ -100,7 +111,7 @@ commit;
 -- ══════════════════════════════════════════════════════════
 select v.ord, v."檢查", v."結果", v."判定" from (
 
-  select t.ord, t.name, t.detail, t.verdict from public._m252_test t
+  select t.ord, t.name, t.detail, t.verdict from _m252_test t
 
   union all
   select 1, '① 三張表的讀取都開給登入者了',
@@ -153,8 +164,9 @@ select v.ord, v."檢查", v."結果", v."判定" from (
 
   union all
   select 5, '⑤ 收尾',
-         '核對完請執行：drop table public._m252_test;',
-         '⚠ 記得清掉這張暫存表'
+         '這支用的是 temp table —— 關掉這個 SQL 分頁它就自己不見了，不用手動清。'
+         || '　★ 247~251 留下來的那幾張要清：drop table if exists public._m249_test, public._m250_test, public._m251_test;',
+         '✅ 這支不留東西'
 
 ) as v(ord, "檢查", "結果", "判定")
 order by v.ord;

@@ -122,6 +122,32 @@ select string_agg(c.ym || '：' || c.action, '、') from public.close_due_period
 ★ 函式冪等就直接叫。有副作用不能叫的，就老實寫
 「這一條沒有驗到執行」，**不要印一句聽起來很確定的預測**。
 
+### 3.7 ★★★ 自檢要用的暫存資料：`create temp table`，**不要加 `on commit drop`**
+
+自檢跑在 `commit` **後面**，所以它要用的快照必須撐得過那個 commit。
+
+```sql
+-- ❌ migration_244：commit 當下就被丟掉 → 自檢死在
+--    `relation "_m244_before" does not exist`
+create temp table _m244_before on commit drop as select …;
+
+-- ❌ 247~251：為了躲上面那個坑，改建 public 的一般表 ——
+--    撐得過 commit，但**每支跑完都在資料庫裡留一張**要人手動 drop
+create table public._m247_before as select …;
+
+-- ✅ 正解：純 temp，不加 on commit drop
+create temp table _m252_test (…);
+```
+
+`on commit drop` 是「交易結束就丟」，而純 `temp` 是**連線結束才丟** ——
+撐得過 commit，而且不會出現在 `public` 的資料表清單裡，不用善後。
+
+★★ 244 當下我下的結論是「不要用暫存表」，**那個結論是錯的**，
+   而它一路影響了 247~252 六支。
+   ★ 判斷錯在哪:看到「暫存表 + 自檢失敗」就歸咎於「暫存表」，
+     而真正的變因是那個選項。**把兩件事一起改掉的時候，
+     不知道是哪一件解決的** —— 那不是修好，是換一個問題。
+
 ### 3.6 ★★ 同一個 SELECT 裡，不要既寫入又讀取
 
 整份自檢是**一個 statement**，所有子查詢共用**同一份快照**，
