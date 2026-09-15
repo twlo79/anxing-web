@@ -60,6 +60,7 @@ declare
   v_did    uuid;
   v_ear    numeric;
   v_pid    uuid;
+  v_del    text;
   v_moved  int := 0;
   v_note   text := '';
 begin
@@ -117,8 +118,24 @@ begin
      */
     update public.orders set earnest_amount = v_ear where id = v_oid;
 
-    /* ④ 契約進回收桶。此時它底下已經什麼都沒有 */
-    perform public.soft_delete('contracts', r.id, '轉為訂金階段的私下訂單');
+    /*
+     * ④ 契約進回收桶。此時它底下已經什麼都沒有。
+     *
+     * ★★★ 2026-09-15 這一行原本是 `perform public.soft_delete(…)` —— **寫錯了**。
+     *   `perform` 把回傳值丟掉，而 soft_delete 失敗時不是丟例外，
+     *   是回傳 `{ok: false, message: …}`（前端 softDelete() 讀的就是那個 ok）。
+     *   結果它安靜地沒刪，而腳本一路跑完、前面三條還全綠。
+     *   —— README 坑 C 的形狀:失敗回傳「成功加沒做事」，
+     *   而我用了一個會把答案丟掉的寫法去接它。
+     *
+     * ★ 現在接住並檢查。刪不掉就整支回滾，不要留下一個半完成的狀態。
+     */
+    v_del := public.soft_delete('contracts', r.id, '轉為訂金階段的私下訂單')::text;
+    if v_del is null or v_del !~ '"ok"\s*:\s*true' then
+      raise exception '% 的契約刪不掉（soft_delete 回傳 %）—— 整支回滾。'
+        '八成是 SQL Editor 裡 auth.uid() 是 null，soft_delete 認不出是誰在刪。'
+        '請改到契約頁按「刪除」。', r.room, coalesce(v_del, 'null');
+    end if;
 
     v_moved := v_moved + 1;
     v_note := concat_ws('　／　', nullif(v_note, ''),
