@@ -121,6 +121,14 @@ const NAV: { href: string; label: string; icon: string; roles: string[]; group?:
   { href: '/housekeeping', label: '房務管理', icon: '🛎️', group: '每日工作', roles: ['cleaner', 'housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/cleaning', label: '清潔記錄', icon: '🧹', group: '每日工作', roles: ['cleaner', 'housekeeper', 'manager', 'super_admin'] },
   /*
+   * 房源狀態（2026-09-15 使用者指定）—— 一條一個房源的日曆，看得出空房。
+   *
+   * ★ 放「每日工作」而不是「收入」:它回答的是「今天哪間空著」，
+   *   那是排房與帶看在用的，不是對帳在用的。
+   * ★★ 清潔看得到 —— 他們要知道哪一天會退房才排得了打掃。
+   */
+  { href: '/rooms', label: '房源狀態', icon: '🗓️', group: '每日工作', roles: ['cleaner', 'housekeeper', 'accountant', 'manager', 'super_admin'] },
+  /*
    * 標案管理（migration_179，2026-08-28）。
    *
    * **只有總經理**（使用者指定）。RLS 也是這樣寫的 —— 選單與資料庫一致,
