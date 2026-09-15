@@ -298,13 +298,45 @@ export function depBadges(
 
   const showFrom = !!d.transfer_from_id;
   if (d.returned_on) return { pay: 'returned', showFrom };
-  if (d.received_on) return { pay: 'paid', showFrom };
+
+  const got = Math.round(Number(d.received_amount) || 0);
+  const due = Math.round(Number(d.amount) || 0);
+
   /*
-   * ★★ 收了一部分要看得出來（migration_147）。
-   *   `received_on` 只有**收滿**才會被觸發器填上，所以走到這裡
-   *   代表沒收滿 —— 有金額就是收部分。
+   * ══════════════════════════════════════════════════════════
+   * ★★★ 有收款日**不等於**收滿（2026-09-15 修）
+   *
+   * 原本這裡是 `if (d.received_on) return 'paid'`，理由寫著
+   * 「`received_on` 只有收滿才會被觸發器填上」。
+   *
+   * **那個前提不成立。** 19B3 碩美的押金:
+   *
+   *     應收 350,000　已收 175,000（訂金轉入）　received_on = 2026-09-15
+   *
+   * 「訂金轉押金」那條路徑**沒收滿也寫了 `received_on`**。
+   * 於是列表顯示「全收」而抽屜顯示「部分收款・尚欠 175,000」——
+   * 同一筆錢，兩個地方各說各話，而列表那個是綠色的。
+   *
+   * ★ 修法是**別信代理欄位，直接比金額**。`received_on` 是
+   *   「收滿了沒」的代理，而 `received_amount` / `amount` 是事實。
+   *
+   * ★★ 有沒有「舊資料只有收款日、沒有金額」的問題？**查過了，沒有**
+   *   （2026-09-15）:89 筆有收款日的押金，`received_amount` 全部都有值，
+   *   null 與 0 各 0 筆。所以這裡可以直接比金額，不用留一道
+   *   「金額是 0 就當作收滿」的護欄 —— 那道護欄會讓
+   *   「收款日有值但一毛沒收」這種真正的錯誤顯示成綠色的「全收」。
+   *
+   * ★ 查過才拿掉，不是憑感覺。同一批資料只有**一筆**踩到這個 bug
+   *   （19B3 碩美），其餘 88 筆金額本來就對得起來。
+   * ══════════════════════════════════════════════════════════
    */
-  if (Math.round(Number(d.received_amount) || 0) > 0) return { pay: 'partial', showFrom };
+  if (d.received_on) {
+    if (due > 0 && got < due) return { pay: 'partial', showFrom };
+    return { pay: 'paid', showFrom };
+  }
+
+  // 沒有收款日:有收到錢就是收部分（migration_147）
+  if (got > 0) return { pay: 'partial', showFrom };
   return { pay: 'unpaid', showFrom };
 }
 
