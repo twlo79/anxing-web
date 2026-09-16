@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   daysInMonth, addDays, daysBetween, isWeekend, lastNightOf, occupies,
   compareRoomName, sortRooms, matchRoom, rowOf, hasFreeDay, hasStay, overlaps,
-  overlapRanges, dropContractOrders,
+  overlapRanges, dropContractOrders, staysInRange, monthRange, rangeDays, eachDay, MAX_RANGE_DAYS,
   type Stay, type Room,
 } from './room-calendar.ts';
 
@@ -71,8 +71,8 @@ describe('★★★ 契約與它產生的月租單只能畫一筆（2026-09-15 �
   test('★★★ 同一張契約的月租單被丟掉 —— 整月不再天天算重疊', () => {
     const kept = dropContractOrders([contract, monthly]);
     assert.deepEqual(kept.map((s) => s.id), ['c1']);
-    assert.deepEqual(overlaps(kept, '2026-09'), [], '一天都不該重疊');
-    assert.deepEqual(overlaps([contract, monthly], '2026-09').length, 30,
+    assert.deepEqual(overlaps(kept, monthRange('2026-09')), [], '一天都不該重疊');
+    assert.deepEqual(overlaps([contract, monthly], monthRange('2026-09')).length, 30,
       '（沒修之前是整整三十天）');
   });
 
@@ -192,7 +192,7 @@ describe('★★ 搜尋房號或房客（使用者 2026-09-15）', () => {
 
 describe('排版成一列格子', () => {
   test('★★ 有人的那幾格合併成一條，span 要對', () => {
-    const cells = rowOf([S({ kind: 'order', start: '2026-09-14', end: '2026-09-18' })], '2026-09');
+    const cells = rowOf([S({ kind: 'order', start: '2026-09-14', end: '2026-09-18' })], monthRange('2026-09'));
     const stay = cells.find((c) => c.type === 'stay') as any;
     assert.equal(stay.day, '2026-09-14');
     assert.equal(stay.span, 4, '14 15 16 17 四晚');
@@ -202,14 +202,14 @@ describe('排版成一列格子', () => {
   });
 
   test('★ 跨月的契約在這個月從 1 號畫到月底', () => {
-    const cells = rowOf([S({ kind: 'contract', start: '2026-07-01', end: '2027-06-30' })], '2026-09');
+    const cells = rowOf([S({ kind: 'contract', start: '2026-07-01', end: '2027-06-30' })], monthRange('2026-09'));
     assert.equal(cells.length, 1);
     assert.equal((cells[0] as any).span, 30);
     assert.equal(hasFreeDay(cells), false);
   });
 
   test('★ 整個月沒人 → 30 格全空', () => {
-    const cells = rowOf([], '2026-09');
+    const cells = rowOf([], monthRange('2026-09'));
     assert.equal(cells.length, 30);
     assert.equal(hasFreeDay(cells), true);
     assert.equal(hasStay(cells), false);
@@ -219,7 +219,7 @@ describe('排版成一列格子', () => {
     const cells = rowOf([
       S({ id: 'a', kind: 'order', start: '2026-09-01', end: '2026-09-05' }),
       S({ id: 'b', kind: 'order', start: '2026-09-10', end: '2026-09-13' }),
-    ], '2026-09');
+    ], monthRange('2026-09'));
     const stays = cells.filter((c) => c.type === 'stay') as any[];
     assert.equal(stays.length, 2);
     assert.equal(stays[0].span, 4);   // 1~4
@@ -236,7 +236,7 @@ describe('排版成一列格子', () => {
     const cells = rowOf([
       S({ id: 'a', kind: 'order', start: '2026-09-01', end: '2026-09-05', guest: '前客' }),
       S({ id: 'b', kind: 'order', start: '2026-09-05', end: '2026-09-09', guest: '後客' }),
-    ], '2026-09');
+    ], monthRange('2026-09'));
     const stays = cells.filter((c) => c.type === 'stay') as any[];
     assert.equal(stays.length, 2);
     assert.equal(stays[0].span, 4, '前客 1~4');
@@ -245,7 +245,7 @@ describe('排版成一列格子', () => {
     assert.deepEqual(overlaps([
       S({ id: 'a', kind: 'order', start: '2026-09-01', end: '2026-09-05' }),
       S({ id: 'b', kind: 'order', start: '2026-09-05', end: '2026-09-09' }),
-    ], '2026-09'), [], '不算重疊');
+    ], monthRange('2026-09')), [], '不算重疊');
   });
 
   test('★★ 真的重疊（資料有問題）要列得出來，不要靜靜蓋掉一筆', () => {
@@ -253,7 +253,7 @@ describe('排版成一列格子', () => {
       S({ id: 'a', kind: 'order', start: '2026-09-01', end: '2026-09-06' }),
       S({ id: 'b', kind: 'order', start: '2026-09-03', end: '2026-09-09' }),
     ];
-    assert.deepEqual(overlaps(dup, '2026-09'),
+    assert.deepEqual(overlaps(dup, monthRange('2026-09')),
       ['2026-09-03', '2026-09-04', '2026-09-05']);
   });
 });
@@ -274,7 +274,7 @@ describe('★★★ 重疊要說得出「是哪兩筆」（使用者 2026-09-15�
   });
 
   test('★★★ 一段期間 ＋ 是哪幾筆，六天併成一段', () => {
-    const rs = overlapRanges([contract, air], '2026-10');
+    const rs = overlapRanges([contract, air], monthRange('2026-10'));
     assert.equal(rs.length, 1, '六天是同一件事，不是六件');
     assert.equal(rs[0].from, '2026-10-26');
     assert.equal(rs[0].to, '2026-10-31');
@@ -287,7 +287,7 @@ describe('★★★ 重疊要說得出「是哪兩筆」（使用者 2026-09-15�
     const base = S({ id: 'a', start: '2026-10-01', end: '2026-10-21' });
     const x = S({ id: 'b', start: '2026-10-05', end: '2026-10-08' });   // 5~7
     const y = S({ id: 'c', start: '2026-10-15', end: '2026-10-18' });   // 15~17
-    const rs = overlapRanges([base, x, y], '2026-10');
+    const rs = overlapRanges([base, x, y], monthRange('2026-10'));
     assert.deepEqual(rs.map((r) => [r.from, r.to]), [
       ['2026-10-05', '2026-10-07'],
       ['2026-10-15', '2026-10-17'],
@@ -300,23 +300,122 @@ describe('★★★ 重疊要說得出「是哪兩筆」（使用者 2026-09-15�
       S({ id: 'a', start: '2026-10-01', end: '2026-10-05' }),
       S({ id: 'b', start: '2026-10-01', end: '2026-10-05' }),
       S({ id: 'c', start: '2026-10-01', end: '2026-10-05' }),
-    ], '2026-10');
+    ], monthRange('2026-10'));
     assert.deepEqual(rs[0].stays.map((s) => s.id), ['a', 'b', 'c']);
   });
 
   test('★ 沒重疊就是空陣列', () => {
-    assert.deepEqual(overlapRanges([contract], '2026-10'), []);
-    assert.deepEqual(overlapRanges([], '2026-10'), []);
+    assert.deepEqual(overlapRanges([contract], monthRange('2026-10')), []);
+    assert.deepEqual(overlapRanges([], monthRange('2026-10')), []);
   });
 
   test('★★ `overlaps()` 是從 `overlapRanges()` 攤平的 —— 兩邊答案不准不一樣', () => {
     const xs = [contract, air];
-    const flat = overlapRanges(xs, '2026-10')
+    const flat = overlapRanges(xs, monthRange('2026-10'))
       .flatMap((r) => {
         const out: string[] = [];
         for (let d = r.from; d <= r.to; d = addDays(d, 1)) out.push(d);
         return out;
       });
-    assert.deepEqual(overlaps(xs, '2026-10'), flat);
+    assert.deepEqual(overlaps(xs, monthRange('2026-10')), flat);
+  });
+});
+
+/* ══════════════════════════════════════════════════════════
+ * 自訂起訖（2026-09-16 使用者:「filter 選月份外可以選 自訂 起訖」）
+ *
+ * ★★★ 這一組存在的理由只有一個:**月檢視與自訂檢視必須是同一條路徑**。
+ *   兩條路徑各算一次「哪一格有人」的話，改了一邊另一邊會安靜地留在舊答案，
+ *   而症狀是「月檢視對、自訂檢視差一格」—— 沒有人會在畫面上看出來。
+ * ══════════════════════════════════════════════════════════ */
+describe('Range：自訂起訖', () => {
+  test('monthRange() 就是「1 號到月底」的一個普通區間', () => {
+    assert.deepEqual(monthRange('2026-09'), { from: '2026-09-01', to: '2026-09-30' });
+    assert.deepEqual(monthRange('2026-02'), { from: '2026-02-01', to: '2026-02-28' });
+    assert.deepEqual(monthRange('2024-02'), { from: '2024-02-01', to: '2024-02-29' }, '閏年');
+  });
+
+  test('★ 壞掉的月份回空區間,不是 crash —— 使用者可以把 input 清空', () => {
+    assert.deepEqual(monthRange(''), { from: '', to: '' });
+    assert.deepEqual(monthRange('2026-13'), { from: '', to: '' });
+  });
+
+  test('rangeDays() 含頭含尾', () => {
+    assert.equal(rangeDays({ from: '2026-09-01', to: '2026-09-30' }), 30);
+    assert.equal(rangeDays({ from: '2026-09-28', to: '2026-10-06' }), 9, '跨月');
+    assert.equal(rangeDays({ from: '2026-09-05', to: '2026-09-05' }), 1, '同一天');
+  });
+
+  test('★★ 起迄顛倒或空的回 0 —— 不是負數也不是無限迴圈', () => {
+    assert.equal(rangeDays({ from: '2026-09-30', to: '2026-09-01' }), 0);
+    assert.equal(rangeDays({ from: '', to: '2026-09-01' }), 0);
+    assert.equal(rangeDays({ from: '2026-09-01', to: '' }), 0);
+    assert.deepEqual(eachDay({ from: '2026-09-30', to: '2026-09-01' }), []);
+  });
+
+  test('eachDay() 跨月接得起來（9/30 → 10/1）', () => {
+    assert.deepEqual(eachDay({ from: '2026-09-29', to: '2026-10-02' }),
+      ['2026-09-29', '2026-09-30', '2026-10-01', '2026-10-02']);
+  });
+
+  test('★★★ 月檢視 = monthRange 的自訂檢視,一格都不准差', () => {
+    const stays = [
+      S({ id: 'a', kind: 'order', start: '2026-09-14', end: '2026-09-18' }),
+      S({ id: 'b', kind: 'contract', start: '2026-09-20', end: '2026-09-30' }),
+    ];
+    assert.deepEqual(
+      rowOf(stays, monthRange('2026-09')),
+      rowOf(stays, { from: '2026-09-01', to: '2026-09-30' }));
+  });
+
+  test('★★ 跨月的單在跨月區間裡是**一條**,不是斷成兩段', () => {
+    // 9/28 入住、10/6 退房 → 最後一晚 10/5,共 8 晚
+    const cells = rowOf([S({ kind: 'order', start: '2026-09-28', end: '2026-10-06' })],
+      { from: '2026-09-28', to: '2026-10-06' });
+    const bars = cells.filter((c) => c.type === 'stay');
+    assert.equal(bars.length, 1, '跨過月底不該斷開');
+    assert.equal((bars[0] as any).span, 8, '9/28~10/5 共 8 晚');
+    assert.equal(cells.filter((c) => c.type === 'free').length, 1, '10/6 退房日是空的');
+  });
+
+  test('★★★ 被區間切掉的單,stay 上帶的還是**真實**起訖', () => {
+    // 8/20 住到 9/10,九月的畫面從 1 號開始 —— 卡片要說 8/20,不是 9/1
+    const cells = rowOf([S({ kind: 'order', start: '2026-08-20', end: '2026-09-10' })],
+      monthRange('2026-09'));
+    const bar = cells.find((c) => c.type === 'stay') as any;
+    assert.equal(bar.day, '2026-09-01', '畫在 9/1 開始');
+    assert.equal(bar.stay.start, '2026-08-20', '★ 但 stay 記得自己真的是 8/20 開始的');
+    assert.equal(bar.span, 9, '9/1 ~ 9/9,9/10 退房');
+  });
+
+  test('★ 重疊偵測在跨月區間裡照樣跨得過去', () => {
+    const a = S({ id: 'a', kind: 'contract', start: '2026-09-25', end: '2026-10-10' });
+    const b = S({ id: 'b', kind: 'order', start: '2026-09-29', end: '2026-10-03' });
+    const rs = overlapRanges([a, b], { from: '2026-09-20', to: '2026-10-15' });
+    assert.equal(rs.length, 1);
+    assert.equal(rs[0].from, '2026-09-29');
+    assert.equal(rs[0].to, '2026-10-02', '訂單最後一晚是 10/2');
+  });
+
+  test('MAX_RANGE_DAYS 是 92 —— 改了這裡畫面那句提示也要跟著改', () => {
+    assert.equal(MAX_RANGE_DAYS, 92);
+  });
+});
+
+describe('staysInRange：篩選要看真相不是畫面', () => {
+  test('★ 邊界上不佔任何一晚的單要被排掉', () => {
+    const r = { from: '2026-09-01', to: '2026-09-30' } as const;
+    // checkout 剛好是 9/1 的訂單 —— 最後一晚是 8/31,跟九月沒有交集
+    assert.deepEqual(staysInRange([S({ kind: 'order', start: '2026-08-25', end: '2026-09-01' })], r), []);
+    // 當日進當日出（加費、折讓）不佔任何一晚
+    assert.deepEqual(staysInRange([S({ kind: 'order', start: '2026-09-10', end: '2026-09-10' })], r), []);
+  });
+
+  test('★★ 被壓住看不見的那一筆也要回 —— rowOf 只畫第一筆,篩選不能跟著瞎', () => {
+    const r = monthRange('2026-09');
+    const a = S({ id: 'a', kind: 'contract', start: '2026-09-01', end: '2026-09-30' });
+    const b = S({ id: 'b', kind: 'order', start: '2026-09-10', end: '2026-09-15', tone: 'short' });
+    assert.equal(rowOf([a, b], r).filter((c) => c.type === 'stay').length, 1, 'rowOf 只畫得下一筆');
+    assert.deepEqual(staysInRange([a, b], r).map((s) => s.id), ['a', 'b'], '★ 但兩筆都在');
   });
 });

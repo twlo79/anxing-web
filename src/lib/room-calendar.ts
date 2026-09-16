@@ -45,6 +45,14 @@ export type Stay = {
    * 只給 `dropContractOrders()` 用 —— 見那支的說明。
    */
   contractId?: string | null;
+  /**
+   * 這筆在資料庫裡的 id（不含 `id` 上面那個 `o`／`c` 前綴）。
+   *
+   * ★ 點開的卡片要連到那一頁的那一筆（`/contracts?contract=…`、`/shortterm?order=…`）。
+   *   在畫面上 `id.slice(1)` 也做得到,但那是**靠前綴的長度活著**的寫法:
+   *   哪天前綴變成兩個字,連結會安靜地指到一個不存在的 id。
+   */
+  srcId?: string;
 };
 
 export type Room = {
@@ -70,6 +78,58 @@ export function daysInMonth(ym: string): number {
   if (m < 1 || m > 12) return 0;
   return new Date(y, m, 0).getDate();
 }
+
+/* ────────────────────────────────────────────────────────── */
+
+/**
+ * 要畫的那一段日子。
+ *
+ * ★★★ 2026-09-16 之前整支吃的是 `ym`（一個月字串），所以這一頁
+ *   **只能整月看** —— 而跨月的檔期（9/28 ~ 10/6）得切兩次月份，
+ *   然後在腦袋裡把兩張圖接起來。使用者:「filter 選月份外可以選 自訂 起訖」。
+ *
+ * ★★ 改法是**把月併進區間**，不是在旁邊多開一條路:
+ *   月檢視 = `monthRange(ym)`，也就是「1 號到月底」的一個普通區間。
+ *   兩條路徑各算一次「哪一格有人」的話，改了一邊另一邊會安靜地留在舊答案 ——
+ *   而症狀是「月檢視對、自訂檢視差一格」，那種差別沒有人會在畫面上看出來。
+ */
+export type Range = { from: Ymd; to: Ymd };
+
+/**
+ * 一次最多畫幾天。
+ *
+ * ★ 一格最少 42px（anxing-ui 的最小點擊區），92 天就是 3,900px 寬，
+ *   已經要橫捲三個螢幕。一年是 15,000px —— 捲到第三個月的時候，
+ *   左邊釘住的房號還在，但人已經不知道自己在看幾月了。
+ *
+ * ★★ 超過**要講出來**，不是默默截斷。截斷的話畫面會少掉幾天的資料
+ *   而完全不說，那比擋下來糟得多。
+ */
+export const MAX_RANGE_DAYS = 92;
+
+/** `2026-09` → `{ from: '2026-09-01', to: '2026-09-30' }` */
+export function monthRange(ym: string): Range {
+  const n = daysInMonth(ym);
+  if (!n) return { from: '', to: '' };
+  return { from: ymd(ym, 1), to: ymd(ym, n) };
+}
+
+/** 這段有幾天（含頭含尾）。起迄顛倒或空的回 0 */
+export function rangeDays(r: Range): number {
+  if (!r?.from || !r?.to) return 0;
+  const n = daysBetween(r.from, r.to) + 1;
+  return n > 0 ? n : 0;
+}
+
+/** 這段的每一天。★ 畫表頭與排格子都走這支 —— 兩邊各自數一次遲早會差一格 */
+export function eachDay(r: Range): Ymd[] {
+  const n = rangeDays(r);
+  const out: Ymd[] = [];
+  for (let i = 0; i < n; i++) out.push(addDays(r.from, i));
+  return out;
+}
+
+/* ────────────────────────────────────────────────────────── */
 
 /** 星期幾。0 = 週日 */
 export function weekdayOf(d: Ymd): number {
@@ -225,22 +285,39 @@ export type Cell =
  *   實務上那是資料有問題（重複訂單、移房沒收乾淨），
  *   而畫面上疊起來只會變成看不懂的一團 —— `overlaps()` 另外列出來給人看。
  */
-export function rowOf(stays: readonly Stay[], ym: string): Cell[] {
-  const n = daysInMonth(ym);
+export function rowOf(stays: readonly Stay[], r: Range): Cell[] {
+  const days = eachDay(r);
+  const n = days.length;
   const sorted = [...stays].sort((a, b) => (a.start ?? '').localeCompare(b.start ?? ''));
   const out: Cell[] = [];
-  let d = 1;
-  while (d <= n) {
-    const day = ymd(ym, d);
+  let d = 0;
+  while (d < n) {
+    const day = days[d];
     const hit = sorted.find((s) => occupies(s, day));
     if (!hit) { out.push({ type: 'free', day }); d++; continue; }
-    // 這一條在這個月裡佔到第幾天為止
+    // 這一條在**這段區間裡**佔到第幾天為止。超出區間的部分不畫,
+    // 但 stay 本身帶著真實的起訖 —— 點開的卡片要說真話,不是說畫面上看到的那一段
     let span = 1;
-    while (d + span <= n && occupies(hit, ymd(ym, d + span))) span++;
+    while (d + span < n && occupies(hit, days[d + span])) span++;
     out.push({ type: 'stay', day, span, stay: hit });
     d += span;
   }
   return out;
+}
+
+/**
+ * 這段區間裡**真的佔到日子**的那幾筆。
+ *
+ * ★★ 撈資料的條件是「跟這段有交集」，那一層必然會多撈到邊界上的單:
+ *   `checkout` 剛好等於 `from` 的訂單、當日進當日出的加費單（不佔任何一晚）。
+ *   拿 `stays` 直接去算「這間房有沒有短租」的話，那幾筆會讓一間空房被算成有客。
+ *
+ * ★ 跟 `rowOf()` 不一樣:`rowOf` 同一天只畫第一筆（畫得下才畫），
+ *   這支**每一筆都回**,包含被壓住看不見的那些 —— 篩選要看的是真相,不是畫面。
+ */
+export function staysInRange(stays: readonly Stay[], r: Range): Stay[] {
+  const days = eachDay(r);
+  return stays.filter((s) => days.some((d) => occupies(s, d)));
 }
 
 /** 這個月有沒有任何一天是空的 */
@@ -271,13 +348,11 @@ export type Overlap = { from: Ymd; to: Ymd; stays: Stay[] };
  *
  * ★ 同一組重疊的連續幾天併成一段 —— 六天各列一次只是把同一件事講六遍。
  */
-export function overlapRanges(stays: readonly Stay[], ym: string): Overlap[] {
-  const n = daysInMonth(ym);
+export function overlapRanges(stays: readonly Stay[], r: Range): Overlap[] {
   const out: Overlap[] = [];
   let cur: Overlap | null = null;
   let curKey = '';
-  for (let d = 1; d <= n; d++) {
-    const day = ymd(ym, d);
+  for (const day of eachDay(r)) {
     const hit = stays.filter((s) => occupies(s, day));
     if (hit.length < 2) { cur = null; curKey = ''; continue; }
     // 「同一組」是看**哪幾筆**，不是看有幾筆 —— 中途換了一筆就要斷開成兩段
@@ -296,10 +371,10 @@ export function overlapRanges(stays: readonly Stay[], ym: string): Overlap[] {
  * ★ 從 `overlapRanges()` 攤平出來，不是自己再數一遍 ——
  *   同一條規則寫兩次，改了一邊另一邊會安靜地留在舊答案。
  */
-export function overlaps(stays: readonly Stay[], ym: string): Ymd[] {
+export function overlaps(stays: readonly Stay[], r: Range): Ymd[] {
   const out: Ymd[] = [];
-  for (const r of overlapRanges(stays, ym)) {
-    for (let d = r.from; d <= r.to; d = addDays(d, 1)) out.push(d);
+  for (const g of overlapRanges(stays, r)) {
+    for (let d = g.from; d <= g.to; d = addDays(d, 1)) out.push(d);
   }
   return out;
 }

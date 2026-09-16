@@ -4,9 +4,10 @@ import { createClient } from '@/lib/supabase';
 import { fetchAll } from '@/lib/fetch-all';
 import { FilterBar, Field, FilterSelect, FilterSearch, FilterClear, FilterCount } from '@/lib/filters';
 import {
-  daysInMonth, ymd, isWeekend, weekdayOf, sortRooms, matchRoom,
-  rowOf, hasFreeDay, hasStay, overlapRanges, dropContractOrders,
-  type Stay, type Room, type Cell,
+  isWeekend, weekdayOf, sortRooms, matchRoom, rowOf, hasFreeDay,
+  overlapRanges, dropContractOrders, monthRange, rangeDays, eachDay,
+  staysInRange, lastNightOf, daysBetween, addDays, MAX_RANGE_DAYS,
+  type Stay, type Room, type Cell, type Range,
 } from '@/lib/room-calendar';
 
 /*
@@ -15,7 +16,7 @@ import {
  *
  * 一條一個房源、橫軸是日期，訂單與契約畫在同一條線上，空白就是空房。
  *
- * ★★★ 「哪一格有人」的算法全部在 `lib/room-calendar.ts`（有 24 個測試）——
+ * ★★★ 「哪一格有人」的算法全部在 `lib/room-calendar.ts`（有 46 個測試）——
  *   這一頁只負責排版。兩種來源的「迄」邊界不一樣（短租是退房日、
  *   契約是最後一晚），那是最容易錯一格的地方，
  *   而錯一格的後果是「畫面說有人、實際上空著」—— 有人會照著它排錯房。
@@ -24,28 +25,35 @@ import {
  *   從訂單反推的話，「整個月都空著」的房間永遠不會出現在畫面上 ——
  *   而那正是最想看到的那幾間。
  *
- * ★★ 只畫**還在用**（`active`）而且**有設物業**的房源
- *   （使用者 2026-09-15：「物業只有正隆」）。
- *   停用的舊房源（舊-A5、C房…）不是今天要排的房，
- *   混在裡面會讓人捲過三十列才找到真的那一間。
- *   沒設物業的不是靜靜消失 —— 下面另外列出來，不然沒人會知道要去補。
+ * ══════════════════════════════════════════════════════════
+ * 【2026-09-16 四項優化（使用者指定）】
+ *
+ *   ① 月份之外可以自訂起訖 —— 跨月的檔期不用切兩次月份自己接
+ *   ② 圖例搬到表格上面，而且點得下去（＝篩選）
+ *   ③ 點色條出現名稱與期間（原本是 hover，手機完全沒有）
+ *   ④ 有重疊的房源可以一鍵篩出來
+ *
+ * ★★★ ① 是 lib 的改動不是畫面的:整支原本吃 `ym`，現在吃 `Range`，
+ *   而**月檢視就是 `monthRange(ym)` 的一種自訂區間** —— 不是兩條路。
+ *   兩條路徑各算一次「哪一格有人」的話，改了一邊另一邊會安靜地留在舊答案。
  * ══════════════════════════════════════════════════════════
  */
 
 const WD = ['日', '一', '二', '三', '四', '五', '六'];
 
-/** 顏色。跟圖例是同一份 —— 兩邊各寫一次就會有對不起來的一天 */
-const TONE: Record<Stay['tone'], { bar: string; label: string }> = {
-  short:    { bar: 'bg-[#2F8C8C]',  label: '短租（Airbnb／Agoda）' },
-  private:  { bar: 'bg-mor-green',  label: '私下' },
-  longterm: { bar: 'bg-mor-slate',  label: '長租契約' },
-  earnest:  { bar: 'bg-[#C9A227]',  label: '訂金／未確認' },
+/** 顏色。跟藥丸是同一份 —— 兩邊各寫一次就會有對不起來的一天 */
+const TONE: Record<Stay['tone'], { bar: string; chip: string; label: string }> = {
+  short:    { bar: 'bg-[#2F8C8C]',  chip: 'bg-[#2F8C8C]',  label: '短租（Airbnb／Agoda）' },
+  private:  { bar: 'bg-mor-green',  chip: 'bg-mor-green',  label: '私下' },
+  longterm: { bar: 'bg-mor-slate',  chip: 'bg-mor-slate',  label: '長租契約' },
+  earnest:  { bar: 'bg-[#C9A227]',  chip: 'bg-[#C9A227]',  label: '訂金／未確認' },
 };
+const TONES = Object.keys(TONE) as Stay['tone'][];
 
 /** 重疊清單裡標「這一筆是哪裡來的」—— 沒有這兩個字就不知道去哪一頁修 */
 const KIND: Record<Stay['kind'], string> = { contract: '契約', order: '訂單' };
 
-/** `2026-10-26` → `10/26`。年份在月份篩選上，這裡再寫一次只是雜訊 */
+/** `2026-10-26` → `10/26`。年份在篩選列上，這裡再寫一次只是雜訊 */
 const mdOf = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
 
 const thisYm = () => {
@@ -59,14 +67,62 @@ const todayStr = () => {
 
 type Est = { id: string; name: string; sort: number | null; active: boolean };
 
+/**
+ * ② 藥丸。**一顆元件畫完所有的藥丸** —— 兩排各寫一次就會有長得不一樣的一天。
+ *
+ * ★ 定在模組層不是元件裡:定在元件裡的話每一次 render 都是一個新的型別，
+ *   React 會把整排拆掉重做，而且焦點會掉。
+ */
+function Pill({ on, onClick, swatch, children, warn }: {
+  on: boolean; onClick: () => void; swatch?: string; children: React.ReactNode; warn?: boolean;
+}) {
+  return (
+    <button type="button" onClick={onClick} aria-pressed={on}
+      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs
+                  transition-colors whitespace-nowrap ${
+        on ? (warn ? 'bg-amber-700 border-amber-700 text-white'
+                   : 'bg-mor-ink border-mor-ink text-white')
+           : (warn ? 'bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100'
+                   : 'bg-white border-mor-line text-gray-600 hover:bg-mor-sand/60')}`}>
+      {swatch && <i className={`w-2.5 h-2.5 rounded-sm shrink-0 ${swatch} ${
+        on ? 'ring-2 ring-white/85' : ''}`} />}
+      {children}
+    </button>
+  );
+}
+
+/** ③ 點開的那張卡片。位置用 `fixed` —— 見下面 `openCard()` 的說明 */
+type Picked = { stay: Stay; room: string; estate: string | null; x: number; y: number };
+
 export default function RoomStatusPage() {
   const supabase = useMemo(() => createClient(), []);
 
+  /*
+   * ① 期間。`month` 與 `custom` 兩種模式，但**算出來都是一個 Range** ——
+   *   底下一律只認 `range`，沒有第二條路徑。
+   */
+  const [mode, setMode] = useState<'month' | 'custom'>('month');
   const [ym, setYm] = useState(thisYm());
+  const [from, setFrom] = useState(todayStr());
+  const [to, setTo] = useState(addDays(todayStr(), 30));
+
   const [estF, setEstF] = useState('');
   const [kwInput, setKwInput] = useState('');
   const [kw, setKw] = useState('');
-  const [only, setOnly] = useState<'' | 'free' | 'busy'>('');
+
+  /*
+   * ② 藥丸。**兩條**（2026-09-16 使用者:「分兩條」）:
+   *
+   *   上排　有客種類　'' | 'any'（所有客戶）| short | private | longterm | earnest
+   *         ★ 單選。「點下去就是只有那一種，再點一下就清除」——
+   *           使用者指定的，不是複選。所以它是一顆值不是一個 Set。
+   *
+   *   下排　狀態　空房 / 重疊　★ 各自獨立開關，跟上排是**且**。
+   *         「空房 ＋ 短租」＝ 有短租、而且還有空日子的房 ＝ 還排得進去的那幾間。
+   */
+  const [tone, setTone] = useState<'' | 'any' | Stay['tone']>('');
+  const [freeOnly, setFreeOnly] = useState(false);
+  const [dupOnly, setDupOnly] = useState(false);
 
   const [estates, setEstates] = useState<Est[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -74,25 +130,39 @@ export default function RoomStatusPage() {
   const [noEstate, setNoEstate] = useState<string[]>([]);
   const [stays, setStays] = useState<Stay[]>([]);
   const [loading, setLoading] = useState(true);
+  const [picked, setPicked] = useState<Picked | null>(null);
 
   /*
    * ★★ 一進來就選好物業（使用者 2026-09-15：「預設物業選正隆」）。
    *   排序第一個 —— 不是把「正隆」寫死在這裡。多一個物業的那天，
    *   把它的 `sort` 調到前面就好，不用再改一次程式。
-   *
-   * ★ `load` 每換一次月份就會跑，所以只認第一次 ——
-   *   不然使用者切到「全部」再換個月份，畫面會自己跳回正隆。
    */
   const defaulted = useRef(false);
   const defEst = estates[0]?.name ?? '';
 
-  const days = daysInMonth(ym);
+  const range: Range = useMemo(
+    () => (mode === 'month' ? monthRange(ym) : { from, to }),
+    [mode, ym, from, to]);
+  const nDays = rangeDays(range);
+  const days = useMemo(() => (nDays > MAX_RANGE_DAYS ? [] : eachDay(range)), [range, nDays]);
   const today = todayStr();
 
+  /*
+   * ★★ 範圍不能用的兩種情形要**分開講**:
+   *   顛倒／沒填完 → 使用者正在打字或打反了
+   *   太長　　　　 → 資料是對的，只是畫不下
+   * 合成一句「範圍不對」的話，兩種都不知道下一步該做什麼。
+   */
+  const noDates = mode === 'custom' && (!from || !to);
+  const badRange = mode === 'custom' && !noDates && nDays === 0;
+  const tooLong = nDays > MAX_RANGE_DAYS;
+  const canDraw = !noDates && !badRange && !tooLong;
+
   const load = useCallback(async () => {
+    if (!canDraw) { setLoading(false); return; }
     setLoading(true);
-    const from = `${ym}-01`;
-    const to = ymd(ym, daysInMonth(ym));
+    const f = range.from;
+    const t = range.to;
 
     const [{ data: es }, { data: ps }] = await Promise.all([
       supabase.from('estates').select('id, name, sort, active').order('sort'),
@@ -108,15 +178,9 @@ export default function RoomStatusPage() {
     ]);
     /*
      * ★★★ 停用的物業不畫（使用者 2026-09-15：「我只需要這一頁不要顯示」）。
-     *   全站其他頁（採購、房務、評價、稅務、押金、清潔）本來就都
-     *   `.eq('active', true)` —— 只有這一頁漏掉，所以他明明關了還是看得到。
-     *   這是漏看現成的開關，不是缺一個新開關。
-     *
-     * ★★ 撈全部的物業，再自己篩 —— 不是在 query 上 `.eq(...)`。
-     *   停用的物業要能跟「根本沒設物業」分開:
+     * ★★ 撈全部的物業，再自己篩 —— 停用的物業要能跟「根本沒設物業」分開:
      *   前者是使用者自己按的，安靜不畫就對了；
-     *   後者是漏填，要跳出來叫他去補。查詢就篩掉的話兩者會混在一起，
-     *   而混在一起的結果是那條提示每天叫，久了就沒人看。
+     *   後者是漏填，要跳出來叫他去補。
      */
     const estAll = (es ?? []) as Est[];
     const estById: Record<string, Est> = {};
@@ -138,26 +202,27 @@ export default function RoomStatusPage() {
     setNoEstate(ownEst.filter((r) => !r.est).map((r) => r.name));
 
     /*
-     * ★★ 撈的是「跟這個月有交集」的，不是「起日在這個月」的 ——
-     *   後者會漏掉跨月的長住（8/20 住到 9/10 那種），
+     * ★★ 撈的是「跟這段有交集」的，不是「起日在這段裡」的 ——
+     *   後者會漏掉跨進來的長住（8/20 住到 9/10 那種），
      *   而畫面上那間房會顯示成空的。
      *
      * ★ 訂單的 checkout 是**退房日**，所以條件要 `> from` 不是 `>= from`：
      *   9/1 退房的單最後一晚是 8/31，跟九月沒有交集。
      */
-    const { rows: os } = await fetchAll<any>((f, t) => supabase.from('orders')
+    const { rows: os } = await fetchAll<any>((a, b) => supabase.from('orders')
       .select('id, property_raw, guest_name, checkin, checkout, source, imported_via, contract_id')
       .not('source', 'in', '(oneoff,airbnb_cancelled)')
-      .lte('checkin', to).gt('checkout', from).range(f, t));
+      .lte('checkin', t).gt('checkout', f).range(a, b));
 
     const { data: cs } = await supabase.from('contracts')
       .select('id, room, tenant_name, display_name, start_date, end_date, active, earnest_only')
-      .lte('start_date', to).gte('end_date', from);
+      .lte('start_date', t).gte('end_date', f);
 
     const oStays: Stay[] = ((os ?? []) as any[])
       .filter((o) => o.property_raw)
       .map((o) => ({
-        id: `o${o.id}`, room: o.property_raw as string, kind: 'order' as const,
+        id: `o${o.id}`, srcId: o.id as string,
+        room: o.property_raw as string, kind: 'order' as const,
         start: o.checkin, end: o.checkout, guest: o.guest_name,
         tone: (o.source === 'private' ? 'private' : 'short') as Stay['tone'],
         contractId: o.contract_id as string | null,
@@ -166,7 +231,8 @@ export default function RoomStatusPage() {
     const cStays: Stay[] = ((cs ?? []) as any[])
       .filter((c) => c.room && c.active !== false)
       .map((c) => ({
-        id: `c${c.id}`, room: c.room as string, kind: 'contract' as const,
+        id: `c${c.id}`, srcId: c.id as string,
+        room: c.room as string, kind: 'contract' as const,
         start: c.start_date, end: c.end_date,
         guest: c.display_name || c.tenant_name,
         /*
@@ -185,39 +251,103 @@ export default function RoomStatusPage() {
      */
     setStays(dropContractOrders([...oStays, ...cStays]));
     setLoading(false);
-  }, [supabase, ym]);
+  }, [supabase, range.from, range.to, canDraw]);
   useEffect(() => { load(); }, [load]);
 
-  /** 房源 → 這個月的佔用 */
+  /** 房源 → 這段的佔用 */
   const byRoom = useMemo(() => {
     const m: Record<string, Stay[]> = {};
     stays.forEach((s) => { (m[s.room] ??= []).push(s); });
     return m;
   }, [stays]);
 
-  const visible = useMemo(() => {
-    const picked = estF ? rooms.filter((r) => r.estate === estF) : rooms;
-    return sortRooms(picked)
+  /*
+   * ★★ 兩層:`base` 只套物業與關鍵字，`visible` 再套藥丸。
+   *
+   *   ★★★ 「⚠ 重疊」藥丸上的數字必須算在 `base` 上 ——
+   *     算在 `visible` 上的話，按下那顆藥丸之後數字會變成它自己篩出來的結果，
+   *     而人看到的是一個**按下去就不再變**的數字，等於它沒在報告任何事。
+   */
+  const base = useMemo(() => {
+    if (!canDraw) return [];
+    const picked0 = estF ? rooms.filter((r) => r.estate === estF) : rooms;
+    return sortRooms(picked0)
       .map((r) => ({ room: r, stays: byRoom[r.name] ?? [] }))
       .filter((x) => matchRoom(x.room, x.stays, kw))
-      .map((x) => ({ ...x, cells: rowOf(x.stays, ym) }))
-      .filter((x) => (only === 'free' ? hasFreeDay(x.cells)
-        : only === 'busy' ? hasStay(x.cells) : true));
-  }, [rooms, byRoom, estF, kw, only, ym]);
+      .map((x) => ({
+        ...x,
+        cells: rowOf(x.stays, range),
+        real: staysInRange(x.stays, range),
+        dups: overlapRanges(x.stays, range),
+      }));
+  }, [rooms, byRoom, estF, kw, range, canDraw]);
 
-  /** 同一間房同一天有兩筆 —— 資料有問題，列出來讓人去修 */
-  const dup = useMemo(() => visible
-    .flatMap((x) => overlapRanges(x.stays, ym).map((r) => ({ room: x.room.name, ...r }))),
-  [visible, ym]);
+  const dupRooms = useMemo(() => base.filter((x) => x.dups.length), [base]);
+
+  const visible = useMemo(() => base.filter((x) => {
+    /*
+     * ★ 種類看的是 `real`（這段裡真的佔到日子的每一筆）不是 `cells` ——
+     *   `rowOf()` 同一天只畫第一筆，被壓住的那一筆在 `cells` 裡根本不存在。
+     *   拿 `cells` 篩的話，「只看短租」會漏掉被長租壓住的那張短租單 ——
+     *   而那正是最需要被看見的一筆。
+     */
+    if (tone === 'any' && !x.real.length) return false;
+    if (tone && tone !== 'any' && !x.real.some((s) => s.tone === tone)) return false;
+    if (freeOnly && !hasFreeDay(x.cells)) return false;
+    if (dupOnly && !x.dups.length) return false;
+    return true;
+  }), [base, tone, freeOnly, dupOnly]);
+
+  /*
+   * ★★ 重疊清乾淨（或換了期間之後沒有重疊）時，那顆藥丸會消失 ——
+   *   但 `dupOnly` 還是 true，畫面會變成一張空表而且**沒有東西可以點掉它**。
+   *   會篩選的東西消失時，它篩出來的狀態也要跟著收掉。
+   */
+  useEffect(() => { if (dupOnly && !dupRooms.length) setDupOnly(false); }, [dupOnly, dupRooms.length]);
+
+  const dup = useMemo(
+    () => dupRooms.flatMap((x) => x.dups.map((r) => ({ room: x.room.name, ...r }))),
+    [dupRooms]);
 
   /*
    * ★ 預設的那個物業**不算篩選** —— 算的話篩選列一進來就亮著、
    *   「清除」永遠可按，而按下去什麼都沒變（它本來就是預設值）。
+   * ★ 月份／自訂也算 —— 換過期間之後「清除」要回得去本月。
    */
-  const active = !!((estF && estF !== defEst) || kw || only);
+  const active = !!((estF && estF !== defEst) || kw || tone || freeOnly || dupOnly
+    || mode !== 'month' || ym !== thisYm());
+
+  const clearAll = () => {
+    setEstF(defEst); setKw(''); setKwInput('');
+    setTone(''); setFreeOnly(false); setDupOnly(false);
+    setMode('month'); setYm(thisYm());
+    setPicked(null);
+  };
+
+  /*
+   * ③ 點色條開卡片。
+   *
+   * ★★★ 用 `fixed` 定位，不是在格子裡 `absolute`。
+   *   表格在一個 `overflow-auto` 的容器裡 —— 在格子裡畫的話，
+   *   卡片會被容器的邊界**裁掉**，而最後一列與最右邊幾天正是最常被點的地方。
+   *
+   * ★★ 座標當場從 `getBoundingClientRect()` 取，並且夾在視窗內:
+   *   靠右的格子往左收、靠下的格子往上翻。
+   */
+  const openCard = (e: React.MouseEvent, stay: Stay, room: Room) => {
+    e.stopPropagation();
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const W = 264;
+    const H = 190;
+    setPicked({
+      stay, room: room.name, estate: room.estate,
+      x: Math.max(8, Math.min(r.left, window.innerWidth - W - 8)),
+      y: r.bottom + H + 8 > window.innerHeight ? Math.max(8, r.top - H - 6) : r.bottom + 6,
+    });
+  };
 
   return (
-    <div>
+    <div onClick={() => picked && setPicked(null)}>
       <div className="flex items-center justify-between mb-4">
         <h1>房源狀態
           <span className="text-sm font-normal text-gray-400 ml-2">
@@ -229,10 +359,41 @@ export default function RoomStatusPage() {
       <FilterBar active={active} right={<FilterCount n={visible.length} unit="間" />}>
         <FilterSelect label="物業" value={estF} onChange={setEstF}
           options={estates.map((e) => ({ value: e.name, label: e.name }))} />
-        <Field label="月份">
-          <input type="month" value={ym} onChange={(e) => setYm(e.target.value || thisYm())}
-            className="h-12 md:h-10 rounded-lg border border-gray-300 px-2 text-ui" />
+        {/*
+          ① 期間（2026-09-16 使用者:「filter 選月份外可以選 自訂 起訖」）。
+
+          ★ 「月／自訂」做成兩段式切換不是下拉 —— 只有兩個選項，
+            下拉要點兩下才換得過去，而這一顆會被換來換去。
+        */}
+        <Field label="期間">
+          <div className="flex h-12 md:h-10 rounded-lg border border-gray-300 overflow-hidden">
+            {([['month', '月'], ['custom', '自訂']] as const).map(([v, t]) => (
+              <button key={v} onClick={() => setMode(v)}
+                className={`px-3.5 text-uisub border-r border-gray-300 last:border-r-0 ${
+                  mode === v ? 'bg-mor-slate text-white' : 'bg-white text-gray-600 hover:bg-mor-sand'}`}>
+                {t}
+              </button>
+            ))}
+          </div>
         </Field>
+        {mode === 'month' ? (
+          <Field label="月份">
+            <input type="month" value={ym} onChange={(e) => setYm(e.target.value || thisYm())}
+              className="h-12 md:h-10 rounded-lg border border-gray-300 px-2 text-ui" />
+          </Field>
+        ) : (
+          <>
+            <Field label="起">
+              <input type="date" value={from} onChange={(e) => setFrom(e.target.value)}
+                className="h-12 md:h-10 rounded-lg border border-gray-300 px-2 text-ui" />
+            </Field>
+            <Field label="迄">
+              <input type="date" value={to} onChange={(e) => setTo(e.target.value)}
+                className={`h-12 md:h-10 rounded-lg border px-2 text-ui ${
+                  badRange || tooLong ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} />
+            </Field>
+          </>
+        )}
         {/*
           ★ placeholder 寫「可以搜哪些」—— 標題一律留「關鍵字」（filters.tsx 的規矩）。
             使用者 2026-09-15 指定要能打房客名字，所以那三個字一定要出現在這裡，
@@ -240,24 +401,30 @@ export default function RoomStatusPage() {
         */}
         <FilterSearch value={kwInput} onChange={setKwInput}
           onSubmit={() => setKw(kwInput.trim())} placeholder="房源／房客" />
-        <Field label="顯示">
-          <div className="flex gap-1.5">
-            {([['', '全部'], ['free', '只看空房'], ['busy', '只看有客']] as const).map(([v, t]) => (
-              <button key={v} onClick={() => setOnly(v as any)}
-                className={`h-12 md:h-10 rounded-lg border px-3 text-uisub
-                  ${only === v ? 'bg-mor-slate text-white border-mor-slate'
-                               : 'bg-white border-gray-300 text-gray-600 hover:bg-mor-sand'}`}>
-                {t}
-              </button>
-            ))}
-          </div>
-        </Field>
         {/* ★ 清除也要把輸入框清掉 —— 只清 kw 的話框裡還留著字，看起來像沒生效 */}
         {/* ★ 清除是回到「預設」，不是回到「全部」 */}
-        <FilterClear active={active} onClear={() => {
-          setEstF(defEst); setKw(''); setKwInput(''); setOnly('');
-        }} />
+        <FilterClear active={active} onClear={clearAll} />
       </FilterBar>
+
+      {/*
+        ① 自訂模式的快捷。★ 只在自訂時出現 —— 月檢視有月份挑選器，
+          再擺四顆按鈕只是兩套做同一件事。
+      */}
+      {mode === 'custom' && (
+        <div className="flex flex-wrap items-center gap-2 -mt-1 mb-3">
+          <span className="text-[11px] font-semibold text-gray-500">快捷</span>
+          {([
+            ['本月', () => { const r = monthRange(thisYm()); setFrom(r.from); setTo(r.to); }],
+            ['未來 30 天', () => { setFrom(today); setTo(addDays(today, 30)); }],
+            ['未來 60 天', () => { setFrom(today); setTo(addDays(today, 60)); }],
+            ['未來 90 天', () => { setFrom(today); setTo(addDays(today, 90)); }],
+          ] as const).map(([t, fn]) => (
+            <button key={t} onClick={fn}
+              className="rounded-full border border-mor-line bg-white px-3 py-1 text-[11.5px]
+                         text-mor-slate hover:bg-mor-bluelight/60">{t}</button>
+          ))}
+        </div>
+      )}
 
       {/*
         ★★ 沒設物業的房源畫不出來（左邊那一欄要顯示物業、篩選也是按物業）。
@@ -277,6 +444,9 @@ export default function RoomStatusPage() {
           原本只列「14B2 26、27、28、29、30、31 號」——
           他去契約清單搜 14B2 只有一筆，就沒路可走了。
           說得出「金鋒（契約）× Roni（訂單）」才修得動。
+
+        ★ 2026-09-16:上面多了一顆「⚠ 重疊」藥丸負責**找**（把表格縮到那幾間），
+          這一段負責**說是哪幾筆**。兩件事，所以兩個地方。
       */}
       {dup.length > 0 && (
         <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800">
@@ -296,10 +466,70 @@ export default function RoomStatusPage() {
       )}
 
       {/*
+        ══════════ ② 藥丸（2026-09-16）══════════
+
+        ★★★ 圖例本來在表格**底下** —— 要先捲過 72 列才看得到顏色的意思，
+          而看顏色的時候人在最上面。搬上來順便讓它變成篩選。
+
+        ★★ 分兩排（使用者:「分兩條」）:
+            上排　有客種類　單選，再點一下清除
+            下排　狀態　　　空房／重疊，各自獨立，跟上排是**且**
+
+          「空房 ＋ 短租」＝ 有短租、而且還有空日子的房 ＝ 還排得進去的那幾間。
+          那是這一頁最常被問的問題，本來要在腦袋裡做。
+
+        ★ 原本篩選列裡的「顯示：全部／只看空房／只看有客」拿掉了 ——
+          「只看空房」＝ 下排的空房，「只看有客」＝ 上排的「所有客戶」。
+          同一件事留兩個入口的話，兩邊遲早會不一致。
+      */}
+      <div className="space-y-2 mb-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Pill on={tone === 'any'} onClick={() => setTone((v) => (v === 'any' ? '' : 'any'))}>
+            所有客戶
+          </Pill>
+          {TONES.map((k) => (
+            <Pill key={k} swatch={TONE[k].chip} on={tone === k}
+              onClick={() => setTone((v) => (v === k ? '' : k))}>
+              {TONE[k].label}
+            </Pill>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Pill on={freeOnly} onClick={() => setFreeOnly((v) => !v)}
+            swatch="bg-white border border-mor-line">空房</Pill>
+          {/*
+            ④-C（2026-09-16 使用者選的）。數字就是「有幾間要處理」——
+            ★ 沒有重疊的時候**整顆不出現**，不是顯示 0。
+              一顆永遠亮著的 0 會變成畫面的一部分，久了沒有人再看它。
+          */}
+          {dupRooms.length > 0 && (
+            <Pill warn on={dupOnly} onClick={() => setDupOnly((v) => !v)}>
+              ⚠ 重疊 {dupRooms.length}
+            </Pill>
+          )}
+        </div>
+      </div>
+
+      {/* ① 範圍不能畫的兩種情形分開講 —— 見上面 `badRange` / `tooLong` 的說明 */}
+      {noDates ? (
+        <div className="rounded-xl border border-mor-line bg-white px-4 py-6 text-center text-sm text-gray-400">
+          選一個起日與迄日。
+        </div>
+      ) : badRange ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-6 text-center text-sm text-amber-800">
+          起日要在迄日之前 —— 現在是 <b>{from}</b> ~ <b>{to}</b>。
+        </div>
+      ) : tooLong ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-6 text-center text-sm text-amber-800">
+          這段有 <b>{nDays}</b> 天，一次最多畫 <b>{MAX_RANGE_DAYS}</b> 天。<br />
+          <span className="text-xs">再長的話橫向要捲三個螢幕以上，捲到後面就看不出自己在看哪一天了。</span>
+        </div>
+      ) : (
+      /*
         ★★ 左邊房源欄與上面日期列都**釘住**（sticky）。
           橫軸三十天一定要橫向捲動，不釘住的話捲到第 20 天
           就看不出這是哪一間、哪一號（anxing-ui 第二節）。
-      */}
+      */
       <div className="rounded-xl border border-mor-line bg-white overflow-auto max-h-[70vh]">
         <table className="border-separate border-spacing-0 text-xs w-max min-w-full">
           <thead>
@@ -308,25 +538,27 @@ export default function RoomStatusPage() {
                              min-w-[150px] max-w-[150px] px-2.5 py-1.5 text-left font-semibold">房源</th>
               {/*
                 ★★★ 「今天」畫在**表頭**，不是畫在格子上。
-                  原本是每一格 `c.day === today` 就加一條藍色左框 ——
-                  但有人住的那幾天會被合併成**一個** `td`（`colSpan`），
+                  有人住的那幾天會被合併成**一個** `td`（`colSpan`），
                   那個 td 的 `day` 是**起日**不是今天，所以條件永遠不成立:
                   結果只有空房那幾列畫得出來，看起來就是一條來路不明的藍線
                   （使用者 2026-09-15：「中間藍色的是甚麼」）。
 
-                  表頭沒有合併問題，而且是 sticky 的 —— 捲到哪裡都看得到。
-                  「今天」兩個字取代星期，所以高度沒變。
+                ★ 跨月的時候每個月的 1 號多標一個月份 ——
+                  不標的話「30、1、2」中間那一格是哪個月要用猜的。
               */}
-              {Array.from({ length: days }, (_, i) => i + 1).map((d) => {
-                const day = ymd(ym, d);
+              {days.map((day) => {
+                const d = Number(day.slice(8, 10));
                 const w = weekdayOf(day);
                 const isToday = day === today;
+                const first = d === 1;
                 return (
-                  <th key={d} className={`sticky top-0 z-20 border-b border-r border-mor-line
+                  <th key={day} className={`sticky top-0 z-20 border-b border-r border-mor-line
                       min-w-[42px] py-1 text-center font-semibold
                       ${isToday ? 'bg-mor-slate text-white'
                                 : `bg-mor-sand ${isWeekend(day) ? 'text-[#C25B5B]' : ''}`}`}>
-                    {d}
+                    {first && !isToday
+                      ? <span className="text-mor-slate">{Number(day.slice(5, 7))}/1</span>
+                      : d}
                     <div className={`font-normal text-[10px] ${isToday ? 'opacity-100' : 'opacity-70'}`}>
                       {isToday ? '今天' : WD[w]}
                     </div>
@@ -336,52 +568,48 @@ export default function RoomStatusPage() {
             </tr>
           </thead>
           <tbody>
-            {visible.map(({ room, cells }) => (
-              <tr key={`${room.estate}/${room.name}`} className="h-8">
-                <td className="sticky left-0 z-10 bg-white border-b border-r border-mor-line
+            {visible.map(({ room, cells, dups }) => (
+              <tr key={`${room.estate}/${room.name}`}
+                className={`h-8 ${dups.length ? 'bg-[#FFFDF6]' : ''}`}>
+                <td className={`sticky left-0 z-10 border-b border-r border-mor-line
                                min-w-[150px] max-w-[150px] px-2.5 font-medium whitespace-nowrap
-                               overflow-hidden text-ellipsis">
+                               overflow-hidden text-ellipsis ${dups.length ? 'bg-[#FFFDF6]' : 'bg-white'}`}>
                   {room.name}
                   <span className="text-gray-400 font-normal text-[11px] ml-1.5">{room.estate}</span>
                 </td>
                 {cells.map((c: Cell) => {
                   const cls = `relative border-b border-r border-mor-line min-w-[42px]
-                    ${isWeekend(c.day) ? 'bg-mor-bg/50' : 'bg-white'}`;
+                    ${isWeekend(c.day) ? 'bg-mor-bg/50' : ''}`;
                   if (c.type === 'free') return <td key={c.day} className={cls} />;
+                  /*
+                    ② 沒被選到的色條**淡掉，不是消失**。
+                    ★★★ 那幾天還是有人。整條拿掉的話畫面會說那間房空著 ——
+                      而有人會照著它排房。淡掉＝「不是你現在在找的，但它佔著」。
+                  */
+                  const dimmed = tone && tone !== 'any' && c.stay.tone !== tone;
                   return (
                     <td key={c.day} colSpan={c.span} className={cls}>
-                      <div title={`${c.stay.guest ?? ''}　${c.stay.start} ~ ${c.stay.end}`}
+                      <button type="button" onClick={(e) => openCard(e, c.stay, room)}
                         className={`absolute inset-y-1 inset-x-0.5 rounded-md px-1.5
                           flex items-center text-[11px] font-semibold text-white
-                          whitespace-nowrap overflow-hidden ${TONE[c.stay.tone].bar}`}>
+                          whitespace-nowrap overflow-hidden transition-opacity
+                          ${TONE[c.stay.tone].bar} ${dimmed ? 'opacity-20' : 'hover:brightness-110'}`}>
                         {c.stay.guest ?? ''}
-                      </div>
+                      </button>
                     </td>
                   );
                 })}
               </tr>
             ))}
             {!loading && visible.length === 0 && (
-              <tr><td colSpan={days + 1} className="px-4 py-8 text-center text-gray-400">
+              <tr><td colSpan={days.length + 1} className="px-4 py-8 text-center text-gray-400">
                 沒有符合的房源
               </td></tr>
             )}
           </tbody>
         </table>
       </div>
-
-      <div className="flex flex-wrap gap-4 text-xs text-gray-600 mt-3">
-        {(Object.keys(TONE) as Stay['tone'][]).map((k) => (
-          <span key={k}>
-            <i className={`inline-block w-3 h-3 rounded-sm mr-1.5 -mb-px align-middle ${TONE[k].bar}`} />
-            {TONE[k].label}
-          </span>
-        ))}
-        <span>
-          <i className="inline-block w-3 h-3 rounded-sm mr-1.5 -mb-px align-middle bg-white border border-mor-line" />
-          空房
-        </span>
-      </div>
+      )}
 
       {/*
         ★★★ 兩種「迄」的規則寫在畫面上（使用者 2026-09-15 定的）。
@@ -392,6 +620,67 @@ export default function RoomStatusPage() {
         短租的「迄」是<b>退房日</b>，最後一晚是前一天（9/18 退房 → 只佔到 17 號，18 號可接新客）；
         契約的「迄」<b>就是最後一晚</b>，含當日。
       </p>
+
+      {/* ③ 點開的卡片 —— 見上面 `openCard()` */}
+      {picked && <StayCard p={picked} onClose={() => setPicked(null)} />}
     </div>
+  );
+}
+
+/**
+ * ③ 點色條跳出來的卡片（2026-09-16 使用者:「點了會出現 名稱 與 期間 > 現在是hover」）。
+ *
+ * ★★★ 原本是 `title=`。手機**完全沒有 hover** —— 也就是一半的使用情境下
+ *   這個資訊根本不存在。桌機上也要等一秒、滑開就消失、複製不了。
+ *
+ * ★★ 寫的是**真實的起訖**，不是畫面上被切掉的那一段。
+ *   8/20 住到 9/10 的單，九月的畫面從 1 號開始，卡片要說 8/20。
+ *   說 9/1 的話，人會以為這是一張九月才開始的單。
+ *
+ * ★★★ 「最後一晚」單獨一行。短租的「迄」是**退房日** ——
+ *   這一頁最常被誤會的就是這件事（「9/18 退房那格為什麼是空的」）。
+ *   把最後一晚直接寫出來，那一格為什麼空著就不用再問了。
+ */
+function StayCard({ p, onClose }: { p: Picked; onClose: () => void }) {
+  const s = p.stay;
+  const last = lastNightOf(s);
+  const nights = s.start && last ? daysBetween(s.start, last) + 1 : 0;
+  const href = s.kind === 'contract' ? `/contracts?contract=${s.srcId}` : `/shortterm?order=${s.srcId}`;
+  return (
+    <>
+      {/* 點外面關掉。★ 蓋滿整個視窗 —— 只靠色條自己的 blur 的話，捲動時會關不掉 */}
+      <div className="fixed inset-0 z-40" onClick={onClose} />
+      <div onClick={(e) => e.stopPropagation()}
+        style={{ left: p.x, top: p.y }}
+        className="fixed z-50 w-[264px] rounded-xl border border-mor-line bg-white p-3 shadow-xl">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 font-bold text-sm">
+              <i className={`w-2.5 h-2.5 rounded-sm shrink-0 ${TONE[s.tone].bar}`} />
+              <span className="truncate">{s.guest || '（沒有名字）'}</span>
+            </div>
+            <div className="text-[11px] text-gray-400 mt-0.5">
+              {p.room}{p.estate ? `・${p.estate}` : ''}　{TONE[s.tone].label}
+            </div>
+          </div>
+          <button onClick={onClose} aria-label="關閉"
+            className="text-gray-400 hover:text-gray-600 text-base leading-none shrink-0">✕</button>
+        </div>
+
+        <dl className="mt-2.5 grid grid-cols-[auto_1fr] gap-x-2.5 gap-y-1 text-xs">
+          <dt className="text-gray-400">期間</dt>
+          <dd className="tabular-nums">{s.start ?? '—'} ~ {s.end ?? '—'}</dd>
+          <dt className="text-gray-400">最後一晚</dt>
+          <dd className="tabular-nums">
+            {last ?? '—'}{nights > 0 && <span className="text-gray-400 ml-1">（住 {nights} 晚）</span>}
+          </dd>
+        </dl>
+
+        <a href={href} target="_blank" rel="noreferrer"
+          className="block mt-2.5 pt-2 border-t border-mor-line text-xs text-mor-slate hover:text-mor-slatedark">
+          打開這張{KIND[s.kind]} →
+        </a>
+      </div>
+    </>
   );
 }
