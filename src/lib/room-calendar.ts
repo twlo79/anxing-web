@@ -53,6 +53,15 @@ export type Stay = {
    *   哪天前綴變成兩個字,連結會安靜地指到一個不存在的 id。
    */
   srcId?: string;
+  /**
+   * 契約的類別（`contracts.type`:`longterm` ／ `company` ／ `office`）。
+   * 只有 `kind === 'contract'` 才有值。
+   *
+   * ★ 未來提醒那一頁靠它把「退租」跟「契約結束」分開 ——
+   *   公司登記沒有人要搬出去,混在退租清單裡會讓管家去排一間
+   *   **根本沒有人住**的房的退房清潔。規則在 `lib/hk-alerts.ts`。
+   */
+  ctype?: string | null;
 };
 
 export type Room = {

@@ -6,6 +6,9 @@ import CalendarTab from './calendar-tab';
 import StatsTab from './stats-tab';
 import DemandTab from './demand-tab';
 import SupplyTab from './supply-tab';
+import AlertsTab from './alerts-tab';
+// 誰看得到「未來提醒」寫在 lib —— 這裡跟分頁清單兩處各寫一次就會不一致
+import { canSeeAlerts } from '@/lib/hk-alerts';
 
 /**
  * 房務管理：行事曆 · 排班統計
@@ -59,8 +62,24 @@ import SupplyTab from './supply-tab';
  * 排在採購需求後面:先發現東西快用完（採購需求），
  * 再處理櫃子裡的進出（備品管理）。
  */
+/*
+ * 【未來提醒排第五】（2026-09-16 使用者:「多一個 未來提醒」）
+ *
+ * ★★★ 它的權限名單**跟 `canEdit` 不一樣**,所以不能借用那個旗標。
+ *   `canEdit` 是會計／主管／總經理,少了**管家** ——
+ *   而管家正是最需要看退租退房的人（要找下一個房客、要排點交清潔）。
+ *   借用的話,他點進房務管理會看不到這個分頁,
+ *   而**他不會來報**,因為他不知道那裡本來有東西。
+ *
+ * ★★ 房務（cleaner）看不到 —— 他們不管退租退房。
+ *   名單在 `lib/hk-alerts.ts` 的 `ALERT_ROLES`,有測試釘著。
+ *
+ * ★ 排最後:行事曆每天看、統計月底算、採購與備品是想到才提,
+ *   未來提醒是**每週看一次**的東西。
+ */
 const TAB_LABEL = {
   calendar: '行事曆', stats: '排班統計', demand: '採購需求', supply: '備品管理',
+  alerts: '未來提醒',
 } as const;
 type TabKey = keyof typeof TAB_LABEL;
 
@@ -72,7 +91,12 @@ export default function HousekeepingPage() {
   const [tab, setTab] = useState<TabKey>(() => {
     if (typeof window === 'undefined') return 'calendar';
     const t = new URLSearchParams(window.location.search).get('tab');
-    return t === 'demand' || t === 'stats' || t === 'supply' ? (t as TabKey) : 'calendar';
+    /*
+     * ★ 白名單用 `in TAB_LABEL` 而不是一串 `||` —— 2026-09-16 加
+     *   「未來提醒」時,這一行漏改的話 `?tab=alerts` 會安靜地退回行事曆,
+     *   而分頁本身看得到、點得動,沒有人會覺得是這裡的問題。
+     */
+    return t && t !== 'calendar' && t in TAB_LABEL ? (t as TabKey) : 'calendar';
   });
   const [msg, setMsg] = useState<{ t: string; err?: boolean } | null>(null);
 
@@ -107,9 +131,13 @@ export default function HousekeepingPage() {
    * 「只看得到自己提的」由 RLS 擋（migration_140 的 pd_own），
    * 不是靠這裡少給一個分頁。
    */
-  const tabs: TabKey[] = canEdit
-    ? ['calendar', 'stats', 'demand', 'supply']
-    : ['calendar', 'demand', 'supply'];
+  const seeAlerts = canSeeAlerts(role);
+  const tabs: TabKey[] = [
+    'calendar',
+    ...(canEdit ? (['stats'] as TabKey[]) : []),
+    'demand', 'supply',
+    ...(seeAlerts ? (['alerts'] as TabKey[]) : []),
+  ];
 
   /**
    * 成功訊息四秒後消失，失敗的不會。
@@ -160,7 +188,10 @@ export default function HousekeepingPage() {
         （排班統計會改資料，切走再切回來時舊狀態可能已經過期。）
       */}
       {/* canEdit 還沒載到之前 tab 不可能是 stats，載到之後若被降權也會退回行事曆 */}
-      {tab === 'supply'
+      {/* ★ 每一個分頁都再檢查一次權限 —— 網址可以直接打 `?tab=alerts` */}
+      {tab === 'alerts' && seeAlerts
+        ? <AlertsTab />
+        : tab === 'supply'
         ? <SupplyTab onMsg={(t, err) => setMsg({ t, err })} />
         : tab === 'demand'
         ? <DemandTab onMsg={(t, err) => setMsg({ t, err })} />

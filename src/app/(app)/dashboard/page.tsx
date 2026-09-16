@@ -21,6 +21,18 @@ import {
   yoySameAsPrev, growth, partialMonth, sameMonthRange,
 } from '@/lib/compare';
 import RangeInput from '@/components/RangeInput';
+/*
+ * 入住率（2026-09-16 使用者:「財務儀錶板多一個入住率，各房源期間都有入住率」）。
+ *
+ * ★★★ 算式在 `lib/occupancy.ts`（28 個測試），差一天的規則沿用
+ *   `lib/room-calendar.ts` 的 `occupies()`（59 個測試）——
+ *   這一頁只負責排版。在這裡另外寫一份的話，
+ *   同一間房會在儀錶板與房源狀態顯示不同的結果。
+ */
+import {
+  occupancyByRoom, totalOccupancy, fmtPct, occTone, type RoomOcc,
+} from '@/lib/occupancy';
+import { dropContractOrders, type Stay } from '@/lib/room-calendar';
 
 /**
  * 財務儀表板。
@@ -70,7 +82,17 @@ type Ord = {
 };
 type Rev5 = { checkout_date: string | null; property_id: string | null; overall_rating: number };
 type Estate = { id: string; name: string; active: boolean };
-type Property = { id: string; name: string; estate_id: string | null };
+type Property = {
+  id: string; name: string; estate_id: string | null;
+  /*
+   * ★★★ 入住率的**分母**靠這兩欄。
+   *   停用的、以及沒勾「排房表」的（2B10 那種只用來記支出、
+   *   根本沒在出租的房源）留在分母裡，會把整體入住率一路往下拉，
+   *   而畫面上完全看不出原因 —— 兩個開關不是一個（migration_255）。
+   */
+  active?: boolean | null;
+  show_in_room_calendar?: boolean | null;
+};
 type Code = { code: string; name: string };
 type Pending = { total_amount: number; planned_transfer_on: string | null };
 /**
@@ -141,6 +163,19 @@ export default function DashboardPage() {
   const [properties, setProperties] = useState<Property[]>([]);
   const [codes, setCodes] = useState<Code[]>([]);
   const [pending, setPending] = useState<Pending[]>([]);
+  /*
+   * 入住率的佔用資料。**自己一條 useEffect**，不併進 `load()`。
+   *
+   * ★★ 併進去的話，「載入中」要等到最慢那一支才消失，
+   *   而入住率不是打開儀錶板第一眼要看的東西（同一頁上面
+   *   「兩批」那段註解寫的理由）。它自己顯示「計算中…」。
+   *
+   * ★ 也不併進 `later`：那個陣列的解構順序有一條白紙黑字的警告，
+   *   多插一個位置正是它在講的那種錯。
+   */
+  const [occStays, setOccStays] = useState<Stay[]>([]);
+  const [occLoading, setOccLoading] = useState(true);
+  const [occErr, setOccErr] = useState('');
 
   // ── 篩選：期間 / 物業 / 房源 ────────────────────────
   // 預設近 12 個月 —— 一年的區間才看得出季節性，這是短租最重要的形狀。
@@ -360,7 +395,7 @@ export default function DashboardPage() {
        * 那些認列就會從物業視角的營收裡整塊消失，而且沒有跡象。
        */
       fetchAll<Property>((f, t) => supabase.from('properties')
-        .select('id, name, estate_id').order('name').range(f, t)),
+        .select('id, name, estate_id, active, show_in_room_calendar').order('name').range(f, t)),
       fetchAll<Code>((f, t) => supabase.from('account_codes')
         .select('code, name').range(f, t)),
     ]);
@@ -423,6 +458,71 @@ export default function DashboardPage() {
    */
   useEffect(() => { load(); }, [load]);
 
+  /*
+   * ══════════════════════════════════════════════════════════
+   * 入住率的佔用資料。
+   *
+   * ★★★ 撈的條件是「跟這段**有交集**」，不是「起日落在這段裡」——
+   *   後者會漏掉跨進來的長住（8/20 住到 9/10 那種），
+   *   而那間房會被算成整個月空著。入住率是用來做決定的數字，
+   *   偏低的那種錯**看起來完全正常**。
+   *
+   * ★★ 訂單的 `checkout` 是退房日，所以條件是 `> fromD` 不是 `>=`:
+   *   9/1 退房的單最後一晚是 8/31，跟九月沒有交集。
+   *
+   * ★ 房源狀態那頁同一組條件、同一份 `dropContractOrders()` ——
+   *   兩頁講同一件事就不該撈出不同的東西。
+   * ══════════════════════════════════════════════════════════
+   */
+  const loadOcc = useCallback(async () => {
+    setOccLoading(true);
+    setOccErr('');
+    const oq = await fetchAll<any>((a, b) => supabase.from('orders')
+      .select('id, property_raw, guest_name, checkin, checkout, source, contract_id')
+      .not('source', 'in', '(oneoff,airbnb_cancelled)')
+      .lte('checkin', toD).gt('checkout', fromD).range(a, b));
+    /*
+     * ★★★ 契約也要分頁。Supabase 預設最多回 1000 列而且不報錯 ——
+     *   長租契約累積幾年就會超過，而超過之後那幾間房會被算成整段空著，
+     *   入住率安靜地變低。
+     */
+    const cq = await fetchAll<any>((a, b) => supabase.from('contracts')
+      .select('id, room, tenant_name, display_name, start_date, end_date, active')
+      .lte('start_date', toD).gte('end_date', fromD).range(a, b));
+
+    /* 撈不完就明講 —— 少一列就是入住率偏低，而那個數字看起來很正常 */
+    if (oq.error) setOccErr('訂單沒有撈完：' + oq.error);
+    else if (cq.error) setOccErr('契約沒有撈完：' + cq.error);
+
+    const oStays: Stay[] = ((oq.rows as any[]) ?? [])
+      .filter((o) => o.property_raw)
+      .map((o) => ({
+        id: `o${o.id}`, srcId: o.id as string,
+        room: o.property_raw as string, kind: 'order' as const,
+        start: o.checkin, end: o.checkout, guest: o.guest_name,
+        tone: (o.source === 'private' ? 'private' : 'short') as Stay['tone'],
+        contractId: o.contract_id as string | null,
+      }));
+    const cStays: Stay[] = ((cq.rows as any[]) ?? [])
+      .filter((c) => c.room && c.active !== false)
+      .map((c) => ({
+        id: `c${c.id}`, srcId: c.id as string,
+        room: c.room as string, kind: 'contract' as const,
+        start: c.start_date, end: c.end_date,
+        guest: c.display_name || c.tenant_name,
+        tone: 'longterm' as const, contractId: c.id as string,
+      }));
+
+    /*
+     * ★★★ 契約產生的月租單跟契約畫的是同一段期間 —— 兩筆都留的話
+     *   是同一件事被算兩次。逐日計算讓它不會把入住率灌爆（同一天只算一次），
+     *   但留著它等於讓一份資料有兩個來源，而哪天算法一變就會出事。
+     */
+    setOccStays(dropContractOrders([...oStays, ...cStays]));
+    setOccLoading(false);
+  }, [supabase, fromD, toD]);
+  useEffect(() => { loadOcc(); }, [loadOcc]);
+
   // 物業改了就把房源清掉 —— 否則會留著上一個物業的房間，篩出空結果
   function pickEstate(v: string) { setEstF(v); setPropF(''); }
   function clearFilters() {
@@ -434,6 +534,37 @@ export default function DashboardPage() {
   const codeName = useMemo(() => Object.fromEntries(codes.map((c) => [c.code, c.name])), [codes]);
   const propsOfEstate = useMemo(
     () => properties.filter((p) => !estF || p.estate_id === estF), [properties, estF]);
+
+  /*
+   * ══════════════════════════════════════════════════════════
+   * 入住率。
+   *
+   * ★★★ 分母是**房源**，不是有訂單的房源。
+   *   從訂單反推的話，「整段期間都空著」的房間根本不會進到分子分母裡 ——
+   *   入住率會變成「有客人的房間有多滿」，永遠接近 100%，
+   *   而那正是最不想被藏起來的那幾間。
+   *
+   * ★★ 停用的、沒勾「排房表」的排掉（理由在 `Property` 的註解）。
+   *   `active` 欄位讀不到的時候（舊資料 null）當成**有效** ——
+   *   預設把房源踢出分母的話，入住率會無聲地變高。
+   *
+   * ★ 篩選跟著頁面上的物業／房源走，跟其他圖表同一組條件。
+   * ══════════════════════════════════════════════════════════
+   */
+  const occRooms = useMemo(() => properties
+    .filter((p) => p.active !== false && p.show_in_room_calendar !== false)
+    .filter((p) => !estF || p.estate_id === estF)
+    .filter((p) => !propF || p.id === propF)
+    .map((p) => ({ name: p.name, estate: p.estate_id ? (estateName[p.estate_id] ?? null) : null })),
+  [properties, estF, propF, estateName]);
+
+  const occList = useMemo<RoomOcc[]>(() => {
+    const by: Record<string, Stay[]> = {};
+    occStays.forEach((s) => { (by[s.room] ??= []).push(s); });
+    return occupancyByRoom(occRooms, by, { from: fromD, to: toD });
+  }, [occStays, occRooms, fromD, toD]);
+
+  const occAll = useMemo(() => totalOccupancy(occList), [occList]);
 
 
   /** 比較期的彙總。篩選在這裡才套,load 只負責拿資料(見 CmpRaw)。 */
@@ -1049,6 +1180,89 @@ export default function DashboardPage() {
         );
       })()}
 
+      {/* ═══ 入住率 ═══ */}
+      <Panel title="入住率"
+        hint="每一間房在這段期間裡有幾天有人住 —— 逐日計算，重疊的訂單只算一次">
+        {occErr && (
+          <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+            ⚠ {occErr}　—— 下面的入住率會<b>偏低</b>，先不要拿它做決定。
+          </div>
+        )}
+        {occLoading ? (
+          <p className="py-8 text-center text-sm text-gray-400">計算中…</p>
+        ) : !occList.length ? (
+          <p className="py-8 text-center text-sm text-gray-400">
+            這個篩選條件下沒有房源。（停用的、沒勾「排房表」的房源不算）
+          </p>
+        ) : (
+          <>
+            {/*
+              合計。★★★ 是「總住宿天數 ÷ 總可住天數」，不是各房入住率的平均 ——
+              兩者在房數天數一樣時剛好相等，所以很容易寫錯（算式在 lib，有測試）。
+            */}
+            <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 mb-4
+                            rounded-lg bg-mor-sand/40 px-4 py-3">
+              <span className={`text-2xl font-bold tabular-nums ${OCC_CLS[occTone(occAll.rate)]}`}>
+                {fmtPct(occAll.rate)}
+              </span>
+              <span className="text-xs text-gray-500 tabular-nums">
+                {occAll.rooms} 間房 × {occAll.days / (occAll.rooms || 1)} 天
+                ＝ 可住 {nf(occAll.days)} 天
+              </span>
+              <span className="text-xs text-gray-500 tabular-nums">
+                住了 <b className="text-mor-ink">{nf(occAll.used)}</b> 天・
+                空著 <b className="text-mor-ink">{nf(occAll.free)}</b> 天
+              </span>
+            </div>
+
+            {/* 各房源。★ 排序照房號的自然順序，不是按入住率 —— 見 lib 的說明 */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm min-w-[420px]">
+                <thead>
+                  <tr className="text-left text-xs text-gray-500 border-b border-mor-line">
+                    <th className="py-2 pr-3">房源</th>
+                    <th className="py-2 pr-3">入住率</th>
+                    <th className="py-2 pr-3 w-1/2">　</th>
+                    <th className="py-2 pr-3 text-right whitespace-nowrap">住 / 可住</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {occList.map((o) => (
+                    <tr key={o.room} className="border-b border-mor-line/50 last:border-0">
+                      <td className="py-1.5 pr-3 whitespace-nowrap">
+                        {o.room}
+                        {!estF && o.estate && (
+                          <span className="ml-1.5 text-xs text-gray-400">{o.estate}</span>
+                        )}
+                      </td>
+                      <td className={`py-1.5 pr-3 tabular-nums font-medium whitespace-nowrap ${
+                        OCC_CLS[occTone(o.rate)]}`}>
+                        {fmtPct(o.rate)}
+                      </td>
+                      <td className="py-1.5 pr-3">
+                        <div className="h-2.5 rounded-sm bg-gray-100">
+                          <div className="h-2.5 rounded-sm"
+                            style={{ width: `${o.rate * 100}%`, background: OCC_BAR[occTone(o.rate)] }} />
+                        </div>
+                      </td>
+                      <td className="py-1.5 pr-3 text-right text-xs text-gray-500 tabular-nums whitespace-nowrap">
+                        {o.used} / {o.days}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <p className="mt-3 text-[11px] text-gray-400 leading-relaxed">
+              ★ 訂單的退房日那天<b>不算</b>住（最後一晚是前一天），契約的租期迄那天<b>算</b>。
+              兩種來源的邊界不一樣，這是最容易差一格的地方 —— 跟房源狀態走同一份算式。<br />
+              ★ 停用的房源、以及沒勾「排房表」的房源不列入分母。
+            </p>
+          </>
+        )}
+      </Panel>
+
       {/* ═══ 趨勢 ═══ */}
       <Panel title="營收與支出趨勢" hint="營收用已按月拆分的認列金額，跨月訂單已經分好了">
         {trend.length === 0 ? <Empty /> : <TrendChart data={trend} />}
@@ -1249,6 +1463,21 @@ export default function DashboardPage() {
  * 【標籤字距拉開、字級壓小】
  * 標籤跟數字差不多大時，整張卡看起來就是兩行普通文字，沒有主從。
  */
+/*
+ * 入住率的顏色。★★ 門檻本身在 `lib/occupancy.ts` 的 `occTone()` ——
+ * 這裡只決定「high/mid/low 長什麼樣」，三個地方各寫一次 `> 0.8` 的話，
+ * 改門檻時一定會漏掉一個。
+ *
+ * ★ 綠色用 `mor-greendark`（#217346）當文字:`mor-green` 對白底只有 2.78:1，
+ *   達不到 4.5:1（anxing-ui 第五節）。長條是色塊不是文字，可以用亮的那支。
+ */
+const OCC_CLS: Record<string, string> = {
+  high: 'text-mor-greendark', mid: 'text-mor-slate', low: 'text-[#B3423C]',
+};
+const OCC_BAR: Record<string, string> = {
+  high: '#3FAE7C', mid: '#41689B', low: '#C0563F',
+};
+
 const KPI_TONE = {
   good: { text: '#3FAE7C', bg: '#3FAE7C0D', border: '#3FAE7C33' },
   bad: { text: '#D0544C', bg: '#D0544C0D', border: '#D0544C33' },
