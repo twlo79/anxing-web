@@ -19,9 +19,16 @@ const exit = (s: Stay, days: number): Exit => ({ stay: s, on: s.end!, days });
 /* ── 天數窗口 ───────────────────────────────────────────── */
 
 test('窗口選項含「全部」', () => {
-  assert.deepEqual([...ALERT_WINDOWS], [7, 14, 30, 45, 0]);
+  assert.deepEqual([...ALERT_WINDOWS], [7, 14, 30, 45, 90, 180, 0]);
   assert.equal(winLabel(0), '全部');
   assert.equal(winLabel(45), '45 天');
+  assert.equal(winLabel(180), '180 天');
+});
+
+test('★ 由小到大，「全部」排最後 —— 下拉的順序就是清單的順序', () => {
+  const nums = ALERT_WINDOWS.filter((w) => w !== 0);
+  assert.deepEqual([...nums], [...nums].sort((a, b) => a - b));
+  assert.equal(ALERT_WINDOWS[ALERT_WINDOWS.length - 1], 0);
 });
 
 test('★ 預設是 45 —— 使用者心裡的退租門檻', () => {
@@ -38,12 +45,14 @@ test('★ 「全部」轉成有限的上界，不是 Infinity', () => {
 test('parseWin 認得網址上的數字', () => {
   assert.equal(parseWin('45'), 45);
   assert.equal(parseWin('7'), 7);
+  assert.equal(parseWin('90'), 90);
+  assert.equal(parseWin('180'), 180);
   assert.equal(parseWin('0'), 0);
 });
 
-test('★ 清單裡拿掉的數字（90／180）回預設，不是照單全收', () => {
-  assert.equal(parseWin('90'), DEFAULT_WINDOW);
-  assert.equal(parseWin('180'), DEFAULT_WINDOW);
+test('★ 不在清單裡的數字回預設，不是照單全收', () => {
+  assert.equal(parseWin('60'), DEFAULT_WINDOW);
+  assert.equal(parseWin('365'), DEFAULT_WINDOW);
 });
 
 test('★ parseWin 認不得就回預設，不是回 0（＝全部）', () => {

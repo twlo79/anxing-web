@@ -531,7 +531,23 @@ export default function SocialPage() {
 
   /* ══════════════════════════════════════════════════ */
   return (
-    <div>
+    /*
+     * ══════════════════════════════════════════════════════════
+     * ★★ 整頁置中（2026-09-16 使用者:「全部置中吧」）。
+     *
+     *   右邊那塊編輯面板收掉之後，這一頁只剩一欄 ——
+     *   靠左貼著的話，寬螢幕上右邊會空掉一大片，而那片空白
+     *   看起來像「還有東西沒載出來」。
+     *
+     * ★★★ 分頁、工具列、提示、九宮格**用同一個寬度**（`max-w-[640px]`）。
+     *   只把九宮格置中、其他留在全寬的話，那幾條線會各自對齊到不同的地方，
+     *   人看到的是「這一頁沒有對齊」—— 比全部靠左更糟。
+     *
+     * ★ 640px 而不是 560:一格變成約 212px，而工具列那五顆按鈕
+     *   在這個寬度剛好排兩排。再窄就要排三排了。
+     * ══════════════════════════════════════════════════════════
+     */
+    <div className="max-w-[640px] mx-auto">
       <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
         <h1>IG 版面模擬
           <span className="text-sm font-normal text-gray-400 ml-2">
@@ -633,9 +649,10 @@ export default function SocialPage() {
             ★★ 代價講在前面:**不能再一邊看版面一邊改文案** ——
               視窗會蓋住九宮格。IG 本身就是這樣，而且編輯框因此大了四倍。
           */}
-          <div className="flex flex-wrap items-start gap-5">
+          {/* ★ 只剩一欄了，不需要 flex —— 留著的話 `gap-5` 會在底下多一段沒人要的空白 */}
+          <div>
             {/* ══ 手機 ══ */}
-            <div className="w-full max-w-[560px] rounded-2xl border border-mor-line bg-white overflow-hidden">
+            <div className="w-full rounded-2xl border border-mor-line bg-white overflow-hidden">
               {/*
                 ══════════ 個人檔案的頭（2026-09-16 使用者:「這些都可以再編輯」）══════════
 

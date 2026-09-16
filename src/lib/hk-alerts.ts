@@ -40,8 +40,15 @@ import type { Exit, Stay } from './room-calendar.ts';
  * ★★ 房源狀態原本那兩個寫死的常數（`ENDING_DAYS` 180 ／ `LEAVING_DAYS` 14）
  *   因此整個退場 —— 兩頁都改吃這一排。
  *   留著一份沒有人用的門檻，下一個人會照著它去 debug。
+ *
+ * ★★★ 2026-09-16 晚:選項從 5 個加回 7 個（補 90／180），
+ *   因為畫面從**一排膠囊**換成**一個下拉**了。
+ *   膠囊多一個就多佔一塊版面，所以當時砍到 5 個;
+ *   下拉多一個只是清單長一列 —— **裝得下的東西不該被砍掉**。
+ *   選項的數量是被「畫面怎麼呈現」決定的，不是被「使用者需要幾個」決定的，
+ *   那正是換一種呈現方式該換來的東西。
  */
-export const ALERT_WINDOWS = [7, 14, 30, 45, 0] as const;
+export const ALERT_WINDOWS = [7, 14, 30, 45, 90, 180, 0] as const;
 export type AlertWindow = (typeof ALERT_WINDOWS)[number];
 
 /**

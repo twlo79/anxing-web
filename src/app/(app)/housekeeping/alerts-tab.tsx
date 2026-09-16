@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { fetchAll } from '@/lib/fetch-all';
-import { FilterBar, Field, FilterSelect } from '@/lib/filters';
+import { FilterBar, Field, FilterSelect, FILTER_CTRL } from '@/lib/filters';
 import {
   exitsSoon, addDays, lastNightOf,
   type Stay, type Exit,
@@ -56,28 +56,6 @@ type Row = {
   /** 訂單才有:最後一晚（退房日的前一天） */
   lastNight: string | null;
 };
-
-/**
- * 膠囊。**一顆元件畫完整排** —— 兩個地方各寫一次就會有長得不一樣的一天。
- *
- * ★ 定在模組層不是元件裡:定在元件裡的話每次 render 都是新的型別，
- *   React 會把整排拆掉重做。
- * ★★ 字級 `text-uisub` 不是 `text-xs` —— 膠囊是**介面外框**不是資料
- *   （anxing-ui 第四節）。
- */
-function Pill({ on, onClick, children }: {
-  on: boolean; onClick: () => void; children: React.ReactNode;
-}) {
-  return (
-    <button type="button" onClick={onClick} aria-pressed={on}
-      className={`inline-flex items-center rounded-full border px-3.5 py-2 text-uisub
-                  transition-colors whitespace-nowrap ${
-        on ? 'bg-mor-ink border-mor-ink text-white font-medium'
-           : 'bg-white border-mor-line text-gray-600 hover:bg-mor-sand/60'}`}>
-      {children}
-    </button>
-  );
-}
 
 export default function AlertsTab() {
   const supabase = useMemo(() => createClient(), []);
@@ -262,16 +240,22 @@ export default function AlertsTab() {
           options={estates.map((e) => ({ value: e.id, label: e.name }))}
           all="全部物業" />
         {/*
-          ★★★ 天數是**按出來的**，不是寫死在標題上。
+          ★★★ 天數是**選出來的**，不是寫死在標題上。
             原本標題掛著「契約在 180 天內到期」—— 那行字等於把一個
             使用者改不動的決定印在畫面上（2026-09-16 他把它劃掉了）。
+
+          ★★ 用下拉不用膠囊（2026-09-16 使用者:「有點多耶，有沒有 drop down」）。
+            膠囊跟旁邊的物業下拉長得完全不一樣，而它們是同一類東西 ——
+            都是「這份清單怎麼算出來的」。同一類就該長一樣。
+            房源狀態那一頁同一個決定、同一份選項。
         */}
         <Field label="多久後退">
-          <div className="flex flex-wrap gap-1.5">
+          <select value={win} onChange={(e) => pickWin(Number(e.target.value) as AlertWindow)}
+            className={FILTER_CTRL}>
             {ALERT_WINDOWS.map((w) => (
-              <Pill key={w} on={win === w} onClick={() => pickWin(w)}>{winLabel(w)}</Pill>
+              <option key={w} value={w}>{winLabel(w)}</option>
             ))}
-          </div>
+          </select>
         </Field>
       </FilterBar>
 

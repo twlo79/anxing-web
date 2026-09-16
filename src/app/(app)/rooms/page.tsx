@@ -131,6 +131,35 @@ function Pill({ on, onClick, swatch, children, warn }: {
   );
 }
 
+type View = '' | 'any' | Stay['tone'] | 'free' | 'dup' | 'ending' | 'leaving';
+
+/** 藥丸上的字。`''` 是沒有選 */
+const VIEW_LABEL: Record<string, string> = {
+  any: '所有客戶', free: '空房', dup: '重疊',
+  short: '短租', private: '私下', longterm: '長租契約', earnest: '訂金／未確認',
+  ending: '快退租', leaving: '快退房',
+};
+
+/**
+ * 一間房符不符合某一顆藥丸。
+ *
+ * ★★★ `ending` ／ `leaving` **不在這裡**。那兩顆是從提醒清單反推的
+ *   （「只看這 N 間」），而提醒清單本身又要靠這支來收窄 ——
+ *   放進來就變成自己篩自己，React 會直接抓到相依迴圈。
+ *   它們在 `visible` 那邊單獨處理。
+ *
+ * ★★ 這支是**唯一**一份藥丸規則。原本 `visible` 裡寫一份、
+ *   提醒那邊再寫一份的話，改了一邊另一邊會安靜地留在舊答案
+ *   （README 坑 A）。
+ */
+function matchPill(x: { real: readonly Stay[]; dups: readonly unknown[] }, view: View): boolean {
+  if (!view || view === 'ending' || view === 'leaving') return true;
+  if (view === 'free') return x.real.length === 0;
+  if (view === 'dup') return x.dups.length > 0;
+  if (view === 'any') return x.real.length > 0;
+  return x.real.some((s) => s.tone === view);
+}
+
 /** ③ 點開的那張卡片。位置用 `fixed` —— 見下面 `openCard()` 的說明 */
 type Picked = { stay: Stay; room: string; estate: string | null; x: number; y: number };
 
@@ -171,7 +200,6 @@ export default function RoomStatusPage() {
    *   但它跟其他幾顆問的是同一件事 ——「我現在要看哪一批房」。
    *   讓它獨立的話就又回到「兩個開關可以湊出沒有意義的組合」。
    */
-  type View = '' | 'any' | Stay['tone'] | 'free' | 'dup' | 'ending' | 'leaving';
   const [view, setView] = useState<View>('');
   /*
    * ★★★ 三顆提醒旋鈕。**是模式不是篩選** ——
@@ -433,18 +461,36 @@ export default function RoomStatusPage() {
   const dupRooms = useMemo(() => base.filter((x) => x.dups.length), [base]);
 
   /*
-   * ★★ 提醒照**物業**收窄,不照關鍵字與藥丸。
-   *   物業是「我現在在管哪一棟」——那是範圍；
-   *   關鍵字與藥丸是「我現在在看什麼」——那是視角。
-   *   讓提醒跟著搜尋框變的話,打字打到一半數字會自己跳,
-   *   而那個數字的意思是「有幾件事要處理」。
+   * ══════════════════════════════════════════════════════════
+   * 提醒的範圍 —— **跟著畫面上的房源走**
+   * （2026-09-16 使用者:「退租提醒和房源綁在一起，不是所有」）
+   *
+   * ★★★ 之前提醒只照物業收窄，不管藥丸。理由是「那個數字的意思是
+   *   有幾件事要處理，不該跟著視角跳」。實際用起來不對:
+   *   按下「空房 8」之後，底下那張表列著 **60 筆跟這 8 間無關的契約** ——
+   *   兩塊東西疊在同一個畫面上卻各說各話，而人會以為它壞了。
+   *
+   * ★★ 所以現在是三層，由外往內:
+   *     物業 ＋ 關鍵字　→ `base`（`matchRoom` 已經套過）
+   *     藥丸　　　　　　→ `matchPill`
+   *     提醒自己的窗口　→ `exitsSoon`（在 loadAlerts 裡）
+   *
+   * ★★★ 「快退租／快退房」那兩顆藥丸**不參與收窄**（`matchPill` 回 true）——
+   *   它們是從提醒清單反推的，再拿去篩提醒就是自己篩自己。
+   *
+   * ★ 代價:數字會跟著藥丸跳。所以底下那張表要**講出來**
+   *   「現在只看『空房』這 8 間」，不然 0 看起來像壞掉（見 `ExitList` 的 `narrow`）。
+   * ══════════════════════════════════════════════════════════
    */
-  const scope = useMemo(() => {
-    const names = new Set(rooms.filter((r) => !estF || r.estate === estF).map((r) => r.name));
-    return names;
-  }, [rooms, estF]);
+  const scope = useMemo(
+    () => new Set(base.filter((x) => matchPill(x, view)).map((x) => x.room.name)),
+    [base, view]);
   const endList  = useMemo(() => ending.filter((e) => scope.has(e.stay.room)), [ending, scope]);
   const outList  = useMemo(() => leaving.filter((e) => scope.has(e.stay.room)), [leaving, scope]);
+
+  /** 藥丸正在收窄提醒的時候，底下那張表要說出來是哪一顆 */
+  const narrow = (view && view !== 'ending' && view !== 'leaving')
+    ? `${VIEW_LABEL[view] ?? view}」這 ${scope.size} 間` : '';
 
   /*
    * 要畫成紅色的那幾筆。★ 比對的是 **id**,不是房號 ——
@@ -485,20 +531,19 @@ export default function RoomStatusPage() {
      * ★★ 一律看 `real`（這段裡真的佔到日子的每一筆），不看 `cells` ——
      *   `rowOf()` 同一天只畫第一筆，被壓住的那一筆在 `cells` 裡根本不存在。
      *   拿 `cells` 篩的話，「只看短租」會漏掉被長租壓住的那張短租單，
-     *   而那正是最需要被看見的一筆。
+     *   而那正是最需要被看見的一筆。（規則在 `matchPill()`。）
      *
      * ★★★ `free` 是 `real.length === 0`（整段都沒人），
      *   **不是** `hasFreeDay()`（有任何一天是空的）。
      *   後者是第一版的寫法，而它會把「9/4 才入住」的房算成空房 ——
      *   使用者:「空房還有人耶」。這兩個問法的差別就是那顆藥丸有沒有用。
+     *
+     * ★ 只有這兩顆在這裡單獨處理 —— 它們是從提醒清單反推的房號，
+     *   不是房間自己的性質（理由見 `matchPill()`）。
      */
-    if (!view) return true;
-    if (view === 'free') return x.real.length === 0;
-    if (view === 'dup') return x.dups.length > 0;
     if (view === 'ending') return endRooms.has(x.room.name);
     if (view === 'leaving') return outRooms.has(x.room.name);
-    if (view === 'any') return x.real.length > 0;
-    return x.real.some((s) => s.tone === view);
+    return matchPill(x, view);
   }), [base, view, endRooms, outRooms]);
 
   /*
@@ -719,7 +764,36 @@ export default function RoomStatusPage() {
             ★ 沒有東西可以提醒的時候**整顆不出現**,不是顯示 0 ——
               一顆永遠亮著的 0 會變成畫面的一部分,久了沒有人再看它。
           */}
-          <span className="ml-auto flex flex-wrap items-center gap-1">
+          <span className="ml-auto flex flex-wrap items-center gap-2">
+            {/*
+              ══════════ 提醒的天數（2026-09-16 使用者:「有點多耶，有沒有 drop down」）══════════
+
+              ★★★ 第一版是**一排膠囊**（7／14／30／45／全部），跟上面那排房源藥丸
+                長得一模一樣 —— 而它們是兩種東西:
+                　藥丸　房源篩選，一天按十次　→ 一直切來切去的，攤開來才快
+                　天數　設一次就不太動　　　　→ 收進下拉
+
+                這一區看起來滿，不是因為東西多，是**同一種形狀用在兩種用途上**，
+                眼睛每次都要重讀一遍才知道哪一排管哪件事。
+
+              ★★ 換成下拉之後選項反而**加回 90／180**:
+                膠囊多一個就多佔一塊版面，下拉多一個只是清單長一列。
+                選項的數量本來就該由「畫面怎麼呈現」決定。
+
+              ★ 兩顆旋鈕上的數字**留在外面**，不收進下拉 ——
+                那兩個是**儀表**不是警報，而且退租與退房是兩件不同的工作
+                （一個要找新房客、一個要排清潔），合成一個數字等於把資訊丟掉。
+            */}
+            <label className="flex items-center gap-1.5">
+              <span className="text-uisub text-gray-500 whitespace-nowrap">提醒範圍</span>
+              <select value={win} onChange={(e) => pickWin(Number(e.target.value) as AlertWindow)}
+                className="h-9 rounded-full border border-mor-line bg-white px-3 text-uisub
+                           text-gray-700 hover:bg-mor-sand/60">
+                {ALERT_WINDOWS.map((w) => (
+                  <option key={w} value={w}>{winLabel(w)}</option>
+                ))}
+              </select>
+            </label>
             {dupRooms.length > 0 && (
               <ToggleInfo tone="amber" on={showDup} onToggle={() => setShowDup((v) => !v)}
                 label={<>⚠ 重疊 <b className="tabular-nums">{dupRooms.length}</b></>}
@@ -754,28 +828,6 @@ export default function RoomStatusPage() {
             </ToggleInfo>
           </span>
         </div>
-      </div>
-
-      {/*
-        ══════════ 提醒的天數（2026-09-16 使用者:「共同一組就好」）══════════
-
-        ★★★ 這一排原本是寫死的兩個數字（180 與 14），印在提醒標題上 ——
-          使用者看得到卻改不動，於是只能來問「不是 45 天嗎」。
-
-        ★★ **退租與退房共用一個**,不是各一排:
-          它們回答的是同一個問題「接下來多久內」。兩排的話畫面上會有
-          兩個數字，而人得先分清楚哪一排管哪一塊。
-
-        ★ 永遠看得到，不是打開旋鈕才出現 ——
-          旋鈕上那兩個數字（退租 N／退房 N）就是這一排算出來的，
-          藏起來的話那兩個數字沒有人解釋得了。
-      */}
-      <div className="mb-2 flex flex-wrap items-center gap-2">
-        <span className="text-uisub text-gray-500">提醒範圍</span>
-        {ALERT_WINDOWS.map((w) => (
-          <Pill key={w} on={win === w} onClick={() => pickWin(w)}>{winLabel(w)}</Pill>
-        ))}
-        <span className="text-xs text-gray-400">退租與退房共用</span>
       </div>
 
       {/* ── 明細：三顆旋鈕打開才出現 ── */}
@@ -830,12 +882,14 @@ export default function RoomStatusPage() {
       )}
 
       {showEnd && (
-        <ExitList kind="ending" list={endList} days={winDays(win)} all={win === 0} drawn={drawnIds}
+        <ExitList kind="ending" list={endList} days={winDays(win)} all={win === 0}
+          narrow={narrow} drawn={drawnIds}
           onFilter={() => setView('ending')}
           onRange={(n) => { setMode('custom'); setFrom(today); setTo(addDays(today, n)); }} />
       )}
       {showOut && (
-        <ExitList kind="leaving" list={outList} days={winDays(win)} all={win === 0} drawn={drawnIds}
+        <ExitList kind="leaving" list={outList} days={winDays(win)} all={win === 0}
+          narrow={narrow} drawn={drawnIds}
           onFilter={() => setView('leaving')}
           onRange={(n) => { setMode('custom'); setFrom(today); setTo(addDays(today, n)); }} />
       )}
@@ -1050,12 +1104,28 @@ function StayCard({ p, onClose }: { p: Picked; onClose: () => void }) {
  * ★★ 每一列都有「打開契約／訂單 →」。看到要處理的事，下一步就是去處理它；
  *   沒有連結的話要自己回那一頁再搜一次房號。
  */
-function ExitList({ kind, list, days, all, drawn, onFilter, onRange }: {
+/**
+ * 一次先給幾筆。
+ *
+ * ★ 六筆 —— 剛好是「一眼掃得完」而且不會把日曆推出畫面的長度。
+ *   定在模組層是為了讓那顆按鈕上的「還有 N 筆」跟這裡永遠是同一個數字。
+ */
+const FOLD_AT = 6;
+
+function ExitList({ kind, list, days, all, narrow, drawn, onFilter, onRange }: {
   kind: 'ending' | 'leaving';
   list: Exit[];
   days: number;
   /** 使用者按的是「全部」—— `days` 那時是一個很大的數字，不能印出來 */
   all: boolean;
+  /**
+   * 有藥丸正在收窄的話，這裡是那顆藥丸的名字與間數。
+   *
+   * ★★★ 沒有它的話，按下「空房」之後這張表會變成 0 筆，
+   *   而畫面上**沒有任何東西說是誰做的** —— 使用者只會看到
+   *   「剛剛還有 60 筆，現在一筆都沒有」，然後以為壞了。
+   */
+  narrow: string;
   drawn: Set<string>;
   onFilter: () => void;
   /** 把期間切成「今天 ～ 今天＋n 天」。n 由 ExitList 夾過上限之後傳回來 */
@@ -1072,6 +1142,29 @@ function ExitList({ kind, list, days, all, drawn, onFilter, onRange }: {
    *   寫 180 而切出 92 的話，那顆按鈕在說謊。
    */
   const jump = Math.min(days, MAX_RANGE_DAYS);
+  /*
+   * ══════════ 超過六筆就折起來（2026-09-16 使用者:「有點多耶」）══════════
+   *
+   * ★★ 使用者的截圖上 24 筆一次攤開，佔掉一整個螢幕 ——
+   *   而真正要處理的是最上面那兩三筆（清單本來就由近到遠排）。
+   *
+   * ★★★ 折的是**顯示**不是**計算**:旋鈕上那個數字、
+   *   標題上的「只看這 N 間」都還是完整的 N。
+   *   折起來連數字也跟著少的話，那個數字就不再是「有幾件事要處理」。
+   *
+   * ★ 按鈕上寫**還有幾筆**。不寫的話展開之前不知道還有多少，等於要猜 ——
+   *   而人不會為了一個未知的數量去點一顆按鈕。
+   */
+  /*
+   * ★★★ 這裡**不能叫 `all`** —— 上面的 prop 已經有一個 `all`
+   *   （使用者按的天數是不是「全部」）。同名會把它蓋掉，
+   *   而症狀是標題上的「契約往後到期」跟著展開按鈕變 ——
+   *   tsc 不會抓（兩個都是 boolean），畫面上也只是一句話怪怪的。
+   */
+  const [expanded, setExpanded] = useState(false);
+  const shown = expanded ? list : list.slice(0, FOLD_AT);
+  /* ★ 換了天數或藥丸就收回去 —— 上一次展開的狀態不該跟著新的清單走 */
+  useEffect(() => { setExpanded(false); }, [days, list.length]);
   const title = isEnd ? '退租提醒' : '退房提醒';
   /*
    * ★ 按「全部」時 `days` 是 3650（十年）—— 直接印會變成
@@ -1088,6 +1181,9 @@ function ExitList({ kind, list, days, all, drawn, onFilter, onRange }: {
       <div className="flex flex-wrap items-center gap-2 font-bold mb-2">
         {title}
         <span className="font-normal opacity-80">{sub}</span>
+        {narrow && (
+          <span className="font-normal opacity-80">・只算「{narrow}</span>
+        )}
         {list.length > 0 && (
           <button onClick={onFilter} className="ml-auto font-normal underline hover:no-underline">
             只看這 {list.length} 間 →
@@ -1104,6 +1200,7 @@ function ExitList({ kind, list, days, all, drawn, onFilter, onRange }: {
       {!list.length ? (
         <div className="leading-relaxed opacity-85">
           {all ? '往後' : `接下來 ${days} 天`}{isEnd ? '沒有契約到期' : '沒有訂單要退房'}。
+          {narrow && <>　<b>目前只看「{narrow}</b> —— 上面那顆藥丸再點一下就看全部。</>}
         </div>
       ) : !inView.length ? (
         <div className="mb-2 leading-relaxed opacity-90">
@@ -1117,7 +1214,7 @@ function ExitList({ kind, list, days, all, drawn, onFilter, onRange }: {
       ) : null}
 
       <div className="space-y-0.5">
-        {list.map((e) => (
+        {shown.map((e) => (
           <div key={e.stay.id}
             className="flex flex-wrap items-baseline gap-x-2.5 py-0.5
                        border-t border-dashed border-black/10 first:border-t-0">
@@ -1137,6 +1234,15 @@ function ExitList({ kind, list, days, all, drawn, onFilter, onRange }: {
           </div>
         ))}
       </div>
+
+      {list.length > FOLD_AT && (
+        <button onClick={() => setExpanded((v) => !v)}
+          className="mt-1.5 w-full rounded-lg border border-dashed px-2 py-1 text-[11px]
+                     bg-white/70 hover:bg-white"
+          style={{ borderColor: '#ECC8C5' }}>
+          {expanded ? '收起來 ▴' : `還有 ${list.length - FOLD_AT} 筆，全部展開 ▾`}
+        </button>
+      )}
 
       {/*
         ★★★ 差一天那件事寫在這裡。
