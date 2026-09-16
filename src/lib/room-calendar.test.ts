@@ -419,3 +419,40 @@ describe('staysInRange：篩選要看真相不是畫面', () => {
     assert.deepEqual(staysInRange([a, b], r).map((s) => s.id), ['a', 'b'], '★ 但兩筆都在');
   });
 });
+
+/* ══════════════════════════════════════════════════════════
+ * 空房與有客是 MECE（2026-09-16 使用者:「空房 還有 人耶」「空房 與 有訂單 是 MECE」）
+ *
+ * ★★★ 第一版的「空房」問的是 `hasFreeDay()`：有**任何一天**是空的。
+ *   於是 9/4 才入住的房也算空房 —— 一顆叫「空房」的藥丸，答案裡有人。
+ *   現在問的是 `staysInRange().length === 0`：整段都沒人。
+ * ══════════════════════════════════════════════════════════ */
+describe('空房 vs 有客：互斥且窮盡', () => {
+  const r = monthRange('2026-09');
+
+  test('★★★ 月中才入住的房**不是**空房 —— 但它確實「有空的日子」', () => {
+    const late = [S({ kind: 'order', start: '2026-09-04', end: '2026-10-01' })];
+    assert.equal(hasFreeDay(rowOf(late, r)), true, '9/1~9/3 是空的');
+    assert.equal(staysInRange(late, r).length > 0, true, '★ 但這間房有人 —— 不算空房');
+  });
+
+  test('整段都沒人才是空房', () => {
+    assert.equal(staysInRange([], r).length, 0);
+    // 最後一晚落在區間外的也算沒人
+    assert.equal(staysInRange([S({ kind: 'order', start: '2026-08-25', end: '2026-09-01' })], r).length, 0);
+  });
+
+  test('★★ 每一間房只會落在其中一邊,不會兩邊都是也不會兩邊都不是', () => {
+    const rooms = [
+      [] as any[],
+      [S({ kind: 'order', start: '2026-09-04', end: '2026-10-01' })],
+      [S({ kind: 'contract', start: '2026-01-01', end: '2027-12-31' })],
+      [S({ kind: 'order', start: '2026-09-10', end: '2026-09-10' })],   // 當日進出,不佔任何一晚
+    ];
+    const occupied = rooms.filter((xs) => staysInRange(xs, r).length > 0).length;
+    const free = rooms.filter((xs) => staysInRange(xs, r).length === 0).length;
+    assert.equal(occupied + free, rooms.length, '★ 兩邊加起來 = 全部');
+    assert.equal(occupied, 2);
+    assert.equal(free, 2);
+  });
+});

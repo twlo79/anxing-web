@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase';
 import { fetchAll } from '@/lib/fetch-all';
 import { FilterBar, Field, FilterSelect, FilterSearch, FilterClear, FilterCount } from '@/lib/filters';
 import {
-  isWeekend, weekdayOf, sortRooms, matchRoom, rowOf, hasFreeDay,
+  isWeekend, weekdayOf, sortRooms, matchRoom, rowOf,
   overlapRanges, dropContractOrders, monthRange, rangeDays, eachDay,
   staysInRange, lastNightOf, daysBetween, addDays, MAX_RANGE_DAYS,
   type Stay, type Room, type Cell, type Range,
@@ -55,6 +55,18 @@ const KIND: Record<Stay['kind'], string> = { contract: '契約', order: '訂單'
 
 /** `2026-10-26` → `10/26`。年份在篩選列上，這裡再寫一次只是雜訊 */
 const mdOf = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
+
+/**
+ * 重疊清單裡的日期。**同一年只寫月／日，跨年才補上年份。**
+ *
+ * ★ 長租契約動不動就是 `2025-09-01 ~ 2027-08-31` —— 那兩個年份是重點，
+ *   省掉的話「9/1 ~ 8/31」看起來像一段倒著走的日期。
+ * ★ 反過來，同一年的每一個日期都掛年份的話，四個數字裡有兩個是雜訊。
+ */
+const dLabel = (d: string | null | undefined, refYear: string) => {
+  if (!d) return '—';
+  return d.slice(0, 4) === refYear ? mdOf(d) : `${Number(d.slice(0, 4))}/${mdOf(d)}`;
+};
 
 const thisYm = () => {
   const d = new Date();
@@ -111,18 +123,30 @@ export default function RoomStatusPage() {
   const [kw, setKw] = useState('');
 
   /*
-   * ② 藥丸。**兩條**（2026-09-16 使用者:「分兩條」）:
+   * ② 藥丸。**全部是同一組單選**（2026-09-16 使用者:「空房 與 有訂單 是 MECE」）。
    *
-   *   上排　有客種類　'' | 'any'（所有客戶）| short | private | longterm | earnest
-   *         ★ 單選。「點下去就是只有那一種，再點一下就清除」——
-   *           使用者指定的，不是複選。所以它是一顆值不是一個 Set。
+   *   上排　所有客戶 ／ 短租 ／ 私下 ／ 長租契約 ／ 訂金
+   *   下排　空房 ／ ⚠ 重疊
    *
-   *   下排　狀態　空房 / 重疊　★ 各自獨立開關，跟上排是**且**。
-   *         「空房 ＋ 短租」＝ 有短租、而且還有空日子的房 ＝ 還排得進去的那幾間。
+   * ★★★ 空房與有客**互斥且窮盡**:一間房在這段期間裡不是有人就是沒人，
+   *   沒有第三種。所以它們不能是兩個各自獨立的開關 ——
+   *   兩個開關可以同時打開，而「有客 ＋ 空房」是一個不存在的東西。
+   *
+   *   第一版就是那樣做的，結果:`空房` 問的是「有沒有**任何一天**是空的」，
+   *   於是 4B2（9/4 才入住）也算空房 —— 使用者:「空房還有人耶」。
+   *   ★ 一顆叫「空房」的藥丸，答案裡不可以有人。
+   *
+   * ★ 分兩排只是**視覺分組**（上排問「是什麼客」、下排問「什麼狀態」），
+   *   行為上是同一組:點一個就只剩那一種，再點一下清除。
+   *
+   * ★ 「⚠ 重疊」也放進同一組。它嚴格說不屬於那個二分（重疊的房當然有客），
+   *   但它跟其他幾顆問的是同一件事 ——「我現在要看哪一批房」。
+   *   讓它獨立的話就又回到「兩個開關可以湊出沒有意義的組合」。
    */
-  const [tone, setTone] = useState<'' | 'any' | Stay['tone']>('');
-  const [freeOnly, setFreeOnly] = useState(false);
-  const [dupOnly, setDupOnly] = useState(false);
+  type View = '' | 'any' | Stay['tone'] | 'free' | 'dup';
+  const [view, setView] = useState<View>('');
+  /** 點同一顆就清除 —— 使用者:「再點一下 就清除」 */
+  const pick = (v: View) => setView((cur) => (cur === v ? '' : v));
 
   const [estates, setEstates] = useState<Est[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -283,27 +307,42 @@ export default function RoomStatusPage() {
   }, [rooms, byRoom, estF, kw, range, canDraw]);
 
   const dupRooms = useMemo(() => base.filter((x) => x.dups.length), [base]);
+  /*
+   * ★★ 有客與空房的間數。**這兩個加起來一定等於 base 的長度** ——
+   *   寫在藥丸上是為了讓它自己證明這件事:數字對不起來就是哪裡漏了，
+   *   而不是等使用者發現「空房裡面還有人」。
+   */
+  const nOccupied = useMemo(() => base.filter((x) => x.real.length > 0).length, [base]);
+  const nFree = base.length - nOccupied;
 
   const visible = useMemo(() => base.filter((x) => {
     /*
-     * ★ 種類看的是 `real`（這段裡真的佔到日子的每一筆）不是 `cells` ——
+     * ★★ 一律看 `real`（這段裡真的佔到日子的每一筆），不看 `cells` ——
      *   `rowOf()` 同一天只畫第一筆，被壓住的那一筆在 `cells` 裡根本不存在。
-     *   拿 `cells` 篩的話，「只看短租」會漏掉被長租壓住的那張短租單 ——
+     *   拿 `cells` 篩的話，「只看短租」會漏掉被長租壓住的那張短租單，
      *   而那正是最需要被看見的一筆。
+     *
+     * ★★★ `free` 是 `real.length === 0`（整段都沒人），
+     *   **不是** `hasFreeDay()`（有任何一天是空的）。
+     *   後者是第一版的寫法，而它會把「9/4 才入住」的房算成空房 ——
+     *   使用者:「空房還有人耶」。這兩個問法的差別就是那顆藥丸有沒有用。
      */
-    if (tone === 'any' && !x.real.length) return false;
-    if (tone && tone !== 'any' && !x.real.some((s) => s.tone === tone)) return false;
-    if (freeOnly && !hasFreeDay(x.cells)) return false;
-    if (dupOnly && !x.dups.length) return false;
-    return true;
-  }), [base, tone, freeOnly, dupOnly]);
+    if (!view) return true;
+    if (view === 'free') return x.real.length === 0;
+    if (view === 'dup') return x.dups.length > 0;
+    if (view === 'any') return x.real.length > 0;
+    return x.real.some((s) => s.tone === view);
+  }), [base, view]);
 
   /*
    * ★★ 重疊清乾淨（或換了期間之後沒有重疊）時，那顆藥丸會消失 ——
-   *   但 `dupOnly` 還是 true，畫面會變成一張空表而且**沒有東西可以點掉它**。
+   *   但 `view` 還停在 `'dup'`，畫面會變成一張空表而且**沒有東西可以點掉它**。
    *   會篩選的東西消失時，它篩出來的狀態也要跟著收掉。
    */
-  useEffect(() => { if (dupOnly && !dupRooms.length) setDupOnly(false); }, [dupOnly, dupRooms.length]);
+  useEffect(() => { if (view === 'dup' && !dupRooms.length) setView(''); }, [view, dupRooms.length]);
+
+  /** 重疊清單的日期用哪一年當基準 —— 同一年就不寫年份 */
+  const refYear = (range.from || `${new Date().getFullYear()}`).slice(0, 4);
 
   const dup = useMemo(
     () => dupRooms.flatMap((x) => x.dups.map((r) => ({ room: x.room.name, ...r }))),
@@ -314,12 +353,12 @@ export default function RoomStatusPage() {
    *   「清除」永遠可按，而按下去什麼都沒變（它本來就是預設值）。
    * ★ 月份／自訂也算 —— 換過期間之後「清除」要回得去本月。
    */
-  const active = !!((estF && estF !== defEst) || kw || tone || freeOnly || dupOnly
+  const active = !!((estF && estF !== defEst) || kw || view
     || mode !== 'month' || ym !== thisYm());
 
   const clearAll = () => {
     setEstF(defEst); setKw(''); setKwInput('');
-    setTone(''); setFreeOnly(false); setDupOnly(false);
+    setView('');
     setMode('month'); setYm(thisYm());
     setPicked(null);
   };
@@ -449,16 +488,54 @@ export default function RoomStatusPage() {
           這一段負責**說是哪幾筆**。兩件事，所以兩個地方。
       */}
       {dup.length > 0 && (
-        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800">
+        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
           <b>同一間房同時有兩筆</b> —— 日曆上只畫得下其中一筆，所以這裡列出來：
-          <div className="mt-1.5 space-y-1">
+          <div className="mt-2 space-y-3">
             {dup.map((d) => (
               <div key={`${d.room}/${d.from}`}>
-                <b>{d.room}</b>
-                <span className="ml-2">{mdOf(d.from)}{d.to === d.from ? '' : `～${mdOf(d.to)}`}</span>
-                <span className="ml-2">
-                  {d.stays.map((s) => `${s.guest || '（沒有名字）'}（${KIND[s.kind]}）`).join('　×　')}
-                </span>
+                {/* 房源名自己一行，底下一筆一行（2026-09-16 使用者指定） */}
+                <div className="font-bold">
+                  {d.room}
+                  <span className="ml-2 font-normal text-amber-700">
+                    {mdOf(d.from)}{d.to === d.from ? '' : ` ~ ${mdOf(d.to)}`} 這幾天疊在一起
+                  </span>
+                </div>
+                <div className="mt-1 space-y-0.5">
+                  {d.stays.map((s) => {
+                    const last = lastNightOf(s);
+                    return (
+                      <div key={s.id} className="flex flex-wrap items-baseline gap-x-2 pl-3">
+                        <span className="text-amber-600">・</span>
+                        <span className="font-medium">{s.guest || '（沒有名字）'}</span>
+                        <span className="text-amber-700">（{KIND[s.kind]}）</span>
+                        {/*
+                          ★★★ 寫的是**這一筆自己的起訖**（使用者:「期間是訂單起訖」），
+                            不是上面那段重疊的日子 —— 要去修它的人需要知道
+                            這張單本來是幾號到幾號，而不是它跟別人撞到的那幾天。
+
+                          ★★ 訂單的「迄」是**退房日**，所以這個數字會跟日曆上的
+                            色條**差一天**（使用者:「與房源顯示差一天」）。
+                            那不是畫錯 —— 但不講的話看起來就是畫錯。
+                            所以後面直接把「最後一晚」寫出來，兩個數字都給，
+                            沒有人需要自己減一。契約的「迄」本來就是最後一晚，不用寫。
+                        */}
+                        <span className="tabular-nums">
+                          {dLabel(s.start, refYear)} ~ {dLabel(s.end, refYear)}
+                        </span>
+                        {s.kind === 'order' && last && (
+                          <span className="text-amber-700 tabular-nums">
+                            最後一晚 {dLabel(last, refYear)}
+                          </span>
+                        )}
+                        {/* 看到問題的下一步就是去修它 —— 沒有連結就要自己回那一頁再搜一次房號 */}
+                        <a href={s.kind === 'contract' ? `/contracts?contract=${s.srcId}`
+                                                       : `/shortterm?order=${s.srcId}`}
+                          target="_blank" rel="noreferrer"
+                          className="text-amber-800 underline hover:text-amber-900">打開 →</a>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             ))}
           </div>
@@ -472,11 +549,13 @@ export default function RoomStatusPage() {
           而看顏色的時候人在最上面。搬上來順便讓它變成篩選。
 
         ★★ 分兩排（使用者:「分兩條」）:
-            上排　有客種類　單選，再點一下清除
-            下排　狀態　　　空房／重疊，各自獨立，跟上排是**且**
+            上排　是什麼客　所有客戶／短租／私下／長租契約／訂金
+            下排　什麼狀態　空房／⚠ 重疊
 
-          「空房 ＋ 短租」＝ 有短租、而且還有空日子的房 ＝ 還排得進去的那幾間。
-          那是這一頁最常被問的問題，本來要在腦袋裡做。
+          ★★★ 兩排是**同一組單選**，不是兩個獨立的開關
+            （2026-09-16 使用者:「空房 與 有訂單 是 MECE」）。
+            一間房在這段期間裡不是有人就是沒人 —— 兩個獨立的開關可以同時打開，
+            而「有客 ＋ 空房」是一個不存在的東西。分排只是視覺分組。
 
         ★ 原本篩選列裡的「顯示：全部／只看空房／只看有客」拿掉了 ——
           「只看空房」＝ 下排的空房，「只看有客」＝ 上排的「所有客戶」。
@@ -484,26 +563,30 @@ export default function RoomStatusPage() {
       */}
       <div className="space-y-2 mb-2">
         <div className="flex flex-wrap items-center gap-2">
-          <Pill on={tone === 'any'} onClick={() => setTone((v) => (v === 'any' ? '' : 'any'))}>
-            所有客戶
+          <Pill on={view === 'any'} onClick={() => pick('any')}>
+            所有客戶 {nOccupied}
           </Pill>
           {TONES.map((k) => (
-            <Pill key={k} swatch={TONE[k].chip} on={tone === k}
-              onClick={() => setTone((v) => (v === k ? '' : k))}>
+            <Pill key={k} swatch={TONE[k].chip} on={view === k} onClick={() => pick(k)}>
               {TONE[k].label}
             </Pill>
           ))}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Pill on={freeOnly} onClick={() => setFreeOnly((v) => !v)}
-            swatch="bg-white border border-mor-line">空房</Pill>
+          {/*
+            ★★★ 空房 ＝ **整段都沒人**（`real.length === 0`），
+              不是「有任何一天是空的」。跟上面那顆「所有客戶」加起來
+              就是全部的房 —— 數字寫在藥丸上，看得出有沒有漏。
+          */}
+          <Pill on={view === 'free'} onClick={() => pick('free')}
+            swatch="bg-white border border-mor-line">空房 {nFree}</Pill>
           {/*
             ④-C（2026-09-16 使用者選的）。數字就是「有幾間要處理」——
             ★ 沒有重疊的時候**整顆不出現**，不是顯示 0。
               一顆永遠亮著的 0 會變成畫面的一部分，久了沒有人再看它。
           */}
           {dupRooms.length > 0 && (
-            <Pill warn on={dupOnly} onClick={() => setDupOnly((v) => !v)}>
+            <Pill warn on={view === 'dup'} onClick={() => pick('dup')}>
               ⚠ 重疊 {dupRooms.length}
             </Pill>
           )}
@@ -586,7 +669,8 @@ export default function RoomStatusPage() {
                     ★★★ 那幾天還是有人。整條拿掉的話畫面會說那間房空著 ——
                       而有人會照著它排房。淡掉＝「不是你現在在找的，但它佔著」。
                   */
-                  const dimmed = tone && tone !== 'any' && c.stay.tone !== tone;
+                  const dimmed = view !== '' && view !== 'any' && view !== 'free'
+                    && view !== 'dup' && c.stay.tone !== view;
                   return (
                     <td key={c.day} colSpan={c.span} className={cls}>
                       <button type="button" onClick={(e) => openCard(e, c.stay, room)}
