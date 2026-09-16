@@ -4,11 +4,13 @@ import { createClient } from '@/lib/supabase';
 import { fetchAll } from '@/lib/fetch-all';
 import { FilterBar, Field, FilterSelect, FilterSearch, FilterClear, FilterCount } from '@/lib/filters';
 import {
-  isWeekend, weekdayOf, sortRooms, matchRoom, rowOf,
+  isWeekend, weekdayOf, sortRooms, matchRoom, rowOf, exitsSoon,
+  ENDING_DAYS, LEAVING_DAYS,
   overlapRanges, dropContractOrders, monthRange, rangeDays, eachDay,
   staysInRange, lastNightOf, daysBetween, addDays, MAX_RANGE_DAYS,
-  type Stay, type Room, type Cell, type Range,
+  type Stay, type Room, type Cell, type Range, type Exit,
 } from '@/lib/room-calendar';
+import ToggleInfo from '@/components/ToggleInfo';
 
 /*
  * ══════════════════════════════════════════════════════════
@@ -52,6 +54,18 @@ const TONES = Object.keys(TONE) as Stay['tone'][];
 
 /** 重疊清單裡標「這一筆是哪裡來的」—— 沒有這兩個字就不知道去哪一頁修 */
 const KIND: Record<Stay['kind'], string> = { contract: '契約', order: '訂單' };
+
+/*
+ * 提醒的紅色。
+ *
+ * ★★ 算過的:白字對比 **5.58:1**。`mor` 色盤裡最近的 `#C25B5B` 只有 4.25,
+ *   而色條上的字是 11px 粗體 —— 小字更需要對比,不是更不需要。
+ *   （2026-09-16 在三頁上抓到四處真的過不了的綠字之後,顏色一律先算再用。）
+ *
+ * ★ 刻意**不重用** `mor` 的任何一個:綠＝已收、藍＝主色、琥珀＝訂金、
+ *   紫＝移轉。「快要結束了」是第五種意思,借用會讓那個顏色失去原本的意思。
+ */
+const ALERT = '#B3423C';
 
 /** `2026-10-26` → `10/26`。年份在篩選列上，這裡再寫一次只是雜訊 */
 const mdOf = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
@@ -143,8 +157,25 @@ export default function RoomStatusPage() {
    *   但它跟其他幾顆問的是同一件事 ——「我現在要看哪一批房」。
    *   讓它獨立的話就又回到「兩個開關可以湊出沒有意義的組合」。
    */
-  type View = '' | 'any' | Stay['tone'] | 'free' | 'dup';
+  type View = '' | 'any' | Stay['tone'] | 'free' | 'dup' | 'ending' | 'leaving';
   const [view, setView] = useState<View>('');
+  /*
+   * ★★★ 三顆提醒旋鈕。**是模式不是篩選** ——
+   *   打開＝標示 ＋ 展開明細,畫面上的房間一間都不會少。
+   *   要縮到只剩那幾間的話,明細裡有「只看這幾間 →」。
+   *   把篩選做成打開提醒的副作用的話,人只是想看一眼有哪幾間,整張表就不見了。
+   */
+  const [showDup, setShowDup] = useState(false);
+  const [showEnd, setShowEnd] = useState(false);
+  const [showOut, setShowOut] = useState(false);
+  /*
+   * ★★★ 提醒**另外撈一份**,不從日曆那一份算。
+   *   日曆撈的是「跟目前這段期間有交集」的單 —— 翻到十二月的時候,
+   *   十月到期的契約根本不在裡面。而提醒問的是
+   *   「真實世界接下來 45 天會空出哪幾間」,那個答案不該跟著月份變。
+   */
+  const [ending, setEnding] = useState<Exit[]>([]);
+  const [leaving, setLeaving] = useState<Exit[]>([]);
   /** 點同一顆就清除 —— 使用者:「再點一下 就清除」 */
   const pick = (v: View) => setView((cur) => (cur === v ? '' : v));
 
@@ -274,6 +305,49 @@ export default function RoomStatusPage() {
      *   （2026-09-15 上線第一天的樣子）。規則與理由在 `dropContractOrders()`。
      */
     setStays(dropContractOrders([...oStays, ...cStays]));
+
+    /*
+     * ══════════ 退租／退房提醒（2026-09-16）══════════
+     *
+     * ★★★ **另外一份查詢**,基準是今天不是 `range`。
+     *   翻到十二月的時候,十月到期的契約不在日曆那一份裡 ——
+     *   而提醒問的是「真實世界接下來會空出哪幾間」。
+     *
+     * ★★★ 訂單要排掉 `contract_id` 有值的那些。
+     *   那是契約每個月長出來的**月租單**,它的 checkout 是下個月一號 ——
+     *   拿去算「7 天內退房」的話,每一間長租房每個月都會叫一次,
+     *   而那個人根本沒有要退房。這一條錯的話,提醒會變成每月固定的雜訊,
+     *   然後就沒有人再看它。
+     */
+    const t0 = todayStr();
+    const [{ data: ce }, { rows: oe }] = await Promise.all([
+      supabase.from('contracts')
+        .select('id, room, tenant_name, display_name, start_date, end_date')
+        .eq('active', true).gte('end_date', t0).lte('end_date', addDays(t0, ENDING_DAYS)),
+      fetchAll<any>((a, b) => supabase.from('orders')
+        .select('id, property_raw, guest_name, checkin, checkout, source, contract_id')
+        .not('source', 'in', '(oneoff,airbnb_cancelled)')
+        .is('contract_id', null)
+        .gte('checkout', t0).lte('checkout', addDays(t0, LEAVING_DAYS)).range(a, b)),
+    ]);
+
+    const eStays: Stay[] = ((ce ?? []) as any[])
+      .filter((c) => c.room)
+      .map((c) => ({
+        id: `c${c.id}`, srcId: c.id as string, room: c.room as string,
+        kind: 'contract' as const, start: c.start_date, end: c.end_date,
+        guest: c.display_name || c.tenant_name, tone: 'longterm' as const,
+      }));
+    const lStays: Stay[] = (oe ?? [])
+      .filter((o: any) => o.property_raw)
+      .map((o: any) => ({
+        id: `o${o.id}`, srcId: o.id as string, room: o.property_raw as string,
+        kind: 'order' as const, start: o.checkin, end: o.checkout, guest: o.guest_name,
+        tone: (o.source === 'private' ? 'private' : 'short') as Stay['tone'],
+      }));
+
+    setEnding(exitsSoon(eStays, t0, 'contract', ENDING_DAYS));
+    setLeaving(exitsSoon(lStays, t0, 'order', LEAVING_DAYS));
     setLoading(false);
   }, [supabase, range.from, range.to, canDraw]);
   useEffect(() => { load(); }, [load]);
@@ -307,6 +381,47 @@ export default function RoomStatusPage() {
   }, [rooms, byRoom, estF, kw, range, canDraw]);
 
   const dupRooms = useMemo(() => base.filter((x) => x.dups.length), [base]);
+
+  /*
+   * ★★ 提醒照**物業**收窄,不照關鍵字與藥丸。
+   *   物業是「我現在在管哪一棟」——那是範圍；
+   *   關鍵字與藥丸是「我現在在看什麼」——那是視角。
+   *   讓提醒跟著搜尋框變的話,打字打到一半數字會自己跳,
+   *   而那個數字的意思是「有幾件事要處理」。
+   */
+  const scope = useMemo(() => {
+    const names = new Set(rooms.filter((r) => !estF || r.estate === estF).map((r) => r.name));
+    return names;
+  }, [rooms, estF]);
+  const endList  = useMemo(() => ending.filter((e) => scope.has(e.stay.room)), [ending, scope]);
+  const outList  = useMemo(() => leaving.filter((e) => scope.has(e.stay.room)), [leaving, scope]);
+
+  /*
+   * 要畫成紅色的那幾筆。★ 比對的是 **id**,不是房號 ——
+   *   同一間房這個月可能有兩筆,只有快結束的那一筆該變紅。
+   */
+  const hot = useMemo(() => {
+    const m = new Map<string, { days: number; word: string }>();
+    if (showEnd) endList.forEach((e) => m.set(e.stay.id, { days: e.days, word: '退租' }));
+    if (showOut) outList.forEach((e) => m.set(e.stay.id, { days: e.days, word: '退房' }));
+    return m;
+  }, [showEnd, showOut, endList, outList]);
+  /*
+   * 目前這段期間裡**真的畫得出來**的那幾筆。
+   *
+   * ★★ 提醒算的是今天,而畫面可能停在十二月 —— 兩邊對不上是正常的。
+   *   對不上的時候要**講出來**（「這 3 筆都不在目前的期間裡」），
+   *   不然使用者會打開提醒、看到一條紅的都沒有,然後以為功能壞了。
+   */
+  const drawnIds = useMemo(() => {
+    const m = new Set<string>();
+    base.forEach((x) => x.real.forEach((st) => m.add(st.id)));
+    return m;
+  }, [base]);
+
+  /* 「只看這幾間」用房號 —— 提醒的那幾筆不見得在目前的期間裡,比 id 會比不到 */
+  const endRooms = useMemo(() => new Set(endList.map((e) => e.stay.room)), [endList]);
+  const outRooms = useMemo(() => new Set(outList.map((e) => e.stay.room)), [outList]);
   /*
    * ★★ 有客與空房的間數。**這兩個加起來一定等於 base 的長度** ——
    *   寫在藥丸上是為了讓它自己證明這件事:數字對不起來就是哪裡漏了，
@@ -330,9 +445,11 @@ export default function RoomStatusPage() {
     if (!view) return true;
     if (view === 'free') return x.real.length === 0;
     if (view === 'dup') return x.dups.length > 0;
+    if (view === 'ending') return endRooms.has(x.room.name);
+    if (view === 'leaving') return outRooms.has(x.room.name);
     if (view === 'any') return x.real.length > 0;
     return x.real.some((s) => s.tone === view);
-  }), [base, view]);
+  }), [base, view, endRooms, outRooms]);
 
   /*
    * ★★ 重疊清乾淨（或換了期間之後沒有重疊）時，那顆藥丸會消失 ——
@@ -354,11 +471,14 @@ export default function RoomStatusPage() {
    * ★ 月份／自訂也算 —— 換過期間之後「清除」要回得去本月。
    */
   const active = !!((estF && estF !== defEst) || kw || view
+    || showDup || showEnd || showOut
     || mode !== 'month' || ym !== thisYm());
 
   const clearAll = () => {
     setEstF(defEst); setKw(''); setKwInput('');
     setView('');
+    /* ★ 旋鈕也關掉 —— 「清除」是回到剛進來的樣子,而剛進來三顆都是關的 */
+    setShowDup(false); setShowEnd(false); setShowOut(false);
     setMode('month'); setYm(thisYm());
     setPicked(null);
   };
@@ -479,70 +599,6 @@ export default function RoomStatusPage() {
       )}
 
       {/*
-        ★★★ 一行一段，而且**寫出是哪幾筆**（使用者 2026-09-15）。
-          原本只列「14B2 26、27、28、29、30、31 號」——
-          他去契約清單搜 14B2 只有一筆，就沒路可走了。
-          說得出「金鋒（契約）× Roni（訂單）」才修得動。
-
-        ★ 2026-09-16:上面多了一顆「⚠ 重疊」藥丸負責**找**（把表格縮到那幾間），
-          這一段負責**說是哪幾筆**。兩件事，所以兩個地方。
-      */}
-      {dup.length > 0 && (
-        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
-          <b>同一間房同時有兩筆</b> —— 日曆上只畫得下其中一筆，所以這裡列出來：
-          <div className="mt-2 space-y-3">
-            {dup.map((d) => (
-              <div key={`${d.room}/${d.from}`}>
-                {/* 房源名自己一行，底下一筆一行（2026-09-16 使用者指定） */}
-                <div className="font-bold">
-                  {d.room}
-                  <span className="ml-2 font-normal text-amber-700">
-                    {mdOf(d.from)}{d.to === d.from ? '' : ` ~ ${mdOf(d.to)}`} 這幾天疊在一起
-                  </span>
-                </div>
-                <div className="mt-1 space-y-0.5">
-                  {d.stays.map((s) => {
-                    const last = lastNightOf(s);
-                    return (
-                      <div key={s.id} className="flex flex-wrap items-baseline gap-x-2 pl-3">
-                        <span className="text-amber-600">・</span>
-                        <span className="font-medium">{s.guest || '（沒有名字）'}</span>
-                        <span className="text-amber-700">（{KIND[s.kind]}）</span>
-                        {/*
-                          ★★★ 寫的是**這一筆自己的起訖**（使用者:「期間是訂單起訖」），
-                            不是上面那段重疊的日子 —— 要去修它的人需要知道
-                            這張單本來是幾號到幾號，而不是它跟別人撞到的那幾天。
-
-                          ★★ 訂單的「迄」是**退房日**，所以這個數字會跟日曆上的
-                            色條**差一天**（使用者:「與房源顯示差一天」）。
-                            那不是畫錯 —— 但不講的話看起來就是畫錯。
-                            所以後面直接把「最後一晚」寫出來，兩個數字都給，
-                            沒有人需要自己減一。契約的「迄」本來就是最後一晚，不用寫。
-                        */}
-                        <span className="tabular-nums">
-                          {dLabel(s.start, refYear)} ~ {dLabel(s.end, refYear)}
-                        </span>
-                        {s.kind === 'order' && last && (
-                          <span className="text-amber-700 tabular-nums">
-                            最後一晚 {dLabel(last, refYear)}
-                          </span>
-                        )}
-                        {/* 看到問題的下一步就是去修它 —— 沒有連結就要自己回那一頁再搜一次房號 */}
-                        <a href={s.kind === 'contract' ? `/contracts?contract=${s.srcId}`
-                                                       : `/shortterm?order=${s.srcId}`}
-                          target="_blank" rel="noreferrer"
-                          className="text-amber-800 underline hover:text-amber-900">打開 →</a>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/*
         ══════════ ② 藥丸（2026-09-16）══════════
 
         ★★★ 圖例本來在表格**底下** —— 要先捲過 72 列才看得到顏色的意思，
@@ -550,7 +606,12 @@ export default function RoomStatusPage() {
 
         ★★ 分兩排（使用者:「分兩條」）:
             上排　是什麼客　所有客戶／短租／私下／長租契約／訂金
-            下排　什麼狀態　空房／⚠ 重疊
+            下排　什麼狀態　空房　＋（右邊）三顆提醒旋鈕
+
+        ★ 2026-09-16:「⚠ 重疊」從藥丸變成**旋鈕** ——
+          它原本同時是篩選又一直攤著一段明細,一件事兩個入口。
+          現在數字留在旋鈕上（警報還在,收起來也看得到）、明細收進去、
+          要篩選走明細裡的「只看這幾間」。
 
           ★★★ 兩排是**同一組單選**，不是兩個獨立的開關
             （2026-09-16 使用者:「空房 與 有訂單 是 MECE」）。
@@ -580,18 +641,124 @@ export default function RoomStatusPage() {
           */}
           <Pill on={view === 'free'} onClick={() => pick('free')}
             swatch="bg-white border border-mor-line">空房 {nFree}</Pill>
+
           {/*
-            ④-C（2026-09-16 使用者選的）。數字就是「有幾間要處理」——
-            ★ 沒有重疊的時候**整顆不出現**，不是顯示 0。
-              一顆永遠亮著的 0 會變成畫面的一部分，久了沒有人再看它。
+            ★★ 三顆提醒被篩選中時，這裡出現一顆可以關掉的籤。
+              沒有它的話，使用者按了明細裡的「只看這幾間」之後，
+              表格短了一截而畫面上**沒有任何東西說是誰做的** ——
+              然後他會以為資料不見了。
           */}
-          {dupRooms.length > 0 && (
-            <Pill warn on={view === 'dup'} onClick={() => pick('dup')}>
-              ⚠ 重疊 {dupRooms.length}
-            </Pill>
+          {(view === 'dup' || view === 'ending' || view === 'leaving') && (
+            <button type="button" onClick={() => setView('')}
+              className="inline-flex items-center gap-1.5 rounded-full border border-amber-300
+                         bg-amber-50 px-3 py-1.5 text-xs text-amber-800 hover:bg-amber-100">
+              只看{view === 'dup' ? '重疊' : view === 'ending' ? '快退租' : '快退房'}的
+              <span className="opacity-70">✕</span>
+            </button>
           )}
+
+          {/*
+            ══════════ 三顆提醒旋鈕（2026-09-16 使用者:「像一個旋鈕點開」）══════════
+
+            ★★★ 用 `ToggleInfo` —— 站上「👀 防呆」「★ 重要支出」就是這一顆。
+              同一種東西長同一個樣子,不另外發明。
+
+            ★★ 它們是**模式**不是篩選:打開＝標示 ＋ 展開明細,房間一間都不會少。
+              要縮表格走明細裡的「只看這幾間 →」。
+
+            ★ 沒有東西可以提醒的時候**整顆不出現**,不是顯示 0 ——
+              一顆永遠亮著的 0 會變成畫面的一部分,久了沒有人再看它。
+          */}
+          <span className="ml-auto flex flex-wrap items-center gap-1">
+            {dupRooms.length > 0 && (
+              <ToggleInfo tone="amber" on={showDup} onToggle={() => setShowDup((v) => !v)}
+                label={<>⚠ 重疊 <b className="tabular-nums">{dupRooms.length}</b></>}
+                infoLabel="什麼是重疊">
+                同一間房在同一天有兩筆以上。日曆上<b>只畫得下其中一筆</b>，
+                所以另一筆會安靜地不見 —— 這裡把它列出來。
+              </ToggleInfo>
+            )}
+            {endList.length > 0 && (
+              <ToggleInfo tone="red" on={showEnd} onToggle={() => setShowEnd((v) => !v)}
+                label={<>退租提醒 <b className="tabular-nums">{endList.length}</b></>}
+                infoLabel="退租提醒怎麼算">
+                <b>契約</b>在 {ENDING_DAYS} 天內到期的。算的是<b>今天</b>起算，
+                不是你正在看的那個月 —— 這個數字問的是「接下來會空出哪幾間」。
+              </ToggleInfo>
+            )}
+            {outList.length > 0 && (
+              <ToggleInfo tone="red" on={showOut} onToggle={() => setShowOut((v) => !v)}
+                label={<>退房提醒 <b className="tabular-nums">{outList.length}</b></>}
+                infoLabel="退房提醒怎麼算">
+                <b>短租訂單</b>在 {LEAVING_DAYS} 天內退房的。
+                月租單不算 —— 那是契約每個月長出來的帳，不是真的有人要走。
+              </ToggleInfo>
+            )}
+          </span>
         </div>
       </div>
+
+      {/* ── 明細：三顆旋鈕打開才出現 ── */}
+      {showDup && dup.length > 0 && (
+        <div className="mb-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3
+                        text-xs text-amber-900">
+          <div className="flex items-center gap-2 font-bold mb-2">
+            ⚠ 同一間房同時有兩筆
+            <span className="font-normal opacity-80">日曆上只畫得下其中一筆</span>
+            <button onClick={() => setView('dup')}
+              className="ml-auto font-normal underline hover:no-underline">
+              只看這 {dupRooms.length} 間 →
+            </button>
+          </div>
+          <div className="space-y-3">
+            {dup.map((d) => (
+              <div key={`${d.room}/${d.from}`}>
+                <div className="font-bold">
+                  {d.room}
+                  <span className="ml-2 font-normal text-amber-700">
+                    {mdOf(d.from)}{d.to === d.from ? '' : ` ~ ${mdOf(d.to)}`} 這幾天疊在一起
+                  </span>
+                </div>
+                <div className="mt-1 space-y-0.5">
+                  {d.stays.map((st) => {
+                    const last = lastNightOf(st);
+                    return (
+                      <div key={st.id} className="flex flex-wrap items-baseline gap-x-2 pl-3">
+                        <span className="text-amber-600">・</span>
+                        <span className="font-medium">{st.guest || '（沒有名字）'}</span>
+                        <span className="text-amber-700">（{KIND[st.kind]}）</span>
+                        <span className="tabular-nums">
+                          {dLabel(st.start, refYear)} ~ {dLabel(st.end, refYear)}
+                        </span>
+                        {st.kind === 'order' && last && (
+                          <span className="text-amber-700 tabular-nums">
+                            最後一晚 {dLabel(last, refYear)}
+                          </span>
+                        )}
+                        <a href={st.kind === 'contract' ? `/contracts?contract=${st.srcId}`
+                                                       : `/shortterm?order=${st.srcId}`}
+                          target="_blank" rel="noreferrer"
+                          className="text-amber-800 underline hover:text-amber-900">打開 →</a>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {showEnd && (
+        <ExitList kind="ending" list={endList} days={ENDING_DAYS} drawn={drawnIds}
+          onFilter={() => setView('ending')}
+          onRange={() => { setMode('custom'); setFrom(today); setTo(addDays(today, ENDING_DAYS)); }} />
+      )}
+      {showOut && (
+        <ExitList kind="leaving" list={outList} days={LEAVING_DAYS} drawn={drawnIds}
+          onFilter={() => setView('leaving')}
+          onRange={() => { setMode('custom'); setFrom(today); setTo(addDays(today, LEAVING_DAYS)); }} />
+      )}
 
       {/* ① 範圍不能畫的兩種情形分開講 —— 見上面 `badRange` / `tooLong` 的說明 */}
       {noDates ? (
@@ -670,15 +837,33 @@ export default function RoomStatusPage() {
                       而有人會照著它排房。淡掉＝「不是你現在在找的，但它佔著」。
                   */
                   const dimmed = view !== '' && view !== 'any' && view !== 'free'
-                    && view !== 'dup' && c.stay.tone !== view;
+                    && view !== 'dup' && view !== 'ending' && view !== 'leaving'
+                    && c.stay.tone !== view;
+                  /*
+                   * ★★★ 快結束的畫成紅色。
+                   *   ★ 只有**旋鈕打開**的時候才紅 —— 平常不紅,因為這一頁最常做的事
+                   *     是看整體調性,而一排紅色會蓋過那件事。
+                   *   ★★ 尾巴直接寫「還有 N 天退房」:訂單的色條畫到 checkout 的
+                   *     **前一天**為止,而提醒說的是 checkout 當天 ——
+                   *     那個差一天是對的,但不寫出來的話看起來就是畫錯。
+                   */
+                  const hit = hot.get(c.stay.id);
                   return (
                     <td key={c.day} colSpan={c.span} className={cls}>
                       <button type="button" onClick={(e) => openCard(e, c.stay, room)}
+                        style={hit ? { background: ALERT } : undefined}
                         className={`absolute inset-y-1 inset-x-0.5 rounded-md px-1.5
                           flex items-center text-[11px] font-semibold text-white
                           whitespace-nowrap overflow-hidden transition-opacity
-                          ${TONE[c.stay.tone].bar} ${dimmed ? 'opacity-20' : 'hover:brightness-110'}`}>
-                        {c.stay.guest ?? ''}
+                          ${hit ? '' : TONE[c.stay.tone].bar}
+                          ${dimmed ? 'opacity-20' : 'hover:brightness-110'}`}>
+                        <span className="truncate">{c.stay.guest ?? ''}</span>
+                        {hit && (
+                          <span className="ml-auto pl-1.5 text-[9px] font-extrabold opacity-90
+                                           shrink-0 tabular-nums">
+                            {hit.days === 0 ? `今天${hit.word}` : `還有 ${hit.days} 天${hit.word}`}
+                          </span>
+                        )}
                       </button>
                     </td>
                   );
@@ -766,5 +951,93 @@ function StayCard({ p, onClose }: { p: Picked; onClose: () => void }) {
         </a>
       </div>
     </>
+  );
+}
+
+/**
+ * 退租／退房提醒的明細（2026-09-16 使用者:「然後以上會有明細」）。
+ *
+ * ★★★ 這一段最重要的是**對不上的時候要講出來**。
+ *
+ *   提醒算的是**今天**起算的 N 天，而畫面可能停在十二月 ——
+ *   打開旋鈕、日曆上一條紅的都沒有，是正常的。
+ *   不講的話，看到的人會以為功能壞了，然後再也不開它。
+ *
+ *   所以沒有任何一筆在目前期間裡的時候，直接寫一行「都不在目前的期間裡」，
+ *   旁邊一顆「看未來 N 天」把期間切過去 —— 說出問題，同時給出下一步。
+ *
+ * ★★ 每一列都有「打開契約／訂單 →」。看到要處理的事，下一步就是去處理它；
+ *   沒有連結的話要自己回那一頁再搜一次房號。
+ */
+function ExitList({ kind, list, days, drawn, onFilter, onRange }: {
+  kind: 'ending' | 'leaving';
+  list: Exit[];
+  days: number;
+  drawn: Set<string>;
+  onFilter: () => void;
+  onRange: () => void;
+}) {
+  const isEnd = kind === 'ending';
+  const title = isEnd ? '退租提醒' : '退房提醒';
+  const sub = isEnd ? `契約在 ${days} 天內到期` : `短租訂單在 ${days} 天內退房`;
+  const dateLabel = isEnd ? '退租日' : '退房日';
+  const inView = list.filter((e) => drawn.has(e.stay.id));
+
+  return (
+    <div className="mb-2 rounded-xl border px-4 py-3 text-xs"
+      style={{ borderColor: '#ECC8C5', background: '#FDF5F4', color: '#7A2F2A' }}>
+      <div className="flex flex-wrap items-center gap-2 font-bold mb-2">
+        {title}
+        <span className="font-normal opacity-80">{sub}</span>
+        <button onClick={onFilter} className="ml-auto font-normal underline hover:no-underline">
+          只看這 {list.length} 間 →
+        </button>
+      </div>
+
+      {!inView.length && (
+        <div className="mb-2 leading-relaxed opacity-90">
+          ⚠ 這 {list.length} 筆<b>都不在目前的期間裡</b> —— 日曆上不會有紅色。
+          <button onClick={onRange}
+            className="ml-2 rounded-md border px-2 py-0.5 text-[11px] bg-white hover:bg-red-50"
+            style={{ borderColor: '#ECC8C5' }}>
+            看未來 {days} 天
+          </button>
+        </div>
+      )}
+
+      <div className="space-y-0.5">
+        {list.map((e) => (
+          <div key={e.stay.id}
+            className="flex flex-wrap items-baseline gap-x-2.5 py-0.5
+                       border-t border-dashed border-black/10 first:border-t-0">
+            <span className="font-bold min-w-[3.2rem]">{e.stay.room}</span>
+            <span className="flex-1 min-w-[6rem]">{e.stay.guest || '（沒有名字）'}</span>
+            <span className="tabular-nums opacity-85">{dateLabel} {e.on}</span>
+            <span className={`font-extrabold tabular-nums ${e.days <= 7 ? '' : 'opacity-75'}`}>
+              {e.days === 0 ? '就是今天' : `還有 ${e.days} 天`}
+            </span>
+            {!drawn.has(e.stay.id) && (
+              <span className="opacity-60">（不在畫面上）</span>
+            )}
+            <a href={isEnd ? `/contracts?contract=${e.stay.srcId}`
+                           : `/shortterm?order=${e.stay.srcId}`}
+              target="_blank" rel="noreferrer"
+              className="underline hover:no-underline">打開{isEnd ? '契約' : '訂單'} →</a>
+          </div>
+        ))}
+      </div>
+
+      {/*
+        ★★★ 差一天那件事寫在這裡。
+          訂單的色條畫到 checkout 的**前一天**為止，而這裡寫的是 checkout 當天 ——
+          兩個數字差一天是對的，但不講的話看起來就是畫錯。
+      */}
+      <div className="mt-2 pt-2 border-t border-dashed border-black/15 text-[11px] opacity-85 leading-relaxed">
+        {isEnd
+          ? <>★ 契約的「迄」<b>就是最後一晚</b> —— 租期迄那天就是退租日，不用 ±1。</>
+          : <>★ <b>checkout 是退房日</b>，最後一晚是它的前一天。
+              色條畫到前一天為止，而這裡寫的是 checkout 當天 —— <b>差一天是對的</b>。</>}
+      </div>
+    </div>
   );
 }

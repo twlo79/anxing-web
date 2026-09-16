@@ -330,6 +330,65 @@ export function hasStay(cells: readonly Cell[]): boolean {
   return cells.some((c) => c.type === 'stay');
 }
 
+/* ══════════════════════════════════════════════════════════
+ * 退租／退房提醒（2026-09-16 使用者指定）
+ *
+ * 「契約退租提醒 45 天內」「訂單退房提醒 7 天內」。
+ *
+ * ★★★ 兩種單的 `end` 存的是**不同的東西**，而剛好都是這裡要的日子:
+ *
+ *     契約　`end_date` ＝ 最後一晚 ＝ **退租日**（不用 ±1）
+ *     訂單　`checkout` ＝ **退房日**（最後一晚是它的前一天）
+ *
+ *   所以算提醒的時候兩邊都直接用 `s.end` —— 但**畫在日曆上不是**:
+ *   色條走 `lastNightOf()`，訂單會畫到 checkout 的前一天為止。
+ *
+ * ★★ 於是同一筆訂單會出現兩個日期:色條結束在 9/25，提醒說 9/26 退房。
+ *   **那個差一天是對的**，而看到的人會以為是 bug ——
+ *   所以畫面上要把「還有 N 天退房」直接寫在色條上，不要讓人自己數。
+ * ══════════════════════════════════════════════════════════ */
+
+/** 契約提前幾天提醒退租 */
+export const ENDING_DAYS = 45;
+/** 短租訂單提前幾天提醒退房 */
+export const LEAVING_DAYS = 7;
+
+/** 一筆快要結束的佔用 */
+export type Exit = {
+  stay: Stay;
+  /** 契約是退租日、訂單是退房日 —— 兩個都是 `stay.end` */
+  on: Ymd;
+  /** 還有幾天。0 ＝ 就是今天 */
+  days: number;
+};
+
+/**
+ * 接下來 `within` 天內要結束的那幾筆。
+ *
+ * ★★★ 算的基準是**今天**，不是畫面上在看的那一段期間。
+ *   提醒問的是「真實世界接下來會空出哪幾間」—— 那是拿來排新客的，
+ *   翻到十二月看版面的時候這個答案不該跟著變。
+ *   所以呼叫端要另外撈一份資料給它，不要把日曆上那一份丟進來。
+ *
+ * ★★ 已經過去的不算（`days < 0`）—— 提醒是關於還沒發生的事。
+ *   算進去的話，清單會越積越長，然後就沒有人再看它。
+ *
+ * ★ 快到的排前面。同一天的照房號自然排序 —— 不然每次重整順序都不一樣。
+ */
+export function exitsSoon(
+  stays: readonly Stay[], today: Ymd, kind: Stay['kind'], within: number,
+): Exit[] {
+  const out: Exit[] = [];
+  for (const s of stays) {
+    if (s.kind !== kind || !s.end) continue;
+    const days = daysBetween(today, s.end);
+    if (days < 0 || days > within) continue;
+    out.push({ stay: s, on: s.end, days });
+  }
+  return out.sort((a, b) =>
+    a.days - b.days || compareRoomName(a.stay.room, b.stay.room));
+}
+
 /** 一段「同一間房同時有兩筆以上」的期間，連同**是哪幾筆** */
 export type Overlap = { from: Ymd; to: Ymd; stays: Stay[] };
 

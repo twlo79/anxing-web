@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   daysInMonth, addDays, daysBetween, isWeekend, lastNightOf, occupies,
   compareRoomName, sortRooms, matchRoom, rowOf, hasFreeDay, hasStay, overlaps,
-  overlapRanges, dropContractOrders, staysInRange, monthRange, rangeDays, eachDay, MAX_RANGE_DAYS,
+  overlapRanges, dropContractOrders, staysInRange, exitsSoon, ENDING_DAYS, LEAVING_DAYS, monthRange, rangeDays, eachDay, MAX_RANGE_DAYS,
   type Stay, type Room,
 } from './room-calendar.ts';
 
@@ -454,5 +454,78 @@ describe('空房 vs 有客：互斥且窮盡', () => {
     assert.equal(occupied + free, rooms.length, '★ 兩邊加起來 = 全部');
     assert.equal(occupied, 2);
     assert.equal(free, 2);
+  });
+});
+
+/* ══════════════════════════════════════════════════════════
+ * 退租／退房提醒（2026-09-16）
+ *
+ * ★★★ 兩種單的 `end` 存的是不同的東西，而剛好都是提醒要的那一天:
+ *   契約 end_date ＝ 最後一晚 ＝ 退租日；訂單 checkout ＝ 退房日。
+ *   但**畫在日曆上不一樣** —— 色條走 lastNightOf()，訂單會少一天。
+ * ══════════════════════════════════════════════════════════ */
+describe('退租／退房提醒', () => {
+  const T = '2026-09-16';
+
+  test('門檻：契約 45 天、訂單 7 天', () => {
+    assert.equal(ENDING_DAYS, 45);
+    assert.equal(LEAVING_DAYS, 7);
+  });
+
+  test('★ 契約：end_date 就是退租日,不用 ±1', () => {
+    const c = S({ id: 'c1', kind: 'contract', start: '2025-01-01', end: '2026-10-20' });
+    const r = exitsSoon([c], T, 'contract', ENDING_DAYS);
+    assert.equal(r.length, 1);
+    assert.equal(r[0].on, '2026-10-20');
+    assert.equal(r[0].days, 34);
+  });
+
+  test('★★★ 訂單：提醒說的是 checkout,而色條畫到前一天 —— 差一天是對的', () => {
+    const o = S({ id: 'o1', kind: 'order', start: '2026-09-20', end: '2026-09-23' });
+    const r = exitsSoon([o], T, 'order', LEAVING_DAYS);
+    assert.equal(r[0].on, '2026-09-23', '提醒:9/23 退房');
+    assert.equal(r[0].days, 7);
+    assert.equal(lastNightOf(o), '2026-09-22', '★ 而色條只畫到 9/22');
+  });
+
+  test('★★ 已經過去的不算 —— 提醒是關於還沒發生的事', () => {
+    const past = S({ id: 'x', kind: 'contract', start: '2020-01-01', end: '2026-09-15' });
+    assert.deepEqual(exitsSoon([past], T, 'contract', ENDING_DAYS), []);
+  });
+
+  test('今天到期的算進去（還有 0 天）', () => {
+    const now = S({ id: 'n', kind: 'contract', start: '2020-01-01', end: T });
+    const r = exitsSoon([now], T, 'contract', ENDING_DAYS);
+    assert.equal(r.length, 1);
+    assert.equal(r[0].days, 0);
+  });
+
+  test('剛好在門檻上算進去，超過一天就不算', () => {
+    const on45  = S({ id: 'a', kind: 'contract', start: '2020-01-01', end: addDays(T, 45) });
+    const on46  = S({ id: 'b', kind: 'contract', start: '2020-01-01', end: addDays(T, 46) });
+    assert.equal(exitsSoon([on45, on46], T, 'contract', ENDING_DAYS).length, 1);
+  });
+
+  test('★ 只挑自己那一種 —— 契約的清單不會混進訂單', () => {
+    const c = S({ id: 'c', kind: 'contract', start: '2020-01-01', end: '2026-09-20' });
+    const o = S({ id: 'o', kind: 'order', start: '2026-09-18', end: '2026-09-20' });
+    assert.deepEqual(exitsSoon([c, o], T, 'contract', ENDING_DAYS).map((x) => x.stay.id), ['c']);
+    assert.deepEqual(exitsSoon([c, o], T, 'order', LEAVING_DAYS).map((x) => x.stay.id), ['o']);
+  });
+
+  test('快到的排前面,同一天照房號自然排序', () => {
+    const mk = (id: string, room: string, end: string) =>
+      S({ id, room, kind: 'contract', start: '2020-01-01', end });
+    const r = exitsSoon([
+      mk('c3', 'A13', '2026-09-30'),
+      mk('c1', 'A5', '2026-09-20'),
+      mk('c2', 'A5', '2026-09-30'),
+    ], T, 'contract', ENDING_DAYS);
+    assert.deepEqual(r.map((x) => x.stay.id), ['c1', 'c2', 'c3'], 'A5 排在 A13 前面');
+  });
+
+  test('沒有迄日的（訂金階段）不算', () => {
+    const e = S({ id: 'e', kind: 'contract', start: '2026-09-01', end: null });
+    assert.deepEqual(exitsSoon([e], T, 'contract', ENDING_DAYS), []);
   });
 });
