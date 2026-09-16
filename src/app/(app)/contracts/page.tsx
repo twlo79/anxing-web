@@ -786,8 +786,8 @@ const nameOf = (c: Contract) =>
 
       <div className="grid grid-cols-2 gap-3 mb-3 text-sm">
         <div className="rounded-xl bg-white border border-mor-line p-3">
-          <div className="text-uisub text-gray-500 mb-1.5">本月({curMon}) 已收房源(關注) <span className="text-mor-green font-medium">{roomLists.paid.length}</span></div>
-          <div className="flex flex-wrap gap-1">{roomLists.paid.map((it) => <span key={it.room} className="inline-block rounded-md bg-mor-greenlight/50 text-mor-green px-2 py-0.5 text-sm">{it.label}</span>)}{!roomLists.paid.length && <span className="text-xs text-gray-300">—</span>}</div>
+          <div className="text-uisub text-gray-500 mb-1.5">本月({curMon}) 已收房源(關注) <span className="text-mor-greendark font-medium">{roomLists.paid.length}</span></div>
+          <div className="flex flex-wrap gap-1">{roomLists.paid.map((it) => <span key={it.room} className="inline-block rounded-md bg-mor-greenlight/50 text-mor-greendark px-2 py-0.5 text-sm">{it.label}</span>)}{!roomLists.paid.length && <span className="text-xs text-gray-300">—</span>}</div>
         </div>
         <div className="rounded-xl bg-white border border-mor-line p-3">
           <div className="text-uisub text-gray-500 mb-1.5">本月({curMon}) 未收房源(關注) <span className="text-orange-600 font-medium">{roomLists.unpaid.length}</span></div>
@@ -989,7 +989,7 @@ const nameOf = (c: Contract) =>
                     {lt ? (
                       <button onClick={() => setCollect(c)}
                         className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                          lt.paid ? 'bg-mor-greenlight text-mor-green' : 'bg-orange-50 text-orange-600'}`}>
+                          lt.paid ? 'bg-mor-greenlight text-mor-greendark' : 'bg-orange-50 text-orange-600'}`}>
                         {c.cadence === 'monthly' ? '本月' : '本期'}{lt.paid ? '已收' : '未收'}
                       </button>
                     ) : (
@@ -1033,7 +1033,7 @@ const nameOf = (c: Contract) =>
                     // 月繳講「本月」,季繳/半年繳/年繳講「本期」—— 那些繳別是整期一起確認收款的,
                     // 對他們說「本月」會讓人以為只收了其中一個月。
                     const unit = c.cadence === 'monthly' ? '本月' : '本期';
-                    return <button onClick={() => setCollect(c)} title="點擊開啟收款" className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${lt.paid ? 'bg-mor-greenlight text-mor-green' : 'bg-orange-50 text-orange-600'}`}>{unit}{lt.paid ? '已收' : '未收'}</button>;
+                    return <button onClick={() => setCollect(c)} title="點擊開啟收款" className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${lt.paid ? 'bg-mor-greenlight text-mor-greendark' : 'bg-orange-50 text-orange-600'}`}>{unit}{lt.paid ? '已收' : '未收'}</button>;
                   })()}
                 </td>
                 {/*
@@ -1100,7 +1100,7 @@ const nameOf = (c: Contract) =>
                 {row('電話', c.phone ?? '—')}
                 {row('狀態', (
                   <span className="space-x-1">
-                    <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] ${c.active ? 'bg-mor-greenlight text-mor-green' : 'bg-gray-100 text-gray-500'}`}>{c.active ? '啟用' : '停用'}</span>
+                    <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] ${c.active ? 'bg-mor-greenlight text-mor-greendark' : 'bg-gray-100 text-gray-500'}`}>{c.active ? '啟用' : '停用'}</span>
                     {c.watch && <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-amber-50 text-amber-600">已關注</span>}
                     {c.auto_renew && <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-mor-bluelight text-mor-slate">自動續約</span>}
                   </span>
@@ -1135,7 +1135,7 @@ const nameOf = (c: Contract) =>
                   <button onClick={() => { setDetail(null); openEdit(c); }}
                     className="flex-1 min-w-[6rem] h-11 rounded-lg bg-mor-slate text-white text-sm font-medium hover:bg-mor-slatedark">編輯</button>
                   <button onClick={() => { setDetail(null); setCollect(c); }}
-                    className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-green text-mor-green text-sm font-medium hover:bg-mor-greenlight">收租</button>
+                    className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-green text-mor-greendark text-sm font-medium hover:bg-mor-greenlight">收租</button>
                   <a href={`/deposits?contract=${c.id}`}
                     className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-blue text-mor-blue text-sm font-medium hover:bg-mor-bluelight flex items-center justify-center">押金</a>
                   {c.active && (
@@ -2136,9 +2136,10 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
       <div key={'invp' + periodIndex} className="text-xs py-0.5">
         {list.map((inv: any) => (
           <div key={inv.id} className="flex items-center justify-between gap-2 py-0.5">
-            <span className="text-gray-500 shrink-0">發票 第 {periodIndex + 1} 期</span>
+            {/* ★ 2026-09-16 拿掉「第 N 期」—— 它就長在第 N 期的卡片裡，重複講一次 */}
+            <span className="text-gray-500 shrink-0">發票</span>
             <span className="flex items-center gap-2 min-w-0">
-              <span className="rounded bg-mor-greenlight text-mor-green px-1.5 py-0.5 font-medium">{inv.invoice_no}</span>
+              <span className="rounded bg-mor-greenlight text-mor-greendark px-1.5 py-0.5 font-medium">{inv.invoice_no}</span>
               <span className="text-gray-400 whitespace-nowrap">{inv.invoice_date}</span>
               {/*
                 ★★★ 號碼與日期**照常顯示**（2026-09-15 使用者指定）——
@@ -2147,14 +2148,14 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
               */}
               <button onClick={() => setInvDraft({ id: inv.id, ym: inv.ym, date: inv.invoice_date, no: inv.invoice_no, note: inv.note ?? '', label })}
                 disabled={frozen} title={frozen ? '這一期已關帳，發票改不動' : ''}
-                className="text-mor-blue underline shrink-0 disabled:text-gray-400 disabled:no-underline disabled:cursor-not-allowed">改</button>
+                className="text-mor-slate shrink-0 hover:text-mor-slatedark disabled:text-gray-300 disabled:cursor-not-allowed">改</button>
             </span>
           </div>
         ))}
 
         {!list.length && (
           <div className="flex items-center justify-between gap-2">
-            <span className="text-gray-500">發票 第 {periodIndex + 1} 期</span>
+            <span className="text-gray-500">發票</span>
             {canIssue ? (
               <button onClick={() => setInvDraft({ ym: headYm, date: today(), no: '', note: c.invoice_note ?? '', label })}
                 disabled={frozen} title={frozen ? '這一期已關帳，開不了發票' : ''}
@@ -2169,7 +2170,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
         {!!list.length && canIssue && (
           <button onClick={() => setInvDraft({ ym: headYm, date: today(), no: '', note: c.invoice_note ?? '', label })}
             disabled={frozen} title={frozen ? '這一期已關帳，開不了發票' : ''}
-            className="text-mor-blue underline disabled:text-gray-400 disabled:no-underline disabled:cursor-not-allowed">+ 再開一張</button>
+            className="text-mor-slate hover:text-mor-slatedark disabled:text-gray-300 disabled:cursor-not-allowed">+ 再開一張</button>
         )}
       </div>
     );
@@ -2382,13 +2383,29 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                             開鎖之後不是拿掉，是換成「🔓 已開鎖」——
                             拿掉的話他會忘記自己開過，而那正是要避免的狀態。
                         */}
-                        {lockedHere && (
-                          <span className={`ml-1.5 inline-flex items-center gap-1 rounded-full border px-2 py-px text-[11px] font-semibold align-[1px] ${frozen ? 'border-gray-200 bg-gray-100 text-gray-500' : 'border-amber-200 bg-amber-100 text-amber-800'}`}
-                            title={frozen ? (lockMsg ?? '') : '關掉這個視窗就自動鎖回去'}>
-                            {frozen ? `🔒 ${ymLabel(lockYm)}` : '🔓 已開鎖'}
+                        {/*
+                          ★★★ 2026-09-16 標題行只留三樣:期別、租期、右邊那顆按鈕。
+
+                            改版前這一行要塞六樣（期別、租期、關帳標籤、應繳日、
+                            收款日、開鎖鈕）—— 年繳契約的租期字串長達 21 個字，
+                            於是整行折成三行，「應繳」兩個字還被拆開。
+                            使用者:「這邊折行了，幫我優化一下，減少一些訊息。」
+
+                          ★★ 問題不是字太多，是**同一行要放幾樣沒有上限**。
+                            未收的卡只有四樣所以不折 —— 只有已收＋已關帳那張會。
+                            所以應繳日、收款日、關帳月份全部下沉到底下那行灰字，
+                            而那一行**依狀態只放一種**（見下面的 meta）。
+
+                          ★ 只有「已開鎖」還留在這裡:它是一個**暫時而且危險**的狀態，
+                            要跟期別一樣醒目。鎖著的時候不用標 ——
+                            右邊那顆「🔒 開鎖」已經說了。
+                        */}
+                        {lockedHere && !frozen && (
+                          <span className="ml-1.5 inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-100 px-2 py-px text-[11px] font-semibold align-[1px] text-amber-800"
+                            title="關掉這個視窗就自動鎖回去">
+                            🔓 已開鎖
                           </span>
                         )}
-                        {due ? <span className="ml-2 text-xs text-gray-400">應繳 {due}</span> : null}
                       </div>
                       {/*
                         應收是一個大數字,明細在底下逐行列。
@@ -2403,9 +2420,16 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                           一張契約十二期就是四十幾行 —— 那些明細平常不用看,
                           需要看的時候才展開（下面的 toggle）。
                       */}
+                      {/*
+                        ★★ 金額是這張卡的主角（2026-09-16）。
+                          改版前標籤「應收」跟數字一樣大 —— 而要看的是那個數字。
+                          標籤縮成 11px 灰字，數字放大並加 tabular-nums，
+                          十二期疊起來位數才對得齊。
+                      */}
                       <div className="flex items-baseline gap-2 flex-wrap">
-                        <span className="text-sm font-semibold text-mor-slate">
-                          應收 ${fmt(netAmount)}
+                        <span className="text-[11px] text-gray-500">應收</span>
+                        <span className="text-[17px] font-bold text-mor-slate tabular-nums -ml-1">
+                          ${fmt(netAmount)}
                         </span>
                         {!allPaid && periodPaid > 0 && (
                           <>
@@ -2432,11 +2456,30 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                             )}
                           </>
                         )}
-                        {(pt.lines.length > 1 || periodPays.length > 0) && (
-                          <button onClick={() => setOpenPays(openPays === payKey ? null : payKey)}
-                            className="text-xs text-gray-400 underline hover:text-mor-blue">
-                            明細{openPays === payKey ? ' ▴' : ' ▾'}
-                          </button>
+                      </div>
+                      {/*
+                        ★★★ 應繳日／收款日／關帳月份的**唯一**落腳處（2026-09-16）。
+
+                          一行灰字，而且**依狀態只放一種**:
+                            未收　　　　→ 應繳日（要看的是「什麼時候該收」）
+                            已收　　　　→ 收款日（錢都收了，應繳日沒人會再看）
+                            已收＋關帳　→ 收款日 · 已關帳 YYYY-MM
+
+                        ★★ 顏色用 gray-500 不是 gray-400。
+                          在已收卡的綠底上，gray-400 的對比只有 2.40 —— 低於 4.5 的門檻，
+                          那行字在螢幕上是糊的。gray-500 是 4.56。
+                      */}
+                      <div className="mt-0.5 text-[11px] text-gray-500 tabular-nums">
+                        {allPaid
+                          ? (paidAt ? <>收款 {frozen
+                              ? <span className="font-semibold text-mor-ink">{paidAt}</span>
+                              : <input type="date" value={paidAt || ''}
+                                  onChange={(e) => setPeriodPaidAt(chunk, e.target.value)}
+                                  className="rounded border border-gray-300 px-1 py-px text-[11px] align-[1px]" />}
+                            </> : null)
+                          : (due ? <>應繳 {due}</> : null)}
+                        {frozen && lockYm && (
+                          <span className="ml-1.5" title={lockMsg ?? ''}>· 已關帳 {ymLabel(lockYm)}</span>
                         )}
                       </div>
                       {(() => {
@@ -2485,12 +2528,11 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                     {frozen && (
                       <div className="flex items-center gap-2">
                         {/*
-                          ★★ 收款日**留著**，只是變成純文字（使用者:「要看得到繳款日期」）。
-                            改版前整排連同日期一起消失 —— 而那個日期是事實，藏起來沒好處。
+                          ★ 收款日 2026-09-16 搬到上面那行灰字了 ——
+                            它跟「應繳日」是同一格資訊的兩種狀態，本來就該在同一個位置。
+                            留在這裡的話那一行要同時放日期與按鈕，而那正是會折行的原因。
+                            使用者當初指定的「要看得到繳款日期」照樣成立，只是換了位置。
                         */}
-                        {allPaid && paidAt && (
-                          <span className="text-xs text-gray-600">收款日 <b className="tabular-nums font-semibold text-mor-ink">{paidAt}</b></span>
-                        )}
                         <div className="relative">
                           <button
                             onClick={() => (canCollect(myRole)
@@ -2511,7 +2553,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                     )}
                     {os.length > 0 && !frozen && (allPaid
                       ? <div className="flex items-center gap-1.5">
-                          <span className="text-xs text-gray-600">收款日 <input type="date" value={paidAt || ''} onChange={(e) => setPeriodPaidAt(chunk, e.target.value)} className="rounded border border-gray-300 px-1.5 py-0.5 text-xs" /></span>
+                          {/* ★ 收款日的輸入框 2026-09-16 搬到上面那行灰字（見那裡的說明） */}
                           {/*
                             ★★ 退回未收要先問一聲（2026-08-25 使用者指定）。
 
@@ -2535,7 +2577,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                               setPeriodPaid(chunk, false);
                             }}
                             disabled={!!busy}
-                            className="rounded-lg bg-mor-greenlight text-mor-green px-2.5 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">退回</button>
+                            className="rounded-lg bg-mor-greenlight text-mor-greendark px-2.5 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">退回</button>
                         </div>
                       : <div className="flex items-center gap-1.5">
                           {/*
@@ -2767,7 +2809,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                             <div key={inv.id} className="flex items-center justify-between gap-2 text-xs py-0.5 pl-3">
                               <span className="text-gray-400 shrink-0">發票</span>
                               <span className="flex items-center gap-2 min-w-0">
-                                <span className="rounded bg-mor-greenlight text-mor-green px-1.5 py-0.5 font-medium">{inv.invoice_no}</span>
+                                <span className="rounded bg-mor-greenlight text-mor-greendark px-1.5 py-0.5 font-medium">{inv.invoice_no}</span>
                                 <span className="text-gray-400 whitespace-nowrap">{inv.invoice_date}</span>
                                 <button
                                   onClick={() => setInvDraft({
@@ -2777,7 +2819,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                                     orderId: f.id, amount: Number(f.amount) || 0,
                                   })}
                                   disabled={frozen} title={frozen ? '這一期已關帳，發票改不動' : ''}
-                                  className="text-mor-blue underline shrink-0 disabled:text-gray-400 disabled:no-underline disabled:cursor-not-allowed">改</button>
+                                  className="text-mor-slate shrink-0 hover:text-mor-slatedark disabled:text-gray-300 disabled:cursor-not-allowed">改</button>
                               </span>
                             </div>
                           ))}
@@ -2790,7 +2832,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                                   orderId: f.id, amount: Number(f.amount) || 0,
                                 })}
                                 disabled={frozen} title={frozen ? (lockMsg ?? '') : ''}
-                                className="text-xs text-mor-blue underline disabled:text-gray-400 disabled:no-underline disabled:cursor-not-allowed">+ 再開一張</button>
+                                className="text-xs text-mor-slate hover:text-mor-slatedark disabled:text-gray-300 disabled:cursor-not-allowed">+ 再開一張</button>
                             </div>
                           )}
                         </div>
@@ -2840,6 +2882,27 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                         <button onClick={() => setConcDraft(null)} className="text-gray-400 underline text-xs">取消</button>
                       </div>
                     ) : (
+                      /*
+                        ══════════ 動作那一排（2026-09-16 改版）══════════
+
+                        ★★★ 「明細」從金額那行搬到這裡，**靠右**。
+                          金額那行的工作是「這一期多少錢」—— 掛一個連結在數字後面，
+                          眼睛掃金額時會被它絆一下。
+                          靠右是刻意的:加費與折讓是「做一件事」，明細是「打開來看」，
+                          兩種不同的東西不要並排成一排看起來一樣的連結。
+
+                        ★★ 拿掉「(認列營收)」。那四個字在解釋一件**永遠成立**的事，
+                          卻在每一期重複一次 —— 十二期就是十二遍。
+
+                        ★ 三個都不加底線（使用者 2026-09-16）。
+                          每一個都有自己的符號:加費「＋」、折讓「−」、明細「▾」，
+                          符號與位置已經說明了它們可以按。
+
+                        ★★ 顏色從 mor-blue 換成 mor-slate、橘色加深到 amber-700。
+                          在已收卡的綠底上 mor-blue 只有 3.00、orange-600 只有 3.01 ——
+                          都低於 4.5。mor-slate 是 5.39、amber-700 是 4.74。
+                          （跟 anxing-ui 對 mor-green 的警告同一件事:淺色留給「面」。）
+                      */
                       <div className="flex items-center gap-3">
                         {/*
                           ★ 加費與折讓都是**新增一張帶 contract_id 的訂單** ——
@@ -2848,10 +2911,21 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                         */}
                         <button onClick={() => setFeeDraft({ pi: i, date: `${first.y}-${String(first.m).padStart(2, '0')}-01`, label: '電費', amount: 0 })}
                           disabled={frozen} title={frozen ? (lockMsg ?? '') : ''}
-                          className="text-xs text-mor-blue underline disabled:text-gray-400 disabled:no-underline disabled:cursor-not-allowed">+ 加費(認列營收)</button>
+                          className="text-xs text-mor-slate hover:text-mor-slatedark disabled:text-gray-300 disabled:cursor-not-allowed">＋ 加費</button>
                         <button onClick={() => setConcDraft({ pi: i, date: `${first.y}-${String(first.m).padStart(2, '0')}-01`, amount: 0, note: '', baseAmount: amount, priorDisc: discTotal })}
                           disabled={frozen} title={frozen ? (lockMsg ?? '') : ''}
-                          className="text-xs text-orange-600 underline disabled:text-gray-400 disabled:no-underline disabled:cursor-not-allowed">− 折讓</button>
+                          className="text-xs text-amber-700 hover:text-amber-800 disabled:text-gray-300 disabled:cursor-not-allowed">− 折讓</button>
+                        {/*
+                          ★★★ 明細**關帳也照樣打得開**（沒有 disabled）——
+                            鎖的是「能不能改」，不是「能不能看」。
+                            跟發票號碼照常顯示是同一條規則。
+                        */}
+                        {(pt.lines.length > 1 || periodPays.length > 0) && (
+                          <button onClick={() => setOpenPays(openPays === payKey ? null : payKey)}
+                            className="ml-auto text-xs text-mor-slate hover:text-mor-slatedark">
+                            明細{openPays === payKey ? ' ▴' : ' ▾'}
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -2889,7 +2963,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                         <div className="mt-1 space-y-0.5">
                           {ept.lines.map((l, li) => (
                             <div key={li} className="flex items-baseline gap-2 text-xs">
-                              <span className={`w-3 shrink-0 ${l.paid ? 'text-mor-green' : 'text-gray-300'}`}>
+                              <span className={`w-3 shrink-0 ${l.paid ? 'text-mor-greendark' : 'text-gray-300'}`}>
                                 {l.paid ? '✓' : '·'}
                               </span>
                               <span className="text-gray-600">{l.label}</span>
@@ -2979,7 +3053,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                               setPeriodPaid(chunk, false);
                             }}
                             disabled={!!busy}
-                            className="rounded-lg bg-mor-greenlight text-mor-green px-2.5 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">退回</button>
+                            className="rounded-lg bg-mor-greenlight text-mor-greendark px-2.5 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">退回</button>
                         </div>
                       : <div className="relative">
                           <button
