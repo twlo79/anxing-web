@@ -215,6 +215,18 @@ const NAV: { href: string; label: string; icon: string; roles: string[]; group?:
   // 要查一位房客的電話得先猜他是長租還是短租。
   { href: '/customers', label: '客戶管理', icon: '👥', group: '客戶經營', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/reviews', label: '房源評價', icon: '⭐', group: '客戶經營', roles: ['housekeeper', 'manager', 'super_admin'] },
+  /*
+   * IG 版面模擬（migration_258，2026-09-16 使用者:「社群經營 併進去客戶經營裡」）。
+   *
+   * ★★ **位置很要緊**:`groupNav()` 是用「連續相同」切群的。
+   *   這一筆要緊接在 /reviews 後面、group 也填「客戶經營」，才會併進同一群 ——
+   *   插到別的地方會多長出一個同名但分開的群。
+   *
+   * ★ 這裡給的是「誰看得到這個入口」，資料庫那邊的 RLS 讓管家與會計也讀得到。
+   *   兩個數字不一樣是刻意的:RLS 是地板（誰讀得到），側欄是門（誰會用到）。
+   *   要開給管家的話，把 'housekeeper' 加進來就好，不用動 migration。
+   */
+  { href: '/social', label: 'IG 版面模擬', icon: '📱', group: '客戶經營', roles: ['manager', 'super_admin'] },
   // 會計進得去，但只看得到「收付款帳號」與「常用帳號」兩個分頁
   // —— 改人員角色那一頁仍然只有總經理，見 admin 頁的 ACCOUNTANT_TABS
   /*
