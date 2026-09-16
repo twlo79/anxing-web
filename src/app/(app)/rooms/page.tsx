@@ -5,11 +5,20 @@ import { fetchAll } from '@/lib/fetch-all';
 import { FilterBar, Field, FilterSelect, FilterSearch, FilterClear, FilterCount } from '@/lib/filters';
 import {
   isWeekend, weekdayOf, sortRooms, matchRoom, rowOf, exitsSoon,
-  ENDING_DAYS, LEAVING_DAYS,
   overlapRanges, dropContractOrders, monthRange, rangeDays, eachDay,
   staysInRange, lastNightOf, daysBetween, addDays, MAX_RANGE_DAYS,
   type Stay, type Room, type Cell, type Range, type Exit,
 } from '@/lib/room-calendar';
+/*
+ * ★★★ 「幾天內」從寫死改成可以按（2026-09-16 使用者:
+ *   「不要有 hardcode 什麼時候」「共同一組就好 / 7 14 30 45 全部」）。
+ *
+ *   同一排膠囊、同一個預設值，**跟房務管理的「未來提醒」共用一份** ——
+ *   兩邊各寫一組的話，同一件事會有兩排長得不一樣的膠囊。
+ */
+import {
+  ALERT_WINDOWS, DEFAULT_WINDOW, winLabel, winDays, parseWin, type AlertWindow,
+} from '@/lib/hk-alerts';
 import ToggleInfo from '@/components/ToggleInfo';
 
 /*
@@ -181,6 +190,22 @@ export default function RoomStatusPage() {
    */
   const [ending, setEnding] = useState<Exit[]>([]);
   const [leaving, setLeaving] = useState<Exit[]>([]);
+  /*
+   * ★★ 退租與退房**共用一個天數**（使用者 2026-09-16:「共同一組就好」）。
+   *   記在網址上（`?win=45`）—— 重新整理、或把連結丟給會計，看到的是同一份。
+   *   `parseWin` 認不得就回預設,不是回 0（＝全部）。
+   */
+  const [win, setWin] = useState<AlertWindow>(() => {
+    if (typeof window === 'undefined') return DEFAULT_WINDOW;
+    return parseWin(new URLSearchParams(window.location.search).get('win'));
+  });
+  function pickWin(w: AlertWindow) {
+    setWin(w);
+    if (typeof window === 'undefined') return;
+    const u = new URL(window.location.href);
+    u.searchParams.set('win', String(w));
+    window.history.replaceState(null, '', u.toString());
+  }
   /** 點同一顆就清除 —— 使用者:「再點一下 就清除」 */
   const pick = (v: View) => setView((cur) => (cur === v ? '' : v));
 
@@ -311,6 +336,19 @@ export default function RoomStatusPage() {
      */
     setStays(dropContractOrders([...oStays, ...cStays]));
 
+    setLoading(false);
+  }, [supabase, range.from, range.to, canDraw]);
+  useEffect(() => { load(); }, [load]);
+
+  /*
+   * ══════════════════════════════════════════════════════════
+   * 退租／退房提醒 —— **自己一條查詢**，不跟日曆那份綁在一起。
+   *
+   * ★★ 換天數只重抓提醒，日曆不用整張重畫;
+   *   換月份只重抓日曆，提醒不用重抓。兩件事的觸發條件本來就不同。
+   * ══════════════════════════════════════════════════════════
+   */
+  const loadAlerts = useCallback(async () => {
     /*
      * ══════════ 退租／退房提醒（2026-09-16）══════════
      *
@@ -320,20 +358,27 @@ export default function RoomStatusPage() {
      *
      * ★★★ 訂單要排掉 `contract_id` 有值的那些。
      *   那是契約每個月長出來的**月租單**,它的 checkout 是下個月一號 ——
-     *   拿去算「7 天內退房」的話,每一間長租房每個月都會叫一次,
+     *   拿去算「N 天內退房」的話,每一間長租房每個月都會叫一次,
      *   而那個人根本沒有要退房。這一條錯的話,提醒會變成每月固定的雜訊,
      *   然後就沒有人再看它。
      */
     const t0 = todayStr();
-    const [{ data: ce }, { rows: oe }] = await Promise.all([
-      supabase.from('contracts')
+    /* ★ 「全部」＝ 往後不設上界,實際傳一個有限的大數（`winDays()` 的說明） */
+    const n = winDays(win);
+    const [{ rows: ce }, { rows: oe }] = await Promise.all([
+      /*
+       * ★★★ 契約也要分頁。Supabase 預設最多回 1000 列而且不報錯 ——
+       *   窗口按到「全部」時這一支等於「所有還沒到期的契約」,
+       *   第 1001 筆之後會安靜消失,而畫面上只是「怎麼少了幾張」。
+       */
+      fetchAll<any>((a, b) => supabase.from('contracts')
         .select('id, room, tenant_name, display_name, start_date, end_date')
-        .eq('active', true).gte('end_date', t0).lte('end_date', addDays(t0, ENDING_DAYS)),
+        .eq('active', true).gte('end_date', t0).lte('end_date', addDays(t0, n)).range(a, b)),
       fetchAll<any>((a, b) => supabase.from('orders')
         .select('id, property_raw, guest_name, checkin, checkout, source, contract_id')
         .not('source', 'in', '(oneoff,airbnb_cancelled)')
         .is('contract_id', null)
-        .gte('checkout', t0).lte('checkout', addDays(t0, LEAVING_DAYS)).range(a, b)),
+        .gte('checkout', t0).lte('checkout', addDays(t0, n)).range(a, b)),
     ]);
 
     const eStays: Stay[] = ((ce ?? []) as any[])
@@ -351,11 +396,11 @@ export default function RoomStatusPage() {
         tone: (o.source === 'private' ? 'private' : 'short') as Stay['tone'],
       }));
 
-    setEnding(exitsSoon(eStays, t0, 'contract', ENDING_DAYS));
-    setLeaving(exitsSoon(lStays, t0, 'order', LEAVING_DAYS));
-    setLoading(false);
-  }, [supabase, range.from, range.to, canDraw]);
-  useEffect(() => { load(); }, [load]);
+    setEnding(exitsSoon(eStays, t0, 'contract', n));
+    setLeaving(exitsSoon(lStays, t0, 'order', n));
+  }, [supabase, win]);
+  useEffect(() => { loadAlerts(); }, [loadAlerts]);
+
 
   /** 房源 → 這段的佔用 */
   const byRoom = useMemo(() => {
@@ -697,17 +742,40 @@ export default function RoomStatusPage() {
             <ToggleInfo tone="red" on={showEnd} onToggle={() => setShowEnd((v) => !v)}
               label={<>退租提醒 <b className="tabular-nums">{endList.length}</b></>}
               infoLabel="退租提醒怎麼算">
-              <b>契約</b>在 {ENDING_DAYS} 天內到期的。算的是<b>今天</b>起算，
-              不是你正在看的那個月 —— 這個數字問的是「接下來會空出哪幾間」。
+              <b>契約</b>在 {winLabel(win)}內到期的（底下那排膠囊可以換）。
+              算的是<b>今天</b>起算，不是你正在看的那個月 ——
+              這個數字問的是「接下來會空出哪幾間」。
             </ToggleInfo>
             <ToggleInfo tone="red" on={showOut} onToggle={() => setShowOut((v) => !v)}
               label={<>退房提醒 <b className="tabular-nums">{outList.length}</b></>}
               infoLabel="退房提醒怎麼算">
-              <b>短租訂單</b>在 {LEAVING_DAYS} 天內退房的。
+              <b>短租訂單</b>在 {winLabel(win)}內退房的（跟退租共用同一排膠囊）。
               月租單不算 —— 那是契約每個月長出來的帳，不是真的有人要走。
             </ToggleInfo>
           </span>
         </div>
+      </div>
+
+      {/*
+        ══════════ 提醒的天數（2026-09-16 使用者:「共同一組就好」）══════════
+
+        ★★★ 這一排原本是寫死的兩個數字（180 與 14），印在提醒標題上 ——
+          使用者看得到卻改不動，於是只能來問「不是 45 天嗎」。
+
+        ★★ **退租與退房共用一個**,不是各一排:
+          它們回答的是同一個問題「接下來多久內」。兩排的話畫面上會有
+          兩個數字，而人得先分清楚哪一排管哪一塊。
+
+        ★ 永遠看得到，不是打開旋鈕才出現 ——
+          旋鈕上那兩個數字（退租 N／退房 N）就是這一排算出來的，
+          藏起來的話那兩個數字沒有人解釋得了。
+      */}
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="text-uisub text-gray-500">提醒範圍</span>
+        {ALERT_WINDOWS.map((w) => (
+          <Pill key={w} on={win === w} onClick={() => pickWin(w)}>{winLabel(w)}</Pill>
+        ))}
+        <span className="text-xs text-gray-400">退租與退房共用</span>
       </div>
 
       {/* ── 明細：三顆旋鈕打開才出現 ── */}
@@ -762,12 +830,12 @@ export default function RoomStatusPage() {
       )}
 
       {showEnd && (
-        <ExitList kind="ending" list={endList} days={ENDING_DAYS} drawn={drawnIds}
+        <ExitList kind="ending" list={endList} days={winDays(win)} all={win === 0} drawn={drawnIds}
           onFilter={() => setView('ending')}
           onRange={(n) => { setMode('custom'); setFrom(today); setTo(addDays(today, n)); }} />
       )}
       {showOut && (
-        <ExitList kind="leaving" list={outList} days={LEAVING_DAYS} drawn={drawnIds}
+        <ExitList kind="leaving" list={outList} days={winDays(win)} all={win === 0} drawn={drawnIds}
           onFilter={() => setView('leaving')}
           onRange={(n) => { setMode('custom'); setFrom(today); setTo(addDays(today, n)); }} />
       )}
@@ -982,10 +1050,12 @@ function StayCard({ p, onClose }: { p: Picked; onClose: () => void }) {
  * ★★ 每一列都有「打開契約／訂單 →」。看到要處理的事，下一步就是去處理它；
  *   沒有連結的話要自己回那一頁再搜一次房號。
  */
-function ExitList({ kind, list, days, drawn, onFilter, onRange }: {
+function ExitList({ kind, list, days, all, drawn, onFilter, onRange }: {
   kind: 'ending' | 'leaving';
   list: Exit[];
   days: number;
+  /** 使用者按的是「全部」—— `days` 那時是一個很大的數字，不能印出來 */
+  all: boolean;
   drawn: Set<string>;
   onFilter: () => void;
   /** 把期間切成「今天 ～ 今天＋n 天」。n 由 ExitList 夾過上限之後傳回來 */
@@ -1003,7 +1073,12 @@ function ExitList({ kind, list, days, drawn, onFilter, onRange }: {
    */
   const jump = Math.min(days, MAX_RANGE_DAYS);
   const title = isEnd ? '退租提醒' : '退房提醒';
-  const sub = isEnd ? `契約在 ${days} 天內到期` : `短租訂單在 ${days} 天內退房`;
+  /*
+   * ★ 按「全部」時 `days` 是 3650（十年）—— 直接印會變成
+   *   「契約在 3650 天內到期」，那是一個沒有人看得懂的數字。
+   */
+  const span = all ? '往後' : `${days} 天內`;
+  const sub = isEnd ? `契約${span}到期` : `短租訂單${span}退房`;
   const dateLabel = isEnd ? '退租日' : '退房日';
   const inView = list.filter((e) => drawn.has(e.stay.id));
 
@@ -1028,7 +1103,7 @@ function ExitList({ kind, list, days, drawn, onFilter, onRange }: {
       */}
       {!list.length ? (
         <div className="leading-relaxed opacity-85">
-          接下來 {days} 天{isEnd ? '沒有契約到期' : '沒有訂單要退房'}。
+          {all ? '往後' : `接下來 ${days} 天`}{isEnd ? '沒有契約到期' : '沒有訂單要退房'}。
         </div>
       ) : !inView.length ? (
         <div className="mb-2 leading-relaxed opacity-90">

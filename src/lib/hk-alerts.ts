@@ -26,7 +26,7 @@
  * ★ 寫在 `.ts` 不是 `.tsx` —— 測試環境不處理 JSX。
  */
 
-import { type Exit, type Stay, ENDING_DAYS, LEAVING_DAYS } from './room-calendar.ts';
+import type { Exit, Stay } from './room-calendar.ts';
 
 /* ══════════ 天數窗口 ══════════ */
 
@@ -37,14 +37,27 @@ import { type Exit, type Stay, ENDING_DAYS, LEAVING_DAYS } from './room-calendar
  *   原本標題上印著「契約在 180 天內到期」—— 那行字等於把一個
  *   **他改不動的決定**印在畫面上。現在窗口是按出來的。
  *
- * ★★ `ENDING_DAYS` ／ `LEAVING_DAYS` 因此降級成**預設值**，
- *   不再是規則本身。房源狀態那兩顆旋鈕照舊用它們。
+ * ★★ 房源狀態原本那兩個寫死的常數（`ENDING_DAYS` 180 ／ `LEAVING_DAYS` 14）
+ *   因此整個退場 —— 兩頁都改吃這一排。
+ *   留著一份沒有人用的門檻，下一個人會照著它去 debug。
  */
-export const ALERT_WINDOWS = [7, 14, 30, 90, 180, 0] as const;
+export const ALERT_WINDOWS = [7, 14, 30, 45, 0] as const;
 export type AlertWindow = (typeof ALERT_WINDOWS)[number];
 
-/** 預設 30 天。三塊共用一個窗口，30 是三件事都還讀得完的長度 */
-export const DEFAULT_WINDOW: AlertWindow = 30;
+/**
+ * 預設 45 天。（2026-09-16 使用者：「共同一組就好 / 7 14 30 45 全部」）
+ *
+ * ★★★ 45 是這個系統原本的退租門檻，也是使用者心裡的那個數字。
+ *   今天早上一度改成 180（因為 70 天與 106 天到期的兩張沒出現），
+ *   而那是**把預設改掉去解決一個「看不到遠的」的問題** ——
+ *   代價是每天打開都看到一整頁半年後的事。
+ *   正確的解法是讓天數可以按:平常 45，要看遠的按「全部」。
+ *
+ * ★★ 這一份清單**兩頁共用**（房源狀態 ＋ 未來提醒）。
+ *   兩邊各寫一組的話，同一件事會有兩排長得不一樣的膠囊，
+ *   而使用者會以為那是兩種不同的東西。
+ */
+export const DEFAULT_WINDOW: AlertWindow = 45;
 
 /**
  * 「全部」實際傳給 `exitsSoon()` 的上界。
@@ -168,6 +181,4 @@ export function canSeeAlerts(role: string | null | undefined): boolean {
   return (ALERT_ROLES as readonly string[]).includes(role ?? '');
 }
 
-/* ══════════ 預設值（沿用房源狀態那兩支） ══════════ */
-export { ENDING_DAYS, LEAVING_DAYS };
 export type { Exit, Stay };

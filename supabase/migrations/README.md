@@ -554,6 +554,62 @@ perform public.soft_delete('contracts', c.id);   -- ❌
 而 `trg_sync_contract_earnest` 隨時會照著它生一筆 220,000 的押金列出來。
 刪不掉的時候，**先把會長東西的欄位歸零**再去找人工刪 —— 不要留一個半死的狀態過夜。
 
+### ★★★ L. `ON DELETE SET NULL` 會觸發對方的 **BEFORE UPDATE** 觸發器
+
+2026-09-16，要刪掉一間建錯的房源 `14B4`。先掃過所有指向 `properties`
+的外鍵，只有一條有列：
+
+```
+customers.property_id   1 列・ON DELETE SET NULL
+```
+
+判斷「SET NULL 很安全 —— 那位客戶不會消失，只是欄位變空」，於是放行。
+結果：
+
+```
+ERROR: P0001: 客戶的姓名、房源、住宿起訖是從訂單與契約帶過來的，不能在這裡改。
+CONTEXT: PL/pgSQL function customers_guard() line 13 at RAISE
+SQL statement "UPDATE ONLY customers SET property_id = NULL WHERE $1 = property_id"
+SQL statement "delete from public.properties where id = v_id"
+```
+
+**那個判斷只對了一半。**
+`ON DELETE SET NULL` 不是資料庫默默改一個欄位 —— 它會發出一個
+**真正的 `UPDATE`**，而那個 UPDATE 一樣會踩到 `customers` 上的
+BEFORE UPDATE 觸發器。`customers_guard` 的本意是「不准人在客戶管理頁
+改房源」，結果它連資料庫自己的連動更新一起擋了。
+
+所以外鍵的 `confdeltype` 只告訴你**後果**，沒告訴你**跑不跑得完**：
+
+| 規則 | 會不會刪掉對方 | 跑不跑得完 |
+|---|---|---|
+| `CASCADE` | **會** | 要看對方有沒有 BEFORE DELETE 觸發器 |
+| `SET NULL` / `SET DEFAULT` | 不會 | **要看對方有沒有 BEFORE UPDATE 觸發器** |
+| `RESTRICT` / `NO ACTION` | 不會 | 有列就直接擋 |
+
+**規矩：**
+
+* 刪一列主檔之前，除了掃外鍵，還要掃**對方表上的觸發器**：
+
+```sql
+select t.relname, g.tgname, pg_get_triggerdef(g.oid)
+from pg_trigger g
+join pg_class t on t.oid = g.tgrelid
+where not g.tgisinternal
+  and t.relname in ( … 那幾張被外鍵指到的表 … );
+```
+
+* 更實際的做法：**把每一個 `delete` 包進 `begin … exception when others`**，
+  把 `sqlerrm` 印進自檢表。腳本不會整支噴掉，而你會看到資料庫的原話。
+
+★ 解法**不是把守衛關掉**。守衛是對的 —— 那三個欄位本來就該由
+`sync_customers()` 一個人維護（坑 J 的那條「讓寫的人只有一個」）。
+要動的是**那一列資料本身**：先確認它的人工欄位（電話／Email／備註 ——
+同步永遠不動的那幾欄）是空的，刪掉那一列，再刪主檔。
+
+★★ 這是坑 C 家族的第四種形狀：**資料庫的連動動作不是特權動作**。
+它跟你手打的 SQL 走同一條路，被同一批觸發器、同一批 policy 看著。
+
 ---
 
 ## 五、跑錯了怎麼辦

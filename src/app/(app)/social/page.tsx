@@ -2,7 +2,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import Toast from '@/components/Toast';
-import { AddButton } from '@/components/Actions';
 import { useOnce } from '@/lib/once';
 import {
   PIN_MAX, COLS, CELL_W, CELL_H, CAPTION_CUT, SPANS,
@@ -232,6 +231,62 @@ export default function SocialPage() {
   const acc = accounts.find((a) => a.id === accId) ?? null;
   const selRow = rows.find((r) => r.id === sel) ?? null;
   const selCell = cells.find((c) => c.item.id === sel && c.slice === 0) ?? null;
+
+  /*
+   * ══════════════════════════════════════════════════════════
+   * 點一格 → 彈出貼文視窗（2026-09-16 使用者:「每一則點進去要像 IG 介面」
+   *   「一個是 read UI 一個是 write UI」「點進去沒有單個 IG 檢視呀」）
+   *
+   * ★★★ 讀與寫是**兩個畫面**，不是「同一個畫面把輸入框鎖起來」。
+   *   鎖起來的輸入框看得出是輸入框，人會一直去點，然後問
+   *   「為什麼我不能打字」—— 跟灰掉的分頁同一種毛病。
+   *
+   * ★★ 而且讀模式回答的是另一個問題:**「這則貼出去長什麼樣」**。
+   *   編輯框裡那段永遠是原始碼，換行、hashtag、125 字的收合線都要自己腦補。
+   *
+   * ★ 點進去先是「讀」—— 看的次數遠多於改的次數，而且沒有編輯權限的人
+   *   只有這一面（「寫」那顆根本不出現，不是灰掉）。
+   * ══════════════════════════════════════════════════════════
+   */
+  const [pmode, setPmode] = useState<'read' | 'write'>('read');
+  /* 每次換一則都回到「讀」—— 上一則停在編輯模式不該影響下一則 */
+  useEffect(() => { setPmode('read'); }, [sel]);
+
+  /** 版面順序的 item id（一格一則，切圖算一則）—— 視窗裡的 ◀ ▶ 走這個 */
+  const walk = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    cells.forEach((c) => {
+      if (!seen.has(c.item.id)) { seen.add(c.item.id); out.push(c.item.id); }
+    });
+    return out;
+  }, [cells]);
+  const goRel = useCallback((d: -1 | 1) => {
+    setSel((cur) => {
+      if (!cur) return cur;
+      const i = walk.indexOf(cur);
+      if (i < 0) return cur;
+      return walk[(i + d + walk.length) % walk.length];
+    });
+  }, [walk]);
+
+  /*
+   * ★★ 鍵盤:Esc 關、左右換一則。
+   *   ★ 游標在輸入框裡的時候左右鍵**不換則** —— 不然打字打到一半會跳走。
+   */
+  useEffect(() => {
+    if (!sel) return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      const typing = !!t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName);
+      if (e.key === 'Escape') { setSel(null); return; }
+      if (typing) return;
+      if (e.key === 'ArrowLeft') goRel(-1);
+      if (e.key === 'ArrowRight') goRel(1);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [sel, goRel]);
 
   /* ── 寫 ───────────────────────────────────────────── */
 
@@ -483,12 +538,16 @@ export default function SocialPage() {
             把要貼的排出來，直接看整體感覺
           </span>
         </h1>
-        {canEdit && <AddButton onClick={() => setAccDraft({ ...BLANK_ACC })}>
-          新增模擬頁
-        </AddButton>}
       </div>
 
-      {/* ── 模擬頁分頁籤 ── */}
+      {/*
+        ── 模擬頁分頁籤 ──
+
+        ★★ 「＋」是**分頁列最後一個分頁**，不是右上角的按鈕
+          （2026-09-16 使用者:「可以 tab 加個額外的 tab，裡面有一個加號」）。
+          新增一個模擬頁跟切換模擬頁是同一件事的兩面 —— 入口放在一起，
+          而右上角那顆離分頁列有半個螢幕遠。
+      */}
       <div className="flex flex-wrap gap-1 border-b border-mor-line mb-3">
         {accounts.map((a) => (
           <button key={a.id} onClick={() => { setAccId(a.id); setSel(null); }}
@@ -498,9 +557,17 @@ export default function SocialPage() {
             {a.handle}
           </button>
         ))}
+        {canEdit && (
+          <button onClick={() => setAccDraft({ ...BLANK_ACC })}
+            title="新增模擬頁"
+            className="px-3.5 py-2 text-uisub rounded-t-lg border border-b-0 -mb-px
+                       border-transparent text-mor-slate hover:bg-mor-bluelight/60">
+            ＋
+          </button>
+        )}
         {!accounts.length && !loading && (
           <div className="py-2 text-sm text-gray-400">
-            還沒有模擬頁 —— 按右上角「新增模擬頁」開一個。
+            還沒有模擬頁{canEdit ? ' —— 按上面那顆「＋」開一個。' : '。'}
           </div>
         )}
       </div>
@@ -555,9 +622,20 @@ export default function SocialPage() {
             </div>
           ))}
 
+          {/*
+            ══════════ 版面（2026-09-16 改）══════════
+
+            ★★★ 右邊那塊編輯面板整塊拿掉，改成**點格子彈出視窗**。
+              這一頁的重點是「看整體感覺」，而一格只有 112px 寬的時候，
+              看不出來的正是要看的那件事。放大到 560px 之後一格約 185px，
+              跟真的 IG 個人頁差不多。
+
+            ★★ 代價講在前面:**不能再一邊看版面一邊改文案** ——
+              視窗會蓋住九宮格。IG 本身就是這樣，而且編輯框因此大了四倍。
+          */}
           <div className="flex flex-wrap items-start gap-5">
             {/* ══ 手機 ══ */}
-            <div className="w-[340px] shrink-0 rounded-2xl border border-mor-line bg-white overflow-hidden">
+            <div className="w-full max-w-[560px] rounded-2xl border border-mor-line bg-white overflow-hidden">
               {/*
                 ══════════ 個人檔案的頭（2026-09-16 使用者:「這些都可以再編輯」）══════════
 
@@ -639,36 +717,6 @@ export default function SocialPage() {
               </div>
             </div>
 
-            {/* ══ 編輯面板 ══ */}
-            <div className="flex-1 min-w-[340px] rounded-xl border border-mor-line bg-[#FAFAF9] p-4">
-              {!selRow ? (
-                <div className="py-16 text-center text-sm text-gray-400 leading-loose">
-                  點左邊任何一格<br />照片與文案在這裡改
-                  <div className="text-xs mt-3">✂ 的那幾格是切圖，點下去看切片與發佈順序</div>
-                </div>
-              ) : (
-                <Panel row={selRow} seq={selCell?.seq ?? 0} urls={urls} savedAt={savedAt}
-                  canEdit={canEdit} cutting={cutting} rows={rows}
-                  onPatch={patch} onPin={() => togglePin(selRow)} onDel={() => del(selRow)}
-                  onNudge={(d) => nudge(selRow.id, d)}
-                  onSlices={() => downloadSlices(selRow)}
-                  onUpload={async (file, post) => {
-                    const path = await put(file);
-                    if (!path) return;
-                    if (selRow.kind === 'split' && selRow.split) {
-                      /* ★ 同上:RLS 擋下來回的是「成功、0 列」,一定要接 select */
-                      const { data, error } = await supabase.from('social_splits')
-                        .update({ source_path: path }).eq('id', selRow.split.id).select('id');
-                      if (error) return flash('存不起來：' + error.message);
-                      if (!data?.length) return flash('沒有存到 —— 你的權限改不動這一頁。');
-                      markSaved();
-                    } else if (post) {
-                      await patch(post, { image_path: path });
-                    }
-                    load();
-                  }} />
-              )}
-            </div>
           </div>
 
           <p className="text-[11px] text-gray-400 mt-3 leading-relaxed">
@@ -676,6 +724,118 @@ export default function SocialPage() {
             排好之後自己去 IG 貼。九宮格是 <b>4:5</b>（1080×1350），不是正方形。
           </p>
         </>
+      )}
+
+      {/*
+        ══════════ 單則貼文的視窗（讀／寫）══════════
+
+        ★★★ 沒有編輯權限的人只有「讀」那一面 —— 「寫」那顆**不出現**，
+          不是灰掉。灰掉的按鈕會讓人一直去點，然後問為什麼不能用。
+      */}
+      {selRow && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setSel(null); }}>
+          <div className="w-full max-w-[980px] max-h-[92vh] rounded-2xl bg-white overflow-hidden
+                          flex flex-col md:flex-row shadow-2xl">
+            {/* ── 左:照片 ── */}
+            <div className="relative bg-black md:basis-[46%] md:shrink-0 flex items-center justify-center">
+              {(() => {
+                const src = selRow.kind === 'split'
+                  ? selRow.split?.source_path : selRow.posts[0]?.image_path;
+                const u = src ? urls[src] : null;
+                return u
+                  ? <img src={u} alt="" className="w-full aspect-[4/5] object-cover" />
+                  : <div className="w-full aspect-[4/5] flex items-center justify-center
+                                    text-white/45 text-sm">還沒有照片</div>;
+              })()}
+              {/*
+                ★ 上一則／下一則放在照片左右兩側（IG 也在那）。
+                  ★★ 這不是排序 —— 排序的 ◀ ▶ 在右半「寫」那一面裡面。
+                    兩組長得一樣但做的事不同，所以這一組用 ‹ ›、標題也寫清楚。
+              */}
+              {walk.length > 1 && <>
+                <button onClick={() => goRel(-1)} title="上一則"
+                  className="absolute left-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full
+                             bg-white/90 hover:bg-white text-mor-ink text-lg leading-none">‹</button>
+                <button onClick={() => goRel(1)} title="下一則"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full
+                             bg-white/90 hover:bg-white text-mor-ink text-lg leading-none">›</button>
+              </>}
+            </div>
+
+            {/* ── 右:讀／寫 ── */}
+            <div className="flex-1 min-w-0 flex flex-col">
+              <div className="flex items-center gap-2.5 px-4 py-3 border-b border-mor-line">
+                <span className="w-8 h-8 rounded-full shrink-0 flex items-center justify-center"
+                  style={{ background: 'conic-gradient(from 210deg,#C9A227,#3FAE7C,#41689B,#C9A227)' }}>
+                  {acc?.avatar_path && urls[acc.avatar_path] ? (
+                    <img src={urls[acc.avatar_path]} alt=""
+                      className="w-7 h-7 rounded-full object-cover bg-white" />
+                  ) : (
+                    <span className="w-7 h-7 rounded-full bg-white flex items-center justify-center
+                                     text-[11px] font-extrabold text-mor-slate">
+                      {(acc?.name || acc?.handle || '?').slice(0, 1)}
+                    </span>
+                  )}
+                </span>
+                <span className="font-semibold text-sm flex-1 min-w-0 truncate">{acc?.handle}</span>
+                <span className="text-[11px] text-gray-500 whitespace-nowrap">
+                  {selRow.kind === 'split'
+                    ? `第 ${(selCell?.seq ?? 0) - selRow.span + 1}～${selCell?.seq ?? 0} 則`
+                    : `第 ${selCell?.seq ?? 0} 則`}
+                </span>
+                <button onClick={() => setSel(null)} title="關閉（Esc）"
+                  className="text-gray-400 hover:text-mor-ink text-lg leading-none">✕</button>
+              </div>
+
+              <div className="flex items-center gap-1.5 px-4 py-2 border-b border-mor-line bg-mor-sand/30">
+                <button onClick={() => setPmode('read')}
+                  className={`rounded-full border px-3 py-1 text-xs ${
+                    pmode === 'read' ? 'bg-mor-ink border-mor-ink text-white font-semibold'
+                                     : 'bg-white border-mor-line text-gray-600'}`}>👁 讀</button>
+                {canEdit && (
+                  <button onClick={() => setPmode('write')}
+                    className={`rounded-full border px-3 py-1 text-xs ${
+                      pmode === 'write' ? 'bg-mor-ink border-mor-ink text-white font-semibold'
+                                        : 'bg-white border-mor-line text-gray-600'}`}>✎ 寫</button>
+                )}
+                {!canEdit && (
+                  <span className="ml-auto text-[11px] text-gray-400">你的權限只能看，不能編</span>
+                )}
+                <span className="ml-auto text-[11px] text-gray-300 hidden md:inline">
+                  ← → 換一則・Esc 關閉
+                </span>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-4">
+                {pmode === 'read'
+                  ? <ReadPost row={selRow} seq={selCell?.seq ?? 0} handle={acc?.handle ?? ''} />
+                  : (
+<Panel row={selRow} seq={selCell?.seq ?? 0} urls={urls} savedAt={savedAt}
+                canEdit={canEdit} cutting={cutting} rows={rows}
+                onPatch={patch} onPin={() => togglePin(selRow)} onDel={() => del(selRow)}
+                onNudge={(d) => nudge(selRow.id, d)}
+                onSlices={() => downloadSlices(selRow)}
+                onUpload={async (file, post) => {
+                  const path = await put(file);
+                  if (!path) return;
+                  if (selRow.kind === 'split' && selRow.split) {
+                    /* ★ 同上:RLS 擋下來回的是「成功、0 列」,一定要接 select */
+                    const { data, error } = await supabase.from('social_splits')
+                      .update({ source_path: path }).eq('id', selRow.split.id).select('id');
+                    if (error) return flash('存不起來：' + error.message);
+                    if (!data?.length) return flash('沒有存到 —— 你的權限改不動這一頁。');
+                    markSaved();
+                  } else if (post) {
+                    await patch(post, { image_path: path });
+                  }
+                  load();
+                }} />
+                  )}
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── 新增／編輯模擬頁（同一個視窗）── */}
@@ -1007,6 +1167,88 @@ function Panel({ row, seq, urls, savedAt, canEdit, cutting, rows,
  *
  * ★ 存檔在 blur —— 每打一個字就送一次 update 的話，一段文案是兩百次請求。
  */
+/**
+ * 讀的那一面 —— 長得像一則真的 IG 貼文。
+ *
+ * ★★★ 這裡**一個輸入框都沒有**。鎖起來的輸入框看得出是輸入框，
+ *   人會一直去點，然後問「為什麼我不能打字」。
+ *
+ * ★★ 它回答的是編輯框回答不了的問題:**貼出去長什麼樣**。
+ *   編輯框裡永遠是原始碼 —— 換行、hashtag、125 字的收合線都要自己腦補。
+ *
+ * ★ hashtag 上色、超過收合線折成「⋯更多」（點得開）——
+ *   這兩件事就是 IG 真的會做的，少一件這一面就不值得存在。
+ */
+function ReadPost({ row, seq, handle }: { row: Row; seq: number; handle: string }) {
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  /* 換一則就把展開收回去 —— 上一則展開了不該影響下一則 */
+  useEffect(() => { setOpen({}); }, [row.id]);
+
+  return (
+    <div>
+      <div className="flex gap-4 text-lg text-gray-600 mb-3">
+        <span>♡</span><span>💬</span><span>✈</span>
+        <span className="ml-auto">🔖</span>
+      </div>
+
+      {row.posts.map((p, i) => {
+        const cut = captionCut(p.caption);
+        const show = open[p.id] || cut.over === 0;
+        /* 切圖有好幾則,每一則標上它自己的序號 */
+        const n = row.kind === 'split' ? seq - row.span + 1 + i : seq;
+        return (
+          <div key={p.id} className={i > 0 ? 'mt-5 pt-4 border-t border-mor-line' : ''}>
+            {row.kind === 'split' && (
+              <div className="text-[11px] text-gray-400 mb-1">第 {n} 則</div>
+            )}
+            <div className="text-sm leading-[1.85] whitespace-pre-wrap break-words">
+              <b className="mr-1.5">{handle}</b>
+              {p.caption
+                ? <Tagged text={show ? p.caption : cut.visible} />
+                : <span className="text-gray-300">（還沒有文案）</span>}
+              {!show && (
+                <button onClick={() => setOpen((o) => ({ ...o, [p.id]: true }))}
+                  className="text-gray-400 hover:text-gray-600">⋯更多</button>
+              )}
+            </div>
+            <div className="mt-3 pt-2.5 border-t border-mor-line flex flex-wrap gap-x-4 gap-y-1
+                            text-[11px] text-gray-500">
+              <span className={`rounded-full px-2 py-0.5 text-white ${ST[p.status].cls}`}>
+                {ST[p.status].t}
+              </span>
+              <span>預計發佈 {p.planned_on || '—'}</span>
+              <span>
+                {cut.len} 字
+                {cut.over > 0 && `・收合線後還有 ${cut.over} 字`}
+              </span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * hashtag 上色。
+ *
+ * ★ 用切片不用 `dangerouslySetInnerHTML` —— 文案是使用者打的，
+ *   直接塞進 HTML 的話一個 `<` 就會把版面吃掉。
+ */
+function Tagged({ text }: { text: string }) {
+  const parts = text.split(/(#[^\s#]+)/g);
+  return (
+    <>
+      {parts.map((t, i) =>
+        t.startsWith('#')
+          ? <span key={i} className="text-mor-slate">{t}</span>
+          : <span key={i}>{t}</span>)}
+    </>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════ */
+
 function Caption({ post, label, readOnly, onSave }: {
   post: Post; label: string; readOnly: boolean; onSave: (v: string) => void;
 }) {
