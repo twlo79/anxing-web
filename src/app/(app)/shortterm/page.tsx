@@ -40,7 +40,7 @@ import {
   incomeFieldsHidden, incomePartyLabel, checkIncomeBook, hasDeposit, type Book,
 } from '@/lib/book';
 import OrderPayments from '@/components/OrderPayments';
-import MoneyLines from '@/components/MoneyLines';
+import MoneyLines, { ML_LABEL, ML_CUR } from '@/components/MoneyLines';
 import { toLines, fromLines, totalTwd, validateLines, type Line } from '@/lib/money-lines';
 import {
   petAllowed, autoDepositAmount, feePresets, onFeeLabelChange,
@@ -2095,29 +2095,49 @@ export default function ShortTermPage() {
                   這裡讓他勾得動的話，存下去看起來成功、重開又變回來，
                   而畫面上沒有任何一句話解釋為什麼。
               */}
+              {/*
+                ★★★ 2026-09-16 從「一個框 ＋ 三行說明」縮成「一行 ＋ ⓘ」。
+
+                  原本那三行在講「勾了之後**不會**發生什麼」——
+                  那是寫給第一次看到的人，但這個勾一年用不到幾次，
+                  而那三行**每一個開這個視窗的人都要看一遍**。
+
+                ★★ 說明做成 ⓘ 不要用 title（anxing-ui 第三節:手機沒有 hover）。
+                  用 <details> 而不是自己做狀態 —— 原生、點得開、不用多一個 state。
+                  ⓘ 放在 <label> **外面**:放裡面的話點 ⓘ 會連帶把勾選切掉。
+
+                ★ 掛著契約的（契約加費、契約折讓）**唯讀**（migration_247）。
+                  那些單的用途由契約決定，觸發器會把它扳回契約的值 ——
+                  讓他勾得動的話，存下去看起來成功、重開又變回來。
+                  這一種狀態少見而且重要，所以說明**直接攤開**，不收進 ⓘ。
+              */}
               {edit.source !== OTHER_BIZ_SOURCE && (
-                <label className={`sm:col-span-2 flex items-start gap-2 rounded-lg border border-mor-line px-3 py-2 ${edit.contract_id ? 'bg-gray-50 cursor-default' : 'bg-mor-sand/40 cursor-pointer'}`}>
-                  <input type="checkbox" className="mt-0.5"
-                    checked={edit.purpose_type === 'office'}
-                    disabled={!!edit.contract_id}
-                    onChange={(e) => setEdit({ ...edit, purpose_type: e.target.checked ? 'office' : 'estate' })} />
-                  <span className="text-sm">
-                    這筆收入屬<b>安幸辦公室</b>
-                    <span className="block text-xs text-gray-500 mt-0.5">
-                      {edit.contract_id
-                        ? <>這筆掛在契約上，用途<b>由契約決定</b>，在這裡改不了。
-                          要改請到<a href="/contracts" target="_blank" rel="noreferrer"
-                            className="text-mor-blue underline hover:text-mor-slate">契約頁</a>打開那張契約勾，
-                          底下所有的月租單與加費會一起跟著改。</>
-                        : edit.purpose_type === 'office'
-                        ? <>營收報表會把物業顯示成<b className="text-mor-slate">安幸辦公室</b>，
-                          這筆不會算進{edit.estate_id ? (estateName[edit.estate_id] ?? '該物業') : '任何物業'}的營收。
-                          房源與其他欄位照舊。</>
-                        : <>不勾就是一般收入，算進上面選的那個物業。
-                          勾了之後物業與房源<b>不會被改掉</b> —— 只有營收報表的歸屬換成安幸辦公室。</>}
+                <div className="sm:col-span-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+                  <label className={`flex items-center gap-2 ${edit.contract_id ? 'cursor-default text-gray-500' : 'cursor-pointer'}`}>
+                    <input type="checkbox"
+                      checked={edit.purpose_type === 'office'}
+                      disabled={!!edit.contract_id}
+                      onChange={(e) => setEdit({ ...edit, purpose_type: e.target.checked ? 'office' : 'estate' })} />
+                    收入屬於<b>{OFFICE_NAME}</b>
+                  </label>
+                  <details className="inline-block">
+                    <summary className="list-none cursor-pointer inline-flex w-[16px] h-[16px]
+                                        rounded-full bg-mor-sand text-[10px] font-bold text-[#6b5b3f]
+                                        items-center justify-center align-middle select-none">i</summary>
+                    <div className="mt-1.5 text-xs text-gray-500 leading-relaxed">
+                      只換<b>營收報表的歸屬</b> —— 物業與房源不會被改掉，
+                      這筆也不會算進{edit.estate_id ? (estateName[edit.estate_id] ?? '該物業') : '任何物業'}的營收。
+                    </div>
+                  </details>
+                  {edit.contract_id && (
+                    <span className="w-full text-xs text-gray-500 leading-relaxed">
+                      這筆掛在契約上，用途<b>由契約決定</b>，在這裡改不了。要改請到
+                      <a href="/contracts" target="_blank" rel="noreferrer"
+                        className="text-mor-slate hover:text-mor-slatedark mx-1">契約頁</a>
+                      打開那張契約勾，底下所有的月租單與加費會一起跟著改。
                     </span>
-                  </span>
-                </label>
+                  )}
+                </div>
               )}
               {/*
                 房源非必填。
@@ -2136,7 +2156,9 @@ export default function ShortTermPage() {
               */}
               {!hideFields.property && (
               <label className="flex flex-col gap-1">
-                房源<span className="text-xs text-gray-400 ml-1">(非必填)</span>
+                {/* ★ 2026-09-16 拿掉「(非必填)」—— 必填有紅星,沒星就是選填。
+                    再寫一次等於用兩套規則講同一件事,而兩套規則遲早會不一致。 */}
+                房源
                 <select value={edit.property_raw ?? ''}
                   onChange={(e) => {
                     const nm = e.target.value;
@@ -2281,184 +2303,196 @@ export default function ShortTermPage() {
                 </label>
               )}
 
-              {edit.source !== 'oneoff' && (
-                <MoneyLines mode="revenue" label="訂單金額" required lines={revLines} onChange={setRevLines}
-                  invalid={err('金額')}
-                  hint="外幣換匯後併入營收。台幣是清單裡的一列,不必另外找欄位。" />
-              )}
-
               {/*
-                價格提醒。**不擋存檔** —— 談得比較低是真實會發生的事，
-                擋下來的話他只能放棄輸入，系統就變成阻礙。
-                門檻訂在 5 成，基本上只抓「少打一個 0」那種數量級的錯。
-              */}
-              {priceWarn && (
-                <div className="col-span-2 rounded-lg border border-amber-300 bg-amber-50
-                                px-3 py-2.5 text-xs text-amber-800 flex gap-2">
-                  <span className="shrink-0">⚠</span>
-                  <div className="leading-relaxed">{priceWarn.message}</div>
-                </div>
-              )}
+                ══════════ 錢（2026-09-16 改版）══════════
 
-              {/*
-                收退押金的動作搬到「押金管理」頁了(migration_56)。
-                這裡只填金額 —— 金額是訂單條件的一部分,收退是之後才發生的事,
-                混在同一個表單裡會讓「這張單成立了沒」跟「錢收到了沒」分不清楚。
-              */}
-              {edit.source !== 'oneoff' && edit.id && (
-                <div className="col-span-2 text-xs text-gray-400 bg-mor-sand/30 rounded-lg px-3 py-2">
-                  押金的收退日期與入款帳戶請到「押金管理」頁維護,填了金額就會自動出現在那裡。
-                </div>
-              )}
-              {/*
-                ★ 其他事業體也不顯示押金（migration_159）。
-                  兩家不收押金 —— 留著會有人誤填，而誤填的押金會跑進
-                  押金管理頁變成一筆「要退給誰」的錢，而根本沒有人收過。
-              */}
-              {/*
-                ★ 平台代收的押金**鎖住，不拿掉**（2026-08-22 使用者指定）。
-                
-                Airbnb / Agoda 的錢是平台收的，押金不經過我們手上 ——
-                所以不該填。但「藏起來」與「鎖住」的差別很重要:
-                
-                  藏起來   使用者不知道有這個欄位，也不知道為什麼沒有
-                  鎖住     看得到、改不動，旁邊寫著為什麼
-                
-                後者才回答得了「為什麼我不能填押金」。
-                而且移房之類的情況真的可能要動它 —— 那時候
-                至少有個東西可以指著問，不是憑空消失。
-                
-                其他事業體照舊整個藏掉（hideFields.deposit）——
-                那兩家連「押金」這個概念都沒有。
-              */}
-              {/*
-                ★★★ 訂金（migration_256，使用者 2026-09-15 指定「勾選以後填寫訂金，
-                  押金另外填，訂金再轉押金」）。
+                使用者:「給我感覺太多獨立框」「訂押在一起」「金額框盡量對齊」。
 
-                  【為什麼要勾才出現】
-                  絕大多數的單沒有訂金。欄位一直擺在那裡，遲早有人把押金填進去 ——
-                  而填錯的那一筆會在押金管理頁變成一筆「要退給誰」的錢。
-                  跟寵物押金同一個理由（那邊是「+ 寵物押金」才長出來）。
+                ★★★ 改版前這一段有**五個框**:安幸辦公室一個、訂單金額一個、
+                  「到押金管理頁維護」的提示一個、訂金一個、押金一個。
+                  而它們代表的東西不一樣 —— 有的是一組欄位、有的只是一段說明。
+                  **框應該表示「這幾個欄位是一個單位」**，被拿來框住說明之後
+                  它就失去意義，畫面只剩一堆長方形。
 
-                  【為什麼跟押金分開兩塊，不是併成一列】
-                  它們是**兩筆錢**:訂金有自己的一生（收 → 退款／沒收／轉押金，
-                  三條互斥），押金只有收與退。畫成一列的話
-                  「退訂金」看起來會像「退整張單的押金」。
+                ★★ 現在只有這一個框:訂單金額、訂金、押金、寵物押金、收款方式
+                  本來就是同一件事的幾個面向。分段改用「標題 ＋ 細線」。
 
-                  【這裡只填金額】
-                  收款日、收款方式、退款／沒收／轉押金全部在押金管理頁 ——
-                  跟押金同一條路（金額是訂單條件，收退是之後才發生的事）。
-                  兩件事混在同一個表單裡會讓「這張單成立了沒」
-                  跟「錢收到了沒」分不清楚。
+                ★ 所有金額列共用 MoneyLines 匯出的 ML_LABEL / ML_CUR 欄寬 ——
+                  各自寫死數字的話，改一邊就會歪掉而且沒有人會發現。
               */}
-              {edit.source !== 'oneoff' && !hideFields.deposit && hasDeposit(edit.source) && (
-                <div className="col-span-2 rounded-lg border border-mor-line p-3">
-                  <label className="flex items-center gap-2 text-sm">
+              <div className="col-span-2 flex items-center gap-2.5 mt-1">
+                <span className="text-[11px] font-bold tracking-wide text-gray-500 shrink-0">錢</span>
+                <i className="flex-1 h-px bg-mor-line" />
+                {/*
+                  ★★★ 「有收訂金」放在**段落標題**上，不是放在訂金那一列的列首。
+                    放列首的話，勾選框會把後面的幣別籤與金額框整排往右推 ——
+                    那一列就永遠跟押金對不齊，而那不是沒調好，是結構不同。
+                */}
+                {edit.source !== 'oneoff' && !hideFields.deposit && hasDeposit(edit.source) && (
+                  <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer shrink-0">
                     <input type="checkbox" checked={earnest != null}
                       onChange={(e) => setEarnest(e.target.checked ? 0 : null)} />
-                    這張單有收訂金
+                    有收訂金
                   </label>
-                  {earnest != null && (
-                    <>
-                      <div className="flex flex-wrap items-center gap-2 mt-2">
-                        <span className="w-24 h-11 md:h-8 rounded-lg bg-[#F6EFD5] text-[#8a6d1f]
-                                         text-xs font-medium flex items-center justify-center shrink-0">訂金</span>
-                        <MoneyInput value={earnest} onChange={(n) => setEarnest(n)}
-                          className="h-11 md:h-8 rounded-lg border border-mor-line px-2 text-sm
-                                     flex-1 min-w-[6rem] text-right bg-white" />
-                        {/* 新單還沒有 id，那一列訂金也還沒產生 —— 連過去只會看到空清單 */}
-                        {edit.id ? (
-                          <a href={`/deposits?order=${edit.id}`} target="_blank" rel="noreferrer"
-                            className="text-xs text-mor-blue underline hover:text-mor-slate">收退狀態 →</a>
-                        ) : null}
-                      </div>
-                      <p className="text-xs text-gray-400 mt-1.5 leading-relaxed">
-                        只填金額。收款日、收款方式，以及<b className="text-gray-500">退款／沒收／轉押金</b>
-                        都在「押金管理」頁 —— 填了金額就會自動出現在那裡。
-                        房客入住後要把訂金轉成押金，也是在那一頁按「轉押金」。
-                      </p>
-                    </>
-                  )}
-                </div>
-              )}
-              {edit.source !== 'oneoff' && !hideFields.deposit && (
-                <MoneyLines mode="deposit" label="押金" lines={depLines} onChange={setDepLines}
-                  disabled={!hasDeposit(edit.source)}
-                  /*
-                    新單還沒有 id，押金也還沒產生，這時給連結會連到空的清單，
-                    所以只有已存檔的訂單才顯示。
-                  */
-                  action={(
-                    <>
-                      {edit.id ? (
-                        <a href={`/deposits?order=${edit.id}`} target="_blank" rel="noreferrer"
-                          className="text-xs text-mor-blue underline hover:text-mor-slate">收退狀態 →</a>
-                      ) : null}
-                      {/*
-                        ★★★ 禁止帶寵物的物業**連結根本不出現**，不是灰掉。
-                          灰掉的按鈕會讓人問「為什麼不能按」，
-                          而答案是「這個物業不能帶寵物」—— 那不是暫時的狀態，
-                          是永久規則。永久做不到的事不該留一個看得到的入口。
+                )}
+              </div>
 
-                        ★ 已經加過就變灰:一張訂單只能有一筆寵物押金
-                          （deposits 一列，明細在 lines 裡）。
-                          這裡灰掉是對的 —— 它是暫時的，刪掉那一列就能再加。
-                      */}
-                      {hasDeposit(edit.source) && petAllowed(feeDefaults, edit.estate_id) && (
-                        petDep == null ? (
+              <div className="col-span-2 rounded-xl border border-mor-line bg-[#FAFAF9] p-3">
+                {edit.source !== 'oneoff' && (
+                  <MoneyLines bare mode="revenue" label="訂單金額" required
+                    lines={revLines} onChange={setRevLines} invalid={err('金額')} />
+                )}
+
+                {/*
+                  價格提醒。**不擋存檔** —— 談得比較低是真實會發生的事，
+                  擋下來的話他只能放棄輸入，系統就變成阻礙。
+                  門檻訂在 5 成，基本上只抓「少打一個 0」那種數量級的錯。
+                */}
+                {priceWarn && (
+                  <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50
+                                  px-3 py-2.5 text-xs text-amber-800 flex gap-2">
+                    <span className="shrink-0">⚠</span>
+                    <div className="leading-relaxed">{priceWarn.message}</div>
+                  </div>
+                )}
+
+                {/*
+                  ★ 虛線不是實線 —— 訂單金額與訂押金還在同一個「錢」的框裡，
+                    實線會看起來像兩個不同的區塊。
+                */}
+                {edit.source !== 'oneoff' && !hideFields.deposit && (
+                  <div className="border-t border-dashed border-mor-line -mx-3 my-3" />
+                )}
+
+                {/*
+                  訂金那一列（migration_256／257）。勾了才出現 ——
+                  九成的單沒有訂金，欄位一直擺著遲早有人把押金填進去，
+                  而填錯的那一筆會在押金管理頁變成一筆「要退給誰」的錢。
+                */}
+                {edit.source !== 'oneoff' && !hideFields.deposit && earnest != null && (
+                  <div className="flex flex-wrap items-center gap-2 mb-2">
+                    <span className={`${ML_LABEL} flex items-center`}>訂金</span>
+                    <span className={`${ML_CUR} h-11 md:h-8 rounded-lg bg-mor-bluelight text-mor-slate
+                                     text-xs font-medium flex items-center justify-center`}>TWD</span>
+                    <MoneyInput value={earnest} onChange={(n) => setEarnest(n)}
+                      className="h-11 md:h-8 rounded-lg border border-mor-line px-2 text-sm
+                                 flex-1 min-w-[6rem] text-right bg-white" />
+                    {/* 新單還沒有 id，那一列訂金也還沒產生 —— 連過去只會看到空清單 */}
+                    <span className="w-6 shrink-0" />
+                    {edit.id && (
+                      <a href={`/deposits?order=${edit.id}`} target="_blank" rel="noreferrer"
+                        className="text-xs text-mor-slate hover:text-mor-slatedark">收退狀態 →</a>
+                    )}
+                  </div>
+                )}
+
+                {/*
+                  ★ 其他事業體不顯示押金（migration_159）—— 兩家不收押金。
+                  ★ 平台代收的押金**鎖住不拿掉**（2026-08-22 使用者指定）:
+                    藏起來的話使用者不知道有這個欄位、也不知道為什麼沒有；
+                    鎖住則是看得到、改不動，旁邊寫著為什麼。
+                */}
+                {edit.source !== 'oneoff' && !hideFields.deposit && (
+                  <MoneyLines bare mode="deposit" label="押金" lines={depLines} onChange={setDepLines}
+                    disabled={!hasDeposit(edit.source)}
+                    action={(
+                      <>
+                        {/*
+                          ★★★ 禁止帶寵物的物業**連結根本不出現**，不是灰掉。
+                            灰掉的按鈕會讓人問「為什麼不能按」，而答案是
+                            「這個物業不能帶寵物」—— 那不是暫時的狀態，是永久規則。
+                            永久做不到的事不該留一個看得到的入口。
+                        */}
+                        {hasDeposit(edit.source) && petAllowed(feeDefaults, edit.estate_id)
+                          && petDep == null && (
                           <button type="button"
                             onClick={() => {
                               const auto = autoDepositAmount(feeDefaults, edit.estate_id, '寵物押金');
                               setPetDep(auto ?? 0);
                               setPetLocked(startsLocked(auto));
                             }}
-                            className="text-xs text-mor-blue underline hover:text-mor-slate">+ 寵物押金</button>
-                        ) : (
-                          <span className="text-xs text-gray-400">+ 寵物押金</span>
-                        ))}
-                    </>
-                  )}
-                  /*
-                    寵物押金那一列。放進 MoneyLines 的框裡而不是框外面 ——
-                    它跟上面幾列是**同一筆押金**（同一列 deposits、一起收退），
-                    畫在框外會看起來像另一個獨立的東西。
-                  */
-                  footer={petDep != null && hasDeposit(edit.source) ? (
-                    <div className="flex flex-wrap items-center gap-2 mt-2 pt-2 border-t border-dashed border-mor-line">
-                      <span className="w-24 h-11 md:h-8 rounded-lg bg-mor-bluelight text-mor-slate
-                                       text-xs font-medium flex items-center justify-center shrink-0">寵物押金</span>
-                      <MoneyInput value={petDep} onChange={(n) => setPetDep(n)}
-                        disabled={petLocked}
-                        className={`h-11 md:h-8 rounded-lg border border-mor-line px-2 text-sm
-                                    flex-1 min-w-[6rem] text-right
-                                    ${petLocked ? 'bg-gray-100 text-gray-500' : 'bg-white'}`} />
-                      {/*
-                        ★ 鎖是為了保護一個**已知正確**的數字不被誤改
-                          （滑鼠滾輪掃過數字欄就會改掉它）。
-                          沒有預設可保護時 startsLocked() 回 false，這顆一開始就是開的。
-                      */}
-                      <button type="button" onClick={() => setPetLocked((v) => !v)}
-                        title={petLocked ? '點一下才能改' : '改完點一下鎖回去'}
-                        className="text-sm text-gray-500 hover:text-mor-slate px-1">
-                        {petLocked ? '🔒' : '🔓'}
-                      </button>
-                      <button type="button" onClick={() => { setPetDep(null); setPetLocked(true); }}
-                        className="text-xs text-red-500 underline">刪</button>
-                    </div>
-                  ) : null}
-                  hint={hasDeposit(edit.source)
-                    ? '押金原幣退還,不換匯,所以沒有匯率欄。填了金額就會自動出現在押金管理頁,收退日期與帳戶在那裡維護。'
-                      + (petDep != null
-                        ? '一般押金與寵物押金是同一筆,一起收、一起退。'
-                        : '')
-                    : '這是平台代收的訂單 —— 押金由平台收，不經過我們的帳戶，所以這裡鎖住。'} />
-              )}
-              <label className="flex flex-col gap-1">收款方式<select value={edit.account ?? ''} onChange={(e) => setEdit({ ...edit, account: e.target.value || null })} className="rounded-lg border border-gray-300 px-2 py-1.5"><option value="">—</option><option value="現金">現金</option>{payAccounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}<option value="加密貨幣">加密貨幣</option></select></label>
+                            className="text-xs text-mor-slate hover:text-mor-slatedark">＋ 寵物押金</button>
+                        )}
+                        {edit.id && (
+                          <a href={`/deposits?order=${edit.id}`} target="_blank" rel="noreferrer"
+                            className="text-xs text-mor-slate hover:text-mor-slatedark">收退狀態 →</a>
+                        )}
+                      </>
+                    )} />
+                )}
+
+                {/*
+                  ★★ 寵物押金**自己一列**，掛在押金底下（2026-09-16 使用者指定）。
+                    改版前它擠在「＋幣別」旁邊當一個連結，看起來像同一層級的
+                    兩個動作 —— 但一個是加幣別、一個是加一筆錢。
+                    它是押金的一種，不是押金旁邊的一個選項。
+                */}
+                {edit.source !== 'oneoff' && !hideFields.deposit
+                  && petDep != null && hasDeposit(edit.source) && (
+                  <div className="flex flex-wrap items-center gap-2 mt-2">
+                    <span className={`${ML_LABEL} flex items-center`}>寵物押金</span>
+                    <span className={`${ML_CUR} h-11 md:h-8 rounded-lg bg-mor-bluelight text-mor-slate
+                                     text-xs font-medium flex items-center justify-center`}>TWD</span>
+                    <MoneyInput value={petDep} onChange={(n) => setPetDep(n)}
+                      disabled={petLocked}
+                      className={`h-11 md:h-8 rounded-lg border border-mor-line px-2 text-sm
+                                  flex-1 min-w-[6rem] text-right
+                                  ${petLocked ? 'bg-gray-100 text-gray-500' : 'bg-white'}`} />
+                    {/*
+                      ★ 鎖是為了保護一個**已知正確**的數字不被誤改
+                        （滑鼠滾輪掃過數字欄就會改掉它）。
+                        沒有預設可保護時 startsLocked() 回 false，這顆一開始就是開的。
+                    */}
+                    <button type="button" onClick={() => setPetLocked((v) => !v)}
+                      title={petLocked ? '點一下才能改' : '改完點一下鎖回去'}
+                      className="text-sm text-gray-500 hover:text-mor-slate px-1">
+                      {petLocked ? '🔒' : '🔓'}
+                    </button>
+                    <button type="button" onClick={() => { setPetDep(null); setPetLocked(true); }}
+                      className="text-xs text-red-400 hover:text-red-600">刪</button>
+                  </div>
+                )}
+
+                {/* 收款方式屬於「這筆錢怎麼進來的」，本來就該在錢這一區 */}
+                <div className="flex flex-wrap items-center gap-2 mt-3">
+                  <span className={`${ML_LABEL} flex items-center`}>收款方式</span>
+                  <select value={edit.account ?? ''}
+                    onChange={(e) => setEdit({ ...edit, account: e.target.value || null })}
+                    className="h-11 md:h-8 flex-1 min-w-[8rem] rounded-lg border border-mor-line
+                               bg-white px-2 text-sm">
+                    <option value="">—</option>
+                    <option value="現金">現金</option>
+                    {payAccounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
+                    <option value="加密貨幣">加密貨幣</option>
+                  </select>
+                </div>
+
+                {/*
+                  ★★ 一句話講完，而且**只講一次**。
+                    改版前這件事講了兩遍:一個獨立提示框一次、押金框的 hint 再一次。
+                    訂金跟押金併在一起之後，講一次就夠。
+                */}
+                {edit.source !== 'oneoff' && !hideFields.deposit && (
+                  <div className="mt-3 pt-2 border-t border-mor-line text-[11px] text-gray-500 leading-relaxed">
+                    {hasDeposit(edit.source)
+                      ? <>訂金與押金<b>原幣退還不換匯</b>；填了金額就會出現在
+                        <a href="/deposits" target="_blank" rel="noreferrer"
+                          className="text-mor-slate hover:text-mor-slatedark mx-1">押金管理 →</a>
+                        ，收退日期與帳戶在那裡維護。</>
+                      : <>這是平台代收的訂單 —— 押金由平台收，不經過我們的帳戶，所以這裡鎖住。</>}
+                  </div>
+                )}
+              </div>
               {/*
                 發票。設計比照契約:勾了才會在收款視窗出現號碼欄位。
                 抬頭留空時用客戶名稱 —— 大部分情況兩者相同,不該強迫再打一次。
               */}
-              <div className="col-span-2 rounded-lg border border-mor-line p-3">
+              {/* ★ 2026-09-16「其他」分段。跟「錢」一樣用標題＋細線,不再多一個框 */}
+              <div className="col-span-2 flex items-center gap-2.5 mt-1">
+                <span className="text-[11px] font-bold tracking-wide text-gray-500 shrink-0">其他</span>
+                <i className="flex-1 h-px bg-mor-line" />
+              </div>
+              <div className="col-span-2">
                 <label className="flex items-center gap-2 text-sm">
                   <input type="checkbox" checked={!!edit.invoice_required}
                     onChange={(e) => setEdit({ ...edit, invoice_required: e.target.checked })} />
