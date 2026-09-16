@@ -30,7 +30,7 @@ import RangeInput from '@/components/RangeInput';
  *   同一間房會在儀錶板與房源狀態顯示不同的結果。
  */
 import {
-  occupancyByRoom, totalOccupancy, fmtPct, occTone, type RoomOcc,
+  occupancyByRoom, occupancyByEstate, totalOccupancy, fmtPct, occTone, type RoomOcc,
 } from '@/lib/occupancy';
 import { dropContractOrders, type Stay } from '@/lib/room-calendar';
 
@@ -565,6 +565,30 @@ export default function DashboardPage() {
   }, [occStays, occRooms, fromD, toD]);
 
   const occAll = useMemo(() => totalOccupancy(occList), [occList]);
+
+  /*
+   * ══════════════════════════════════════════════════════════
+   * 各物業入住率。（2026-09-16 使用者:「入住率不需要到房源，
+   * 需要整體表現，各物業入住率就好 —— 入住天數 / 期間天數」）
+   *
+   * ★★★ 一個物業的入住率 ＝ **那棟所有房間的入住天數總和**
+   *   ÷（那棟幾間房 × 期間天數）。不是各房入住率的平均 ——
+   *   兩者在房數天數一樣時剛好相等，所以特別容易寫錯（算式在 lib，有測試）。
+   *
+   * ★★ 房源那一層還是算，因為它是這個加總的輸入 ——
+   *   只是**不畫出來**。123 列房號回答不了「這個月表現如何」，
+   *   而那是儀錶板要回答的問題（原本畫了，使用者劃掉）。
+   *
+   * ★ 排序照側邊選單的物業順序（`estates` 撈回來就是 `sort` 排好的），
+   *   不是照名字的筆劃 —— 兩個地方順序不一樣，人會以為是兩份資料。
+   * ══════════════════════════════════════════════════════════
+   */
+  const occByEst = useMemo(() => {
+    const ix: Record<string, number> = {};
+    estates.forEach((e, i) => { ix[e.name] = i; });
+    return occupancyByEstate(occList)
+      .sort((a, b) => (ix[a.estate] ?? 9999) - (ix[b.estate] ?? 9999));
+  }, [occList, estates]);
 
 
   /** 比較期的彙總。篩選在這裡才套,load 只負責拿資料(見 CmpRaw)。 */
@@ -1182,7 +1206,7 @@ export default function DashboardPage() {
 
       {/* ═══ 入住率 ═══ */}
       <Panel title="入住率"
-        hint="每一間房在這段期間裡有幾天有人住 —— 逐日計算，重疊的訂單只算一次">
+        hint="各物業在這段期間裡被住掉幾成 —— 入住天數 ÷（房間數 × 期間天數），逐日計算，重疊的訂單只算一次">
         {occErr && (
           <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
             ⚠ {occErr}　—— 下面的入住率會<b>偏低</b>，先不要拿它做決定。
@@ -1197,16 +1221,17 @@ export default function DashboardPage() {
         ) : (
           <>
             {/*
-              合計。★★★ 是「總住宿天數 ÷ 總可住天數」，不是各房入住率的平均 ——
+              整體。★★★ 是「總住宿天數 ÷ 總可住天數」，不是各物業入住率的平均 ——
               兩者在房數天數一樣時剛好相等，所以很容易寫錯（算式在 lib，有測試）。
             */}
             <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 mb-4
                             rounded-lg bg-mor-sand/40 px-4 py-3">
+              <span className="text-xs text-gray-500">整體</span>
               <span className={`text-2xl font-bold tabular-nums ${OCC_CLS[occTone(occAll.rate)]}`}>
                 {fmtPct(occAll.rate)}
               </span>
               <span className="text-xs text-gray-500 tabular-nums">
-                {occAll.rooms} 間房 × {occAll.days / (occAll.rooms || 1)} 天
+                {occAll.rooms} 間房 × {occAll.rooms ? occAll.days / occAll.rooms : 0} 天
                 ＝ 可住 {nf(occAll.days)} 天
               </span>
               <span className="text-xs text-gray-500 tabular-nums">
@@ -1215,38 +1240,44 @@ export default function DashboardPage() {
               </span>
             </div>
 
-            {/* 各房源。★ 排序照房號的自然順序，不是按入住率 —— 見 lib 的說明 */}
+            {/* 各物業。★ 排序照側邊選單的物業順序，不是按入住率也不是筆劃 */}
             <div className="overflow-x-auto">
-              <table className="w-full text-sm min-w-[420px]">
+              <table className="w-full text-sm min-w-[460px]">
                 <thead>
                   <tr className="text-left text-xs text-gray-500 border-b border-mor-line">
-                    <th className="py-2 pr-3">房源</th>
+                    <th className="py-2 pr-3">物業</th>
+                    <th className="py-2 pr-3 text-right whitespace-nowrap">間數</th>
                     <th className="py-2 pr-3">入住率</th>
                     <th className="py-2 pr-3 w-1/2">　</th>
                     <th className="py-2 pr-3 text-right whitespace-nowrap">住 / 可住</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {occList.map((o) => (
-                    <tr key={o.room} className="border-b border-mor-line/50 last:border-0">
-                      <td className="py-1.5 pr-3 whitespace-nowrap">
-                        {o.room}
-                        {!estF && o.estate && (
-                          <span className="ml-1.5 text-xs text-gray-400">{o.estate}</span>
-                        )}
+                  {occByEst.map((o) => (
+                    <tr key={o.estate || '(none)'} className="border-b border-mor-line/50 last:border-0">
+                      {/*
+                        ★ 沒設物業的房源收在一起，寫「未指定物業」而不是留白 ——
+                          留白看起來像資料壞了，而它其實是「有幾間房漏填物業」，
+                          那是一件該去補的事。
+                      */}
+                      <td className="py-2 pr-3 whitespace-nowrap font-medium">
+                        {o.estate || <span className="text-amber-700">未指定物業</span>}
                       </td>
-                      <td className={`py-1.5 pr-3 tabular-nums font-medium whitespace-nowrap ${
+                      <td className="py-2 pr-3 text-right text-xs text-gray-500 tabular-nums">
+                        {o.rooms}
+                      </td>
+                      <td className={`py-2 pr-3 tabular-nums font-semibold whitespace-nowrap ${
                         OCC_CLS[occTone(o.rate)]}`}>
                         {fmtPct(o.rate)}
                       </td>
-                      <td className="py-1.5 pr-3">
+                      <td className="py-2 pr-3">
                         <div className="h-2.5 rounded-sm bg-gray-100">
                           <div className="h-2.5 rounded-sm"
                             style={{ width: `${o.rate * 100}%`, background: OCC_BAR[occTone(o.rate)] }} />
                         </div>
                       </td>
-                      <td className="py-1.5 pr-3 text-right text-xs text-gray-500 tabular-nums whitespace-nowrap">
-                        {o.used} / {o.days}
+                      <td className="py-2 pr-3 text-right text-xs text-gray-500 tabular-nums whitespace-nowrap">
+                        {nf(o.used)} / {nf(o.days)}
                       </td>
                     </tr>
                   ))}
@@ -1255,6 +1286,8 @@ export default function DashboardPage() {
             </div>
 
             <p className="mt-3 text-[11px] text-gray-400 leading-relaxed">
+              ★ 一棟的入住率＝<b>那棟所有房間的入住天數總和 ÷（那棟幾間房 × 期間天數）</b>，
+              不是各房入住率的平均。<br />
               ★ 訂單的退房日那天<b>不算</b>住（最後一晚是前一天），契約的租期迄那天<b>算</b>。
               兩種來源的邊界不一樣，這是最容易差一格的地方 —— 跟房源狀態走同一份算式。<br />
               ★ 停用的房源、以及沒勾「排房表」的房源不列入分母。
