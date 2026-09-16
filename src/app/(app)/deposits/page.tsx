@@ -1118,7 +1118,8 @@ export default function DepositsPage() {
   }
 
   async function del(d: Dep) {
-    if (!confirm(`刪除這筆押金紀錄（${d.room ?? ''} ${d.guest_name ?? ''}）?\n\n會移到回收桶,可以復原。`)) return;
+    // ★ 訂金與押金都走這裡 —— 訊息要講對是哪一種,不然刪訂金卻看到「押金」會以為按錯了
+    if (!confirm(`刪除這筆${wordOf(d)}紀錄（${d.room ?? ''} ${d.guest_name ?? ''}）?\n\n會移到回收桶,可以復原。`)) return;
     const r = await softDelete(supabase, 'deposits', d.id);
     flash(r.message);
     if (r.ok) { setEdit(null); setTriedRefund(false); setDetail(null); load(); }
@@ -1234,9 +1235,9 @@ export default function DepositsPage() {
     if (r.refund_status !== 'pending') return null;
     return (
       <div className="text-[11px] text-gray-400 mt-0.5 whitespace-nowrap">
-        <span className={r.manager_approved_at ? 'text-mor-green' : ''}>{r.manager_approved_at ? '✓' : '○'} 主管</span>
+        <span className={r.manager_approved_at ? 'text-mor-greendark' : ''}>{r.manager_approved_at ? '✓' : '○'} 主管</span>
         <span className="mx-1">·</span>
-        <span className={r.admin_approved_at ? 'text-mor-green' : ''}>{r.admin_approved_at ? '✓' : '○'} 總經理</span>
+        <span className={r.admin_approved_at ? 'text-mor-greendark' : ''}>{r.admin_approved_at ? '✓' : '○'} 總經理</span>
       </div>
     );
   };
@@ -1269,7 +1270,7 @@ export default function DepositsPage() {
       // 其餘（未付/已收/審核中）跟押金講法一樣,往下走共用的那幾行
     }
     if (r.returned_on) return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-gray-100 text-gray-500">已退款</span>;
-    if (st === 'approved') return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-mor-greenlight text-mor-green">已核可・待匯款</span>;
+    if (st === 'approved') return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-mor-greenlight text-mor-greendark">已核可・待匯款</span>;
     if (st === 'pending') return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-amber-50 text-amber-700">退款審核中</span>;
     if (st === 'rejected') return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-red-50 text-red-600">已駁回</span>;
     return null;
@@ -1287,7 +1288,7 @@ export default function DepositsPage() {
     if (!c) return null;
     return (
       <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] ${
-        c.dir === 'out' ? 'bg-violet-50 text-violet-700' : 'bg-mor-greenlight text-mor-green'}`}>
+        c.dir === 'out' ? 'bg-violet-50 text-violet-700' : 'bg-mor-greenlight text-mor-greendark'}`}>
         {c.text}
       </span>
     );
@@ -1313,7 +1314,7 @@ export default function DepositsPage() {
     orphan:      { text: DEP_BADGE_LABEL.orphan,      cls: 'bg-red-50 text-red-600' },
     transferred: { text: DEP_BADGE_LABEL.transferred, cls: 'bg-violet-50 text-violet-700' },
     returned:    { text: DEP_BADGE_LABEL.returned,    cls: 'bg-gray-100 text-gray-500' },
-    paid:        { text: DEP_BADGE_LABEL.paid,        cls: 'bg-mor-greenlight text-mor-green' },
+    paid:        { text: DEP_BADGE_LABEL.paid,        cls: 'bg-mor-greenlight text-mor-greendark' },
     partial:     { text: DEP_BADGE_LABEL.partial,     cls: 'bg-amber-50 text-amber-700' },
     unpaid:      { text: DEP_BADGE_LABEL.unpaid,      cls: 'bg-amber-50 text-amber-600' },
   };
@@ -1552,7 +1553,7 @@ export default function DepositsPage() {
               className={`rounded-lg px-3 py-2 text-xs border text-left transition
                 ${statusF === 'refund_approved'
                   ? 'bg-mor-green text-white border-mor-green'
-                  : 'bg-mor-greenlight text-mor-green border-mor-green/30 hover:border-mor-green/60'}`}>
+                  : 'bg-mor-greenlight text-mor-greendark border-mor-green/30 hover:border-mor-green/60'}`}>
               已核可待匯款 {stats.refund_approved.n} 筆・NT$ {fmt(stats.refund_approved.cur['TWD'] ?? 0)}
               <span className={`ml-2 ${statusF === 'refund_approved' ? 'opacity-80' : 'opacity-70'}`}>匯出後回來填退款日</span>
             </button>
@@ -1911,22 +1912,34 @@ export default function DepositsPage() {
                 style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
                 {(() => {
                   const p = refundPerms(d);
-                  const btn = 'flex-1 min-w-[5rem] h-11 rounded-lg text-sm font-medium';
+                  /*
+                    ★ 2026-09-16 欄寬與高度跟**契約抽屜**對齊（min-w-[6rem] h-11）——
+                      兩個抽屜是同一種東西，長得不一樣只會讓人每次重新適應。
+                  */
+                  const btn = 'flex-1 min-w-[6rem] h-11 rounded-lg text-sm font-medium';
                   const earnest = d.kind === 'earnest';
                   return <>
                     {/*
-                      ══════════ 按鈕順序（2026-08-25 使用者逐顆指定）══════════
+                      ══════════ 按鈕順序（2026-09-16 使用者:「編輯 收款 沒收 押金移房」）══════════
 
-                        訂金：收款 → 明細 → 轉押金 → 沒收 → 分享 → 關閉
-                        押金：收款 → 明細 → 押金移房 →         分享 → 關閉
+                        訂金：編輯 → 收款 → 轉押金 → 沒收 →           分享 → 關閉
+                        押金：編輯 → 收款 →                押金移房 → 分享 → 關閉
 
-                      ★ 順序就是**流程的順序**:先把錢收進來，再看細節，
-                        然後才是「這筆錢最後去哪」。分享與關閉一律墊底 ——
-                        那兩顆跟這筆錢的狀態無關，位置固定才按得順手。
+                      ★★★ 這一排現在跟**契約抽屜**逐顆對齊（使用者:「按鈕編排也請參考」）:
+                        契約是「編輯 → 收租 → 押金 → 結束租約」，
+                        也就是**先開這筆的內容，再收錢，最後才是它的去向**。
+                        兩個抽屜是同一種東西，順序不一樣的話，
+                        同一個位置在兩頁做的是不同的事 —— 那是手滑的來源。
+
+                      ★ 舊的順序是「收款 → 明細 → …」（2026-08-25 定的）。
+                        改掉的理由不是舊的排錯，是**兩頁要一致**。
+
+                      ★ 分享與關閉一律墊底 —— 那兩顆跟這筆錢的狀態無關，
+                        位置固定才按得順手。
 
                       ★ 退款流程那幾顆（核可／駁回／排匯款／確認退款日／撤銷）
                         **不在這份清單裡**，因為它們是條件出現的。
-                        插在「明細」後面 —— 它們是當下最該做的事，
+                        插在「收款」後面 —— 它們是當下最該做的事，
                         排到分享後面的話會被誤認為次要動作。
 
                       ★★ 管家只能看:藏起來而不是按了才擋。
@@ -1934,7 +1947,22 @@ export default function DepositsPage() {
                          畫面上看起來像存好了，重整才發現沒變。
                     */}
 
-                    {/* ① 收款 —— 一筆一列（migration_147）。
+                    {/* ① 編輯／明細 —— 退款申請、加費扣抵、備註與憑證。
+                           手動列還多一件事（改物業房源姓名金額），所以那種列叫「編輯」
+                           （2026-09-16 使用者:「編輯內容 > 改成 編輯」—— 契約抽屜那顆就叫「編輯」，
+                            兩頁同一個位置的那顆要叫同一個名字）。
+
+                        ★ 這一排唯一的**實心**按鈕，而且排第一 —— 比照契約抽屜的「編輯」。
+                          一排裡只有一顆是主要動作，其餘都是外框；
+                          全部都外框的話，人要讀完六顆才知道該按哪一顆。 */}
+                    {canEdit && (
+                      <button onClick={() => { setEdit({ ...d }); setDetail(null); }}
+                        className={`${btn} bg-mor-slate text-white hover:bg-mor-slatedark`}>
+                        {d.is_manual ? '編輯' : '明細'}
+                      </button>
+                    )}
+
+                    {/* ② 收款 —— 一筆一列（migration_147）。
                            **沒退款之前都開得起來**:已經收滿了還是要看得到
                            明細與收款證明照片。 */}
                     {/*
@@ -1946,22 +1974,17 @@ export default function DepositsPage() {
 
                       ★★ `canEdit` 那一段不動:主管照樣改得了備註、
                         申請退款、看收款證明。收回來的只有「收錢」。
+
+                      ★ 綠框 —— 對齊契約抽屜的「收租」（同樣是把錢收進來的那一顆）。
+                        字用 greendark 不是 green:mor-green 當文字只有 2.78:1，
+                        小字讀不動（anxing-ui:green 只給面，不給字）。
                     */}
                     {canEdit && !d.returned_on && (
                       <button onClick={() => {
                         if (!canCollect(role)) return flash(collectDeniedMsg('押金'));
                         setPaying(d); setDetail(null);
                       }}
-                        className={`${btn} border border-mor-slate text-mor-slate`}>收款</button>
-                    )}
-
-                    {/* ② 明細 —— 退款申請、加費扣抵、備註與憑證。
-                           手動列還多一件事（改物業房源姓名金額），所以那種列叫「編輯內容」。 */}
-                    {canEdit && (
-                      <button onClick={() => { setEdit({ ...d }); setDetail(null); }}
-                        className={`${btn} border border-mor-line`}>
-                        {d.is_manual ? '編輯內容' : '明細'}
-                      </button>
+                        className={`${btn} border border-mor-green text-mor-greendark hover:bg-mor-greenlight`}>收款</button>
                     )}
 
                     {/* 退款流程（條件出現）—— 見上面的說明 */}
@@ -2029,7 +2052,7 @@ export default function DepositsPage() {
                     })()}
 
                     {/*
-                      ③-押金 押金移房。**訂金沒有這顆** ——
+                      ④-押金 押金移房。**訂金沒有這顆** ——
                       `canBeTarget` / `canBeSource` 已經先擋掉訂金了（deposit-transfer.ts），
                       這裡不用再判斷一次。
 
@@ -2060,6 +2083,30 @@ export default function DepositsPage() {
                       className={`${btn} border border-gray-300`}>關閉</button>
                   </>;
                 })()}
+                {/*
+                  ══════════ 刪除（2026-09-16，比照契約抽屜）══════════
+
+                  ★★★ 原本這一顆在**編輯視窗的底部**，跟「取消」「儲存」排成一列 ——
+                    那一排讀起來是「毀掉它 ／ 算了 ／ 存起來」，
+                    而使用者去那個視窗是為了改東西然後存檔。手滑的代價差太多。
+
+                  ★★ 做成**底下一行紅色小字**，不是按鈕（使用者 2026-09-16:
+                    「改成與契約刪除的模式相似」）。契約抽屜的原註解講得最清楚:
+                    大部分人想做的是上面那幾顆，做成大按鈕的話
+                    「以前卻只看得到後者那顆紅色大按鈕」。
+
+                  ★ 括號裡寫**實際後果**:押金走 softDelete，會進回收桶、救得回來。
+                    契約那邊寫「不可復原」是因為它真的 cascade 掉月租單與營收 ——
+                    兩邊後果不同，文案就不能抄同一句。
+                */}
+                {(d.is_manual || d.orphaned) && (
+                  <div className="mt-2 text-center">
+                    <button onClick={() => del(d)}
+                      className="text-xs text-red-400 underline hover:text-red-600">
+                      刪除這筆{wordOf(d)}（會移到回收桶,可以復原）
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -2193,7 +2240,7 @@ export default function DepositsPage() {
 
                 {/* 筆數一定要寫出來 —— 「金額對得上的有幾筆」是這個視窗唯一重要的數字 */}
                 <div className="px-4 md:px-6 py-2 border-b border-mor-line text-xs flex flex-wrap items-center gap-2">
-                  <span className={good.length ? 'text-mor-green font-medium' : 'text-gray-400'}>
+                  <span className={good.length ? 'text-mor-greendark font-medium' : 'text-gray-400'}>
                     金額相符 {good.length} 筆
                   </span>
                   {bad.length > 0 && (
@@ -2483,7 +2530,7 @@ export default function DepositsPage() {
                 ) : edit.refund_status === 'approved' ? (
                   /* 核可後鎖住。錢要出去了,改收款帳號等於繞過審核 —— 要改就先駁回。 */
                   <div className="space-y-1 text-xs text-gray-600">
-                    <div className="rounded-lg bg-mor-greenlight text-mor-green px-3 py-2">
+                    <div className="rounded-lg bg-mor-greenlight text-mor-greendark px-3 py-2">
                       已核可,等待匯款。要修改內容請先請主管或總經理駁回。
                     </div>
                     <div className="pt-1">退到:{edit.payee_name} {edit.payee_bank_code} {edit.payee_account}</div>
@@ -2529,11 +2576,12 @@ export default function DepositsPage() {
 
             <div className="shrink-0 bg-white border-t border-mor-line px-4 md:px-6 py-3 md:py-4 flex gap-2 md:justify-end"
               style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
-              {/* 連動列不能刪 —— 刪了下次來源同步又會長回來,只會讓人以為壞掉 */}
-              {edit.id && (edit.is_manual || edit.orphaned) && (
-                <button onClick={() => del(edit)}
-                  className="h-12 md:h-auto rounded-lg border border-red-300 text-red-600 px-4 md:py-1.5 text-sm">刪除</button>
-              )}
+              {/*
+                ★ 「刪除」2026-09-16 搬到**抽屜**了（見那裡的說明）。
+                  留在這裡的話它會跟「儲存」排在同一列 —— 而使用者來這個視窗
+                  是為了改東西然後存檔，手滑的代價差太多。
+                  條件（只有手動建的或孤兒列才給刪）原封不動搬過去。
+              */}
               <button onClick={() => setEdit(null)}
                 className="h-12 md:h-auto flex-1 md:flex-none rounded-lg border border-gray-300 px-4 md:py-1.5 text-sm">取消</button>
               {/* ★ aria-disabled 不是 disabled —— 點得下去，點下去把紅框亮起來 */}

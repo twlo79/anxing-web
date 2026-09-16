@@ -396,7 +396,7 @@ export default function ShortTermPage() {
    * 訂金（migration_256）。跟 petDep 同一個寫法:
    *
    *     null → 這張單沒收訂金，整塊不顯示
-   *     0    → 勾了「有收訂金」但還沒填金額
+   *     0    → 勾了「已收訂金」但還沒填金額
    *
    * ★★ 合成一個的話，勾起來之後那一塊會立刻消失（petDep 那邊的原註解）。
    */
@@ -2324,7 +2324,7 @@ export default function ShortTermPage() {
                 <span className="text-[11px] font-bold tracking-wide text-gray-500 shrink-0">錢</span>
                 <i className="flex-1 h-px bg-mor-line" />
                 {/*
-                  ★★★ 「有收訂金」放在**段落標題**上，不是放在訂金那一列的列首。
+                  ★★★ 「已收訂金」放在**段落標題**上，不是放在訂金那一列的列首。
                     放列首的話，勾選框會把後面的幣別籤與金額框整排往右推 ——
                     那一列就永遠跟押金對不齊，而那不是沒調好，是結構不同。
                 */}
@@ -2332,7 +2332,7 @@ export default function ShortTermPage() {
                   <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer shrink-0">
                     <input type="checkbox" checked={earnest != null}
                       onChange={(e) => setEarnest(e.target.checked ? 0 : null)} />
-                    有收訂金
+                    已收訂金
                   </label>
                 )}
               </div>
