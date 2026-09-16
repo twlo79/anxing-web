@@ -222,11 +222,15 @@ const NAV: { href: string; label: string; icon: string; roles: string[]; group?:
    *   這一筆要緊接在 /reviews 後面、group 也填「客戶經營」，才會併進同一群 ——
    *   插到別的地方會多長出一個同名但分開的群。
    *
-   * ★ 這裡給的是「誰看得到這個入口」，資料庫那邊的 RLS 讓管家與會計也讀得到。
-   *   兩個數字不一樣是刻意的:RLS 是地板（誰讀得到），側欄是門（誰會用到）。
-   *   要開給管家的話，把 'housekeeper' 加進來就好，不用動 migration。
+   * ★★ 這四種**要跟 migration_259 的 policy 一致**（2026-09-16 使用者:
+   *   「開放給 管家 經理 會計 總經理，所有人都可以編輯」——
+   *   「經理」在權限那一欄叫主管 `manager`）。
+   *   房務 cleaner 不開。
+   *
+   * ★ 同一條規則寫在兩個地方就會有一邊沒跟上（README 坑 A）——
+   *   改這一行的時候，`social/page.tsx` 的 `CAN_EDIT` 與 migration 都要一起改。
    */
-  { href: '/social', label: 'IG 版面模擬', icon: '📱', group: '客戶經營', roles: ['manager', 'super_admin'] },
+  { href: '/social', label: 'IG 版面模擬', icon: '📱', group: '客戶經營', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   // 會計進得去，但只看得到「收付款帳號」與「常用帳號」兩個分頁
   // —— 改人員角色那一頁仍然只有總經理，見 admin 頁的 ACCOUNTANT_TABS
   /*

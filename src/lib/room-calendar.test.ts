@@ -467,9 +467,23 @@ describe('空房 vs 有客：互斥且窮盡', () => {
 describe('退租／退房提醒', () => {
   const T = '2026-09-16';
 
-  test('門檻：契約 45 天、訂單 7 天', () => {
-    assert.equal(ENDING_DAYS, 45);
-    assert.equal(LEAVING_DAYS, 7);
+  /*
+   * ★★★ 這兩個數字**改過一次**（2026-09-16，45→180、7→14）。
+   *   原因不是算式錯,是窗口訂太短:使用者指著 70 天後與 106 天後
+   *   到期的兩張契約說「這些要退租啦」,而 45 天的窗口兩張都漏掉。
+   *   釘在這裡是為了下次有人改這個數字時,會先看到上面那段說明。
+   */
+  test('門檻：契約半年、訂單兩週', () => {
+    assert.equal(ENDING_DAYS, 180);
+    assert.equal(LEAVING_DAYS, 14);
+  });
+
+  test('★★ 70 天後與 106 天後到期的契約都要抓得到（就是使用者圈的那兩張）', () => {
+    const a = S({ id: '8A2', kind: 'contract', start: '2025-11-26', end: '2026-11-25' });
+    const b = S({ id: '5B1', kind: 'contract', start: '2026-01-01', end: '2026-12-31' });
+    const r = exitsSoon([a, b], T, 'contract', ENDING_DAYS);
+    assert.deepEqual(r.map((x) => x.stay.id), ['8A2', '5B1'], '近的排前面');
+    assert.deepEqual(r.map((x) => x.days), [70, 106]);
   });
 
   test('★ 契約：end_date 就是退租日,不用 ±1', () => {
@@ -501,9 +515,11 @@ describe('退租／退房提醒', () => {
   });
 
   test('剛好在門檻上算進去，超過一天就不算', () => {
-    const on45  = S({ id: 'a', kind: 'contract', start: '2020-01-01', end: addDays(T, 45) });
-    const on46  = S({ id: 'b', kind: 'contract', start: '2020-01-01', end: addDays(T, 46) });
-    assert.equal(exitsSoon([on45, on46], T, 'contract', ENDING_DAYS).length, 1);
+    /* ★ 用常數算邊界,不要寫死 45 —— 寫死的話改門檻時這條會假性失敗（已經發生過一次） */
+    const onEdge = S({ id: 'a', kind: 'contract', start: '2020-01-01', end: addDays(T, ENDING_DAYS) });
+    const over   = S({ id: 'b', kind: 'contract', start: '2020-01-01', end: addDays(T, ENDING_DAYS + 1) });
+    const r = exitsSoon([onEdge, over], T, 'contract', ENDING_DAYS);
+    assert.deepEqual(r.map((x) => x.stay.id), ['a'], '剛好在門檻上的留著,多一天的不算');
   });
 
   test('★ 只挑自己那一種 —— 契約的清單不會混進訂單', () => {

@@ -691,7 +691,7 @@ export default function RoomStatusPage() {
 
               ★★ 跟「⚠ 重疊」的差別在於那兩種 0 的意思不一樣:
                 　重疊 0　＝ 沒有壞掉的資料。那是**正常狀態**,不需要一顆常駐的警報。
-                　退租 0　＝ 接下來 45 天沒有人要退租。那是一個**答案**,而且是會變的答案。
+                　退租 0　＝ 接下來這段時間沒有人要退租。那是一個**答案**,而且是會變的答案。
                 前者是警報，後者是儀表 —— 警報平常要安靜，儀表平常就該看得到。
             */}
             <ToggleInfo tone="red" on={showEnd} onToggle={() => setShowEnd((v) => !v)}
@@ -764,12 +764,12 @@ export default function RoomStatusPage() {
       {showEnd && (
         <ExitList kind="ending" list={endList} days={ENDING_DAYS} drawn={drawnIds}
           onFilter={() => setView('ending')}
-          onRange={() => { setMode('custom'); setFrom(today); setTo(addDays(today, ENDING_DAYS)); }} />
+          onRange={(n) => { setMode('custom'); setFrom(today); setTo(addDays(today, n)); }} />
       )}
       {showOut && (
         <ExitList kind="leaving" list={outList} days={LEAVING_DAYS} drawn={drawnIds}
           onFilter={() => setView('leaving')}
-          onRange={() => { setMode('custom'); setFrom(today); setTo(addDays(today, LEAVING_DAYS)); }} />
+          onRange={(n) => { setMode('custom'); setFrom(today); setTo(addDays(today, n)); }} />
       )}
 
       {/* ① 範圍不能畫的兩種情形分開講 —— 見上面 `badRange` / `tooLong` 的說明 */}
@@ -988,9 +988,20 @@ function ExitList({ kind, list, days, drawn, onFilter, onRange }: {
   days: number;
   drawn: Set<string>;
   onFilter: () => void;
-  onRange: () => void;
+  /** 把期間切成「今天 ～ 今天＋n 天」。n 由 ExitList 夾過上限之後傳回來 */
+  onRange: (n: number) => void;
 }) {
   const isEnd = kind === 'ending';
+  /*
+   * ★★★ 「看未來 N 天」要夾在 `MAX_RANGE_DAYS` 以內。
+   *   契約的窗口是半年（180 天），而日曆一次最多畫 92 天 ——
+   *   直接把 180 丟給期間的話，按下去只會換來一句
+   *   「這段有 180 天，一次最多畫 92 天」，等於那顆按鈕是壞的。
+   *
+   * ★ 按鈕上的字寫**實際會切成幾天**，不是寫窗口的天數 ——
+   *   寫 180 而切出 92 的話，那顆按鈕在說謊。
+   */
+  const jump = Math.min(days, MAX_RANGE_DAYS);
   const title = isEnd ? '退租提醒' : '退房提醒';
   const sub = isEnd ? `契約在 ${days} 天內到期` : `短租訂單在 ${days} 天內退房`;
   const dateLabel = isEnd ? '退租日' : '退房日';
@@ -1011,7 +1022,7 @@ function ExitList({ kind, list, days, drawn, onFilter, onRange }: {
 
       {/*
         ★★★ 沒有半筆的時候要**講出答案**，不是留一片空白。
-          「接下來 45 天沒有契約到期」是一個有用的答案 ——
+          「接下來這段時間沒有契約到期」是一個有用的答案 ——
           而空白只會讓人以為這個功能沒做出來（2026-09-16 使用者:
           「退房按鈕還沒看到」，那顆其實在，只是當時 0 筆所以整顆藏起來了）。
       */}
@@ -1022,10 +1033,10 @@ function ExitList({ kind, list, days, drawn, onFilter, onRange }: {
       ) : !inView.length ? (
         <div className="mb-2 leading-relaxed opacity-90">
           ⚠ 這 {list.length} 筆<b>都不在目前的期間裡</b> —— 日曆上不會有紅色。
-          <button onClick={onRange}
+          <button onClick={() => onRange(jump)}
             className="ml-2 rounded-md border px-2 py-0.5 text-[11px] bg-white hover:bg-red-50"
             style={{ borderColor: '#ECC8C5' }}>
-            看未來 {days} 天
+            看未來 {jump} 天
           </button>
         </div>
       ) : null}

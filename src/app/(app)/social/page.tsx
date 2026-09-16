@@ -1,7 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase';
-import { useProfile } from '@/lib/profile';
 import Toast from '@/components/Toast';
 import { AddButton } from '@/components/Actions';
 import { useOnce } from '@/lib/once';
@@ -86,10 +85,35 @@ const ST: Record<Post['status'], { t: string; cls: string }> = {
 const mdOf = (d?: string | null) =>
   d ? `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}` : '';
 
+
+
 export default function SocialPage() {
   const supabase = useMemo(() => createClient(), []);
-  const role = useProfile().profile?.role ?? '';
-  const canEdit = role === 'manager' || role === 'super_admin';
+  /*
+   * ══════════ 誰改得動這一頁（2026-09-16）══════════
+   *
+   * 使用者:「有小編這角色」「沒開不能編輯」「芊和 super admin 可以編輯，
+   * 其他人只能讀」。所以這是**一個人一個勾**，不是一種權限 ——
+   * 同樣是管家，有的人是小編有的不是，用 role 分不出來。
+   *
+   * ★★★ 答案**跟資料庫問**（`can_edit_social()`），不在這裡再判斷一次。
+   *   那一支同時是三張表與 storage 的 policy 用的東西 ——
+   *   **整個功能只有一份規則**。
+   *   在前端另外寫一份 `role === … || …` 的話，兩邊遲早會不一樣，
+   *   而症狀是「畫面讓你按、存檔卻擋下來」，或反過來
+   *   「明明有權限按鈕卻是灰的」。兩種都查不出原因。
+   *
+   * ★★ 失敗時 fall back 成 false（不能編輯），不是 true。
+   *   問不到答案的時候要**關起來**:多按不到一顆按鈕是小事，
+   *   讓沒權限的人以為自己能改、改完才發現存不進去是大事。
+   */
+  const [canEdit, setCanEdit] = useState(false);
+  useEffect(() => {
+    (async () => {
+      const { data, error } = await supabase.rpc('can_edit_social');
+      setCanEdit(!error && data === true);
+    })();
+  }, [supabase]);
 
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [accId, setAccId] = useState('');
@@ -268,7 +292,7 @@ export default function SocialPage() {
    *   看不到「格」這個概念，所以加總一定要在這裡算。
    */
   const togglePin = async (r: Row) => {
-    if (!canEdit) return flash('只有主管與總管理員改得動這一頁。');
+    if (!canEdit) return flash('你不是小編，改不動這一頁 —— 請總經理到「權限設定 → 人員」幫你打勾。');
 
     let next: Row[];
     if (r.pin > 0) {
@@ -316,7 +340,7 @@ export default function SocialPage() {
    *   他會照著那個假數字去做下一件事。
    */
   const patch = async (p: Post, fields: Partial<Post>) => {
-    if (!canEdit) return flash('只有主管與總管理員改得動這一頁。');
+    if (!canEdit) return flash('你不是小編，改不動這一頁 —— 請總經理到「權限設定 → 人員」幫你打勾。');
     const { data, error } = await supabase.from('social_posts')
       .update(fields).eq('id', p.id).select('id');
     if (error) return flash('存不起來：' + error.message);
@@ -344,7 +368,7 @@ export default function SocialPage() {
 
   const addPost = async () => {
     if (!accId) return flash('先新增一個模擬頁。');
-    if (!canEdit) return flash('只有主管與總管理員改得動這一頁。');
+    if (!canEdit) return flash('你不是小編，改不動這一頁 —— 請總經理到「權限設定 → 人員」幫你打勾。');
     // 新的排最前面（左上角）—— 其餘往後退一格
     const { data, error } = await supabase.from('social_posts')
       .insert({ account_id: accId, sort: -1, caption: '' }).select().single();
@@ -357,7 +381,7 @@ export default function SocialPage() {
 
   const addSplit = async (span: number) => {
     if (!accId) return flash('先新增一個模擬頁。');
-    if (!canEdit) return flash('只有主管與總管理員改得動這一頁。');
+    if (!canEdit) return flash('你不是小編，改不動這一頁 —— 請總經理到「權限設定 → 人員」幫你打勾。');
     const { data: sp, error: se } = await supabase.from('social_splits')
       .insert({ account_id: accId, span }).select().single();
     if (se) return flash('新增失敗：' + se.message);
@@ -376,7 +400,7 @@ export default function SocialPage() {
   };
 
   const del = async (r: Row) => {
-    if (!canEdit) return flash('只有主管與總管理員改得動這一頁。');
+    if (!canEdit) return flash('你不是小編，改不動這一頁 —— 請總經理到「權限設定 → 人員」幫你打勾。');
     const what = r.kind === 'split' ? `這張跨 ${r.span} 格的切圖（連同 ${r.span} 則）` : '這一則';
     if (!confirm(`刪除${what}？\n\n可以再建回來，但文案與照片不會回來。`)) return;
     const { error } = r.kind === 'split'
@@ -395,7 +419,7 @@ export default function SocialPage() {
    *   而且補出來的空格看得見，使用者知道那裡還要放東西。
    */
   const fixAlign = async (id: string, push: number) => {
-    if (!canEdit) return flash('只有主管與總管理員改得動這一頁。');
+    if (!canEdit) return flash('你不是小編，改不動這一頁 —— 請總經理到「權限設定 → 人員」幫你打勾。');
     const i = rows.findIndex((r) => r.id === id);
     if (i < 0) return;
     const { data, error } = await supabase.from('social_posts').insert(

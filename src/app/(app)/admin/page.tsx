@@ -67,7 +67,9 @@ type Property = {
   clean_price?: number | null;
   active?: boolean | null;
 };
-type Profile = { id: string; name: string | null; role: string; active: boolean };
+type Profile = { id: string; name: string | null; role: string; active: boolean;
+  /** 小編：可以編輯 IG 版面模擬（migration_259）。一個人一個勾,不是一種權限 */
+  is_social_editor?: boolean };
 /** 編輯紀錄（migration_72）。changes 格式:刪除/新增是整列,修改是 {欄位: [改前, 改後]} */
 type Audit = {
   id: number; at: string; user_id: string | null; table_name: string;
@@ -366,7 +368,9 @@ export default function AdminPage() {
 
   const load = useCallback(async () => {
     const { data: st } = await supabase.from('staff').select('*').order('sort').order('name');
-    const { data: pf } = await supabase.from('profiles').select('id, name, role, active');
+    /* is_social_editor：IG 版面模擬的「小編」勾（migration_259）。一個人一個勾,不是一種權限 */
+    const { data: pf } = await supabase.from('profiles')
+      .select('id, name, role, active, is_social_editor');
     const { data: es } = await supabase.from('estates').select('*').order('sort').order('name');
     const { data: pr } = await supabase.from('properties')
       .select('id, name, estate_id, airbnb_listing_id, parent_property_id, beds, clean_points, clean_price, active, show_in_room_calendar').order('name');
@@ -788,6 +792,28 @@ export default function AdminPage() {
     if (error) return flash('新增失敗:' + error.message);
     setNewStaffName(''); flash('已新增 ' + name); load();
   }
+  /**
+   * 勾／取消「小編」（migration_259）。
+   *
+   * ★★★ `.select('id')` 不能省。RLS 擋下來的 UPDATE **回成功且影響 0 列**，
+   *   不是錯誤（CLAUDE.md 那條坑）。只接 error 的話，勾起來看起來成功了，
+   *   重新整理跳回沒勾 —— 而中間沒有任何一句話。
+   *
+   * ★★ 勾的是 `profiles`（RLS 認的是 auth.uid()），所以 key 是 `staff.auth_uid`
+   *   不是 `staff.id`。沒有登入帳號的人上面那一格根本不給勾。
+   *
+   * ★ 成功之後重載 —— 樂觀更新在這裡沒有必要（一個勾而已），
+   *   而且權限的畫面寧可慢一點也要跟資料庫一致。
+   */
+  async function toggleSocialEditor(s: Staff, on: boolean) {
+    if (!s.auth_uid) return;
+    const { data, error } = await supabase.from('profiles')
+      .update({ is_social_editor: on }).eq('id', s.auth_uid).select('id');
+    if (error) { alert('改不動：' + error.message); return; }
+    if (!data?.length) { alert('沒有存到 —— 你的權限改不動這一欄。'); return; }
+    load();
+  }
+
   // 改職位時連權限一起改 —— 兩者一對一,分開改遲早會不同步
   async function changeStaffType(s: Staff, staff_type: string) {
     const role = ROLE_OF[staff_type];
@@ -1162,12 +1188,18 @@ export default function AdminPage() {
         <div className="rounded-xl glass overflow-hidden">
           {/* 手機放不下這幾欄 —— 沒有這層捲軸容器，欄位會被壓到只剩幾個 px 而不是可以滑動 */}
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-sm">
+            <table className="w-full min-w-[860px] text-sm">
               <thead>
                 <tr className="text-left text-xs text-gray-500 border-b border-mor-line bg-white/45">
                   <th className="px-4 py-2.5">姓名</th>
                   <th className="px-4 py-2.5">職位</th>
                   <th className="px-4 py-2.5">權限</th>
+                  {/*
+                    小編（migration_259）。★ 它跟「權限」那一欄**不是同一種東西**:
+                    權限由職位決定、一個人只有一個；小編是一個獨立的勾，
+                    同樣是管家有的人是小編有的不是。所以是獨立一欄，不是併進權限裡。
+                  */}
+                  <th className="px-4 py-2.5">小編</th>
                   <th className="px-4 py-2.5">帳號</th>
                   <th className="px-4 py-2.5">狀態</th>
                   <th className="px-4 py-2.5 text-right">操作</th>
@@ -1192,6 +1224,29 @@ export default function AdminPage() {
                     <td className="px-4 py-2">
                       <span className="text-sm">{ROLE_LABEL[s.role ?? 'housekeeper'] ?? s.role}</span>
                       <span className="ml-1 text-xs text-gray-400">(依職位)</span>
+                    </td>
+                    {/*
+                      ★★ 沒有登入帳號的人**不給勾**，顯示破折號。
+                        小編是掛在 `profiles` 上的（RLS 認的是 auth.uid()），
+                        而沒建過帳號的人根本沒有那一列 —— 勾了會存不進去而且不報錯。
+                      ★ 只有總經理勾得動。這是在發權限,不是在改資料。
+                    */}
+                    <td className="px-4 py-2">
+                      {!s.auth_uid ? (
+                        <span className="text-xs text-gray-300" title="還沒建立登入帳號">—</span>
+                      ) : (
+                        <label className={`inline-flex items-center gap-1.5 text-xs ${
+                          isAdmin ? 'cursor-pointer' : 'cursor-default text-gray-400'}`}
+                          title={isAdmin ? '打勾之後這個人就能編輯 IG 版面模擬'
+                                         : '只有總經理改得動'}>
+                          <input type="checkbox" disabled={!isAdmin}
+                            checked={!!profiles.find((p) => p.id === s.auth_uid)?.is_social_editor}
+                            onChange={(e) => toggleSocialEditor(s, e.target.checked)} />
+                          {profiles.find((p) => p.id === s.auth_uid)?.is_social_editor
+                            ? <span className="text-mor-slate font-medium">小編</span>
+                            : <span className="text-gray-400">—</span>}
+                        </label>
+                      )}
                     </td>
                     <td className="px-4 py-2">
                       {s.auth_uid ? (
