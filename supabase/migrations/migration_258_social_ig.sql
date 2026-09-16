@@ -65,9 +65,28 @@ create table if not exists public.social_accounts (
   created_by  uuid default auth.uid()
 );
 
+/*
+ * ★★ 個人檔案的頭也要改得動（2026-09-16 使用者:「這些都可以再編輯」）。
+ *
+ *   建立的時候填一次、之後改不了的話，打錯字就只能砍掉重建 ——
+ *   而砍掉會連同底下所有的貼文一起 cascade 掉。
+ *
+ * ★ 追蹤者用 **text 不是數字**。這一頁沒有連 IG,那兩個數字純粹是
+ *   「讓這面牆看起來像 IG」的裝飾 —— 而使用者想打的可能是「12.3萬」。
+ *   存成整數的話，那種寫法存不進去,然後他得自己換算成 123000,
+ *   而畫面上又會顯示成 123000 —— 兩邊都不是他要的。
+ *
+ * ★★ `add column if not exists` —— 這支整份是可以重跑的。
+ *   已經跑過 258 的人再跑一次就會補上這三欄,不用另外開一支。
+ */
+alter table public.social_accounts add column if not exists avatar_path text;
+alter table public.social_accounts add column if not exists followers   text;
+alter table public.social_accounts add column if not exists following   text;
+
 comment on table public.social_accounts is
   'IG 版面模擬的「模擬頁」（migration_258）。一列 ＝ 一個要模擬的 IG 帳號。'
-  '★ 這裡**沒有任何真的 IG 授權** —— 追蹤者數字是畫面上寫死的裝飾，不是資料。';
+  '★ 這裡**沒有任何真的 IG 授權** —— followers / following 是使用者自己打的裝飾，'
+  '  不是從 IG 讀來的。所以是 text 不是數字（「12.3萬」也要存得進去）。';
 
 create unique index if not exists social_accounts_handle_uidx
   on public.social_accounts (lower(handle));
@@ -411,6 +430,19 @@ select v.ord, v."檢查", v."結果", v."判定" from (
                      where schemaname = 'public'
                        and tablename in ('social_accounts','social_splits','social_posts')) = 6
               then '✅ 6/6' else '❌ 少了幾條就是那張表全部讀不到' end
+
+  union all
+  /* ★ 個人檔案的頭要改得動 —— 這三欄是 2026-09-16 補的,重跑這支就會有 */
+  select 2.5, '②-2 模擬頁的頭：頭像／追蹤者／追蹤中',
+         coalesce((select string_agg(column_name || ' ' || data_type, '　' order by column_name)
+                     from information_schema.columns
+                    where table_schema = 'public' and table_name = 'social_accounts'
+                      and column_name in ('avatar_path','followers','following')),
+                  '★ 一欄都沒有'),
+         case when (select count(*) from information_schema.columns
+                     where table_schema = 'public' and table_name = 'social_accounts'
+                       and column_name in ('avatar_path','followers','following')) = 3
+              then '✅ 3/3' else '❌' end
 
   union all
   select 3, '③ 約束：span／status／pin／切圖成對',

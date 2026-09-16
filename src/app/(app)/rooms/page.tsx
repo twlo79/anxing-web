@@ -104,13 +104,18 @@ function Pill({ on, onClick, swatch, children, warn }: {
 }) {
   return (
     <button type="button" onClick={onClick} aria-pressed={on}
-      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs
+      /*
+       * ★ 字級用 `text-uisub`（15px）不是 `text-xs` —— 藥丸是**介面外框**不是資料
+       *   （anxing-ui 第四節:xs/sm 給表格內文,ui/uisub 給外框）。
+       *   直接寫死 `text-[15px]` 的話，哪天整站調外框字級就會漏掉這一排。
+       */
+      className={`inline-flex items-center gap-1.5 rounded-full border px-3.5 py-2 text-uisub
                   transition-colors whitespace-nowrap ${
         on ? (warn ? 'bg-amber-700 border-amber-700 text-white'
                    : 'bg-mor-ink border-mor-ink text-white')
            : (warn ? 'bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100'
                    : 'bg-white border-mor-line text-gray-600 hover:bg-mor-sand/60')}`}>
-      {swatch && <i className={`w-2.5 h-2.5 rounded-sm shrink-0 ${swatch} ${
+      {swatch && <i className={`w-3 h-3 rounded-sm shrink-0 ${swatch} ${
         on ? 'ring-2 ring-white/85' : ''}`} />}
       {children}
     </button>
@@ -510,7 +515,7 @@ export default function RoomStatusPage() {
       <div className="flex items-center justify-between mb-4">
         <h1>房源狀態
           <span className="text-sm font-normal text-gray-400 ml-2">
-            訂單與契約畫在同一條線上，空白就是空房
+            Airbnb　私下　契約　狀態
           </span>
         </h1>
       </div>
@@ -678,22 +683,29 @@ export default function RoomStatusPage() {
                 所以另一筆會安靜地不見 —— 這裡把它列出來。
               </ToggleInfo>
             )}
-            {endList.length > 0 && (
-              <ToggleInfo tone="red" on={showEnd} onToggle={() => setShowEnd((v) => !v)}
-                label={<>退租提醒 <b className="tabular-nums">{endList.length}</b></>}
-                infoLabel="退租提醒怎麼算">
-                <b>契約</b>在 {ENDING_DAYS} 天內到期的。算的是<b>今天</b>起算，
-                不是你正在看的那個月 —— 這個數字問的是「接下來會空出哪幾間」。
-              </ToggleInfo>
-            )}
-            {outList.length > 0 && (
-              <ToggleInfo tone="red" on={showOut} onToggle={() => setShowOut((v) => !v)}
-                label={<>退房提醒 <b className="tabular-nums">{outList.length}</b></>}
-                infoLabel="退房提醒怎麼算">
-                <b>短租訂單</b>在 {LEAVING_DAYS} 天內退房的。
-                月租單不算 —— 那是契約每個月長出來的帳，不是真的有人要走。
-              </ToggleInfo>
-            )}
+            {/*
+              ★★★ 2026-09-16 改:退租／退房**永遠出現,就算是 0**。
+                第一版跟「⚠ 重疊」一樣「沒東西就整顆不見」,結果使用者回報
+                「退房按鈕還沒看到」—— 而它其實是對的（那七天真的沒有人要退房）。
+                **人分不出「沒事」跟「沒做出來」**,而分不出的時候他會假設是後者。
+
+              ★★ 跟「⚠ 重疊」的差別在於那兩種 0 的意思不一樣:
+                　重疊 0　＝ 沒有壞掉的資料。那是**正常狀態**,不需要一顆常駐的警報。
+                　退租 0　＝ 接下來 45 天沒有人要退租。那是一個**答案**,而且是會變的答案。
+                前者是警報，後者是儀表 —— 警報平常要安靜，儀表平常就該看得到。
+            */}
+            <ToggleInfo tone="red" on={showEnd} onToggle={() => setShowEnd((v) => !v)}
+              label={<>退租提醒 <b className="tabular-nums">{endList.length}</b></>}
+              infoLabel="退租提醒怎麼算">
+              <b>契約</b>在 {ENDING_DAYS} 天內到期的。算的是<b>今天</b>起算，
+              不是你正在看的那個月 —— 這個數字問的是「接下來會空出哪幾間」。
+            </ToggleInfo>
+            <ToggleInfo tone="red" on={showOut} onToggle={() => setShowOut((v) => !v)}
+              label={<>退房提醒 <b className="tabular-nums">{outList.length}</b></>}
+              infoLabel="退房提醒怎麼算">
+              <b>短租訂單</b>在 {LEAVING_DAYS} 天內退房的。
+              月租單不算 —— 那是契約每個月長出來的帳，不是真的有人要走。
+            </ToggleInfo>
           </span>
         </div>
       </div>
@@ -822,9 +834,10 @@ export default function RoomStatusPage() {
               <tr key={`${room.estate}/${room.name}`}
                 className={`h-8 ${dups.length ? 'bg-[#FFFDF6]' : ''}`}>
                 <td className={`sticky left-0 z-10 border-b border-r border-mor-line
-                               min-w-[150px] max-w-[150px] px-2.5 font-medium whitespace-nowrap
+                               min-w-[150px] max-w-[150px] px-2.5 font-medium text-sm whitespace-nowrap
                                overflow-hidden text-ellipsis ${dups.length ? 'bg-[#FFFDF6]' : 'bg-white'}`}>
                   {room.name}
+                  {/* ★ 物業維持小字 —— 它是附註,跟房號一起放大的話兩個一樣重,反而更難掃 */}
                   <span className="text-gray-400 font-normal text-[11px] ml-1.5">{room.estate}</span>
                 </td>
                 {cells.map((c: Cell) => {
@@ -989,12 +1002,24 @@ function ExitList({ kind, list, days, drawn, onFilter, onRange }: {
       <div className="flex flex-wrap items-center gap-2 font-bold mb-2">
         {title}
         <span className="font-normal opacity-80">{sub}</span>
-        <button onClick={onFilter} className="ml-auto font-normal underline hover:no-underline">
-          只看這 {list.length} 間 →
-        </button>
+        {list.length > 0 && (
+          <button onClick={onFilter} className="ml-auto font-normal underline hover:no-underline">
+            只看這 {list.length} 間 →
+          </button>
+        )}
       </div>
 
-      {!inView.length && (
+      {/*
+        ★★★ 沒有半筆的時候要**講出答案**，不是留一片空白。
+          「接下來 45 天沒有契約到期」是一個有用的答案 ——
+          而空白只會讓人以為這個功能沒做出來（2026-09-16 使用者:
+          「退房按鈕還沒看到」，那顆其實在，只是當時 0 筆所以整顆藏起來了）。
+      */}
+      {!list.length ? (
+        <div className="leading-relaxed opacity-85">
+          接下來 {days} 天{isEnd ? '沒有契約到期' : '沒有訂單要退房'}。
+        </div>
+      ) : !inView.length ? (
         <div className="mb-2 leading-relaxed opacity-90">
           ⚠ 這 {list.length} 筆<b>都不在目前的期間裡</b> —— 日曆上不會有紅色。
           <button onClick={onRange}
@@ -1003,7 +1028,7 @@ function ExitList({ kind, list, days, drawn, onFilter, onRange }: {
             看未來 {days} 天
           </button>
         </div>
-      )}
+      ) : null}
 
       <div className="space-y-0.5">
         {list.map((e) => (

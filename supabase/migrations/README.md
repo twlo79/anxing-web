@@ -289,6 +289,7 @@ view 擋住就**停下來報名字**，不要自己 drop 別人的東西；
 | 255 | `properties.show_in_room_calendar` | 2B10 沒在出租但**支出記在它頭上** —— `active = false` 會讓它從房務／清潔／採購一起消失，而支出還要繼續記。「這間房不排」與「這間房不做了」是兩件事，要兩個開關。預設 true |
 | 256 | 訂單也能收訂金：`orders.earnest_amount` ＋ 索引放寬成 `(order_id, kind)` | 舊索引是 `UNIQUE(order_id)` —— **一張訂單只能一列** deposits，訂金插不進去。而 `sync_order_deposits` 的收尾沒分 kind，訂金掛上去之後**只要有人改房客姓名就會被標成孤兒**。契約那邊 174～176 早就做完了，這支照抄（連欄位名都一樣）—— 見下面 J |
 | 257 | 收了訂金的訂單可以**沒有起訖日**：`orders.earnest_only` ＋ `checkin/checkout` 放寬成可空 | 「收了訂金但還不知道住哪幾天」是真實存在的一步，而舊模型逼他當場編一個日期 —— 編出來的那個日期會一路流進排房表與營收。<br>★ 放寬的同時加 `orders_earnest_dates_chk`：**只有 `earnest_only` 的單可以沒日期**，其餘照舊必填。放寬而不加約束的話，一年後沒有人知道「日期是空的」代表訂金階段還是匯入漏了 |
+| 258 | 社群經營：IG 版面模擬（`social_accounts` / `social_splits` / `social_posts` ＋ `social` bucket） | 三張表而不是一張，理由在「一張切圖 ＝ **N 則貼文**」—— 跨 3 格的切圖要貼三次、三則各自有文案與日期，做成「一則佔三格」的話文案只有一份。<br>★ 這支**整份可以重跑**（`if not exists` ＋ policy 包 `duplicate_object`）。2026-09-16 補 `avatar_path`／`followers`／`following` 三欄就是靠重跑，沒有另開一支。<br>★★ `followers` 是 **text 不是數字** —— 這一頁沒連 IG，那個數字是使用者自己打的裝飾，而他可能想打「12.3萬」 |
 
 ### ⚠ 228 有兩支
 

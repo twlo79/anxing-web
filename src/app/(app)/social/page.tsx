@@ -43,7 +43,23 @@ const BUCKET = 'social';
 
 type Account = {
   id: string; name: string; handle: string; bio: string | null;
+  /** 頭像。storage 路徑,沒設就用名字的第一個字 */
+  avatar_path: string | null;
+  /**
+   * 追蹤者／追蹤中。**text 不是數字**（2026-09-16）——
+   * 這一頁沒有連 IG,這兩個數字純粹是「讓牆看起來像 IG」的裝飾，
+   * 而使用者想打的可能是「12.3萬」。存成整數的話那種寫法存不進去。
+   */
+  followers: string | null; following: string | null;
   sort: number; active: boolean;
+};
+/** 個人檔案的頭，新增與編輯共用同一份草稿 */
+type AccDraft = {
+  id?: string; name: string; handle: string; bio: string;
+  followers: string; following: string; avatar_path: string | null;
+};
+const BLANK_ACC: AccDraft = {
+  name: '', handle: '', bio: '', followers: '', following: '', avatar_path: null,
 };
 type Split = { id: string; account_id: string; source_path: string | null; span: number };
 type Post = {
@@ -90,10 +106,29 @@ export default function SocialPage() {
    *   要管進度時才打開。
    */
   const [clean, setClean] = useState(true);
-  const [newAcc, setNewAcc] = useState<{ name: string; handle: string; bio: string } | null>(null);
+  /*
+   * 個人檔案的頭。`id` 有值＝編輯既有的，沒有＝新增一個 ——
+   * ★ 兩個視窗長得一模一樣,所以是同一個元件、同一份草稿。
+   *   分成兩個的話，「簡介」那一欄的提示遲早會有一邊沒跟上。
+   */
+  const [accDraft, setAccDraft] = useState<AccDraft | null>(null);
   const [drag, setDrag] = useState<string | null>(null);
 
   const flash = (t: string) => { setMsg(t); setTimeout(() => setMsg(''), 3500); };
+
+  /*
+   * ★★ 「已存」。這一頁**沒有儲存鈕** —— 文案離開欄位就存、換圖選完就存、
+   *   日期與狀態改完就存。但沒有任何回饋的話，使用者不知道自己存到了沒，
+   *   於是他會再做一次（2026-09-16 使用者:「內文修改 換圖 也可以直接存嗎」
+   *   —— 這個問題本身就是答案:能存，但畫面沒有講）。
+   *
+   * ★ 只在**成功**時亮。失敗走 flash，那是另一件事。
+   */
+  const [savedAt, setSavedAt] = useState(0);
+  const markSaved = () => {
+    setSavedAt(Date.now());
+    setTimeout(() => setSavedAt((t) => (Date.now() - t >= 1800 ? 0 : t)), 2000);
+  };
 
   /* ── 撈 ───────────────────────────────────────────── */
   const load = useCallback(async () => {
@@ -130,6 +165,7 @@ export default function SocialPage() {
       const want = [
         ...posts.map((p) => p.image_path),
         ...splits.map((s) => s.source_path),
+        ...accounts.map((a) => a.avatar_path),
       ].filter((x): x is string => !!x && !urls[x]);
       if (!want.length) return;
       const { data } = await supabase.storage.from(BUCKET).createSignedUrls(want, 3600);
@@ -140,7 +176,7 @@ export default function SocialPage() {
     })();
     // urls 故意不放進相依 —— 放了會因為 setUrls 觸發自己而無限迴圈
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [posts, splits, supabase]);
+  }, [posts, splits, accounts, supabase]);
 
   /* ── 把資料庫的列組成「版面上的一筆」 ───────────────── */
   const rows: Row[] = useMemo(() => {
@@ -268,11 +304,25 @@ export default function SocialPage() {
     load();
   };
 
+  /**
+   * 改一格的內容（文案、日期、狀態、照片）—— **改完就存，沒有儲存鈕**。
+   *
+   * ★★★ `.select('id')` 不能省。RLS 擋下來的 UPDATE **回成功且影響 0 列**，
+   *   不是錯誤（CLAUDE.md 那條坑）。只接 `error` 的話:
+   *   存檔「成功」→ 樂觀更新把畫面改了 → 重新整理跳回舊值，
+   *   而中間沒有任何一句話。使用者會以為是系統自己改回去的。
+   *
+   * ★★ 所以 0 列的時候**不動畫面**。留著假數字比沒改更糟 ——
+   *   他會照著那個假數字去做下一件事。
+   */
   const patch = async (p: Post, fields: Partial<Post>) => {
     if (!canEdit) return flash('只有主管與總管理員改得動這一頁。');
-    const { error } = await supabase.from('social_posts').update(fields).eq('id', p.id);
+    const { data, error } = await supabase.from('social_posts')
+      .update(fields).eq('id', p.id).select('id');
     if (error) return flash('存不起來：' + error.message);
+    if (!data?.length) return flash('沒有存到 —— 你的權限改不動這一頁，畫面沒有變。');
     setPosts((xs) => xs.map((x) => (x.id === p.id ? { ...x, ...fields } : x)));
+    markSaved();
   };
 
   /** 上傳一個檔案，回傳 storage 路徑 */
@@ -282,6 +332,13 @@ export default function SocialPage() {
     const { error } = await supabase.storage.from(BUCKET)
       .upload(path, file, { contentType: file.type || 'image/jpeg', upsert: false });
     if (error) { flash('上傳失敗：' + error.message); return null; }
+    /*
+     * ★★ 傳完**當場**換一張簽名網址。
+     *   等 `load()` 的話，選完頭像到看得到中間有一段畫面沒反應 ——
+     *   而那段時間使用者會以為沒選到，再選一次。
+     */
+    const { data } = await supabase.storage.from(BUCKET).createSignedUrl(path, 3600);
+    if (data?.signedUrl) setUrls((u) => ({ ...u, [path]: data.signedUrl }));
     return path;
   };
 
@@ -387,7 +444,7 @@ export default function SocialPage() {
         // 一次丟太多下載瀏覽器會擋 —— 隔開一點
         await new Promise((res) => setTimeout(res, 250));
       }
-      flash(`切好了 ${order.length} 張，檔名 01 的**先貼**。`);
+      flash(`切好了 ${order.length} 張 —— 檔名 01 的那張先貼。`);
     } catch (e: any) {
       flash('切不出來：' + (e?.message ?? e));
     } finally { setCutting(false); }
@@ -402,7 +459,7 @@ export default function SocialPage() {
             把要貼的排出來，直接看整體感覺
           </span>
         </h1>
-        {canEdit && <AddButton onClick={() => setNewAcc({ name: '', handle: '', bio: '' })}>
+        {canEdit && <AddButton onClick={() => setAccDraft({ ...BLANK_ACC })}>
           新增模擬頁
         </AddButton>}
       </div>
@@ -477,26 +534,58 @@ export default function SocialPage() {
           <div className="flex flex-wrap items-start gap-5">
             {/* ══ 手機 ══ */}
             <div className="w-[340px] shrink-0 rounded-2xl border border-mor-line bg-white overflow-hidden">
-              <div className="px-3.5 py-3 border-b border-[#EFEFEF]">
+              {/*
+                ══════════ 個人檔案的頭（2026-09-16 使用者:「這些都可以再編輯」）══════════
+
+                ★★ 頭像、名稱、簡介、追蹤者都改得動。建立時填一次就鎖死的話，
+                  打錯字只能砍掉重建 —— 而砍掉會連同底下所有的貼文一起消失。
+
+                ★ 「編輯」放在這一塊的**右上角**，不是丟到別的頁面去 ——
+                  要改的東西就在眼前，入口也該在眼前。
+              */}
+              <div className="px-3.5 py-3 border-b border-[#EFEFEF] relative">
+                {canEdit && (
+                  <button onClick={() => setAccDraft({
+                    id: acc.id, name: acc.name, handle: acc.handle, bio: acc.bio ?? '',
+                    followers: acc.followers ?? '', following: acc.following ?? '',
+                    avatar_path: acc.avatar_path,
+                  })}
+                    className="absolute right-3 top-2.5 text-[11px] text-mor-slate
+                               hover:text-mor-slatedark">編輯</button>
+                )}
                 <div className="flex items-center gap-3.5">
                   <span className="w-[54px] h-[54px] rounded-full shrink-0 flex items-center justify-center"
                     style={{ background: 'conic-gradient(from 210deg,#C9A227,#3FAE7C,#41689B,#C9A227)' }}>
-                    <span className="w-12 h-12 rounded-full bg-white flex items-center justify-center
-                                     text-[15px] font-extrabold text-mor-slate">
-                      {(acc.name || acc.handle).slice(0, 1)}
-                    </span>
+                    {acc.avatar_path && urls[acc.avatar_path] ? (
+                      <img src={urls[acc.avatar_path]} alt=""
+                        className="w-12 h-12 rounded-full object-cover bg-white" />
+                    ) : (
+                      <span className="w-12 h-12 rounded-full bg-white flex items-center justify-center
+                                       text-[15px] font-extrabold text-mor-slate">
+                        {(acc.name || acc.handle).slice(0, 1)}
+                      </span>
+                    )}
                   </span>
-                  <div className="flex gap-6 text-center text-xs">
+                  <div className="flex gap-5 text-center text-xs">
+                    {/* ★ 貼文數是**算出來的**（幾格就是幾則），不給改 —— 給改就會跟牆對不上 */}
                     <div><b className="block text-sm">{cells.length}</b>
                       <span className="text-gray-500 text-[11px]">貼文</span></div>
-                    {/* ★ 追蹤者是裝飾不是資料 —— 這一頁沒有連 IG，寫個數字只會讓人以為是真的 */}
-                    <div><b className="block text-sm text-gray-300">—</b>
-                      <span className="text-gray-400 text-[11px]">追蹤者</span></div>
+                    {/*
+                      ★★ 追蹤者與追蹤中是**使用者自己打的裝飾**,不是從 IG 讀來的。
+                        沒填就留一個灰色的破折號 —— 塞一個假數字進去的話,
+                        看到的人會以為那是真的。
+                    */}
+                    <div><b className={`block text-sm ${acc.followers ? '' : 'text-gray-300'}`}>
+                      {acc.followers || '—'}</b>
+                      <span className="text-gray-500 text-[11px]">追蹤者</span></div>
+                    <div><b className={`block text-sm ${acc.following ? '' : 'text-gray-300'}`}>
+                      {acc.following || '—'}</b>
+                      <span className="text-gray-500 text-[11px]">追蹤中</span></div>
                   </div>
                 </div>
                 <div className="mt-2 text-xs leading-relaxed">
                   <b>{acc.name}</b>
-                  {acc.bio && <div className="text-gray-500">{acc.bio}</div>}
+                  {acc.bio && <div className="text-gray-500 whitespace-pre-wrap">{acc.bio}</div>}
                 </div>
               </div>
               <div className="flex border-b border-[#EFEFEF] text-[13px]">
@@ -534,7 +623,7 @@ export default function SocialPage() {
                   <div className="text-xs mt-3">✂ 的那幾格是切圖，點下去看切片與發佈順序</div>
                 </div>
               ) : (
-                <Panel row={selRow} seq={selCell?.seq ?? 0} urls={urls}
+                <Panel row={selRow} seq={selCell?.seq ?? 0} urls={urls} savedAt={savedAt}
                   canEdit={canEdit} cutting={cutting} rows={rows}
                   onPatch={patch} onPin={() => togglePin(selRow)} onDel={() => del(selRow)}
                   onNudge={(d) => nudge(selRow.id, d)}
@@ -543,9 +632,12 @@ export default function SocialPage() {
                     const path = await put(file);
                     if (!path) return;
                     if (selRow.kind === 'split' && selRow.split) {
-                      const { error } = await supabase.from('social_splits')
-                        .update({ source_path: path }).eq('id', selRow.split.id);
+                      /* ★ 同上:RLS 擋下來回的是「成功、0 列」,一定要接 select */
+                      const { data, error } = await supabase.from('social_splits')
+                        .update({ source_path: path }).eq('id', selRow.split.id).select('id');
                       if (error) return flash('存不起來：' + error.message);
+                      if (!data?.length) return flash('沒有存到 —— 你的權限改不動這一頁。');
+                      markSaved();
                     } else if (post) {
                       await patch(post, { image_path: path });
                     }
@@ -562,15 +654,43 @@ export default function SocialPage() {
         </>
       )}
 
-      {/* ── 新增模擬頁 ── */}
-      {newAcc && (
-        <NewAccount draft={newAcc} onChange={setNewAcc} onClose={() => setNewAcc(null)}
+      {/* ── 新增／編輯模擬頁（同一個視窗）── */}
+      {accDraft && (
+        <AccountForm draft={accDraft} onChange={setAccDraft} onClose={() => setAccDraft(null)}
+          url={accDraft.avatar_path ? urls[accDraft.avatar_path] : null}
+          onPickAvatar={async (f) => {
+            const path = await put(f);
+            if (path) setAccDraft((d) => (d ? { ...d, avatar_path: path } : d));
+          }}
           onSave={async (d) => {
+            const body = {
+              name: d.name.trim(),
+              handle: d.handle.trim().replace(/^@/, ''),
+              bio: d.bio.trim() || null,
+              followers: d.followers.trim() || null,
+              following: d.following.trim() || null,
+              avatar_path: d.avatar_path,
+            };
+            const { error } = d.id
+              ? await supabase.from('social_accounts').update(body).eq('id', d.id)
+              : await supabase.from('social_accounts').insert({ ...body, sort: accounts.length });
+            if (error) return flash((d.id ? '存不起來：' : '建不起來：') + error.message);
+            setAccDraft(null);
+            load();
+          }}
+          onDeactivate={async () => {
+            if (!accDraft.id) return;
+            /*
+             * ★★ 停用不是刪除。這個模擬頁底下可能有幾十格的文案與照片 ——
+             *   刪掉會 cascade 掉全部,而「我只是不想在分頁籤上看到它」
+             *   跟「我要把它全部丟掉」是兩件事。
+             */
+            if (!confirm('停用這個模擬頁？\n\n它會從上面的分頁籤消失，但貼文與照片都留著。')) return;
             const { error } = await supabase.from('social_accounts')
-              .insert({ name: d.name.trim(), handle: d.handle.trim().replace(/^@/, ''),
-                bio: d.bio.trim() || null, sort: accounts.length });
-            if (error) return flash('建不起來：' + error.message);
-            setNewAcc(null);
+              .update({ active: false }).eq('id', accDraft.id);
+            if (error) return flash('停用失敗：' + error.message);
+            setAccDraft(null);
+            setAccId('');
             load();
           }} />
       )}
@@ -637,9 +757,11 @@ function Cell({ cell, urls, clean, selected, onClick, draggable, onDragStart, on
 
 /* ══════════════════════════════════════════════════════════ */
 
-function Panel({ row, seq, urls, canEdit, cutting, rows,
+function Panel({ row, seq, urls, savedAt, canEdit, cutting, rows,
   onPatch, onPin, onDel, onNudge, onSlices, onUpload }: {
   row: Row; seq: number; urls: Record<string, string>;
+  /** 剛存好的時間戳。0 ＝ 沒有剛存過 */
+  savedAt: number;
   canEdit: boolean; cutting: boolean; rows: Row[];
   onPatch: (p: Post, f: Partial<Post>) => void;
   onPin: () => void; onDel: () => void; onNudge: (d: -1 | 1) => void;
@@ -669,6 +791,10 @@ function Panel({ row, seq, urls, canEdit, cutting, rows,
                   第 {seq - row.span + 1}～{seq} 則</span></>
             : <>第 {seq} 則</>}
           {lock && <span className="ml-2 text-[11px] font-normal text-mor-greendark">已發佈</span>}
+          {/* ★ 這一頁沒有儲存鈕 —— 存好了要說一聲,不然沒有人知道自己存到了沒 */}
+          {savedAt > 0 && (
+            <span className="ml-2 text-[11px] font-normal text-mor-greendark">✓ 已存</span>
+          )}
         </h4>
         {canEdit && (
           <span className="flex gap-1 shrink-0">
@@ -682,6 +808,9 @@ function Panel({ row, seq, urls, canEdit, cutting, rows,
       <p className="text-[11px] text-gray-500 mt-0.5 leading-relaxed">
         {lock ? '已經貼出去的內容不給改 —— 改了預覽就跟真的不一樣了。釘選還是可以動。'
               : '格子可以拖曳換順序，或用右邊的 ◀ ▶。IG 是新的在左上。'}
+        <span className="block mt-0.5 text-gray-400">
+          沒有儲存鈕 —— 文案<b>點到別的地方</b>就存，換圖、日期、狀態改完就存。
+        </span>
       </p>
 
       {/* ── 釘選 ── */}
@@ -893,46 +1022,118 @@ function Caption({ post, label, readOnly, onSave }: {
 
 /* ══════════════════════════════════════════════════════════ */
 
-function NewAccount({ draft, onChange, onClose, onSave }: {
-  draft: { name: string; handle: string; bio: string };
-  onChange: (d: { name: string; handle: string; bio: string }) => void;
+/**
+ * 新增／編輯模擬頁 —— **同一個視窗**。
+ *
+ * ★ 兩個分開寫的話，「簡介」那一欄的提示遲早會有一邊沒跟上，
+ *   然後同一個欄位在兩個地方說不一樣的話。
+ *
+ * ★★ 追蹤者用文字框不是數字框:這一頁沒有連 IG，那兩個數字是裝飾。
+ *   數字框會擋掉「12.3萬」，而那正是使用者可能想打的。
+ */
+function AccountForm({ draft, url, onChange, onClose, onSave, onPickAvatar, onDeactivate }: {
+  draft: AccDraft;
+  /** 頭像的簽名網址（剛上傳完還沒換到的話會是 null，那就先顯示首字） */
+  url: string | null;
+  onChange: (d: AccDraft) => void;
   onClose: () => void;
-  onSave: (d: { name: string; handle: string; bio: string }) => void;
+  onSave: (d: AccDraft) => Promise<void> | void;
+  onPickAvatar: (f: File) => void;
+  onDeactivate: () => void;
 }) {
   const [save, saving] = useOnce(async () => { await onSave(draft); });
+  const file = useRef<HTMLInputElement>(null);
   const bad = !draft.name.trim() || !draft.handle.trim();
+  const editing = !!draft.id;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/30" onClick={onClose} />
-      <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm">
-        <div className="px-5 py-3.5 border-b border-mor-line font-bold flex items-center justify-between">
-          新增模擬頁
+      <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm max-h-[85vh] overflow-y-auto">
+        <div className="sticky top-0 bg-white px-5 py-3.5 border-b border-mor-line font-bold
+                        flex items-center justify-between">
+          {editing ? '編輯模擬頁' : '新增模擬頁'}
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
         </div>
+
         <div className="px-5 py-4 grid gap-3 text-sm">
+          {/* 頭像 */}
+          <div className="flex items-center gap-3">
+            <span className="w-14 h-14 rounded-full shrink-0 flex items-center justify-center"
+              style={{ background: 'conic-gradient(from 210deg,#C9A227,#3FAE7C,#41689B,#C9A227)' }}>
+              {url ? (
+                <img src={url} alt="" className="w-[50px] h-[50px] rounded-full object-cover bg-white" />
+              ) : (
+                <span className="w-[50px] h-[50px] rounded-full bg-white flex items-center
+                                 justify-center text-base font-extrabold text-mor-slate">
+                  {(draft.name || draft.handle || '？').slice(0, 1)}
+                </span>
+              )}
+            </span>
+            <div className="text-[11px] text-gray-500 leading-relaxed">
+              頭像
+              <div className="mt-1 flex gap-2">
+                <input ref={file} type="file" accept="image/*" hidden
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) onPickAvatar(f); e.target.value = ''; }} />
+                <button onClick={() => file.current?.click()}
+                  className="h-7 rounded-lg border border-mor-line bg-white px-2.5 text-[11px]">
+                  {draft.avatar_path ? '換一張' : '選一張'}
+                </button>
+                {draft.avatar_path && (
+                  <button onClick={() => onChange({ ...draft, avatar_path: null })}
+                    className="h-7 px-1 text-[11px] text-gray-400 underline">用名字的第一個字</button>
+                )}
+              </div>
+            </div>
+          </div>
+
           <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">名稱</span>
             <input value={draft.name} onChange={(e) => onChange({ ...draft, name: e.target.value })}
               placeholder="ESTIA 台北服務式住宅"
               className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+
           <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">帳號（handle）</span>
             <input value={draft.handle} onChange={(e) => onChange({ ...draft, handle: e.target.value })}
               placeholder="estia.tw"
               className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+
           <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">簡介</span>
-            <input value={draft.bio} onChange={(e) => onChange({ ...draft, bio: e.target.value })}
+            <textarea value={draft.bio} onChange={(e) => onChange({ ...draft, bio: e.target.value })}
               placeholder="中山・南京 ｜ 月租・短租 ｜ 私訊看房"
-              className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
-          <div className="text-[11px] text-gray-400 leading-relaxed">
-            這裡不會連到真的 IG —— handle 只是用來分辨是哪一面牆。
+              className="rounded-lg border border-gray-300 px-2 py-1.5 min-h-[58px] resize-y" /></label>
+
+          <div className="flex gap-2.5">
+            <label className="flex-1 flex flex-col gap-1"><span className="text-xs text-gray-500">追蹤者</span>
+              <input value={draft.followers} onChange={(e) => onChange({ ...draft, followers: e.target.value })}
+                placeholder="1,204" className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+            <label className="flex-1 flex flex-col gap-1"><span className="text-xs text-gray-500">追蹤中</span>
+              <input value={draft.following} onChange={(e) => onChange({ ...draft, following: e.target.value })}
+                placeholder="312" className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
           </div>
+
+          <div className="text-[11px] text-gray-400 leading-relaxed">
+            這裡不會連到真的 IG —— 這兩個數字是<b>你自己打的</b>，只是讓這面牆看起來像 IG。
+            留空就顯示破折號。
+          </div>
+
+          {/* 停用是底下一行紅色小字，不是按鈕（anxing-ui 四-3） */}
+          {editing && (
+            <div className="text-center pt-1">
+              <button onClick={onDeactivate}
+                className="text-xs text-red-400 underline hover:text-red-600">
+                停用這個模擬頁（貼文與照片都留著）
+              </button>
+            </div>
+          )}
         </div>
-        <div className="px-5 py-3 border-t border-mor-line flex justify-end gap-2">
+
+        <div className="sticky bottom-0 bg-white px-5 py-3 border-t border-mor-line flex justify-end gap-2">
           <button onClick={onClose} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>
           <button onClick={save} disabled={saving || bad}
             title={bad ? '名稱與帳號都要填' : ''}
             className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium
                        hover:bg-mor-slatedark disabled:opacity-50">
-            {saving ? '建立中⋯' : '建立'}</button>
+            {saving ? '儲存中⋯' : editing ? '儲存' : '建立'}</button>
         </div>
       </div>
     </div>
