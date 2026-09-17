@@ -42,7 +42,56 @@ export type Entry = {
    * ★ 日期、項目、科目、備註照樣改得動 —— 那幾欄不影響對帳。
    */
   fromRequest?: boolean;
+  /**
+   * 這一筆是**安幸代墊**的（migration_236 / 237）。有值就是那列暫付的 id。
+   *
+   * ══════════════════════════════════════════════════════════
+   * 【為什麼要帶到這一頁來】（2026-09-17 使用者連問三次）
+   *
+   * 愛皮這個月 8 筆支出全部都是安幸先墊的，而這一頁**一個字都沒說**。
+   * 要知道就得跑去「暫收付管理 → 暫付」把 4,530／1,329／7,350
+   * 三個數字加起來對 —— 使用者就是這樣連問了三次
+   * 「怎麼還是三筆」「全都代墊」。
+   *
+   * ★ 資料一直都是對的。缺的是畫面上那一句話。
+   * ══════════════════════════════════════════════════════════
+   */
+  advanceId?: string | null;
 };
+
+/** 這一筆是不是安幸代墊的。 */
+export const isLent = (e: Entry | null | undefined) => !!e?.advanceId;
+
+/**
+ * 這個月有多少錢是安幸先墊的。
+ *
+ * ★★ 算的是**支出**那一側。收入沒有代墊這回事 ——
+ *   代墊的定義就是「安幸替別本帳付錢」，錢進來不會經過這條路。
+ *   不濾 kind 的話，哪天收入那邊有人塞了 advanceId 進來，
+ *   這個數字會變大而沒有人知道為什麼。
+ */
+export function lentTotal(entries: Entry[] | null | undefined): number {
+  let n = 0;
+  for (const e of entries ?? []) {
+    if (e.kind === 'expense' && isLent(e)) n += round(e.amount);
+  }
+  return n;
+}
+
+/**
+ * 同一列暫付底下的其他幾筆（點開「安幸代墊」那顆籤要看的）。
+ *
+ * ★ 從**已經載進來的資料**裡撈，不另外查一次資料庫 ——
+ *   同一張請款單的支出日期都是那張單的出款日，
+ *   所以它們一定在同一個月份、同一份清單裡。
+ *
+ * ★★ 回傳**含自己**。少掉自己的話，五筆的那一組點開只看到四筆，
+ *   而合計對不起來的時候沒有人知道少了哪一筆。
+ */
+export function lentSiblings(entries: Entry[] | null | undefined, advanceId: string | null | undefined): Entry[] {
+  if (!advanceId) return [];
+  return (entries ?? []).filter((e) => e.advanceId === advanceId);
+}
 
 /** 收入為正、支出為負。淨額直接把這一欄加起來就好。 */
 export const signed = (e: Entry) => (e.kind === 'income' ? round(e.amount) : -round(e.amount));

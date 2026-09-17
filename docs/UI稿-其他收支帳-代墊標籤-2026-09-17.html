@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>UI 稿 — 其他收支帳：看得出哪幾筆是代墊</title>
+<style>
+  :root{--bg:#F1F0EC;--line:#E0DDD5;--ink:#2E3840;--slate:#41689B;--slatedark:#345380;
+        --bluelight:#DFEDFA;--greendark:#217346;--greenlight:#DFF2E8;--sand:#ECE8DF}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.6 -apple-system,"PingFang TC","Noto Sans TC",sans-serif;padding:24px 16px 70px}
+  .wrap{max-width:1080px;margin:0 auto}
+  h1{font-size:20px;margin:0 0 4px}
+  h2{font-size:15px;margin:30px 0 9px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+  h3{font-size:12px;margin:0 0 7px;color:#6b7280;font-weight:700;letter-spacing:.04em}
+  .lead{color:#6b7280;font-size:13px;margin:0 0 4px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:13px;overflow:hidden}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:880px){.two{grid-template-columns:1fr}}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  thead{background:rgba(236,232,223,.6);color:#6b7280;font-size:11px}
+  th,td{padding:6px 9px;text-align:left;white-space:nowrap}
+  th.r,td.r{text-align:right}
+  tbody tr{border-top:1px solid rgba(224,221,213,.5)}
+  tbody tr.g{background:rgba(223,237,250,.35)}
+  .num{font-variant-numeric:tabular-nums}
+  .red{color:#dc2626}.mut{color:#9ca3af}
+  .pill{font-size:10px;border-radius:4px;padding:1px 5px;font-weight:600}
+  .p-e{background:#FEF2F2;color:#dc2626}
+  .p-l{background:var(--bluelight);color:var(--slatedark);cursor:pointer}
+  .sub{font-size:11px;color:#9ca3af}
+  .note{font-size:12.5px;color:#4b5563;background:#fff;border:1px solid var(--line);
+        border-radius:11px;padding:11px 13px;margin-top:10px}
+  .q{font-size:13px;background:#FFFBEB;border:1px solid #FCD34D;border-radius:11px;padding:11px 13px;margin-top:10px}
+  .q b{color:#92400E}
+  ul{margin:5px 0 0;padding-left:18px}li{margin:3px 0}
+  .pop{position:fixed;z-index:9;background:#fff;border:1px solid var(--line);border-radius:11px;
+       box-shadow:0 8px 24px rgba(0,0,0,.14);padding:10px 12px;font-size:12px;min-width:230px;display:none}
+  .pop b{font-size:12.5px}
+  .pop .row{display:flex;justify-content:space-between;gap:14px;padding:2px 0}
+  .pop .tot{border-top:1px solid var(--line);margin-top:5px;padding-top:5px;font-weight:700}
+  .ab{font-size:12px;font-weight:700;color:var(--slatedark)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>其他收支帳：讓「這幾筆是代墊」看得出來</h1>
+<p class="lead">2026-09-17。資料本來就對（8 筆＝3 列暫付＝$13,209），<b>問題是畫面上一個字都沒說</b>。還沒動程式碼。</p>
+
+<h2>現在 vs 調整後</h2>
+<div class="two">
+  <div>
+    <h3>現在</h3>
+    <div class="card">
+      <table>
+        <thead><tr><th>日期</th><th>項目</th><th>會計科目</th><th class="r">金額</th></tr></thead>
+        <tbody>
+          <tr><td class="mut">09-09</td><td><span class="pill p-e">支</span> 115/7月健保費</td><td>保險費</td><td class="r num red">−1,428</td></tr>
+          <tr><td class="mut">09-09</td><td><span class="pill p-e">支</span> 115/7月勞保費</td><td>辦公費</td><td class="r num red">−3,102</td></tr>
+          <tr><td class="mut">09-08</td><td><span class="pill p-e">支</span> 旅平險</td><td>保險費</td><td class="r num red">−261</td></tr>
+          <tr><td class="mut">09-08</td><td><span class="pill p-e">支</span> 115/7月電信費-0975…</td><td>辦公費</td><td class="r num red">−246</td></tr>
+          <tr><td class="mut">09-07</td><td><span class="pill p-e">支</span> 115/7-8月管理服務費</td><td>辦公費</td><td class="r num red">−7,350</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="sub" style="margin-top:6px">
+      要知道哪幾筆是代墊，得自己去「暫收付管理」把 4,530／1,329／7,350 加起來對。
+      <b>你今天問了三次，每一次都是因為這件事。</b>
+    </p>
+  </div>
+
+  <div>
+    <h3>調整後 — 多一個「代墊」籤，點得開</h3>
+    <div class="card">
+      <table>
+        <thead><tr><th>日期</th><th>項目</th><th>會計科目</th><th class="r">金額</th></tr></thead>
+        <tbody>
+          <tr class="g"><td class="mut">09-09</td>
+            <td><span class="pill p-e">支</span> 115/7月健保費
+                <span class="pill p-l" data-k="075">代墊</span></td>
+            <td>保險費</td><td class="r num red">−1,428</td></tr>
+          <tr class="g"><td class="mut">09-09</td>
+            <td><span class="pill p-e">支</span> 115/7月勞保費
+                <span class="pill p-l" data-k="075">代墊</span></td>
+            <td>辦公費</td><td class="r num red">−3,102</td></tr>
+          <tr class="g"><td class="mut">09-08</td>
+            <td><span class="pill p-e">支</span> 旅平險
+                <span class="pill p-l" data-k="086">代墊</span></td>
+            <td>保險費</td><td class="r num red">−261</td></tr>
+          <tr class="g"><td class="mut">09-08</td>
+            <td><span class="pill p-e">支</span> 115/7月電信費-0975…
+                <span class="pill p-l" data-k="086">代墊</span></td>
+            <td>辦公費</td><td class="r num red">−246</td></tr>
+          <tr class="g"><td class="mut">09-07</td>
+            <td><span class="pill p-e">支</span> 115/7-8月管理服務費
+                <span class="pill p-l" data-k="077">代墊</span></td>
+            <td>辦公費</td><td class="r num red">−7,350</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="sub" style="margin-top:6px">
+      <b>點藍色那顆「代墊」試試看</b> —— 會跳出這筆屬於哪一張單、那張單一共代墊多少、同一張單還有哪幾筆。
+    </p>
+  </div>
+</div>
+
+<div class="note">
+  <b>為什麼是「點一下」不是 hover。</b>
+  手機沒有 hover，`title=` 那句話在手機上等於不存在（anxing-ui 三）。
+  卡片用 <code>fixed</code> ＋ <code>getBoundingClientRect()</code> 定位，不要在格子裡 <code>absolute</code> ——
+  表格在 <code>overflow-auto</code> 裡，畫在格子裡會被容器裁掉，而最後一列正是最常被點的。
+</div>
+
+<h2>還有兩個小地方</h2>
+<div class="note">
+  <b>① 上面的統計卡多一張「其中代墊 $13,209」。</b>
+  現在是「收入 / 支出 / 淨額」三張。多這一張，一眼就知道這個月的支出有多少是安幸先墊的、要跟愛皮收回來。
+  <br><br>
+  <b>② 暫收付管理那一頁，把 $1,329 點得開。</b>
+  那一列現在只寫「代墊請款單 PR-202608-086」，看不到裡面是哪 5 筆。
+  展開列出「旅平險 261／電信費 246・305・300・217」。
+</div>
+
+<div class="q">
+  <b>要我做哪幾個？</b>
+  <ul>
+    <li><b>甲（建議）</b>　只做列上那顆「代墊」籤 —— 最小、解決你今天問三次的那件事</li>
+    <li><b>乙</b>　甲 ＋ 統計卡多一張</li>
+    <li><b>丙</b>　全部三個（含暫付那一頁點得開）</li>
+  </ul>
+</div>
+
+<h2>這次不會動到的</h2>
+<div class="note">
+  安幸的支出明細頁、請款單控管、營收表一行都不動。<br>
+  <b>資料完全不動</b> —— 這幾筆本來就是代墊，只是畫面上沒說。這是純顯示的改動。<br>
+  另外那張「應支／實支」的稿子是另一件事，還在等你回 ❶❷❸。
+</div>
+
+<div class="pop" id="pop"></div>
+<script>
+const D = {
+  '075': {no:'PR-202608-075', amt:4530, items:[['115/7月健保費',1428],['115/7月勞保費',3102]]},
+  '086': {no:'PR-202608-086', amt:1329, items:[['旅平險',261],['電信費-0975(7月)',246],
+          ['電信費-2778(8月)',305],['電信費-2778(7月)',300],['電信費-0975(8月)',217]]},
+  '077': {no:'PR-202608-077', amt:7350, items:[['115/7-8月管理服務費',7350]]},
+};
+const pop = document.getElementById('pop');
+let open = null;
+document.querySelectorAll('.p-l').forEach((el) => {
+  el.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const d = D[el.dataset.k];
+    if (open === el) { pop.style.display='none'; open=null; return; }
+    open = el;
+    pop.innerHTML = '<b>安幸代墊・'+d.no+'</b>'
+      + '<div class="sub" style="margin:3px 0 6px">愛皮之後要還安幸這筆</div>'
+      + d.items.map(([n,a]) => '<div class="row"><span>'+n+'</span><span class="num">'
+          + a.toLocaleString() + '</span></div>').join('')
+      + '<div class="row tot"><span>這張單合計</span><span class="num">'
+      + d.amt.toLocaleString() + '</span></div>';
+    pop.style.display = 'block';
+    const r = el.getBoundingClientRect();
+    const w = pop.offsetWidth, h = pop.offsetHeight;
+    pop.style.left = Math.max(8, Math.min(r.left, innerWidth - w - 8)) + 'px';
+    pop.style.top  = (r.bottom + h + 8 > innerHeight ? r.top - h - 6 : r.bottom + 6) + 'px';
+  });
+});
+document.addEventListener('click', () => { pop.style.display='none'; open=null; });
+</script>
+</div>
+</body>
+</html>

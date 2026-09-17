@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { useProfile } from '@/lib/profile';
 import { fetchAll } from '@/lib/fetch-all';
@@ -13,6 +13,7 @@ import {
 } from '@/lib/book';
 import {
   totals, byMonth, byCode, unsettled, applyFilters, monthRange, prevMonth, pctChange,
+  isLent, lentTotal, lentSiblings,
   type Entry, type Filters,
 } from '@/lib/other-book';
 import {
@@ -115,7 +116,7 @@ export default function OtherBooksPage() {
         .eq('book', book).eq('source', OTHER_BIZ_SOURCE)
         .gte('checkin', from).lte('checkin', to).range(a, b)),
       fetchAll<Record<string, unknown>>((a, b) => supabase.from('expenses')
-        .select('id, spent_on, item_name, account_code, amount, note, request_id')
+        .select('id, spent_on, item_name, account_code, amount, note, request_id, advance_id')
         .eq('book', book)
         .gte('spent_on', from).lte('spent_on', to).range(a, b)),
     ]);
@@ -154,6 +155,8 @@ export default function OtherBooksPage() {
         settled: true,
         // ★ 請款單產生的:金額不給在這裡改（見 lib/other-book.ts 的 fromRequest）
         fromRequest: !!e.request_id,
+        // ★ 安幸代墊（2026-09-17）。有值就畫那顆籤 —— 見 lib/other-book.ts 的 advanceId
+        advanceId: (e.advance_id as string) ?? null,
       })),
     ].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''));
 
@@ -246,6 +249,11 @@ export default function OtherBooksPage() {
    *   使用者的結論是「這個欄位壞了」。
    */
   const [row, setRow] = useState<Entry | null>(null);
+  /*
+   * 點開的那顆「安幸代墊」籤（2026-09-17）。
+   * ★ 存座標不存元素 —— 卡片用 fixed 畫在整頁上，見 LendPop 的註解。
+   */
+  const [lend, setLend] = useState<{ advanceId: string; x: number; y: number } | null>(null);
 
   async function saveRow() {
     if (!row || busy) return;
@@ -534,6 +542,7 @@ export default function OtherBooksPage() {
                             {e.kind === 'income' ? '收' : '支'}
                           </span>
                           <span className="font-medium truncate">{e.name}</span>
+                          <LendTag e={e} onOpen={setLend} />
                           {e.kind === 'income' && !e.settled && (
                             <span className="shrink-0 rounded bg-amber-50 text-amber-700 px-1.5 py-0.5 text-[11px]">未收</span>
                           )}
@@ -578,6 +587,7 @@ export default function OtherBooksPage() {
                               {e.kind === 'income' ? '收' : '支'}
                             </span>
                             <span className="truncate">{e.name}</span>
+                            <LendTag e={e} onOpen={setLend} />
                             {/* 還沒收的錢要標出來 —— 那是唯一會讓人今天做一件事的資訊 */}
                             {e.kind === 'income' && !e.settled && (
                               <span className="shrink-0 rounded bg-amber-50 text-amber-700 px-1.5 py-0.5 text-[11px]">未收</span>
@@ -624,6 +634,11 @@ export default function OtherBooksPage() {
         )}
         </div>
       </TabShell>
+
+      {/* ══════════════ 安幸代墊的明細（2026-09-17）══════════════ */}
+      {lend && (
+        <LendPop at={lend} rows={cur} onClose={() => setLend(null)} />
+      )}
 
       {/* ══════════════ 打開來編輯（2026-09-10）══════════════ */}
       {row && (
@@ -812,6 +827,137 @@ export default function OtherBooksPage() {
 }
 
 /* ══════════════ 儀錶板 ══════════════ */
+
+
+/* ══════════════════════════════════════════════════════════
+ * 安幸代墊：列上那顆籤 ＋ 點開的明細
+ * ══════════════════════════════════════════════════════════
+ *
+ * 【為什麼要有這個】（2026-09-17 使用者連問三次）
+ *
+ * 愛皮 2026-09 的 8 筆支出**全部**都是安幸先墊的（$13,209），
+ * 而這一頁一個字都沒說。要知道就得跑去「暫收付管理 → 暫付」
+ * 把 4,530／1,329／7,350 三個數字加起來對 ——
+ * 使用者就是這樣問了三次「怎麼還是三筆」「全都代墊」。
+ *
+ * ★ 資料一直是對的。缺的是畫面上那一句話。
+ */
+
+/**
+ * 列上那顆「安幸代墊」。
+ *
+ * ★★ 點得開，不是 `title=`。手機沒有 hover，
+ *   `title` 那句話在手機上等於不存在（anxing-ui 三）。
+ *
+ * ★ `stopPropagation` 一定要 —— 這一列本身點下去是「打開編輯」，
+ *   不擋的話點籤會連編輯視窗一起彈出來。
+ */
+function LendTag({ e, onOpen }: {
+  e: Entry;
+  onOpen: (v: { advanceId: string; x: number; y: number }) => void;
+}) {
+  if (!isLent(e)) return null;
+  return (
+    <button
+      onClick={(ev) => {
+        ev.stopPropagation();
+        const r = (ev.currentTarget as HTMLElement).getBoundingClientRect();
+        onOpen({ advanceId: e.advanceId as string, x: r.left, y: r.bottom });
+      }}
+      title="安幸先墊的錢，點開看這張單還有哪幾筆"
+      className="shrink-0 rounded bg-mor-bluelight text-mor-slatedark px-1.5 py-0.5
+                 text-[11px] font-medium hover:bg-mor-slate hover:text-white">
+      安幸代墊
+    </button>
+  );
+}
+
+/**
+ * 點開之後那張卡片。
+ *
+ * ══════════════════════════════════════════════════════════
+ * 【★★★ 為什麼用 fixed ＋ getBoundingClientRect，不在格子裡 absolute】
+ *
+ * 這個表格在 `overflow-x-auto` 的容器裡。畫在格子裡的話會被容器**裁掉**，
+ * 而最後一列與最右邊那幾格正是最常被點的（anxing-ui 三，2026-09-16 踩過）。
+ *
+ * ★ 座標要夾在視窗內:靠右往左收、靠下往上翻。
+ *   不夾的話手機上點最後一列，卡片會有一半在螢幕外。
+ * ══════════════════════════════════════════════════════════
+ *
+ * ★★ 明細從**已經載進來的 `cur`** 裡撈，不另外查資料庫 ——
+ *   同一張請款單的支出日期都是那張單的出款日，
+ *   所以它們一定在同一個月份、同一份清單裡（見 lib 的 lentSiblings）。
+ */
+function LendPop({ at, rows, onClose }: {
+  at: { advanceId: string; x: number; y: number };
+  rows: Entry[];
+  onClose: () => void;
+}) {
+  const items = lentSiblings(rows, at.advanceId);
+  const total = items.reduce((n, e) => n + (Number(e.amount) || 0), 0);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+
+  /*
+   * ★ 先畫再量。量得到寬高才夾得住邊界 ——
+   *   render 當下那個 div 還不存在，`offsetWidth` 是 0。
+   */
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const w = el.offsetWidth, h = el.offsetHeight;
+    setPos({
+      left: Math.max(8, Math.min(at.x, window.innerWidth - w - 8)),
+      top: at.y + h + 8 > window.innerHeight ? Math.max(8, at.y - h - 28) : at.y + 6,
+    });
+  }, [at.x, at.y, at.advanceId]);
+
+  return (
+    <>
+      {/* 點別的地方就關掉。整頁的透明層,不畫遮罩 —— 這只是一張小卡片 */}
+      <div className="fixed inset-0 z-[55]" onClick={onClose} />
+      <div ref={ref} onClick={(e) => e.stopPropagation()}
+        style={{ left: pos?.left ?? at.x, top: pos?.top ?? at.y + 6,
+                 visibility: pos ? 'visible' : 'hidden' }}
+        className="fixed z-[56] min-w-[15rem] max-w-[22rem] rounded-xl border border-mor-line
+                   bg-white shadow-xl px-3.5 py-3 text-sm">
+        <div className="font-bold text-[13px]">安幸代墊</div>
+        <div className="text-[11px] text-gray-400 mt-0.5 mb-2">
+          這張請款單的錢由安幸先付，之後跟這本帳收回
+        </div>
+        {items.length === 0 ? (
+          /*
+           * ★ 撈不到不要畫成空白。跨月的話（同一張單的支出被改到別的月份）
+           *   這一份清單裡就沒有它的同伴 —— 要說出來,不是留白。
+           */
+          <div className="text-xs text-gray-400 py-1">
+            這個月份的清單裡只有這一筆。<br />同一張單的其他筆可能在別的月份。
+          </div>
+        ) : (
+          <>
+            <div className="divide-y divide-mor-line/50">
+              {items.map((e) => (
+                <div key={e.id} className="flex items-baseline justify-between gap-3 py-1">
+                  <span className="text-xs truncate">{e.name}</span>
+                  <span className="text-xs tabular-nums shrink-0">{fmt(e.amount)}</span>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-baseline justify-between gap-3 pt-1.5 mt-1.5
+                            border-t border-mor-line font-bold">
+              <span className="text-xs">這張單合計</span>
+              <span className="text-xs tabular-nums">{fmt(total)}</span>
+            </div>
+            <div className="text-[11px] text-gray-400 mt-2">
+              暫收付管理 → 暫付 也有這一列
+            </div>
+          </>
+        )}
+      </div>
+    </>
+  );
+}
 
 function Dashboard({
   rows, cur, ym, nameOf, loading, book,
