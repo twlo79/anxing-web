@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  dueDateOf, resolvePayDay, checkFirstDue, fmtDue, STEP_OF,
+  dueDateOf, payDayOf, dueDayText, fmtDue, STEP_OF,
   periodRange, fmtPeriodRange, rentMonthCount, checkContractDates,
 } from './due-date.ts';
 
@@ -27,18 +27,17 @@ test('年繳：只有一期,應繳日一樣是 6/13', () => {
   assert.equal(dueDateOf(START, 'yearly', 0, 13), '2026-06-13');
 });
 
-test('使用者的三個例子:首繳日填什麼都不影響應繳日', () => {
-  // 5/13、6/13、7/13 三種填法,第一期應繳日都該是 6/13
-  for (const fp of ['2026-05-13', '2026-06-13', '2026-07-13']) {
-    const payDay = resolvePayDay(null, fp);
-    assert.equal(dueDateOf(START, 'monthly', 0, payDay), '2026-06-13', `首繳日 ${fp} 算錯`);
-  }
+test('★★★ 沒填 pay_day → 幾號來自租期起日（2026-09-17 改）', () => {
+  // 租期起 7/1 → 每月 1 號；預繳制所以第一期應繳日落在 6/1
+  const payDay = payDayOf(START, null);
+  assert.equal(payDay, 1);
+  assert.equal(dueDateOf(START, 'monthly', 0, payDay), '2026-06-01');
+  assert.equal(dueDateOf(START, 'monthly', 1, payDay), '2026-07-01');
 });
 
-test('首繳日年份打錯三年也不影響 —— 舊算法就是這樣整排偏掉的', () => {
-  const payDay = resolvePayDay(null, '2023-06-06');
-  assert.equal(dueDateOf(START, 'monthly', 0, payDay), '2026-06-06');
-  assert.equal(dueDateOf(START, 'monthly', 1, payDay), '2026-07-06');
+test('★★ 租期起在月中 → 幾號就是那一天', () => {
+  assert.equal(payDayOf('2026-07-16', null), 16);
+  assert.equal(dueDateOf('2026-07-16', 'monthly', 0, payDayOf('2026-07-16', null)), '2026-06-16');
 });
 
 test('跨年:1 月起租的第一期應繳日落在前一年 12 月', () => {
@@ -67,43 +66,78 @@ test('資料不齊時回 null,不要自己編一個日期出來', () => {
   assert.equal(dueDateOf('壞掉的日期', 'monthly', 0, 13), null);
 });
 
-// ── resolvePayDay ──────────────────────────────────
+// ── payDayOf ───────────────────────────────────────
 
-test('resolvePayDay:pay_day 優先於首繳日', () => {
-  assert.equal(resolvePayDay(5, '2026-06-13'), 5);
+test('payDayOf:pay_day 有填就用它（另外談好的繳款日）', () => {
+  assert.equal(payDayOf(START, 5), 5, '租期起是 1 號，但約定 5 號繳');
 });
 
-test('resolvePayDay:沒有 pay_day 就取首繳日的日數', () => {
-  assert.equal(resolvePayDay(null, '2026-06-13'), 13);
-  assert.equal(resolvePayDay(0, '2026-06-13'), 13);      // 0 不是有效的「幾號」
+test('★★★ payDayOf:沒填 pay_day 就用租期起日的「日」', () => {
+  assert.equal(payDayOf('2026-07-16', null), 16);
+  assert.equal(payDayOf('2026-07-16', 0), 16, '0 不是有效的「幾號」');
 });
 
-test('resolvePayDay:兩個都沒有回 null —— 不要自己猜 1 號', () => {
-  assert.equal(resolvePayDay(null, null), null);
-  assert.equal(resolvePayDay(null, ''), null);
+test('★★ payDayOf:首繳日再也影響不了它 —— 這支根本收不到那個參數', () => {
+  // 舊的寫法是 resolvePayDay(null, '2023-06-06') → 6。
+  // 現在只看租期起日，那個 6 沒有任何路徑進得來。
+  assert.equal(payDayOf('2026-07-01', null), 1);
 });
 
-test('resolvePayDay:超出 1–31 一律不採信', () => {
-  assert.equal(resolvePayDay(32, null), null);
-  assert.equal(resolvePayDay(-3, null), null);
+test('payDayOf:沒有租期起日又沒有 pay_day → null，不要自己猜 1 號', () => {
+  assert.equal(payDayOf(null, null), null);
+  assert.equal(payDayOf('', null), null);
+  assert.equal(payDayOf('壞掉的日期', null), null);
 });
 
-// ── checkFirstDue ──────────────────────────────────
-
-test('checkFirstDue:首繳日剛好等於算出來的第一期應繳日 → 不提示', () => {
-  const r = checkFirstDue(START, 'monthly', 13, '2026-06-13');
-  assert.equal(r.firstDue, '2026-06-13');
-  assert.equal(r.mismatch, false);
+test('payDayOf:pay_day 超出 1–31 就當沒填，退回租期起日', () => {
+  assert.equal(payDayOf('2026-07-16', 32), 16);
+  assert.equal(payDayOf('2026-07-16', -3), 16);
+  assert.equal(payDayOf(null, 32), null, '兩邊都不能用就是 null');
 });
 
-test('checkFirstDue:對不上就要提示 —— 不說的話使用者以為 5/13 生效了', () => {
-  const r = checkFirstDue(START, 'monthly', 13, '2026-05-13');
-  assert.equal(r.firstDue, '2026-06-13');
-  assert.equal(r.mismatch, true);
+// ── dueDayText（畫面上那一行人話）────────────────────
+
+test('月繳只說幾號', () => {
+  const r = dueDayText('2026-11-01', 'monthly');
+  assert.equal(r.text, '每月 1 號');
+  assert.equal(r.months, '');
 });
 
-test('checkFirstDue:沒填首繳日就沒有對不上的問題', () => {
-  assert.equal(checkFirstDue(START, 'monthly', 13, null).mismatch, false);
+test('★★★ 季繳要說出是哪幾個月 —— 只寫「每季 1 號」不知道是哪一季', () => {
+  const r = dueDayText('2026-11-01', 'quarterly');
+  assert.equal(r.text, '每季 1 號');
+  assert.equal(r.months, '也就是 11／2／5／8 月的 1 號');
+});
+
+test('半年繳兩個月份', () => {
+  assert.equal(dueDayText('2026-11-01', 'halfyear').months, '也就是 11／5 月的 1 號');
+});
+
+test('★★ 年繳要寫幾月幾號 —— 一年只有一次，月份是最重要的資訊', () => {
+  const r = dueDayText('2026-11-01', 'yearly');
+  assert.equal(r.text, '每年 11 月 1 號');
+  assert.equal(r.months, '');
+});
+
+test('★ pay_day 覆寫時人話也跟著換', () => {
+  assert.equal(dueDayText('2026-11-01', 'monthly', 5).text, '每月 5 號');
+  assert.equal(dueDayText('2026-11-01', 'quarterly', 5).months, '也就是 11／2／5／8 月的 5 號');
+});
+
+test('★★ 29 號以上要提醒會被夾到月底 —— 不然二月會被當成算錯', () => {
+  assert.ok(dueDayText('2026-01-31', 'monthly').clamp.includes('31 號'));
+  assert.ok(dueDayText('2026-01-30', 'monthly').clamp.includes('30 號'));
+  assert.equal(dueDayText('2026-01-28', 'monthly').clamp, '', '28 號每個月都有');
+});
+
+test('★ 算不出來就回空字串，不要印半句話', () => {
+  assert.deepEqual(dueDayText(null, 'monthly'), { text: '', months: '', clamp: '' });
+  assert.deepEqual(dueDayText('壞掉', 'monthly'), { text: '', months: '', clamp: '' });
+});
+
+test('★ 月份會跨年繞回來:季繳 11 月起 → 11／2／5／8', () => {
+  assert.equal(dueDayText('2026-11-05', 'quarterly').months, '也就是 11／2／5／8 月的 5 號');
+  assert.equal(dueDayText('2026-01-05', 'quarterly').months, '也就是 1／4／7／10 月的 5 號');
 });
 
 test('STEP_OF 四種繳別齊全', () => {
@@ -240,19 +274,12 @@ test('正常租期 → 過', () => {
   assert.deepEqual(checkContractDates('2026-05-01', '2027-04-30'), { ok: true });
 });
 
-test('首繳日早於租期起是正常的（預繳制）', () => {
-  assert.deepEqual(checkContractDates('2026-05-01', '2027-04-30', '2026-04-15'), { ok: true });
-});
-
-test('★ 首繳日早了一年以上 → 多半是年份打錯', () => {
-  const r = checkContractDates('2026-05-01', '2027-04-30', '2025-04-15');
-  assert.equal(r.ok, false);
-  assert.match((r as { error: string }).error, /年份/);
-});
-
-test('首繳日空白不擋 —— 那是選填', () => {
-  assert.deepEqual(checkContractDates('2026-05-01', '2027-04-30', null), { ok: true });
-});
+/*
+ * ★★ 2026-09-17:「首繳日」那三條檢查一起刪掉了。
+ *   它們守的是一個已經不存在的欄位 —— 首繳日不再參與計算，
+ *   表單上也不再出現。一個沒有人填得到的欄位不需要守衛，
+ *   而留著一條永遠通過的測試會讓人以為那裡還有人在看。
+ */
 
 /*
  * ── 訂金階段的租期（migration_174 / 2026-08-25 修）────────
@@ -261,27 +288,21 @@ test('首繳日空白不擋 —— 那是選填', () => {
  * 畫面上那兩格明明寫著「選填」。
  */
 test('★ allowEmpty：兩欄都空時放行', () => {
-  assert.deepEqual(checkContractDates('', '', null, { allowEmpty: true }), { ok: true });
-  assert.deepEqual(checkContractDates(null, null, null, { allowEmpty: true }), { ok: true });
+  assert.deepEqual(checkContractDates('', '', { allowEmpty: true }), { ok: true });
+  assert.deepEqual(checkContractDates(null, null, { allowEmpty: true }), { ok: true });
 });
 
 test('★★ allowEmpty 只放行「都空」—— 填一半照樣擋', () => {
-  assert.equal(checkContractDates('2026-09-01', '', null, { allowEmpty: true }).ok, false);
-  assert.equal(checkContractDates('', '2027-08-31', null, { allowEmpty: true }).ok, false);
+  assert.equal(checkContractDates('2026-09-01', '', { allowEmpty: true }).ok, false);
+  assert.equal(checkContractDates('', '2027-08-31', { allowEmpty: true }).ok, false);
 });
 
 test('allowEmpty 時租期填完整還是要檢查前後順序', () => {
-  assert.equal(checkContractDates('2027-01-01', '2026-01-01', null, { allowEmpty: true }).ok, false);
-  assert.deepEqual(checkContractDates('2026-09-01', '2027-08-31', null, { allowEmpty: true }), { ok: true });
+  assert.equal(checkContractDates('2027-01-01', '2026-01-01', { allowEmpty: true }).ok, false);
+  assert.deepEqual(checkContractDates('2026-09-01', '2027-08-31', { allowEmpty: true }), { ok: true });
 });
 
-test('allowEmpty ＋ 租期空著時，首繳日格式壞掉還是要抓', () => {
-  const r = checkContractDates('', '', '2026/09/01', { allowEmpty: true });
-  assert.equal(r.ok, false);
-  assert.match((r as { error: string }).error, /首繳日/);
-  // 正常的首繳日不擋 —— 訂金階段先講好第一期什麼時候付是合理的
-  assert.deepEqual(checkContractDates('', '', '2026-09-01', { allowEmpty: true }), { ok: true });
-});
+
 
 test('沒傳 opts 時行為跟以前一模一樣（既有呼叫端不會鬆掉）', () => {
   assert.equal(checkContractDates('', '', null).ok, false);

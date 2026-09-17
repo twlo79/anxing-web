@@ -26,8 +26,11 @@
  *
  *     第 i 期應繳日 = （第 i 期的第一個月 − 1 個月）的「幾號」
  *
- * 「幾號」來自 pay_day；沒設定時取首繳日的日數當預設。
- * 首繳日從此只是用來猜「幾號」，不再當作起點 —— 它的年月填錯也不會影響任何一期。
+ * 「幾號」來自 `payDayOf()`:pay_day 有填就用它，沒填就用**租期起日的那個「日」**。
+ *
+ * ★★★ 2026-09-17 之前那個退路是「首繳日的日數」，而首繳日被當成
+ *   「實際第一次收到錢的那天」在填 —— 109 張契約裡有 57 張因此拿到了
+ *   一個差一天、或 28／30／31 號的繳款日。使用者:「我不需要首繳日了。」
  *
  * 同一條規則直接涵蓋四種繳別，因為繳別只影響「期別怎麼切」，不影響錨點：
  *
@@ -93,7 +96,6 @@ const BAD_DATE_HINT = '（日期框在收到不存在的日期時會自動清空
 export function checkContractDates(
   startDate: string | null | undefined,
   endDate: string | null | undefined,
-  firstPaymentDate?: string | null,
   opts?: {
     /**
      * 訂金階段（`earnest_only`）：租期兩欄都空著是合法的（migration_174）。
@@ -116,29 +118,20 @@ export function checkContractDates(
 ): DateCheck {
   const ok = (s: string | null | undefined) => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
 
-  if (opts?.allowEmpty && !startDate && !endDate) {
-    // 租期都還沒定。首繳日照樣檢查 —— 它跟租期無關，填了就要是有效日期
-    if (firstPaymentDate && !ok(firstPaymentDate)) {
-      return { ok: false, error: `首繳日沒有填成有效日期${BAD_DATE_HINT}` };
-    }
-    return { ok: true };
-  }
+  // 租期都還沒定（訂金階段）—— 放行
+  if (opts?.allowEmpty && !startDate && !endDate) return { ok: true };
 
   if (!ok(startDate)) return { ok: false, error: `租期起沒有填成有效日期${BAD_DATE_HINT}` };
   if (!ok(endDate)) return { ok: false, error: `租期迄沒有填成有效日期${BAD_DATE_HINT}` };
   if (endDate! <= startDate!) {
     return { ok: false, error: `租期迄（${endDate}）要晚於租期起（${startDate}）` };
   }
-  // 首繳日可以早於租期起（預繳制），但不該離譜到隔了一年以上
-  if (firstPaymentDate) {
-    if (!ok(firstPaymentDate)) return { ok: false, error: `首繳日沒有填成有效日期${BAD_DATE_HINT}` };
-    const gap = (new Date(startDate!).getTime() - new Date(firstPaymentDate).getTime()) / 86400000;
-    // 366 天 = 真的超過一年（閏年也算得進去）。
-    // 原本寫 400,跟錯誤訊息「早了一年以上」對不起來 —— 一個 381 天的年份錯字會漏掉。
-    if (gap > 366) {
-      return { ok: false, error: `首繳日（${firstPaymentDate}）比租期起早了一年以上，請確認年份是否打錯` };
-    }
-  }
+  /*
+   * ★★ 2026-09-17:首繳日那三段檢查一起拿掉了。
+   *   它們在檢查「首繳日是不是有效日期／有沒有比租期起早一年以上」——
+   *   而首繳日已經不參與計算，也不在表單上了。
+   *   一個沒有人填得到的欄位不需要守衛。
+   */
   return { ok: true };
 }
 
@@ -246,17 +239,97 @@ export function fmtPeriodRange(r: [string, string] | null): string {
 }
 
 /**
- * 「幾號繳」。優先用契約設定的 pay_day，沒有就取首繳日的日數。
- * 兩個都沒有時回 null —— 呼叫端要顯示「未設定」，不要自己猜一個 1 號出來。
+ * 這張契約「每個月幾號繳」。
+ *
+ * ══════════════════════════════════════════════════════════
+ * ★★★ 2026-09-17 改：退路從「首繳日」換成**租期起日**。
+ *
+ *   舊的寫法是 `pay_day` 沒填就去抓 `first_payment_date` 的「日」。
+ *   問題是那一欄被當成兩種東西在填：
+ *       ① 第一期的應繳日（規則）
+ *       ② 實際第一次收到錢的那天（紀錄）
+ *   而 109 張生效中的契約裡，**63 張**的「幾號繳」跟租期起日不一樣，
+ *   其中 57 張是從 ② 推出來的 —— 差一天、31 號、28 號那種。
+ *   使用者：「我不需要首繳日了。」
+ *
+ * ★★ 現在的規則只有兩條，由上而下：
+ *       1. `pay_day` 有填 → 用它（另外談好的繳款日）
+ *       2. 沒填 → **租期起日的那個「日」**
+ *   `first_payment_date` 不再參與計算。欄位留在資料庫裡（那 57 張
+ *   「第一次收到錢是哪天」是有用的紀錄），只是不再被讀。
+ *
+ * ★★★ 這支**改了名字**，不是只改參數。
+ *   舊名字 `resolvePayDay(payDay, firstPaymentDate)` 的兩個參數
+ *   跟新的 `payDayOf(startDate, payDay)` **型別完全一樣**（string|null、number|null）——
+ *   只改參數順序的話，漏改的呼叫端會**安靜地把參數放反**而 tsc 一句話都不說。
+ *   改名字才會編不過。
+ * ══════════════════════════════════════════════════════════
  */
-export function resolvePayDay(payDay: number | null | undefined, firstPaymentDate: string | null | undefined): number | null {
+export function payDayOf(
+  startDate: string | null | undefined,
+  payDay: number | null | undefined,
+): number | null {
   const p = Number(payDay);
   if (p >= 1 && p <= 31) return Math.trunc(p);
-  if (firstPaymentDate && /^\d{4}-\d{2}-\d{2}$/.test(firstPaymentDate)) {
-    const d = Number(firstPaymentDate.slice(8, 10));
+  if (startDate && /^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
+    const d = Number(startDate.slice(8, 10));
     if (d >= 1 && d <= 31) return d;
   }
   return null;
+}
+
+/** 繳別的中文。跟契約頁的 `CAD_LABEL` 同一組字 */
+const CAD_WORD: Record<string, string> = {
+  monthly: '每月', quarterly: '每季', halfyear: '每半年', yearly: '每年',
+};
+
+/**
+ * 應繳日的人話。（2026-09-17 使用者指定的四種寫法）
+ *
+ *     月繳　　每月 1 號
+ *     季繳　　每季 1 號　　　＋「也就是 11／2／5／8 月的 1 號」
+ *     半年繳　每半年 1 號　　＋「也就是 11／5 月的 1 號」
+ *     年繳　　每年 11 月 1 號
+ *
+ * ★★★ 季／半年一定要說出**是哪幾個月**。只寫「每季 1 號」的話，
+ *   看的人不知道是哪一季 —— 而那正是他要查這一行的原因。
+ *   月份從租期起的那個月往後推，因為第一期就是從那個月開始收。
+ *
+ * ★★ 年繳要寫「幾月幾號」:一年只有一次，月份是它最重要的資訊。
+ *
+ * ★ 回兩段而不是一個字串 —— 畫面要把它們排成兩行（大字 ＋ 灰字），
+ *   在這裡黏成一句的話，畫面就得再把它拆開，而拆的規則會跟這裡不一致。
+ */
+export function dueDayText(
+  startDate: string | null | undefined,
+  cadence: string,
+  payDay?: number | null,
+): { text: string; months: string; clamp: string } {
+  const d = payDayOf(startDate, payDay);
+  if (!d) return { text: '', months: '', clamp: '' };
+
+  /*
+   * ★ 31 號在沒有 31 號的月份會落在當月最後一天（`dueDateOf()` 的 `Math.min`）。
+   *   28 以上就講出來 —— 不講的話「每月 31 號」在二月變成 28 號，
+   *   而使用者會以為系統算錯。
+   */
+  const clamp = d > 28
+    ? `${d} 號在沒有 ${d} 號的月份會落在當月最後一天（例如 2 月）。` : '';
+
+  const word = CAD_WORD[cadence] ?? '每月';
+  const step = STEP_OF[cadence] ?? 1;
+
+  if (cadence === 'monthly') return { text: `每月 ${d} 號`, months: '', clamp };
+
+  const m = startDate && /^\d{4}-\d{2}-\d{2}$/.test(startDate)
+    ? Number(startDate.slice(5, 7)) : 0;
+  if (!m) return { text: `${word} ${d} 號`, months: '', clamp };
+
+  if (cadence === 'yearly') return { text: `每年 ${m} 月 ${d} 號`, months: '', clamp };
+
+  const ms: number[] = [];
+  for (let i = 0; i < 12 / step; i++) ms.push(((m - 1 + i * step) % 12) + 1);
+  return { text: `${word} ${d} 號`, months: `也就是 ${ms.join('／')} 月的 ${d} 號`, clamp };
 }
 
 /**
@@ -290,24 +363,10 @@ export function fmtDue(d: string | null): string {
   return `${Number(d.slice(0, 4))}/${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
 }
 
-export type DueCheck =
-  | { ok: true; payDay: number; firstDue: string }
-  | { ok: false; reason: 'no_start' | 'no_pay_day' }
-  | { ok: true; payDay: number; firstDue: string; warn: string };
-
-/**
- * 首繳日與算出來的第一期應繳日對不對得上。
- *
- * 對不上不是錯誤，只是要講出來 —— 使用者填了 2026/5/13，系統實際用 2026/6/13，
- * 不說的話他會以為系統壞了，或者更糟：以為 5/13 真的生效了。
+/*
+ * ★★ `checkFirstDue()` 與 `DueCheck` 在 2026-09-17 一起刪掉。
+ *   它們的工作是「首繳日跟算出來的第一期應繳日對不對得上」——
+ *   而首繳日已經不參與計算了，那個比較沒有意義。
+ *   留著一支永遠回 `mismatch: false` 的檢查，比沒有它更糟：
+ *   下一個人會以為那裡有人在看著。
  */
-export function checkFirstDue(
-  startDate: string | null | undefined,
-  cadence: string,
-  payDay: number | null,
-  firstPaymentDate: string | null | undefined,
-): { firstDue: string | null; mismatch: boolean } {
-  const firstDue = dueDateOf(startDate, cadence, 0, payDay);
-  if (!firstDue || !firstPaymentDate) return { firstDue, mismatch: false };
-  return { firstDue, mismatch: firstPaymentDate !== firstDue };
-}

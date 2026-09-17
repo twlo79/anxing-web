@@ -21,7 +21,7 @@ import { useOpenFromUrl } from '@/lib/open-from-url';
 import { FEE_TYPES, ONEOFF_PRESETS, presetOf, feeLabel, canInvoiceFee } from '@/lib/fee-types';
 import ContractFees, { type Rc } from '@/components/ContractFees';
 import { feeMonthly, leasePeriods, periodOf } from '@/lib/lease';
-import { dueDateOf, resolvePayDay, checkFirstDue, fmtDue, periodRange, fmtPeriodRange, rentMonthCount, checkContractDates } from '@/lib/due-date';
+import { dueDateOf, payDayOf, dueDayText, fmtDue, periodRange, fmtPeriodRange, rentMonthCount, checkContractDates } from '@/lib/due-date';
 import { keyBase, onlyKeyOf } from '@/lib/ltKey';
 // 關帳：畫面上擋住的判斷跟資料庫那支守衛走**同一份規則**（migration_249）
 import { isLocked, lockedMsg, lockYmOf, ymLabel, type Ym } from '@/lib/period-lock';
@@ -454,7 +454,7 @@ export default function ContractsPage() {
      * ★ `allowEmpty` **只在兩欄都空時放行**，填一半照樣擋 ——
      *   理由寫在 due-date.ts。
      */
-    const dc = checkContractDates(edit.start_date, edit.end_date, edit.first_payment_date,
+    const dc = checkContractDates(edit.start_date, edit.end_date,
       { allowEmpty: !!edit.earnest_only });
     if (!dc.ok) { alert(dc.error); return; }
 
@@ -481,7 +481,14 @@ export default function ContractsPage() {
       // 契約押金只有台幣。fx_deposit 一律清空 —— 之前短暫支援過多幣別,
       // 舊資料若留著外幣,押金管理會多出一筆沒人維護的外幣押金。
       deposit: edit.deposit, fx_deposit: [],
-      start_date: edit.start_date || null, end_date: edit.end_date || null, first_payment_date: edit.first_payment_date || null, pay_day: edit.pay_day ?? null,
+      start_date: edit.start_date || null, end_date: edit.end_date || null,
+      /*
+       * ★★ `first_payment_date` 原樣帶回去，**不再由表單產生**（2026-09-17）。
+       *   表單上沒有這一欄了，但舊資料那 57 張「第一次收到錢是哪天」
+       *   是有用的紀錄 —— 寫成 null 等於在存檔時把它們清掉。
+       */
+      first_payment_date: edit.first_payment_date || null,
+      pay_day: edit.pay_day ?? null,
       account: edit.account, note: edit.note, active: edit.active, watch: edit.watch ?? false, display_name: edit.display_name || null, name: `${edit.tenant_name ?? ''}-${edit.room ?? ''}`,
       /*
        * ★★★ 未稅就強制關掉開發票（migration_204 的 check 約束也擋）。
@@ -745,6 +752,14 @@ const nameOf = (c: Contract) =>
    * `tried` 打不開、紅框永遠不出現（見 lib/required.ts 的 submitGate）。
    */
   const gate = submitGate(missing, saveBusy);
+
+  /*
+   * 表單上那一行應繳日。算式在 `lib/due-date.ts`（有測試）——
+   * ★ 這裡不自己拼字串，清單那一行吃的也是同一支。
+   */
+  const due = edit
+    ? dueDayText(edit.start_date, edit.cadence, edit.pay_day)
+    : { text: '', months: '', clamp: '' };
 
   function blank(): Contract {
     return { id: '', estate_id: estates.find((e) => e.name === '正隆')?.id ?? null, room: '', tenant_name: '', phone: '', cadence: 'monthly', type: 'longterm', monthly_rent: 0, amount_per_period: 0, deposit: 0, start_date: '', end_date: '', pay_day: null, first_payment_date: '', paid: false, account: null, note: '', active: true, watch: false, display_name: '', earnest_only: false, earnest_amount: 0,
@@ -1126,7 +1141,6 @@ const nameOf = (c: Contract) =>
                 {row('押金', c.deposit ? <span>${fmt(c.deposit)}</span> : '—')}
                 {row('租期', `${c.start_date ?? '—'} ~ ${c.end_date ?? '—'}`)}
                 {row('繳款日', c.pay_day ? `每期 ${c.pay_day} 號` : '—')}
-                {row('首期繳款', c.first_payment_date ?? '—')}
                 {row('安幸收款帳號', c.account ?? '—')}
                 {row('電話', c.phone ?? '—')}
                 {row('狀態', (
@@ -1347,33 +1361,73 @@ const nameOf = (c: Contract) =>
                 <input type="date" value={edit.start_date ?? ''} onChange={(e) => setEdit({ ...edit, start_date: e.target.value })} className={`rounded-lg border px-2 py-1.5 ${err('租期起') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} /></label>
               <label className="flex flex-col gap-1"><span className="flex items-center">租期迄{!edit.earnest_only && <Req />}{edit.earnest_only && <span className="text-xs text-gray-400 ml-1">選填</span>}</span>
                 <input type="date" value={edit.end_date ?? ''} onChange={(e) => setEdit({ ...edit, end_date: e.target.value })} className={`rounded-lg border px-2 py-1.5 ${err('租期迄') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} /></label>
-              <label className="flex flex-col gap-1">首繳日
-                <input type="date" value={edit.first_payment_date ?? ''} onChange={(e) => setEdit({ ...edit, first_payment_date: e.target.value || null })} className={FIELD_IN} />
-                <span className="text-[11px] text-gray-400">留空會從租期起推算</span></label>
               {/*
-                ★★★ 「幾號繳」以前是一行漂浮小字裡的一個沒有標籤的輸入框
-                  （「租金對應:每月 [__] 日」），夾在兩個欄位中間。
+                ══════════ 應繳日（2026-09-17 使用者:「我不需要首繳日了」）══════════
 
-                  它本來就是一個輸入框，卻沒有標籤、沒有跟別的欄位對齊、
-                  也沒有長得跟別的欄位一樣 —— 看起來像一句附註。
+                ★★★ 「首繳日」與「幾號繳」兩個手填欄位換成**一行算出來的人話**。
 
-                ★★ 而它決定**所有期別的應繳日**:沒設就算不出應繳日，
-                  收租頁那一整欄會是空的。那麼重要的東西不該長得像附註，
-                  所以 2026-09-16 把它扶正成一個欄位，排在首繳日旁邊。
+                  首繳日被當成兩種東西在填:
+                    ① 第一期的應繳日（規則）
+                    ② 實際第一次收到錢的那天（紀錄）
+                  而 109 張生效中的契約裡 **63 張**的「幾號繳」跟租期起日不一樣，
+                  其中 57 張是從 ② 推出來的 —— 差一天、31 號、28 號那種。
 
-                ★ 底下那行說明用 payScheduleText —— 跟清單上顯示的是**同一支**，
-                  年繳的「幾月」從首繳日來，這裡不自己再算一次。
+                ★★ 現在只有一條規則:**幾號 ＝ 租期起日的那個「日」**。
+                  改租期起日，這一行跟著改，不用再記得回來改另一格。
+
+                ★ 算式在 `lib/due-date.ts` 的 `dueDayText()`（有測試）——
+                  這裡不自己拼字串。原本頁底那支 `payScheduleText()` 已經刪掉，
+                  同一句話在兩個地方各寫一次，遲早有一邊沒跟上。
               */}
-              <label className="flex flex-col gap-1">幾號繳
-                <input type="number" min={1} max={31}
-                  value={edit.pay_day ?? (edit.first_payment_date ? Number(edit.first_payment_date.slice(8, 10)) : '')}
-                  onChange={(e) => setEdit({ ...edit, pay_day: e.target.value ? parseInt(e.target.value) : null })}
-                  className={`${FIELD_IN} text-right`} />
-                <span className="text-[11px] text-gray-400">
-                  {payScheduleText(edit.cadence, edit.first_payment_date, edit.pay_day)
-                    ? `應繳日：${payScheduleText(edit.cadence, edit.first_payment_date, edit.pay_day)}`
-                    : '沒設就算不出應繳日'}
-                </span></label>
+              <div className="col-span-2 rounded-lg border border-[#cddcee] bg-mor-bluelight/70 px-3 py-2.5">
+                <div className="text-[11px] text-mor-slate">應繳日</div>
+                <div className="text-base font-bold text-mor-slatedark">
+                  {due.text || <span className="font-normal text-gray-400">先填租期起日</span>}
+                </div>
+                <div className="text-[11px] text-gray-500 mt-1 leading-relaxed">
+                  {due.months && <>{due.months}<br /></>}
+                  {edit.pay_day
+                    ? '★ 這個數字來自底下的覆寫，不是租期起日。'
+                    : '★ 跟著租期起日走 —— 改租期起日，這一行跟著改。'}
+                  {due.clamp && <><br />{due.clamp}</>}
+                </div>
+
+                {/*
+                  ★★ 覆寫框**勾起來才出現**。
+
+                    新契約永遠不用碰它 —— 那正是拿掉兩個欄位的目的。
+                    但有二十幾張舊契約的繳款日確實跟租期起日不同
+                    （沒有房號的攤位十幾張都是 15 號、另外 6 張有人特地填過），
+                    那是談出來的條件，不是填錯。
+
+                  ★★★ 勾掉就把 `pay_day` 清成 null —— 留著一個看不見卻仍在生效的值，
+                    比留著那個欄位更糟:畫面說「跟著租期起日」而實際不是。
+                */}
+                <label className="flex items-start gap-2 mt-2.5 pt-2.5 border-t border-[#cddcee] text-xs">
+                  <input type="checkbox" className="mt-0.5"
+                    checked={edit.pay_day != null}
+                    onChange={(e) => setEdit({
+                      ...edit,
+                      pay_day: e.target.checked
+                        ? (edit.start_date ? Number(edit.start_date.slice(8, 10)) : 1)
+                        : null,
+                    })} />
+                  <span className="text-gray-600">
+                    繳款日跟租期起日<b>不一樣</b>（另外談好的）
+                    {edit.pay_day != null && (
+                      <span className="flex items-center gap-1.5 mt-1.5">
+                        <input type="number" min={1} max={31} value={edit.pay_day}
+                          onChange={(e) => setEdit({
+                            ...edit,
+                            pay_day: e.target.value ? parseInt(e.target.value) : null,
+                          })}
+                          className={`${FIELD_IN} w-20 text-right`} />
+                        <span>號</span>
+                      </span>
+                    )}
+                  </span>
+                </label>
+              </div>
 
               {/*
                 ══════════ 錢（2026-09-16 改版）══════════
@@ -1681,17 +1735,12 @@ const nameOf = (c: Contract) =>
 
 
 const CAD_MONTHS: Record<string, number> = { monthly: 1, quarterly: 3, halfyear: 6, yearly: 12 };
-function payScheduleText(cadence: string, fpd: string | null | undefined, payDay?: number | null) {
-  const p = fpd ? fpd.split('-').map(Number) : null;
-  const m = p ? p[1] : null;
-  const d = payDay || (p ? p[2] : null);
-  if (!d) return '';
-  if (cadence === 'monthly') return `每月 ${d} 日`;
-  if (cadence === 'quarterly') return `每三個月 ${d} 日`;
-  if (cadence === 'halfyear') return `每半年 ${d} 日`;
-  if (cadence === 'yearly' && m) return `每年 ${m} 月 ${d} 日`;
-  return '';
-}
+/*
+ * ★★ `payScheduleText()` 在 2026-09-17 刪掉了 —— 它跟
+ *   `lib/due-date.ts` 的 `dueDayText()` 講的是同一句話，
+ *   而同一句話寫在兩個地方，遲早有一邊沒跟上（README 坑 A）。
+ *   清單與表單現在都吃 lib 那一支。
+ */
 function ymd(d: Date) { return d.toISOString().slice(0, 10); }
 const nextYm = (ym: string) => { let y = +ym.slice(0, 4), m = +ym.slice(4, 6); m++; if (m > 12) { m = 1; y++; } return `${y}${String(m).padStart(2, '0')}`; };
 const fmtYm = (ym: string) => `${+ym.slice(0, 4)}/${+ym.slice(4, 6)}`;
@@ -1798,10 +1847,10 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
   const STEP = ({ monthly: 1, quarterly: 3, halfyear: 6, yearly: 12 } as any)[c.cadence] || 1;
   /*
    * 「幾號繳」—— 應繳日的唯一依據。
-   * pay_day 沒設定就取首繳日的日數；兩個都沒有時是 null,底下會提示要去設。
+   * pay_day 有填就用它,沒填就用**租期起日的那個「日」**（2026-09-17）。
+   * 兩邊都沒有（連租期起都沒填）才是 null,底下會提示。
    */
-  const payDay = resolvePayDay(c.pay_day, c.first_payment_date);
-  const firstDue = checkFirstDue(c.start_date, c.cadence, payDay, c.first_payment_date);
+  const payDay = payDayOf(c.start_date, c.pay_day);
 
   /*
    * 這份租約真正有幾個月租期 —— **不是它碰到幾個日曆月**。
@@ -2368,7 +2417,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
         <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 flex items-center justify-between">
           <div>
             <div className="font-bold">收款 — {c.room} {c.tenant_name}</div>
-            <div className="text-xs text-gray-500 mt-0.5">{TYPE_LABEL[c.type ?? 'longterm']}・{CAD_LABEL[c.cadence]}・每期 ${fmt(c.amount_per_period)}(月 ${fmt(c.monthly_rent)})・首繳 {c.first_payment_date ?? '—'}{payScheduleText(c.cadence, c.first_payment_date, c.pay_day) ? `・繳款 ${payScheduleText(c.cadence, c.first_payment_date, c.pay_day)}` : ''}・租期 {c.start_date} ~ {c.end_date}・應收按月自動認列</div>
+            <div className="text-xs text-gray-500 mt-0.5">{TYPE_LABEL[c.type ?? 'longterm']}・{CAD_LABEL[c.cadence]}・每期 ${fmt(c.amount_per_period)}(月 ${fmt(c.monthly_rent)}){dueDayText(c.start_date, c.cadence, c.pay_day).text ? `・應繳 ${dueDayText(c.start_date, c.cadence, c.pay_day).text}` : ''}・租期 {c.start_date} ~ {c.end_date}・應收按月自動認列</div>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
         </div>
@@ -2405,17 +2454,8 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
           */}
           {c.start_date && !payDay && (
             <div className="mb-3 rounded-lg bg-amber-50 text-amber-800 px-3 py-2 text-xs">
-              還沒設定「幾號繳」,所以底下算不出應繳日。
-              請到編輯視窗的「租期」那一段填「幾號繳」,或填一個首繳日讓系統取它的日數。
-            </div>
-          )}
-          {firstDue.mismatch && (
-            <div className="mb-3 rounded-lg bg-mor-bluelight text-mor-slate px-3 py-2 text-xs leading-relaxed">
-              首繳日填的是 <b>{c.first_payment_date}</b>,系統實際用的第一期應繳日是
-              <b> {fmtDue(firstDue.firstDue)}</b>（每期 {payDay} 號繳,租金當期的前一個月收）。
-              <span className="block text-mor-slate/70 mt-0.5">
-                應繳日只看「幾號繳」與期別,不受首繳日的年月影響 —— 所以首繳日填錯不會讓整排偏掉。
-              </span>
+              還沒填租期起日,所以算不出應繳日。
+              請到編輯視窗的「租期」那一段補上租期起。
             </div>
           )}
           {/*
