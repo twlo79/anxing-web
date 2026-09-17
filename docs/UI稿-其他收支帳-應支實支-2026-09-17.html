@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>UI 稿 — 其他收支帳：應支／實支</title>
+<style>
+  :root{
+    --bg:#F1F0EC; --line:#E0DDD5; --ink:#2E3840; --slate:#41689B; --slatedark:#345380;
+    --blue:#4E96D1; --bluelight:#DFEDFA; --green:#3FAE7C; --greendark:#217346; --greenlight:#DFF2E8;
+    --sand:#ECE8DF;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.6 -apple-system,"PingFang TC","Noto Sans TC",sans-serif;padding:24px 16px 80px}
+  .wrap{max-width:1180px;margin:0 auto}
+  h1{font-size:21px;margin:0 0 4px}
+  h2{font-size:16px;margin:34px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+  h3{font-size:13px;margin:0 0 8px;color:#6b7280;font-weight:700;letter-spacing:.04em}
+  .lead{color:#6b7280;font-size:13px;margin:0 0 6px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:860px){.two{grid-template-columns:1fr}}
+  .tag{display:inline-block;font-size:11px;border-radius:5px;padding:1px 7px;vertical-align:2px}
+  .tag.now{background:#eee;color:#666}
+  .tag.new{background:var(--bluelight);color:var(--slatedark)}
+  .tag.ask{background:#FEF3C7;color:#92400E}
+
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  thead{background:rgba(236,232,223,.6);color:#6b7280;font-size:11px}
+  th,td{padding:6px 8px;text-align:left;white-space:nowrap}
+  th.r,td.r{text-align:right}
+  tbody tr{border-top:1px solid rgba(224,221,213,.5);cursor:pointer}
+  tbody tr:hover{background:rgba(236,232,223,.5)}
+  .num{font-variant-numeric:tabular-nums}
+  .red{color:#dc2626}.grn{color:var(--greendark)}.amb{color:#b45309}.mut{color:#9ca3af}
+  .pill{font-size:10px;border-radius:4px;padding:1px 5px;font-weight:600}
+  .p-e{background:#FEF2F2;color:#dc2626}.p-i{background:var(--greenlight);color:var(--greendark)}
+  .p-un{background:#FEF3C7;color:#92400E}.p-pt{background:var(--bluelight);color:var(--slatedark)}
+  .p-ok{background:#f3f4f6;color:#9ca3af}
+  .sub{font-size:11px;color:#9ca3af}
+
+  .box{border-radius:9px;padding:8px 4px;text-align:center}
+  .box .l{font-size:11px}.box .v{font-weight:700;font-size:15px;font-variant-numeric:tabular-nums}
+  .b3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+
+  .modal{border:1px solid var(--line);border-radius:14px;background:#fff;overflow:hidden}
+  .mhead{border-bottom:1px solid var(--line);padding:11px 16px;display:flex;justify-content:space-between;align-items:flex-start}
+  .mbody{padding:14px 16px;display:flex;flex-direction:column;gap:14px}
+  .sec{border:1px solid var(--line);border-radius:11px;padding:11px}
+  .sec.dash{border-style:dashed}
+  .rowline{display:flex;align-items:center;gap:8px;padding:7px 9px;font-size:13px}
+  .rowline+.rowline{border-top:1px solid rgba(224,221,213,.6)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  label.f{display:flex;flex-direction:column;gap:3px}
+  label.f>span{font-size:11px;color:#9ca3af}
+  .in{background:#fff;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:13px;min-height:32px;
+      display:flex;align-items:center;font-family:inherit;color:var(--ink);width:100%}
+  select.in,input.in{appearance:auto}
+  .btn{height:36px;border-radius:8px;font-size:13px;font-weight:500;border:1px solid transparent;cursor:pointer;
+       font-family:inherit;padding:0 14px}
+  .btn.pri{background:var(--slate);color:#fff}
+  .btn.grn{border-color:var(--greendark);color:var(--greendark);background:#fff}
+  .del{font-size:11px;color:#f87171;background:none;border:none;cursor:pointer;font-family:inherit}
+  .delrow{text-align:center;margin-top:8px}
+  .delrow button{font-size:12px;color:#f87171;text-decoration:underline;background:none;border:none;cursor:pointer;font-family:inherit}
+
+  .note{font-size:12px;color:#6b7280;background:#fff;border:1px solid var(--line);border-radius:11px;padding:11px 13px}
+  .q{font-size:13px;background:#FFFBEB;border:1px solid #FCD34D;border-radius:11px;padding:12px 14px;margin-top:10px}
+  .q b{color:#92400E}
+  ul{margin:6px 0 0;padding-left:18px}li{margin:3px 0}
+  .ab{font-size:12px;font-weight:700;color:var(--slatedark)}
+  .cb{width:15px;height:15px;border:1.5px solid #9ca3af;border-radius:3px;display:inline-block;
+      vertical-align:-3px;position:relative;cursor:pointer;background:#fff;flex:none}
+  .cb.on{background:var(--slate);border-color:var(--slate)}
+  .cb.on::after{content:"";position:absolute;left:4.5px;top:1px;width:4px;height:8px;
+                border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}
+  .divider{height:1px;background:var(--line);border:0;margin:0}
+  .sechd{display:flex;align-items:center;gap:8px;margin-bottom:7px}
+  .sechd i{flex:1;height:1px;background:var(--line);display:block}
+  .sechd>span:first-child{font-size:11px;font-weight:700;letter-spacing:.05em;color:#6b7280;font-style:normal}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>其他收支帳（愛皮 · 洪鯊）：金額拆成「應支 / 實支」</h1>
+<p class="lead">2026-09-17 需求 2～8。<b>還沒動任何程式碼</b> —— 這張是給你挑的。下面有 3 個要你決定的地方（黃底）。</p>
+
+<!-- ══════════ 一、列表 ══════════ -->
+<h2>一、列表：金額那一欄</h2>
+<div class="two">
+  <div>
+    <h3>現在 <span class="tag now">一欄</span></h3>
+    <div class="card" style="padding:0;overflow:hidden">
+      <table>
+        <thead><tr><th>日期</th><th>項目</th><th>會計科目</th><th>對象</th><th class="r">金額</th></tr></thead>
+        <tbody>
+          <tr><td class="mut">09-09</td><td><span class="pill p-e">支</span> 115/7月健保費</td><td>保險費</td><td class="mut">—</td><td class="r num red">−1,428</td></tr>
+          <tr><td class="mut">09-08</td><td><span class="pill p-e">支</span> 115/7月電信費-0975…</td><td>辦公費</td><td class="mut">—</td><td class="r num red">−246</td></tr>
+          <tr><td class="mut">09-07</td><td><span class="pill p-e">支</span> 115/7-8月管理服務費</td><td>辦公費</td><td class="mut">—</td><td class="r num red">−7,350</td></tr>
+          <tr><td class="mut">09-05</td><td><span class="pill p-i">收</span> 日本團尾款</td><td>團費收入</td><td class="mut">王小姐</td><td class="r num">28,000</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="sub" style="margin-top:6px">只有一個數字 —— 看不出「這筆到底付了沒、付了多少」。</p>
+  </div>
+
+  <div>
+    <h3>調整後 <span class="tag new">兩欄 ＋ 狀態</span></h3>
+    <div class="card" style="padding:0;overflow:hidden">
+      <table>
+        <thead><tr><th>日期</th><th>項目</th><th>會計科目</th><th class="r">應支</th><th class="r">實支</th><th></th></tr></thead>
+        <tbody>
+          <tr><td class="mut">09-09</td><td><span class="pill p-e">支</span> 115/7月健保費</td><td>保險費</td>
+              <td class="r num">1,428</td><td class="r num red">1,428</td><td><span class="pill p-ok">已付</span></td></tr>
+          <tr><td class="mut">09-08</td><td><span class="pill p-e">支</span> 115/7月電信費-0975…</td><td>辦公費</td>
+              <td class="r num">246</td><td class="r num red">100</td><td><span class="pill p-pt">部分</span></td></tr>
+          <tr><td class="mut">09-07</td><td><span class="pill p-e">支</span> 115/7-8月管理服務費</td><td>辦公費</td>
+              <td class="r num">7,350</td><td class="r num mut">—</td><td><span class="pill p-un">未付</span></td></tr>
+          <tr><td class="mut">09-05</td><td><span class="pill p-i">收</span> 日本團尾款</td><td>團費收入</td>
+              <td class="r num grn" colspan="2" style="text-align:right">28,000（收入）</td><td><span class="pill p-un">未收</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="sub" style="margin-top:6px">
+      收入那一列<b>兩欄合併成一格</b> —— 收入放在一個叫「應支」的欄位底下會是假話。<br>
+      「對象」欄讓給兩個數字（它現在十列有九列是「—」）。對象改印在項目底下那一行。
+    </p>
+  </div>
+</div>
+
+<div class="q">
+  <b>❶ 要你決定：上面那三張統計卡（收入 / 支出 / 淨額）的「支出」要算哪一個？</b>
+  <ul>
+    <li><b>甲（建議）</b>　支出還是算 <b>應支</b>，右邊<b>多一張卡</b>寫「其中實支 X」。<br>
+      <span class="sub">好處：以前每個月的數字一個都不會變。這一頁本來就是「這個月發生多少」。</span></li>
+    <li><b>乙</b>　支出改算 <b>實支</b>（真的付出去的錢）。<br>
+      <span class="sub">代價：<b>過去每一個月的支出數字都會變小</b> —— 舊資料沒有付款紀錄，實支全是 0。要先補登才看得對。</span></li>
+  </ul>
+</div>
+
+<!-- ══════════ 二、點進去 ══════════ -->
+<h2>二、點進去一筆支出（參考「收款」的版面）</h2>
+<p class="lead">收款視窗是：三個數字 → 明細 → 新增一筆。這裡照抄同一個順序，差別只有「收」變「付」。</p>
+
+<div class="two">
+  <!-- A -->
+  <div>
+    <h3><span class="ab">A 案</span>　一個視窗，上面是這筆支出、下面是付款 <span class="tag new">建議</span></h3>
+    <div class="modal">
+      <div class="mhead">
+        <div><div style="font-weight:700">115/7-8月管理服務費</div>
+             <div class="sub" style="margin-top:2px">愛皮・2026-09-07・辦公費</div></div>
+        <div class="mut" style="font-size:18px">✕</div>
+      </div>
+      <div class="mbody">
+
+        <div class="sechd"><span>看板</span><i></i></div>
+        <div class="b3">
+          <div class="box" style="background:rgba(236,232,223,.7)"><div class="l mut">應支</div><div class="v">$7,350</div></div>
+          <div class="box" style="background:var(--greenlight)"><div class="l grn">實支</div><div class="v grn">$5,000</div></div>
+          <div class="box" style="background:#FEF2F2"><div class="l red">差距</div><div class="v red">$2,350</div></div>
+        </div>
+
+        <div>
+          <div class="sechd"><span>明細</span><i></i><span class="sub" style="font-weight:400;letter-spacing:0">2 筆</span></div>
+          <div class="sec" style="padding:0">
+            <div class="rowline">
+              <div style="flex:1"><div style="font-weight:600" class="num">$3,000</div>
+                <div class="sub">2026-09-07・匯款（永豐 ‧‧1234）</div></div>
+              <button class="del">刪除</button>
+            </div>
+            <div class="rowline">
+              <div style="flex:1"><div style="font-weight:600" class="num">$2,000</div>
+                <div class="sub">2026-09-12・現金</div></div>
+              <button class="del">刪除</button>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div class="sechd"><span>編輯</span><i></i></div>
+          <div class="sec">
+            <div class="grid2">
+              <label class="f"><span>付款日</span><input class="in" type="date" value="2026-09-17"></label>
+              <label class="f"><span>金額（台幣）</span><input class="in" type="number" value="2350" style="text-align:right"></label>
+              <label class="f"><span>付費方式</span>
+                <select class="in" id="m1" onchange="acct('m1','a1')">
+                  <option value="cash">現金</option><option value="transfer" selected>匯款</option>
+                  <option value="credit_card">信用卡</option><option value="crypto">加密貨幣</option>
+                </select></label>
+              <label class="f" id="a1"><span>帳號</span>
+                <select class="in"><option>永豐 ‧‧1234</option><option>元大 ‧‧5678</option><option>國泰 ‧‧9012</option></select></label>
+            </div>
+            <div style="margin-top:9px"><button class="btn grn" style="width:100%">＋ 記一筆實支</button></div>
+            <div class="sub" style="margin-top:6px">預設帶差距 $2,350 —— 一次付清的話不用改數字。</div>
+          </div>
+        </div>
+
+        <hr class="divider">
+        <div>
+          <div class="sechd"><span>這筆支出本身</span><i></i>
+            <span class="sub" style="font-weight:400;letter-spacing:0;cursor:pointer" onclick="tog('x1')">展開 ▾</span></div>
+          <div id="x1" style="display:none">
+            <div class="grid2">
+              <label class="f"><span>日期</span><input class="in" type="date" value="2026-09-07"></label>
+              <label class="f"><span>會計科目</span><select class="in"><option>辦公費</option><option>保險費</option></select></label>
+              <label class="f" style="grid-column:1/-1"><span>項目</span><input class="in" value="115/7-8月管理服務費"></label>
+              <label class="f"><span>應支金額</span><input class="in" type="number" value="7350" style="text-align:right"></label>
+              <label class="f"><span>備註</span><input class="in" value=""></label>
+            </div>
+            <div class="delrow"><button>刪除這筆支出（會移到回收桶，可以復原）</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="sub" style="margin-top:7px"><b>一個入口</b>。點一列就是這個視窗，最常做的事（記一筆付款）在上面，改項目／科目收在底下。</p>
+  </div>
+
+  <!-- B -->
+  <div>
+    <h3><span class="ab">B 案</span>　兩個視窗：列上多一顆「付款」</h3>
+    <div class="card" style="padding:0;overflow:hidden;margin-bottom:10px">
+      <table>
+        <thead><tr><th>日期</th><th>項目</th><th class="r">應支</th><th class="r">實支</th><th></th></tr></thead>
+        <tbody>
+          <tr><td class="mut">09-07</td><td><span class="pill p-e">支</span> 管理服務費</td>
+              <td class="r num">7,350</td><td class="r num red">5,000</td>
+              <td><button class="btn grn" style="height:26px;padding:0 9px;font-size:11px">付款</button></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="modal">
+      <div class="mhead"><div><div style="font-weight:700">付款</div>
+        <div class="sub" style="margin-top:2px">115/7-8月管理服務費</div></div><div class="mut" style="font-size:18px">✕</div></div>
+      <div class="mbody">
+        <div class="b3">
+          <div class="box" style="background:rgba(236,232,223,.7)"><div class="l mut">應支</div><div class="v">$7,350</div></div>
+          <div class="box" style="background:var(--greenlight)"><div class="l grn">實支</div><div class="v grn">$5,000</div></div>
+          <div class="box" style="background:#FEF2F2"><div class="l red">差距</div><div class="v red">$2,350</div></div>
+        </div>
+        <div class="sec" style="padding:0">
+          <div class="rowline"><div style="flex:1"><div style="font-weight:600" class="num">$3,000</div>
+            <div class="sub">2026-09-07・匯款（永豐 ‧‧1234）</div></div><button class="del">刪除</button></div>
+          <div class="rowline"><div style="flex:1"><div style="font-weight:600" class="num">$2,000</div>
+            <div class="sub">2026-09-12・現金</div></div><button class="del">刪除</button></div>
+        </div>
+        <div class="sec">
+          <div class="grid2">
+            <label class="f"><span>付款日</span><input class="in" type="date" value="2026-09-17"></label>
+            <label class="f"><span>金額（台幣）</span><input class="in" type="number" value="2350" style="text-align:right"></label>
+            <label class="f"><span>付費方式</span>
+              <select class="in" id="m2" onchange="acct('m2','a2')">
+                <option value="cash">現金</option><option value="transfer" selected>匯款</option>
+                <option value="credit_card">信用卡</option><option value="crypto">加密貨幣</option></select></label>
+            <label class="f" id="a2"><span>帳號</span>
+              <select class="in"><option>永豐 ‧‧1234</option><option>元大 ‧‧5678</option></select></label>
+          </div>
+          <div style="margin-top:9px"><button class="btn grn" style="width:100%">＋ 記一筆實支</button></div>
+        </div>
+      </div>
+    </div>
+    <p class="sub" style="margin-top:7px">
+      跟短租收款<b>長得一模一樣</b>（同一顆按鈕、同一個視窗形狀）。<br>
+      代價：<b>列上多一欄按鈕</b>，而且「改科目」跟「記付款」變成兩個不同的點法 ——
+      現在點一列就是編輯，會有人點了列之後找不到付款在哪。
+    </p>
+  </div>
+</div>
+
+<div class="q">
+  <b>❷ 要你決定：A 還是 B。</b>
+  我建議 <b>A</b> —— 這一頁的列本來就是「點一下打開編輯」，多一顆按鈕會讓同一列有兩種點法。
+  想跟短租收款完全一致就選 B。
+</div>
+
+<div class="q">
+  <b>❸ 要你決定：「付費方式」選現金時，帳號那一格怎麼辦？</b>
+  <ul>
+    <li><b>甲（建議）</b>　<b>整格不出現</b>。現金沒有帳號，留一個永遠空白的格子等於在教人「這頁有些欄位不用看」。
+      <span class="sub">（上面兩張稿就是這樣 —— 你把「付費方式」改成現金試試看，帳號會消失。）</span></li>
+    <li><b>乙</b>　留著但灰掉。</li>
+  </ul>
+  <div style="margin-top:8px"><span class="cb" id="c1" onclick="this.classList.toggle('on')"></span>
+    <span class="sub" style="margin-left:5px">（這顆是給你測稿子點不點得動的，沒有意義）</span></div>
+</div>
+
+<!-- ══════════ 三、資料放哪 ══════════ -->
+<h2>三、資料要放哪（不是 UI，但決定了上面做不做得出來）</h2>
+<div class="note">
+  <b>新開一張表 <code>expense_payments</code></b>：一筆實支一列（支出 id、付款日、金額、付費方式、帳號、備註）。
+  <code>expenses.paid_amount</code> 由<b>資料庫的觸發器</b>維護，前端不自己算。
+  <ul>
+    <li>這就是短租收款那一套（<code>order_payments</code> ＋ migration_84）。已經跑了一年，照抄比重寫安全。</li>
+    <li>★ 合計<b>一定要觸發器算</b>。讓前端寫的話，第二個寫入者或任何一次失敗，
+      那個數字就永遠是錯的<b>而且不會叫</b>（README：推導值存成欄位）。</li>
+    <li>★★ 「差距」<b>不存</b>，每次現算 —— 存了就會有「應支改了但差距沒跟上」。</li>
+    <li>★★★ 舊資料的 <code>paid_amount</code> 一律 <b>0</b>，所以<b>每一筆舊支出都會變成「未付」</b>。
+      這是誠實的（系統確實不知道付了沒），但你會看到一整頁紅色的「未付」。
+      要的話我可以在 migration 裡把 <b>請款單已出款</b>的那些自動補一筆實支（金額＝應支、日期＝出款日、方式＝那張單的付款方式）。</li>
+  </ul>
+</div>
+
+<h2>四、這次不會動到的</h2>
+<div class="note">
+  安幸的支出明細頁、請款單控管、營收表、財務儀錶板 —— 一行都不動。<br>
+  這一頁的<b>收入</b>側也不動（收入本來就有「未收」標籤）。<br>
+  儀錶板分頁（近 12 個月趨勢、科目分佈）不動 —— 等❶決定了才知道那邊要不要跟。
+</div>
+
+<script>
+function acct(mid,aid){document.getElementById(aid).style.display =
+  document.getElementById(mid).value==='transfer' ? 'flex' : 'none';}
+function tog(id){var e=document.getElementById(id);e.style.display = e.style.display==='none'?'block':'none';}
+</script>
+</div>
+</body>
+</html>

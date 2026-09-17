@@ -32,7 +32,7 @@ import DepositFees from '@/components/DepositFees';
  */
 import {
   OTHER_BIZ_PURPOSE, OTHER_BOOKS, BOOK_LABEL, DEFAULT_BOOK, newItemPurpose, needsManagerVote,
-  canLend, lendFor,
+  canLend, lendFor, autoLend,
 
   misbookedItems, toBook, isOtherBook, bookLabel, type Book,
 } from '@/lib/book';
@@ -3103,11 +3103,16 @@ export default function PurchasesPage() {
                                * 「這張單是安幸的帳」，而使用者不知道還要去哪裡改。
                                *
                                * 反過來從其他事業體改回物業/辦公室時，book 要清回安幸。
+                               *
+                               * ★★ 「安幸代墊」那顆勾跟著 book 走（`autoLend`，2026-09-17 使用者指定）。
+                               *   改回安幸時**一定要清掉** —— 留著的話畫面上看不到那顆勾
+                               *   （它只在愛皮／洪鯊的單上畫出來），而 state 裡還帶著值。
                                */
                               if (v === OTHER_BIZ_PURPOSE) {
-                                setEdit({ ...edit, book: edit.book && edit.book !== DEFAULT_BOOK ? edit.book : null });
+                                const nb = edit.book && edit.book !== DEFAULT_BOOK ? edit.book : null;
+                                setEdit({ ...edit, book: nb, advance_for_book: autoLend(nb, edit) });
                               } else if (edit.book && edit.book !== DEFAULT_BOOK) {
-                                setEdit({ ...edit, book: DEFAULT_BOOK });
+                                setEdit({ ...edit, book: DEFAULT_BOOK, advance_for_book: null });
                               }
                               /*
                                * ★ 換帳本時**每一項的科目都要清**。
@@ -3172,7 +3177,21 @@ export default function PurchasesPage() {
                               <select disabled={readOnly} value={edit.book && edit.book !== DEFAULT_BOOK ? edit.book : ''}
                                 onChange={(e) => {
                                   // 換事業體要清掉所有項目的科目 —— 兩家的科目不重疊
-                                  setEdit({ ...edit, book: (e.target.value || null) as Book | null });
+                                  const nb = (e.target.value || null) as Book | null;
+                                  /*
+                                   * ★★★ 選了愛皮／洪鯊就**自動勾起「安幸代墊」**
+                                   *   （2026-09-17 使用者指定）。
+                                   *
+                                   *   之前是手動勾，而漏勾不會有任何地方報錯 ——
+                                   *   支出照樣記進愛皮、金額對、單也送得出去，
+                                   *   只有安幸那邊少記一筆應收。2026-09-17 查出來:
+                                   *   有請款單的支出 195 筆，代墊暫付只有 2 筆。
+                                   *
+                                   *   ★ 規則寫在 lib/book.ts 的 `autoLend()`（有測試）。
+                                   *     寫在這裡的話測不到 —— 測試環境不處理 JSX。
+                                   *   ★★ 勾還在，真的不是代墊的那幾張點得掉。
+                                   */
+                                  setEdit({ ...edit, book: nb, advance_for_book: autoLend(nb, edit) });
                                   setItems(items.map((x) => ({ ...x, account_code: null })));
                                 }}
                                 className={`w-full h-12 md:h-auto bg-white rounded-lg border px-2 md:py-1.5 disabled:bg-gray-50 ${
@@ -3529,7 +3548,8 @@ export default function PurchasesPage() {
                       暫支款 選項」）。
                   */}
                   <div className="rounded-lg border border-mor-line p-3">
-                    <label className="flex items-start gap-2 text-sm cursor-pointer">
+                    <label className={`flex items-start gap-2 text-sm ${
+                      edit.advance_for_book ? 'opacity-50' : 'cursor-pointer'}`}>
                       {/* ★ 已經勾了代墊就不能再勾暫支 —— 兩者互斥，
                           資料庫那層會 raise，這裡先擋住讓人不用看那句訊息 */}
                       <input type="checkbox" className="mt-1"
@@ -3543,9 +3563,18 @@ export default function PurchasesPage() {
                         })} />
                       <span>
                         <span>這是暫支款（之後會收回來）</span>
+                        {/*
+                          ★★★ 灰掉的時候要說得出為什麼（anxing-ui 二-6）。
+                            2026-09-17 起愛皮／洪鯊的單會**自動勾上代墊**，
+                            而代墊與暫支互斥 —— 於是這顆會是灰的。
+                            不解釋的話使用者看到的是「這一格點不動」，
+                            結論會是系統壞了，而原因就在下面那一塊。
+                        */}
                         <span className="block text-xs text-gray-500 mt-0.5">
-                          勾了之後這筆錢<span className="text-amber-700">不算當月支出</span>
-                          {' '}—— 它是暫時放在別人那裡的錢，不是花掉的
+                          {edit.advance_for_book
+                            ? '已經勾了下面的「安幸代墊」—— 兩者不能同時。要改成暫支款的話，先把代墊那顆點掉。'
+                            : <>勾了之後這筆錢<span className="text-amber-700">不算當月支出</span>
+                              {' '}—— 它是暫時放在別人那裡的錢，不是花掉的</>}
                         </span>
                       </span>
                     </label>
@@ -3618,6 +3647,15 @@ export default function PurchasesPage() {
                           以及<span className="text-gray-600">暫收付管理 → 暫付</span>一列
                           （類別「代墊」、對象「{BOOK_LABEL[toBook(edit.book)]}」、金額帶合計）。
                           收回時錢要回到這張單的付款帳戶。
+                          {/*
+                            ★★ 「這是自動勾的、點得掉」要寫出來（2026-09-17）。
+                              不寫的話，真的從愛皮自己戶頭出的那幾張也會被記成應收 ——
+                              而那筆假的應收不會有任何地方報錯,只會讓安幸的暫付一直掛著。
+                          */}
+                          <span className="block mt-1">
+                            <b className="text-gray-600">這筆錢不是從安幸的戶頭出的話，把上面那顆點掉。</b>
+                            {' '}選了事業體就會自動勾起來。
+                          </span>
                         </div>
                       )}
                     </div>
