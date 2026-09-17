@@ -8,7 +8,7 @@ import {
   eventOrder, nextEvent, isPast, untilLabel, fmtEventWhen,
   FILE_ACCEPT, fileKind, KIND_BADGE, canPreview, whyNoPreview,
   fmtSize, fileTooBig, type EventKind,
-  linkify, urlHref, urlLabel, eventShareText, lineShareUrl,
+  linkify, urlHref, urlLabel, eventShareText, lineShareUrl, shareVia, type ShareVia,
   canUpload, filesByPerson,
 } from '@/lib/board';
 
@@ -501,11 +501,89 @@ function EventRow({ ev, files, names, meId, isAdmin, people,
           <button onClick={onEdit}
             className="text-xs text-mor-slate hover:text-mor-slatedark">編輯</button>
         )}
-        <button onClick={() => window.open(lineShareUrl(eventShareText(ev)), '_blank', 'noopener')}
-          title="開 LINE，訊息已經打好了"
-          className="ml-auto rounded-lg border border-mor-line bg-white px-3.5 py-1
-                     text-xs text-gray-600 hover:bg-mor-sand/60">分享</button>
+        <ShareButton ev={ev} />
       </div>
+    </div>
+  );
+}
+
+/**
+ * 分享一場活動。
+ *
+ * ══════════════════════════════════════════════════════════
+ * 【2026-09-17 使用者：「點分享跑到 https://www.line.me/en/」】
+ *
+ * 原本一律 `window.open(line.me/R/share?text=…)`。那是 LINE 的
+ * **URL scheme** —— 官方文件寫著「isn't supported in LINE for PC」。
+ * 桌機瀏覽器打開它，就是被導去 LINE 官網叫你下載 App。
+ *
+ * ★★ 網頁版那支（`social-plugins.line.me/lineit/share`）也不行:
+ *   `url` 是必填，而佈告欄要登入才看得到 —— 貼出去是一條點開變登入畫面
+ *   的連結，而且它的 `text` 在 iPhone Safari 上會被忽略。
+ *
+ * ══════════════════════════════════════════════════════════
+ * 【所以分成兩條路（規則在 lib/board.ts 的 `shareVia`，有測試）】
+ *
+ *   手機　`navigator.share()` → 系統分享面板，LINE 就在裡面。
+ *        文字原樣帶過去，換行也留得住。
+ *   桌機　複製到剪貼簿 → 自己貼進 LINE 桌機版。
+ *        **這比任何 LINE 網址都好** —— PC 版本來就不吃 URL scheme。
+ *
+ * ★★★ 按鈕上的字跟著路徑變。一律寫「分享」的話，
+ *   桌機按下去只會複製，而畫面上沒有任何地方說過這件事 ——
+ *   人會以為按鈕壞了（那正是這次的原型）。
+ *
+ * ★ 能力在 `useEffect` 裡量，不是 render 當下。
+ *   伺服器那一輪沒有 `navigator`，直接讀會讓兩邊算出不同的字，
+ *   React 會丟 hydration 警告。先用桌機那條當預設，掛載後再修正。
+ */
+function ShareButton({ ev }: { ev: Ev }) {
+  const [via, setVia] = useState<ShareVia>('copy');
+  const [done, setDone] = useState('');
+
+  useEffect(() => {
+    setVia(shareVia({
+      hasNativeShare: typeof navigator !== 'undefined' && typeof navigator.share === 'function',
+      hasClipboard: typeof navigator !== 'undefined' && !!navigator.clipboard?.writeText,
+    }));
+  }, []);
+
+  function flash(t: string) { setDone(t); setTimeout(() => setDone(''), 4000); }
+
+  async function go() {
+    const text = eventShareText(ev);
+    try {
+      if (via === 'native') { await navigator.share({ text }); return; }
+      if (via === 'copy') {
+        await navigator.clipboard.writeText(text);
+        flash('已複製 —— 貼到 LINE 就好');
+        return;
+      }
+      window.open(lineShareUrl(text), '_blank', 'noopener');
+    } catch (e) {
+      /*
+       * ★ 在系統面板上按取消也會走到這裡（AbortError）——
+       *   那不是失敗，不要跳訊息嚇人。
+       */
+      if ((e as { name?: string })?.name === 'AbortError') return;
+      flash('分享不了 —— 手動選取上面那幾行複製');
+    }
+  }
+
+  return (
+    <div className="ml-auto flex items-center gap-2">
+      {/*
+        ★★ 訊息要出現在**動作發生的地方**（anxing-ui 二-5）。
+          跳在頁面最上方的話，這張卡片在畫面下半部的人看不到 ——
+          他按了鈕、什麼都沒發生，結論是「按鈕壞了」。
+      */}
+      {done && <span className="text-[11px] text-mor-greendark">{done}</span>}
+      <button onClick={go}
+        title={via === 'copy' ? '複製活動資訊，貼到 LINE 就好' : '開分享面板，訊息已經打好了'}
+        className="rounded-lg border border-mor-line bg-white px-3.5 py-1
+                   text-xs text-gray-600 hover:bg-mor-sand/60">
+        {via === 'copy' ? '複製' : '分享'}
+      </button>
     </div>
   );
 }

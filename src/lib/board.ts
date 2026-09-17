@@ -388,16 +388,63 @@ export function eventShareText(ev: {
 }
 
 /**
- * LINE 的分享網址。
+ * LINE 的分享網址（**最後一條退路**，不是主要做法 —— 看下面的 `shareVia`）。
  *
- * ★★ 用 `line.me/R/share?text=` —— 官方文件上那支
- *   `social-plugins.line.me/lineit/share` 的 `text` 參數
- *   在 iPhone Safari 上會被忽略（只帶得動 url）。
+ * ══════════════════════════════════════════════════════════
+ * 【★★★ 2026-09-17 修：兩支端點沒有一支到處都能用】
+ *
+ * 使用者回報「點分享跑到 https://www.line.me/en/」——那是 LINE 官網首頁。
+ *
+ *   `line.me/R/share?text=`
+ *     LINE 的 **URL scheme**。手機裝了 LINE 才會被攔截。
+ *     官方文件白紙黑字:「The LINE URL scheme isn't supported in
+ *     LINE for PC (macOS, Windows)」—— 桌機瀏覽器打開就是被導去
+ *     官網叫你下載 LINE。**這就是使用者看到的**。
+ *
+ *   `social-plugins.line.me/lineit/share?url=…&text=…`
+ *     網頁版分享鈕。`url` 是**必填**，而我們的佈告欄要登入才看得到 ——
+ *     貼出去只會是一條點開變登入畫面的連結，預覽也抓不到。
+ *     而且它的 `text` 在 iPhone Safari 上會被忽略。
+ *
+ * ★★ 所以兩支都不是答案。答案是**手機用系統分享面板、桌機用複製**
+ *   （見 `shareVia`）。這一支只留給「兩種都沒有」的瀏覽器。
  *
  * ★ 換行交給 `encodeURIComponent` 轉成 `%0A`，不要自己拼。
  */
 export function lineShareUrl(text: string): string {
   return `https://line.me/R/share?text=${encodeURIComponent(text ?? '')}`;
+}
+
+/** 分享要走哪一條路。 */
+export type ShareVia = 'native' | 'copy' | 'line';
+
+/**
+ * 這台裝置該走哪一條分享路徑。
+ *
+ * ══════════════════════════════════════════════════════════
+ *   native  `navigator.share()` —— 手機的系統分享面板，LINE 就在裡面。
+ *           文字**原樣**帶過去，不經過任何網址編碼，換行也留得住。
+ *
+ *   copy    複製到剪貼簿 ＋ 告訴使用者「貼到 LINE 就好」。
+ *           ★★★ 桌機走這一條，**而且它比任何 LINE 網址都好**:
+ *             David 的 LINE 是 PC 版，而 PC 版根本不支援 URL scheme
+ *             （LINE 官方文件），網頁版那支又需要一個公開網址。
+ *             複製一定成功，而且他本來就要自己挑要貼到哪個群。
+ *
+ *   line    兩種都沒有時的退路。會開 `line.me/R/share`——
+ *           手機有 LINE 的話會攔截，沒有的話會看到官網。
+ *           ★ 這一條**本來就不保證成功**,所以排最後。
+ * ══════════════════════════════════════════════════════════
+ *
+ * ★ 傳進來的是「能力」不是 `navigator` 本身 —— 測試環境沒有那個物件，
+ *   直接讀 `navigator` 的話這支就測不到（而它決定了按鈕會不會動）。
+ */
+export function shareVia(env: {
+  hasNativeShare?: boolean; hasClipboard?: boolean;
+} | null | undefined): ShareVia {
+  if (env?.hasNativeShare) return 'native';
+  if (env?.hasClipboard) return 'copy';
+  return 'line';
 }
 
 /* ── 上傳開關 ─────────────────────────────────────────────── */

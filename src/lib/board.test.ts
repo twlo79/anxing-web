@@ -244,7 +244,7 @@ test('★★ 太大的要擋，而且要講怎麼辦', () => {
 
 /* ── 備註裡的網址（2026-09-17）────────────────────────────── */
 
-import { linkify, urlHref, urlLabel, eventShareText, lineShareUrl,
+import { linkify, urlHref, urlLabel, eventShareText, lineShareUrl, shareVia,
   canUpload, filesByPerson } from './board.ts';
 
 const kinds = (t: string) => linkify(t).map((p) => `${p.kind}:${p.v}`);
@@ -347,10 +347,42 @@ test('★ 沒有備註就不留空行', () => {
   assert.ok(!t.includes('\n\n'));
 });
 
-test('★★ LINE 用 /R/share?text= —— 官方那支的 text 在 iPhone Safari 會被忽略', () => {
+test('lineShareUrl：換行要編碼成 %0A（它只是最後一條退路）', () => {
   const u = lineShareUrl('一\n二');
   assert.ok(u.startsWith('https://line.me/R/share?text='));
   assert.ok(u.includes('%0A'), '換行要編碼成 %0A');
+});
+
+/*
+ * ══════════════════════════════════════════════════════════
+ * 【2026-09-17 使用者回報：點分享跑到 www.line.me/en/】
+ *
+ * `line.me/R/share` 是 LINE 的 URL scheme，而官方文件寫著
+ * 「isn't supported in LINE for PC」—— 桌機瀏覽器打開就是官網首頁。
+ *
+ * 所以分享不能只有一條路。這幾條在驗**每一種裝置都走得到會動的那一條**。
+ * ══════════════════════════════════════════════════════════
+ */
+test('★★★ 手機有系統分享面板就走它 —— 文字原樣帶過去，不經過網址編碼', () => {
+  assert.equal(shareVia({ hasNativeShare: true, hasClipboard: true }), 'native');
+  assert.equal(shareVia({ hasNativeShare: true, hasClipboard: false }), 'native');
+});
+
+test('★★★ 桌機沒有系統分享面板 → 複製，不要開 LINE 網址', () => {
+  // 這就是使用者踩到的那一格:桌機 Chrome 沒有 navigator.share
+  assert.equal(shareVia({ hasNativeShare: false, hasClipboard: true }), 'copy');
+});
+
+test('★ 兩種都沒有才退回 LINE 網址（本來就不保證成功，所以排最後）', () => {
+  assert.equal(shareVia({ hasNativeShare: false, hasClipboard: false }), 'line');
+  assert.equal(shareVia({}), 'line');
+  assert.equal(shareVia(null), 'line');
+  assert.equal(shareVia(undefined), 'line');
+});
+
+test('shareVia 是純函式：同樣的輸入永遠同樣的輸出', () => {
+  const env = { hasNativeShare: false, hasClipboard: true };
+  assert.equal(shareVia(env), shareVia(env));
 });
 
 /* ── 上傳開關 ─────────────────────────────────────────────── */
