@@ -216,7 +216,8 @@ const NAV: { href: string; label: string; icon: string; roles: string[]; group?:
   { href: '/customers', label: '客戶管理', icon: '👥', group: '客戶經營', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/reviews', label: '房源評價', icon: '⭐', group: '客戶經營', roles: ['housekeeper', 'manager', 'super_admin'] },
   /*
-   * IG 版面模擬（migration_258，2026-09-16 使用者:「社群經營 併進去客戶經營裡」）。
+   * 社群模擬（migration_258，2026-09-16 使用者:「社群經營 併進去客戶經營裡」;
+ *   2026-09-17 使用者:「改成社群模擬」「分成 IG 跟 FB」）。
    *
    * ★★ **位置很要緊**:`groupNav()` 是用「連續相同」切群的。
    *   這一筆要緊接在 /reviews 後面、group 也填「客戶經營」，才會併進同一群 ——
@@ -230,7 +231,7 @@ const NAV: { href: string; label: string; icon: string; roles: string[]; group?:
    * ★ 同一條規則寫在兩個地方就會有一邊沒跟上（README 坑 A）——
    *   改這一行的時候，`social/page.tsx` 的 `CAN_EDIT` 與 migration 都要一起改。
    */
-  { href: '/social', label: 'IG 版面模擬', icon: '📱', group: '客戶經營', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/social', label: '社群模擬', icon: '📱', group: '客戶經營', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   // 會計進得去，但只看得到「收付款帳號」與「常用帳號」兩個分頁
   // —— 改人員角色那一頁仍然只有總經理，見 admin 頁的 ACCOUNTANT_TABS
   /*

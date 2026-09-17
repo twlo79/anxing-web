@@ -9,12 +9,31 @@ import {
   sourceSize, sliceCrop, sliceBg, publishOrder, sliceFileName, captionCut,
   type Item, type GridCell,
 } from '@/lib/social-grid';
+import {
+  PLATFORMS, PLATFORM_LABEL, parsePlatform,
+  FB_VISIBLE_MAX, FB_PIN_MAX, fbOrder, fbCanPin, fbPinProblem,
+  type Platform,
+} from '@/lib/social-fb';
+import FbWall, { Collage, FbPhotoWarnings, photosOf } from './fb-wall';
 
 /*
  * ══════════════════════════════════════════════════════════
- * 社群經營 → IG 版面模擬（2026-09-16 使用者指定）
+ * 社群經營 → 社群模擬（2026-09-16 建立，2026-09-17 分成 IG 跟 FB）
  *
  * 「模擬 IG 的版面去放照片與文案，可以直接看感覺。」
+ * 「改成社群模擬」「分成 IG 跟 FB」（2026-09-17）
+ *
+ * ══════════════════════════════════════════════════════════
+ * 【★★★ 兩個平台不是換個外框而已】
+ *
+ *   IG　一則 ＝ 一格。會錯的是**格子歪不歪**（切圖跨排）
+ *   FB　一則 ＝ 一張拼貼。會錯的是**哪幾張圖被蓋掉**（11 張只有 5 張露臉）
+ *
+ * 所以工具列、警告、版面、建帳號的表單**四個都跟著平台變**。
+ * FB 那一面畫在 `./fb-wall.tsx`，算式在 `lib/social-fb.ts`。
+ *
+ * ★★ 平台選 A 案（使用者 2026-09-17:「A 比較好」）——
+ *   平台在上、帳號在下。一次只看一個平台，跟實際在做的事一樣。
  *
  * ★★★ 排版的算式全部在 `lib/social-grid.ts`（33 個測試）——
  *   這一頁只負責畫。哪一格在哪、誰先貼、切圖有沒有歪、釘選還剩幾格，
@@ -50,21 +69,59 @@ type Account = {
    */
   followers: string | null; following: string | null;
   sort: number; active: boolean;
+  /**
+   * 哪個平台（migration_261）。
+   *
+   * ★★★ 讀回來一律過 `parsePlatform()` —— 認不得的當 'ig'。
+   *   當 null 的話這個帳號在**兩個平台底下都不會出現**，
+   *   而畫面上只是一個很正常的「還沒有帳號」，沒有任何錯誤。
+   */
+  platform: string | null;
+  /** 封面照。FB 用，IG 沒有這個東西 */
+  cover_path: string | null;
+  /** 檔案頭上那一行類別。純顯示 */
+  category: string | null;
 };
 /** 個人檔案的頭，新增與編輯共用同一份草稿 */
 type AccDraft = {
   id?: string; name: string; handle: string; bio: string;
   followers: string; following: string; avatar_path: string | null;
+  platform: Platform; cover_path: string | null; category: string;
 };
-const BLANK_ACC: AccDraft = {
+const blankAcc = (platform: Platform): AccDraft => ({
   name: '', handle: '', bio: '', followers: '', following: '', avatar_path: null,
-};
+  platform, cover_path: null, category: '',
+});
+/**
+ * 既有帳號 → 草稿。
+ *
+ * ★★ 只有這一份。兩個平台的「編輯」按鈕各自組一次的話，
+ *   之後加欄位會有一邊忘了帶 —— 而症狀是「在 FB 那邊編輯完，類別不見了」
+ *   （少帶的欄位被當成空值存回去）。
+ */
+const draftOf = (a: Account): AccDraft => ({
+  id: a.id, name: a.name, handle: a.handle, bio: a.bio ?? '',
+  followers: a.followers ?? '', following: a.following ?? '',
+  avatar_path: a.avatar_path,
+  platform: parsePlatform(a.platform),
+  cover_path: a.cover_path,
+  category: a.category ?? '',
+});
 type Split = { id: string; account_id: string; source_path: string | null; span: number };
 type Post = {
   id: string; account_id: string; sort: number; caption: string;
   image_path: string | null; planned_on: string | null; published_on: string | null;
   status: 'draft' | 'scheduled' | 'published'; pin: number;
   split_id: string | null; split_index: number | null;
+  /**
+   * FB 拼貼的照片（migration_261）。IG 不用這一欄 —— IG 一格一張，走 `image_path`。
+   *
+   * ★ 資料庫是 `text[] not null default '{}'`，所以正常情況不會是 null。
+   *   型別留 `| null` 是因為 migration 跑之前建的列 select 回來是 undefined，
+   *   而那一段時間畫面還是要能開（2026-09-03 的 hk_day.rooms_override 踩過
+   *   反過來的版本:欄位不存在,select('*') 只回 undefined,一聲都不叫）。
+   */
+  images: string[] | null;
 };
 
 /** 版面上的一筆：一則貼文，或一張切圖（連同它的 N 則） */
@@ -116,6 +173,11 @@ export default function SocialPage() {
 
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [accId, setAccId] = useState('');
+  /*
+   * ★★ 現在看的是哪個平台（A 案:平台在上、帳號在下）。
+   *   預設 IG —— 現有的兩個帳號都是 IG，開頁就有東西看。
+   */
+  const [plat, setPlat] = useState<Platform>('ig');
   const [posts, setPosts] = useState<Post[]>([]);
   const [splits, setSplits] = useState<Split[]>([]);
   const [urls, setUrls] = useState<Record<string, string>>({});
@@ -167,7 +229,13 @@ export default function SocialPage() {
     const list = (accs ?? []) as Account[];
     setAccounts(list);
 
-    const id = accId && list.some((a) => a.id === accId) ? accId : (list[0]?.id ?? '');
+    /*
+     * ★★★ 只在**這個平台**的帳號裡挑。
+     *   不過濾的話，從 IG 切到 FB 時分頁列換了、底下的牆卻還是上一個帳號的
+     *   —— 畫面上看不出哪裡不對，只覺得「FB 怎麼有 IG 的貼文」。
+     */
+    const mine = list.filter((a) => parsePlatform(a.platform) === plat);
+    const id = accId && mine.some((a) => a.id === accId) ? accId : (mine[0]?.id ?? '');
     if (id !== accId) setAccId(id);
     if (!id) { setPosts([]); setSplits([]); setLoading(false); return; }
 
@@ -179,7 +247,7 @@ export default function SocialPage() {
     setPosts((ps ?? []) as Post[]);
     setSplits((sp ?? []) as Split[]);
     setLoading(false);
-  }, [supabase, accId]);
+  }, [supabase, accId, plat]);
   useEffect(() => { load(); }, [load]);
 
   /* 私有 bucket：每張圖都要換一次簽名網址（跟 Receipts 同一套） */
@@ -187,8 +255,11 @@ export default function SocialPage() {
     (async () => {
       const want = [
         ...posts.map((p) => p.image_path),
+        /* ★ FB 的拼貼是好幾張 —— 漏掉的話那幾格永遠停在「圖載入中」 */
+        ...posts.flatMap((p) => p.images ?? []),
         ...splits.map((s) => s.source_path),
         ...accounts.map((a) => a.avatar_path),
+        ...accounts.map((a) => a.cover_path),
       ].filter((x): x is string => !!x && !urls[x]);
       if (!want.length) return;
       const { data } = await supabase.storage.from(BUCKET).createSignedUrls(want, 3600);
@@ -232,6 +303,25 @@ export default function SocialPage() {
   const selRow = rows.find((r) => r.id === sel) ?? null;
   const selCell = cells.find((c) => c.item.id === sel && c.slice === 0) ?? null;
 
+  /* ── FB 那一半 ───────────────────────────────────── */
+  const isFb = plat === 'fb';
+  /** 分頁列上看得到的帳號 —— 只有這個平台的 */
+  const shownAccounts = useMemo(
+    () => accounts.filter((a) => parsePlatform(a.platform) === plat),
+    [accounts, plat],
+  );
+  /*
+   * ★ FB 沒有切圖 —— `split_id` 有值的一律濾掉。
+   *   留著的話一張切圖會在 FB 牆上變成 N 則各一張圖的貼文，
+   *   而那在 FB 上不是任何東西。
+   */
+  const fbPosts = useMemo(
+    () => fbOrder(posts.filter((p) => !p.split_id)),
+    [posts],
+  );
+  /** 置頂設超過一則了嗎 —— FB 粉專只吃一則，而畫面上看不出來 */
+  const fbPin = useMemo(() => fbPinProblem(fbPosts), [fbPosts]);
+
   /*
    * ══════════════════════════════════════════════════════════
    * 點一格 → 彈出貼文視窗（2026-09-16 使用者:「每一則點進去要像 IG 介面」
@@ -254,13 +344,15 @@ export default function SocialPage() {
 
   /** 版面順序的 item id（一格一則，切圖算一則）—— 視窗裡的 ◀ ▶ 走這個 */
   const walk = useMemo(() => {
+    /* ★ FB 是一則一則往下，沒有格子 —— 走的是牆上的順序 */
+    if (isFb) return fbPosts.map((p) => p.id);
     const seen = new Set<string>();
     const out: string[] = [];
     cells.forEach((c) => {
       if (!seen.has(c.item.id)) { seen.add(c.item.id); out.push(c.item.id); }
     });
     return out;
-  }, [cells]);
+  }, [cells, isFb, fbPosts]);
   const goRel = useCallback((d: -1 | 1) => {
     setSel((cur) => {
       if (!cur) return cur;
@@ -348,6 +440,21 @@ export default function SocialPage() {
    */
   const togglePin = async (r: Row) => {
     if (!canEdit) return flash('你不是小編，改不動這一頁 —— 請總經理到「權限設定 → 人員」幫你打勾。');
+
+    /*
+     * ★★★ FB 只能置頂**一則**（IG 是 3 格）。
+     *   而且 FB 的 pin 沒有「第幾格」的概念 —— 是就是 1，不是就是 0。
+     *   照 IG 那套算格位的話，一則貼文會拿到 1、下一則拿到 2，
+     *   然後兩則都以為自己被置頂了，而貼到 FB 上只有一則會是。
+     */
+    if (isFb) {
+      const p = r.posts[0];
+      if (!p) return;
+      if (r.pin > 0) return patch(p, { pin: 0 });
+      const ok = fbCanPin(fbPosts, { id: r.id, pin: r.pin });
+      if (!ok.ok) return flash(ok.why);
+      return patch(p, { pin: 1 });
+    }
 
     let next: Row[];
     if (r.pin > 0) {
@@ -548,12 +655,33 @@ export default function SocialPage() {
      * ══════════════════════════════════════════════════════════
      */
     <div className="max-w-[640px] mx-auto">
-      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-        <h1>IG 版面模擬
+      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <h1>社群模擬
           <span className="text-sm font-normal text-gray-400 ml-2">
             把要貼的排出來，直接看整體感覺
           </span>
         </h1>
+      </div>
+
+      {/*
+        ── 平台（A 案，使用者 2026-09-17:「A 比較好」）──
+
+        ★★★ 平台在**帳號分頁的上面**，不是混在同一排。
+          理由是工具列會跟著平台變形（IG 有切圖、FB 有置頂）——
+          混在一排的話，同一個位置有時候有按鈕有時候沒有，
+          而那種「按鈕自己消失」的畫面比多點一下更難用。
+      */}
+      <div className="inline-flex bg-mor-sand border border-mor-line rounded-xl p-[3px] gap-[3px] mb-3">
+        {PLATFORMS.map((p) => (
+          <button key={p} onClick={() => { if (p !== plat) { setPlat(p); setSel(null); } }}
+            className={`px-5 py-1.5 rounded-lg text-uisub ${
+              p === plat ? 'bg-white text-mor-ink font-semibold shadow-sm'
+                         : 'text-gray-500 hover:text-mor-ink'}`}>
+            <span className={`inline-block w-2 h-2 rounded-full mr-1.5 align-middle ${
+              p === 'ig' ? 'bg-[#C13584]' : 'bg-[#1877F2]'}`} />
+            {PLATFORM_LABEL[p]}
+          </button>
+        ))}
       </div>
 
       {/*
@@ -565,7 +693,7 @@ export default function SocialPage() {
           而右上角那顆離分頁列有半個螢幕遠。
       */}
       <div className="flex flex-wrap gap-1 border-b border-mor-line mb-3">
-        {accounts.map((a) => (
+        {shownAccounts.map((a) => (
           <button key={a.id} onClick={() => { setAccId(a.id); setSel(null); }}
             className={`px-3.5 py-2 text-uisub rounded-t-lg border border-b-0 -mb-px ${
               a.id === accId ? 'bg-white border-mor-line font-semibold text-mor-ink'
@@ -574,16 +702,17 @@ export default function SocialPage() {
           </button>
         ))}
         {canEdit && (
-          <button onClick={() => setAccDraft({ ...BLANK_ACC })}
-            title="新增模擬頁"
+          /* ★ 新的帳號建在**現在看的那個平台**底下 —— 不然建完會看不到它 */
+          <button onClick={() => setAccDraft(blankAcc(plat))}
+            title={`新增一個 ${PLATFORM_LABEL[plat]} 模擬頁`}
             className="px-3.5 py-2 text-uisub rounded-t-lg border border-b-0 -mb-px
                        border-transparent text-mor-slate hover:bg-mor-bluelight/60">
             ＋
           </button>
         )}
-        {!accounts.length && !loading && (
+        {!shownAccounts.length && !loading && (
           <div className="py-2 text-sm text-gray-400">
-            還沒有模擬頁{canEdit ? ' —— 按上面那顆「＋」開一個。' : '。'}
+            還沒有 {PLATFORM_LABEL[plat]} 模擬頁{canEdit ? ' —— 按上面那顆「＋」開一個。' : '。'}
           </div>
         )}
       </div>
@@ -596,7 +725,12 @@ export default function SocialPage() {
               <button onClick={addPost}
                 className="h-9 rounded-lg bg-mor-slate text-white px-3.5 text-uisub font-medium
                            hover:bg-mor-slatedark">＋ 貼文</button>
-              {SPANS.map((n) => (
+              {/*
+                ★★ 切圖是 **IG 專屬**。FB 沒有九宮格，也就沒有「跨幾格」這回事 ——
+                  在 FB 底下留著這三顆的話，按下去會產生三則各一張圖的貼文，
+                  而那在 FB 上不是任何東西。
+              */}
+              {!isFb && SPANS.map((n) => (
                 <button key={n} onClick={() => addSplit(n)}
                   className="h-9 rounded-lg border border-mor-slate text-mor-slate px-3
                              text-uisub hover:bg-mor-bluelight/60">✂ 切圖・跨 {n} 格</button>
@@ -609,20 +743,38 @@ export default function SocialPage() {
               乾淨模式
             </button>
             <span className="ml-auto text-xs text-gray-500">
-              共 <b className="text-mor-ink">{cells.length}</b> 格
-              📌 <b className="text-mor-ink">{pinUsed} / {PIN_MAX}</b>
+              {isFb ? <>
+                共 <b className="text-mor-ink">{fbPosts.length}</b> 則
+                📌 <b className="text-mor-ink">{fbPin.n} / {FB_PIN_MAX}</b>
+              </> : <>
+                共 <b className="text-mor-ink">{cells.length}</b> 格
+                📌 <b className="text-mor-ink">{pinUsed} / {PIN_MAX}</b>
+              </>}
             </span>
           </div>
 
-          {/* ── 提示：釘選推歪 ＋ 切圖沒對齊 ── */}
-          {bad.length > 0 && shift > 0 && (
+          {/*
+            ── FB 的提示 ──
+            ★ 跟 IG 的切圖警告同一個位置（貼文清單正上方），
+              不是頁面最上方 —— 訊息要出現在動作發生的地方（README 那條坑）。
+          */}
+          {isFb && fbPin.bad && (
+            <div className="mb-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5
+                            text-xs text-amber-900 leading-relaxed">
+              📌 <b>置頂了 {fbPin.n} 則</b> —— {fbPin.why}
+            </div>
+          )}
+          {isFb && <FbPhotoWarnings posts={fbPosts} onSelect={setSel} />}
+
+          {/* ── 提示：釘選推歪 ＋ 切圖沒對齊（IG）── */}
+          {!isFb && bad.length > 0 && shift > 0 && (
             <div className="mb-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5
                             text-xs text-amber-900 leading-relaxed">
               📌 <b>釘選了 {pinUsed} 格，不是 {COLS} 的倍數</b> —— 底下整面牆往後推了 {shift} 格，
               所以下面的切圖跟著歪。釘選要嘛 <b>0 格</b>、要嘛 <b>{COLS} 格（剛好一排）</b>。
             </div>
           )}
-          {bad.map((m) => (
+          {!isFb && bad.map((m) => (
             <div key={m.item.id}
               className="mb-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5
                          text-xs text-amber-900 leading-relaxed">
@@ -651,7 +803,23 @@ export default function SocialPage() {
           */}
           {/* ★ 只剩一欄了，不需要 flex —— 留著的話 `gap-5` 會在底下多一段沒人要的空白 */}
           <div>
-            {/* ══ 手機 ══ */}
+            {isFb ? (
+              /*
+                ══ FB 的牆 ══
+                ★ 畫在 `./fb-wall.tsx` —— 它跟九宮格沒有一行共用的地方，
+                  硬塞在這裡會讓兩邊的條件判斷交纏在一起。
+              */
+              <FbWall
+                acc={{
+                  id: acc.id, name: acc.name, handle: acc.handle, bio: acc.bio,
+                  category: acc.category, followers: acc.followers, following: acc.following,
+                  avatar_path: acc.avatar_path, cover_path: acc.cover_path,
+                }}
+                posts={fbPosts} urls={urls} clean={clean} sel={sel} canEdit={canEdit}
+                onSelect={setSel}
+                onEditAcc={() => setAccDraft(draftOf(acc))} />
+            ) : (
+            /* ══ 手機 ══ */
             <div className="w-full rounded-2xl border border-mor-line bg-white overflow-hidden">
               {/*
                 ══════════ 個人檔案的頭（2026-09-16 使用者:「這些都可以再編輯」）══════════
@@ -664,11 +832,7 @@ export default function SocialPage() {
               */}
               <div className="px-3.5 py-3 border-b border-[#EFEFEF] relative">
                 {canEdit && (
-                  <button onClick={() => setAccDraft({
-                    id: acc.id, name: acc.name, handle: acc.handle, bio: acc.bio ?? '',
-                    followers: acc.followers ?? '', following: acc.following ?? '',
-                    avatar_path: acc.avatar_path,
-                  })}
+                  <button onClick={() => setAccDraft(draftOf(acc))}
                     className="absolute right-3 top-2.5 text-[11px] text-mor-slate
                                hover:text-mor-slatedark">編輯</button>
                 )}
@@ -733,12 +897,16 @@ export default function SocialPage() {
                 )}
               </div>
             </div>
-
+            )}
           </div>
 
           <p className="text-[11px] text-gray-400 mt-3 leading-relaxed">
-            這一頁<b>沒有連到真的 IG</b> —— 不發佈、不讀追蹤者。它是一面牆的草稿，
-            排好之後自己去 IG 貼。九宮格是 <b>4:5</b>（1080×1350），不是正方形。
+            這一頁<b>沒有連到真的 {isFb ? 'FB' : 'IG'}</b> —— 不發佈、不讀追蹤者。
+            它是一面牆的草稿，排好之後自己去貼。
+            {isFb
+              ? <> FB 一則貼文只有<b>前 {FB_VISIBLE_MAX} 張</b>看得到，
+                  第 {FB_VISIBLE_MAX + 1} 張以後蓋在「＋N」底下。</>
+              : <> 九宮格是 <b>4:5</b>（1080×1350），不是正方形。</>}
           </p>
         </>
       )}
@@ -757,6 +925,15 @@ export default function SocialPage() {
             {/* ── 左:照片 ── */}
             <div className="relative bg-black md:basis-[46%] md:shrink-0 flex items-center justify-center">
               {(() => {
+                /* ★ FB 是一張拼貼，不是一張圖 —— 用牆上那一支同一個元件畫 */
+                if (isFb) {
+                  const p = selRow.posts[0];
+                  const paths = p ? photosOf(p) : [];
+                  return paths.length
+                    ? <div className="w-full bg-white"><Collage paths={paths} urls={urls} /></div>
+                    : <div className="w-full aspect-[4/5] flex items-center justify-center
+                                      text-white/45 text-sm">還沒有照片</div>;
+                }
                 const src = selRow.kind === 'split'
                   ? selRow.split?.source_path : selRow.posts[0]?.image_path;
                 const u = src ? urls[src] : null;
@@ -829,7 +1006,25 @@ export default function SocialPage() {
                   ? <ReadPost row={selRow} seq={selCell?.seq ?? 0} handle={acc?.handle ?? ''} />
                   : (
 <Panel row={selRow} seq={selCell?.seq ?? 0} urls={urls} savedAt={savedAt}
-                canEdit={canEdit} cutting={cutting} rows={rows}
+                canEdit={canEdit} cutting={cutting} isFb={isFb}
+                pinCheck={isFb
+                  ? fbCanPin(fbPosts, { id: selRow.id, pin: selRow.pin })
+                  : canPin(rows, selRow)}
+                onFbAdd={async (files, post) => {
+                  /*
+                   * ★★ 一張一張傳，傳完**一次**寫回去。
+                   *   每傳一張就 update 的話，後面那次會用到前面那次之前的
+                   *   `images`（state 還沒回來）—— 結果只留下最後一張。
+                   */
+                  const got: string[] = [];
+                  for (const f of Array.from(files)) {
+                    const path = await put(f);
+                    if (path) got.push(path);
+                  }
+                  if (!got.length) return;
+                  await patch(post, { images: [...photosOf(post), ...got] });
+                }}
+                onFbSet={async (post, paths) => { await patch(post, { images: paths }); }}
                 onPatch={patch} onPin={() => togglePin(selRow)} onDel={() => del(selRow)}
                 onNudge={(d) => nudge(selRow.id, d)}
                 onSlices={() => downloadSlices(selRow)}
@@ -859,9 +1054,14 @@ export default function SocialPage() {
       {accDraft && (
         <AccountForm draft={accDraft} onChange={setAccDraft} onClose={() => setAccDraft(null)}
           url={accDraft.avatar_path ? urls[accDraft.avatar_path] : null}
+          coverUrl={accDraft.cover_path ? urls[accDraft.cover_path] : null}
           onPickAvatar={async (f) => {
             const path = await put(f);
             if (path) setAccDraft((d) => (d ? { ...d, avatar_path: path } : d));
+          }}
+          onPickCover={async (f) => {
+            const path = await put(f);
+            if (path) setAccDraft((d) => (d ? { ...d, cover_path: path } : d));
           }}
           onSave={async (d) => {
             const body = {
@@ -871,11 +1071,22 @@ export default function SocialPage() {
               followers: d.followers.trim() || null,
               following: d.following.trim() || null,
               avatar_path: d.avatar_path,
+              category: d.category.trim() || null,
+              cover_path: d.cover_path,
             };
+            /*
+             * ★★★ `platform` 只在**新增**時寫進去，編輯時不帶。
+             *   改平台會讓底下的貼文去讀另一支空的照片欄位
+             *   （IG 讀 image_path、FB 讀 images）—— 照片沒有不見，
+             *   但畫面上全部變成空格，而且不會有任何錯誤。
+             */
             const { error } = d.id
               ? await supabase.from('social_accounts').update(body).eq('id', d.id)
-              : await supabase.from('social_accounts').insert({ ...body, sort: accounts.length });
+              : await supabase.from('social_accounts')
+                  .insert({ ...body, platform: d.platform, sort: accounts.length });
             if (error) return flash((d.id ? '存不起來：' : '建不起來：') + error.message);
+            /* ★ 新建的帳號在哪個平台，就切到那個平台 —— 不然建完會看不到它 */
+            if (!d.id) setPlat(d.platform);
             setAccDraft(null);
             load();
           }}
@@ -958,20 +1169,38 @@ function Cell({ cell, urls, clean, selected, onClick, draggable, onDragStart, on
 
 /* ══════════════════════════════════════════════════════════ */
 
-function Panel({ row, seq, urls, savedAt, canEdit, cutting, rows,
-  onPatch, onPin, onDel, onNudge, onSlices, onUpload }: {
+function Panel({ row, seq, urls, savedAt, canEdit, cutting, isFb, pinCheck,
+  onPatch, onPin, onDel, onNudge, onSlices, onUpload, onFbAdd, onFbSet }: {
   row: Row; seq: number; urls: Record<string, string>;
   /** 剛存好的時間戳。0 ＝ 沒有剛存過 */
   savedAt: number;
-  canEdit: boolean; cutting: boolean; rows: Row[];
+  canEdit: boolean; cutting: boolean;
+  /** 這一則屬於 FB 的帳號 */
+  isFb: boolean;
+  /**
+   * 釘選／置頂能不能再加一則。
+   *
+   * ★★ **在外面算好傳進來**，不是在這裡再判斷一次 —— IG 算的是格數
+   *   （切圖吃掉 3 格）、FB 算的是則數（上限 1 則），規則完全不同。
+   *   在這裡用 `isFb ? … : …` 的話，這條規則就在兩個地方各有一份
+   *   （README 坑 A），而遲早有一邊沒跟上。
+   */
+  pinCheck: { ok: boolean; why: string };
   onPatch: (p: Post, f: Partial<Post>) => void;
   onPin: () => void; onDel: () => void; onNudge: (d: -1 | 1) => void;
   onSlices: () => void;
   onUpload: (file: File, post: Post | null) => void;
+  /** FB：加照片（可以一次選好幾張） */
+  onFbAdd: (files: FileList, post: Post) => void;
+  /** FB：把照片換成這一串（刪除與換順序都走這支） */
+  onFbSet: (post: Post, paths: string[]) => void;
 }) {
   const file = useRef<HTMLInputElement>(null);
+  const fbFile = useRef<HTMLInputElement>(null);
   const lock = row.status === 'published';
-  const pin = canPin(rows, row);
+  const pin = pinCheck;
+  const fbPost = row.posts[0] ?? null;
+  const fbPaths = fbPost ? photosOf(fbPost) : [];
   const src = row.kind === 'split' ? row.split?.source_path : row.posts[0]?.image_path;
   const url = src ? urls[src] : null;
   const { w, h } = sourceSize(row.span);
@@ -1022,20 +1251,105 @@ function Panel({ row, seq, urls, savedAt, canEdit, cutting, rows,
             <input type="checkbox" className="mt-0.5" checked={row.pin > 0}
               disabled={!pin.ok} onChange={onPin} />
             <span>
-              <b>釘選到最上方</b>{row.pin > 0 ? `（第 ${row.pin} 個）` : ''}
+              <b>{isFb ? '置頂這一則' : '釘選到最上方'}</b>
+              {!isFb && row.pin > 0 ? `（第 ${row.pin} 個）` : ''}
               <span className="block text-[11px] text-gray-500 mt-0.5 leading-relaxed">
                 {!pin.ok ? pin.why
-                  : row.span > 1
-                    ? `這張切圖會用掉 ${row.span} 格釘選額度（IG 上限 ${PIN_MAX} 格）——
-                       剛好把一整排釘在最上面，底下不會被推歪。`
-                    : `只是把它拉到版面最上方，不會改變發佈日期或序號。`}
+                  : isFb
+                    ? `FB 粉專只能置頂 ${FB_PIN_MAX} 則 —— 換一則的話，先把原本那則取消。`
+                    : row.span > 1
+                      ? `這張切圖會用掉 ${row.span} 格釘選額度（IG 上限 ${PIN_MAX} 格）——
+                         剛好把一整排釘在最上面，底下不會被推歪。`
+                      : `只是把它拉到版面最上方，不會改變發佈日期或序號。`}
               </span>
             </span>
           </label>
         </div>
       )}
 
-      {/* ── 圖 ── */}
+      {/*
+        ── 圖（FB：一則好幾張）──
+
+        ★★★ 前 {FB_VISIBLE_MAX} 張畫實線、其餘畫成半透明並標「蓋住」——
+          這是整個 FB 模擬要回答的那一題。只寫一句「超過 5 張」的話，
+          人還是要自己數到第幾張才被蓋掉。
+      */}
+      {isFb && fbPost ? (
+        <div className="mt-3">
+          <div className="text-[11px] text-gray-500 mb-1">
+            照片　共 {fbPaths.length} 張
+            {fbPaths.length > FB_VISIBLE_MAX && (
+              <b className="text-amber-700 ml-1">
+                　只有前 {FB_VISIBLE_MAX} 張看得到
+              </b>
+            )}
+          </div>
+          {fbPaths.length > 0 && (
+            <div className="grid grid-cols-5 gap-1.5">
+              {fbPaths.map((p, i) => {
+                const hiddenOne = i >= FB_VISIBLE_MAX;
+                return (
+                  <div key={`${p}/${i}`}
+                    className={`relative aspect-square rounded-lg overflow-hidden border ${
+                      hiddenOne ? 'border-amber-300 opacity-45' : 'border-mor-line'}`}>
+                    {urls[p]
+                      ? <img src={urls[p]} alt="" className="w-full h-full object-cover" />
+                      : <span className="absolute inset-0 bg-[#F3F1EC]" />}
+                    <span className="absolute left-0.5 top-0.5 rounded bg-black/55 text-white
+                                     text-[9px] font-bold px-1">{i + 1}</span>
+                    {hiddenOne && (
+                      <span className="absolute right-0.5 top-0.5 rounded bg-amber-700 text-white
+                                       text-[9px] font-bold px-1">蓋住</span>
+                    )}
+                    {canEdit && !lock && (
+                      <span className="absolute inset-x-0 bottom-0 flex justify-between
+                                       bg-black/45 text-white text-[11px] leading-none">
+                        <button title="往前"
+                          onClick={() => {
+                            if (i === 0) return;
+                            const a = [...fbPaths];
+                            [a[i - 1], a[i]] = [a[i], a[i - 1]];
+                            onFbSet(fbPost, a);
+                          }}
+                          className="px-1 py-1 disabled:opacity-30" disabled={i === 0}>◀</button>
+                        <button title="拿掉這張"
+                          onClick={() => onFbSet(fbPost, fbPaths.filter((_, k) => k !== i))}
+                          className="px-1 py-1">✕</button>
+                        <button title="往後"
+                          onClick={() => {
+                            if (i === fbPaths.length - 1) return;
+                            const a = [...fbPaths];
+                            [a[i], a[i + 1]] = [a[i + 1], a[i]];
+                            onFbSet(fbPost, a);
+                          }}
+                          className="px-1 py-1 disabled:opacity-30"
+                          disabled={i === fbPaths.length - 1}>▶</button>
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {canEdit && !lock && (
+            <div className="mt-2">
+              <input ref={fbFile} type="file" accept="image/*" hidden multiple
+                onChange={(e) => {
+                  if (e.target.files?.length) onFbAdd(e.target.files, fbPost);
+                  e.target.value = '';
+                }} />
+              <button onClick={() => fbFile.current?.click()}
+                className="h-7 rounded-lg border border-mor-line bg-white px-2.5 text-[11px]">
+                ＋ 加照片（可以一次選好幾張）
+              </button>
+            </div>
+          )}
+          <p className="text-[11px] text-gray-500 mt-2 leading-relaxed">
+            拼貼的形狀是 FB 自己排的 —— 1 張整張、2 張左右各半、3 張一大兩小、
+            4 張 2×2、<b>5 張以上只露前 5 張</b>。順序就是拼貼的順序，用 ◀ ▶ 換。
+          </p>
+        </div>
+      ) : (
       <div className="mt-3">
         <div className="text-[11px] text-gray-500 mb-1">
           {row.kind === 'split' ? `原圖　建議 ${w} × ${h}` : `照片　建議 ${CELL_W} × ${CELL_H}`}
@@ -1072,6 +1386,7 @@ function Panel({ row, seq, urls, savedAt, canEdit, cutting, rows,
           </div>
         </div>
       </div>
+      )}
 
       {/* ── 切圖：切片 ＋ 發佈順序 ── */}
       {row.kind === 'split' && (
@@ -1314,20 +1629,26 @@ function Caption({ post, label, readOnly, onSave }: {
  * ★★ 追蹤者用文字框不是數字框:這一頁沒有連 IG，那兩個數字是裝飾。
  *   數字框會擋掉「12.3萬」，而那正是使用者可能想打的。
  */
-function AccountForm({ draft, url, onChange, onClose, onSave, onPickAvatar, onDeactivate }: {
+function AccountForm({ draft, url, coverUrl, onChange, onClose, onSave,
+  onPickAvatar, onPickCover, onDeactivate }: {
   draft: AccDraft;
   /** 頭像的簽名網址（剛上傳完還沒換到的話會是 null，那就先顯示首字） */
   url: string | null;
+  /** 封面照的簽名網址。FB 才有 */
+  coverUrl: string | null;
   onChange: (d: AccDraft) => void;
   onClose: () => void;
   onSave: (d: AccDraft) => Promise<void> | void;
   onPickAvatar: (f: File) => void;
+  onPickCover: (f: File) => void;
   onDeactivate: () => void;
 }) {
   const [save, saving] = useOnce(async () => { await onSave(draft); });
   const file = useRef<HTMLInputElement>(null);
+  const coverFile = useRef<HTMLInputElement>(null);
   const bad = !draft.name.trim() || !draft.handle.trim();
   const editing = !!draft.id;
+  const isFb = draft.platform === 'fb';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -1335,11 +1656,72 @@ function AccountForm({ draft, url, onChange, onClose, onSave, onPickAvatar, onDe
       <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm max-h-[85vh] overflow-y-auto">
         <div className="sticky top-0 bg-white px-5 py-3.5 border-b border-mor-line font-bold
                         flex items-center justify-between">
-          {editing ? '編輯模擬頁' : '新增模擬頁'}
+          {editing ? '編輯模擬頁' : `新增 ${PLATFORM_LABEL[draft.platform]} 模擬頁`}
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
         </div>
 
         <div className="px-5 py-4 grid gap-3 text-sm">
+          {/*
+            ── 平台 ──
+            ★★★ 新增時選得動，**編輯時不給改**。
+              改了的話底下的貼文會去讀另一支空的照片欄位
+              （IG 讀 image_path、FB 讀 images）—— 照片沒有不見，
+              但畫面上全部變成空格，而且不會有任何錯誤。
+            ★ 建好之後這一欄還是**顯示出來**，不是消失 ——
+              不然使用者要靠猜的才知道這個模擬頁是哪個平台。
+          */}
+          {editing ? (
+            <div className="text-xs text-gray-500">
+              平台　<b className="text-mor-ink">{PLATFORM_LABEL[draft.platform]}</b>
+              <span className="text-gray-400 ml-2">建好之後不能改</span>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-1">
+              <span className="text-xs text-gray-500">平台（建好之後不能改）</span>
+              <div className="flex gap-2">
+                {PLATFORMS.map((p) => (
+                  <button key={p} onClick={() => onChange({ ...draft, platform: p })}
+                    className={`flex-1 rounded-lg border px-3 py-1.5 text-uisub ${
+                      p === draft.platform
+                        ? 'bg-mor-slate border-mor-slate text-white font-semibold'
+                        : 'bg-white border-gray-300 text-gray-600 hover:bg-mor-sand/60'}`}>
+                    {PLATFORM_LABEL[p]}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/*
+            ── 封面照（FB）──
+            ★ 它佔掉 FB 第一屏一半 —— 沒有的話「看整體感覺」從第一眼就是錯的。
+              IG 沒有這個東西，所以整塊不出現（不是灰掉）。
+          */}
+          {isFb && (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs text-gray-500">封面照</span>
+              <div className="h-[72px] rounded-lg overflow-hidden border border-mor-line
+                              bg-gradient-to-br from-[#9fc7dd] via-[#d5cdbb] to-[#b98a63]
+                              flex items-center justify-center">
+                {coverUrl
+                  ? <img src={coverUrl} alt="" className="w-full h-full object-cover" />
+                  : <span className="text-[11px] text-white/90 drop-shadow">還沒有封面照</span>}
+              </div>
+              <div className="flex gap-2">
+                <input ref={coverFile} type="file" accept="image/*" hidden
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) onPickCover(f); e.target.value = ''; }} />
+                <button onClick={() => coverFile.current?.click()}
+                  className="h-7 rounded-lg border border-mor-line bg-white px-2.5 text-[11px]">
+                  {draft.cover_path ? '換一張' : '選一張'}
+                </button>
+                {draft.cover_path && (
+                  <button onClick={() => onChange({ ...draft, cover_path: null })}
+                    className="h-7 px-1 text-[11px] text-gray-400 underline">拿掉</button>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* 頭像 */}
           <div className="flex items-center gap-3">
             <span className="w-14 h-14 rounded-full shrink-0 flex items-center justify-center"
@@ -1385,6 +1767,13 @@ function AccountForm({ draft, url, onChange, onClose, onSave, onPickAvatar, onDe
               placeholder="中山・南京 ｜ 月租・短租 ｜ 私訊看房"
               className="rounded-lg border border-gray-300 px-2 py-1.5 min-h-[58px] resize-y" /></label>
 
+          {/* ★ 類別：FB 檔案頭上「🏷 Travel Company」那一行。純顯示，兩個平台都有 */}
+          <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">類別</span>
+            <input value={draft.category}
+              onChange={(e) => onChange({ ...draft, category: e.target.value })}
+              placeholder={isFb ? 'Serviced Apartments' : '住宿服務'}
+              className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+
           <div className="flex gap-2.5">
             <label className="flex-1 flex flex-col gap-1"><span className="text-xs text-gray-500">追蹤者</span>
               <input value={draft.followers} onChange={(e) => onChange({ ...draft, followers: e.target.value })}
@@ -1395,8 +1784,8 @@ function AccountForm({ draft, url, onChange, onClose, onSave, onPickAvatar, onDe
           </div>
 
           <div className="text-[11px] text-gray-400 leading-relaxed">
-            這裡不會連到真的 IG —— 這兩個數字是<b>你自己打的</b>，只是讓這面牆看起來像 IG。
-            留空就顯示破折號。
+            這裡不會連到真的 {PLATFORM_LABEL[draft.platform]} ——
+            這兩個數字是<b>你自己打的</b>，只是讓這面牆看起來像真的。留空就顯示破折號。
           </div>
 
           {/* 停用是底下一行紅色小字，不是按鈕（anxing-ui 四-3） */}
