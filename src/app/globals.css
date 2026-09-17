@@ -761,3 +761,52 @@ input:-webkit-autofill:focus {
       linear-gradient(168deg, #43648F 0%, #2A4266 48%, #131F35 100%);
   }
 }
+
+/*
+ * ══════════════════════════════════════════════════════════
+ * Word 預覽（佈告欄 → 活動 → 開會資料，2026-09-17）
+ *
+ * mammoth 把 .docx 解成一串**沒有 class 的標籤**（h1〜h6、p、strong、
+ * ul／ol、table、img）。Tailwind 的 preflight 把這些標籤的預設樣式
+ * 全部清掉了 —— 不補的話，標題跟內文一樣大、表格沒有框線，
+ * 整份文件糊成一團。
+ *
+ * ★★ 這不是要做得跟 Word 一樣（做不到，也不該假裝）——
+ *   是要讓它**讀得下去**。畫面上那條琥珀色的提示已經說了排版會走樣。
+ *
+ * ★ 只作用在 `.docx-preview` 裡面，不會外漏到別的頁。
+ * ══════════════════════════════════════════════════════════
+ */
+.docx-preview { color: #2E3840; }
+.docx-preview > :first-child { margin-top: 0; }
+.docx-preview p { margin: 0 0 0.75em; line-height: 1.85; }
+.docx-preview h1 { font-size: 1.5rem;  font-weight: 800; margin: 1.4em 0 0.5em; }
+.docx-preview h2 { font-size: 1.25rem; font-weight: 700; margin: 1.3em 0 0.45em; }
+.docx-preview h3 { font-size: 1.1rem;  font-weight: 700; margin: 1.2em 0 0.4em; }
+.docx-preview h4,
+.docx-preview h5,
+.docx-preview h6 { font-size: 1rem; font-weight: 700; margin: 1.1em 0 0.35em; }
+.docx-preview strong { font-weight: 700; }
+.docx-preview em { font-style: italic; }
+.docx-preview ul { list-style: disc;    padding-left: 1.6em; margin: 0 0 0.75em; }
+.docx-preview ol { list-style: decimal; padding-left: 1.7em; margin: 0 0 0.75em; }
+.docx-preview li { margin: 0.15em 0; line-height: 1.8; }
+.docx-preview a { color: #41689B; text-decoration: underline; }
+/* ★ 長表格橫向捲，不要把整個視窗撐寬 —— 撐寬的話右邊的內容直接看不到 */
+.docx-preview table {
+  border-collapse: collapse;
+  margin: 0.9em 0;
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+.docx-preview th,
+.docx-preview td {
+  border: 1px solid #E0DDD5;
+  padding: 6px 10px;
+  vertical-align: top;
+  text-align: left;
+}
+.docx-preview th { background: #ECE8DF; font-weight: 700; }
+/* ★ 圖片不要超出容器。Word 裡的圖常常是原始尺寸 */
+.docx-preview img { max-width: 100%; height: auto; margin: 0.6em 0; }

@@ -34,14 +34,18 @@ self.addEventListener('push', (event) => {
     tag: data.tag || 'anxing',
     // 沒帶網址就落在「新訊息」——那一頁看得到這則通知本身,
     // 而 /purchases 對一則訂單通知來說是完全不相干的地方
-    data: { url: data.url || '/settings?tab=news' },
+    //
+    // ★★★ 這個檔案是**瀏覽器快取的**。網址改成 /board 之後,
+    //   已經裝在手機上的那一支還會繼續送舊網址,直到它自己更新為止
+    //   —— 所以舊那個網址那邊留了一個 redirect。兩邊都要有。
+    data: { url: data.url || '/board?tab=news' },
   };
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const url = (event.notification.data && event.notification.data.url) || '/settings?tab=news';
+  const url = (event.notification.data && event.notification.data.url) || '/board?tab=news';
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
       // 已經開著的分頁就直接切過去，不要每次都開新視窗

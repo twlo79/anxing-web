@@ -1,7 +1,6 @@
 'use client';
-import { Suspense, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
-import NewsTab from './news-tab';
+import { Suspense, useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import NotifyTab from './notify-tab';
 import TrashTab from './trash-tab';
 import { Tabs } from '@/components/Tabs';
@@ -21,17 +20,30 @@ import { Tabs } from '@/components/Tabs';
  * 各列表頁的 🗑️ 入口靠這個直接把人送到他要看的那一段，
  * 而不是丟到一個「全部」的清單前面讓他自己找。
  *
- * 【新訊息排第一】（2026-08-15 使用者指定）
+ * ══════════════════════════════════════════════════════════
+ * 【★★★ 新訊息搬到「佈告欄」了（2026-09-17 使用者指定）】
  *
- * 分頁順序 = 使用頻率。「通知設定」是設一次就不動的東西，
- * 「新訊息」是每天會來看的 —— 手機上滑掉的那則要回來這裡查。
+ * 使用者:「做一個佈告欄⋯1. 通知 把新訊息移進來」。
+ * 所以這一頁現在只剩「通知設定」與「紀錄」兩格。
  *
- * 原本的分頁叫「通知」，跟新訊息擺在一起會分不出誰是誰，
- * 所以改名「通知設定」—— 它本來就只是四個開關。
+ * ★★ 但 `?tab=news` **不能就這樣不見** ——
+ *   `public/sw.js` 裡寫死了 `/settings?tab=news`，而 service worker
+ *   是**瀏覽器快取的**：推上去之後，已經裝在手機上的那一支
+ *   還會繼續把人送到這裡，直到它自己更新為止。
+ *
+ *   不接的話，那段時間點推播會落在一個沒有新訊息的設定頁 ——
+ *   使用者看到的是「通知點了什麼都沒有」，而系統沒有任何錯誤。
+ *
+ * ★ 所以 `?tab=news` 在這裡 redirect 到 `/board?tab=news`。
+ *   sw.js 也改了，兩邊都要有 —— 只改一邊就會有一段空窗期。
+ *   （2026-09-03 那條坑的另一種形狀:只找到一條產生路徑就當成唯一的）
+ *
+ * ★★ 等到確定沒有人的手機上還留著舊的 sw（幾個月後），
+ *   這個 redirect 才可以拿掉。在那之前它不是贅碼。
+ * ══════════════════════════════════════════════════════════
  */
 
 const TABS = [
-  { key: 'news', label: '新訊息', icon: '📬' },
   { key: 'notify', label: '通知設定', icon: '🔔' },
   { key: 'trash', label: '紀錄', icon: '🗑️' },
 ] as const;
@@ -39,17 +51,29 @@ type TabKey = (typeof TABS)[number]['key'];
 
 function SettingsInner() {
   const params = useSearchParams();
+  const router = useRouter();
+
+  /* ★ 舊的推播網址 —— 送去佈告欄，不要停在這裡 */
+  const stale = params.get('tab') === 'news';
+  useEffect(() => {
+    if (stale) router.replace('/board?tab=news');
+  }, [stale, router]);
+
   // 網址指定的分頁只在第一次載入時採用 —— 之後使用者點分頁是他的選擇，
   // 不該因為網址沒變就被拉回去。
-  /*
-   * 推播點開會帶 ?tab=news 進來 —— 那是這一頁存在的主要入口,
-   * 網址對不上的話,人點了通知會落在「通知設定」的四個開關前面。
-   */
   const [tab, setTab] = useState<TabKey>(() => {
     const t = params.get('tab');
-    return TABS.some((x) => x.key === t) ? (t as TabKey) : 'news';
+    return TABS.some((x) => x.key === t) ? (t as TabKey) : 'notify';
   });
   const [initialTable] = useState(params.get('table') ?? '');
+
+  /*
+   * ★ 轉頁的那一瞬間不要先畫出「通知設定」的四個開關 ——
+   *   閃一下再跳走，看起來像點錯了。
+   */
+  if (stale) {
+    return <div className="text-gray-400 py-20 text-center">帶你去佈告欄的通知…</div>;
+  }
 
   return (
     <div>
@@ -61,9 +85,7 @@ function SettingsInner() {
           label: <><span className="mr-1.5">{t.icon}</span>{t.label}</>,
         }))} />
 
-      {tab === 'news' ? <NewsTab />
-        : tab === 'notify' ? <NotifyTab />
-        : <TrashTab initialTable={initialTable} />}
+      {tab === 'notify' ? <NotifyTab /> : <TrashTab initialTable={initialTable} />}
     </div>
   );
 }

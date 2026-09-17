@@ -3,7 +3,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { monthGrid, shiftMonth, twToday, dayStatus, type ReportRow } from '@/lib/attendance-ui';
 import { CARD, type Holiday, type TabProps } from './types';
-import NoticeTab from './notice-tab';
 
 /**
  * 行事曆：國定假日 ＋ 我的請假 ＋（主管）當天誰請假。
@@ -112,7 +111,12 @@ export default function CalendarTab({ me, isAdmin, onMsg }: TabProps) {
 
   return (
     <div className="space-y-5">
-      <NoticeTab me={me} isAdmin={isAdmin} onMsg={onMsg} />
+      {/*
+        公告搬到「佈告欄」了（2026-09-17 使用者:「這個 拿掉」）。
+        ★ 公告本身沒有刪 —— 同一張 announcements 表、同一個元件
+          （notice-tab.tsx 還在這個資料夾裡），只是入口換到 /board。
+          已讀紀錄、置頂、未讀名單全部照舊。
+      */}
 
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1">

@@ -232,6 +232,18 @@ const NAV: { href: string; label: string; icon: string; roles: string[]; group?:
    *   改這一行的時候，`social/page.tsx` 的 `CAN_EDIT` 與 migration 都要一起改。
    */
   { href: '/social', label: '社群模擬', icon: '📱', group: '客戶經營', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  /*
+   * 佈告欄（migration_262，2026-09-17 使用者:「做一個 佈告欄」）。
+   *
+   * ★★ 公告從出勤日曆搬過來、新訊息從設定搬過來。
+   *   不藏在「設定」裡是故意的 —— 那個名字讓人以為裡面是設定，
+   *   不會每天點進去，而沒有人看的公告等於沒發。
+   *
+   * ★ 房務 cleaner 也要開 —— 公告、新訊息、團聚都是全公司的事。
+   *   「帳密」那一格在頁裡面自己擋（can_see_board_secrets），
+   *   不是靠這一行—— 靠這一行的話他連公告也看不到。
+   */
+  { href: '/board', label: '佈告欄', icon: '📢', group: '公司', roles: ['cleaner', 'housekeeper', 'accountant', 'manager', 'super_admin'] },
   // 會計進得去，但只看得到「收付款帳號」與「常用帳號」兩個分頁
   // —— 改人員角色那一頁仍然只有總經理，見 admin 頁的 ACCOUNTANT_TABS
   /*
