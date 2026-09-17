@@ -20,21 +20,6 @@
 
 tsc、測試、migration 自檢的結果。
 
-### 4.4 ★★★ 哪些檔案**自動打開**（David 指定，2026-09-16）
-
-送檔案卡的時候要指定「在側欄直接開」還是「只給一張下載卡」。規矩只有一條：
-
-| 檔案 | 怎麼送 | 為什麼 |
-|---|---|---|
-| **`.sql`** | **自動打開** | 他是**直接從那張卡選取複製**去貼 Supabase SQL Editor 的。要先點一下才展開的話，每一支都多一步 |
-| **UI 設計稿 `.html`** | **自動打開** | 那是拿來看的。不打開就等於沒給 —— 過審要看得到圖 |
-| **`.tsx` / `.ts` / 其他** | **只給下載卡，不要打開** | 他不讀 code，那是給 git 的。自動展開兩百行 TSX 只會把對話洗掉，而真正要看的那張 SQL 卡被推到上面去了 |
-
-★★ **下載卡還是會出現，這件事躲不掉。**
-寫進他電腦的唯一路徑是「先送檔案 → 拿到 uuid → 再寫進資料夾」
-（`device_commit_files` 只吃 `fileUuid`，直接給 outputs 路徑會 404）。
-所以 `.tsx` 一定會留下一張卡 —— 能控制的是**它不要自己展開**。
-
 ### 4.5 migration 一律附可點開的檔案卡
 
 **寫完 `.sql` 的下一個動作就是送檔案卡，不要只講檔名。**
@@ -62,11 +47,6 @@ tsc、測試、migration 自檢的結果。
 ★★ 自檢跑出來的表格，**看不到 = 整支回滾了**，不是「跑成功但沒輸出」。
 自檢在 `commit` 後面，成功就一定看得到。
 這件事 2026-09-10 被誤讀兩次 —— 每一支 migration 的自檢前面都要寫這句。
-
-★★★ **SQL 一律同時寫進 `supabase/` 底下的資料夾，不要只留在對話的卡片上。**
-一次性的查詢／修復腳本放 `supabase/一次性腳本/`，migration 放 `supabase/migrations/`。
-卡片是**方便複製**用的，不是保存用的 —— 我的工作區是暫時的，
-閒置夠久就被回收，那時只有寫進他 repo 的那一份還在。
 
 ### 5. 推送（有要推的時候才給）
 
@@ -171,7 +151,12 @@ commit 訊息一行，中文，動詞開頭或「主題：內容」。
 ## 這個專案的規矩
 
 * **不能執行 `deploy.ps1`**（sandbox 的 `next build` 會在 SWC 原生檔掛掉）。也**不用 raw git 幫 David 先 commit** —— 推是他的動作。
-* **migration 是手動貼進 Supabase SQL Editor 的**，CI 不碰。每支結尾要有回傳結果的自檢表格（`raise notice` 在 SQL Editor 看不到）。
+* **migration 是手動貼進 Supabase SQL Editor 的**，CI 不碰。每支結尾要有回傳結果的自檢表格（`raise notice` 在 SQL Editor 看不到），而且**一定要呼叫 `record_migration()`**。
+* **★★★ 交給 David 之前，先在本地 Postgres 真的跑一次**（2026-09-17 起）。
+  `apt-get install -y postgresql` → `initdb` → 建一個最小的 Supabase 環境（`auth.uid()`、`storage.buckets`／`objects`、`profiles`、`schema_migrations`、`record_migration`）→ `psql -v ON_ERROR_STOP=1 -f migration_XXX.sql`。
+  migration_262 那一輪眼睛看過兩遍、腳本檢查過分號與詞邊界，**還是有兩個錯**:少一個表別名（`42P01`）、掃 `pg_class` 沒濾 `relkind`（自檢永遠紅）。後者**用看的不可能發現** —— 要跑起來才看得到那一行輸出。
+  ★ 順便驗得到冪等（跑第二次輸出一樣）、權限（用真的角色 select）、守衛（沒有痕跡時一列都不記）。
+  ★★ 本地過**不等於**線上過（`auth.uid()` 是假的、資料是空的）——它抓的是語法與自身邏輯，而那正是前幾次踩到的那些。
 * **邏輯寫在 `.ts` 不是 `.tsx`** —— 測試執行環境不處理 JSX，寫在 `.tsx` 裡的判斷式測不到。
 * 改完跑：
 
@@ -216,10 +201,13 @@ node --experimental-strip-types --test "src/**/*.test.ts"
 | **同一支欄位既拿來顯示又拿來當 key** | `Unpriced.label` 空的時候顯示成「（沒填房源）」，而畫面若拿那四個字去存 `job_code`，`splitJobKey` 就對不上（它用原始的空字串）。症狀是「拆完存好了，但支出完全沒變」—— tsc 過、沒有錯誤訊息、使用者只會再拆一次。**顯示的代換一律留在畫面那一層**；要當 key 的欄位另外開一支原始值（2026-09-03 寫拆帳時抓到，跟 `'2026-08-20'.startsWith('202608')` 同一種病）|
 | **整批刪掉重建有 id 的東西** | 支出的冪等鍵是 `split:<拆帳列的 id>`。存拆帳時圖方便「全刪再全建」的話 id 全變 → 已產生的支出**全部變孤兒**，下次按產生又多一整組，**帳直接雙倍**而總額只是「比較大」。改法:留著的 update（id 不動）、新的 insert、拿掉的才 delete，每一步數影響列數 |
 | **自檢的基準值依賴這支正在改的東西** | migration_187 拿「最後一筆的餘額」當基準，而那支改的正是順序 —— 基準自己會被改掉。基準要用**跟改動無關**的量（總和、筆數）|
-| **★★★ 憑對話紀錄判斷 migration 跑了沒** | 2026-09-05 我連續三次說「213／215／216 未跑」，而三支**都在 09-03 跑完了**。事實在 `schema_migrations`，不在我的摘要裡 —— 對話會被壓縮、會跨 session、會記錯。<br>★ 代價不只是白跑一趟:213 的自檢因此回了一個誤導的 0（見下一條），我花了**兩輪查詢在追一個不存在的 bug**。<br>★★ 規矩:要 David 跑任何一支之前，先請他跑 `select name from schema_migrations where name >= '210' order by name;`，或在那支自己的自檢裡放一列「這支跑過了沒」。**不要說「這支還沒跑」除非剛看過那張表。**<br>★★★ **「推了沒」也一樣**（2026-09-08 又踩一次）:我列了五項「同批未推」，而其中四項 David 早就 commit 了（`git log` 三行就看得到）。事實在 `git status` 與 `git log`，不在我的摘要裡。**要寫「未推」之前先跑一次 `git status --short`。** |
+| **★★★ 憑對話紀錄判斷 migration 跑了沒** | 2026-09-05 我連續三次說「213／215／216 未跑」，而三支**都在 09-03 跑完了**。事實在 `schema_migrations`，不在我的摘要裡 —— 對話會被壓縮、會跨 session、會記錯。<br>★ 代價不只是白跑一趟:213 的自檢因此回了一個誤導的 0（見下一條），我花了**兩輪查詢在追一個不存在的 bug**。<br>★★ 規矩:要 David 跑任何一支之前，先請他跑 `select name from schema_migrations where name >= '210' order by name;`，或在那支自己的自檢裡放一列「這支跑過了沒」。**不要說「這支還沒跑」除非剛看過那張表。**<br>★★★ **「推了沒」也一樣**（2026-09-08 又踩一次）:我列了五項「同批未推」，而其中四項 David 早就 commit 了（`git log` 三行就看得到）。事實在 `git status` 與 `git log`，不在我的摘要裡。**要寫「未推」之前先跑一次 `git status --short`。**<br>★★★ **而那張表本身也有洞**（2026-09-17）:238 與 255～259 **六支都跑過了卻不在 `schema_migrations` 裡** —— 那幾個檔案沒有呼叫 `record_migration()`。所以查完表之後還要問**「它做出來的東西還在不在」**（欄位／函式／約束／表；純資料的 migration 看它有沒有把編號寫進 COMMENT）。痕跡在就是跑過了 —— 那是證據。<br>★★ 補記時每一列 `insert` 要**自己帶著證據**（`where exists(那個痕跡)`），不要無條件寫五行 values:憑相信寫進去的紀錄表**看起來很完整而且說謊**，比缺五列更糟。<br>★ `name` 是 text，`>= '210'` 比的是字串（`'30_'` 會排在 `'262_'` 後面）——要 `order by split_part(name,'_',1)::int desc`。 |
 | **★★★ PostgREST 的 `upsert` 對不到 partial 唯一索引** | `expenses_hk_job_uniq` 建成 `unique (hk_job_key) where hk_job_key is not null`，而前端寫 `upsert(rows, { onConflict: 'hk_job_key' })` —— PostgREST 只送得出**欄位名**，表達不出那個 WHERE，Postgres 直接丟 `there is no unique or exclusion constraint matching the ON CONFLICT specification`。<br>★ 結果是**房務支出這個功能從上線到現在一次都沒成功過**（`hk_job_key` 有值的是 0 筆），而使用者只說「沒產生到支出」。<br>★★ 錯誤**有被接到**，但走 `flash()` 跳在頁面最上方、2.5 秒消失，而那個面板在畫面下半部 —— 半年來每一次失敗都有訊息，只是沒有人看得到。<br>★★★ 拿掉 `onConflict` 也不行:PostgREST 沒有那個參數時會拿**主鍵**當衝突目標，而 `id` 每次都是新 uuid —— 永遠不衝突，按兩次就產生兩整組，比失敗更糟。要用 upsert 就**不能用 partial 索引**（唯一索引本來就允許多個 NULL，拿掉 WHERE 語意不變）（2026-09-07 踩到，migration_221 修）|
 | **★★★ `deferrable` 延到的是「交易」，不是「一連串請求」** | `trg_expense_deferral_sum` 是 `constraint trigger ... deferrable initially deferred`，設計是對的。但 `DeferralPanel` 把存檔拆成**三次 PostgREST 呼叫**（刪子單 → 改母單 → 建子單），而**每個請求各自一個交易** ——第二步自己 commit 時子單還沒建，`母單 40880 + 子單 0 ≠ 實付 76650`，必爆。<br>★ 那段程式的註解白紙黑字寫著「沒關係，觸發器延到交易結束才驗」——**假設從第一天就是錯的**，而遞延只要需要拆子單就從來沒成功過。<br>★★ 為什麼半年沒被發現:不用拆時 `own == gross`，第二步的等式剛好成立。**真正要用那個功能的時候才會撞到。**<br>★★★ 換順序解決不了 —— 先建子單的話中間會有一批指向非遞延母單的子單，它們以獨立支出出現在支出頁上，**那筆錢被算兩次**。要跨多個寫入守一條等式，就**包成一支 RPC**（migration_228）|
 | **★★★ 改欄位型別之前沒有先列出「掛在那一欄上的東西」** | migration_239 要把 `purchase_demand_items.qty` 從 `numeric` 轉成 `text`，**連死兩次，兩次都是同一類原因**:<br>　一版 直接 `alter ... type text using qty::text` → `42804 default for column "qty" cannot be cast automatically`<br>　二版 補了 `drop default`、也查了 view → `42883 operator does not exist: text > numeric`（那個 `>` 來自欄位上的 `check (qty > 0)`，型別一換 Postgres 拿新的 text 去重驗它）<br>★ 兩次的錯誤訊息**都不說是誰**:42883 只講「text > numeric」，不講那個 `>` 從哪來。所以「看訊息再補」是一條走不完的路 —— 撞一次補一個，補完還有下一個。<br>★★ 規矩:改型別前一次列完三樣 —— **① view/rule ② DEFAULT ③ check 約束**（還有 generated column）。view 擋住就**停下來報名字**，不要自己 drop 別人的東西;約束 drop 掉要把定義寫進 COMMENT 留底 —— 一條看門的規則安靜消失，比留著它更糟。<br>★★★ 掃約束用詞邊界 `~ '\mqty\M'` 不是 `ilike '%qty%'` —— 後者會掃到 `quantity_note` 之類的欄位，而**誤刪一條別的約束不會報錯**。<br>★ 還有一個順手的:`numeric::text` 會把 `3.00` 的尾零帶出來，畫面上「× 3.00 箱」看起來像壞掉，整數要收成 `3`（2026-09-10 踩過）|
+| **★★★ 掃 `pg_class` 找「表」沒濾 `relkind`** | 索引與主鍵會一起被掃進來，而那些本來就沒有 RLS → 「每一張表都開 RLS 了嗎」這一列在**一切正常的時候回 ❌**（`board_events_pkey RLS❌`）。<br>★ 跟 `pg_get_functiondef()` 要加 `prokind` 同一種病:**系統目錄裡不只有你要的那一種東西**。<br>★★ 而且比「掃到聚合函式炸掉」更難發現 —— 炸掉會停下來，**誤報只是讓人習慣忽略那一格**，然後真的壞掉那天也一起被忽略（2026-09-17 踩過，拿真的 Postgres 跑過才看見）|
+| **★★★ 自檢把清單再打一次，然後拿它當答案** | migration_262 的帳密權限，我在自檢裡把同一串角色重打一遍 —— **比的是我寫的跟我寫的，永遠會綠**，policy 裡那份改掉了它也不會知道。修法:把清單抽成一支讀得出來的函式（`board_secret_roles()`），policy 與自檢都走它，再加一列證明判斷式真的走那支清單。<br>★★★ 權限的最後一哩是**用真的角色去撞**:`set role authenticated` ＋ 換掉 `auth.uid()`，實際 select 一次。「policy 存在」跟「名單長對」可以同時成立而門是開的（2026-09-17）|
+| **★★★ migration 沒呼叫 `record_migration()`** | 200~254 每一支都有，238 與 255~259 這六支漏了 → 「跑了沒」從此要靠考古。純資料的 migration **尤其要記**，因為它連痕跡都不會留（2026-09-17）|
 | **★★ 自檢問「這次跑做了什麼」而不是「結果對不對」** | migration_213 的第 4 列寫成「最近十分鐘有沒有 expenses 的刪除」。那支是冪等的 —— 第二次跑會走「找不到那筆，不做事」直接 return，於是那一格變成 0，看起來像稽核系統壞了。<br>★ 而且「十分鐘內」**會隨時間過期**。一個會自己變紅的檢查等於沒有檢查。<br>★★ 判斷法:把自檢跑第二次、第十次，答案該一模一樣。會變的那一條就是寫錯的那一條（2026-09-05 踩過）|
 
 ## 判斷原則

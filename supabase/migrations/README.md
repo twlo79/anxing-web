@@ -60,6 +60,45 @@ select name, run_at
 2026-09-05 我連續三次說「213／215／216 未跑」，而三支**都在兩天前跑完了** ——
 代價是兩輪查詢在追一個不存在的 bug。
 
+★ `name` 是 **text**，所以 `>= '230'` 比的是字串不是數字 ——
+`'30_...'` 會排在 `'262_...'` 後面，而 100～229 反而被濾掉。要照號碼看：
+
+```sql
+select name from public.schema_migrations
+ where split_part(name, '_', 1) ~ '^\d+$'
+ order by split_part(name, '_', 1)::int desc
+ limit 15;
+```
+
+### ★★★ 「不在表裡」≠「沒跑」——表本身有洞（2026-09-17）
+
+238 與 255～259 都**不在** `schema_migrations` 裡，而六支**全都跑過了**。
+原因是那幾個檔案根本沒有呼叫 `record_migration()`。
+
+所以查完那張表之後，**要問的下一個問題是「它做出來的東西還在不在」**：
+
+| migration | 去看什麼 |
+|---|---|
+| 255 | `properties.show_in_room_calendar` 欄位 |
+| 256 | `sync_order_earnest()` 函式 |
+| 257 | `orders_earnest_dates_chk` 約束 |
+| 258 | `social_accounts` / `social_posts` / `social_splits` 三張表 |
+| 259 | `can_edit_social()` 函式 ＋ `profiles.is_social_editor` 欄位 |
+| 238 | 那一欄的 **COMMENT** 裡有沒有寫 `migration_238` |
+
+痕跡在，它就跑過了。**這是證據，不是印象。**
+
+★★ 238 只改資料、沒動 schema，所以它的痕跡是**它順手重寫的 COMMENT**
+（那段文字裡寫著自己的編號）。純資料的 migration 一定要留這種簽名，
+不然事後無從判斷 —— 「還有沒有舊值」答案是 0 的時候，
+可能是清乾淨了，**也可能是根本沒有人填過**。
+
+★★★ 補記的時候，**每一列 `insert` 要自己帶著證據**
+（`insert ... select ... where exists(那個痕跡)`），
+不要寫成無條件的五行 `values`。憑相信寫進去的話，那張表會變成
+**看起來很完整、而且說謊** —— 比缺五列更糟，因為缺五列至少看得出來缺。
+見 `migration_263_record_255_259.sql` 與 `264_record_238.sql`。
+
 ---
 
 ## 二、寫一支 migration 的規矩
@@ -131,6 +170,45 @@ select string_agg(c.ym || '：' || c.action, '、') from public.close_due_period
 
 ★ 函式冪等就直接叫。有副作用不能叫的，就老實寫
 「這一條沒有驗到執行」，**不要印一句聽起來很確定的預測**。
+
+### 3.55 ★★★ 自檢不可以把清單**再打一次** —— 要讓它讀得出來（2026-09-17）
+
+migration_262 的帳密權限，第一版我是這樣寫的：
+
+```sql
+-- ❌ 在自檢裡把同一串角色再打一次，然後拿它當答案
+gate as (
+  select r.role, (r.role in ('housekeeper','accountant','manager','super_admin')) as ok
+  from (values ('cleaner'),('housekeeper'),…) as r(role)
+)
+```
+
+**比的是我寫的跟我寫的，永遠會綠。** policy 裡那份改掉了它也不會知道。
+
+修法是把清單抽成一支**讀得出來**的函式，policy 與自檢都走它：
+
+```sql
+create function public.board_secret_roles() returns text[] language sql immutable
+as $fn$ select array['housekeeper','accountant','manager','super_admin']::text[] $fn$;
+
+create function public.can_see_board_secrets() returns boolean … 
+as $fn$ select coalesce(public.board_role() = any(public.board_secret_roles()), false) $fn$;
+
+-- ✅ 自檢餵進去的是 policy 真正在用的那一份
+gate as (select r.role, (r.role = any(public.board_secret_roles())) as ok from …)
+```
+
+★★ 還要再加一列證明**判斷式真的走那支清單**
+（`pg_get_functiondef(...) ~ '\mboard_secret_roles\M'`）——
+少了它的話，有人把判斷式改成寫死的字串，上面那一列還是綠的。
+
+★★★ 而權限這種東西，最後一哩是**用真的角色去撞**：
+建幾個 profile、`set role authenticated`、把 `auth.uid()` 換成各個人，
+實際 `select` 一次。262 那一輪跑出來是房務 0 筆、其餘三種各 1 筆 ——
+在那之前我只驗到「policy 存在」跟「名單長對」，那兩件事都可以同時成立而門是開的。
+
+★ 這條跟 §2（基準值不可以來自另一個問法）是同一個病根：
+**自檢要去問系統，不要去問自己。**
 
 ### 3.7 ★★★ 自檢要用的暫存資料：`create temp table`，**不要加 `on commit drop`**
 
@@ -253,6 +331,67 @@ migration_239 為此連死兩次：
 view 擋住就**停下來報名字**，不要自己 drop 別人的東西；
 約束 drop 掉要把定義寫進 COMMENT 留底 —— 一條看門的規則安靜消失，比留著更糟。
 
+### 10. ★★★ 掃系統目錄找「表」，一定要加 `relkind = 'r'`（2026-09-17）
+
+```sql
+from pg_class c join pg_namespace n on n.oid = c.relnamespace
+where n.nspname = 'public' and c.relkind = 'r' and c.relname like 'board\_%'
+```
+
+不加的話 `pg_class` 會把**索引與主鍵**一起掃進來 ——
+`board_events_pkey`、`board_events_starts_idx` 這些東西本來就沒有 RLS，
+於是「每一張表都開 RLS 了嗎」這一列在**一切正常的時候回 ❌**：
+
+```
+board_events RLS✅/4條　board_events_pkey RLS❌/0條　board_events_starts_idx RLS❌/0條
+判定：❌ 有表沒開 RLS
+```
+
+★ 跟 §7 的 `prokind` 是同一種病：**系統目錄裡不只有你要的那一種東西**。
+`pg_class` 裝表、索引、序列、view、物化檢視；`pg_proc` 裝函式與聚合。
+
+★★ 而且這一種錯比「掃到聚合函式炸掉」更難發現 —— 炸掉會停下來，
+**誤報只是讓人習慣忽略那一格**。一個每次都紅的檢查等於沒有檢查，
+然後真的壞掉那天也一起被忽略（見四-D「標籤說謊」）。
+
+### 11. ★★★ 結尾一定要 `record_migration()` —— 漏了就再也查不出「跑了沒」
+
+200～254 每一支都有，而 **238 與 255～259 這六支漏了**（2026-09-17 發現）。
+代價不是當下，是三個月後：那張表的唯一用途就是回答「跑了沒」，
+而它有洞的時候，答案要靠考古（見一、的那張痕跡對照表）。
+
+★ 純資料的 migration（不動 schema 的）**尤其要記**，
+因為它連痕跡都不會留。真的沒有 `record_migration()` 可用的話，
+至少把編號寫進相關欄位的 `COMMENT` 當簽名 —— 238 是誤打誤撞留下的。
+
+### 12. ★★★ 交出去之前，先在本地 Postgres 真的跑一次（2026-09-17 起）
+
+```bash
+apt-get install -y postgresql
+initdb -D /tmp/pgdata -A trust -U postgres
+pg_ctl -D /tmp/pgdata -o '-p 5433 -k /tmp' start
+# 再建一個最小的 Supabase 環境：
+#   schema auth（auth.uid()）、schema storage（buckets / objects）、
+#   public.profiles、public.schema_migrations、public.record_migration(text)
+psql -h /tmp -p 5433 -U postgres -v ON_ERROR_STOP=1 -f migration_XXX.sql
+```
+
+migration_262 那一輪，眼睛看過兩遍、腳本檢查過分號與詞邊界，
+**還是有兩個錯**：
+
+| 錯 | 用看的看得出來嗎 |
+|---|---|
+| `from rls` 卻用 `r.t`（少一個別名）→ `42P01` | 勉強 |
+| 掃 `pg_class` 沒濾 `relkind` → 自檢永遠紅 | **不可能** ——要跑起來才看得到那一行輸出 |
+
+跑一次還順便驗到三件本來只能用講的：
+**跑第二次輸出一模一樣**（冪等）、**四種角色實際去 `select`**
+（房務 0 筆、其餘三種各 1 筆）、**守衛擋得住**
+（263 在沒有痕跡的資料庫上一列都不記）。
+
+★ 本地跑得過**不代表**線上跑得過（policy 依賴的 `auth.uid()` 是假的、
+資料是空的）。它抓的是**語法與自身邏輯**的錯 —— 而那正是前面幾次踩到的那些。
+
 ---
 
 ## 三、230 ~ 249 這一批
@@ -296,6 +435,19 @@ view 擋住就**停下來報名字**，不要自己 drop 別人的東西；
 `migration_228_deferral_rpc.sql` 與 `migration_228_hk_double_entry.sql` 撞號。
 兩支都跑過，功能不相干，但**編號不再是唯一的** —— 排序與「跑到第幾支」的判斷
 從此要看檔名全名，不能只看數字。
+
+### ⚠ 259 也有兩支（2026-09-17）
+
+`migration_259_social_editor.sql` 與 `migration_259_social_write_open.sql` 撞號，
+而且**兩支建的是同名的那幾條 policy** —— 從資料庫這一側分不出來跑的是哪一支。
+
+唯一分得出來的是 `can_edit_social()`：只有 `_social_editor` 有它，
+而線上的 policy 走的就是它 —— 所以 `_social_write_open` 是**被取代掉的舊版**。
+
+★ 228 那兩支是「功能不相干、都要跑」，259 這兩支是「後面那支取代前面那支」。
+**形狀不一樣，處理也不一樣**：228 兩支都要記，259 只記 `_social_editor`，
+而 `_social_write_open` 那個檔案該刪掉 —— 留著的話下一輪又要再問一次
+「259 到底是哪一支」。
 
 ---
 
@@ -553,62 +705,6 @@ perform public.soft_delete('contracts', c.id);   -- ❌
 ★★ 更麻煩的是**沒刪成功會留下地雷**：那兩張契約的 `earnest_amount` 還在，
 而 `trg_sync_contract_earnest` 隨時會照著它生一筆 220,000 的押金列出來。
 刪不掉的時候，**先把會長東西的欄位歸零**再去找人工刪 —— 不要留一個半死的狀態過夜。
-
-### ★★★ L. `ON DELETE SET NULL` 會觸發對方的 **BEFORE UPDATE** 觸發器
-
-2026-09-16，要刪掉一間建錯的房源 `14B4`。先掃過所有指向 `properties`
-的外鍵，只有一條有列：
-
-```
-customers.property_id   1 列・ON DELETE SET NULL
-```
-
-判斷「SET NULL 很安全 —— 那位客戶不會消失，只是欄位變空」，於是放行。
-結果：
-
-```
-ERROR: P0001: 客戶的姓名、房源、住宿起訖是從訂單與契約帶過來的，不能在這裡改。
-CONTEXT: PL/pgSQL function customers_guard() line 13 at RAISE
-SQL statement "UPDATE ONLY customers SET property_id = NULL WHERE $1 = property_id"
-SQL statement "delete from public.properties where id = v_id"
-```
-
-**那個判斷只對了一半。**
-`ON DELETE SET NULL` 不是資料庫默默改一個欄位 —— 它會發出一個
-**真正的 `UPDATE`**，而那個 UPDATE 一樣會踩到 `customers` 上的
-BEFORE UPDATE 觸發器。`customers_guard` 的本意是「不准人在客戶管理頁
-改房源」，結果它連資料庫自己的連動更新一起擋了。
-
-所以外鍵的 `confdeltype` 只告訴你**後果**，沒告訴你**跑不跑得完**：
-
-| 規則 | 會不會刪掉對方 | 跑不跑得完 |
-|---|---|---|
-| `CASCADE` | **會** | 要看對方有沒有 BEFORE DELETE 觸發器 |
-| `SET NULL` / `SET DEFAULT` | 不會 | **要看對方有沒有 BEFORE UPDATE 觸發器** |
-| `RESTRICT` / `NO ACTION` | 不會 | 有列就直接擋 |
-
-**規矩：**
-
-* 刪一列主檔之前，除了掃外鍵，還要掃**對方表上的觸發器**：
-
-```sql
-select t.relname, g.tgname, pg_get_triggerdef(g.oid)
-from pg_trigger g
-join pg_class t on t.oid = g.tgrelid
-where not g.tgisinternal
-  and t.relname in ( … 那幾張被外鍵指到的表 … );
-```
-
-* 更實際的做法：**把每一個 `delete` 包進 `begin … exception when others`**，
-  把 `sqlerrm` 印進自檢表。腳本不會整支噴掉，而你會看到資料庫的原話。
-
-★ 解法**不是把守衛關掉**。守衛是對的 —— 那三個欄位本來就該由
-`sync_customers()` 一個人維護（坑 J 的那條「讓寫的人只有一個」）。
-要動的是**那一列資料本身**：先確認它的人工欄位（電話／Email／備註 ——
-同步永遠不動的那幾欄）是空的，刪掉那一列，再刪主檔。
-
-★★ 這是坑 C 家族的第四種形狀：**資料庫的連動動作不是特權動作**。
-它跟你手打的 SQL 走同一條路，被同一批觸發器、同一批 policy 看著。
 
 ---
 
