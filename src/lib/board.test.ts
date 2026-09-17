@@ -241,3 +241,150 @@ test('★★ 太大的要擋，而且要講怎麼辦', () => {
   assert.match(r.why, /200\.0 MB/);
   assert.match(r.why, /壓縮|拆成/);
 });
+
+/* ── 備註裡的網址（2026-09-17）────────────────────────────── */
+
+import { linkify, urlHref, urlLabel, eventShareText, lineShareUrl,
+  canUpload, filesByPerson } from './board.ts';
+
+const kinds = (t: string) => linkify(t).map((p) => `${p.kind}:${p.v}`);
+
+test('純文字 —— 一段，不切', () => {
+  assert.deepEqual(kinds('六點在店門口集合，遲到請先跟芊說'),
+    ['text:六點在店門口集合，遲到請先跟芊說']);
+});
+
+test('純網址 —— 一段', () => {
+  assert.deepEqual(kinds('https://maps.app.goo.gl/abc'), ['url:https://maps.app.goo.gl/abc']);
+});
+
+test('混合 —— 前中後三段', () => {
+  assert.deepEqual(kinds('KIGAI 微風店 https://maps.app.goo.gl/abc 六點集合'),
+    ['text:KIGAI 微風店 ', 'url:https://maps.app.goo.gl/abc', 'text: 六點集合']);
+});
+
+test('★★★ 中文沒有空白 —— 句號之後的字不可以被吃進網址', () => {
+  /*
+   * 第一版寫 `[^\s]+`（不是空白就算）—— 而中文句子裡沒有空白，
+   * 整句話從句號到句尾全被吃進網址裡：連結是壞的、後面那句也不見了。
+   */
+  assert.deepEqual(kinds('地點 https://maps.app.goo.gl/abc。記得帶名片'),
+    ['text:地點 ', 'url:https://maps.app.goo.gl/abc', 'text:。記得帶名片']);
+});
+
+test('★★ 括號包住的網址，右括號不算網址', () => {
+  assert.deepEqual(kinds('看這裡(https://x.co/a)好嗎'),
+    ['text:看這裡(', 'url:https://x.co/a', 'text:)好嗎']);
+});
+
+test('★ 沒打 https:// 的 www. 也認', () => {
+  assert.deepEqual(kinds('餐廳官網 www.kigai.com.tw 可以先看菜單'),
+    ['text:餐廳官網 ', 'url:www.kigai.com.tw', 'text: 可以先看菜單']);
+});
+
+test('兩條網址都要切出來', () => {
+  const r = linkify('地圖 https://maps.app.goo.gl/a 菜單 https://kigai.com.tw/menu');
+  assert.equal(r.filter((p) => p.kind === 'url').length, 2);
+});
+
+test('★ 換行留在文字段落裡（畫面是 pre-wrap，靠它換行）', () => {
+  assert.deepEqual(kinds('KIGAI\n\nhttps://maps.app.goo.gl/abc\n六點集合'),
+    ['text:KIGAI\n\n', 'url:https://maps.app.goo.gl/abc', 'text:\n六點集合']);
+});
+
+test('空字串回空陣列', () => {
+  assert.deepEqual(linkify(''), []);
+  assert.deepEqual(linkify(null as unknown as string), []);
+});
+
+test('★★★ www. 開頭一定要補 https:// —— 直接丟進 href 會被當成相對路徑', () => {
+  // 不補的話點下去跑到「安幸上工網址/board/www.kigai.com.tw」，一個 404
+  assert.equal(urlHref('www.kigai.com.tw'), 'https://www.kigai.com.tw');
+  assert.equal(urlHref('https://x.co/a'), 'https://x.co/a');
+  assert.equal(urlHref('HTTP://x.co/a'), 'HTTP://x.co/a');
+});
+
+test('★★ 地圖連結顯示成「📍 開啟地圖」', () => {
+  /*
+   * 第一版比對的是「前面是開頭或一個點」，而真正的網址是
+   * https://maps.app.goo.gl/… —— maps 前面是 `//`，所以一條都沒認出來，
+   * 而畫面只是照原樣顯示網址、看起來完全正常。
+   */
+  assert.equal(urlLabel('https://maps.app.goo.gl/pa9u39LqFjUDnHDq7'), '📍 開啟地圖');
+  assert.equal(urlLabel('https://goo.gl/maps/xyz'), '📍 開啟地圖');
+  assert.equal(urlLabel('https://www.google.com/maps/place/abc'), '📍 開啟地圖');
+});
+
+test('★ 不是地圖的照原樣顯示 —— 全部換成「連結」的話兩條會長得一樣', () => {
+  assert.equal(urlLabel('https://kigai.com.tw/menu'), 'https://kigai.com.tw/menu');
+  assert.equal(urlLabel('www.kigai.com.tw'), 'www.kigai.com.tw');
+  assert.equal(urlLabel('https://maps.apple.com/?q=x'), 'https://maps.apple.com/?q=x');
+});
+
+test('★ 太長的中間省略，頭尾都留著', () => {
+  const long = 'https://kigai.com.tw/menu/2026-autumn-special-course';
+  const out = urlLabel(long);
+  assert.ok(out.length < long.length);
+  assert.ok(out.startsWith('https://kigai'));
+  assert.ok(out.includes('…'));
+  assert.ok(out.endsWith(long.slice(-9)));
+});
+
+/* ── 分享 ─────────────────────────────────────────────────── */
+
+test('分享的文字：種類、時間、名稱、備註', () => {
+  assert.equal(eventShareText({
+    kind: 'gathering', title: 'KIGAI燒肉專門店',
+    starts_at: '2026-09-17T17:00:00+08:00', note: 'https://maps.app.goo.gl/x',
+  }), '【團聚】9/17（四） 17:00\nKIGAI燒肉專門店\nhttps://maps.app.goo.gl/x');
+});
+
+test('★ 沒有備註就不留空行', () => {
+  const t = eventShareText({
+    kind: 'meeting', title: 'Q4 房源檢討', starts_at: '2026-09-24T14:00:00+08:00', note: null,
+  });
+  assert.equal(t, '【開會】9/24（四） 14:00\nQ4 房源檢討');
+  assert.ok(!t.includes('\n\n'));
+});
+
+test('★★ LINE 用 /R/share?text= —— 官方那支的 text 在 iPhone Safari 會被忽略', () => {
+  const u = lineShareUrl('一\n二');
+  assert.ok(u.startsWith('https://line.me/R/share?text='));
+  assert.ok(u.includes('%0A'), '換行要編碼成 %0A');
+});
+
+/* ── 上傳開關 ─────────────────────────────────────────────── */
+
+test('★★★ 要開會＋開關開著，兩個條件都成立才收得了檔案', () => {
+  assert.equal(canUpload({ kind: 'meeting', uploads_open: true }), true);
+  assert.equal(canUpload({ kind: 'meeting', uploads_open: false }), false);
+  assert.equal(canUpload({ kind: 'gathering', uploads_open: true }), false, '團聚不收');
+  assert.equal(canUpload({ kind: 'meeting' }), false, 'undefined 當關著');
+  assert.equal(canUpload({ kind: 'meeting', uploads_open: null }), false);
+});
+
+/* ── 照人分組 ─────────────────────────────────────────────── */
+
+const F = (id: string, who: string | null, at: string) =>
+  ({ id, uploaded_by: who, created_at: at });
+
+test('照人分組，人名照第一次上傳的時間排', () => {
+  const g = filesByPerson([
+    F('c', 'tang', '2026-09-03T10:00:00Z'),
+    F('a', 'qian', '2026-09-01T10:00:00Z'),
+    F('b', 'qian', '2026-09-02T10:00:00Z'),
+  ]);
+  assert.deepEqual(g.map((x) => x.who), ['qian', 'tang']);
+  assert.deepEqual(g[0].items.map((x) => x.id), ['a', 'b']);
+});
+
+test('★ 沒有 uploaded_by 的也要有自己一組，不能掉進別人底下', () => {
+  const g = filesByPerson([F('a', null, '2026-09-01T10:00:00Z'), F('b', 'qian', '2026-09-02T10:00:00Z')]);
+  assert.equal(g.length, 2);
+});
+
+test('★ 不改動傳進來的陣列', () => {
+  const src = [F('b', 'q', '2026-09-02T10:00:00Z'), F('a', 'q', '2026-09-01T10:00:00Z')];
+  filesByPerson(src);
+  assert.deepEqual(src.map((x) => x.id), ['b', 'a']);
+});

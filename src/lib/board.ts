@@ -302,3 +302,174 @@ export function fileTooBig(bytes: number): { bad: boolean; why: string } {
       + `太大的檔案每個人打開都要重載一次 —— 請先壓縮，或拆成兩份。`,
   };
 }
+
+/* ── 備註裡的網址 ─────────────────────────────────────────── */
+
+/**
+ * 把一段文字切成「純文字」與「網址」。
+ *
+ * ★★★ 使用者 2026-09-17：「團建 可能貼地址 url」——
+ *   而畫面上那條 Google Maps 網址現在是**印出來的字**，點不動。
+ *   同事看到只能自己選取、複製、貼到瀏覽器。
+ *
+ * ★★ 回的是**段落陣列**，不是一串 HTML。
+ *   回 HTML 的話畫面那層就得用 `dangerouslySetInnerHTML` ——
+ *   而那一欄是使用者自己打的字。要讓它變成連結，
+ *   就得先證明裡面沒有別的東西，而那件事很難證明。
+ *   切成段落之後，畫面用 React 元素畫出來，**天生就跳不出去**。
+ */
+export type TextPart = { kind: 'text' | 'url'; v: string };
+
+/** 網址結尾常常黏著中文標點 —— 那些不是網址的一部分 */
+const TAIL = /[。，、；：）」』\]）.,;:!?)]+$/;
+
+export function linkify(text: string): TextPart[] {
+  const s = text ?? '';
+  if (!s) return [];
+  const out: TextPart[] = [];
+  /*
+   * ★★★ 字元集只收 URL 合法的那幾種（RFC 3986）。
+   *   最初我寫 `[^\\s]+`（不是空白就算）—— 而中文沒有空白：
+   *   「地點 https://maps.app.goo.gl/abc。記得帶名片」
+   *   整句話從句號到句尾全部被吃進網址裡，連結是壞的、
+   *   而後面那句話也不見了。自測當場抓到。
+   */
+  /*
+   * ★★ 也收 `www.` 開頭的 —— 人打地址時很少打 https://。
+   *   不收的話「www.kigai.com.tw」會是一段死的灰字，
+   *   而使用者看不出來為什麼那一條可以點、這一條不行。
+   */
+  const re = /(?:https?:\/\/|www\.)[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+/g;
+  let at = 0;
+  for (let m = re.exec(s); m; m = re.exec(s)) {
+    let url = m[0];
+    /*
+     * ★ 「⋯地圖 https://maps.app.goo.gl/abc。」——
+     *   那個句號會被 `[^\s]+` 吃進網址裡，而那條連結就是壞的。
+     */
+    const cut = url.match(TAIL);
+    if (cut) url = url.slice(0, url.length - cut[0].length);
+    if (!url) continue;
+    const start = m.index;
+    if (start > at) out.push({ kind: 'text', v: s.slice(at, start) });
+    out.push({ kind: 'url', v: url });
+    at = start + url.length;
+  }
+  if (at < s.length) out.push({ kind: 'text', v: s.slice(at) });
+  return out;
+}
+
+/* ── 分享到 LINE ──────────────────────────────────────────── */
+
+/**
+ * 分享用的文字。
+ *
+ * ```
+ * 【開會】10/2（五）13:30
+ * 10/2 開會
+ * https://maps.app.goo.gl/…
+ * ```
+ *
+ * ★★ 這一份**不帶安幸上工的網址**。那一頁要登入才看得到，
+ *   貼進 LINE 不會有預覽圖，點開只會看到登入畫面 ——
+ *   而收到的人多半是在手機上、沒登入的狀態。
+ *   把該知道的事**寫在訊息本身**，比丟一條點不開的連結有用。
+ */
+export function eventShareText(ev: {
+  kind: string; title: string; starts_at: string; all_day?: boolean; note?: string | null;
+}): string {
+  const lines = [
+    `【${kindLabel(ev.kind)}】${fmtEventWhen(ev.starts_at, !ev.all_day)}`,
+    (ev.title ?? '').trim(),
+  ];
+  const note = (ev.note ?? '').trim();
+  if (note) lines.push(note);
+  return lines.filter((l) => l !== '').join('\n');
+}
+
+/**
+ * LINE 的分享網址。
+ *
+ * ★★ 用 `line.me/R/share?text=` —— 官方文件上那支
+ *   `social-plugins.line.me/lineit/share` 的 `text` 參數
+ *   在 iPhone Safari 上會被忽略（只帶得動 url）。
+ *
+ * ★ 換行交給 `encodeURIComponent` 轉成 `%0A`，不要自己拼。
+ */
+export function lineShareUrl(text: string): string {
+  return `https://line.me/R/share?text=${encodeURIComponent(text ?? '')}`;
+}
+
+/* ── 上傳開關 ─────────────────────────────────────────────── */
+
+/**
+ * 這一場現在收不收檔案。
+ *
+ * ★★★ 兩個條件：**是開會**，而且**開關打開了**
+ *   （使用者 2026-09-17：「團聚 不用上傳資料」「開會上傳資料 是有一個 toggle 打開才能上傳」）。
+ *
+ * ★★ 資料庫那邊的 policy 走同一條規則（migration_265）——
+ *   只擋畫面的話，開關關著照樣傳得進去，而畫面上看不到那些檔案。
+ *   那比不擋更糟:東西在 storage 裡佔著位子，沒有人知道它在。
+ */
+export function canUpload(ev: { kind: string; uploads_open?: boolean | null }): boolean {
+  return parseEventKind(ev.kind) === 'meeting' && !!ev.uploads_open;
+}
+
+/** 檔案照「誰傳的」分組，人名照第一次上傳的時間排 */
+export function filesByPerson<T extends { uploaded_by: string | null; created_at: string }>(
+  files: readonly T[],
+): { who: string | null; items: T[] }[] {
+  const g = new Map<string, { who: string | null; items: T[] }>();
+  for (const f of [...files].sort((a, b) => a.created_at.localeCompare(b.created_at))) {
+    const k = f.uploaded_by ?? '—';
+    const hit = g.get(k);
+    if (hit) hit.items.push(f);
+    else g.set(k, { who: f.uploaded_by, items: [f] });
+  }
+  return [...g.values()];
+}
+
+/**
+ * 連結真正要打開的網址。
+ *
+ * ★ `www.kigai.com.tw` 直接丟進 href 的話，瀏覽器會當成**相對路徑** ——
+ *   點下去跑到 `安幸上工網址/board/www.kigai.com.tw`，一個 404。
+ *   而畫面上那條連結看起來完全正常。
+ */
+export function urlHref(url: string): string {
+  const u = (url ?? '').trim();
+  return /^https?:\/\//i.test(u) ? u : `https://${u}`;
+}
+
+/**
+ * 看起來像地圖的網址。
+ *
+ * ★★★ 第一版我寫成 `/(^|\.)(maps\.app\.goo\.gl|…)/` —— 要求前面是開頭或一個點。
+ *   而真正的網址是 `https://maps.app.goo.gl/abc`，`maps` 前面是 **`//`**。
+ *   所以它**一條都沒認出來**，而畫面上只是照原樣顯示網址 ——
+ *   看起來完全正常，只是那個「📍 開啟地圖」永遠不會出現。
+ *   自測跑出來才看見（跑之前我以為它是對的）。
+ *
+ * ★ 改成**取出主機名再比**，不要在整條網址上玩前後文。
+ */
+const MAP_HOST = /^(maps\.app\.goo\.gl|goo\.gl|maps\.google\.[a-z.]+|www\.google\.[a-z.]+)$/i;
+
+function hostOf(url: string): string {
+  try { return new URL(urlHref(url)).hostname; } catch { return ''; }
+}
+
+function looksLikeMap(url: string): boolean {
+  const h = hostOf(url);
+  if (!h) return false;
+  if (MAP_HOST.test(h)) return true;
+  /* google.com/maps、google.com.tw/maps 這種路徑在後面的 */
+  return /google\./i.test(h) && /\/maps?\b/i.test(url);
+}
+
+export function urlLabel(url: string, max = 42): string {
+  const u = (url ?? '').trim();
+  if (looksLikeMap(u)) return '📍 開啟地圖';
+  if (u.length <= max) return u;
+  return `${u.slice(0, max - 12)}…${u.slice(-9)}`;
+}

@@ -2,11 +2,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { useOnce } from '@/lib/once';
+import { ReqMark } from '@/components/Req';
 import {
   EVENT_KINDS, KIND_LABEL, parseEventKind, kindLabel,
   eventOrder, nextEvent, isPast, untilLabel, fmtEventWhen,
   FILE_ACCEPT, fileKind, KIND_BADGE, canPreview, whyNoPreview,
   fmtSize, fileTooBig, type EventKind,
+  linkify, urlHref, urlLabel, eventShareText, lineShareUrl,
+  canUpload, filesByPerson,
 } from '@/lib/board';
 
 /*
@@ -44,6 +47,8 @@ type Ev = {
   title: string;
   starts_at: string;
   all_day: boolean;
+  /** 開會才有意義：true 才收得了檔案（migration_265） */
+  uploads_open: boolean;
   note: string | null;
   created_by: string | null;
   created_at: string;
@@ -55,7 +60,13 @@ type Fl = {
   path: string;
   name: string;
   size_bytes: number | null;
+  /** 誰按的上傳 —— 出事要查是誰傳錯的 */
   uploaded_by: string | null;
+  /**
+   * 這份資料是**誰的**（migration_265）。代傳時跟 uploaded_by 不同。
+   * ★ 畫面照這一欄分組，`uploaded_by` 顯示成「芊代傳」的小標。
+   */
+  author_id: string | null;
   created_at: string;
 };
 
@@ -86,6 +97,8 @@ export default function EventsTab({ meId, isAdmin, onMsg }: {
   const [events, setEvents] = useState<Ev[]>([]);
   const [files, setFiles] = useState<Fl[]>([]);
   const [names, setNames] = useState<Map<string, string>>(new Map());
+  /** 「傳給誰」下拉用的在職名單 */
+  const [people, setPeople] = useState<{ id: string; name: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [view, setView] = useState<Fl | null>(null);
@@ -95,7 +108,7 @@ export default function EventsTab({ meId, isAdmin, onMsg }: {
     const [{ data: ev, error }, { data: fl }, { data: pf }] = await Promise.all([
       supabase.from('board_events').select('*'),
       supabase.from('board_files').select('*').order('created_at'),
-      supabase.from('profiles').select('id, name'),
+      supabase.from('profiles').select('id, name, active').order('name'),
     ]);
     /*
      * ★★ RLS 擋下來的查詢回的是「成功、0 列」不是錯誤（README 坑 C）——
@@ -106,6 +119,9 @@ export default function EventsTab({ meId, isAdmin, onMsg }: {
     setEvents((ev ?? []) as Ev[]);
     setFiles((fl ?? []) as Fl[]);
     setNames(new Map((pf ?? []).map((p) => [p.id as string, p.name as string])));
+    setPeople((pf ?? [])
+      .filter((p) => (p as { active?: boolean }).active !== false)
+      .map((p) => ({ id: p.id as string, name: (p.name as string) ?? '—' })));
     setLoading(false);
   }, [supabase, onMsg]);
 
@@ -120,20 +136,21 @@ export default function EventsTab({ meId, isAdmin, onMsg }: {
   );
 
   const save = async (d: Draft) => {
-    if (!d.date) return onMsg('要選一個日期。', true);
     /*
-     * ★★ 沒填時間就存當天 00:00 並把 all_day 打勾 ——
-     *   畫面上照 all_day 決定畫不畫時間。
-     *   不記這個旗標的話，「7/19 慶功」會被畫成「7/19 00:00」，
-     *   看起來像半夜要集合。
+     * ★ 日期與時間都必填（使用者 2026-09-17）。
+     *   按鈕本來就會擋，但這裡再守一次 —— 按鈕的 disabled 只是畫面。
      */
-    const allDay = !d.time;
-    const iso = new Date(`${d.date}T${d.time || '00:00'}:00`).toISOString();
+    if (!d.date || !d.time) return onMsg('日期與時間都要填。', true);
+    /*
+     * ★★ `all_day` 已停用（migration_265），新的列一律 false。
+     *   欄位留著是為了舊資料 —— 畫面讀到 true 時還是照它不畫時間。
+     */
+    const iso = new Date(`${d.date}T${d.time}:00`).toISOString();
     const body = {
       kind: d.kind,
       title: d.title.trim(),
       starts_at: iso,
-      all_day: allDay,
+      all_day: false,
       note: d.note.trim() || null,
     };
     /* ★★★ `.select('id')` 不能省 —— RLS 擋下來回的是「成功、0 列」 */
@@ -152,9 +169,11 @@ export default function EventsTab({ meId, isAdmin, onMsg }: {
     load();
   };
 
+  /*
+   * ★ 確認畫面在 `EventForm` 裡就地展開,這裡不再叫 `confirm()` ——
+   *   那個灰框長得跟系統警告一樣,而且手機上很醜。
+   */
   const del = async (e: Ev) => {
-    const n = filesOf(e.id).length;
-    if (!confirm(`刪掉「${e.title}」？${n ? `\n\n底下那 ${n} 份資料會一起不見。` : ''}`)) return;
     const { data, error } = await supabase.from('board_events')
       .delete().eq('id', e.id).select('id');
     if (error) return onMsg('刪不掉：' + error.message, true);
@@ -162,8 +181,24 @@ export default function EventsTab({ meId, isAdmin, onMsg }: {
     load();
   };
 
+  /**
+   * 開／關「開放上傳」。
+   *
+   * ★★ 這只是畫面上的方便 —— 真正擋住上傳的是資料庫的 policy
+   *   （migration_265：要 kind='meeting' 且 uploads_open）。
+   *   只改這裡的話，開關關著照樣傳得進去而畫面上看不到那些檔案。
+   */
+  const toggleUploads = async (ev: Ev) => {
+    const want = !ev.uploads_open;
+    const { data, error } = await supabase.from('board_events')
+      .update({ uploads_open: want }).eq('id', ev.id).select('id');
+    if (error) return onMsg('改不動：' + error.message, true);
+    if (!data?.length) return onMsg('沒有改到 —— 只有排這一場的人跟主管動得了這個開關。', true);
+    setEvents((xs) => xs.map((x) => (x.id === ev.id ? { ...x, uploads_open: want } : x)));
+  };
+
   /** 上傳（可以一次選好幾份） */
-  const upload = async (ev: Ev, picked: FileList) => {
+  const upload = async (ev: Ev, picked: FileList, authorId: string) => {
     const list = Array.from(picked);
     for (const f of list) {
       const tooBig = fileTooBig(f.size);
@@ -183,7 +218,9 @@ export default function EventsTab({ meId, isAdmin, onMsg }: {
         .upload(path, f, { contentType: f.type || undefined, upsert: false });
       if (ue) { onMsg(`${f.name} 傳不上去：${ue.message}`, true); continue; }
       const { data, error } = await supabase.from('board_files').insert({
-        event_id: ev.id, path, name: f.name, size_bytes: f.size, uploaded_by: meId,
+        event_id: ev.id, path, name: f.name, size_bytes: f.size,
+        /* ★ 誰按的上傳 vs 這是誰的 —— 代傳時兩個不一樣 */
+        uploaded_by: meId, author_id: authorId || meId,
       }).select('id');
       if (error || !data?.length) {
         /*
@@ -240,21 +277,32 @@ export default function EventsTab({ meId, isAdmin, onMsg }: {
       <div className="grid gap-2">
         {rows.map((e) => (
           <EventRow key={e.id} ev={e} files={filesOf(e.id)} names={names} meId={meId}
-            isAdmin={isAdmin}
+            isAdmin={isAdmin} people={people}
             onEdit={() => setDraft({
               id: e.id, kind: parseEventKind(e.kind), title: e.title,
               date: dateOf(e.starts_at), time: e.all_day ? '' : timeOf(e.starts_at),
               note: e.note ?? '',
             })}
-            onDel={() => del(e)}
-            onUpload={(fl) => upload(e, fl)}
+            onToggle={() => toggleUploads(e)}
+            onUpload={(fl, who) => upload(e, fl, who)}
             onDelFile={delFile}
             onView={setView} />
         ))}
       </div>
 
-      {draft && <EventForm draft={draft} onChange={setDraft}
-        onClose={() => setDraft(null)} onSave={save} />}
+      {draft && (() => {
+        const cur = events.find((x) => x.id === draft.id) ?? null;
+        const mine = cur ? cur.created_by === meId : true;
+        return (
+          <EventForm draft={draft} onChange={setDraft}
+            onClose={() => setDraft(null)} onSave={save}
+            /* ★ 刪除只給排這場的人跟主管 —— 做不到的時候整顆不出現（anxing-ui 四-3） */
+            canDelete={!!draft.id && (mine || isAdmin)}
+            files={draft.id ? filesOf(draft.id) : []}
+            names={names}
+            onDelete={async () => { if (cur) { await del(cur); setDraft(null); } }} />
+        );
+      })()}
 
       {view && <FileViewer file={view} onClose={() => setView(null)} onMsg={onMsg} />}
     </div>
@@ -276,22 +324,32 @@ function timeOf(iso: string): string {
 
 /* ══════════════════════════════════════════════════════════ */
 
-function EventRow({ ev, files, names, meId, isAdmin,
-  onEdit, onDel, onUpload, onDelFile, onView }: {
+function EventRow({ ev, files, names, meId, isAdmin, people,
+  onEdit, onToggle, onUpload, onDelFile, onView }: {
   ev: Ev; files: Fl[]; names: Map<string, string>; meId: string; isAdmin: boolean;
-  onEdit: () => void; onDel: () => void;
-  onUpload: (f: FileList) => void;
+  people: { id: string; name: string }[];
+  onEdit: () => void;
+  onToggle: () => void;
+  /** 第二個參數是「這份資料是誰的」—— 代傳時不等於自己 */
+  onUpload: (f: FileList, authorId: string) => void;
   onDelFile: (f: Fl) => void;
   onView: (f: Fl) => void;
 }) {
   const pick = useRef<HTMLInputElement>(null);
+  /** 「傳給誰」。預設自己 —— 九成的情況零個額外動作 */
+  const [forWho, setForWho] = useState(meId);
   const kind = parseEventKind(ev.kind);
   const past = isPast(ev.starts_at);
   const mine = ev.created_by === meId;
+  const canEdit = mine || isAdmin;
+  const open = canUpload(ev);
+  const who = (id: string | null) => names.get(id ?? '') ?? '—';
 
   return (
     <div className={`rounded-xl border bg-white px-4 py-3 ${
-      past ? 'border-mor-line opacity-60' : 'border-mor-line border-l-[3px] border-l-mor-slate'}`}>
+      past ? 'border-mor-line opacity-60'
+           : `border-mor-line border-l-[3px] ${
+               kind === 'meeting' ? 'border-l-mor-slate' : 'border-l-[#C9A227]'}`}`}>
 
       <div className="flex items-start gap-2 flex-wrap">
         {/* ★ 標籤 —— 兩種活動同一條列表，分的是標籤不是位置 */}
@@ -306,72 +364,147 @@ function EventRow({ ev, files, names, meId, isAdmin,
       </div>
 
       <div className="mt-1 text-sm">{ev.title}</div>
-      {ev.note && (
-        <div className="mt-0.5 text-xs text-gray-600 whitespace-pre-wrap leading-relaxed">{ev.note}</div>
+
+      {/*
+        ★★ 誰排的。使用者問「是大家都可以看／編輯嗎」—— 會問就代表畫面上看不出來。
+          看到「芊 排的」而自己不是芊，就知道為什麼沒有「編輯」那顆；
+          不寫的話，沒有編輯鍵的人只會覺得是系統壞了。
+      */}
+      <div className="text-[11px] text-gray-400 mt-0.5">{who(ev.created_by)} 排的</div>
+
+      {ev.note && <Note text={ev.note} />}
+
+      {/*
+        ── 資料 ──
+        ★★★ 只有**開會**才有這一塊（使用者:「團聚 不用上傳資料」）。
+          團聚整塊不出現 —— 不是灰掉。灰掉的東西人會一直去點。
+      */}
+      {kind === 'meeting' && (
+        <div className="mt-2 border-t border-dashed border-mor-line pt-2">
+          <div className="flex items-center gap-2">
+            {canEdit ? (
+              <button onClick={onToggle} role="switch" aria-checked={ev.uploads_open}
+                className={`w-9 h-5 rounded-full relative shrink-0 transition-colors ${
+                  ev.uploads_open ? 'bg-mor-greendark' : 'bg-[#D6D3CC]'}`}>
+                <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
+                  ev.uploads_open ? 'left-[18px]' : 'left-0.5'}`} />
+              </button>
+            ) : (
+              <span className={`w-9 h-5 rounded-full relative shrink-0 ${
+                ev.uploads_open ? 'bg-mor-greendark' : 'bg-[#D6D3CC]'}`}>
+                <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow ${
+                  ev.uploads_open ? 'left-[18px]' : 'left-0.5'}`} />
+              </span>
+            )}
+            <span className="text-[12.5px]">開放上傳資料</span>
+            <span className="text-[11px] text-gray-400">
+              {ev.uploads_open ? '已開放' : '開了大家才能傳'}
+            </span>
+          </div>
+
+          {/*
+            ★ 關著的時候要說出**為什麼**不能傳、**誰**能打開 ——
+              一塊沒有解釋的空白會被當成壞掉。
+          */}
+          {!ev.uploads_open && (
+            <div className="mt-1.5 rounded-lg bg-[#FAFAF8] px-2.5 py-1.5 text-[11.5px] text-gray-500">
+              還沒開放 —— 由{mine ? '你' : `排這場會的人（${who(ev.created_by)}）`}或主管打開。
+            </div>
+          )}
+
+          {/* ★★ 照「這是誰的」分組，不是照誰按的按鈕 */}
+          {filesByPerson(files.map((f) => ({ ...f, uploaded_by: f.author_id ?? f.uploaded_by })))
+            .map((g) => (
+              <div key={g.who ?? '—'}>
+                <div className="text-[11.5px] font-bold text-gray-600 mt-2 mb-0.5">
+                  {who(g.who)}
+                  <span className="font-normal text-gray-400 ml-1.5">· {g.items.length} 份</span>
+                </div>
+                {g.items.map((f) => {
+                  const k = fileKind(f.name);
+                  const badge = KIND_BADGE[k];
+                  const canOpen = canPreview(f.name);
+                  /* 代傳：這份的作者不是按上傳的那個人 */
+                  const proxy = f.author_id && f.uploaded_by && f.author_id !== f.uploaded_by;
+                  return (
+                    <div key={f.id} className="flex items-center gap-1.5 py-[3px] pl-2.5 text-xs">
+                      <span className="w-4 text-center shrink-0">{k === 'pdf' ? '📕' : '📘'}</span>
+                      {canOpen ? (
+                        <button onClick={() => onView(f)}
+                          className="flex-1 min-w-0 truncate text-left text-mor-slate hover:underline">
+                          {f.name}
+                        </button>
+                      ) : (
+                        <span className="flex-1 min-w-0 truncate text-gray-500"
+                          title={whyNoPreview(f.name)}>{f.name}</span>
+                      )}
+                      {badge && (
+                        <span title={badge.hint.replace(/\*\*/g, '')}
+                          className={`rounded px-1 text-[9.5px] font-bold shrink-0 ${
+                            k === 'pdf' ? 'bg-[#FDE7E5] text-[#B3423C]'
+                                        : 'bg-[#EDE7F6] text-[#5E35B1]'}`}>{badge.t}</span>
+                      )}
+                      {proxy && (
+                        <span className="rounded bg-[#F5F4F1] px-1.5 text-[10px] text-gray-400 shrink-0">
+                          {who(f.uploaded_by)}代傳
+                        </span>
+                      )}
+                      <span className="text-[10.5px] text-gray-400 shrink-0">{fmtSize(f.size_bytes)}</span>
+                      {(f.uploaded_by === meId || isAdmin) && (
+                        <button onClick={() => onDelFile(f)} title="刪掉"
+                          className="text-gray-300 hover:text-red-500 shrink-0">✕</button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+
+          {/*
+            ★ 「可以讓大家上傳」—— 所以不分角色、也不管這場會是誰排的。
+              但要開關打開（資料庫那邊同一條規則）。
+          */}
+          {open && (
+            <div className="mt-2 flex gap-2 items-center">
+              <select value={forWho} onChange={(e) => setForWho(e.target.value)}
+                title="代別人傳的話改這裡"
+                className="rounded-lg border border-mor-line px-2 py-1.5 text-[11.5px]
+                           bg-white text-gray-600 max-w-[8.5rem]">
+                <option value={meId}>傳給　我自己</option>
+                {people.filter((p) => p.id !== meId).map((p) => (
+                  <option key={p.id} value={p.id}>傳給　{p.name}</option>
+                ))}
+              </select>
+              <input ref={pick} type="file" accept={FILE_ACCEPT} hidden multiple
+                onChange={(e) => {
+                  if (e.target.files?.length) onUpload(e.target.files, forWho);
+                  e.target.value = '';
+                }} />
+              <button onClick={() => pick.current?.click()}
+                className="flex-1 rounded-lg border border-dashed border-mor-line py-1.5
+                           text-[11.5px] text-gray-500 hover:bg-mor-sand/50">
+                ＋ 上傳資料　<span className="text-gray-400">PDF・Word</span>
+              </button>
+            </div>
+          )}
+        </div>
       )}
 
-      {/* ── 資料 ── */}
-      <div className="mt-2 border-t border-dashed border-mor-line pt-2">
-        {files.map((f) => {
-          const k = fileKind(f.name);
-          const badge = KIND_BADGE[k];
-          const canOpen = canPreview(f.name);
-          return (
-            <div key={f.id} className="flex items-center gap-1.5 py-[3px] text-xs">
-              <span className="w-4 text-center shrink-0">{k === 'pdf' ? '📕' : '📘'}</span>
-              {canOpen ? (
-                <button onClick={() => onView(f)}
-                  className="flex-1 min-w-0 truncate text-left text-mor-slate hover:underline">
-                  {f.name}
-                </button>
-              ) : (
-                <span className="flex-1 min-w-0 truncate text-gray-500" title={whyNoPreview(f.name)}>
-                  {f.name}
-                </span>
-              )}
-              {/*
-                ★★★ 「原樣」／「預覽」—— 這兩個字是整個檔案功能的重點。
-                  沒有它的話，Word 的預覽會被當成原檔的樣子。
-              */}
-              {badge && (
-                <span title={badge.hint.replace(/\*\*/g, '')}
-                  className={`rounded px-1 text-[9.5px] font-bold shrink-0 ${
-                    k === 'pdf' ? 'bg-[#FDE7E5] text-[#B3423C]' : 'bg-[#EDE7F6] text-[#5E35B1]'}`}>
-                  {badge.t}
-                </span>
-              )}
-              <span className="text-[10.5px] text-gray-400 shrink-0">
-                {names.get(f.uploaded_by ?? '') ?? '—'}
-                {fmtSize(f.size_bytes) && ` · ${fmtSize(f.size_bytes)}`}
-              </span>
-              {(f.uploaded_by === meId || isAdmin) && (
-                <button onClick={() => onDelFile(f)} title="刪掉"
-                  className="text-gray-300 hover:text-red-500 shrink-0">✕</button>
-              )}
-            </div>
-          );
-        })}
-
-        {/*
-          ★ 「大家上傳」（使用者 2026-09-17）—— 所以這個框每個人都看得到，
-            不分角色、也不管這場會是誰排的。
-        */}
-        <input ref={pick} type="file" accept={FILE_ACCEPT} hidden multiple
-          onChange={(e) => { if (e.target.files?.length) onUpload(e.target.files); e.target.value = ''; }} />
-        <button onClick={() => pick.current?.click()}
-          className="mt-1 w-full rounded-lg border border-dashed border-mor-line py-1.5
-                     text-[11.5px] text-gray-500 hover:bg-mor-sand/50">
-          ＋ 上傳資料　<span className="text-gray-400">PDF・Word</span>
-        </button>
-      </div>
-
-      <div className="mt-2 flex gap-3">
-        {(mine || isAdmin) && <>
+      {/*
+        ── 動作 ──
+        ★★★ 刪除**不在這裡** —— 它搬進「編輯」視窗了（anxing-ui 四-3：
+          刪除是底下一行紅色小字，而且刪這一場會連檔案一起帶走）。
+        ★ 連結不帶底線（四-4）。
+      */}
+      <div className="mt-2.5 flex items-center gap-3">
+        {canEdit && (
           <button onClick={onEdit}
-            className="text-[11px] text-mor-slate hover:text-mor-slatedark">編輯</button>
-          <button onClick={onDel}
-            className="text-[11px] text-red-400 hover:text-red-600">刪掉</button>
-        </>}
+            className="text-xs text-mor-slate hover:text-mor-slatedark">編輯</button>
+        )}
+        <button onClick={() => window.open(lineShareUrl(eventShareText(ev)), '_blank', 'noopener')}
+          title="開 LINE，訊息已經打好了"
+          className="ml-auto rounded-lg border border-mor-line bg-white px-3.5 py-1
+                     text-xs text-gray-600 hover:bg-mor-sand/60">分享</button>
       </div>
     </div>
   );
@@ -379,14 +512,56 @@ function EventRow({ ev, files, names, meId, isAdmin,
 
 /* ══════════════════════════════════════════════════════════ */
 
-function EventForm({ draft, onChange, onClose, onSave }: {
+/**
+ * 備註：文字與網址混在一起。
+ *
+ * ★★★ 走 `linkify()` 切成段落再畫，**不是** `dangerouslySetInnerHTML`。
+ *   那一欄是使用者自己打的字 —— 轉成 HTML 就得先證明裡面沒有別的東西，
+ *   而那件事很難證明。切成段落之後用 React 元素畫，天生就跳不出去。
+ *
+ * ★ `whitespace-pre-wrap` 讓換行照原樣顯示（文字段落裡留著 `\n`）。
+ */
+function Note({ text }: { text: string }) {
+  return (
+    <div className="mt-1 text-xs text-gray-600 leading-relaxed whitespace-pre-wrap break-words">
+      {linkify(text).map((p, i) => (
+        p.kind === 'url'
+          ? <a key={i} href={urlHref(p.v)} target="_blank" rel="noopener noreferrer"
+              title={p.v}
+              className="text-mor-slate underline break-all">{urlLabel(p.v)}</a>
+          : <span key={i}>{p.v}</span>
+      ))}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════ */
+
+function EventForm({ draft, onChange, onClose, onSave, canDelete, files, names, onDelete }: {
   draft: Draft;
   onChange: (d: Draft) => void;
   onClose: () => void;
   onSave: (d: Draft) => Promise<void> | void;
+  /** 做不到的時候整顆不出現，不是灰掉（anxing-ui 四-3） */
+  canDelete: boolean;
+  /** 這一場底下有哪些檔案 —— 確認文字要講出「是誰的幾份」 */
+  files: Fl[];
+  names: Map<string, string>;
+  onDelete: () => Promise<void> | void;
 }) {
   const [save, saving] = useOnce(async () => { await onSave(draft); });
-  const bad = !draft.title.trim() || !draft.date;
+  const [asking, setAsking] = useState(false);
+  const [wiping, wiping2] = useOnce(async () => { await onDelete(); });
+  /* ★ 日期與時間都必填（使用者 2026-09-17） */
+  const bad = !draft.title.trim() || !draft.date || !draft.time;
+
+  /*
+   * ★★ 確認文字裡把檔案**是誰的**講出來。
+   *   只寫「3 份資料」的話，刪的人不知道自己順手毀掉的是別人的東西。
+   */
+  const byWho = filesByPerson(files.map((f) => ({ ...f, uploaded_by: f.author_id ?? f.uploaded_by })))
+    .map((g) => `${names.get(g.who ?? '') ?? '—'} ${g.items.length} 份`)
+    .join('、');
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -400,7 +575,7 @@ function EventForm({ draft, onChange, onClose, onSave }: {
         </div>
 
         <div className="px-5 py-4 grid gap-3 text-sm">
-          {/* ★ 兩種活動用同一個「＋活動」進來，在這裡分（使用者 2026-09-17） */}
+          {/* ★ 兩種活動用同一個「＋活動」進來，在這裡分 */}
           <div className="flex flex-col gap-1">
             <span className="text-xs text-gray-500">哪一種</span>
             <div className="flex gap-2">
@@ -416,34 +591,68 @@ function EventForm({ draft, onChange, onClose, onSave }: {
             </div>
           </div>
 
-          <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">名稱</span>
+          {/* ★ 沒有範例文字（使用者 2026-09-17:「名稱都不用範例」） */}
+          <label className="flex flex-col gap-1">
+            <span className="flex items-center text-xs text-gray-500">名稱<ReqMark /></span>
             <input value={draft.title} onChange={(e) => onChange({ ...draft, title: e.target.value })}
-              placeholder={draft.kind === 'meeting' ? 'Q4 房源檢討' : '中秋聚餐・大直海霸王'}
               className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
 
           <div className="flex gap-2.5">
-            <label className="flex-1 flex flex-col gap-1"><span className="text-xs text-gray-500">日期</span>
+            <label className="flex-1 flex flex-col gap-1">
+              <span className="flex items-center text-xs text-gray-500">日期<ReqMark /></span>
               <input type="date" value={draft.date}
                 onChange={(e) => onChange({ ...draft, date: e.target.value })}
                 className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
             <label className="flex-1 flex flex-col gap-1">
-              <span className="text-xs text-gray-500">時間（可以不填）</span>
+              <span className="flex items-center text-xs text-gray-500">時間<ReqMark /></span>
               <input type="time" value={draft.time}
                 onChange={(e) => onChange({ ...draft, time: e.target.value })}
                 className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
           </div>
-          <div className="text-[11px] text-gray-400 -mt-1">
-            不填時間就只顯示日期 —— 不會變成「00:00」。
-          </div>
 
           <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">備註</span>
             <textarea value={draft.note} onChange={(e) => onChange({ ...draft, note: e.target.value })}
-              placeholder="地點、誰要到、要準備什麼"
-              className="rounded-lg border border-gray-300 px-2 py-1.5 min-h-[58px] resize-y" /></label>
+              className="rounded-lg border border-gray-300 px-2 py-1.5 min-h-[58px] resize-y" />
+            {/* ★ 這是**行為說明**不是範例 —— 不講的話沒有人知道可以貼網址 */}
+            <span className="text-[11px] text-gray-400">貼網址會自動變成可以點的</span></label>
 
-          {draft.kind === 'meeting' && (
+          {draft.kind === 'meeting' && !draft.id && (
             <div className="text-[11px] text-gray-400 leading-relaxed">
-              建好之後，每個人都可以在這一場底下上傳資料（PDF 或 Word）。
+              建好之後，把「開放上傳資料」打開，大家就可以傳 PDF 或 Word。
+            </div>
+          )}
+
+          {/*
+            ══════════ 刪除 ══════════
+            ★★★ 在**內容區的最後一格**，不是跟底下的「取消／儲存」排一起
+              （anxing-ui 四-3）——那一排讀起來是「毀掉它／算了／存起來」，
+              而人來這個視窗是為了改東西然後存檔。中間隔著一條線。
+            ★ 跟「社群模擬」的編輯視窗同一個做法，人不用學第二次。
+          */}
+          {canDelete && !asking && (
+            <div className="text-center pt-1">
+              <button onClick={() => setAsking(true)}
+                className="text-xs text-red-400 underline hover:text-red-600">
+                刪掉這場活動{files.length ? `（連同 ${files.length} 份資料，不可復原）` : '（不可復原）'}
+              </button>
+            </div>
+          )}
+          {canDelete && asking && (
+            <div className="rounded-lg border border-dashed border-red-300 bg-red-50/60 px-3 py-2.5">
+              <div className="text-[12.5px] text-red-800 leading-relaxed">
+                <b>確定要刪掉「{draft.title || '這場活動'}」？</b><br />
+                {files.length
+                  ? <>底下<b>{byWho}</b>共 {files.length} 份資料會一起不見，<b>救不回來</b>。</>
+                  : <><b>救不回來</b>。</>}
+              </div>
+              <div className="mt-2 flex justify-end gap-2">
+                <button onClick={() => setAsking(false)}
+                  className="rounded-lg border border-gray-300 bg-white px-3 py-1 text-xs">算了</button>
+                <button onClick={wiping} disabled={wiping2}
+                  className="rounded-lg border border-red-300 bg-white px-3 py-1 text-xs
+                             text-red-600 disabled:opacity-50">
+                  {wiping2 ? '刪除中⋯' : '確定刪掉'}</button>
+              </div>
             </div>
           )}
         </div>
@@ -452,7 +661,7 @@ function EventForm({ draft, onChange, onClose, onSave }: {
           <button onClick={onClose}
             className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>
           <button onClick={save} disabled={saving || bad}
-            title={bad ? '名稱與日期都要填' : ''}
+            title={bad ? '名稱、日期、時間都要填' : ''}
             className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium
                        hover:bg-mor-slatedark disabled:opacity-50">
             {saving ? '儲存中⋯' : draft.id ? '儲存' : '建立'}</button>

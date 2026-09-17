@@ -64,8 +64,14 @@ import {
  * 連試都不試。所以要有「重新檢查」，不然唯一出路是 F5 而畫面沒寫。
  */
 
+/*
+ * ★★ 這是 `Record<NotifyKind, …>`，所以**新增一種通知就一定要來加一個圖示** ——
+ *   漏了的話 tsc 會擋下來（2026-09-17 加「活動」時就是這樣被抓到的）。
+ *   那正是用 Record 而不是 `Partial<Record<…>>` 的理由:
+ *   少一個圖示只會讓畫面空一格，而空一格不會有人來報。
+ */
 const ICON: Record<NotifyKind, string> = {
-  orders: '🏨', approvals: '🧾', reviews: '⭐', cleaning: '🧹', purchasing: '🛒',
+  orders: '🏨', approvals: '🧾', reviews: '⭐', cleaning: '🧹', purchasing: '🛒', board: '📢',
 };
 
 type Prefs = Record<NotifyKind, boolean>;

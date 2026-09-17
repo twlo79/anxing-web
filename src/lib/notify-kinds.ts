@@ -17,9 +17,9 @@
  * 刻意一致 —— 不然要多維護一份對照表，而對照表漏掉一項不會報錯，
  * 只會讓某一種通知永遠發不出去。
  */
-export type NotifyKind = 'orders' | 'approvals' | 'reviews' | 'cleaning' | 'purchasing';
+export type NotifyKind = 'orders' | 'approvals' | 'reviews' | 'cleaning' | 'purchasing' | 'board';
 
-export const NOTIFY_KINDS: NotifyKind[] = ['orders', 'approvals', 'reviews', 'cleaning', 'purchasing'];
+export const NOTIFY_KINDS: NotifyKind[] = ['orders', 'approvals', 'reviews', 'cleaning', 'purchasing', 'board'];
 
 export const NOTIFY_LABEL: Record<NotifyKind, string> = {
   orders: '訂單通知',
@@ -27,6 +27,7 @@ export const NOTIFY_LABEL: Record<NotifyKind, string> = {
   reviews: '評價通知',
   cleaning: '清潔記錄通知',
   purchasing: '採購需求通知',
+  board: '活動通知',
 };
 
 export const NOTIFY_DESC: Record<NotifyKind, string> = {
@@ -35,6 +36,7 @@ export const NOTIFY_DESC: Record<NotifyKind, string> = {
   reviews: '爬蟲抓到新的房客評價',
   cleaning: '匯入新的清潔記錄',
   purchasing: '有人提出新的採購需求（migration_140）',
+  board: '佈告欄排了新的開會或團聚（migration_265）',
 };
 
 /**
@@ -53,4 +55,15 @@ export const NOTIFY_DEFAULT: Record<NotifyKind, boolean> = {
    * 那正是這個功能要解決的問題。
    */
   purchasing: true,
+  /*
+   * 活動也是 true（migration_265 的 column default 也是 true）。
+   *
+   * ★ 跟採購需求同一個道理:新功能沒有「維持現狀」的問題,
+   *   而收不到的人就不知道公司排了會或聚餐 —— 那正是這個功能要解決的事。
+   *
+   * ★★ 這一行跟 migration_265 的 `default true` **必須一致**。
+   *   不一致的話,沒有偏好列的人在「通知設定」上看到的開關狀態,
+   *   跟他實際會不會收到**是兩回事** —— 而那不會有任何錯誤。
+   */
+  board: true,
 };
