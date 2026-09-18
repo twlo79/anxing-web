@@ -10,7 +10,7 @@ import {
 
 /*
  * ══════════════════════════════════════════════════════════
- * 佈告欄 → 表單下載（2026-09-18 使用者指定）
+ * 佈告欄 → 檔案下載（2026-09-18 使用者指定，同日改名:表單→檔案）
  *
  *   「加一個 表單下載 / 可上傳 共用公司文件 之後的人 可以下載使用
  *     1. 可以編輯 換檔案 > 總經理 | 會計 | 主管
@@ -52,6 +52,8 @@ type Form = {
   title: string;
   category: string | null;
   note: string | null;
+  /** 使用說明（migration_276）。null ＝ 沒有，那一列不畫那顆 ▾ */
+  usage_note: string | null;
   file_path: string | null;
   file_name: string | null;
   file_size: number | null;
@@ -65,13 +67,14 @@ type Draft = {
   title: string;
   category: string;
   note: string;
+  usage_note: string;
   /** 新選的檔案。編輯時留 null ＝ 不換檔案 */
   file: File | null;
   /** 編輯時原本那份叫什麼 —— 給畫面顯示「現在是這一份」 */
   oldName?: string | null;
 };
 
-const BLANK: Draft = { title: '', category: '人事', note: '', file: null };
+const BLANK: Draft = { title: '', category: '人事', note: '', usage_note: '', file: null };
 const BUCKET = 'board-forms';
 
 /*
@@ -87,11 +90,27 @@ const BADGE_BG: Record<string, string> = {
 /**
  * 「可以傳哪些」那一行字。
  *
- * ★★ 從 `KIND_EXTS` 長出來，**不要自己再打一次** ——
- *   打第二次的話，哪天加了一種格式，畫面上那一行會留在舊的，
- *   而使用者會照著它以為傳不了（README:同一條規則在三個地方各寫一次）。
+ * ══════════════════════════════════════════════════════════
+ * 【★★ 寫種類，不寫副檔名】（2026-09-18 使用者:「爆版」）
+ *
+ * 十二個副檔名排成一行會超出對話框（`.pdf .doc .docx .xls .xlsx
+ * .csv .jpg .jpeg .png .gif .webp .heic`）。**而且沒有人需要讀完** ——
+ * 手上那份是 Excel 還是圖片，他自己知道。
+ *
+ * ★ 真的傳錯格式時，錯誤訊息**還是會把完整的副檔名列出來**
+ *   （`ACCEPT_FULL`）—— 那時候他才需要知道到底收哪幾種。
+ *
+ * ★★ 兩份都從 `KIND_EXTS` 長出來，不要自己再打一次 ——
+ *   打第二次的話，哪天加了一種格式，畫面上那一行會留在舊的
+ *   （README:同一條規則在三個地方各寫一次）。
+ * ══════════════════════════════════════════════════════════
  */
-const ACCEPT_HINT = Object.values(KIND_EXTS).flat().join('　');
+const KIND_NAME: Record<string, string> = {
+  pdf: 'PDF', word: 'Word', excel: 'Excel', csv: 'CSV', image: '圖片',
+};
+const ACCEPT_HINT = Object.keys(KIND_EXTS).map((k) => KIND_NAME[k] ?? k).join('　');
+/** 被擋下來的時候才印這一份 —— 完整的副檔名 */
+const ACCEPT_FULL = Object.values(KIND_EXTS).flat().join(' ');
 
 export default function FormsTab({ role, meId, onMsg }: {
   role: string;
@@ -107,6 +126,13 @@ export default function FormsTab({ role, meId, onMsg }: {
   const [q, setQ] = useState('');
   const [draft, setDraft] = useState<Draft | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  /*
+   * 哪幾列的「使用說明」展開了（2026-09-18 使用者選的乙案）。
+   *
+   * ★ 用 id 當 key，不是用索引 —— 換一次篩選索引就全對不上，
+   *   而症狀是「我點的是 A，展開的是 B」。
+   */
+  const [open, setOpen] = useState<Record<string, true>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -146,9 +172,9 @@ export default function FormsTab({ role, meId, onMsg }: {
 
   const save = async (d: Draft) => {
     const title = d.title.trim();
-    if (!title) return onMsg('「表單名稱」要填。', true);
+    if (!title) return onMsg('「檔案名稱」要填。', true);
 
-    /* 新增時一定要有檔案 —— 沒檔案的「表單下載」是一顆按了沒反應的鈕 */
+    /* 新增時一定要有檔案 —— 沒檔案的「檔案下載」是一顆按了沒反應的鈕 */
     if (!d.id && !d.file) return onMsg('要選一個檔案（PDF 或 Word）。', true);
 
     let path: string | null = null;
@@ -158,7 +184,7 @@ export default function FormsTab({ role, meId, onMsg }: {
       const big = fileTooBig(d.file.size);
       if (big.bad) return onMsg(big.why, true);
       if (fileKind(d.file.name) === 'other') {
-        return onMsg('這種檔案收不了。可以傳：' + ACCEPT_HINT, true);
+        return onMsg('這種檔案收不了。可以傳：' + ACCEPT_FULL, true);
       }
       /*
        * ★ 路徑帶時間戳 —— 同名檔案換兩次不會互相蓋掉，
@@ -175,6 +201,11 @@ export default function FormsTab({ role, meId, onMsg }: {
       title,
       category: parseFormCat(d.category),
       note: d.note.trim() || null,
+      /*
+       * ★ 空的存 null，不要存空字串 —— 「沒有使用說明」只能有一種形狀，
+       *   不然畫面要判兩次（migration_276 的註解寫了同一件事）。
+       */
+      usage_note: d.usage_note.trim() || null,
       updated_by: meId,
       updated_at: new Date().toISOString(),
     };
@@ -198,7 +229,7 @@ export default function FormsTab({ role, meId, onMsg }: {
       /* ★ 寫不進去的話，剛剛傳上去的那個檔要清掉 —— 不然 bucket 裡會留孤兒 */
       if (path) await supabase.storage.from(BUCKET).remove([path]);
       if (error) return onMsg((d.id ? '存不起來：' : '建不起來：') + error.message, true);
-      return onMsg('沒有存進去 —— 你的帳號沒有上傳表單的權限。', true);
+      return onMsg('沒有存進去 —— 你的帳號沒有上傳檔案的權限。', true);
     }
 
     /* ★ 舊檔最後才刪。刪失敗只留一行 console —— 不擋住人做事 */
@@ -232,10 +263,10 @@ export default function FormsTab({ role, meId, onMsg }: {
         {canEdit && (
           <button onClick={() => setDraft({ ...BLANK })}
             className="h-11 md:h-10 rounded-lg bg-mor-slate text-white px-4 text-ui font-medium
-                       hover:bg-mor-slatedark">＋ 上傳表單</button>
+                       hover:bg-mor-slatedark">＋ 檔案上傳</button>
         )}
         <input value={q} onChange={(e) => setQ(e.target.value)}
-          placeholder="關鍵字找表單..."
+          placeholder="關鍵字找檔案..."
           className="h-11 md:h-10 rounded-lg border border-mor-line px-3 text-ui flex-1 min-w-[170px]" />
         <span className="text-uisub text-gray-500 whitespace-nowrap">
           共 <b className="text-mor-ink">{rows.length}</b> 份
@@ -249,8 +280,8 @@ export default function FormsTab({ role, meId, onMsg }: {
           {list.length
             ? `找不到「${q}」`
             : canEdit
-              ? '還沒有任何表單 —— 按上面的「＋ 上傳表單」。'
-              : '還沒有任何表單。要放請假單、報帳單這些的話，請會計或主管上傳。'}
+              ? '還沒有任何檔案 —— 按上面的「＋ 檔案上傳」。'
+              : '還沒有任何檔案。要放請假單、報帳單這些的話，請會計或主管上傳。'}
         </div>
       )}
 
@@ -261,8 +292,8 @@ export default function FormsTab({ role, meId, onMsg }: {
             const k = fileKind(f.file_name ?? '');
             const has = formHasFile(f);
             return (
-              <div key={f.id}
-                className="flex items-center gap-3 px-4 py-3 border-t border-mor-line/60 first:border-t-0">
+              <div key={f.id} className="border-t border-mor-line/60 first:border-t-0">
+              <div className="flex items-start gap-3 px-4 py-3">
                 {/*
                   ★ 用副檔名當圖示，一眼看得出是 Word 還是 PDF ——
                     下載之前就知道等一下要用什麼開。
@@ -272,7 +303,11 @@ export default function FormsTab({ role, meId, onMsg }: {
                   {FILE_BADGE[k]}
                 </span>
 
-                <span className="flex-1 min-w-0">
+                {/*
+                  ★ 每一段各自一整排（2026-09-18 使用者:「資訊獨立一排」
+                    「使用說明 獨立一行」）—— 擠成一行的話讀起來像壞掉的。
+                */}
+                <span className="flex-1 min-w-0 block">
                   <span className="block text-ui font-medium truncate">{f.title}</span>
                   {f.note && <span className="block text-uisub text-gray-500 truncate">{f.note}</span>}
                   <span className="block text-xs text-gray-400 truncate">
@@ -280,6 +315,21 @@ export default function FormsTab({ role, meId, onMsg }: {
                     {' · '}{f.updated_at.slice(5, 10).replace('-', '/')}
                     {f.file_size ? ` · ${fmtSize(f.file_size)}` : ''}
                   </span>
+                  {/*
+                    ★★★ **有使用說明才畫這一顆**。沒有內容還畫的話，
+                      那是一顆點了什麼都不會發生的鈕 ——
+                      使用者會以為壞掉，而不是以為「這一份沒有說明」。
+                  */}
+                  {f.usage_note?.trim() && (
+                    <button onClick={() => setOpen((p) => {
+                      const n = { ...p };
+                      if (n[f.id]) delete n[f.id]; else n[f.id] = true;
+                      return n;
+                    })}
+                      className="block w-fit mt-1 text-uisub text-mor-slate hover:text-mor-slatedark">
+                      使用說明 {open[f.id] ? '▴' : '▾'}
+                    </button>
+                  )}
                 </span>
 
                 <span className="shrink-0 rounded px-2 py-0.5 text-xs
@@ -291,7 +341,8 @@ export default function FormsTab({ role, meId, onMsg }: {
                   <>
                     <button onClick={() => setDraft({
                       id: f.id, title: f.title, category: parseFormCat(f.category),
-                      note: f.note ?? '', file: null, oldName: f.file_name,
+                      note: f.note ?? '', usage_note: f.usage_note ?? '',
+                      file: null, oldName: f.file_name,
                     })} className="shrink-0 text-uisub text-mor-slate hover:text-mor-slatedark">編輯</button>
                     <button onClick={() => del(f)}
                       className="shrink-0 text-uisub text-red-400 hover:text-red-600">刪掉</button>
@@ -310,6 +361,20 @@ export default function FormsTab({ role, meId, onMsg }: {
                         : 'border-amber-300 text-amber-700 bg-amber-50'}`}>
                   {busyId === f.id ? '準備中⋯' : has ? '下載' : '沒有檔案'}
                 </button>
+              </div>
+
+              {/*
+                ★ 展開的內容縮排到跟標題對齊（左邊讓出圖示的寬度），
+                  用虛線隔開 —— 實線會看起來像兩個不同的區塊（anxing-ui 二-7）。
+                ★★ `whitespace-pre-wrap` 不能省:使用者打的換行要留著，
+                  不然「① ② ③」會全部黏成一段。
+              */}
+              {open[f.id] && (
+                <div className="px-4 pb-3 pl-[3.25rem] text-uisub text-gray-600 leading-relaxed
+                                whitespace-pre-wrap border-t border-dashed border-mor-line pt-2.5">
+                  {f.usage_note}
+                </div>
+              )}
               </div>
             );
           })}
@@ -343,7 +408,7 @@ function FormDialog({ draft, onChange, onClose, onSave }: {
                       max-h-[92vh] sm:max-h-[85vh] overflow-y-auto">
         <div className="sticky top-0 bg-white px-5 py-3.5 border-b border-mor-line font-bold text-ui
                         flex items-center justify-between">
-          {draft.id ? '編輯表單' : '上傳表單'}
+          {draft.id ? '編輯檔案' : '檔案上傳'}
           <button onClick={onClose}
             className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
         </div>
@@ -386,7 +451,7 @@ function FormDialog({ draft, onChange, onClose, onSave }: {
 
           <label className="flex flex-col gap-1">
             <span className="text-uisub text-gray-500 flex items-center">
-              表單名稱<span className="text-red-500 ml-0.5">*</span>
+              檔案名稱<span className="text-red-500 ml-0.5">*</span>
             </span>
             <input value={draft.title} onChange={(e) => onChange({ ...draft, title: e.target.value })}
               placeholder="請假單"
@@ -405,6 +470,22 @@ function FormDialog({ draft, onChange, onClose, onSave }: {
               placeholder="填完交給芊，人事單月底前送出"
               className="h-11 md:h-10 rounded-lg border border-mor-line px-3 text-ui" /></label>
 
+          {/*
+            使用說明（2026-09-18 使用者選的乙案）。
+            ★ 跟上面那格「說明」是**兩件事**:
+              說明　　一行，列上一直看得到，回答「這是什麼」
+              使用說明 一段，收起來，回答「怎麼填、填完交給誰」
+            ★★ 用 textarea 不是 input —— 換行要留得住。
+          */}
+          <label className="flex flex-col gap-1">
+            <span className="text-uisub text-gray-500">使用說明（怎麼填、填完交給誰）</span>
+            <textarea value={draft.usage_note} rows={5}
+              onChange={(e) => onChange({ ...draft, usage_note: e.target.value })}
+              placeholder={'沒有發票或收據的支出才用這一份。\n① 填寫金額、用途、日期\n② 找主管簽名\n③ 掃描後連同支出一起送會計'}
+              className="rounded-lg border border-mor-line px-3 py-2 text-ui leading-relaxed" />
+            <span className="text-xs text-gray-400">留空就不會出現那顆「使用說明 ▾」。</span>
+          </label>
+
           <div className="text-xs text-gray-400 leading-relaxed">
             全公司都下載得到（含房務）。只有總經理、會計、主管可以上傳與換檔案。
           </div>
@@ -415,7 +496,7 @@ function FormDialog({ draft, onChange, onClose, onSave }: {
             className="h-11 md:h-10 rounded-lg border border-mor-line px-5 text-uisub">取消</button>
           {/* ★ 灰掉要說得出為什麼（anxing-ui 二-6） */}
           <button onClick={save} disabled={saving || bad}
-            title={!draft.title.trim() ? '「表單名稱」要填'
+            title={!draft.title.trim() ? '「檔案名稱」要填'
                  : (!draft.id && !draft.file) ? '要先選一個檔案' : ''}
             className="h-11 md:h-10 rounded-lg bg-mor-slate text-white px-5 text-uisub font-medium
                        hover:bg-mor-slatedark disabled:opacity-50">

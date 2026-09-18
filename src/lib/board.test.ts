@@ -727,3 +727,38 @@ test('★★★ formHasFile：沒有檔案要看得出來', () => {
   assert.equal(formHasFile({ id: '1', title: 'x' }), false);
   assert.equal(formHasFile(null), false);
 });
+
+/* ── 使用說明（migration_276，2026-09-18 使用者選的乙案）─────── */
+
+const FORM_WITH_USAGE = {
+  id: '1', title: '支出證明單', category: '財務',
+  note: '無憑證時使用',
+  usage_note: '① 填寫金額、用途、日期\n② 找主管簽名\n③ 掃描後連同支出一起送會計',
+  file_name: 'expense.docx',
+};
+
+/*
+ * ★★ 使用者記得的常常不是標題,是**那句話** ——
+ *   「那份要找主管簽名的」。而它只在使用說明裡。
+ */
+test('★★ matchForm：使用說明也要找得到', () => {
+  assert.equal(matchForm(FORM_WITH_USAGE, '主管簽名'), true);
+  assert.equal(matchForm(FORM_WITH_USAGE, '送會計'), true);
+});
+
+test('★ matchForm：原本那四欄照樣比得到', () => {
+  assert.equal(matchForm(FORM_WITH_USAGE, '支出證明'), true);
+  assert.equal(matchForm(FORM_WITH_USAGE, '財務'), true);
+  assert.equal(matchForm(FORM_WITH_USAGE, '無憑證'), true);
+  assert.equal(matchForm(FORM_WITH_USAGE, 'expense'), true);
+});
+
+test('matchForm：沒中的還是回 false', () => {
+  assert.equal(matchForm(FORM_WITH_USAGE, '請假'), false);
+});
+
+/* ★ 舊的那幾筆沒有這一欄（null）—— 不可以爆，也不可以變成「什麼都中」 */
+test('★ matchForm：沒有使用說明的那幾筆不會爆', () => {
+  assert.equal(matchForm({ id: '2', title: '客戶收據' }, '收據'), true);
+  assert.equal(matchForm({ id: '2', title: '客戶收據' }, '簽名'), false);
+});

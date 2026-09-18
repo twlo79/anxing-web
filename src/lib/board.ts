@@ -757,6 +757,8 @@ export function parseFormCat(raw: unknown): FormCat {
 export type FormRow = {
   id: string; title: string;
   category?: string | null; note?: string | null;
+  /** 使用說明（migration_276）。收起來的那一段 */
+  usage_note?: string | null;
   file_name?: string | null; file_path?: string | null;
 };
 
@@ -783,7 +785,11 @@ export function matchForm(r: FormRow | null | undefined, kw: string | null | und
   const k = (kw ?? '').trim().toLowerCase();
   if (!k) return true;
   if (!r) return false;
-  return [r.title, r.category, r.note, r.file_name]
+  /*
+   * ★ 使用說明也要比（migration_276）。使用者記得的常常是
+   *   「那份要找主管簽名的」—— 而那句話只在使用說明裡。
+   */
+  return [r.title, r.category, r.note, r.usage_note, r.file_name]
     .map((v) => (v ?? '').toLowerCase())
     .some((v) => v.includes(k));
 }

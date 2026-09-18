@@ -65,7 +65,7 @@ import FormsTab from './forms-tab';
  *
  * ★ 帳密**移到最後**（使用者:「帳密 後移」）——
  *   它是最少點、最敏感的一格。
- * ★★ 表單下載是新的一格:共用的公司文件（請假單、報帳單那種）。
+ * ★★ 檔案下載是新的一格:共用的公司文件（請假單、報帳單、對帳表、照片那種）。
  *   全公司都下載得到（含房務），只有總經理・會計・主管上傳得了。
  *
  * ★★★ `key` 是網址上的 `?tab=`，**改了會讓舊連結失效**
@@ -75,7 +75,13 @@ import FormsTab from './forms-tab';
 const TABS = [
   { key: 'news', label: '通知', icon: '📬' },
   { key: 'events', label: '活動', icon: '🗓' },
-  { key: 'forms', label: '表單下載', icon: '📄' },
+  /*
+   * ★ 2026-09-18 使用者:「表單下載 改成 檔案下載」——
+   *   這一格收的不只是表單（Excel、圖片都收），叫「表單」會讓人以為只能放表單。
+   * ★★ `key` **一個字都不能改** —— 它是網址上的 `?tab=`，
+   *   推播的深連結走它（見底下那一段註解）。
+   */
+  { key: 'forms', label: '檔案下載', icon: '📄' },
   { key: 'secrets', label: '帳密', icon: '🔑' },
 ] as const;
 type TabKey = (typeof TABS)[number]['key'];
