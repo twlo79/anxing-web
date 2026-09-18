@@ -53,7 +53,7 @@ type Form = {
   title: string;
   category: string | null;
   note: string | null;
-  /** 使用說明（migration_276）。null ＝ 沒有，那一列不畫那顆 ▾ */
+  /** 使用說明（migration_276）。null ＝ 沒有，那一列不畫那顆 ▸ */
   usage_note: string | null;
   file_path: string | null;
   file_name: string | null;
@@ -306,14 +306,18 @@ export default function FormsTab({ role, meId, onMsg }: {
                 **跟會計報表那一頁一模一樣**，兩頁就是同一種列。
                 ══════════════════════════════════════════════
                 　圖示 ／ 內容(封頂 30rem) ／ 下載 ／ 彈性空白 ／ 編輯
-                　第二個 grid row 給**說明 ＋ 使用說明 ▾**，橫跨到最右邊。
+                　由上往下四行:標題 → 簡單說明 → 使用說明 ▸ → 檔案的資料。
+
+                ★★★ 2026-09-18 使用者:「說明放第三行 / 簡單說明是副標 前面不用打說明」。
+                  原本「使用說明 ▸」是接在副標**後面**的 —— 兩件不同的東西擠在同一行，
+                  副標長一點就把那顆鈕推出畫面外，而它是唯一可以點的東西。
               */}
               <div className="grid items-center gap-y-0.5 gap-x-3 md:gap-x-5 px-4 py-2.5
                               hover:bg-[#FAFAF9] transition-colors
                               [grid-template-columns:2.25rem_minmax(0,1fr)_auto]
-                              [grid-template-areas:'ico_mid_mid'_'ico_note_note'_'ico_file_file'_'._dl_acts']
+                              [grid-template-areas:'ico_mid_mid'_'ico_note_note'_'ico_use_use'_'ico_file_file'_'._dl_acts']
                               md:[grid-template-columns:2.25rem_minmax(0,1fr)_16rem_auto_auto]
-                              md:[grid-template-areas:'ico_mid_file_dl_acts'_'ico_note_note_dl_acts']">
+                              md:[grid-template-areas:'ico_mid_file_dl_acts'_'ico_note_note_dl_acts'_'ico_use_use_dl_acts']">
                 {/*
                   ★ 用副檔名當圖示，一眼看得出是 Word 還是 PDF ——
                     下載之前就知道等一下要用什麼開。
@@ -371,29 +375,37 @@ export default function FormsTab({ role, meId, onMsg }: {
                 )}
 
                 {/*
-                  ★★★ 說明**自己一行、橫跨整列**（2026-09-18 使用者選的甲）。
+                  ★★★ 第二行:簡單說明，**自己一行、橫跨整列**（2026-09-18 使用者選的甲）。
                     有 870px —— 擠在上面那一欄只有 30rem，稍長就被截成「⋯」，
                     而說明是自由輸入的，多長都有可能。
-                  ★ 「使用說明 ▾」接在它後面（**有內容才畫** —— 沒有內容還畫的話，
-                    那是一顆點了什麼都不會發生的鈕）。
-                  ★★ 兩個都沒有就整段不畫，那一列的高度一格都不會變。
+                  ★★ 「說明」兩個字的標籤拿掉了（2026-09-18 使用者:「簡單說明是副標
+                    前面不用打說明」）—— 它就在標題底下，**位置本身已經說了它是副標**，
+                    再寫兩個字只是把每一列都多印一次同樣的東西。
+                  ★ 沒有就整段不畫，那一列的高度一格都不會變。
                 */}
-                {(f.note?.trim() || f.usage_note?.trim()) && (
+                {f.note?.trim() && (
                   <span className="[grid-area:note] min-w-0 truncate text-sm text-gray-500">
-                    {f.note?.trim() && <>
-                      {/* ★ 「說明」兩個字是**標籤**不是內容 —— 再淡一階 */}
-                      <span className="text-xs text-gray-300 mr-1">說明</span>{f.note.trim()}
-                    </>}
-                    {f.usage_note?.trim() && (
-                      <button onClick={() => setOpen((p) => {
-                        const n = { ...p };
-                        if (n[f.id]) delete n[f.id]; else n[f.id] = true;
-                        return n;
-                      })}
-                        className={`text-mor-slate hover:text-mor-slatedark ${f.note?.trim() ? 'ml-2.5' : ''}`}>
-                        使用說明 {open[f.id] ? '▴' : '▾'}
-                      </button>
-                    )}
+                    {f.note.trim()}
+                  </span>
+                )}
+
+                {/*
+                  ★★★ 第三行:「使用說明」自己一行（2026-09-18 使用者:「說明放第三行」）。
+                  ★★ 箭頭**收起來時向右 ▸、展開之後向下 ▾**（使用者指定）——
+                    向右是「這裡面還有東西，點開」，向下是「已經開了，就在下面」。
+                    兩種狀態長得一樣的話，那顆箭頭就沒有在報告任何事。
+                  ★ **有內容才畫** —— 沒有內容還畫的話，那是一顆點了什麼都不會發生的鈕。
+                */}
+                {f.usage_note?.trim() && (
+                  <span className="[grid-area:use] min-w-0">
+                    <button onClick={() => setOpen((p) => {
+                      const n = { ...p };
+                      if (n[f.id]) delete n[f.id]; else n[f.id] = true;
+                      return n;
+                    })}
+                      className="text-sm text-mor-slate hover:text-mor-slatedark">
+                      使用說明 {open[f.id] ? '▾' : '▸'}
+                    </button>
                   </span>
                 )}
 
@@ -605,7 +617,7 @@ function FormDialog({ draft, onChange, onClose, onSave, onDelete }: {
               onChange={(e) => onChange({ ...draft, usage_note: e.target.value })}
               placeholder={'沒有發票或收據的支出才用這一份。\n① 填寫金額、用途、日期\n② 找主管簽名\n③ 掃描後連同支出一起送會計'}
               className="rounded-lg border border-mor-line px-3 py-2 text-ui leading-relaxed" />
-            <span className="text-xs text-gray-400">留空就不會出現那顆「使用說明 ▾」。</span>
+            <span className="text-xs text-gray-400">留空就不會出現那顆「使用說明 ▸」。</span>
           </label>
 
           <div className="text-xs text-gray-400 leading-relaxed">
