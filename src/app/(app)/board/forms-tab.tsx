@@ -311,7 +311,7 @@ export default function FormsTab({ role, meId, onMsg }: {
               <div className="grid items-center gap-y-1 gap-x-4 px-4 py-2.5
                               hover:bg-[#FAFAF9] transition-colors
                               [grid-template-columns:2.25rem_minmax(0,30rem)_auto_1fr_auto]
-                              [grid-template-areas:'ico_mid_dl_sp_acts'_'ico_note_note_note_note']">
+                              [grid-template-areas:'ico_mid_dl_sp_acts'_'ico_note_note_note_note'_'ico_meta_meta_meta_meta']">
                 {/*
                   ★ 用副檔名當圖示，一眼看得出是 Word 還是 PDF ——
                     下載之前就知道等一下要用什麼開。
@@ -337,17 +337,6 @@ export default function FormsTab({ role, meId, onMsg }: {
                       {formIcon(cat)} {cat}
                     </span>
                     <span className="text-ui font-medium truncate">{f.title}</span>
-                  </span>
-                  {/*
-                    ★★★ 日期印**年月日**（2026-09-18 使用者:「顯示年月日」）。
-                      這一頁的檔案會放好幾年，只寫 09/18 的話，
-                      明年再看就分不出是今年傳的還是去年傳的。
-                    ★ 西元 —— 跟會計報表同一種寫法（使用者選的甲）。
-                  */}
-                  <span className="block text-xs text-gray-400 truncate">
-                    {names.get(f.updated_by ?? f.created_by ?? '') ?? '—'}
-                    {' · '}{f.updated_at.slice(0, 10).replace(/-/g, '/')}
-                    {f.file_size ? ` · ${fmtSize(f.file_size)}` : ''}
                   </span>
                 </span>
 
@@ -404,6 +393,20 @@ export default function FormsTab({ role, meId, onMsg }: {
                     )}
                   </span>
                 )}
+
+                {/*
+                  ★★★ 檔案的資料放**最下面**（2026-09-18 使用者:「檔案 資料最下面」）——
+                    跟會計報表那一頁同一個順序。
+                    這一列由上往下讀是:這是什麼 → 說明 → **最後才是這個檔案本身**。
+                  ★★ 日期印**年月日**、西元（2026-09-18 使用者:「顯示年月日」＋選了甲）。
+                    這一頁的檔案會放好幾年，只寫 09/18 的話，
+                    明年再看就分不出是今年傳的還是去年傳的。
+                */}
+                <span className="[grid-area:meta] min-w-0 truncate text-xs text-gray-400">
+                  {names.get(f.updated_by ?? f.created_by ?? '') ?? '—'}
+                  {'　·　'}{f.updated_at.slice(0, 10).replace(/-/g, '/')}
+                  {f.file_size ? `　·　${fmtSize(f.file_size)}` : ''}
+                </span>
               </div>
 
               {/*
@@ -455,6 +458,29 @@ function FormDialog({ draft, onChange, onClose, onSave, onDelete }: {
   onDelete: (() => Promise<void> | void) | null;
 }) {
   const [save, saving] = useOnce(async () => { await onSave(draft); });
+  const [over, setOver] = useState(false);
+  const [fileErr, setFileErr] = useState<string | null>(null);
+
+  /*
+   * 收下一個檔案（點選的、拖進來的都走這一支）。
+   *
+   * ★★★ **擋在這裡，不是等到按儲存**（2026-09-18）——
+   *   拖了一個 .zip 進來，要到按下儲存才說收不了的話，
+   *   中間他已經把標題、分類、說明全部打完了。
+   * ★ 錯誤留在這個框旁邊，不要丟到頁面最上方（CLAUDE.md 2026-09-02:
+   *   訊息要出現在動作發生的地方）。
+   */
+  const take = (fs: FileList | null) => {
+    const f = fs?.[0];
+    if (!f) return;
+    if (fileKind(f.name) === 'other') {
+      return setFileErr('這種檔案收不了。可以傳：' + ACCEPT_FULL);
+    }
+    const big = fileTooBig(f.size);
+    if (big.bad) return setFileErr(big.why);
+    setFileErr(null);
+    onChange({ ...draft, file: f });
+  };
 
   /*
    * ══════════════════════════════════════════════════════════
@@ -494,24 +520,43 @@ function FormDialog({ draft, onChange, onClose, onSave, onDelete }: {
               檔案{!draft.id && <span className="text-red-500 ml-0.5">*</span>}
             </span>
             <input ref={pick} type="file" accept={FILE_ACCEPT} className="hidden"
-              onChange={(e) => onChange({ ...draft, file: e.target.files?.[0] ?? null })} />
+              onChange={(e) => { take(e.target.files); e.target.value = ''; }} />
+            {/*
+              ★★★ `onDragOver` 一定要 preventDefault —— 不擋的話瀏覽器會
+                **直接用新分頁打開那個檔案**，而對話框裡填一半的東西全部不見。
+              ★★ `onDragEnter` 也要 —— 只擋 over 的話，某些瀏覽器在進入的
+                那一瞬間就已經接手了。
+              ★ 這一段跟會計報表那一頁**一模一樣**（2026-09-18 使用者:「無法拖拉耶」）。
+                那邊早就能拖，這邊漏了 —— 同一個功能在兩頁不一樣，
+                使用者的結論是「這個系統有時候可以有時候不行」。
+            */}
             <button onClick={() => pick.current?.click()}
-              className="rounded-lg border-[1.5px] border-dashed border-mor-line bg-[#FAFAF9]
-                         px-4 py-4 text-center hover:border-mor-slate">
+              onDragOver={(e) => { e.preventDefault(); setOver(true); }}
+              onDragEnter={(e) => { e.preventDefault(); setOver(true); }}
+              onDragLeave={() => setOver(false)}
+              onDrop={(e) => { e.preventDefault(); setOver(false); take(e.dataTransfer.files); }}
+              className={`rounded-lg border-[1.5px] border-dashed px-4 py-5 text-center transition-colors ${
+                over ? 'border-mor-slate bg-mor-bluelight border-2'
+                     : draft.file ? 'border-mor-greendark bg-mor-greenlight'
+                                  : 'border-mor-line bg-[#FAFAF9] hover:border-mor-slate'}`}>
               {draft.file ? (
                 <>
-                  <span className="block text-ui text-mor-ink break-all">{draft.file.name}</span>
-                  <span className="block text-xs text-gray-400 mt-0.5">
+                  <span className="block text-ui text-mor-greendark break-all">{draft.file.name}</span>
+                  <span className="block text-xs text-gray-500 mt-0.5">
                     {fmtSize(draft.file.size)}・點一下換別份
                   </span>
                 </>
+              ) : over ? (
+                <span className="block text-ui text-mor-slatedark font-medium">放開就放進來</span>
               ) : (
                 <>
-                  <span className="block text-ui text-mor-slate">選擇檔案</span>
+                  <span className="block text-ui text-mor-slate">把檔案拖進來，或點一下選擇</span>
                   <span className="block text-xs text-gray-400 mt-0.5">{ACCEPT_HINT}</span>
                 </>
               )}
             </button>
+            {/* ★★ 錯誤留在這個框旁邊，不要丟到頁面最上方（CLAUDE.md 2026-09-02） */}
+            {fileErr && <span className="text-xs text-red-600">{fileErr}</span>}
             {/*
               ★★ 編輯時**要說出現在是哪一份**。不說的話，
                 看到一個空的「選擇檔案」會以為原本的檔案不見了。

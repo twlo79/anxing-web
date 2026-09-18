@@ -362,7 +362,7 @@ export default function ReportsPage() {
                            border-t border-mor-line/60 first:border-t-0 hover:bg-[#FAFAF9]
                            transition-colors
                            [grid-template-columns:2.25rem_minmax(0,30rem)_auto_1fr_auto]
-                           [grid-template-areas:'ico_mid_dl_sp_acts'_'ico_note_note_note_note']">
+                           [grid-template-areas:'ico_mid_dl_sp_acts'_'ico_note_note_note_note'_'ico_meta_meta_meta_meta']">
                 <span className={`w-9 h-9 rounded-lg flex items-center justify-center self-start mt-0.5
                                   text-[11px] font-bold text-white [grid-area:ico] ${BADGE_CLASS[fkd]}`}>
                   {FILE_BADGE[fkd]}
@@ -401,23 +401,6 @@ export default function ReportsPage() {
                     });
                     return line
                       ? <span className="block text-uisub text-gray-500 truncate">{line}</span>
-                      : null;
-                  })()}
-                  {/*
-                    第三行:誰傳的・檔名・大小・上傳日。
-                    ★★ 申報日**不在這裡** —— 它跟期別、備註同一類,在上面那一行
-                      (2026-09-18 使用者:「申報 和 備註 資訊放一起」)。
-                    ★ 排法在 `fileLine`（lib，有測試）—— 空的那幾段整段不見，
-                      不是留一個講不出自己是什麼的「—」。
-                  */}
-                  {(() => {
-                    const line = fileLine({
-                      who: names.get(r.updated_by ?? r.created_by ?? '') ?? '',
-                      size: r.file_size ? fmtSize(r.file_size) : '',
-                      uploadedOn: r.uploaded_on,
-                    });
-                    return line
-                      ? <span className="block text-xs text-gray-400 truncate">{line}</span>
                       : null;
                   })()}
                 </span>
@@ -464,6 +447,25 @@ export default function ReportsPage() {
                     {r.note.trim()}
                   </span>
                 )}
+
+                {/*
+                  ★★★ 檔案的資料放**最下面**（2026-09-18 使用者:「檔案 資料最下面」）。
+                    這一列由上往下讀是:這是什麼 → 哪一期、什麼時候申報 → 備註
+                    → **最後才是這個檔案本身**（誰傳的、多大、什麼時候進來）。
+                    檔案的事是附註,不該卡在報表的內容中間。
+                  ★ 排法在 `fileLine`（lib，有測試）—— 空的那幾段整段不見，
+                    不是留一個講不出自己是什麼的「—」。
+                */}
+                {(() => {
+                  const line = fileLine({
+                    who: names.get(r.updated_by ?? r.created_by ?? '') ?? '',
+                    size: r.file_size ? fmtSize(r.file_size) : '',
+                    uploadedOn: r.uploaded_on,
+                  });
+                  return line
+                    ? <span className="[grid-area:meta] min-w-0 truncate text-xs text-gray-400">{line}</span>
+                    : null;
+                })()}
               </div>
             );
           })}
