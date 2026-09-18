@@ -92,9 +92,24 @@ export default function FbWall({
       {/* ── 封面照 ── */}
       <div className="relative h-[118px] bg-gradient-to-br from-[#9fc7dd] via-[#d5cdbb] to-[#b98a63]">
         {cover && <img src={cover} alt="" className="absolute inset-0 w-full h-full object-cover" />}
+        {/*
+          ══════════════════════════════════════════════════════════
+          【★★★ `z-10` 不能拿掉 —— 沒有它這顆按鈕**按不動**】（2026-09-18 踩過）
+
+          底下那塊檔案頭是 `-mt-[42px] relative`（把頭像疊到封面上，
+          FB 本來就長這樣）。它在 DOM 上排在封面後面又是 `relative`，
+          所以**畫在這顆按鈕上面** —— 而它沒有底色，
+          按鈕看得見、卻接不到點擊，點下去打到的是那塊 div。
+
+          ★ 症狀最惡劣的地方就在這裡:**畫面完全正常**，
+            使用者只會說「按了沒反應」，而 console 一行錯誤都沒有。
+          ★★ 用 elementFromPoint 量過:沒有 z-10 時點按鈕中心打到 `head` 那個 div，
+            加上去之後才打到 `button`。
+          ══════════════════════════════════════════════════════════
+        */}
         {canEdit && (
           <button onClick={onEditAcc}
-            className="absolute right-2.5 bottom-2 rounded-lg bg-white/90 px-2.5 py-1
+            className="absolute right-2.5 bottom-2 z-10 rounded-lg bg-white/90 px-2.5 py-1
                        text-[11px] font-semibold text-mor-slate hover:bg-white">
             編輯
           </button>
