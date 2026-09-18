@@ -256,22 +256,47 @@ describe('★ matchReport —— 打「7-8」要找得到', () => {
   test('沒中的回 false', () => assert.equal(matchReport(R({ title: 'a', note: null, file_name: null }), 'zzz'), false));
 });
 
-describe('★★ findSamePeriod —— 同一期已經有一份了', () => {
+describe('★★★ findSamePeriod —— 同一期可以有好幾份（2026-09-18）', () => {
+  /* 使用者:「401 可以重複上傳」「會有不同公司」「月報 401 不必一對一」 */
   const rows = [
-    R({ id: '1', kind: '401', period_start: '2026-07-01' }),
-    R({ id: '2', kind: '月報', period_start: '2026-07-01' }),
+    R({ id: '1', kind: '401', period_start: '2026-07-01', title: '愛皮-115年 7-8月' }),
+    R({ id: '2', kind: '月報', period_start: '2026-07-01', title: '正隆-115年 7月' }),
   ];
-  test('同種類同期別 → 找得到', () => {
-    assert.equal(findSamePeriod(rows, R({ id: 'new', kind: '401', period_start: '2026-07-01' }))?.id, '1');
+
+  test('★★★ 同一期、不同公司 → **不算重複**，不要問他', () => {
+    assert.equal(findSamePeriod(rows,
+      R({ id: 'new', kind: '401', period_start: '2026-07-01', title: '正隆-115年 7-8月' })), null);
+    assert.equal(findSamePeriod(rows,
+      R({ id: 'new', kind: '401', period_start: '2026-07-01', title: '洪鯊-115年 7-8月' })), null);
   });
+
+  test('★★ 種類、期別、標題**三個都一樣**才算同一份', () => {
+    assert.equal(findSamePeriod(rows,
+      R({ id: 'new', kind: '401', period_start: '2026-07-01', title: '愛皮-115年 7-8月' }))?.id, '1');
+  });
+
+  test('★ 標題前後的空白要收掉再比 —— 多一個空白就變成另一份的話這個提醒等於沒有', () => {
+    assert.equal(findSamePeriod(rows,
+      R({ id: 'new', kind: '401', period_start: '2026-07-01', title: '  愛皮-115年 7-8月 ' }))?.id, '1');
+  });
+
   test('★ 種類不同不算 —— 7 月的月報跟 7-8 月的 401 是兩份', () => {
-    assert.equal(findSamePeriod(rows, R({ id: 'new', kind: '401', period_start: '2026-09-01' })), null);
+    assert.equal(findSamePeriod(rows,
+      R({ id: 'new', kind: '401', period_start: '2026-09-01', title: '愛皮-115年 9-10月' })), null);
   });
+
   test('★★ 自己不算自己 —— 不然編輯既有的那一列會說「已經有一份」', () => {
     assert.equal(findSamePeriod(rows, rows[0]), null);
   });
-  test('★ 「其他」不比 —— 它可以有很多份', () => {
-    assert.equal(findSamePeriod(rows, R({ kind: '其他', period_start: '2026-07-01' })), null);
+
+  test('★ 「其他」不比 —— 它本來就可以有很多份', () => {
+    assert.equal(findSamePeriod(rows,
+      R({ kind: '其他', period_start: '2026-07-01', title: '愛皮-115年 7-8月' })), null);
+  });
+
+  test('★ 標題空的不比 —— 那時候還沒填完，問了也沒意義', () => {
+    assert.equal(findSamePeriod(rows,
+      R({ id: 'new', kind: '401', period_start: '2026-07-01', title: '' })), null);
   });
 });
 

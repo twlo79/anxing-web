@@ -265,12 +265,36 @@ export function matchReport(r: Report, kw: string | null | undefined): boolean {
   return hay.includes(q);
 }
 
-/** 同一個種類＋同一期已經有一份了嗎（❷「換掉舊的」靠這個先問一句）。 */
+/**
+ * 同一份已經傳過了嗎（❷「換掉舊的」靠這個先問一句）。
+ *
+ * ══════════════════════════════════════════════════════════
+ * 【★★★ 2026-09-18 改:同一期**可以有好幾份**】
+ *
+ * 使用者:「401 可以重複上傳」「會有不同公司」「月報 401 不必一對一」。
+ *
+ * 安幸底下不只一家:同一期的 401，正隆一份、愛皮一份、洪鯊一份，
+ * **每一份都是對的**。原本只比「種類＋期別」的話，
+ * 傳第二家會被當成重複 —— 而資料庫那條唯一索引直接擋掉
+ * （migration_279 已經拿掉它）。
+ *
+ * ★ 所以再加一個條件:**標題也一樣**才算同一份。
+ *   公司寫在標題裡（「正隆-115年 8月」），標題不同就不會被問。
+ *
+ * ★★ 標題前後的空白要收掉再比 —— 多一個空白就變成另一份的話，
+ *   這個提醒等於沒有（README:兩個格式不同的字串拿去比對）。
+ * ══════════════════════════════════════════════════════════
+ */
 export function findSamePeriod(rows: Report[], r: Report): Report | null {
   const k = parseKind(r.kind);
   if (k === '其他' || !r.period_start) return null;
+  const title = (r.title ?? '').trim();
+  if (!title) return null;
   return (rows ?? []).find((x) =>
-    x.id !== r.id && parseKind(x.kind) === k && x.period_start === r.period_start) ?? null;
+    x.id !== r.id
+    && parseKind(x.kind) === k
+    && x.period_start === r.period_start
+    && (x.title ?? '').trim() === title) ?? null;
 }
 
 /* ══════════════ 檔案 ══════════════ */
