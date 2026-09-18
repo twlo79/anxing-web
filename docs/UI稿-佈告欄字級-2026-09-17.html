@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>UI 稿 — 佈告欄字級</title>
+<style>
+  :root{--bg:#F1F0EC;--line:#E0DDD5;--ink:#2E3840;--slate:#41689B;--slatedark:#345380;
+        --bluelight:#DFEDFA;--greendark:#217346;--greenlight:#DFF2E8;--sand:#ECE8DF;
+        /* 這四個是被切換的 —— 預設＝現在的值 */
+        --f11:11px; --fxs:13px; --fsm:15px; --fui:17px}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.6 -apple-system,"PingFang TC","Noto Sans TC",sans-serif;padding:20px 16px 70px}
+  .wrap{max-width:980px;margin:0 auto}
+  h1{font-size:20px;margin:0 0 4px}
+  .lead{color:#6b7280;font-size:13px;margin:0 0 14px}
+
+  .switch{position:sticky;top:0;z-index:5;background:var(--bg);padding:10px 0 12px;
+          border-bottom:1px solid var(--line);margin-bottom:16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .switch b{font-size:13px}
+  .opt{border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 13px;font-size:13px;
+       cursor:pointer;font-family:inherit;color:var(--ink)}
+  .opt.on{background:var(--slate);border-color:var(--slate);color:#fff;font-weight:600}
+  .sizes{font-size:12px;color:#6b7280;margin-left:4px}
+
+  /* ── 下面完全照 app 的結構，只是把 px 換成變數 ── */
+  .card{background:#fff;border:1px solid var(--line);border-radius:13px;padding:13px 15px;margin-bottom:10px}
+  .hd{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+  .ttl{font-size:var(--fsm);font-weight:600}
+  .ttl span{color:#9ca3af;font-weight:400}
+  .who{font-size:var(--f11);color:#9ca3af;white-space:nowrap}
+  .fld{display:flex;align-items:center;gap:9px;margin-top:8px}
+  .fld>label{font-size:var(--f11);color:#6b7280;width:2.6rem;flex:none}
+  .box{flex:1;background:#F8F7F5;border:1px solid var(--line);border-radius:7px;padding:5px 9px;
+       font-size:var(--fxs);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow:hidden;
+       text-overflow:ellipsis;white-space:nowrap}
+  .act{font-size:var(--fxs);color:var(--slate);flex:none;cursor:pointer}
+  .foot{display:flex;gap:13px;margin-top:9px;font-size:var(--fxs)}
+  .foot a{color:var(--slate);text-decoration:none;cursor:pointer}
+  .foot a.del{color:#f87171}
+
+  .tabs{display:flex;gap:6px;margin-bottom:11px}
+  .tab{border:1px solid var(--line);background:#fff;border-radius:8px 8px 0 0;padding:6px 14px;font-size:var(--fxs)}
+  .tab.on{font-weight:700;border-bottom-color:#fff}
+  .warn{background:#FFFBEB;border:1px solid #FCD34D;border-radius:9px;padding:8px 12px;
+        font-size:var(--fxs);color:#92400E;margin-bottom:11px}
+  .search{display:flex;gap:9px;align-items:center;margin-bottom:11px}
+  .btn{background:var(--slate);color:#fff;border:none;border-radius:8px;padding:7px 14px;
+       font-size:var(--fxs);font-weight:500;font-family:inherit;flex:none}
+  .inp{flex:1;background:#fff;border:1px solid var(--line);border-radius:8px;padding:7px 11px;font-size:var(--fxs);color:#9ca3af}
+  .cnt{font-size:var(--fxs);color:#6b7280;flex:none}
+
+  .pill{font-size:var(--f11);border-radius:5px;padding:2px 7px;font-weight:600}
+  .p-m{background:var(--bluelight);color:var(--slatedark)}
+  .p-g{background:#FEF3C7;color:#92400E}
+  .when{font-size:var(--fxs);font-weight:600;margin-left:6px}
+  .sub{font-size:var(--f11);color:#9ca3af;margin-top:3px}
+  .note{font-size:var(--fxs);color:var(--slate);margin-top:6px}
+  .dash{border-top:1px dashed var(--line);margin:9px -15px;padding-top:9px}
+  .tog{display:flex;align-items:center;gap:8px;font-size:var(--fxs)}
+  .knob{width:32px;height:18px;border-radius:9px;background:var(--greendark);position:relative;flex:none}
+  .knob::after{content:"";position:absolute;right:2px;top:2px;width:14px;height:14px;border-radius:50%;background:#fff}
+  .drop{border:1px solid var(--line);border-radius:7px;padding:5px 9px;font-size:var(--fxs);background:#fff}
+  .up{flex:1;border:1px dashed var(--line);border-radius:7px;padding:7px;text-align:center;
+      font-size:var(--fxs);color:#9ca3af}
+  .sharebtn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:4px 13px;font-size:var(--fxs);color:#6b7280}
+
+  h2{font-size:14px;margin:26px 0 9px;padding-bottom:5px;border-bottom:1px solid var(--line);color:#6b7280}
+  .tbl{width:100%;border-collapse:collapse;font-size:13px;background:#fff;border:1px solid var(--line);border-radius:11px;overflow:hidden}
+  .tbl th,.tbl td{padding:7px 10px;text-align:left;border-top:1px solid rgba(224,221,213,.6)}
+  .tbl thead th{background:rgba(236,232,223,.6);font-size:11px;color:#6b7280;border-top:none}
+  .q{font-size:13px;background:#FFFBEB;border:1px solid #FCD34D;border-radius:11px;padding:11px 13px;margin-top:14px}
+  .q b{color:#92400E}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>佈告欄：字要大一點</h1>
+<p class="lead">按下面的鈕，整頁會跟著變 —— 直接看哪一級順眼。<b>還沒動程式碼。</b></p>
+
+<div class="switch">
+  <b>字級</b>
+  <button class="opt on" data-k="0">現在</button>
+  <button class="opt" data-k="1">＋一級（建議）</button>
+  <button class="opt" data-k="2">＋兩級</button>
+  <span class="sizes" id="sz"></span>
+</div>
+
+<div class="tabs">
+  <div class="tab">💬 通知</div><div class="tab on">🔑 帳密</div><div class="tab">📅 活動</div>
+</div>
+
+<div class="warn">🔑 這一格存的是真的帳號密碼 —— 房務看不到，其餘的人都看得到。翻閱密碼會被記一筆（誰、什麼時候、哪一筆），總經理查得到。</div>
+
+<div class="search">
+  <button class="btn">＋ 新增一筆</button>
+  <div class="inp">找… 台電、中華電信、管委會</div>
+  <div class="cnt">共 32 筆</div>
+</div>
+
+<div class="card">
+  <div class="hd"><div class="ttl">公司資料 <span>｜</span> JIM身分證</div><div class="who">David · 09/17</div></div>
+  <div class="fld"><label>帳號</label><div class="box">A126597563</div><div class="act">複製</div></div>
+  <div class="foot"><a>編輯</a><a class="del">刪掉</a></div>
+</div>
+
+<div class="card">
+  <div class="hd"><div class="ttl">訂房 <span>｜</span> Airbnb</div><div class="who">— · 09/17</div></div>
+  <div class="fld"><label>帳號</label><div class="box">kingjim00018160575420@gmail.com</div><div class="act">複製</div></div>
+  <div class="fld"><label>密碼</label><div class="box">•••••••••</div><div class="act">看密碼</div></div>
+  <div class="foot"><a>編輯</a><a class="del">刪掉</a></div>
+</div>
+
+<div class="card">
+  <div class="hd"><div class="ttl">社群 <span>｜</span> 正隆官邸 FB</div><div class="who">— · 09/17</div></div>
+  <div class="fld"><label>帳號</label><div class="box">zhenglongjustwork@gmail.com</div><div class="act">複製</div></div>
+  <div class="fld"><label>密碼</label><div class="box">•••••••••••</div><div class="act">看密碼</div></div>
+  <div class="note">⚠ 要確認：另一處寫的是 justwork0117@gmail.com / youyu200201070304</div>
+  <div class="foot"><a>編輯</a><a class="del">刪掉</a></div>
+</div>
+
+<h2>活動那一頁</h2>
+
+<div class="card" style="border-left:3px solid var(--slate)">
+  <div class="hd">
+    <div><span class="pill p-m">開會</span><span class="when">10/2（五） 13:30</span></div>
+    <div class="who">還有 15 天</div>
+  </div>
+  <div class="ttl" style="margin-top:5px">10/2 開會</div>
+  <div class="sub">David 排的</div>
+  <div class="dash">
+    <div class="tog"><span class="knob"></span><span>開放上傳資料</span><span style="color:#9ca3af">已開放</span></div>
+    <div style="display:flex;gap:9px;margin-top:8px">
+      <div class="drop">傳給 我自己 ▾</div>
+      <div class="up">＋ 上傳資料　PDF・Word</div>
+    </div>
+  </div>
+  <div style="display:flex;align-items:center;margin-top:9px">
+    <a class="foot" style="margin:0;color:var(--slate);text-decoration:none">編輯</a>
+    <div style="margin-left:auto"><span class="sharebtn">分享</span></div>
+  </div>
+</div>
+
+<div class="card" style="border-left:3px solid #FCD34D">
+  <div class="hd">
+    <div><span class="pill p-g">團聚</span><span class="when">9/17（四） 17:00</span></div>
+    <div class="who">就是今天</div>
+  </div>
+  <div class="ttl" style="margin-top:5px">KIGAI燒肉專門店-微風百貨店</div>
+  <div class="sub">David 排的</div>
+  <div class="note">📍 開啟地圖</div>
+  <div style="display:flex;align-items:center;margin-top:9px">
+    <a class="foot" style="margin:0;color:var(--slate);text-decoration:none">編輯</a>
+    <div style="margin-left:auto"><span class="sharebtn">分享</span></div>
+  </div>
+</div>
+
+<h2>實際會改的是這四個 class</h2>
+<table class="tbl">
+  <thead><tr><th>現在</th><th>＋一級（建議）</th><th>＋兩級</th><th>用在哪</th></tr></thead>
+  <tbody>
+    <tr><td><code>text-[11px]</code> 11px</td><td><code>text-xs</code> 13px</td><td><code>text-uisub</code> 15px</td>
+        <td>「帳號」「密碼」小標、「David · 09/17」、「David 排的」</td></tr>
+    <tr><td><code>text-xs</code> 13px</td><td><code>text-uisub</code> 15px</td><td><code>text-ui</code> 17px</td>
+        <td>欄位內容、編輯／刪掉／複製／看密碼、按鈕、搜尋框</td></tr>
+    <tr><td><code>text-sm</code> 15px</td><td><code>text-ui</code> 17px</td><td>19px</td>
+        <td>卡片標題、活動名稱</td></tr>
+  </tbody>
+</table>
+
+<div class="q">
+  <b>為什麼不去調全站的 <code>text-xs</code> / <code>text-sm</code>？</b><br>
+  那兩個在全站用了 1,400 多次，而且幾乎全是<b>表格內文</b> —— 表格正是最不該變大的地方（變大就會換行，而換行的表格比小字難讀得多）。
+  <br><br>
+  佈告欄是<b>卡片清單不是表格</b>，所以這一頁自己往上換一級是安全的，不會動到營收表、支出明細那些。
+</div>
+
+<div class="q">
+  <b>回我「一級」或「兩級」就好。</b>
+  想混搭也可以（例如標題用兩級、其餘一級），跟我講哪一塊。
+</div>
+
+<script>
+const L = [
+  {f11:'11px', fxs:'13px', fsm:'15px', fui:'17px', t:'11 / 13 / 15px'},
+  {f11:'13px', fxs:'15px', fsm:'17px', fui:'19px', t:'13 / 15 / 17px'},
+  {f11:'15px', fxs:'17px', fsm:'19px', fui:'21px', t:'15 / 17 / 19px'},
+];
+const sz = document.getElementById('sz');
+function set(k){
+  const v = L[k], r = document.documentElement.style;
+  r.setProperty('--f11', v.f11); r.setProperty('--fxs', v.fxs);
+  r.setProperty('--fsm', v.fsm); r.setProperty('--fui', v.fui);
+  sz.textContent = '小標 / 內容 / 標題 ＝ ' + v.t;
+  document.querySelectorAll('.opt').forEach((b) => b.classList.toggle('on', +b.dataset.k === k));
+}
+document.querySelectorAll('.opt').forEach((b) => b.addEventListener('click', () => set(+b.dataset.k)));
+set(0);
+</script>
+</div>
+</body>
+</html>

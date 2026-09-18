@@ -520,3 +520,144 @@ export function urlLabel(url: string, max = 42): string {
   if (u.length <= max) return u;
   return `${u.slice(0, max - 12)}…${u.slice(-9)}`;
 }
+
+/* ══════════════════════════════════════════════════════════
+ * 帳密的清單（2026-09-17 改版，參考 Google 密碼管理）
+ * ══════════════════════════════════════════════════════════
+ *
+ * 【為什麼要改成兩層】
+ *
+ * 原本 31 筆全部攤開在同一頁，每一張卡都印著帳號與密碼欄。
+ * 為了塞得下，字被壓到 11～13px —— 使用者 2026-09-17:「字要大一點」。
+ *
+ * ★★★ 那不是文案問題，是**結構**問題:清單那一層根本不需要印密碼。
+ *   拿掉之後一行就夠，字可以放大到 17px，而且一個畫面看得到十幾筆。
+ *
+ * ★ 順帶一個安全上的好處:翻閱稽核（board_secret_reads）從
+ *   「一進帳密頁就整排渲染」變成「點進某一筆才算翻閱」——
+ *   後者才是「他真的看了這一筆」。
+ */
+
+/**
+ * 標題的格式是 `類別｜名稱`（全形直線）。
+ *
+ * ★★ 分隔符號用**全形**｜不是半形 | —— 半形在密碼、網址裡出現的機率
+ *   高得多（`a|b` 這種），切錯的話名稱會被砍一半而且沒有人會發現。
+ *
+ * ★ 沒有分隔符號的（使用者自己建的舊資料）整串當名稱、類別留空。
+ *   **不要猜**它屬於哪一類 —— 猜錯會讓它排到一個找不到的位置。
+ */
+export const SECRET_SEP = '｜';
+
+export function splitSecretTitle(title: string | null | undefined): { cat: string; name: string } {
+  const t = (title ?? '').trim();
+  const i = t.indexOf(SECRET_SEP);
+  if (i < 0) return { cat: '', name: t };
+  return { cat: t.slice(0, i).trim(), name: t.slice(i + SECRET_SEP.length).trim() };
+}
+
+/** 反過來組回去。類別空的話不加分隔符號 —— 不然會留下一個開頭的｜。 */
+export function joinSecretTitle(cat: string | null | undefined, name: string | null | undefined): string {
+  const c = (cat ?? '').trim();
+  const n = (name ?? '').trim();
+  return c ? `${c}${SECRET_SEP}${n}` : n;
+}
+
+/**
+ * 類別的順序（2026-09-17 使用者選的）。
+ *
+ * ★ 這一份是**唯一的一份** —— 排序、下拉選單、圖示都走它。
+ *   分散成三份的話，加一個類別要記得改三個地方，而漏掉的那個不會叫。
+ */
+export const SECRET_CATS = [
+  '訂房', '社群', '帳號', '電商', '物流', '財稅', '其他', '公司資料',
+] as const;
+
+/** 每一類的圖示。★ 收合成只剩圖示時要分得出來，所以八個都不一樣。 */
+export const SECRET_CAT_ICON: Record<string, string> = {
+  訂房: '✈️', 社群: '💬', 帳號: '📧', 電商: '🛒',
+  物流: '📦', 財稅: '🧾', 其他: '🔧', 公司資料: '🏢',
+};
+
+export const secretIcon = (cat: string | null | undefined) =>
+  SECRET_CAT_ICON[(cat ?? '').trim()] ?? '🔑';
+
+/**
+ * 排序用的名次。
+ *
+ * ★★ 不認得的類別排在**已知的後面、未分類的前面**。
+ *   丟到最前面的話，打錯一個字（「訂房 」多一個空白）
+ *   那一筆就跳到第一個，而畫面上看不出為什麼。
+ */
+export function catRank(cat: string | null | undefined): number {
+  const c = (cat ?? '').trim();
+  if (!c) return SECRET_CATS.length + 1;               // 未分類 —— 最後
+  const i = (SECRET_CATS as readonly string[]).indexOf(c);
+  return i >= 0 ? i : SECRET_CATS.length;              // 不認得的 —— 倒數第二群
+}
+
+export type SecretRow = {
+  id: string; title: string;
+  account?: string | null; secret?: string | null;
+  url?: string | null; note?: string | null;
+};
+
+/**
+ * 照類別排，同類照名稱。
+ *
+ * ★ 名稱用 `localeCompare('zh-Hant')` —— 直接比 `<` 的話
+ *   中文是按 UTF-16 碼位排的，看起來像亂序。
+ * ★★ **不要就地排序**（`rows.sort()` 會改到傳進來的陣列）——
+ *   那個陣列是 React 的 state，改它等於偷偷改 state。
+ */
+export function sortSecrets<T extends { title: string }>(rows: T[] | null | undefined): T[] {
+  return [...(rows ?? [])].sort((a, b) => {
+    const A = splitSecretTitle(a.title);
+    const B = splitSecretTitle(b.title);
+    const d = catRank(A.cat) - catRank(B.cat);
+    if (d !== 0) return d;
+    return A.name.localeCompare(B.name, 'zh-Hant');
+  });
+}
+
+/**
+ * 關鍵字比對。
+ *
+ * ★★ 連**類別、網址、備註**一起找 —— 打「83684417」要撈得到
+ *   統編、電子發票平台、工商憑證三筆。只比標題的話
+ *   使用者會以為那幾筆不見了。
+ *
+ * ★ **密碼不列入比對**。把密碼當搜尋條件等於讓人用猜的去撞 ——
+ *   而且撞中了畫面還會告訴他是哪一筆。
+ */
+export function matchSecret(r: SecretRow | null | undefined, kw: string | null | undefined): boolean {
+  const k = (kw ?? '').trim().toLowerCase();
+  if (!k) return true;
+  if (!r) return false;
+  return [r.title, r.account, r.url, r.note]
+    .map((v) => (v ?? '').toLowerCase())
+    .some((v) => v.includes(k));
+}
+
+/**
+ * 這一筆有沒有「⚠ 要確認」。
+ *
+ * ★★★ 要在**清單那一層**就看得到。點進去才發現有兩種說法的話，
+ *   人已經準備要登入了 —— 而連錯三次是鎖帳號。
+ */
+export const secretHasWarn = (r: SecretRow | null | undefined) =>
+  (r?.note ?? '').includes('⚠');
+
+/**
+ * 網址補上 https://。
+ *
+ * ★ 使用者填的多半是 `www.airbnb.com.tw` 這種沒有協定的，
+ *   直接丟進 href 的話瀏覽器會當成**相對路徑** ——
+ *   點下去跑到 `justwork.estia.com.tw/board/www.airbnb.com.tw`，
+ *   而那是一個 404，不是「連結壞了」看得出來的樣子。
+ */
+export function secretHref(url: string | null | undefined): string {
+  const u = (url ?? '').trim();
+  if (!u) return '';
+  return /^https?:\/\//i.test(u) ? u : `https://${u}`;
+}

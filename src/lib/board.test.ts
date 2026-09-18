@@ -420,3 +420,138 @@ test('★ 不改動傳進來的陣列', () => {
   filesByPerson(src);
   assert.deepEqual(src.map((x) => x.id), ['b', 'a']);
 });
+
+/* ══════════════════════════════════════════════════════════
+ * 帳密清單（2026-09-17 改版）
+ * ══════════════════════════════════════════════════════════ */
+
+import {
+  splitSecretTitle, joinSecretTitle, SECRET_CATS, catRank,
+  secretIcon, sortSecrets, matchSecret, secretHasWarn, secretHref,
+} from './board.ts';
+
+const S = (title: string, extra: Record<string, unknown> = {}) =>
+  ({ id: title, title, ...extra } as never);
+
+test('splitSecretTitle：全形｜切成類別與名稱', () => {
+  assert.deepEqual(splitSecretTitle('訂房｜Airbnb'), { cat: '訂房', name: 'Airbnb' });
+  assert.deepEqual(splitSecretTitle('公司資料｜安幸銀行帳號（8088）'),
+    { cat: '公司資料', name: '安幸銀行帳號（8088）' });
+});
+
+test('★★ 沒有分隔符號的整串當名稱 —— 不要猜它屬於哪一類', () => {
+  assert.deepEqual(splitSecretTitle('台電・網路自繳'), { cat: '', name: '台電・網路自繳' });
+  assert.deepEqual(splitSecretTitle(''), { cat: '', name: '' });
+  assert.deepEqual(splitSecretTitle(null), { cat: '', name: '' });
+});
+
+test('★★ 半形 | 不算分隔符號 —— 密碼與網址裡出現的機率高得多', () => {
+  assert.deepEqual(splitSecretTitle('a|b'), { cat: '', name: 'a|b' });
+});
+
+test('splitSecretTitle：名稱裡還有｜的話只切第一個', () => {
+  assert.deepEqual(splitSecretTitle('其他｜A｜B'), { cat: '其他', name: 'A｜B' });
+});
+
+test('joinSecretTitle：組回去，類別空的不留開頭的｜', () => {
+  assert.equal(joinSecretTitle('訂房', 'Airbnb'), '訂房｜Airbnb');
+  assert.equal(joinSecretTitle('', '台電'), '台電');
+  assert.equal(joinSecretTitle(null, '台電'), '台電');
+  assert.equal(joinSecretTitle('  訂房  ', '  Airbnb  '), '訂房｜Airbnb');
+});
+
+test('★★ split 與 join 對得起來（來回一次不變）', () => {
+  for (const t of ['訂房｜Airbnb', '台電・網路自繳', '公司資料｜統一編號', '其他｜A｜B']) {
+    const { cat, name } = splitSecretTitle(t);
+    assert.equal(joinSecretTitle(cat, name), t, `${t} 來回之後變了`);
+  }
+});
+
+test('catRank：照使用者選的順序', () => {
+  const ranks = SECRET_CATS.map((c) => catRank(c));
+  assert.deepEqual(ranks, [...ranks].sort((a, b) => a - b), 'SECRET_CATS 自己要是遞增的');
+  assert.ok(catRank('訂房') < catRank('公司資料'));
+});
+
+test('★★ 不認得的類別排在已知後面、未分類前面（打錯字不會跳到第一個）', () => {
+  assert.ok(catRank('訂房 ') === catRank('訂房'), '前後空白要 trim');
+  assert.ok(catRank('亂打的') > catRank('公司資料'));
+  assert.ok(catRank('') > catRank('亂打的'), '未分類要在最後');
+  assert.ok(catRank(null) > catRank('亂打的'));
+});
+
+test('secretIcon：八類各有一個，不認得的回鑰匙', () => {
+  const icons = SECRET_CATS.map((c) => secretIcon(c));
+  assert.equal(new Set(icons).size, SECRET_CATS.length, '八個圖示不可以重複');
+  assert.equal(secretIcon('亂打的'), '🔑');
+  assert.equal(secretIcon(null), '🔑');
+});
+
+test('★★★ sortSecrets：照類別，同類照名稱', () => {
+  const out = sortSecrets([
+    S('公司資料｜統一編號'), S('訂房｜VRBO'), S('台電・網路自繳'),
+    S('訂房｜Agoda'), S('社群｜安幸 FB'),
+  ]).map((r) => (r as { title: string }).title);
+  assert.deepEqual(out, [
+    '訂房｜Agoda', '訂房｜VRBO', '社群｜安幸 FB', '公司資料｜統一編號', '台電・網路自繳',
+  ]);
+});
+
+test('★★ sortSecrets 不改到傳進來的陣列（那是 React 的 state）', () => {
+  const src = [S('社群｜B'), S('訂房｜A')];
+  const before = src.map((r) => (r as { title: string }).title);
+  sortSecrets(src);
+  assert.deepEqual(src.map((r) => (r as { title: string }).title), before);
+});
+
+test('sortSecrets：空的／null 回空陣列，不炸', () => {
+  assert.deepEqual(sortSecrets([]), []);
+  assert.deepEqual(sortSecrets(null), []);
+  assert.deepEqual(sortSecrets(undefined), []);
+});
+
+test('★★ matchSecret：連類別、帳號、網址、備註一起找', () => {
+  const r = { id: '1', title: '財稅｜電子發票整合平台', account: '83684417',
+              url: 'www.einvoice.nat.gov.tw', note: '統編登入' };
+  assert.equal(matchSecret(r, '83684417'), true, '帳號');
+  assert.equal(matchSecret(r, '財稅'), true, '類別');
+  assert.equal(matchSecret(r, 'einvoice'), true, '網址');
+  assert.equal(matchSecret(r, '統編'), true, '備註');
+  assert.equal(matchSecret(r, 'EINVOICE'), true, '不分大小寫');
+  assert.equal(matchSecret(r, '蝦皮'), false);
+});
+
+test('★★★ matchSecret 不比密碼 —— 不讓人用猜的去撞', () => {
+  const r = { id: '1', title: '訂房｜Agoda', account: 'a@b.c', secret: 'SuperSecret123' };
+  assert.equal(matchSecret(r, 'SuperSecret123'), false);
+  assert.equal(matchSecret(r, 'supersecret'), false);
+});
+
+test('matchSecret：關鍵字空白就全部通過', () => {
+  const r = { id: '1', title: '訂房｜Agoda' };
+  assert.equal(matchSecret(r, ''), true);
+  assert.equal(matchSecret(r, '   '), true);
+  assert.equal(matchSecret(r, null), true);
+  assert.equal(matchSecret(null, 'x'), false);
+});
+
+test('★★★ secretHasWarn：⚠ 要在清單那一層就看得到', () => {
+  assert.equal(secretHasWarn({ id: '1', title: 't', note: '⚠ 要確認：另一處寫的是…' }), true);
+  assert.equal(secretHasWarn({ id: '1', title: 't', note: '洪小姐' }), false);
+  assert.equal(secretHasWarn({ id: '1', title: 't' }), false);
+  assert.equal(secretHasWarn(null), false);
+});
+
+test('★★ secretHref：沒有協定的要補 https，不然會被當成相對路徑', () => {
+  assert.equal(secretHref('www.airbnb.com.tw'), 'https://www.airbnb.com.tw');
+  assert.equal(secretHref('https://mail.zoho.com/'), 'https://mail.zoho.com/');
+  assert.equal(secretHref('HTTP://a.b'), 'HTTP://a.b');
+  assert.equal(secretHref('  www.a.b  '), 'https://www.a.b');
+});
+
+test('secretHref：沒填就回空字串（呼叫端靠它決定畫不畫連結）', () => {
+  assert.equal(secretHref(''), '');
+  assert.equal(secretHref('   '), '');
+  assert.equal(secretHref(null), '');
+  assert.equal(secretHref(undefined), '');
+});

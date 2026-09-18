@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>UI 稿 — 帳密改版</title>
+<style>
+  :root{--bg:#F1F0EC;--line:#E0DDD5;--ink:#2E3840;--slate:#41689B;--slatedark:#345380;
+        --bluelight:#DFEDFA;--green:#3FAE7C;--greendark:#217346;--greenlight:#DFF2E8;--sand:#ECE8DF}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.6 -apple-system,"PingFang TC","Noto Sans TC",sans-serif;padding:20px 16px 80px}
+  .wrap{max-width:900px;margin:0 auto}
+  h1{font-size:20px;margin:0 0 4px}
+  h2{font-size:14px;margin:30px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line);color:#6b7280}
+  .lead{color:#6b7280;font-size:13px;margin:0 0 14px}
+
+  /* ══ app 外框 ══ */
+  .app{background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:16px;overflow:hidden}
+  .tabs{display:flex;gap:6px;margin-bottom:12px}
+  .tab{border:1px solid var(--line);background:#fff;border-radius:9px;padding:7px 15px;font-size:15px;color:#6b7280}
+  .tab.on{font-weight:700;color:var(--ink);border-color:var(--slate);background:var(--bluelight)}
+  .warn{background:#FFFBEB;border:1px solid #FCD34D;border-radius:10px;padding:9px 13px;
+        font-size:13px;color:#92400E;margin-bottom:12px;line-height:1.55}
+
+  .bar{display:flex;gap:9px;align-items:center;margin-bottom:12px}
+  .btn{background:var(--slate);color:#fff;border:none;border-radius:9px;padding:9px 16px;
+       font-size:15px;font-weight:500;font-family:inherit;flex:none;cursor:pointer}
+  .srch{flex:1;background:#fff;border:1px solid var(--line);border-radius:9px;padding:9px 13px;
+        font-size:15px;font-family:inherit;color:var(--ink)}
+  .cnt{font-size:13px;color:#6b7280;flex:none}
+
+  /* ══ 清單（一行一個）══ */
+  .list{background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .row{display:flex;align-items:center;gap:11px;padding:12px 14px;cursor:pointer;
+       border-top:1px solid rgba(224,221,213,.6)}
+  .row:first-child{border-top:none}
+  .row:hover{background:rgba(236,232,223,.5)}
+  .ic{width:30px;height:30px;border-radius:8px;flex:none;display:flex;align-items:center;
+      justify-content:center;font-size:14px;background:var(--sand)}
+  .nm{font-size:17px;font-weight:500;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .nm small{display:block;font-size:13px;color:#9ca3af;font-weight:400}
+  .cat{font-size:12px;border-radius:5px;padding:2px 8px;flex:none;background:var(--bluelight);color:var(--slatedark)}
+  .chev{color:#c9c9c9;font-size:17px;flex:none}
+  .warnmark{color:#b45309;font-size:14px;flex:none}
+  .empty{padding:36px;text-align:center;color:#9ca3af;font-size:15px}
+
+  /* ══ 詳細 ══ */
+  .back{display:flex;align-items:center;gap:10px;margin-bottom:13px;cursor:pointer}
+  .back .arw{font-size:19px;color:#6b7280}
+  .back .t{font-size:19px;font-weight:700}
+  .det{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:11px}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:700px){.cols{grid-template-columns:1fr}}
+  .f{margin-bottom:11px}
+  .f:last-child{margin-bottom:0}
+  .f>span{display:block;font-size:13px;color:#6b7280;margin-bottom:4px}
+  .val{display:flex;align-items:center;gap:7px;background:#F5F4F1;border:1px solid var(--line);
+       border-radius:8px;padding:8px 11px}
+  .val .v{flex:1;font-size:15px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+          font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .val .v.plain{font-family:inherit}
+  .icb{border:none;background:none;cursor:pointer;font-size:14px;color:#6b7280;padding:2px;flex:none}
+  .icb:hover{color:var(--slate)}
+  .ph{color:#9ca3af;font-size:15px}
+  .detfoot{display:flex;align-items:center;gap:9px;margin-top:15px;padding-top:13px;border-top:1px solid var(--line)}
+  .pill{border:1px solid var(--line);background:#fff;border-radius:999px;padding:7px 18px;
+        font-size:14px;font-family:inherit;cursor:pointer;color:var(--slate)}
+  .pill.del{color:#dc2626;border-color:#fecaca}
+  .noteflag{background:#FFFBEB;border:1px solid #FCD34D;border-radius:9px;padding:9px 12px;
+            font-size:13px;color:#92400E;margin-top:12px;line-height:1.55}
+
+  .note{font-size:12.5px;color:#4b5563;background:#fff;border:1px solid var(--line);
+        border-radius:11px;padding:11px 13px;margin-top:10px;line-height:1.7}
+  .q{font-size:13px;background:#FFFBEB;border:1px solid #FCD34D;border-radius:11px;padding:12px 14px;margin-top:11px}
+  .q b{color:#92400E}
+  ul{margin:5px 0 0;padding-left:19px}li{margin:4px 0}
+  code{background:#F1F0EC;border-radius:4px;padding:1px 5px;font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>帳密改版：照 Google 密碼管理的兩層</h1>
+<p class="lead">
+  <b>稿子是活的 —— 上面搜尋打得動、每一列點得進去、返回也回得來。</b>
+  還沒動程式碼。底下有 3 個要你決定的地方（黃底）。
+</p>
+
+<div class="app">
+  <div class="tabs"><div class="tab">💬 通知</div><div class="tab on">🔑 帳密</div><div class="tab">📅 活動</div></div>
+
+  <!-- ══════ 清單 ══════ -->
+  <div id="listView">
+    <div class="warn">🔑 這一格存的是真的帳號密碼 —— 房務看不到，其餘的人都看得到。翻閱密碼會被記一筆（誰、什麼時候、哪一筆），總經理查得到。</div>
+    <div class="bar">
+      <button class="btn">＋ 新增</button>
+      <input class="srch" id="q" placeholder="關鍵字找密碼...">
+      <span class="cnt" id="cnt"></span>
+    </div>
+    <div class="list" id="rows"></div>
+  </div>
+
+  <!-- ══════ 詳細 ══════ -->
+  <div id="detView" style="display:none">
+    <div class="back" id="back"><span class="arw">←</span><span class="ic" id="dIc"></span><span class="t" id="dNm"></span></div>
+    <div class="det">
+      <div class="cols">
+        <div>
+          <div class="f"><span>帳號</span>
+            <div class="val"><span class="v" id="dAc"></span><button class="icb" title="複製">⧉</button></div></div>
+          <div class="f" id="pwWrap"><span>密碼</span>
+            <div class="val"><span class="v" id="dPw"></span>
+              <button class="icb" id="eye" title="看密碼">👁</button>
+              <button class="icb" title="複製">⧉</button></div></div>
+        </div>
+        <div>
+          <div class="f"><span>網址</span>
+            <div class="val" id="dUrlBox"><span class="v plain" id="dUrl"></span><button class="icb" title="開啟">↗</button></div></div>
+          <div class="f"><span>備註</span>
+            <div class="val"><span class="v plain" id="dNote"></span></div></div>
+        </div>
+      </div>
+      <div class="noteflag" id="dFlag" style="display:none"></div>
+      <div class="detfoot">
+        <button class="pill">編輯</button>
+        <button class="pill del">刪掉</button>
+        <span style="margin-left:auto;font-size:12.5px;color:#9ca3af" id="dWho"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>差在哪</h2>
+<div class="note">
+  <b>現在</b>　32 張卡全部攤開在同一頁，每一張都印著帳號與密碼欄。要找一個得往下捲很久，
+  而為了塞得下，字被壓到 11～13px（你說的「字太小」就是這個結果）。<br><br>
+  <b>調整後</b>　清單一行一個、字 17px，一個畫面看得到十幾個；點進去才是帳號密碼，欄位用 15px。
+  <b>字變大而且看得到的東西變多</b> —— 因為清單那一層不需要印密碼。
+  <br><br>
+  ★ 翻閱稽核（`board_secret_reads`）照舊 —— 現在改成「點進詳細頁才算翻閱」，比原本一進帳密頁就整排渲染出來合理得多。
+</div>
+
+<div class="q">
+  <b>❶ 要不要多一個「網址」欄？</b>（Google 那邊叫 Sites）
+  <ul>
+    <li><b>要（建議）</b>　Zoho 的 <code>https://mail.zoho.com/</code>、591、綠界那些現在只能寫在備註裡。有這一欄就點得開。<br>
+      <span style="color:#6b7280">需要一支 migration 加 <code>board_secrets.url</code>。</span></li>
+    <li><b>不要</b>　繼續寫在備註。少一支 migration。</li>
+  </ul>
+</div>
+
+<div class="q">
+  <b>❷ 清單要照什麼排？</b>
+  <ul>
+    <li><b>照類別（建議）</b>　訂房 → 社群 → 帳號 → 電商 → 物流 → 財稅 → 其他 → 公司資料。<b>上面的稿子就是這樣。</b></li>
+    <li><b>照最近改過的</b>　跟現在一樣（<code>updated_at desc</code>）。剛改過的浮上來。</li>
+    <li><b>照名稱</b>　純字母／筆劃排序。</li>
+  </ul>
+</div>
+
+<div class="q">
+  <b>❸ 手機上那兩欄怎麼辦？</b>
+  桌機是左右兩欄（帳號密碼｜網址備註）。手機寬度不夠，<b>建議直接疊成一欄</b>（稿子在窄視窗會自己變，你把瀏覽器縮窄看看）。
+</div>
+
+<h2>這次不會動到的</h2>
+<div class="note">
+  通知與活動兩個分頁不動。RLS 與「誰看得到」不動（<code>can_see_board_secrets()</code>）。
+  資料一筆都不動 —— 這是純畫面的改法。<br>
+  ★ 另外那張「字級」的稿就<b>不用看了</b> —— 這一版已經把字放大了（清單 17px、欄位 15px、小標 13px）。
+</div>
+
+<script>
+const D = [
+  ['訂房','Airbnb','✈','kingjim00018160575420@gmail.com','jiM@61207','www.airbnb.com.tw','',''],
+  ['訂房','Agoda','✈','justwork0117@gmail.com','0117justwork','www.agoda.com','',''],
+  ['訂房','VRBO','✈','justwork0117@gmail.com','Zhenglongjustwork83684417','www.vrbo.com','',''],
+  ['社群','安幸 FB','💬','justwork0117@gmail.com','youyu200201070304','www.facebook.com','',''],
+  ['社群','安幸 IG','💬','justwork0117@gmail.com','youyu200201070304','www.instagram.com','',''],
+  ['社群','正隆官邸 FB','💬','zhenglongjustwork@gmail.com','@Aa83684417','www.facebook.com','',
+   '⚠ 要確認：另一處寫的是 justwork0117@gmail.com / youyu200201070304（跟安幸 FB 一模一樣，可能是抄錯）。連錯三次會鎖帳號。'],
+  ['社群','正隆官邸 IG','💬','justwork0117@gmail.com','@Aa83684417','www.instagram.com','',
+   '⚠ 要確認：另一處寫的密碼是 youyu200201070304。'],
+  ['社群','時兆 IG','💬','ya_zhu410','199319','www.instagram.com','',''],
+  ['帳號','justwork','📧','justwork0117@gmail.com','0117justworK','mail.google.com','',''],
+  ['帳號','安幸','📧','an27119033@gmail.com','Aa83684417','mail.google.com','',''],
+  ['帳號','正隆官邸 Google','📧','zhenglongjustwork@gmail.com','J83684417','mail.google.com',
+   '綁定手機 0978081560。舊密碼 @Aa83684417 已停用。',''],
+  ['帳號','公司信箱（Zoho）','📧','hello@estia.com.tw','','mail.zoho.com','★ 沒有密碼 —— 還沒給',''],
+  ['帳號','Apple ID','📧','hungkuochun01@gmail.com','Jimhung0117kuochun','appleid.apple.com','',''],
+  ['帳號','ring','📧','an27119033@gmail.com','0117justworK$','ring.com','',''],
+  ['電商','蝦皮','🛒','0919502679','0117justworK','shopee.tw','',''],
+  ['電商','酷澎','🛒','zhenglongjustwork@gmail.com','J83684417','www.tw.coupang.com','',''],
+  ['電商','IKEA 企業卡','🛒','justwork0117@gmail.com','0117justwork','www.ikea.com.tw','',''],
+  ['物流','DHL','📦','0978081560','0117justworK$','www.dhl.com','',''],
+  ['物流','EZ WAY','📦','A203823517','@0117justworK','','★ 帳號是身分證字號。這一頁會計與經理都看得到。',''],
+  ['物流','集運注意事項','📦','','','','我們的集運商**不收鋁箔紙包裝**。',''],
+  ['財稅','綠界電子發票','🧾','justwork0117','0117justworK$','www.ecpay.com.tw','',''],
+  ['財稅','電子發票整合平台','🧾','83684417','0117justworK$','www.einvoice.nat.gov.tw','',''],
+  ['財稅','工商憑證','🧾','83684417','JIM420','moeaca.nat.gov.tw','',''],
+  ['其他','591 會員','🔧','0909642035','0117justwork','www.591.com.tw','洪小姐',''],
+  ['其他','南10 網路','🔧','RMJ2f','420420420','','',''],
+  ['其他','WiFi justworksuper','🔧','justworksuper','88888888','','',''],
+  ['公司資料','統一編號','🏢','','','','安幸 83684417　洪鯊 62111467',''],
+  ['公司資料','安幸銀行帳號（8088）','🏢','20992000148088','','','銀行代號 806。★ 這是收款帳號，不是密碼。',''],
+  ['公司資料','公司電話','🏢','','','','愛皮 2778-5700　安幸 2711-9033',''],
+  ['公司資料','ESTIA 品牌標語','🏢','','','','ESTIA Residences Taipei — 城市之中，自成一隅',''],
+  ['公司資料','負責人身分證','🏢','A126597563','','','⚠ 這一頁房務以外都看得到（管家、會計、經理）。',''],
+];
+const listView = document.getElementById('listView');
+const detView  = document.getElementById('detView');
+const rowsEl   = document.getElementById('rows');
+const q        = document.getElementById('q');
+const cnt      = document.getElementById('cnt');
+let shown = false;
+
+function draw(){
+  const kw = q.value.trim().toLowerCase();
+  const hit = D.filter((d) => !kw || (d[0]+d[1]+d[3]+d[6]+d[5]).toLowerCase().includes(kw));
+  cnt.textContent = '共 ' + hit.length + ' 筆';
+  rowsEl.innerHTML = hit.length === 0
+    ? '<div class="empty">找不到「' + q.value + '」</div>'
+    : hit.map((d) => {
+        const i = D.indexOf(d);
+        return '<div class="row" data-i="' + i + '">'
+          + '<span class="ic">' + d[2] + '</span>'
+          + '<span class="nm">' + d[1]
+          + (d[3] ? '<small>' + d[3] + '</small>' : (d[6] ? '<small>' + d[6].replace(/\*\*/g,'') + '</small>' : ''))
+          + '</span>'
+          + (d[7] ? '<span class="warnmark">⚠</span>' : '')
+          + '<span class="cat">' + d[0] + '</span><span class="chev">›</span></div>';
+      }).join('');
+  rowsEl.querySelectorAll('.row').forEach((r) =>
+    r.addEventListener('click', () => open(+r.dataset.i)));
+}
+function open(i){
+  const d = D[i];
+  document.getElementById('dIc').textContent = d[2];
+  document.getElementById('dNm').textContent = d[1];
+  document.getElementById('dAc').textContent = d[3] || '—';
+  shown = false;
+  document.getElementById('dPw').textContent = d[4] ? '•'.repeat(d[4].length) : '—';
+  document.getElementById('pwWrap').style.display = d[4] ? 'block' : 'none';
+  document.getElementById('dUrl').innerHTML = d[5]
+    ? '<span style="color:var(--slate)">' + d[5] + '</span>' : '<span class="ph">沒有網址</span>';
+  document.getElementById('dNote').innerHTML = d[6]
+    ? d[6].replace(/\*\*(.+?)\*\*/g,'<b>$1</b>') : '<span class="ph">沒有備註</span>';
+  const fl = document.getElementById('dFlag');
+  fl.style.display = d[7] ? 'block' : 'none';
+  fl.textContent = d[7];
+  document.getElementById('dWho').textContent = '— · 09/17';
+  document.getElementById('eye').onclick = () => {
+    shown = !shown;
+    document.getElementById('dPw').textContent = shown ? d[4] : '•'.repeat(d[4].length);
+    document.getElementById('eye').textContent = shown ? '🙈' : '👁';
+  };
+  document.getElementById('eye').textContent = '👁';
+  listView.style.display = 'none'; detView.style.display = 'block';
+}
+document.getElementById('back').addEventListener('click', () => {
+  detView.style.display = 'none'; listView.style.display = 'block';
+});
+q.addEventListener('input', draw);
+draw();
+</script>
+</div>
+</body>
+</html>
