@@ -344,72 +344,60 @@ export default function ReportsPage() {
             return (
               /*
                 ══════════════════════════════════════════════
-                一列的骨架（2026-09-18 使用者過審的 A 案）
+                一列的骨架（2026-09-18 使用者過審的最終版）
                 ══════════════════════════════════════════════
-                　圖示 ／ 內容(上限 30rem，撐到多寬就多寬) ／ 下載 ／ 檔案資料(靠右) ／ 編輯
+                　圖示 ／ 內容(封頂 30rem) ／ 下載 ／ 彈性空白 ／ 編輯
                 　第二個 grid row 給**備註**，橫跨到最右邊。
 
-                ★★★ 下載**緊接在標題後面**（2026-09-18 使用者選 A 案:「下載在標題後一點」）。
-                  內容那一欄從固定 30rem 改成 auto —— 下載跟著標題走，
-                  一眼看得出這顆是下哪一份。代價是每一列的 x 不同,掃下來會參差。
-                  改回「每列同一個 x」的話,把 mid 那欄換回 minmax(0,30rem) 就行。
-                ★★★ 檔案資料（誰傳的、多大、什麼時候進來）移到**第一行最右邊**
-                  （2026-09-18 使用者:「檔案資訊往後放」）—— 右半邊本來空著約 900px。
-                ★★ 備註留在第二個 grid row，所以它有整列的寬（約 870px）。
+                ★★★ 內容那一欄**封頂**，下載才會每一列都停在同一個 x
+                  —— 連按三份不用重新瞄準。不封頂的話下載會跟著標題長短跳。
+                ★★ 備註在第二個 grid row，所以它有整列的寬（約 870px）。
                   擠在期別後面只有約 180px，稍長就被截成「⋯」，
                   而備註是自由輸入的，多長都有可能。
                 ★ 沒有備註的那幾列**一格都不會變高** —— 那一格不存在，
                   grid 的第二排高度就是 0。
               */
               <div key={r.id}
-                className="grid items-center gap-y-1 gap-x-4 px-4 py-2.5
+                className="grid items-center gap-y-0.5 gap-x-3 md:gap-x-5 px-4 py-2.5
                            border-t border-mor-line/60 first:border-t-0 hover:bg-[#FAFAF9]
                            transition-colors
-                           [grid-template-columns:2.25rem_auto_auto_1fr_auto]
-                           [grid-template-areas:'ico_mid_dl_meta_acts'_'ico_note_note_note_note']
-                           max-sm:[grid-template-columns:2.25rem_1fr_auto]
-                           max-sm:[grid-template-areas:'ico_mid_mid'_'ico_note_note'_'ico_dl_acts'_'ico_meta_meta']">
+                           [grid-template-columns:2.25rem_minmax(0,1fr)_auto]
+                           [grid-template-areas:'ico_mid_mid'_'ico_per_per'_'ico_note_note'_'ico_file_file'_'._dl_acts']
+                           md:[grid-template-columns:2.25rem_minmax(0,1fr)_17rem_16rem_auto_auto]
+                           md:[grid-template-areas:'ico_mid_per_file_dl_acts'_'ico_note_note_note_dl_acts']">
                 <span className={`w-9 h-9 rounded-lg flex items-center justify-center self-start mt-0.5
                                   text-[11px] font-bold text-white [grid-area:ico] ${BADGE_CLASS[fkd]}`}>
                   {FILE_BADGE[fkd]}
                 </span>
 
-                <span className="min-w-0 max-w-[30rem] block [grid-area:mid]">
-                  {/*
-                    ★ 種類那顆籤畫在**標題前面**（2026-09-18 使用者:「放到表頭」）——
-                      一眼看得出這一列是哪一種，不用往右找。
-                  */}
-                  <span className="block truncate">
-                    <span className={`inline-block rounded px-1.5 py-0.5 text-xs font-medium mr-1.5
-                                      align-middle ${KIND_CLASS[k] ?? ''}`}>{k}</span>
-                    <span className="text-ui font-medium align-middle">{reportTitle(r)}</span>
-                  </span>
-                  {/*
-                    ★ 標題跟期別一樣的話不重複寫一次（README:重複的數字不要寫第二次）——
-                      使用者改過標題時才把期別補在底下。
-                  */}
-                  {/*
-                    第二行:期別 ＋ 備註。
-                    ★ 標題跟期別一樣時不重複寫（README:重複的數字不要寫第二次）。
-                    ★★ 「（沒填上傳日）」那句拿掉了 —— 上傳日現在自動帶，
-                      沒有「忘了填」這回事，印出來只是噪音。
-                  */}
-                  {(() => {
-                    /*
-                      ★★★ 第二行講的是**這份報表本身**:哪一期、什麼時候送出去的、備註
-                        （2026-09-18 使用者:「申報 和 備註 資訊放一起」）。
-                        檔案的事（誰傳的、多大、什麼時候進來）在第三行。
-                      ★ 標題跟期別一樣時不重複寫（README:重複的數字不要寫第二次）。
-                    */
-                    const line = metaLine({
-                      period: per && per !== reportTitle(r) ? per : '',
-                      filedOn: r.filed_on,
-                    });
-                    return line
-                      ? <span className="block text-uisub text-gray-500 truncate">{line}</span>
-                      : null;
-                  })()}
+                {/*
+                  ★ 種類那顆籤畫在**標題前面**（2026-09-18 使用者:「放到表頭」）——
+                    一眼看得出這一列是哪一種，不用往右找。
+                  ★★ 標題是這一列唯一要「認出來」的東西，所以它是**唯一的黑字**
+                    （font-semibold）—— 底下那幾行一律灰的（2026-09-18 排字體）。
+                */}
+                <span className="min-w-0 flex items-center gap-1.5 [grid-area:mid]">
+                  <span className={`shrink-0 rounded px-1.5 py-0.5 text-xs font-medium
+                                    ${KIND_CLASS[k] ?? ''}`}>{k}</span>
+                  <span className="text-ui font-semibold truncate">{reportTitle(r)}</span>
                 </span>
+
+                {/*
+                  ★★★ 期別／申報日**自己一欄**（2026-09-18 使用者過審的分欄版）——
+                    整頁往下掃的時候「哪一期」成一直行，比一列一列讀快得多。
+                  ★ 標題跟期別一樣時不重複寫（README:重複的數字不要寫第二次）。
+                  ★★ 數字等寬（`tabular-nums`）—— 不等寬的話一直行的日期會參差。
+                */}
+                {(() => {
+                  const line = metaLine({
+                    period: per && per !== reportTitle(r) ? per : '',
+                    filedOn: r.filed_on,
+                  });
+                  return line
+                    ? <span className="[grid-area:per] min-w-0 truncate text-sm text-gray-500
+                                       tabular-nums">{line}</span>
+                    : null;
+                })()}
 
                 {/*
                   ★★★ 沒有檔案的那幾筆，鈕**不畫成「下載」** ——
@@ -419,7 +407,8 @@ export default function ReportsPage() {
                 */}
                 <button onClick={() => download(r)} disabled={busyId === r.id}
                   title={r.file_path ? '下載' : '這一份還沒有檔案'}
-                  className={`h-10 rounded-lg border px-4 text-uisub font-medium justify-self-start
+                  className={`h-11 md:h-10 rounded-lg border px-4 text-uisub font-medium mt-2 md:mt-0
+                              justify-self-stretch md:justify-self-end
                               [grid-area:dl] disabled:opacity-50 ${
                     r.file_path ? 'border-mor-greendark text-mor-greendark hover:bg-mor-greenlight'
                                 : 'border-amber-300 text-amber-700 bg-amber-50'}`}>
@@ -432,7 +421,7 @@ export default function ReportsPage() {
                   ★ 淡灰，滑上去才變色 —— 這一頁九成的動作是下載，
                     編輯只有三個人按得到，平常不該搶注意力。
                 */}
-                <span className="[grid-area:acts] self-center">
+                <span className="[grid-area:acts] self-center mt-2 md:mt-0 pl-3 md:pl-0">
                   <button onClick={() => setDraft({
                     ...r, file: null, oldName: r.file_name, titleTouched: true,
                     uploaded_on: r.uploaded_on ?? '', filed_on: r.filed_on ?? '',
@@ -448,18 +437,19 @@ export default function ReportsPage() {
                   ★★ 沒有備註就**整段不畫** —— 那一列的高度一格都不會變。
                 */}
                 {r.note?.trim() && (
-                  <span className="[grid-area:note] min-w-0 truncate text-uisub text-gray-500">
-                    <span className="text-xs text-gray-400 mr-1">{NOTE_LABEL}</span>
+                  <span className="[grid-area:note] min-w-0 truncate text-sm text-gray-500">
+                    {/* ★ 「備註」兩個字是**標籤**不是內容 —— 再淡一階，
+                        不然眼睛會先讀到「備註」而不是後面那句話 */}
+                    <span className="text-xs text-gray-300 mr-1">{NOTE_LABEL}</span>
                     {r.note.trim()}
                   </span>
                 )}
 
                 {/*
-                  ★★★ 檔案的資料靠在**第一行最右邊**（2026-09-18 使用者:「檔案資訊往後放」）。
-                    右半邊本來空著約 900px，而這一段是整列最不需要盯著看的東西 ——
-                    誰傳的、多大、什麼時候進來，只在對版本時才會讀。
-                  ★★ `whitespace-nowrap` 不能省:這一段拆行的話會把上面那一行的高度撐開，
-                    整排卡片就會一列高一列矮。寬度不夠時它自己被 truncate 掉。
+                  ★★★ 檔案的資料放**最下面**（2026-09-18 使用者:「檔案 資料最下面」）。
+                    這一列由上往下讀是:這是什麼 → 哪一期、什麼時候申報 → 備註
+                    → **最後才是這個檔案本身**（誰傳的、多大、什麼時候進來）。
+                    檔案的事是附註,不該卡在報表的內容中間。
                   ★ 排法在 `fileLine`（lib，有測試）—— 空的那幾段整段不見，
                     不是留一個講不出自己是什麼的「—」。
                 */}
@@ -470,9 +460,8 @@ export default function ReportsPage() {
                     uploadedOn: r.uploaded_on,
                   });
                   return line
-                    ? <span className="[grid-area:meta] justify-self-end max-sm:justify-self-start
-                                       min-w-0 truncate whitespace-nowrap
-                                       text-xs text-gray-400">{line}</span>
+                    ? <span className="[grid-area:file] min-w-0 truncate text-xs text-gray-400
+                                       tabular-nums">{line}</span>
                     : null;
                 })()}
               </div>

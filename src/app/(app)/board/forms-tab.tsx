@@ -308,10 +308,12 @@ export default function FormsTab({ role, meId, onMsg }: {
                 　圖示 ／ 內容(封頂 30rem) ／ 下載 ／ 彈性空白 ／ 編輯
                 　第二個 grid row 給**說明 ＋ 使用說明 ▾**，橫跨到最右邊。
               */}
-              <div className="grid items-center gap-y-1 gap-x-4 px-4 py-2.5
+              <div className="grid items-center gap-y-0.5 gap-x-3 md:gap-x-5 px-4 py-2.5
                               hover:bg-[#FAFAF9] transition-colors
-                              [grid-template-columns:2.25rem_minmax(0,30rem)_auto_1fr_auto]
-                              [grid-template-areas:'ico_mid_dl_sp_acts'_'ico_note_note_note_note'_'ico_meta_meta_meta_meta']">
+                              [grid-template-columns:2.25rem_minmax(0,1fr)_auto]
+                              [grid-template-areas:'ico_mid_mid'_'ico_note_note'_'ico_file_file'_'._dl_acts']
+                              md:[grid-template-columns:2.25rem_minmax(0,1fr)_16rem_auto_auto]
+                              md:[grid-template-areas:'ico_mid_file_dl_acts'_'ico_note_note_dl_acts']">
                 {/*
                   ★ 用副檔名當圖示，一眼看得出是 Word 還是 PDF ——
                     下載之前就知道等一下要用什麼開。
@@ -325,19 +327,18 @@ export default function FormsTab({ role, meId, onMsg }: {
                   ★ 每一段各自一整排（2026-09-18 使用者:「資訊獨立一排」
                     「使用說明 獨立一行」）—— 擠成一行的話讀起來像壞掉的。
                 */}
-                <span className="min-w-0 block [grid-area:mid]">
-                  {/*
-                    ★★★ 分類籤畫在**標題前面**（2026-09-18 使用者過審）——
-                      跟會計報表的「月報」「401」同一個位置。
-                      原本它夾在內容與按鈕中間:它不是動作，卻站在動作那一排裡。
-                  */}
-                  <span className="flex items-center gap-1.5 min-w-0">
-                    <span className="shrink-0 rounded px-1.5 py-0.5 text-xs font-medium
-                                     bg-mor-bluelight text-mor-slatedark">
-                      {formIcon(cat)} {cat}
-                    </span>
-                    <span className="text-ui font-medium truncate">{f.title}</span>
+                {/*
+                  ★★★ 分類籤畫在**標題前面**（2026-09-18 使用者過審）——
+                    跟會計報表的「月報」「401」同一個位置。
+                  ★★ 標題是這一列唯一要「認出來」的東西，所以它是**唯一的黑字**;
+                    底下那幾行一律灰的（2026-09-18 排字體）。
+                */}
+                <span className="min-w-0 flex items-center gap-1.5 [grid-area:mid]">
+                  <span className="shrink-0 rounded px-1.5 py-0.5 text-xs font-medium
+                                   bg-mor-bluelight text-mor-slatedark">
+                    {formIcon(cat)} {cat}
                   </span>
+                  <span className="text-ui font-semibold truncate">{f.title}</span>
                 </span>
 
                 {/*
@@ -347,7 +348,8 @@ export default function FormsTab({ role, meId, onMsg }: {
                 */}
                 <button onClick={() => download(f)} disabled={busyId === f.id}
                   title={has ? '下載' : '這一份還沒有檔案'}
-                  className={`h-10 rounded-lg border px-4 text-uisub font-medium justify-self-start
+                  className={`h-11 md:h-10 rounded-lg border px-4 text-uisub font-medium mt-2 md:mt-0
+                              justify-self-stretch md:justify-self-end
                               [grid-area:dl] disabled:opacity-50 ${
                     has ? 'border-mor-greendark text-mor-greendark hover:bg-mor-greenlight'
                         : 'border-amber-300 text-amber-700 bg-amber-50'}`}>
@@ -359,7 +361,7 @@ export default function FormsTab({ role, meId, onMsg }: {
                     刪掉在編輯視窗最底下，而且要把檔案名稱打一次才按得下去。
                 */}
                 {canEdit && (
-                  <span className="[grid-area:acts] self-center">
+                  <span className="[grid-area:acts] self-center mt-2 md:mt-0 pl-3 md:pl-0">
                     <button onClick={() => setDraft({
                       id: f.id, title: f.title, category: parseFormCat(f.category),
                       note: f.note ?? '', usage_note: f.usage_note ?? '',
@@ -377,9 +379,10 @@ export default function FormsTab({ role, meId, onMsg }: {
                   ★★ 兩個都沒有就整段不畫，那一列的高度一格都不會變。
                 */}
                 {(f.note?.trim() || f.usage_note?.trim()) && (
-                  <span className="[grid-area:note] min-w-0 truncate text-uisub text-gray-500">
+                  <span className="[grid-area:note] min-w-0 truncate text-sm text-gray-500">
                     {f.note?.trim() && <>
-                      <span className="text-xs text-gray-400 mr-1">說明</span>{f.note.trim()}
+                      {/* ★ 「說明」兩個字是**標籤**不是內容 —— 再淡一階 */}
+                      <span className="text-xs text-gray-300 mr-1">說明</span>{f.note.trim()}
                     </>}
                     {f.usage_note?.trim() && (
                       <button onClick={() => setOpen((p) => {
@@ -402,7 +405,7 @@ export default function FormsTab({ role, meId, onMsg }: {
                     這一頁的檔案會放好幾年，只寫 09/18 的話，
                     明年再看就分不出是今年傳的還是去年傳的。
                 */}
-                <span className="[grid-area:meta] min-w-0 truncate text-xs text-gray-400">
+                <span className="[grid-area:file] min-w-0 truncate text-xs text-gray-400 tabular-nums">
                   {names.get(f.updated_by ?? f.created_by ?? '') ?? '—'}
                   {'　·　'}{f.updated_at.slice(0, 10).replace(/-/g, '/')}
                   {f.file_size ? `　·　${fmtSize(f.file_size)}` : ''}
