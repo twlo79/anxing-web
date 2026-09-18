@@ -32,7 +32,7 @@ import { fmtSize, fileTooBig } from '@/lib/board';
 import {
   REPORT_KINDS, parseKind, periodText, options401, defaultStartFor,
   monthToStart, startToMonth, validateReport, suggestTitle, reportTitle,
-  sortReports, yearOf, matchReport,
+  sortReports, yearOf, matchReport, fileLine,
   reportFileKind, FILE_BADGE, reportFileName, REPORT_ACCEPT,
   type Report,
 } from '@/lib/report';
@@ -68,7 +68,7 @@ const BADGE_CLASS: Record<string, string> = {
 const blank = (): Draft => ({
   kind: '401', period_start: defaultStartFor('401'),
   title: suggestTitle('401', defaultStartFor('401')),
-  uploaded_on: '', note: '', file: null,
+  note: '', file: null,
 });
 
 export default function ReportsPage() {
@@ -82,6 +82,15 @@ export default function ReportsPage() {
   const [fy, setFy] = useState('');
   const [draft, setDraft] = useState<Draft | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  /*
+   * ★★★ 現在登入的是誰。**不抓的話 `created_by` 永遠是 null** ——
+   *   而列上「誰傳的」那一格就會一直是空的
+   *   （2026-09-18 使用者圈著它問「第一個空白是甚麼？」）。
+   */
+  const [meId, setMeId] = useState<string | null>(null);
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setMeId(data.user?.id ?? null));
+  }, [supabase]);
 
   const onMsg = useCallback((t: string, err?: boolean) => {
     setMsg({ t, err });
@@ -173,15 +182,26 @@ export default function ReportsPage() {
       kind: parseKind(d.kind),
       period_start: d.period_start || null,
       title: d.title.trim(),
-      uploaded_on: d.uploaded_on || null,
       note: d.note?.trim() || null,
       updated_at: new Date().toISOString(),
+      updated_by: meId,
     };
     if (d.file && path) {
       body.file_path = path;
       body.file_name = d.file.name;
       body.file_size = d.file.size;
+      /*
+       * ★★★ 上傳日**自動帶**（2026-09-18 使用者:「不用上傳日，自動吃」）。
+       *   只在真的換了檔案時更新 —— 改個標題不該讓上傳日跳到今天，
+       *   那個日期回答的是「這份檔案什麼時候進來的」。
+       * ★ 用本地時間組，不要 `toISOString()` —— 那是 UTC，
+       *   台灣時間晚上八點之後會變成前一天（README 的 todayStr 同一件事）。
+       */
+      const t = new Date();
+      body.uploaded_on = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}`
+        + `-${String(t.getDate()).padStart(2, '0')}`;
     }
+    if (!targetId) body.created_by = meId;
 
     /*
      * ★★★ `.select('id')` 不能省。RLS 擋下來的寫入**回成功且影響 0 列**，
@@ -325,15 +345,35 @@ export default function ReportsPage() {
                     ★ 標題跟期別一樣的話不重複寫一次（README:重複的數字不要寫第二次）——
                       使用者改過標題時才把期別補在底下。
                   */}
-                  <span className="block text-uisub text-gray-500">
-                    {per && per !== reportTitle(r) ? per + '　·　' : ''}
-                    {r.uploaded_on ? `上傳日 ${r.uploaded_on}` : '（沒填上傳日）'}
-                    {r.note ? '　·　' + r.note : ''}
-                  </span>
-                  <span className="block text-xs text-gray-400">
-                    {names.get(r.updated_by ?? r.created_by ?? '') ?? '—'}
-                    {r.file_size ? ` · ${fmtSize(r.file_size)}` : ''}
-                  </span>
+                  {/*
+                    第二行:期別 ＋ 備註。
+                    ★ 標題跟期別一樣時不重複寫（README:重複的數字不要寫第二次）。
+                    ★★ 「（沒填上傳日）」那句拿掉了 —— 上傳日現在自動帶，
+                      沒有「忘了填」這回事，印出來只是噪音。
+                  */}
+                  {(per && per !== reportTitle(r)) || r.note ? (
+                    <span className="block text-uisub text-gray-500 truncate">
+                      {per && per !== reportTitle(r) ? per : ''}
+                      {per && per !== reportTitle(r) && r.note ? '　·　' : ''}
+                      {r.note ?? ''}
+                    </span>
+                  ) : null}
+                  {/*
+                    第三行:誰傳的・檔名・大小・上傳日（2026-09-18 使用者指定）。
+                    ★ 排法在 `fileLine`（lib，有測試）—— 空的那幾段整段不見，
+                      不是留一個講不出自己是什麼的「—」。
+                  */}
+                  {(() => {
+                    const line = fileLine({
+                      who: names.get(r.updated_by ?? r.created_by ?? '') ?? '',
+                      fileName: r.file_name,
+                      size: r.file_size ? fmtSize(r.file_size) : '',
+                      uploadedOn: r.uploaded_on,
+                    });
+                    return line
+                      ? <span className="block text-xs text-gray-400 truncate">{line}</span>
+                      : null;
+                  })()}
                 </span>
 
                 <button onClick={() => setDraft({
@@ -518,11 +558,6 @@ function ReportDialog({ draft, onChange, onClose, onSave }: {
             {/* ★ 一句話講完，寫給不知道前因後果的人看 */}
             <span className="text-xs text-gray-400">下載下來的檔名就是這一行。</span>
           </label>
-
-          <label className="flex flex-col gap-1">
-            <span className="text-uisub text-gray-500">上傳日</span>
-            <input type="date" value={draft.uploaded_on ?? ''} className={CTRL}
-              onChange={(e) => onChange({ ...draft, uploaded_on: e.target.value })} /></label>
 
           <label className="flex flex-col gap-1">
             <span className="text-uisub text-gray-500">備註</span>

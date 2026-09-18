@@ -330,3 +330,35 @@ export function reportFileName(r: Report): string {
   /* 標題自己已經帶了副檔名就不重複加 */
   return safe.toLowerCase().endsWith(ext) ? safe : safe + ext;
 }
+
+/**
+ * 列上第三行：**誰傳的・檔名・大小・上傳日**（2026-09-18 使用者:「給檔案明細 大小 上傳日期」）。
+ *
+ * ══════════════════════════════════════════════════════════
+ * 【★★ 空的那幾段要整段不見，不是印一個「—」】
+ *
+ * 使用者 2026-09-18 圈出第一格的空白問「第一個空白是甚麼？」——
+ * 那是上傳者，而它一直是空的（`created_by` 從來沒被寫進去）。
+ *
+ * 一個孤零零的「—」講不出自己是什麼欄位 —— 看的人只會猜。
+ * **沒有值就整段拿掉**，剩下的用「・」接起來。
+ *
+ * ★ 每一段自己帶著名字（「62 KB」「上傳 09/18」）才看得懂，
+ *   所以順序換了也不會讀錯。
+ * ══════════════════════════════════════════════════════════
+ */
+export function fileLine(p: {
+  who?: string | null;
+  fileName?: string | null;
+  size?: string | null;
+  uploadedOn?: string | null;
+}): string {
+  const parts = [
+    (p.who ?? '').trim(),
+    (p.fileName ?? '').trim(),
+    (p.size ?? '').trim(),
+    p.uploadedOn ? `上傳 ${String(p.uploadedOn).slice(5).replace('-', '/')}` : '',
+  ].filter(Boolean);
+  /* ★ 一段都沒有時回空字串 —— 畫面那邊整行不畫，不要留一條空的灰線 */
+  return parts.join('　·　');
+}

@@ -5,7 +5,7 @@ import {
   monthToStart, startToMonth, START_MONTHS_401,
   options401, default401, defaultMonthly, defaultStartFor,
   validateReport, suggestTitle, reportTitle, sortReports, yearOf,
-  matchReport, reportFileKind, extOf, FILE_BADGE,
+  matchReport, reportFileKind, extOf, FILE_BADGE, fileLine,
   reportFileName, type Report,
 } from './report.ts';
 
@@ -310,5 +310,39 @@ describe('★★★ reportFileName —— 下載下來就叫標題', () => {
 
   test('★ 原本沒有副檔名就不加', () => {
     assert.equal(reportFileName(R({ title: '財簽報告', file_name: '沒有副檔名' })), '財簽報告');
+  });
+});
+
+/* ── 列上第三行（2026-09-18「給檔案明細 大小 上傳日期」）─────── */
+
+describe('★★ fileLine —— 空的整段不見，不是印「—」', () => {
+  test('四段都有', () => {
+    assert.equal(
+      fileLine({ who: '芊', fileName: '401.pdf', size: '160 KB', uploadedOn: '2026-09-10' }),
+      '芊　·　401.pdf　·　160 KB　·　上傳 09/10');
+  });
+
+  test('★★ 沒有上傳者 → 整段不見（不是留一個孤零零的「—」）', () => {
+    const s = fileLine({ who: '', fileName: '401.pdf', size: '160 KB', uploadedOn: '2026-09-10' });
+    assert.equal(s, '401.pdf　·　160 KB　·　上傳 09/10');
+    assert.ok(!s.includes('—'));
+  });
+
+  test('★ 沒有上傳日 → 那一段不見，其餘照舊', () => {
+    assert.equal(fileLine({ who: '芊', fileName: 'a.xlsx', size: '62 KB' }),
+                 '芊　·　a.xlsx　·　62 KB');
+  });
+
+  test('★ 每一段自己帶著名字 —— 「上傳」兩個字不能省，不然分不出是哪個日期', () => {
+    assert.ok(fileLine({ uploadedOn: '2026-09-10' }).startsWith('上傳 '));
+  });
+
+  test('★ 一段都沒有回空字串 —— 畫面那邊整行不畫', () => {
+    assert.equal(fileLine({}), '');
+    assert.equal(fileLine({ who: '  ', fileName: null, size: '', uploadedOn: null }), '');
+  });
+
+  test('日期只印月/日 —— 年份在期別裡已經有了', () => {
+    assert.equal(fileLine({ uploadedOn: '2026-09-10' }), '上傳 09/10');
   });
 });
