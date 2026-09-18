@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>表單下載 優化</title>
+<style>
+  :root{--bg:#F1F0EC;--line:#E0DDD5;--ink:#2E3840;--slate:#41689B;--slatedark:#345380;
+        --bluelight:#DFEDFA;--green:#3FAE7C;--greendark:#217346;--greenlight:#DFF2E8;--sand:#ECE8DF}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.6 -apple-system,"PingFang TC","Noto Sans TC",sans-serif;padding:20px 16px 90px}
+  .wrap{max-width:1040px;margin:0 auto}
+  h1{font-size:20px;margin:0 0 4px}
+  h2{font-size:14px;margin:30px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line);color:#6b7280}
+  .lead{color:#6b7280;font-size:13px;margin:0 0 14px}
+  .note{font-size:13px;color:#4b5563;background:#fff;border:1px solid var(--line);
+        border-radius:11px;padding:12px 14px;margin-top:10px;line-height:1.8}
+  .q{font-size:13px;background:#FFFBEB;border:1px solid #FCD34D;border-radius:11px;padding:12px 14px;margin-top:11px}
+  .q b{color:#92400E}
+  .sub{font-size:12px;color:#9ca3af}
+  .red{color:#dc2626}.grn{color:var(--greendark)}.mut{color:#9ca3af}
+  code{background:#F1F0EC;border-radius:4px;padding:1px 5px;font-size:12px}
+  ul{margin:5px 0 0;padding-left:19px}li{margin:5px 0}
+
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px}
+  @media(max-width:760px){.two{grid-template-columns:1fr}}
+  .panel{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px}
+  .panel.pick{border:2px solid var(--greendark)}
+  .ph{font-size:13px;font-weight:700;margin-bottom:2px}
+  .ph.g{color:var(--greendark)}
+
+  /* 表單列 */
+  .card{border:1px solid var(--line);border-radius:11px;background:#fff;overflow:hidden}
+  .row{display:flex;align-items:flex-start;gap:10px;padding:11px 12px;border-top:1px solid rgba(224,221,213,.6)}
+  .row:first-child{border-top:0}
+  .ico{width:34px;height:34px;flex:none;border-radius:9px;background:#2563eb;color:#fff;
+       display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700}
+  /* ★★ 每一段各自一整排。稿子第一版沒寫 display:block，
+        標題、說明、資訊、使用說明全部擠成同一行（2026-09-18 使用者圈出來） */
+  .mid{flex:1;min-width:0;display:block}
+  .t1{display:block;font-size:14px;font-weight:600}
+  .t2{display:block;font-size:12px;color:#6b7280;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:1px}
+  .t3{display:block;font-size:11px;color:#9ca3af;margin-top:2px}
+  .tag{flex:none;font-size:11px;border-radius:4px;padding:2px 7px;background:var(--bluelight);color:var(--slatedark);margin-top:2px}
+  .dl{flex:none;height:32px;border-radius:8px;border:1px solid var(--greendark);color:var(--greendark);
+      background:#fff;font-size:12px;font-family:inherit;padding:0 12px;cursor:pointer}
+  .lnk{flex:none;font-size:12px;color:var(--slate);cursor:pointer;margin-top:2px}
+  .lnk.d{color:#f87171}
+  /* 使用說明 —— 獨立一行（2026-09-18 使用者指定），不跟資訊擠在一起 */
+  .tog{display:block;width:fit-content;font-size:12px;color:var(--slate);
+       cursor:pointer;user-select:none;margin-top:4px}
+  .body{padding:0 12px 11px 56px;font-size:12.5px;color:#4b5563;line-height:1.85;white-space:pre-wrap;
+        border-top:1px dashed var(--line);margin-top:0;padding-top:9px}
+
+  table{width:100%;border-collapse:collapse;font-size:12.5px;background:#fff}
+  thead{background:rgba(236,232,223,.6);color:#6b7280;font-size:11px}
+  th,td{padding:7px 9px;text-align:left}
+  tbody tr{border-top:1px solid rgba(224,221,213,.5)}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+
+  /* 對話框 */
+  .dlg{background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden;max-width:430px}
+  .dh{padding:11px 14px;border-bottom:1px solid var(--line);font-weight:700;font-size:14px}
+  .db{padding:13px 14px;display:grid;gap:11px}
+  .lb{font-size:12px;color:#6b7280;display:block;margin-bottom:3px}
+  .in{border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:14px;background:#fff;
+      font-family:inherit;width:100%}
+  .in:empty::before{content:"\00a0"}
+  .ta{min-height:76px;white-space:pre-wrap;line-height:1.8;font-size:13px}
+  .drop{border:1.5px dashed var(--line);border-radius:10px;background:#FAFAF9;padding:20px 12px;text-align:center}
+  .drop.on{border-color:var(--slate);background:var(--bluelight);border-width:2px}
+  .drop.ok{border-color:var(--greendark);background:var(--greenlight)}
+  .df{padding:12px 14px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px}
+  .btn{background:var(--slate);color:#fff;border:none;border-radius:8px;padding:8px 16px;
+       font-size:13px;font-family:inherit;cursor:pointer}
+  .ghost{border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 14px;
+         font-size:13px;font-family:inherit;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>表單下載 優化</h1>
+<p class="lead">三件事：① 使用說明可以展開／編輯　② 下載的檔名　③ 拖拉上傳。<b>還沒動程式碼。</b></p>
+
+<!-- ══════════════ ❷ 檔名（先講，因為那是壞掉的） ══════════════ -->
+<h2>❷ 下載的檔名（這個是 bug，不用挑）</h2>
+
+<div class="note">
+  <b>為什麼會是亂碼：</b>現在的下載是把「原始檔名」塞進網址的 <code>?download=</code>，
+  伺服器再把它寫進 HTTP 表頭 —— 而<b>中文在那個表頭裡沒有被正確編碼</b>，
+  瀏覽器就照 byte 讀成一串亂碼。<br>
+  ★★ 所以「改成用表單名稱」<u>單靠換字串是不會好的</u> ——
+  「支出證明單」也是中文，走同一條路一樣會亂。<br>
+  <b>改法：不走那個表頭。</b>把檔案抓下來變成一個暫存連結，
+  檔名用瀏覽器自己的 <code>download</code> 屬性帶 —— 那是純文字，中文不會壞。
+</div>
+
+<div class="card" style="margin-top:10px">
+  <table>
+    <thead><tr><th>表單名稱</th><th>原本存的檔名</th><th>現在下載得到</th><th>改後下載得到</th></tr></thead>
+    <tbody id="fn"></tbody>
+  </table>
+</div>
+
+<div class="note">
+  <b>命名規則</b>（打勾的地方是會被處理掉的）：
+  <ul>
+    <li>檔名 ＝ <b>表單名稱</b> ＋ <b>原本那份的副檔名</b>（.docx／.pdf 照舊，不會換格式）</li>
+    <li>Windows 不准的字元 <code>\ / : * ? " &lt; &gt; |</code> 換成 <code>_</code> —— 不然存不進資料夾</li>
+    <li>表單名稱如果已經帶了副檔名（有人會打「請假單.docx」），<b>不重複加</b></li>
+    <li>表單名稱空的（理論上不會，它是必填）就退回原始檔名 —— 不要產生一個叫「.docx」的檔</li>
+  </ul>
+</div>
+
+<!-- ══════════════ ❶ 使用說明 ══════════════ -->
+<h2>❶ 使用說明可以展開／編輯　—— 這一題要挑</h2>
+
+<div class="note">
+  現在列上那一行說明是<b>單行、而且被截斷</b>（「無憑證時使用，填寫產生支出支出證明」寫長一點就看不完）。
+  你要的是「點開來看完整說明、而且改得動」。差別在<b>要一個欄位還是兩個</b>。
+</div>
+
+<div class="two">
+  <div class="panel pick">
+    <div class="ph g">甲　一個欄位（建議）</div>
+    <div class="sub" style="margin-bottom:8px">
+      現在那個「說明」直接變成<b>多行的使用說明</b>。列上顯示第一行，點「使用說明 ▾」展開全部。
+    </div>
+    <div class="card" id="listA"></div>
+    <div class="sub" style="margin-top:8px">
+      ★ 一件事一個名字（<code>README</code> 的用語表）。<br>
+      ★ 不用改資料庫 —— <code>note</code> 本來就是 <code>text</code>，長度沒有上限。
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="ph">乙　兩個欄位</div>
+    <div class="sub" style="margin-bottom:8px">
+      一行短的（列上一直看得到）＋ 一段長的使用說明（收起來）。
+    </div>
+    <div class="card" id="listB"></div>
+    <div class="sub" style="margin-top:8px">
+      ★ 代價：上傳的人每次要想「這句話算短說明還是使用說明」，<br>
+      而寫錯的那幾筆，看的人分不出來 —— 只會覺得有的表單說明很短。<br>
+      ★★ 要多一支欄位，得跑一支 migration。
+    </div>
+  </div>
+</div>
+
+<div class="q">
+  <b>兩案共通的：</b>對話框裡那一格從單行 <code>input</code> 換成可以換行的 <code>textarea</code>，
+  <b>權限跟現在一樣</b> —— 總經理｜會計｜主管改得動，其他人只看得到。
+</div>
+
+<!-- ══════════════ ❸ 拖拉上傳 ══════════════ -->
+<h2>❸ 拖拉上傳</h2>
+
+<div class="note">
+  現在那個虛線框<b>本來就是一顆按鈕</b>（點了開檔案選擇器）。
+  加拖拉不換版面 —— <b>只是多一種放進去的方式</b>，點一下照樣可以用。
+  下面三張是同一個框的三個狀態：
+</div>
+
+<div class="two" style="grid-template-columns:1fr 1fr 1fr;margin-top:10px">
+  <div class="panel">
+    <div class="ph mut" style="margin-bottom:7px">平常</div>
+    <div class="drop">
+      <div style="font-size:14px;color:var(--slate)">把檔案拖進來，或<u>點一下選擇</u></div>
+      <div class="sub" style="margin-top:3px">.pdf　.doc　.docx</div>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="ph" style="color:var(--slate);margin-bottom:7px">拖到上面時</div>
+    <div class="drop on">
+      <div style="font-size:14px;color:var(--slatedark);font-weight:600">放開就放進來</div>
+      <div class="sub" style="margin-top:3px">支出證明單.docx</div>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="ph g" style="margin-bottom:7px">放好了</div>
+    <div class="drop ok">
+      <div style="font-size:14px;color:var(--greendark);word-break:break-all">支出證明單.docx</div>
+      <div class="sub" style="margin-top:3px">75 KB・點一下換別份</div>
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  <b>三個一定要顧到的：</b>
+  <ul>
+    <li><b>拖到框外面不可以開啟檔案。</b>沒擋的話拖歪一點，瀏覽器會直接用新分頁打開那個 Word ——
+      對話框裡填一半的東西全部不見</li>
+    <li><b>一次只收一份。</b>拖三個進來就取第一個，並且講一句「一次一份，先放了第一個」</li>
+    <li><b>不收的格式在放開的當下就說</b>（.xlsx、.jpg）—— 不要等按了上傳才擋</li>
+  </ul>
+  ★ 手機沒有拖拉這回事，點擊那條路完全不變。
+</div>
+
+<!-- ══════════════ 沒動的 ══════════════ -->
+<h2>這次沒動的</h2>
+<div class="note">
+  分類（人事／財務／房務／其他）、排序、搜尋、權限（看＝全公司含房務，改＝總經理｜會計｜主管）、
+  檔案大小上限、列上「編輯／刪掉／下載」三顆的位置與顏色 —— <b>一個字都不動</b>。
+</div>
+
+<script>
+/* ── 命名規則：這一段之後原封不動搬進 lib/board.ts ── */
+const BAD = /[\\/:*?"<>|\x00-\x1f]/g;
+function extOf(name){
+  const m = String(name || '').match(/\.[A-Za-z0-9]{1,8}$/);
+  return m ? m[0].toLowerCase() : '';
+}
+function downloadName(title, fileName){
+  const ext = extOf(fileName);
+  let t = String(title || '').replace(BAD, '_').replace(/\s+/g, ' ').trim();
+  if (!t) return String(fileName || '') || '下載';
+  if (ext && t.toLowerCase().endsWith(ext)) return t;
+  return t + ext;
+}
+
+/* ── ❷ 檔名對照表 ── */
+const F = [
+  ['支出證明單', '支出證明單.docx'],
+  ['客戶收據',   '收據 空白 v2.docx'],
+  ['現金簽收單', '現金簽收單.doc'],
+  ['預付請款單', '預付請款單 (最新).pdf'],
+];
+document.getElementById('fn').innerHTML = F.map(([t, f]) =>
+  '<tr><td>' + t + '</td>'
+  + '<td class="mono mut">' + f + '</td>'
+  + '<td class="mono red">' + mojibake(f) + '</td>'
+  + '<td class="mono grn">' + downloadName(t, f) + '</td></tr>').join('');
+
+/* 只是把「中文在表頭沒編碼」長什麼樣畫出來，讓他認得出現在看到的就是這個 */
+function mojibake(s){
+  let out = '';
+  for (const ch of s) {
+    if (ch.charCodeAt(0) < 128) { out += ch; continue; }
+    for (const b of new TextEncoder().encode(ch)) out += String.fromCharCode(b);
+  }
+  return out;
+}
+
+/* ── ❶ 兩案的列 ── */
+const ROWS = [
+  { t:'支出證明單', short:'無憑證時使用，填寫產生支出證明',
+    long:'沒有發票或收據的支出才用這一份。\n① 填寫金額、用途、日期\n② 找主管簽名\n③ 掃描後連同支出一起送會計\n★ 金額超過 3,000 要另外附一張簽呈。',
+    who:'David・09/18・75 KB', cat:'財務' },
+  { t:'客戶收據', short:'給客戶的收據證明',
+    long:'客戶要收據時用這一份。\n公司抬頭與統編已經印好，只要填金額與日期。\n★ 一式兩聯，下聯留存給會計。',
+    who:'David・09/18・20 KB', cat:'財務' },
+];
+const open = { A:{}, B:{} };
+
+function draw(which){
+  const el = document.getElementById('list' + which);
+  el.innerHTML = ROWS.map((r, i) => {
+    const on = !!open[which][i];
+    /*
+     * 甲：列上那一行就是使用說明的第一行 —— 展開之後它會**換成全文**，
+     *     不是在底下再寫一次（同一句話不寫兩遍）。
+     * 乙：列上那一行是另外一個欄位（短說明），展開時它留著。
+     */
+    const line = which === 'A' ? (on ? '' : r.long.split('\n')[0]) : r.short;
+    return '<div>'
+      + '<div class="row">'
+      +   '<span class="ico">DOC</span>'
+      +   '<span class="mid">'
+      +     '<span class="t1">' + r.t + '</span>'
+      +     (line ? '<span class="t2">' + line + '</span>' : '')
+      +     '<span class="t3">' + r.who + '</span>'
+      +     '<span class="tog" data-w="' + which + '" data-i="' + i + '">'
+      +       '使用說明 ' + (on ? '▴' : '▾') + '</span>'
+      +   '</span>'
+      +   '<span class="tag">' + r.cat + '</span>'
+      +   '<span class="lnk">編輯</span><span class="lnk d">刪掉</span>'
+      +   '<button class="dl">下載</button>'
+      + '</div>'
+      + (on ? '<div class="body">' + r.long + '</div>' : '')
+      + '</div>';
+  }).join('');
+  el.querySelectorAll('.tog').forEach((n) => n.addEventListener('click', () => {
+    const w = n.dataset.w, i = n.dataset.i;
+    open[w][i] = !open[w][i];
+    draw(w);
+  }));
+}
+draw('A'); draw('B');
+</script>
+</div>
+</body>
+</html>
