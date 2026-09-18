@@ -14,6 +14,8 @@ import {
 import {
   totals, byMonth, byCode, unsettled, applyFilters, monthRange, prevMonth, pctChange,
   isLent, lentTotal, lentSiblings,
+  paidOf, dueOf, gapOf, bookTotals, validatePayment, overpayWarning,
+  PAY_METHODS, type Payment,
   type Entry, type Filters,
 } from '@/lib/other-book';
 import {
@@ -78,6 +80,12 @@ export default function OtherBooksPage() {
   const [tab, setTab] = useState<'ledger' | 'dash'>('ledger');
   const [ym, setYm] = useState(thisYm());
   const [rows, setRows] = useState<Entry[]>([]);
+  /** 實支明細，照 expense_id 分組（migration_277） */
+  const [pays, setPays] = useState<Record<string, Payment[]>>({});
+  /** 代墊那幾筆:那一列暫付收回了多少。**null ＝ 還沒收回** */
+  const [adv, setAdv] = useState<Record<string, number | null>>({});
+  /** 打開的抽屜是哪一列 */
+  const [view, setView] = useState<Entry | null>(null);
   const [codes, setCodes] = useState<Code[]>([]);
   const [accounts, setAccounts] = useState<{ code: string; name: string }[]>([]);
   const [loading, setLoading] = useState(true);
@@ -110,6 +118,16 @@ export default function OtherBooksPage() {
     const from = `${new Date(Date.UTC(y, m - 13, 1)).toISOString().slice(0, 7)}-01`;
     const { to } = monthRange(ym);
 
+    /*
+     * ══════════ 應支與實支（migration_277）══════════
+     *
+     * 實支有**兩個來源**（lib/other-book.ts 的 paidOf 有完整說明）:
+     *   代墊 → `advance_payments.refunded_amount`（安幸在暫付頁按收回時寫）
+     *   其餘 → `other_book_payments` 加起來
+     *
+     * ★ 兩份一起撈,不要等打開抽屜才查 —— 列上那一欄就要印實支,
+     *   一列查一次的話十筆就是十次往返。
+     */
     const [ordRes, expRes] = await Promise.all([
       fetchAll<Record<string, unknown>>((a, b) => supabase.from('orders')
         .select('id, checkin, guest_name, account_code, item_name, fee_type, amount, note, paid')
@@ -161,6 +179,32 @@ export default function OtherBooksPage() {
     ].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''));
 
     setRows(ent);
+
+    /* ── 實支明細（非代墊的那幾筆）── */
+    const expIds = expRes.rows.map((e) => String(e.id));
+    if (expIds.length) {
+      const { data: pay } = await supabase.from('other_book_payments')
+        .select('id, expense_id, paid_on, amount, method, account, note')
+        .in('expense_id', expIds);
+      const byExp: Record<string, Payment[]> = {};
+      for (const r of (pay ?? []) as Payment[]) {
+        (byExp[r.expense_id] ??= []).push(r);
+      }
+      for (const k of Object.keys(byExp)) {
+        byExp[k].sort((a, b) => (a.paid_on ?? '').localeCompare(b.paid_on ?? ''));
+      }
+      setPays(byExp);
+    } else setPays({});
+
+    /* ── 代墊那幾筆:去安幸的暫付看收回了多少 ── */
+    const advIds = expRes.rows.map((e) => e.advance_id as string).filter(Boolean);
+    if (advIds.length) {
+      const { data: adv } = await supabase.from('advance_payments')
+        .select('id, refunded_amount, refunded_on').in('id', advIds);
+      setAdv(Object.fromEntries(((adv ?? []) as Record<string, unknown>[])
+        .map((a) => [String(a.id), a.refunded_amount == null ? null : Number(a.refunded_amount)])));
+    } else setAdv({});
+
     setLoading(false);
   }, [supabase, book, ym, canSee]);
 
@@ -294,7 +338,15 @@ export default function OtherBooksPage() {
   }, [rows, ym]);
 
   const shown = useMemo(() => applyFilters(cur, f), [cur, f]);
-  const sum = useMemo(() => totals(shown), [shown]);
+
+  /*
+   * ══════════ 實支怎麼算（算式在 lib/other-book.ts，有測試）══════════
+   * ★ 這裡只負責把兩份資料餵給它 —— 判斷式寫在 .tsx 裡測不到。
+   */
+  const paidFor = useCallback((e: Entry) => paidOf(
+    e, (id) => pays[id], (advId) => adv[advId]), [pays, adv]);
+
+  const sum = useMemo(() => bookTotals(shown, paidFor), [shown, paidFor]);
 
   /* ══════════════ 新增 ══════════════ */
 
@@ -506,11 +558,22 @@ export default function OtherBooksPage() {
                 這裡的紅**不是**警示,是會計上的借貸方向,
                 所以由呼叫端決定,不進 StatCard 的 tone。
             */}
+            {/*
+              ══════════ 支出那張卡是**實支**（2026-09-17 使用者指定）══════════
+
+              ★★★ 副標只印「應支 X」，而且**只在跟實支不一樣時才印**。
+                未付 ＝ 應支減掉它正上方那個實支 —— 不用再寫一次
+                （README:重複的數字不要寫第二次）。
+              ★ 每一列都印的話眼睛會開始略過它，而那一行存在的
+                唯一理由就是要被看見。
+            */}
             <StatRow cols={3} className="mb-3">
-              {([['收入', sum.income, 'text-mor-green'], ['支出', sum.expense, 'text-red-600'],
-                ['淨額', sum.net, sum.net < 0 ? 'text-red-600' : '']] as const).map(([l, v, cls]) => (
-                <StatCard key={l} label={l} value={<span className={cls}>{fmt(v)}</span>} />
-              ))}
+              <StatCard label="收入" value={<span className="text-mor-green">{fmt(sum.income)}</span>} />
+              <StatCard label="支出（實支）"
+                value={<span className="text-red-600">{fmt(sum.expense)}</span>}
+                sub={sum.due !== sum.expense ? `應支 ${fmt(sum.due)}` : undefined} />
+              <StatCard label="淨額"
+                value={<span className={sum.net < 0 ? 'text-red-600' : ''}>{fmt(sum.net)}</span>} />
             </StatRow>
 
             {loading ? (
@@ -533,7 +596,9 @@ export default function OtherBooksPage() {
               */}
               <div className="md:hidden space-y-2">
                 {shown.map((e) => (
-                  <div key={`m-${e.kind}-${e.id}`} className="rounded-xl border border-mor-line bg-white px-3 py-2.5">
+                  <div key={`m-${e.kind}-${e.id}`}
+                    onClick={() => canSee && setView({ ...e })}
+                    className="rounded-xl border border-mor-line bg-white px-3 py-2.5">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
@@ -553,9 +618,15 @@ export default function OtherBooksPage() {
                         </div>
                         {e.note && <div className="text-[11px] text-gray-400 mt-0.5 truncate">{e.note}</div>}
                       </div>
+                      {/* ★ 不要負號（2026-09-17 使用者指定）；支出印實支 */}
                       <div className={`shrink-0 text-right font-bold tabular-nums ${
                         e.kind === 'income' ? '' : 'text-red-600'}`}>
-                        {e.kind === 'income' ? '' : '−'}{fmt(e.amount)}
+                        {e.kind === 'income' ? fmt(e.amount) : fmt(paidFor(e))}
+                        {e.kind === 'expense' && gapOf(dueOf(e), paidFor(e)) > 0 && (
+                          <div className="text-[11px] font-normal text-amber-700">
+                            應支 {fmt(dueOf(e))}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -570,14 +641,20 @@ export default function OtherBooksPage() {
                       <th className="px-3 py-2 text-left whitespace-nowrap">日期</th>
                       <th className="px-3 py-2 text-left">項目</th>
                       <th className="px-3 py-2 text-left whitespace-nowrap">會計科目</th>
-                      <th className="px-3 py-2 text-left whitespace-nowrap">對象</th>
-                      <th className="px-3 py-2 text-right whitespace-nowrap">金額</th>
+                      {/*
+                        ★ 「對象」收進抽屜（2026-09-18）—— 十列有十列是「—」，
+                          那一欄的寬度讓給「檢視」。要看對象就打開抽屜。
+                        ★★ 金額改叫「實支」:應支只在跟實支不一樣時，
+                          印在數字底下那一行（琥珀色）。
+                      */}
+                      <th className="px-3 py-2 text-right whitespace-nowrap">實支</th>
+                      <th className="px-3 py-2 text-center whitespace-nowrap w-16">檢視</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-mor-line/40">
                     {shown.map((e) => (
                       <tr key={`${e.kind}-${e.id}`}
-                        onClick={() => canSee && setRow({ ...e })}
+                        onClick={() => canSee && setView({ ...e })}
                         className="even:bg-mor-sand/20 hover:bg-mor-sand/60 cursor-pointer">
                         <td className="px-3 py-2 whitespace-nowrap text-gray-500">{e.date}</td>
                         <td className="px-3 py-2">
@@ -597,29 +674,46 @@ export default function OtherBooksPage() {
                         </td>
                         <td className="px-3 py-2 whitespace-nowrap">
                           {/*
-                            ★★ 沒分類的用琥珀色標出來 —— 它是**待辦**，
-                              不是一種分類。跟其他科目一樣印成灰字的話，
-                              三筆未分類混在十筆裡沒有人會發現。
+                            ★★★ 2026-09-18 使用者:「不要 從外面編輯會計科目」。
+                              原本這一格是下拉，而它跟「整列可以點」疊在同一格上，
+                              所以程式裡得寫 stopPropagation 擋著。
+                              拿掉之後這一列只剩一種點法 —— 要改科目就進抽屜按編輯。
+                            ★★ 沒分類的還是用琥珀色標出來 —— 它是**待辦**不是一種分類。
+                              印成灰字的話，三筆未分類混在十筆裡沒有人會發現。
                           */}
-                          {/* ★ 就地改科目 —— 點下拉不要順便把編輯視窗打開 */}
-                          <select
-                            value={e.account_code ?? ''}
-                            disabled={savingCode === `${e.kind}-${e.id}`}
-                            onClick={(ev) => ev.stopPropagation()}
-                            onChange={(ev) => void setCode(e, ev.target.value)}
-                            className={`rounded border px-1.5 py-0.5 text-xs bg-white max-w-[9rem] ${
-                              e.account_code
-                                ? 'border-transparent text-gray-600 hover:border-mor-line'
-                                : 'border-amber-300 bg-amber-50 text-amber-700'}`}>
-                            <option value="">未分類</option>
-                            {(e.kind === 'income' ? incomeCodes : expenseCodes)
-                              .map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
-                          </select>
+                          {e.account_code ? (
+                            <span className="text-gray-600">{nameOf(e.account_code)}</span>
+                          ) : (
+                            <span className="rounded bg-amber-50 text-amber-700 px-1.5 py-0.5 text-xs">未分類</span>
+                          )}
                         </td>
-                        <td className="px-3 py-2 whitespace-nowrap text-gray-600">{e.party ?? '—'}</td>
-                        <td className={`px-3 py-2 text-right tabular-nums whitespace-nowrap ${
-                          e.kind === 'income' ? '' : 'text-red-600'}`}>
-                          {e.kind === 'income' ? '' : '−'}{fmt(e.amount)}
+                        {/*
+                          ══════════ 實支（migration_277）══════════
+                          ★★★ 主數字是**實支**，應支只在**不一樣**時才印在底下。
+                            每一列都印的話眼睛會開始略過那一行，
+                            而它存在的唯一理由就是要被看見。
+                          ★ 不要負號（2026-09-17 使用者指定）—— 這一欄本來就是支出，
+                            負號是把同一件事再講一次。
+                        */}
+                        <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
+                          {e.kind === 'income' ? (
+                            <span>{fmt(e.amount)}</span>
+                          ) : (() => {
+                            const due = dueOf(e); const paid = paidFor(e); const gap = gapOf(due, paid);
+                            return (
+                              <>
+                                <span className="text-red-600">{fmt(paid)}</span>
+                                {gap > 0 && (
+                                  <div className="text-[11px] text-amber-700">應支 {fmt(due)}</div>
+                                )}
+                              </>
+                            );
+                          })()}
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <button onClick={(ev) => { ev.stopPropagation(); setView({ ...e }); }}
+                            className="rounded-lg border border-mor-line px-2.5 py-1 text-xs
+                                       text-mor-slate hover:border-mor-slate">檢視</button>
                         </td>
                       </tr>
                     ))}
@@ -634,6 +728,22 @@ export default function OtherBooksPage() {
         )}
         </div>
       </TabShell>
+
+      {/* ══════════════ 檢視抽屜（2026-09-18）══════════════ */}
+      {view && (
+        <ViewDrawer
+          e={view}
+          pays={pays[view.id] ?? []}
+          paid={paidFor(view)}
+          nameOf={nameOf}
+          accounts={accounts}
+          onClose={() => setView(null)}
+          onEdit={() => { setRow({ ...view }); setView(null); }}
+          onReload={() => { void load(); }}
+          onMsg={setErr}
+          supabase={supabase}
+        />
+      )}
 
       {/* ══════════════ 安幸代墊的明細（2026-09-17）══════════════ */}
       {lend && (
@@ -1112,6 +1222,220 @@ function Modal({
             className="flex-1 h-11 md:h-9 rounded-lg bg-mor-slate text-white text-sm font-medium disabled:opacity-40">
             {busy ? '儲存中…' : '儲存'}
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════
+ * 檢視抽屜（2026-09-18 使用者:「多一欄檢視 有抽屜 > 可以進去 編輯 與 實支 編輯」）
+ *
+ * 三段，順序是使用者在稿上挑的：
+ *
+ *   ① 這筆支出   列表上精簡掉的欄位都在這（對象、備註、科目）
+ *   ② 看板       應支／實支／差距
+ *   ③ 實支明細   一筆一列，底下可以再記一筆
+ *
+ * ★ 看板挪到中間 —— 打開先看「這是什麼」，錢的事跟付款明細擺在一起。
+ *
+ * ★★ 按鈕照契約與押金那一套（anxing-ui 四-2）:
+ *   一排裡**只有一顆實心**，而且實心那顆是「打開這一筆的內容」（編輯）；
+ *   刪除是**底下一行紅色小字**，不跟「取消／儲存」排在一起。
+ * ══════════════════════════════════════════════════════════ */
+function ViewDrawer({
+  e, pays, paid, nameOf, accounts, onClose, onEdit, onReload, onMsg, supabase,
+}: {
+  e: Entry;
+  pays: Payment[];
+  paid: number;
+  nameOf: (code: string | null) => string;
+  accounts: { code: string; name: string }[];
+  onClose: () => void;
+  onEdit: () => void;
+  onReload: () => void;
+  onMsg: (t: string) => void;
+  supabase: ReturnType<typeof createClient>;
+}) {
+  const due = dueOf(e);
+  const gap = gapOf(due, paid);
+  const lent = isLent(e);
+
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState<Partial<Payment>>({});
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function addPay() {
+    setErr('');
+    const bad = validatePayment(e, draft, paid);
+    if (bad) { setErr(bad); return; }
+    const warn = overpayWarning(due, paid, Number(draft.amount));
+    if (warn && !confirm(warn)) return;
+
+    setBusy(true);
+    const { data, error } = await supabase.from('other_book_payments').insert({
+      expense_id: e.id,
+      paid_on: draft.paid_on,
+      amount: Number(draft.amount),
+      method: draft.method || null,
+      account: draft.account || null,
+    }).select('id');
+    setBusy(false);
+    if (error) { setErr('記不進去：' + error.message); return; }
+    /*
+     * ★★★ RLS 擋下來的寫入**回成功且影響 0 列**，不是錯誤（README）。
+     *   不檢查長度的話，沒有權限的人會看到「記好了」而什麼都沒有。
+     */
+    if (!data?.length) { setErr('沒有記進去 —— 你的帳號沒有這個權限。'); return; }
+    setDraft({}); setAdding(false);
+    onReload();
+  }
+
+  async function delPay(p: Payment) {
+    if (!confirm(`刪掉 ${p.paid_on} 的 ${fmt(p.amount)}？`)) return;
+    const { data, error } = await supabase.from('other_book_payments')
+      .delete().eq('id', p.id!).select('id');
+    if (error) return onMsg('刪不掉：' + error.message);
+    if (!data?.length) return onMsg('沒有刪掉 —— 你的帳號沒有這個權限。');
+    onReload();
+  }
+
+  const L = ({ k, v }: { k: string; v: React.ReactNode }) => (
+    <div className="flex gap-3 py-1.5 border-b border-mor-line/40 last:border-0">
+      <span className="w-16 shrink-0 text-xs text-gray-500">{k}</span>
+      <span className="flex-1 min-w-0 text-sm">{v}</span>
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/30" />
+      {/* ★ 從右邊開出來。手機上是整頁 */}
+      <div onClick={(ev) => ev.stopPropagation()}
+        className="relative bg-white w-full sm:max-w-md h-full overflow-y-auto shadow-xl">
+        <div className="sticky top-0 bg-white px-4 py-3 border-b border-mor-line
+                        flex items-center justify-between">
+          <span className="font-bold text-ui truncate">{e.name}</span>
+          <button onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 text-xl leading-none shrink-0 ml-2">✕</button>
+        </div>
+
+        <div className="px-4 py-3 space-y-4">
+          {/* ── ① 這筆支出 ── */}
+          <div>
+            <div className="text-[11px] font-bold tracking-wide text-gray-500 mb-1">這筆支出</div>
+            <L k="日期" v={e.date ?? '—'} />
+            <L k="項目" v={e.name} />
+            <L k="會計科目" v={e.account_code
+              ? nameOf(e.account_code)
+              : <span className="text-amber-700">未分類</span>} />
+            <L k="對象" v={e.party || '—'} />
+            <L k="備註" v={e.note || '—'} />
+          </div>
+
+          {/* ── ② 看板 ── */}
+          <div className="rounded-xl border border-mor-line bg-[#FAFAF9] p-3">
+            <div className="grid grid-cols-3 gap-2 text-center">
+              {([['應支', due, ''], ['實支', paid, 'text-red-600'],
+                 ['差距', gap, gap > 0 ? 'text-amber-700' : '']] as const).map(([l, v, c]) => (
+                <div key={l}>
+                  <div className="text-[11px] text-gray-500">{l}</div>
+                  <div className={`text-lg font-bold tabular-nums ${c}`}>{fmt(v)}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* ── ③ 實支明細 ── */}
+          <div>
+            <div className="text-[11px] font-bold tracking-wide text-gray-500 mb-1">實支明細</div>
+
+            {/*
+              ★★★ 代墊的**不在這裡記** —— 同一筆錢只有一個人寫。
+                而且要說得出去哪裡記，不然他只知道不能按
+                （資料庫的 trg_obp_block_lent 也擋著，這裡只是先講）。
+            */}
+            {lent ? (
+              <div className="rounded-lg bg-mor-bluelight border border-mor-slate/30 px-3 py-2.5
+                              text-xs text-mor-slatedark leading-relaxed">
+                這筆是<b>安幸代墊</b>的 —— 實支跟著安幸那邊走。<br />
+                到「暫收付管理 → 暫付」把它勾起來按<b>收回</b>，這裡的實支就會自己變。
+              </div>
+            ) : (
+              <>
+                {pays.length === 0 && (
+                  <div className="text-xs text-gray-400 py-3">還沒有付款紀錄。</div>
+                )}
+                {pays.map((p) => (
+                  <div key={p.id}
+                    className="flex items-center gap-2 py-1.5 border-b border-mor-line/40 text-sm">
+                    <span className="text-gray-500 w-24 shrink-0">{p.paid_on}</span>
+                    <span className="flex-1 min-w-0 text-xs text-gray-500 truncate">
+                      {p.method || '—'}{p.account ? `・${p.account}` : ''}
+                    </span>
+                    <span className="tabular-nums font-medium">{fmt(p.amount)}</span>
+                    <button onClick={() => delPay(p)}
+                      className="shrink-0 text-xs text-red-400 hover:text-red-600">刪</button>
+                  </div>
+                ))}
+
+                {!adding ? (
+                  <button onClick={() => { setAdding(true); setErr(''); }}
+                    className="mt-2 w-full rounded-lg border border-mor-greendark text-mor-greendark
+                               py-2 text-sm hover:bg-mor-greenlight">＋ 記一筆實支</button>
+                ) : (
+                  <div className="mt-2 rounded-xl border border-mor-line bg-[#FAFAF9] p-3 space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="flex flex-col gap-1">
+                        <span className="flex items-center text-xs text-gray-500">付款日<Req /></span>
+                        <input type="date" value={draft.paid_on ?? ''}
+                          onChange={(ev) => setDraft({ ...draft, paid_on: ev.target.value })}
+                          className="h-10 rounded-lg border border-mor-line px-2 text-sm" /></label>
+                      <label className="flex flex-col gap-1">
+                        <span className="flex items-center text-xs text-gray-500">金額<Req /></span>
+                        <MoneyInput value={Number(draft.amount ?? 0)}
+                          onChange={(n) => setDraft({ ...draft, amount: n })}
+                          className="h-10 rounded-lg border border-mor-line px-2 text-sm text-right" /></label>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-xs text-gray-500">付費方式</span>
+                        <select value={draft.method ?? ''}
+                          onChange={(ev) => setDraft({ ...draft, method: ev.target.value })}
+                          className="h-10 rounded-lg border border-mor-line px-2 text-sm bg-white">
+                          <option value="">—</option>
+                          {PAY_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
+                        </select></label>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-xs text-gray-500">帳號</span>
+                        <select value={draft.account ?? ''}
+                          onChange={(ev) => setDraft({ ...draft, account: ev.target.value })}
+                          className="h-10 rounded-lg border border-mor-line px-2 text-sm bg-white">
+                          <option value="">—</option>
+                          {accounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
+                        </select></label>
+                    </div>
+                    {/* ★★ 錯誤留在這個面板裡，不要丟到頁面最上方（README 2026-09-02） */}
+                    {err && <div className="text-xs text-red-600">{err}</div>}
+                    <div className="flex gap-2">
+                      <button onClick={addPay} disabled={busy}
+                        className="flex-1 h-10 rounded-lg bg-mor-greendark text-white text-sm
+                                   font-medium disabled:opacity-50">
+                        {busy ? '記錄中⋯' : '＋ 記一筆實支'}</button>
+                      <button onClick={() => { setAdding(false); setErr(''); }}
+                        className="h-10 rounded-lg border border-mor-line px-4 text-sm">取消</button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/*
+            ★★ 一排裡只有一顆實心，而且它是「打開這一筆的內容」（anxing-ui 四-2）。
+          */}
+          <button onClick={onEdit}
+            className="w-full h-11 rounded-lg bg-mor-slate text-white text-sm font-medium
+                       hover:bg-mor-slatedark">編輯</button>
         </div>
       </div>
     </div>

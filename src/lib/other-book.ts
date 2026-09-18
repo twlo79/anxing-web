@@ -219,3 +219,146 @@ export function prevMonth(ym: string): string {
   const d = new Date(Date.UTC(y, m - 2, 1));
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
 }
+
+/* ══════════════════════════════════════════════════════════
+ * 應支與實支（migration_277）
+ *
+ * 2026-09-17 使用者:「愛皮 洪鯊 金額改成 應支 與 實支 /
+ *   點進去 可以編輯 實際支出 / 看板區 應支 實支 差距」
+ *
+ * ══════════════════════════════════════════════════════════
+ * 【★★★ 應支與實支是兩件事，而且來源不同】
+ *
+ *     應支  `expenses.amount`   —— 這筆帳欠多少
+ *     實支  **看是不是代墊**:
+ *           代墊  → 安幸在暫付頁按「收回」時記的 `refunded_amount`
+ *           其餘  → `other_book_payments` 加起來
+ *
+ * ★★★ 代墊為什麼不在這裡記:同一筆錢**只有一個人寫**。
+ *   兩邊各記一次的話會不一致，而且不會有任何地方報錯
+ *   （README:一份資料存在兩個地方）。資料庫也有觸發器擋
+ *   （`trg_obp_block_lent`）—— 這裡只是讓畫面先講得出為什麼。
+ *
+ * ★★ 差距**不存** —— 它是算出來的（README:推導值存成欄位）。
+ * ══════════════════════════════════════════════════════════ */
+
+/** 實支明細的一列。欄位名跟資料庫一致。 */
+export type Payment = {
+  id?: string;
+  expense_id: string;
+  paid_on: string | null;
+  amount: number;
+  method?: string | null;
+  account?: string | null;
+  note?: string | null;
+};
+
+/** 付費方式（2026-09-17 使用者指定的四種）。 */
+export const PAY_METHODS = ['現金', '匯款', '信用卡', '加密貨幣'] as const;
+export type PayMethod = (typeof PAY_METHODS)[number];
+
+/** 這一列欠多少（應支）。 */
+export const dueOf = (e: Entry): number => round(e.amount);
+
+/**
+ * 這一列實際付了多少（實支）。
+ *
+ * @param paymentsOf  這筆支出的付款明細
+ * @param refundedOf  代墊時:那一列暫付收回了多少。**還沒收回回 null**
+ *
+ * ★★ `null` 與 `0` 是兩件事（跟 `advance.statusOf` 同一條規則）:
+ *   還沒收回是 null，全額被扣才是 0。這裡兩者都算「實支 0」——
+ *   因為從愛皮的帳上看，錢都還沒付出去。
+ */
+export function paidOf(
+  e: Entry,
+  paymentsOf: (expenseId: string) => Payment[] | undefined,
+  refundedOf: (advanceId: string) => number | null | undefined,
+): number {
+  /* ★ 收入不走這一套 —— 它有自己的「已收款沒」（`settled`） */
+  if (e.kind === 'income') return round(e.amount);
+  if (isLent(e)) {
+    const back = refundedOf(e.advanceId as string);
+    return back == null ? 0 : round(back);
+  }
+  return (paymentsOf(e.id) ?? []).reduce((n, p) => n + round(p.amount), 0);
+}
+
+/**
+ * 還差多少。**不會是負數** —— 付超過是另一件事（多付要退，不是「欠 −500」）。
+ *
+ * ★★ 這個帳本**一律整數台幣**（檔頭那支 `round()` 收到元）。
+ *   所以先各自收成整數再相減 —— 反過來的話
+ *   「3000.4 − 1000.4」會留下一個畫面上看不到的 0.0000001。
+ */
+export const gapOf = (due: number, paid: number): number =>
+  Math.max(0, round(due) - round(paid));
+
+/** 付清了沒。★ 應支 0 的那幾筆算付清 —— 沒有東西要付。 */
+export const isSettledExpense = (due: number, paid: number): boolean =>
+  round(paid) >= round(due);
+
+/** 一整個月的總計（應支與實支分開）。 */
+export type BookTotals = {
+  income: number;
+  /** 支出：**實支**總計（2026-09-17 使用者:「上方的支出 是 實支 總計」） */
+  expense: number;
+  /** 應支總計。跟實支不一樣時才要印出來 */
+  due: number;
+  net: number;
+};
+
+export function bookTotals(entries: Entry[], paid: (e: Entry) => number): BookTotals {
+  let income = 0; let expense = 0; let due = 0;
+  for (const e of entries ?? []) {
+    if (e.kind === 'income') { income += round(e.amount); continue; }
+    expense += round(paid(e));
+    due += round(e.amount);
+  }
+  /* ★ 淨額用**實支** —— 那是真的離開過帳戶的錢 */
+  return { income, expense, due, net: income - expense };
+}
+
+/**
+ * 記一筆實支之前的檢查。回第一個錯，沒問題回 null。
+ *
+ * ★★ 這幾條跟資料庫是同一組規則（migration_277 的 `obp_amount_chk`、
+ *   `paid_on not null`、`trg_obp_block_lent`）。兩邊都寫是刻意的:
+ *   資料庫擋住任何路徑，這一層負責講出**為什麼**。
+ */
+export function validatePayment(
+  e: Entry, p: Partial<Payment>, alreadyPaid: number,
+): string | null {
+  /*
+   * ★★★ 代墊的不在這裡記 —— 同一筆錢只有一個人寫。
+   *   訊息要說得出**去哪裡記**，不然他只知道不能按。
+   */
+  if (isLent(e)) {
+    return '這筆是安幸代墊的 —— 實支請到「暫收付管理 → 暫付」按收回，那邊記完這裡會自己出現。';
+  }
+  if (!p.paid_on) return '要填付款日';
+  const amt = Number(p.amount);
+  if (!Number.isFinite(amt)) return '金額只能填數字';
+  if (amt <= 0) return '金額要大於 0';
+  /*
+   * ★★ 這個帳本**只收整數** —— 畫面上的 `round()` 收到元，
+   *   讓它存 1.5 的話「存進去的」跟「看到的」是兩個數字，
+   *   而加總對不起來時沒有人查得出那 0.5 在哪
+   *   （README:兩個格式不同的字串拿去比對，同一種病）。
+   */
+  if (!Number.isInteger(amt)) return '金額要填整數（這本帳不記小數）';
+
+  /*
+   * ★ 付超過**是提醒不是禁止**（跟暫付的收款帳戶同一條原則:
+   *   系統負責看見，人負責決定）—— 所以這裡回 null，
+   *   多付的那一句由 `overpayWarning()` 講。
+   */
+  return null;
+}
+
+/** 付超過時的提醒。沒超過回 null。 */
+export function overpayWarning(due: number, paid: number, adding: number): string | null {
+  const after = round(paid) + round(adding);
+  if (after <= round(due)) return null;
+  return `記完會變成實支 ${after}，比應支 ${round(due)} 多 ${round(after - round(due))} —— 確定嗎？`;
+}

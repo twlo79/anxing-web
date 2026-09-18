@@ -8,9 +8,13 @@
  * 跑法：node --experimental-strip-types --test src/lib/other-book.test.ts
  */
 
-import { test } from 'node:test';
+import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { isLent, lentTotal, lentSiblings, type Entry } from './other-book.ts';
+import {
+  isLent, lentTotal, lentSiblings, type Entry,
+  paidOf, dueOf, gapOf, isSettledExpense, bookTotals,
+  validatePayment, overpayWarning, PAY_METHODS,
+} from './other-book.ts';
 
 const ex = (id: string, amount: number, advanceId?: string | null): Entry => ({
   id, kind: 'expense', date: '2026-09-08', name: id, account_code: null,
@@ -117,4 +121,145 @@ test('★★ 每一組的加總，合起來要等於 lentTotal', () => {
     (s, id) => s + lentSiblings(rows, id).reduce((n, e) => n + e.amount, 0), 0);
   assert.equal(sum, lentTotal(rows));
   assert.equal(sum, 13209);
+});
+
+/* ══════════════════════════════════════════════════════════
+ * 應支與實支（migration_277，2026-09-17／18）
+ * ══════════════════════════════════════════════════════════ */
+
+const EXP = (o: Partial<Entry> = {}): Entry => ({
+  id: 'e1', kind: 'expense', date: '2026-09-09', name: '勞保費',
+  account_code: '5200', party: null, amount: 3102, note: null, settled: true, ...o,
+});
+const noPays = () => [];
+const noAdv = () => null;
+
+describe('★★★ paidOf —— 代墊與自付走不同來源', () => {
+  test('自付:把付款明細加起來', () => {
+    const e = EXP({ amount: 5000 });
+    const pays = [
+      { expense_id: 'e1', paid_on: '2026-09-20', amount: 2000 },
+      { expense_id: 'e1', paid_on: '2026-09-25', amount: 1500 },
+    ];
+    assert.equal(paidOf(e, () => pays, noAdv), 3500);
+  });
+
+  test('自付、一筆都還沒付 → 0（不是 null）', () => {
+    assert.equal(paidOf(EXP(), noPays, noAdv), 0);
+  });
+
+  test('★★★ 代墊:讀安幸那一列暫付收回了多少', () => {
+    const e = EXP({ advanceId: 'a1' });
+    assert.equal(paidOf(e, noPays, () => 3102), 3102);
+  });
+
+  test('★★★ 代墊還沒收回（null）→ 實支 0 —— 從愛皮的帳上看錢還沒付', () => {
+    assert.equal(paidOf(EXP({ advanceId: 'a1' }), noPays, () => null), 0);
+  });
+
+  test('★★ 代墊全額被扣（收回 0）也是 0 —— null 與 0 在這裡同一個結果', () => {
+    assert.equal(paidOf(EXP({ advanceId: 'a1' }), noPays, () => 0), 0);
+  });
+
+  test('★★★ 代墊**不看**付款明細 —— 那是兩個來源，會對不起來', () => {
+    const e = EXP({ advanceId: 'a1' });
+    const pays = [{ expense_id: 'e1', paid_on: '2026-09-20', amount: 9999 }];
+    assert.equal(paidOf(e, () => pays, () => 3102), 3102);
+  });
+
+  test('★ 收入不走這一套', () => {
+    assert.equal(paidOf(EXP({ kind: 'income', amount: 8000 }), noPays, noAdv), 8000);
+  });
+});
+
+describe('gapOf / isSettledExpense', () => {
+  test('差距 ＝ 應支 − 實支', () => assert.equal(gapOf(5000, 3500), 1500));
+  test('付清是 0', () => assert.equal(gapOf(5000, 5000), 0));
+  test('★★ 付超過**不會變負數** —— 多付要退，不是「欠 −500」', () => {
+    assert.equal(gapOf(5000, 5500), 0);
+  });
+  /* ★ 先各自收成整數再相減 —— 反過來會留下畫面上看不到的小數 */
+  test('★ 一律整數台幣', () => {
+    assert.equal(gapOf(3000.4, 1000.4), 2000);
+    assert.equal(gapOf(3000.6, 1000.4), 2001);
+  });
+  test('付清了沒', () => {
+    assert.equal(isSettledExpense(5000, 5000), true);
+    assert.equal(isSettledExpense(5000, 4999), false);
+    assert.equal(isSettledExpense(5000, 5500), true);
+    assert.equal(isSettledExpense(0, 0), true);
+  });
+});
+
+describe('★★ bookTotals —— 上面那張卡的支出是「實支」', () => {
+  const rows: Entry[] = [
+    EXP({ id: 'a', amount: 3102, advanceId: 'adv-a' }),
+    EXP({ id: 'b', amount: 1428, advanceId: 'adv-b' }),
+    EXP({ id: 'c', amount: 5000 }),
+    { ...EXP({ id: 'd', amount: 8000 }), kind: 'income' },
+  ];
+  /* 代墊都還沒收回；自付那一筆付了 2,000 */
+  const paid = (e: Entry) => paidOf(e,
+    (id) => (id === 'c' ? [{ expense_id: 'c', paid_on: '2026-09-20', amount: 2000 }] : []),
+    () => null);
+
+  test('★★★ 支出 ＝ 實支總計，應支另外算', () => {
+    const t = bookTotals(rows, paid);
+    assert.equal(t.expense, 2000);            // 只有自付那 2,000 真的付了
+    assert.equal(t.due, 3102 + 1428 + 5000);  // 應支 9,530
+    assert.equal(t.income, 8000);
+  });
+
+  test('★ 淨額用實支 —— 那是真的離開過帳戶的錢', () => {
+    assert.equal(bookTotals(rows, paid).net, 8000 - 2000);
+  });
+
+  test('★ 一筆都沒有時回 0，不是 NaN', () => {
+    assert.deepEqual(bookTotals([], paid), { income: 0, expense: 0, due: 0, net: 0 });
+  });
+});
+
+describe('★★★ validatePayment', () => {
+  const ok = { paid_on: '2026-09-20', amount: 1000 };
+
+  test('正常的回 null', () => assert.equal(validatePayment(EXP(), ok, 0), null));
+
+  test('★★★ 代墊的不給在這裡記，而且要說得出去哪裡記', () => {
+    const err = validatePayment(EXP({ advanceId: 'a1' }), ok, 0);
+    assert.ok(err?.includes('暫付'), err ?? '');
+    assert.ok(err?.includes('收回'), err ?? '');
+  });
+
+  test('沒填付款日', () => assert.equal(validatePayment(EXP(), { amount: 100 }, 0), '要填付款日'));
+
+  test('金額要大於 0', () => {
+    assert.equal(validatePayment(EXP(), { ...ok, amount: 0 }, 0), '金額要大於 0');
+    assert.equal(validatePayment(EXP(), { ...ok, amount: -5 }, 0), '金額要大於 0');
+  });
+
+  test('★★ 只收整數 —— 存進去的跟看到的不可以是兩個數字', () => {
+    assert.ok(validatePayment(EXP(), { ...ok, amount: 1.5 }, 0)?.includes('整數'));
+    assert.equal(validatePayment(EXP(), { ...ok, amount: 1500 }, 0), null);
+  });
+
+  test('★★ 付超過**不擋** —— 系統負責看見，人負責決定', () => {
+    assert.equal(validatePayment(EXP({ amount: 1000 }), { ...ok, amount: 9999 }, 0), null);
+  });
+
+  test('★ 一次只回一個錯', () => {
+    const err = validatePayment(EXP(), { amount: -1 }, 0);
+    assert.equal(err, '要填付款日');
+    assert.ok(!err!.includes('\n'));
+  });
+});
+
+describe('overpayWarning —— 提醒不是禁止', () => {
+  test('沒超過不囉嗦', () => assert.equal(overpayWarning(5000, 3000, 2000), null));
+  test('剛好付清也不囉嗦', () => assert.equal(overpayWarning(5000, 5000, 0), null));
+  test('★ 超過要講出三個數字:記完變多少、應支多少、多了多少', () => {
+    const m = overpayWarning(5000, 4000, 2000)!;
+    assert.match(m, /6000/);
+    assert.match(m, /5000/);
+    assert.match(m, /1000/);
+  });
 });
