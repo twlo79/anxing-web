@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>UI 稿 — 其他收支帳：檢視抽屜 ＋ 實支</title>
+<style>
+  :root{--bg:#F1F0EC;--line:#E0DDD5;--ink:#2E3840;--slate:#41689B;--slatedark:#345380;
+        --bluelight:#DFEDFA;--green:#3FAE7C;--greendark:#217346;--greenlight:#DFF2E8;--sand:#ECE8DF}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.6 -apple-system,"PingFang TC","Noto Sans TC",sans-serif;padding:20px 16px 90px}
+  .wrap{max-width:1120px;margin:0 auto}
+  h1{font-size:20px;margin:0 0 4px}
+  h2{font-size:14px;margin:30px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line);color:#6b7280}
+  .lead{color:#6b7280;font-size:13px;margin:0 0 14px}
+
+  .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin-bottom:13px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 15px}
+  .card .l{font-size:12px;color:#6b7280}
+  .card .v{font-size:25px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.25}
+  .card .s{font-size:12px;color:#b45309;margin-top:1px}
+
+  table{width:100%;border-collapse:collapse;font-size:13px;background:#fff}
+  thead{background:rgba(236,232,223,.6);color:#6b7280;font-size:11px}
+  th,td{padding:8px 10px;text-align:left;white-space:nowrap}
+  th.r,td.r{text-align:right}
+  th.c,td.c{text-align:center}
+  tbody tr{border-top:1px solid rgba(224,221,213,.5)}
+  tbody tr:hover{background:rgba(236,232,223,.45)}
+  .box{background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .num{font-variant-numeric:tabular-nums}
+  .red{color:#dc2626}.grn{color:var(--greendark)}.amb{color:#b45309}.mut{color:#9ca3af}
+  .pill{font-size:10px;border-radius:4px;padding:1px 5px;font-weight:600}
+  .p-e{background:#FEF2F2;color:#dc2626}
+  .p-l{background:var(--bluelight);color:var(--slatedark)}
+  .p-un{background:#FEF3C7;color:#92400E}.p-pt{background:var(--bluelight);color:var(--slatedark)}
+  .sub{font-size:11px;color:#9ca3af}
+  .view{font-size:12px;color:var(--slate);background:none;border:none;cursor:pointer;
+        text-decoration:underline;font-family:inherit}
+  .sel{border:1px solid var(--line);border-radius:6px;padding:2px 20px 2px 7px;font-size:12px;background:#fff}
+
+  /* ══ 抽屜 ══ */
+  .mask{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:40;display:none}
+  .mask.on{display:block}
+  .dw{position:fixed;top:0;right:0;bottom:0;width:min(470px,100%);background:#fff;z-index:41;
+      box-shadow:-8px 0 26px rgba(0,0,0,.14);display:none;flex-direction:column}
+  .dw.on{display:flex}
+  .dwh{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;
+       justify-content:space-between;align-items:flex-start;gap:10px}
+  .dwb{padding:16px 18px;overflow-y:auto;flex:1}
+  .dwt{font-size:16px;font-weight:700}
+  .x{border:none;background:none;font-size:20px;color:#9ca3af;cursor:pointer;line-height:1}
+
+  .b3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:15px}
+  .bx{border-radius:9px;padding:9px 4px;text-align:center}
+  .bx .l{font-size:11px}.bx .v{font-weight:700;font-size:15px;font-variant-numeric:tabular-nums}
+
+  .sechd{display:flex;align-items:center;gap:8px;margin:0 0 8px}
+  .sechd>span:first-child{font-size:11px;font-weight:700;letter-spacing:.05em;color:#6b7280}
+  .sechd i{flex:1;height:1px;background:var(--line);display:block}
+
+  .kv{display:flex;gap:11px;padding:6px 0;border-bottom:1px solid rgba(224,221,213,.45)}
+  .kv:last-child{border-bottom:none}
+  .kv .k{width:4.5rem;flex:none;font-size:12px;color:#9ca3af;padding-top:2px}
+  .kv .v{flex:1;min-width:0;font-size:14px}
+
+  .rowline{display:flex;align-items:center;gap:9px;padding:8px 10px;font-size:13px}
+  .rowline+.rowline{border-top:1px solid rgba(224,221,213,.6)}
+  .del{font-size:11px;color:#f87171;background:none;border:none;cursor:pointer;font-family:inherit}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+  label.f{display:flex;flex-direction:column;gap:3px}
+  label.f>span{font-size:11px;color:#9ca3af}
+  .in{background:#fff;border:1px solid var(--line);border-radius:8px;padding:7px 9px;font-size:13px;
+      font-family:inherit;color:var(--ink);width:100%;min-height:34px}
+
+  .acts{display:flex;gap:8px;margin:16px 0 0}
+  .btn{flex:1;min-width:6rem;height:42px;border-radius:9px;font-size:14px;font-weight:500;
+       font-family:inherit;cursor:pointer;border:1px solid transparent}
+  .btn.pri{background:var(--slate);color:#fff}
+  .btn.grn{border-color:var(--greendark);color:var(--greendark);background:#fff}
+  .delrow{text-align:center;margin-top:11px;padding-top:11px;border-top:1px solid var(--line)}
+  .delrow button{font-size:12px;color:#f87171;text-decoration:underline;background:none;
+                 border:none;cursor:pointer;font-family:inherit}
+
+  .note{font-size:12.5px;color:#4b5563;background:#fff;border:1px solid var(--line);
+        border-radius:11px;padding:11px 13px;margin-top:10px;line-height:1.75}
+  .q{font-size:13px;background:#FFFBEB;border:1px solid #FCD34D;border-radius:11px;padding:12px 14px;margin-top:11px}
+  .q b{color:#92400E}
+  ul{margin:5px 0 0;padding-left:19px}li{margin:4px 0}
+  code{background:#F1F0EC;border-radius:4px;padding:1px 5px;font-size:12px}
+  .was{text-decoration:line-through;color:#c9c9c9}
+  .opt{border:1px solid var(--line);background:#fff;border-radius:8px;padding:5px 12px;
+       font-size:12.5px;cursor:pointer;font-family:inherit;color:var(--ink)}
+  .opt.on{background:var(--slate);border-color:var(--slate);color:#fff;font-weight:600}
+  .due{font-size:11px;color:#9ca3af;font-variant-numeric:tabular-nums;margin-top:1px}
+  .due.short{color:#b45309}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>其他收支帳：金額欄改成「實支」、科目不在列上改、多一欄「檢視」</h1>
+<p class="lead"><b>2026-09-18 改過：愛皮的實支是 0，不是 13,209。</b>點任何一列的「檢視」試試看 —— 抽屜會從右邊開出來。還沒動程式碼。底下有 2 個要你決定的地方。</p>
+
+<div class="cards">
+  <div class="card"><div class="l">收入</div><div class="v grn">0</div></div>
+  <div class="card">
+    <div class="l">支出（實支）</div><div class="v red">0</div>
+    <div class="s">應支 13,209</div>
+  </div>
+  <div class="card"><div class="l">淨額</div><div class="v red">−13,209</div></div>
+</div>
+
+<div class="box">
+  <table>
+    <thead><tr>
+      <th>日期</th><th>項目</th><th>會計科目</th><th>對象</th><th class="r">實支</th><th class="c">檢視</th>
+    </tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+</div>
+
+<div class="note">
+  <b>會計科目那一欄變成純文字</b>（原本是一個下拉，可以在列上直接改）。要改科目就進抽屜按「編輯」。<br>
+  <span class="sub">★ 原本那顆下拉還有一個毛病：它跟「整列可以點」疊在同一格上，所以程式裡得寫 <code>stopPropagation</code> 擋著。拿掉之後這一列只剩一種點法。</span>
+</div>
+
+<div class="note" style="border-color:#FCD34D;background:#FFFBEB">
+  <b>★ 這一版修掉一個我搞錯的地方。</b><br>
+  上一版我把實支預設成等於應支，理由是「這些請款單都出款了，錢付掉了」——
+  <b>付的是安幸，不是愛皮</b>。從愛皮的帳上看，愛皮一毛都還沒付。
+  <table style="width:100%;margin-top:8px;font-size:12.5px">
+    <tr><td style="padding:3px 0;width:11rem;color:#6b7280">請款單確認出款</td>
+        <td>愛皮記一筆<b>應支</b>（愛皮欠這筆）　＋　安幸記一筆<b>暫付</b>（安幸的應收）</td></tr>
+    <tr><td style="padding:3px 0;color:#6b7280">愛皮還錢給安幸</td>
+        <td>愛皮記一筆<b>實支</b>　＋　安幸的暫付<b>收回</b></td></tr>
+  </table>
+  所以現在：愛皮應支 13,209、<b>實支 0</b>、全部未付。
+</div>
+
+<div class="q">
+  <b>❷ 代墊那幾筆的「實支」，要怎麼記？</b>
+  <ul>
+    <li><b>從安幸那邊帶過來（建議）</b>　在「暫收付管理 → 暫付」按<b>收回</b>時，
+      愛皮這邊自動長出對應的實支。<br>
+      <span style="color:#6b7280">同一筆錢只有一個人寫。兩邊各記一次的話會不一致，
+      而且<b>不會有任何地方報錯</b>（README：一份資料存在兩個地方）。</span></li>
+    <li><b>這裡手動記</b>　簡單，但安幸的「收回」跟愛皮的「實支」是同一筆錢記兩次，
+      早晚對不起來。</li>
+  </ul>
+  <span style="font-size:12px;color:#6b7280">★ 愛皮自己付的錢（不是代墊的）一律手動記，兩種做法都一樣。</span>
+</div>
+
+<h2>抽屜裡面</h2>
+<div class="note">
+  三段：<b>這筆支出</b>（列表上精簡掉的欄位都在這）→ <b>看板</b>（應支／實支／差距）→ <b>實支明細</b>（一筆一列，可以再記一筆）。<br>看板挪到中間 —— 打開先看「這是什麼」，錢的事跟付款明細擺在一起。<br>
+  按鈕照契約與押金那一套：<b>一排裡只有一顆實心</b>，而且實心那顆是「打開這一筆的內容」（編輯）；<b>刪除是底下一行紅色小字</b>，不跟「取消／儲存」排在一起。
+</div>
+
+<div class="note">
+  <b>應支只在「跟實支不一樣」時才印</b>（2026-09-18 你在稿子上劃掉了付清那一列的應支）。<br>
+  付清的列乾淨、只有一個數字；沒付清的那一行自己跳出來（琥珀色）——
+  <b>那一行存在的唯一理由就是要被看見</b>，每一列都印的話眼睛會開始略過它。<br>
+  統計卡的副標同理，只留 <code>應支 13,209</code>：未付＝應支減掉它正上方那個實支，不用再寫一次。
+</div>
+
+<div class="q">
+  <b>❸「對象」那一欄現在十列有十列是「—」，要收進抽屜嗎？</b>
+  <ul>
+    <li><b>收進去（建議）</b>　讓出寬度給「檢視」。要看對象就開抽屜。</li>
+    <li><b>留著</b>　維持現狀。</li>
+  </ul>
+  <span class="sub">★ 上面的稿子先照「留著」畫，這樣你比得出差別。</span>
+</div>
+
+<h2>這次不會動到的</h2>
+<div class="note">
+  儀錶板分頁、收入那一側、安幸的支出明細頁、請款單控管 —— 一行都不動。<br>
+  <b>資料不用改</b>：這些支出都是<b>已經出款的請款單</b>產生的，所以實支預設就等於應支（付款日＝出款日）。
+  這個月的 13,209 <b>不會變</b>。<br>
+  <span class="sub">★ 只有「手動補登、還沒真的付錢」的支出才會出現差距 —— 而那正是這個功能要看見的東西。</span>
+</div>
+
+<!-- ══════ 抽屜 ══════ -->
+<div class="mask" id="mask"></div>
+<aside class="dw" id="dw">
+  <div class="dwh">
+    <div style="min-width:0">
+      <div class="dwt" id="dTitle"></div>
+      <div class="sub" id="dSub" style="margin-top:2px"></div>
+    </div>
+    <button class="x" id="dX">✕</button>
+  </div>
+  <div class="dwb">
+
+    <div class="sechd"><span>這筆支出</span><i></i></div>
+    <div style="margin-bottom:15px">
+      <div class="kv"><div class="k">日期</div><div class="v" id="dDate"></div></div>
+      <div class="kv"><div class="k">項目</div><div class="v" id="dName"></div></div>
+      <div class="kv"><div class="k">會計科目</div><div class="v" id="dCode"></div></div>
+      <div class="kv"><div class="k">對象</div><div class="v mut">—</div></div>
+      <div class="kv"><div class="k">備註</div><div class="v" id="dNote"></div></div>
+    </div>
+
+    <div class="sechd"><span>看板</span><i></i></div>
+    <div class="b3">
+      <div class="bx" style="background:rgba(236,232,223,.7)"><div class="l mut">應支</div><div class="v" id="dDue"></div></div>
+      <div class="bx" style="background:var(--greenlight)"><div class="l grn">實支</div><div class="v grn" id="dPaid"></div></div>
+      <div class="bx" id="dGapBox"><div class="l" id="dGapL">差距</div><div class="v" id="dGap"></div></div>
+    </div>
+
+    <div class="sechd"><span>實支明細</span><i></i><span class="sub" id="dCnt"></span></div>
+    <div class="box" style="border-radius:9px" id="dPays"></div>
+
+    <div style="margin-top:11px;border:1px solid var(--line);border-radius:9px;padding:11px">
+      <div class="sub" style="margin-bottom:7px">再記一筆實支</div>
+      <div class="grid2">
+        <label class="f"><span>付款日</span><input class="in" type="date" value="2026-09-18"></label>
+        <label class="f"><span>金額</span><input class="in" type="number" id="dAmt" style="text-align:right"></label>
+        <label class="f"><span>付費方式</span>
+          <select class="in" id="dM" onchange="acct()">
+            <option value="cash">現金</option><option value="transfer" selected>匯款</option>
+            <option value="credit_card">信用卡</option><option value="crypto">加密貨幣</option>
+          </select></label>
+        <label class="f" id="dAcctW"><span>帳號</span>
+          <select class="in"><option>(安幸)現金</option><option>永豐 ‧‧1234</option></select></label>
+      </div>
+      <div style="margin-top:9px"><button class="btn grn" style="width:100%">＋ 記一筆實支</button></div>
+    </div>
+
+    <div class="acts">
+      <button class="btn pri">編輯</button>
+    </div>
+    <div class="delrow">
+      <button>刪掉這筆支出（會移到回收桶，可以復原）</button>
+    </div>
+  </div>
+</aside>
+
+<script>
+const fm = (n) => n.toLocaleString('en-US');
+/*
+ * ★★★ 2026-09-18 使用者更正:「安幸代墊 / 愛皮實支是 0 / 請款單過來是愛皮應支」。
+ *
+ *   我上一版把實支預設成等於應支，理由是「這些請款單都出款了，錢付掉了」——
+ *   **付的是安幸，不是愛皮**。從愛皮的帳上看，愛皮一毛都還沒付。
+ *
+ *   請款單出款 → 愛皮的**應支**（愛皮欠這筆）＋ 安幸的暫付（安幸的應收）
+ *   愛皮還錢給安幸 → 這時才是愛皮的**實支**
+ *
+ * 欄位：日期・項目・科目・應支・實支・備註・是不是代墊
+ */
+const D = [
+  ['2026-09-09','115/7月健保費','保險費',1428,0,'',true],
+  ['2026-09-09','115/7月勞保費','辦公費',3102,0,'',true],
+  ['2026-09-08','旅平險(115/7/1-115/12/23)','保險費',261,0,'8/17-零用金撥補',true],
+  ['2026-09-08','115/7月電信費-0975792181(115/6/1-115/6/30)','辦公費',246,0,'8/10-零用金撥補',true],
+  ['2026-09-08','115/8月電信費-27785700(115/7/1-115/7/31)','辦公費',305,0,'8/10-零用金撥補',true],
+  ['2026-09-08','115/7月電信費-27785700(115/6/1-115/6/30)','辦公費',300,0,'8/10-零用金撥補',true],
+  ['2026-09-08','115/8月電信費-0975792181(115/7/1-115/7/31)','辦公費',217,0,'8/10-零用金撥補',true],
+  ['2026-09-07','115/7-8月管理服務費','辦公費',7350,0,'',true],
+];
+function draw(){
+  document.getElementById('rows').innerHTML = D.map((d,i) => {
+    const gap = d[3]-d[4];
+    /* ★ 應支那一行:全部顯示,或只在跟實支不一樣時顯示 */
+    const due = (gap !== 0)
+      ? '<div class="due'+(gap>0?' short':'')+'">應支 '+fm(d[3])
+        + (gap>0 ? '・未付 '+fm(gap) : '') + '</div>'
+      : '';
+    return '<tr><td class="mut">'+d[0]+'</td>'
+      + '<td><span class="pill p-e">支</span> '+d[1]
+      + (d[6]?' <span class="pill p-l">安幸代墊</span>':'')
+      + (d[5]?'<div class="sub">'+d[5]+'</div>':'') + '</td>'
+      + '<td>'+d[2]+'</td><td class="mut">—</td>'
+      /*
+       * ★ 不加負號（2026-09-18 使用者指定）。是支出這件事由左邊那顆
+       *   紅色的「支」籤與紅字講，數字本身就是金額。
+       *   ★★ 淨額那張卡**留著負號** —— 它是一個有正負的總和，
+       *     拿掉的話「淨額 13,209」看起來像賺了。
+       */
+      + '<td class="r"><div class="num red">'+(d[4]?fm(d[4]):'—')+'</div>'+due+'</td>'
+      + '<td class="c"><button class="view" data-i="'+i+'">檢視</button></td></tr>';
+  }).join('');
+  document.querySelectorAll('.view').forEach((b)=>b.addEventListener('click',()=>open(+b.dataset.i)));
+  const paid = D.reduce((n,d)=>n+d[4],0), duez = D.reduce((n,d)=>n+d[3],0);
+  document.querySelector('.cards .card:nth-child(2) .v').textContent = fm(paid);
+  /*
+   * ★ 副標只寫應支。原本還寫了「未付 X」——那是同一件事講兩次:
+   *   應支 13,209 減掉上面的 7,757 就是未付,而那兩個數字就在它正上方。
+   */
+  document.querySelector('.cards .card:nth-child(2) .s').textContent = '應支 '+fm(duez);
+  /* ★ 0 不要印成「−0」 */
+  document.querySelector('.cards .card:nth-child(3) .v').textContent = paid ? '−'+fm(paid) : '0';
+
+}
+draw();
+
+const mask=document.getElementById('mask'), dw=document.getElementById('dw');
+function acct(){document.getElementById('dAcctW').style.display =
+  document.getElementById('dM').value==='transfer'?'flex':'none';}
+function open(i){
+  const d=D[i], gap=d[3]-d[4];
+  document.getElementById('dTitle').textContent=d[1];
+  document.getElementById('dSub').textContent='愛皮・'+d[0]+'・'+d[2];
+  document.getElementById('dDue').textContent='$'+fm(d[3]);
+  document.getElementById('dPaid').textContent='$'+fm(d[4]);
+  const gb=document.getElementById('dGapBox');
+  gb.style.background = gap>0?'#FEF2F2':'var(--greenlight)';
+  document.getElementById('dGapL').className='l '+(gap>0?'red':'grn');
+  document.getElementById('dGapL').textContent = gap>0?'差距':'已付清';
+  /* ★ 付清時印「✓」不是「$0」—— 一個標著「已付清」的 $0 讀起來是矛盾的 */
+  const g=document.getElementById('dGap');
+  g.textContent = gap>0 ? '$'+fm(gap) : '✓';
+  g.className='v '+(gap>0?'red':'grn');
+  document.getElementById('dDate').textContent=d[0];
+  document.getElementById('dName').textContent=d[1];
+  document.getElementById('dCode').textContent=d[2];
+  document.getElementById('dNote').innerHTML=d[5]||'<span class="mut">—</span>';
+  document.getElementById('dCnt').textContent='1 筆';
+  /*
+   * ★★★ 這一筆是**確認出款時自動記的**，不是人打的。
+   *   原本標一個「請款單帶進來的」的籤 —— 使用者 2026-09-18 直接問
+   *   「什麼是請款單帶過來？」。看不懂的標籤等於沒有標籤。
+   *
+   * ★★ 而且**不給刪**:刪掉之後這筆支出會變成「未付」，
+   *   而錢早就付掉了。跟 other-book.ts 的 `fromRequest`
+   *   （請款單產生的支出金額鎖住）同一條規則 ——
+   *   同一筆錢不可以在兩張表上是兩個值。
+   *
+   * ★ 鎖住要**說得出為什麼**（anxing-ui 二-6）。
+   */
+  /*
+   * ★★★ 代墊的那幾筆:實支要等**愛皮還錢給安幸**那天才會有。
+   *   這裡不能只寫「還沒有付款紀錄」—— 看的人會以為是漏記了。
+   */
+  document.getElementById('dPays').innerHTML = d[4]
+    ? ('<div class="rowline"><div style="flex:1"><div style="font-weight:600" class="num">$'+fm(d[4])+'</div>'
+      + '<div class="sub">'+d[0]+'・現金（(安幸)現金）</div></div>'
+      + '<button class="del">刪掉</button></div>')
+    : ('<div style="padding:11px 12px">'
+      + '<div class="sub" style="font-size:12.5px;color:#4b5563">還沒有付款紀錄。</div>'
+      + (d[6] ? '<div class="sub" style="color:#b45309;margin-top:4px">'
+        + '這筆是<b>安幸代墊</b> —— 錢是安幸付的，愛皮還沒還。'
+        + '愛皮還錢給安幸那天，這裡才會出現實支。</div>' : '')
+      + '</div>');
+  document.getElementById('dAmt').value = gap>0?gap:'';
+  acct();
+  mask.classList.add('on'); dw.classList.add('on');
+}
+document.querySelectorAll('.view').forEach((b)=>b.addEventListener('click',()=>open(+b.dataset.i)));
+function close(){mask.classList.remove('on');dw.classList.remove('on');}
+mask.addEventListener('click',close);
+document.getElementById('dX').addEventListener('click',close);
+</script>
+</div>
+</body>
+</html>

@@ -8,18 +8,21 @@ import NoticeTab from '../attendance/notice-tab';
 import type { Role } from '../attendance/types';
 import SecretsTab from './secrets-tab';
 import EventsTab from './events-tab';
+import FormsTab from './forms-tab';
 
 /**
- * 佈告欄（2026-09-17 使用者指定）。
+ * 佈告欄（2026-09-17 使用者指定，2026-09-18 多一格）。
  *
  * 「做一個佈告欄，包含三格 tab —— 通知（把新訊息移進來）、帳密、活動」
+ * 「加一個 表單下載 / 可上傳 共用公司文件 之後的人 可以下載使用」（09-18）
  *
  * ══════════════════════════════════════════════════════════
- * 【三格】
+ * 【四格】
  *
- *   通知　公告（留得住、置頂得了、看得到誰讀過）＋ 新訊息（推播的同一批）
- *   帳密　真的存帳號密碼。房務以外看得到
- *   活動　開會與團聚合成一條列表，用標籤分。開會底下掛得了資料
+ *   通知　　公告（留得住、置頂得了、看得到誰讀過）＋ 新訊息（推播的同一批）
+ *   活動　　開會與團聚合成一條列表，用標籤分。開會底下掛得了資料
+ *   表單下載　共用的公司文件。**全公司下載得到**，三種角色改得了
+ *   帳密　　真的存帳號密碼。房務以外看得到
  *
  * ★ 「通知設定」使用者說先不放進去（2026-09-17）——
  *   它還留在「設定」頁。那一頁現在只剩通知設定與紀錄兩格。
@@ -54,10 +57,26 @@ import EventsTab from './events-tab';
  * 使用者看到的是「通知點了什麼都沒有」。
  */
 
+/*
+ * ══════════════════════════════════════════════════════════
+ * 【順序（2026-09-18 使用者指定）】
+ *
+ *   通知 → 活動 → 表單下載 → 帳密
+ *
+ * ★ 帳密**移到最後**（使用者:「帳密 後移」）——
+ *   它是最少點、最敏感的一格。
+ * ★★ 表單下載是新的一格:共用的公司文件（請假單、報帳單那種）。
+ *   全公司都下載得到（含房務），只有總經理・會計・主管上傳得了。
+ *
+ * ★★★ `key` 是網址上的 `?tab=`，**改了會讓舊連結失效**
+ *   （推播的深連結走 `?tab=news`）。這次只動順序，key 一個都沒改。
+ * ══════════════════════════════════════════════════════════
+ */
 const TABS = [
   { key: 'news', label: '通知', icon: '📬' },
-  { key: 'secrets', label: '帳密', icon: '🔑' },
   { key: 'events', label: '活動', icon: '🗓' },
+  { key: 'forms', label: '表單下載', icon: '📄' },
+  { key: 'secrets', label: '帳密', icon: '🔑' },
 ] as const;
 type TabKey = (typeof TABS)[number]['key'];
 
@@ -134,8 +153,9 @@ function BoardInner() {
           <NewsTab />
         </div>
       )}
-      {tab === 'secrets' && <SecretsTab role={me.role} meId={me.id} onMsg={onMsg} />}
       {tab === 'events' && <EventsTab meId={me.id} isAdmin={isAdmin} onMsg={onMsg} />}
+      {tab === 'forms' && <FormsTab role={me.role} meId={me.id} onMsg={onMsg} />}
+      {tab === 'secrets' && <SecretsTab role={me.role} meId={me.id} onMsg={onMsg} />}
     </div>
   );
 }

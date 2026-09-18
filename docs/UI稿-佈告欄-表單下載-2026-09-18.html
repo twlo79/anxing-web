@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>UI 稿 — 佈告欄：表單下載</title>
+<style>
+  :root{--bg:#F1F0EC;--line:#E0DDD5;--ink:#2E3840;--slate:#41689B;--slatedark:#345380;
+        --bluelight:#DFEDFA;--greendark:#217346;--greenlight:#DFF2E8;--sand:#ECE8DF}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.6 -apple-system,"PingFang TC","Noto Sans TC",sans-serif;padding:20px 16px 80px}
+  .wrap{max-width:900px;margin:0 auto}
+  h1{font-size:20px;margin:0 0 4px}
+  h2{font-size:14px;margin:28px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line);color:#6b7280}
+  .lead{color:#6b7280;font-size:13px;margin:0 0 14px}
+
+  .app{background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:16px}
+  .tabs{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+  .tab{border:1px solid var(--line);background:#fff;border-radius:9px;padding:7px 15px;
+       font-size:15px;color:#6b7280;cursor:pointer;font-family:inherit}
+  .tab.on{font-weight:700;color:var(--ink);border-color:var(--slate);background:var(--bluelight)}
+  .tab.new{border-style:dashed;border-color:var(--greendark);color:var(--greendark)}
+
+  .bar{display:flex;gap:9px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+  .btn{background:var(--slate);color:#fff;border:none;border-radius:9px;padding:9px 16px;
+       font-size:15px;font-weight:500;font-family:inherit;cursor:pointer}
+  .srch{flex:1;background:#fff;border:1px solid var(--line);border-radius:9px;padding:9px 13px;
+        font-size:15px;font-family:inherit;color:var(--ink);min-width:150px}
+  .cnt{font-size:13px;color:#6b7280;white-space:nowrap}
+
+  .list{background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .row{display:flex;align-items:center;gap:12px;padding:13px 15px;border-top:1px solid rgba(224,221,213,.6)}
+  .row:first-child{border-top:none}
+  .row:hover{background:rgba(236,232,223,.4)}
+  .ic{width:34px;height:34px;border-radius:8px;flex:none;display:flex;align-items:center;
+      justify-content:center;font-size:12px;font-weight:700;color:#fff}
+  .ic.pdf{background:#DC2626}.ic.doc{background:#2563EB}
+  .nm{flex:1;min-width:0}
+  .nm b{font-size:17px;font-weight:500;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .nm span{font-size:13px;color:#9ca3af}
+  .dl{flex:none;border:1px solid var(--greendark);color:var(--greendark);background:#fff;
+      border-radius:9px;padding:7px 15px;font-size:14px;font-weight:500;cursor:pointer;font-family:inherit}
+  .ed{flex:none;font-size:13px;color:var(--slate);background:none;border:none;cursor:pointer;font-family:inherit}
+  .cat{flex:none;font-size:12px;border-radius:5px;padding:2px 8px;background:var(--bluelight);color:var(--slatedark)}
+
+  .note{font-size:12.5px;color:#4b5563;background:#fff;border:1px solid var(--line);
+        border-radius:11px;padding:11px 13px;margin-top:10px;line-height:1.75}
+  .q{font-size:13px;background:#FFFBEB;border:1px solid #FCD34D;border-radius:11px;padding:12px 14px;margin-top:11px}
+  .q b{color:#92400E}
+  ul{margin:5px 0 0;padding-left:19px}li{margin:4px 0}
+  code{background:#F1F0EC;border-radius:4px;padding:1px 5px;font-size:12px}
+  table{width:100%;border-collapse:collapse;font-size:13px;background:#fff;
+        border:1px solid var(--line);border-radius:11px;overflow:hidden;margin-top:8px}
+  th,td{padding:7px 11px;text-align:left;border-top:1px solid rgba(224,221,213,.6)}
+  thead th{background:rgba(236,232,223,.6);font-size:11px;color:#6b7280;border-top:none}
+  .ok{color:var(--greendark);font-weight:700}.no{color:#c9c9c9}
+
+  /* 上傳視窗 */
+  .mask{position:fixed;inset:0;background:rgba(0,0,0,.32);z-index:40;display:none}
+  .mask.on{display:block}
+  .dlg{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(430px,92vw);
+       background:#fff;border-radius:15px;box-shadow:0 12px 40px rgba(0,0,0,.2);z-index:41;display:none}
+  .dlg.on{display:block}
+  .dh{padding:14px 18px;border-bottom:1px solid var(--line);font-weight:700;font-size:16px;
+      display:flex;justify-content:space-between;align-items:center}
+  .db{padding:16px 18px;display:flex;flex-direction:column;gap:11px}
+  .df{display:flex;flex-direction:column;gap:4px}
+  .df>span{font-size:12px;color:#9ca3af}
+  .in{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size:15px;
+      font-family:inherit;color:var(--ink);width:100%}
+  .drop{border:1.5px dashed var(--line);border-radius:10px;padding:18px;text-align:center;
+        color:#9ca3af;font-size:14px;background:#FAFAF9}
+  .dfoot{padding:12px 18px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px}
+  .x{border:none;background:none;font-size:20px;color:#9ca3af;cursor:pointer}
+  .ghost{border:1px solid var(--line);background:#fff;border-radius:9px;padding:9px 16px;
+         font-size:15px;font-family:inherit;cursor:pointer}
+  .delrow{text-align:center;margin-top:4px}
+  .delrow button{font-size:12px;color:#f87171;text-decoration:underline;background:none;
+                 border:none;cursor:pointer;font-family:inherit}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>佈告欄：多一格「表單下載」＋ 帳密移到最後</h1>
+<p class="lead">
+  <b>分頁點得動、右上角可以切身分看差別、「上傳」按得開。</b>還沒動程式碼。底下有 2 個要你決定的地方。
+</p>
+
+<div style="display:flex;gap:8px;align-items:center;margin-bottom:11px;flex-wrap:wrap">
+  <b style="font-size:13px">用誰的身分看</b>
+  <button class="tab on" data-r="super_admin">總經理</button>
+  <button class="tab" data-r="accountant">會計</button>
+  <button class="tab" data-r="manager">主管</button>
+  <button class="tab" data-r="housekeeper">管家</button>
+  <button class="tab" data-r="cleaner">房務</button>
+</div>
+
+<div class="app">
+  <div class="tabs" id="tabs"></div>
+  <div class="bar">
+    <button class="btn" id="upBtn">＋ 上傳表單</button>
+    <input class="srch" placeholder="關鍵字找表單..." id="q">
+    <span class="cnt" id="cnt"></span>
+  </div>
+  <div class="list" id="rows"></div>
+  <div class="note" id="roleNote" style="margin-top:11px"></div>
+</div>
+
+<h2>誰可以做什麼</h2>
+<table>
+  <thead><tr><th>　</th><th>下載</th><th>上傳 / 換檔案 / 改名 / 刪除</th></tr></thead>
+  <tbody>
+    <tr><td>總經理　<code>super_admin</code></td><td class="ok">✓</td><td class="ok">✓</td></tr>
+    <tr><td>會計　　<code>accountant</code></td><td class="ok">✓</td><td class="ok">✓</td></tr>
+    <tr><td>主管　　<code>manager</code></td><td class="ok">✓</td><td class="ok">✓</td></tr>
+    <tr><td>管家　　<code>housekeeper</code></td><td class="ok">✓</td><td class="no">✕</td></tr>
+    <tr><td>房務　　<code>cleaner</code></td><td class="ok">✓</td><td class="no">✕</td></tr>
+  </tbody>
+</table>
+<div class="note">
+  <b>「其他人有權限可以下載」＝ 全公司都下載得到</b>（含房務）—— 那是這一格存在的意義：
+  請假單、報帳單這種表單本來就是發給大家填的。<br>
+  ★ 這跟<b>帳密</b>那一格不一樣（房務看不到）。兩格的規則不同，所以是兩支各自的 policy，不共用。<br>
+  ★★ 看得到但不能改的人，畫面上<b>不畫</b>「上傳／換檔案」那些鈕 —— 不是灰掉。
+  灰掉的鈕會讓人一直點然後問「為什麼我不能用」（跟權限管理頁同一個處理）。
+</div>
+
+<div class="q">
+  <b>❶ 分頁順序</b>
+  <ul>
+    <li><b>通知 → 活動 → 表單下載 → 帳密（建議）</b>　上面的稿子就是這樣。
+      帳密放最後 —— 它是最少點、最敏感的一格。</li>
+    <li><b>通知 → 活動 → 帳密 → 表單下載</b>　帳密只往後移一格。</li>
+  </ul>
+</div>
+
+<div class="q">
+  <b>❷ 要不要分類？</b>
+  <ul>
+    <li><b>要（建議）</b>　人事 / 財務 / 房務 / 其他。表單會越積越多，十份以後沒有分類就只能靠搜尋。
+      <span style="color:#6b7280">上面的稿子就是這樣。</span></li>
+    <li><b>不要</b>　一條平的清單，靠搜尋找。少一個欄位。</li>
+  </ul>
+</div>
+
+<h2>這次不會動到的</h2>
+<div class="note">
+  通知、活動、帳密三格的內容一行都不動 —— 只有<b>分頁的順序</b>會變。<br>
+  要一支 migration：新開一張 <code>board_forms</code>（檔名、說明、分類、檔案、誰上傳、什麼時候）
+  ＋ 一個 storage bucket ＋ RLS（全員讀、三種角色寫）。<br>
+  ★ Word 與 PDF 兩種都收，跟「活動」那格同一套（<code>.pdf .doc .docx</code>）。
+</div>
+
+<!-- 上傳視窗 -->
+<div class="mask" id="mask"></div>
+<div class="dlg" id="dlg">
+  <div class="dh">上傳表單<button class="x" id="dx">✕</button></div>
+  <div class="db">
+    <label class="df"><span>檔案（PDF 或 Word）</span>
+      <div class="drop">把檔案拖進來，或<b style="color:var(--slate)">選擇檔案</b><br>
+        <span style="font-size:12px">.pdf　.doc　.docx</span></div></label>
+    <label class="df"><span>表單名稱　<b style="color:#dc2626">*</b></span>
+      <input class="in" placeholder="請假單"></label>
+    <label class="df"><span>分類</span>
+      <select class="in"><option>人事</option><option>財務</option><option>房務</option><option>其他</option></select></label>
+    <label class="df"><span>說明（什麼時候要用、交給誰）</span>
+      <input class="in" placeholder="填完交給芊，人事單月底前送出"></label>
+  </div>
+  <div class="dfoot">
+    <button class="ghost" id="dc">取消</button>
+    <button class="btn">上傳</button>
+  </div>
+</div>
+
+<script>
+const F = [
+  ['請假單','人事','pdf','填完交給芊，人事單月底前送出','芊','09/12','182 KB'],
+  ['加班申請單','人事','doc','主管簽完再交會計','David','09/10','64 KB'],
+  ['報帳單','財務','pdf','附發票正本','雪雪','08/28','240 KB'],
+  ['零用金請領單','財務','doc','單筆超過 2,000 要總經理簽','雪雪','08/28','58 KB'],
+  ['房務點交表','房務','pdf','退房當天填，拍照上傳','唐','08/15','310 KB'],
+  ['備品盤點表','房務','doc','每月最後一個工作天','唐','08/15','47 KB'],
+];
+const CAN_EDIT = ['super_admin','accountant','manager'];
+const LABEL = {super_admin:'總經理',accountant:'會計',manager:'主管',housekeeper:'管家',cleaner:'房務'};
+let role = 'super_admin';
+
+function tabs(){
+  document.getElementById('tabs').innerHTML =
+    ['💬 通知','📅 活動','📄 表單下載','🔑 帳密'].map((t,i) =>
+      '<div class="tab'+(i===2?' on new':'')+'">'+t+'</div>').join('');
+}
+function draw(){
+  const can = CAN_EDIT.includes(role);
+  const kw = (document.getElementById('q').value||'').trim().toLowerCase();
+  const hit = F.filter((f)=>!kw || (f[0]+f[1]+f[3]).toLowerCase().includes(kw));
+  document.getElementById('upBtn').style.display = can ? '' : 'none';
+  document.getElementById('cnt').textContent = '共 '+hit.length+' 份';
+  document.getElementById('rows').innerHTML = hit.length ? hit.map((f)=>
+    '<div class="row">'
+    + '<span class="ic '+(f[2]==='pdf'?'pdf':'doc')+'">'+(f[2]==='pdf'?'PDF':'DOC')+'</span>'
+    + '<span class="nm"><b>'+f[0]+'</b><span>'+f[3]+'</span>'
+    + '<span style="display:block">'+f[4]+' · '+f[5]+' · '+f[6]+'</span></span>'
+    + '<span class="cat">'+f[1]+'</span>'
+    + (can ? '<button class="ed">換檔案</button><button class="ed">編輯</button>' : '')
+    + '<button class="dl">下載</button>'
+    + '</div>').join('')
+    : '<div style="padding:34px;text-align:center;color:#9ca3af;font-size:15px">找不到符合的</div>';
+  document.getElementById('roleNote').innerHTML = can
+    ? '你現在是 <b>'+LABEL[role]+'</b> —— 上傳、換檔案、編輯、刪除都做得到。'
+    : '你現在是 <b>'+LABEL[role]+'</b> —— <b>只有下載</b>。上傳與換檔案那些鈕<b>整顆不出現</b>，不是灰掉。';
+}
+document.querySelectorAll('[data-r]').forEach((b)=>b.addEventListener('click',()=>{
+  role=b.dataset.r;
+  document.querySelectorAll('[data-r]').forEach((x)=>x.classList.toggle('on',x===b));
+  draw();
+}));
+document.getElementById('q').addEventListener('input',draw);
+const mask=document.getElementById('mask'),dlg=document.getElementById('dlg');
+const openD=()=>{mask.classList.add('on');dlg.classList.add('on');};
+const closeD=()=>{mask.classList.remove('on');dlg.classList.remove('on');};
+document.getElementById('upBtn').addEventListener('click',openD);
+mask.addEventListener('click',closeD);
+document.getElementById('dx').addEventListener('click',closeD);
+document.getElementById('dc').addEventListener('click',closeD);
+tabs();draw();
+</script>
+</div>
+</body>
+</html>

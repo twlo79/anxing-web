@@ -661,3 +661,93 @@ export function secretHref(url: string | null | undefined): string {
   if (!u) return '';
   return /^https?:\/\//i.test(u) ? u : `https://${u}`;
 }
+
+/* ══════════════════════════════════════════════════════════
+ * 表單下載（2026-09-18 使用者:「加一個 表單下載 / 可上傳 共用公司文件」）
+ * ══════════════════════════════════════════════════════════
+ *
+ * 【★★★ 這一格的規則跟「帳密」不一樣，所以是另一份名單】
+ *
+ *   帳密　　看：房務以外（SECRET_ROLES）　　　改：同上
+ *   表單　　看：**全公司，含房務**　　　　　改：總經理・會計・主管
+ *
+ * ★ 請假單、報帳單這種本來就是發給大家填的 —— 房務看不到的話沒有意義。
+ * ★★ 規則不同就**不要共用一支函式**。共用的話，哪天改其中一格
+ *   會連帶改掉另一格，而那件事不會有人發現（README:同一條規則在三個地方各寫一次）。
+ *
+ * ★★★ 資料庫那一份是 migration_273 的 `board_form_edit_roles()`，
+ *   **那一份說了算**。這裡這一份只是先畫個大概，免得畫面閃一下 ——
+ *   被改掉也沒有用，policy 還是會擋。
+ */
+
+/** 可以上傳／換檔案／改名／刪除的角色 —— **白名單**。 */
+export const FORM_EDIT_ROLES = ['accountant', 'manager', 'super_admin'] as const;
+
+export function canEditForms(role: unknown): boolean {
+  return typeof role === 'string' && (FORM_EDIT_ROLES as readonly string[]).includes(role);
+}
+
+/**
+ * 分類（2026-09-18 使用者選的）。
+ *
+ * ★ 跟 migration_273 的 `board_forms_cat_chk` 是同一份 ——
+ *   這裡多一個而資料庫沒有的話，存檔會撞 check 約束，
+ *   而使用者看到的是一句看不懂的 SQL 訊息。
+ */
+export const FORM_CATS = ['人事', '財務', '房務', '其他'] as const;
+export type FormCat = (typeof FORM_CATS)[number];
+
+export const FORM_CAT_ICON: Record<string, string> = {
+  人事: '🧑', 財務: '💰', 房務: '🛎️', 其他: '📄',
+};
+
+export const formIcon = (cat: string | null | undefined) =>
+  FORM_CAT_ICON[(cat ?? '').trim()] ?? '📄';
+
+/** 認不得的分類一律當「其他」—— 回 null 的話那一筆會排到一個找不到的位置。 */
+export function parseFormCat(raw: unknown): FormCat {
+  return (FORM_CATS as readonly string[]).includes(raw as string) ? (raw as FormCat) : '其他';
+}
+
+export type FormRow = {
+  id: string; title: string;
+  category?: string | null; note?: string | null;
+  file_name?: string | null; file_path?: string | null;
+};
+
+/**
+ * 照分類排，同類照名稱。
+ *
+ * ★ 名稱用 `localeCompare('zh-Hant')` —— 直接比 `<` 的話中文是按
+ *   UTF-16 碼位排的，看起來像亂序。
+ * ★★ 不就地排序（那個陣列是 React 的 state）。
+ */
+export function sortForms<T extends { title: string; category?: string | null }>(
+  rows: T[] | null | undefined,
+): T[] {
+  return [...(rows ?? [])].sort((a, b) => {
+    const d = (FORM_CATS as readonly string[]).indexOf(parseFormCat(a.category))
+            - (FORM_CATS as readonly string[]).indexOf(parseFormCat(b.category));
+    if (d !== 0) return d;
+    return (a.title ?? '').localeCompare(b.title ?? '', 'zh-Hant');
+  });
+}
+
+/** 關鍵字：名稱、分類、說明、檔名都找。 */
+export function matchForm(r: FormRow | null | undefined, kw: string | null | undefined): boolean {
+  const k = (kw ?? '').trim().toLowerCase();
+  if (!k) return true;
+  if (!r) return false;
+  return [r.title, r.category, r.note, r.file_name]
+    .map((v) => (v ?? '').toLowerCase())
+    .some((v) => v.includes(k));
+}
+
+/**
+ * 沒有檔案的那幾筆。
+ *
+ * ★★★ 一份「表單下載」而沒有檔案，畫面上是一顆按了沒反應的下載鈕 ——
+ *   而使用者的結論會是「系統壞了」。要看得出來、而且說得出為什麼。
+ */
+export const formHasFile = (r: FormRow | null | undefined) =>
+  !!(r?.file_path ?? '').trim();

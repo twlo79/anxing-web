@@ -555,3 +555,107 @@ test('secretHref：沒填就回空字串（呼叫端靠它決定畫不畫連結�
   assert.equal(secretHref(null), '');
   assert.equal(secretHref(undefined), '');
 });
+
+/* ══════════════════════════════════════════════════════════
+ * 表單下載（2026-09-18）
+ * ══════════════════════════════════════════════════════════ */
+
+import {
+  FORM_EDIT_ROLES, canEditForms, FORM_CATS, parseFormCat, formIcon,
+  sortForms, matchForm, formHasFile,
+} from './board.ts';
+
+test('★★★ 上傳／換檔案只有總經理・會計・主管（使用者 2026-09-18）', () => {
+  assert.equal(canEditForms('super_admin'), true);
+  assert.equal(canEditForms('accountant'), true);
+  assert.equal(canEditForms('manager'), true);
+  assert.equal(canEditForms('housekeeper'), false);
+  assert.equal(canEditForms('cleaner'), false);
+  assert.equal(FORM_EDIT_ROLES.length, 3);
+});
+
+test('★★ 是白名單 —— 沒見過的角色預設不能改', () => {
+  assert.equal(canEditForms('intern'), false);
+  assert.equal(canEditForms('SUPER_ADMIN'), false);
+  assert.equal(canEditForms(null), false);
+  assert.equal(canEditForms(undefined), false);
+  assert.equal(canEditForms({ role: 'super_admin' }), false);
+});
+
+/*
+ * ★★★ 表單跟帳密**不是同一份名單**，這一條在防「有人為了少寫一行而共用」。
+ *   共用的話改其中一格會連帶改掉另一格，而那件事不會有人發現。
+ */
+test('★★★ 表單的名單跟帳密的名單不一樣 —— 管家看得到帳密，但不能改表單', () => {
+  assert.equal(canSeeSecrets('housekeeper'), true);
+  assert.equal(canEditForms('housekeeper'), false);
+  assert.notDeepEqual([...FORM_EDIT_ROLES], [...SECRET_ROLES]);
+});
+
+test('★★ 房務看不到帳密，但表單他要看得到（下載不受這份名單限制）', () => {
+  assert.equal(canSeeSecrets('cleaner'), false);
+  // 「能不能改」是 false，但「能不能看」這一頁不設限 —— 由 RLS 的 select policy 放行
+  assert.equal(canEditForms('cleaner'), false);
+});
+
+test('四個分類，認不得的當「其他」', () => {
+  assert.deepEqual([...FORM_CATS], ['人事', '財務', '房務', '其他']);
+  assert.equal(parseFormCat('人事'), '人事');
+  assert.equal(parseFormCat('亂打的'), '其他');
+  assert.equal(parseFormCat(null), '其他');
+  assert.equal(parseFormCat(''), '其他');
+});
+
+test('formIcon：四類各一個，不重複', () => {
+  const icons = FORM_CATS.map((c) => formIcon(c));
+  assert.equal(new Set(icons).size, FORM_CATS.length);
+  assert.equal(formIcon('亂打的'), '📄');
+});
+
+test('★★ sortForms：照分類排，同類照名稱', () => {
+  const out = sortForms([
+    { title: '備品盤點表', category: '房務' },
+    { title: '報帳單', category: '財務' },
+    { title: '請假單', category: '人事' },
+    { title: '加班申請單', category: '人事' },
+    { title: '雜項', category: '亂打的' },
+  ]).map((r) => r.title);
+  // 人事（加班・請假）→ 財務 → 房務 → 其他（亂打的歸這裡）
+  assert.deepEqual(out, ['加班申請單', '請假單', '報帳單', '備品盤點表', '雜項']);
+});
+
+test('sortForms 不改到傳進來的陣列', () => {
+  const src = [{ title: 'B', category: '財務' }, { title: 'A', category: '人事' }];
+  sortForms(src);
+  assert.deepEqual(src.map((r) => r.title), ['B', 'A']);
+});
+
+test('sortForms：空的／null 回空陣列', () => {
+  assert.deepEqual(sortForms([]), []);
+  assert.deepEqual(sortForms(null), []);
+  assert.deepEqual(sortForms(undefined), []);
+});
+
+test('matchForm：名稱、分類、說明、檔名都找得到', () => {
+  const r = { id: '1', title: '請假單', category: '人事',
+              note: '填完交給芊', file_name: 'leave-form.pdf' };
+  assert.equal(matchForm(r, '請假'), true);
+  assert.equal(matchForm(r, '人事'), true);
+  assert.equal(matchForm(r, '芊'), true);
+  assert.equal(matchForm(r, 'LEAVE'), true);
+  assert.equal(matchForm(r, '報帳'), false);
+  assert.equal(matchForm(r, ''), true);
+  assert.equal(matchForm(null, 'x'), false);
+});
+
+/*
+ * ★★★ 一份「表單下載」而沒有檔案，畫面上是一顆按了沒反應的下載鈕 ——
+ *   使用者的結論會是「系統壞了」。
+ */
+test('★★★ formHasFile：沒有檔案要看得出來', () => {
+  assert.equal(formHasFile({ id: '1', title: 'x', file_path: 'forms/a.pdf' }), true);
+  assert.equal(formHasFile({ id: '1', title: 'x', file_path: '' }), false);
+  assert.equal(formHasFile({ id: '1', title: 'x', file_path: '   ' }), false);
+  assert.equal(formHasFile({ id: '1', title: 'x' }), false);
+  assert.equal(formHasFile(null), false);
+});
