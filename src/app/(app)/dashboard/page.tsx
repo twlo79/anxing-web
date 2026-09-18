@@ -3,6 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DASH_TABS, parseTab, pillsApply, whyPillsOff,
   sourcePills, applyPill, togglePill, perf,
+  COMBO_MODES, parseComboMode, effectiveComboMode, monthsBetween,
+  comboRow, occSegments, moneyTop, MONEY_TICKS, axisLabels,
+  type ComboMode, type ComboRow,
 } from '@/lib/dash';
 import { createClient } from '@/lib/supabase';
 import { useProfile } from '@/lib/profile';
@@ -35,7 +38,8 @@ import RangeInput from '@/components/RangeInput';
  *   同一間房會在儀錶板與房源狀態顯示不同的結果。
  */
 import {
-  occupancyByRoom, occupancyByEstate, totalOccupancy, fmtPct, occTone, type RoomOcc,
+  occupancyByRoom, occupancyByEstate, totalOccupancy, occupancyByMonth, isPartialMonth,
+  fmtPct, occTone, type RoomOcc,
 } from '@/lib/occupancy';
 import { dropContractOrders, type Stay } from '@/lib/room-calendar';
 
@@ -262,6 +266,12 @@ export default function DashboardPage() {
    * `null` ＝ 沒篩。★ 再點一下就是清除，不用另外做一顆「全部」。
    */
   const [srcPill, setSrcPill] = useState<string | null>(null);
+
+  /*
+   * 「營收與住房率」那張圖要畫哪一種。
+   * `null` ＝ 使用者還沒按過 —— 這時由區間長度決定（`effectiveComboMode`）。
+   */
+  const [comboPick, setComboPick] = useState<ComboMode | null>(null);
 
   const [exOneoff, setExOneoff] = useState(false);
   const [exNonOp, setExNonOp] = useState(false);
@@ -591,11 +601,20 @@ export default function DashboardPage() {
     .map((p) => ({ name: p.name, estate: p.estate_id ? (estateName[p.estate_id] ?? null) : null })),
   [properties, estF, propF, estateName]);
 
-  const occList = useMemo<RoomOcc[]>(() => {
+  /*
+   * ★ 抽出來是因為「按月」那張圖也要用同一份。
+   *   兩邊各自 group 一次的話，遲早會有一邊漏掉某種佔用，
+   *   而症狀是「整體 70%、十二個月加起來卻不是 70%」。
+   */
+  const occByRoom = useMemo(() => {
     const by: Record<string, Stay[]> = {};
     occStays.forEach((s) => { (by[s.room] ??= []).push(s); });
-    return occupancyByRoom(occRooms, by, { from: fromD, to: toD });
-  }, [occStays, occRooms, fromD, toD]);
+    return by;
+  }, [occStays]);
+
+  const occList = useMemo<RoomOcc[]>(
+    () => occupancyByRoom(occRooms, occByRoom, { from: fromD, to: toD }),
+    [occByRoom, occRooms, fromD, toD]);
 
   const occAll = useMemo(() => totalOccupancy(occList), [occList]);
 
@@ -869,6 +888,68 @@ export default function DashboardPage() {
       // 本期金額大的排前面 —— 佔比大的物業動一點,對總數的影響就比小的動很多還大
       .sort((a, b) => b.cur - a.cur);
   }, [cmp, revByEstate, estates]);
+
+  /*
+   * ══════════════════════════════════════════════════════════
+   * 營收與住房率　合成一張圖
+   *
+   * 【使用者 2026-09-18】
+   *   「可以看各物業 營收趨勢 然後 住房率 畫一起
+   *     營收畫長條圖 住房率畫折線圖　可以合在一起」
+   *   「沒有營收與住房率呀　然後這不是 MECE 可以合併的」
+   *
+   * ★★★ 合併掉的是兩塊:原本的「住房率」與「各物業營收」。
+   *   同一個住房率印在兩個地方、同一組物業營收畫兩次 ——
+   *   兩塊並排而內容重疊，看的人要自己比對哪個數字對哪個。
+   *
+   * ★★ x 軸的月份**從區間長出來不是從資料長出來**（`monthsBetween`）——
+   *   照資料長的話，沒有營收的月份會從軸上消失，
+   *   而那個月的住房率可能很高（長租客那個月沒有認列），
+   *   於是折線把不相鄰的兩個月接起來，看起來一路平穩。
+   *
+   * ★ 長條**跟著膠囊變**（用 `pRevs`），折線不跟 ——
+   *   住房率算的是房間有沒有人住，跟錢從哪個通路來的無關。
+   *   這件事畫面上要寫出來，不然看的人會以為折線壞了。
+   * ══════════════════════════════════════════════════════════
+   */
+  const comboMonths = useMemo(() => monthsBetween(fromD, toD), [fromD, toD]);
+  const comboMode = effectiveComboMode(comboPick, comboMonths.length);
+
+  const occMonths = useMemo(
+    () => occupancyByMonth(occRooms, occByRoom, comboMonths, { from: fromD, to: toD }),
+    [occRooms, occByRoom, comboMonths, fromD, toD]);
+
+  const comboTime = useMemo<ComboRow[]>(() => {
+    const rev: Record<string, number> = {};
+    pRevs.forEach((r) => { rev[r.ym] = (rev[r.ym] ?? 0) + Number(r.month_amount || 0); });
+    /* ★★★ 最後一個月通常還沒過完 —— 那根長條只有半個月的錢，
+       看起來像營收暴跌。標出來（畫面把它畫淡並在下面寫一句）。 */
+    return occMonths.map((o) => comboRow(
+      o.m, ymMonth(o.m), rev[o.m] ?? 0, o, isPartialMonth(o.m, { from: fromD, to: toD })));
+  }, [pRevs, occMonths, fromD, toD]);
+
+  const comboEstate = useMemo<ComboRow[]>(() => {
+    const rev = groupSum(pRevs, (r) => estKey(r.estate_id, r.property_id),
+      (r) => Number(r.month_amount || 0));
+    /* 住房率那邊的 key 是**物業名稱**（`occupancyByEstate` 就是這樣分的），
+       營收這邊的 key 是 id —— 兩邊靠名字對起來。沒設物業的兩邊都收在 `''`。 */
+    const byName: Record<string, { rate: number; days: number; used: number; rooms: number }> = {};
+    occByEst.forEach((o) => { byName[o.estate] = o; });
+    const seen = new Set<string>();
+    const rows = rev.map(([k, v]) => {
+      const label = k.startsWith('(') ? k : (estateName[k] ?? propName[k] ?? k);
+      const name = k.startsWith('(') ? '' : label;
+      seen.add(name);
+      return comboRow(k, k.startsWith('(') ? '未指定物業' : label, v, byName[name]);
+    });
+    /* ★★ 有房間、但這段期間一毛錢都沒有的物業也要列 ——
+       那正是最該被看到的一棟，而只看營收的話它會整根消失。 */
+    occByEst.forEach((o) => {
+      if (seen.has(o.estate)) return;
+      rows.push(comboRow(o.estate || '(未指定物業)', o.estate || '未指定物業', 0, o));
+    });
+    return rows;
+  }, [pRevs, occByEst, estKey, estateName, propName]);
   /*
    * ★★★ 「訂單數分布」也改成跟依來源同一套（2026-08-29 使用者:「都算阿」）。
    *
@@ -1360,98 +1441,98 @@ export default function DashboardPage() {
         </Panel>
       )}
 
-      {/* ═══ 住房率（分頁:營收分析）═══
-        ★ 2026-09-18 使用者指定全站改叫「住房率」（原本叫住房率）。 */}
+      {/*
+        ══════════════════════════════════════════════════════
+        營收與住房率（2026-09-18 合併，使用者過審）
+        ══════════════════════════════════════════════════════
+        ★★★ 這一塊吃掉了原本的「住房率」與「各物業營收」兩塊 ——
+          使用者:「這不是 MECE 可以合併的」。
+          同一個住房率印在兩個地方、同一組物業營收畫兩次。
+        ★★ 長條是錢（左軸）、折線是住房率（右軸，**固定 0~100%**）。
+          右軸會跟著資料縮放的話，58% 到 62% 看起來像暴漲 ——
+          那是最容易誤導人的一種圖。
+      */}
       {tab === 'revenue' && (
-      <Panel title="住房率"
-        hint="各物業在這段期間裡被住掉幾成 —— 入住天數 ÷（房間數 × 期間天數），逐日計算，重疊的訂單只算一次">
+      <Panel title="營收與住房率"
+        hint="長條＝營收（左軸）・折線＝住房率（右軸，固定 0~100%）">
         {occErr && (
           <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-            ⚠ {occErr}　—— 下面的住房率會<b>偏低</b>，先不要拿它做決定。
+            ⚠ {occErr}　—— 折線的住房率會<b>偏低</b>，先不要拿它做決定。
           </div>
         )}
+
+        {/* 模式切換。★ 兩顆而已，用分段按鈕不用下拉 —— 下拉要點兩次 */}
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <div className="flex gap-1">
+            {COMBO_MODES.map((m) => (
+              <button key={m.key} type="button"
+                onClick={() => setComboPick(parseComboMode(m.key))}
+                className={`h-8 px-3 rounded-lg border text-sm transition-colors ${
+                  comboMode === m.key
+                    ? 'bg-mor-slate border-mor-slate text-white font-semibold'
+                    : 'bg-white border-mor-line text-mor-ink hover:bg-mor-bg'}`}>
+                {m.label}
+              </button>
+            ))}
+          </div>
+          {/* ★ 折線不跟膠囊走 —— 講出來，不然看的人會以為它壞了 */}
+          {pillOn && (
+            <span className="text-[11px] text-gray-400">
+              長條只看{srcLabel(pillOn)}・折線不分來源
+            </span>
+          )}
+          {/*
+            ★★ 選了單一物業之後「各物業比較」只剩一根 ——
+              那看起來像圖壞了，而它只是被篩剩一棟。
+              **講出來並且給一顆清掉的鈕**，不要只是顯示一根。
+          */}
+          {comboMode === 'estate' && (estF || propF) && comboEstate.length <= 1 && (
+            <span className="text-[11px] text-amber-700">
+              只剩一棟　
+              <button type="button" onClick={() => { setEstF(''); setPropF(''); }}
+                className="underline hover:text-amber-900">清掉物業篩選</button>
+              　才比較得出來
+            </span>
+          )}
+        </div>
+
         {occLoading ? (
           <p className="py-8 text-center text-sm text-gray-400">計算中…</p>
-        ) : !occList.length ? (
-          <p className="py-8 text-center text-sm text-gray-400">
-            這個篩選條件下沒有房源。（停用的、沒勾「排房表」的房源不算）
-          </p>
+        ) : (comboMode === 'time' ? comboTime : comboEstate).length === 0 ? (
+          <Empty />
         ) : (
-          <>
-            {/*
-              整體。★★★ 是「總住宿天數 ÷ 總可住天數」，不是各物業住房率的平均 ——
-              兩者在房數天數一樣時剛好相等，所以很容易寫錯（算式在 lib，有測試）。
-            */}
-            <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 mb-4
-                            rounded-lg bg-mor-sand/40 px-4 py-3">
-              <span className="text-xs text-gray-500">整體</span>
-              <span className={`text-2xl font-bold tabular-nums ${OCC_CLS[occTone(occAll.rate)]}`}>
-                {fmtPct(occAll.rate)}
-              </span>
-              <span className="text-xs text-gray-500 tabular-nums">
-                {occAll.rooms} 間房 × {occAll.rooms ? occAll.days / occAll.rooms : 0} 天
-                ＝ 可住 {nf(occAll.days)} 天
-              </span>
-              <span className="text-xs text-gray-500 tabular-nums">
-                住了 <b className="text-mor-ink">{nf(occAll.used)}</b> 天・
-                空著 <b className="text-mor-ink">{nf(occAll.free)}</b> 天
-              </span>
-            </div>
-
-            {/* 各物業。★ 排序照側邊選單的物業順序，不是按住房率也不是筆劃 */}
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm min-w-[460px]">
-                <thead>
-                  <tr className="text-left text-xs text-gray-500 border-b border-mor-line">
-                    <th className="py-2 pr-3">物業</th>
-                    <th className="py-2 pr-3 text-right whitespace-nowrap">間數</th>
-                    <th className="py-2 pr-3">住房率</th>
-                    <th className="py-2 pr-3 w-1/2">　</th>
-                    <th className="py-2 pr-3 text-right whitespace-nowrap">住 / 可住</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {occByEst.map((o) => (
-                    <tr key={o.estate || '(none)'} className="border-b border-mor-line/50 last:border-0">
-                      {/*
-                        ★ 沒設物業的房源收在一起，寫「未指定物業」而不是留白 ——
-                          留白看起來像資料壞了，而它其實是「有幾間房漏填物業」，
-                          那是一件該去補的事。
-                      */}
-                      <td className="py-2 pr-3 whitespace-nowrap font-medium">
-                        {o.estate || <span className="text-amber-700">未指定物業</span>}
-                      </td>
-                      <td className="py-2 pr-3 text-right text-xs text-gray-500 tabular-nums">
-                        {o.rooms}
-                      </td>
-                      <td className={`py-2 pr-3 tabular-nums font-semibold whitespace-nowrap ${
-                        OCC_CLS[occTone(o.rate)]}`}>
-                        {fmtPct(o.rate)}
-                      </td>
-                      <td className="py-2 pr-3">
-                        <div className="h-2.5 rounded-sm bg-gray-100">
-                          <div className="h-2.5 rounded-sm"
-                            style={{ width: `${o.rate * 100}%`, background: OCC_BAR[occTone(o.rate)] }} />
-                        </div>
-                      </td>
-                      <td className="py-2 pr-3 text-right text-xs text-gray-500 tabular-nums whitespace-nowrap">
-                        {nf(o.used)} / {nf(o.days)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <p className="mt-3 text-[11px] text-gray-400 leading-relaxed">
-              ★ 一棟的住房率＝<b>那棟所有房間的入住天數總和 ÷（那棟幾間房 × 期間天數）</b>，
-              不是各房住房率的平均。<br />
-              ★ 訂單的退房日那天<b>不算</b>住（最後一晚是前一天），契約的租期迄那天<b>算</b>。
-              兩種來源的邊界不一樣，這是最容易差一格的地方 —— 跟房源狀態走同一份算式。<br />
-              ★ 停用的房源、以及沒勾「排房表」的房源不列入分母。
-            </p>
-          </>
+          <RevOccChart rows={comboMode === 'time' ? comboTime : comboEstate} />
         )}
+
+        {/*
+          整體那一行。★★ 這裡**不再印一次住房率的百分比** ——
+            它已經在上面「營收表現」那一排了（使用者:這不是 MECE）。
+            這一行回答的是另一個問題:那個百分比的分母是怎麼來的。
+        */}
+        {!occLoading && occList.length > 0 && (
+          <div className="mt-3 flex flex-wrap items-baseline gap-x-5 gap-y-1
+                          rounded-lg bg-mor-sand/40 px-4 py-2.5 text-xs text-gray-500 tabular-nums">
+            <span>{occAll.rooms} 間房 × {occAll.rooms ? occAll.days / occAll.rooms : 0} 天
+              ＝ 可住 {nf(occAll.days)} 天</span>
+            <span>住了 <b className="text-mor-ink">{nf(occAll.used)}</b> 天・
+              空著 <b className="text-mor-ink">{nf(occAll.free)}</b> 天</span>
+          </div>
+        )}
+        {!occLoading && occList.length === 0 && (
+          <p className="mt-3 text-center text-sm text-gray-400">
+            這個篩選條件下沒有房源，所以沒有折線。（停用的、沒勾「排房表」的房源不算）
+          </p>
+        )}
+
+        <p className="mt-3 text-[11px] text-gray-400 leading-relaxed">
+          ★ 一棟的住房率＝<b>那棟所有房間的入住天數總和 ÷（那棟幾間房 × 期間天數）</b>，
+          不是各房住房率的平均。逐日計算，重疊的訂單只算一次。<br />
+          ★ 訂單的退房日那天<b>不算</b>住（最後一晚是前一天），契約的租期迄那天<b>算</b>。
+          兩種來源的邊界不一樣，這是最容易差一格的地方 —— 跟房源狀態走同一份算式。<br />
+          ★ 折線<b>斷掉</b>的那一格代表那裡沒有房源可以算，不是住房率 0%。<br />
+          ★ 長條<b>淡掉</b>的那一格是還沒過完的月份 —— 它只有半個月的錢，
+          跟前面幾格比會偏矮，那不是衰退。住房率沒有這個問題（分母也跟著只算到今天）。
+        </p>
       </Panel>
       )}
 
@@ -1481,14 +1562,11 @@ export default function DashboardPage() {
       </div>
       )}
 
-      {/* ═══ 各物業營收（分頁:營收分析）═══ */}
-      {tab === 'revenue' && (
-        <Panel title="各物業營收">
-          <BarList rows={revByEstate.map(([k, v], i) => ({
-            label: nameOf(k), value: v, color: PALETTE[i % PALETTE.length],
-          }))} fmt={money} />
-        </Panel>
-      )}
+      {/* ═══ 各物業營收 ═══
+        ★★★ 2026-09-18 拿掉 —— 併進上面的「營收與住房率 → 各物業比較」。
+          原本它跟「住房率」是兩塊並排，同一組物業各畫一次
+          （使用者:「這不是 MECE 可以合併的」）。
+          `revByEstate` 本身沒拿掉，財報比較那一頁的「各物業損益」還在用。 */}
 
       {/* ═══ 各物業支出（分頁:支出分析）═══ */}
       {tab === 'expense' && (
@@ -1713,9 +1791,9 @@ export default function DashboardPage() {
 const OCC_CLS: Record<string, string> = {
   high: 'text-mor-greendark', mid: 'text-mor-slate', low: 'text-[#B3423C]',
 };
-const OCC_BAR: Record<string, string> = {
-  high: '#3FAE7C', mid: '#41689B', low: '#C0563F',
-};
+/* ★ OCC_BAR（住房率長條的三段顏色）2026-09-18 拿掉 —— 那張橫條表併進合圖了，
+   而合圖的折線是單一深墨色（不借用任何一個既有的語意色）。留著一個沒人用的
+   顏色表，下一個人會以為某處還在用它。 */
 
 const KPI_TONE = {
   good: { text: '#3FAE7C', bg: '#3FAE7C0D', border: '#3FAE7C33' },
@@ -1808,6 +1886,165 @@ function BarList({ rows, fmt }: { rows: { label: string; value: number; color: s
  * 解法是讓座標系跟著實際寬度走：**1 個 SVG 單位 = 1 個 CSS px**，
  * 縮放比例永遠是 1，什麼都不會變形。也不必猜斷點。
  */
+/**
+ * 營收（長條，左軸）＋ 住房率（折線，右軸）。
+ *
+ * ══════════════════════════════════════════════════════════
+ * 【★★★ 兩條軸不能共用一個刻度】
+ *
+ * 營收是幾百萬、住房率是 0~100 —— 擠在同一個刻度上的話，
+ * 住房率會變成貼著底線的一條直線，等於沒畫。
+ * 所以**左軸是錢、右軸是百分比**。
+ *
+ * 【★★ 右軸固定 0~100%，不隨資料縮放】
+ *
+ * 會縮放的話，58% 到 62% 看起來像暴漲。
+ * 一張把 4% 畫成兩倍高的圖，比不畫還糟。
+ *
+ * 【★★★ 折線遇到沒有資料就斷開】
+ *
+ * `occSegments()` 把有值的格子切成好幾段（`lib/dash.ts`，有測試）。
+ * 直接把有值的點連起來的話，中間那幾格會被讀成「平滑地降下來」，
+ * 而那幾格根本沒有房源可以算。
+ * ══════════════════════════════════════════════════════════
+ */
+function RevOccChart({ rows }: { rows: ComboRow[] }) {
+  const [hover, setHover] = useState<number | null>(null);
+  const box = useRef<HTMLDivElement>(null);
+  const [W, setW] = useState(1000);
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    // 280 是下限 —— 再窄就不是手機而是量測還沒完成，用 0 去除會得到 Infinity
+    const ro = new ResizeObserver(([e]) => setW(Math.max(280, Math.round(e.contentRect.width))));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const H = 300, T = 12, B = 34;
+  /*
+   * ★★★ 這兩個數字是**量出來的**，不是抓的:
+   *   「1000 萬」41.1px ＋ 8px 間距 → 左邊至少 50；
+   *   「100%」30px ＋ 7px → 右邊至少 37。
+   *   2026-09-18 第一版寫 44／30，手機上左軸印成「.000 萬」、
+   *   右軸印成「100」—— 兩邊都被切掉，而 tsc 跟測試都不會叫。
+   */
+  const L = 54, R = 38;
+  const ih = H - T - B, iw = Math.max(W - L - R, 40);
+
+  const top = moneyTop(Math.max(...rows.map((r) => r.rev), 0));
+  const step = iw / rows.length;
+  const barW = Math.max(Math.min(step * 0.56, 46), 2);
+  const cx = (i: number) => L + step * i + step / 2;
+  const yRev = (v: number) => T + ih - (Math.max(v, 0) / top) * ih;
+  const yOcc = (rate: number) => T + ih - Math.min(Math.max(rate, 0), 1) * ih;
+
+  /*
+   * x 軸怎麼印（`axisLabels`，有測試）:物業截短、月份隔一個印一個。
+   * ★ 手機上十二個月一格只有 ~20px，而「12月」就 25px 寬。
+   */
+  const { labels: xLabels, stride } = axisLabels(rows, step);
+  const segs = occSegments(rows);
+  const anyPartial = rows.some((r) => r.partial);
+  /* ★ 底下那一格印「0」不是「0 萬」—— 零就是零，多兩個字只是雜訊 */
+  const axisMoney = (v: number) =>
+    (v === 0 ? '0' : top >= 10000 ? `${Math.round(v / 10000)} 萬` : nf(Math.round(v)));
+
+  return (
+    <div ref={box} className="relative">
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} style={{ display: 'block' }}>
+        {/* 格線 ＋ 左軸（錢）＋ 右軸（%）。四等分之後每一格都是好讀的數字（moneyTop） */}
+        {Array.from({ length: MONEY_TICKS + 1 }, (_, g) => {
+          const y = T + ih - (ih * g) / MONEY_TICKS;
+          return (
+            <g key={g}>
+              <line x1={L} x2={W - R} y1={y} y2={y} stroke="#EFEEE9" strokeWidth="1" />
+              <text x={L - 8} y={y + 4} textAnchor="end" fontSize="10.5" fill="#b6bcc4">
+                {axisMoney((top * g) / MONEY_TICKS)}</text>
+              <text x={W - R + 7} y={y + 4} fontSize="10.5" fill="#9aa3ac">
+                {(g * 100) / MONEY_TICKS}%</text>
+            </g>
+          );
+        })}
+
+        {/* 長條 */}
+        {rows.map((r, i) => (
+          /* ★ 還沒過完的月份畫淡 —— 它天生就比別人矮，實心的話看起來像衰退 */
+          <rect key={`b${r.key}`} x={cx(i) - barW / 2} y={yRev(r.rev)}
+            width={barW} height={Math.max(T + ih - yRev(r.rev), 0)} rx="3"
+            fill="#41689B" fillOpacity={r.partial ? 0.42 : 1} />
+        ))}
+
+        {/* 折線。★ 一段一條 polyline —— 中間斷掉的地方不連 */}
+        {segs.map((seg) => (
+          <polyline key={`l${seg[0]}`} fill="none" stroke="#2E3840" strokeWidth="2.5"
+            strokeLinejoin="round" strokeLinecap="round"
+            points={seg.map((i) => `${cx(i)},${yOcc(rows[i].occ!.rate)}`).join(' ')} />
+        ))}
+        {rows.map((r, i) => (r.occ ? (
+          <circle key={`c${r.key}`} cx={cx(i)} cy={yOcc(r.occ.rate)} r={hover === i ? 5 : 3.5}
+            fill="#fff" stroke="#2E3840" strokeWidth="2.5" />
+        ) : null))}
+
+        {/* x 軸文字 */}
+        {rows.map((r, i) => (
+          (i % stride === 0 || hover === i) && (
+            <text key={`t${r.key}`} x={cx(i)} y={H - 10} textAnchor="middle"
+              fontSize="11" fill={hover === i ? '#2E3840' : '#8b929a'}>
+              {xLabels[i]}
+            </text>
+          )
+        ))}
+
+        {/*
+          感應區畫在最後（蓋在上面）而且是**整欄**不只長條 ——
+          長條矮的時候點不到，而矮的那幾格正是要看的。
+          手機沒有滑鼠，所以 onTouchStart 一定要有。
+        */}
+        {rows.map((r, i) => (
+          <rect key={`h${r.key}`} x={L + step * i} y={T} width={step} height={ih}
+            fill={hover === i ? '#2E3840' : 'transparent'} fillOpacity={hover === i ? 0.04 : 0}
+            onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}
+            onTouchStart={() => setHover(i)} />
+        ))}
+      </svg>
+
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-xs">
+        <Legend color="#41689B" label="營收（左軸）" />
+        <Legend color="#2E3840" label="住房率（右軸）" line />
+        {anyPartial && (
+          <span className="text-[11px] text-amber-700">淡色的那一格是還沒過完的月份</span>
+        )}
+        <span className="w-full sm:w-auto sm:ml-auto text-gray-500 tabular-nums">
+          {hover != null && rows[hover] ? (
+            <>
+              {/* ★ 分隔的全形空白要寫成 {'　'} —— 直接打在行尾的話，
+                  JSX 會把「含換行的空白」整段吃掉，兩段字就黏在一起
+                  （2026-09-18 在無頭瀏覽器裡看到「…4,889,954（這個月還沒過完）住房率」）。 */}
+              <b className="text-mor-ink">{rows[hover].label}</b>{'　'}營收 {money(rows[hover].rev)}
+              {rows[hover].partial && <span className="text-amber-700">（這個月還沒過完）</span>}
+              {'　'}
+              {rows[hover].occ ? (
+                <>
+                  住房率 <span className={`font-semibold ${OCC_CLS[occTone(rows[hover].occ!.rate)]}`}>
+                    {fmtPct(rows[hover].occ!.rate)}</span>
+                  <span className="text-gray-400">
+                    （住 {nf(rows[hover].occ!.used)} / 可住 {nf(rows[hover].occ!.days)} 天）</span>
+                </>
+              ) : <span className="text-gray-400">這一格沒有房源可以算住房率</span>}
+            </>
+          ) : (
+            <span className="text-gray-400">
+              <span className="sm:hidden">點一下看那一格的數字</span>
+              <span className="hidden sm:inline">滑過去看那一格的數字</span>
+            </span>
+          )}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function TrendChart({ data }: { data: { m: string; rev: number; exp: number; net: number }[] }) {
   const [hover, setHover] = useState<number | null>(null);
   const box = useRef<HTMLDivElement>(null);

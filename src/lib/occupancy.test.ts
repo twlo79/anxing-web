@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   usedDays, occupancyOf, occupancyByRoom, totalOccupancy, occupancyByEstate,
   fmtPct, occTone, OCC_HIGH, OCC_LOW,
+  clipToRange, occupancyByMonth,
 } from './occupancy.ts';
 import type { Stay } from './room-calendar.ts';
 
@@ -221,4 +222,80 @@ test('occTone 的分界點是 >=', () => {
   assert.equal(occTone(OCC_LOW - 0.0001), 'low');
   assert.equal(occTone(0), 'low');
   assert.equal(occTone(1), 'high');
+});
+
+/* ══════════════════════════════════════════════════════════
+ * clipToRange ／ occupancyByMonth（2026-09-18 合圖）
+ * ══════════════════════════════════════════════════════════ */
+
+test('整個月都在區間裡 → 夾出整個月', () => {
+  assert.deepEqual(clipToRange('2026-09', { from: '2026-08-01', to: '2026-10-31' }),
+    { from: '2026-09-01', to: '2026-09-30' });
+});
+
+test('★★★ 區間在月中就截斷 —— 不然分母會用整個月，住房率無聲變低', () => {
+  assert.deepEqual(clipToRange('2026-09', { from: '2026-09-01', to: '2026-09-18' }),
+    { from: '2026-09-01', to: '2026-09-18' });
+  assert.deepEqual(clipToRange('2026-09', { from: '2026-09-10', to: '2026-10-31' }),
+    { from: '2026-09-10', to: '2026-09-30' });
+});
+
+test('剛好只有一天交集也算交集', () => {
+  assert.deepEqual(clipToRange('2026-09', { from: '2026-09-30', to: '2026-12-31' }),
+    { from: '2026-09-30', to: '2026-09-30' });
+});
+
+test('完全沒有交集 → null', () => {
+  assert.equal(clipToRange('2026-09', { from: '2026-10-01', to: '2026-10-31' }), null);
+  assert.equal(clipToRange('2026-09', { from: '2026-07-01', to: '2026-08-31' }), null);
+});
+
+test('二月的天數照月份走（不是固定 30）', () => {
+  assert.deepEqual(clipToRange('2026-02', { from: '2026-01-01', to: '2026-12-31' }),
+    { from: '2026-02-01', to: '2026-02-28' });
+});
+
+const ROOMS2 = [{ name: 'A', estate: '甲' }, { name: 'B', estate: '甲' }];
+
+test('★★★ 十二格的入住天數加起來 ＝ 整體的入住天數', () => {
+  // 兩間房、跨三個月的契約一張，加一張九月的短租
+  const by = {
+    A: [contract('c1', 'A', '2026-07-15', '2026-09-20')],
+    B: [order('o1', 'B', '2026-09-01', '2026-09-11')],
+  };
+  const r = { from: '2026-07-01', to: '2026-09-30' };
+  const all = totalOccupancy(occupancyByRoom(ROOMS2, by, r));
+  const ms = occupancyByMonth(ROOMS2, by, ['2026-07', '2026-08', '2026-09'], r);
+  assert.equal(ms.reduce((s, m) => s + m.used, 0), all.used);
+  assert.equal(ms.reduce((s, m) => s + m.days, 0), all.days);
+});
+
+test('★★★ 不在區間裡的月份回 days 0 —— 折線要斷開，不是畫成 0%', () => {
+  const by = { A: [order('o1', 'A', '2026-09-01', '2026-09-11')] };
+  const ms = occupancyByMonth(ROOMS2, by, ['2026-05', '2026-09'],
+    { from: '2026-09-01', to: '2026-09-30' });
+  assert.equal(ms[0].days, 0);
+  assert.equal(ms[0].used, 0);
+  assert.equal(ms[1].days, 60);          // 2 間 × 30 天
+  assert.equal(ms[1].used, 10);
+});
+
+test('★★ 真的一天都沒住的月份 rate 是 0 而 days 不是 0 —— 那是事實不是沒資料', () => {
+  const ms = occupancyByMonth(ROOMS2, {}, ['2026-09'],
+    { from: '2026-09-01', to: '2026-09-30' });
+  assert.equal(ms[0].days, 60);
+  assert.equal(ms[0].rate, 0);
+});
+
+test('區間最後一個月被截斷時，分母跟著變小', () => {
+  const by = { A: [contract('c1', 'A', '2026-09-01', '2026-09-30')] };
+  const ms = occupancyByMonth([{ name: 'A', estate: null }], by, ['2026-09'],
+    { from: '2026-09-01', to: '2026-09-10' });
+  assert.equal(ms[0].days, 10);
+  assert.equal(ms[0].used, 10);
+  assert.equal(ms[0].rate, 1);           // 夾對了就是 100%，不是 33%
+});
+
+test('月份清單是空的 → 空陣列（不自己生月份）', () => {
+  assert.deepEqual(occupancyByMonth(ROOMS2, {}, [], { from: '2026-09-01', to: '2026-09-30' }), []);
 });

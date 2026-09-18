@@ -32,7 +32,7 @@
 
 import {
   type Range, type Stay, type Ymd,
-  eachDay, occupies, rangeDays, compareRoomName,
+  eachDay, occupies, rangeDays, compareRoomName, monthRange, daysInMonth,
 } from './room-calendar.ts';
 
 /** 一間房在一段期間裡的入住狀況 */
@@ -137,6 +137,74 @@ export function occupancyByEstate(list: readonly RoomOcc[]): (OccTotal & { estat
   return [...m.entries()]
     .map(([estate, rows]) => ({ estate, ...totalOccupancy(rows) }))
     .sort((a, b) => a.estate.localeCompare(b.estate));
+}
+
+/* ══════════════════════════════════════════════════════════
+ * 按月切（2026-09-18 使用者:「營收畫長條圖 住房率畫折線圖 可以合在一起」）
+ * ══════════════════════════════════════════════════════════ */
+
+/**
+ * 把一個月**夾進**篩選區間。完全沒有交集回 `null`。
+ *
+ * ★★★ 一定要夾。不夾的話，篩選「9/01 ~ 9/18」時九月那一格會拿
+ *   **整個九月 30 天**當分母，而分子只有 18 天有資料 ——
+ *   住房率無聲地少掉四成，畫面上就是折線在最後一格跳水，
+ *   而那看起來像「這個月生意突然變差」。
+ *
+ * ★★ 同理，第一個月也要夾（區間從月中開始的時候）。
+ *
+ * ★ 夾完之後那一格的分母跟整體那個數字是同一套算法 ——
+ *   十二格的入住天數加起來會等於整體的入住天數（有測試釘住）。
+ */
+export function clipToRange(ym: string, r: Range): Range | null {
+  const m = monthRange(ym);
+  const from = m.from > r.from ? m.from : r.from;
+  const to = m.to < r.to ? m.to : r.to;
+  return from > to ? null : { from, to };
+}
+
+/**
+ * 這個月**被夾過**嗎（＝不是完整的一個月）。
+ *
+ * ★★★ 為什麼要知道：區間的最後一個月幾乎一定是沒過完的。
+ *   九月只到 9/18 的話，那根長條只有十八天的營收 ——
+ *   畫出來就是一根明顯矮掉的柱子，看起來像**營收暴跌**，
+ *   而它只是月還沒過完。這是這張圖最會騙人的地方。
+ *
+ * ★ 住房率沒有這個問題（分母也跟著夾），所以只有長條要標。
+ */
+export function isPartialMonth(ym: string, r: Range): boolean {
+  const cl = clipToRange(ym, r);
+  if (!cl) return false;                        // 根本不在範圍裡 —— 那是「沒有」不是「不完整」
+  return rangeDays(cl) < daysInMonth(ym);
+}
+
+/** 一個月的合計。`m` 是 `2026-09` 這種。 */
+export type MonthOcc = OccTotal & { m: string };
+
+/**
+ * 每個月各算一次。
+ *
+ * ★★★ 跟區間**沒有交集**的月份回 `days: 0`（不是 rate 0）——
+ *   兩者在畫面上差很多：`days = 0` 是「這個月不在看的範圍裡」，
+ *   要讓折線**斷開**；`rate = 0` 是「這個月一天都沒住」，
+ *   那是一個真的、很糟的事實，要畫在底線上。
+ *   混成同一個值的話，一條斷掉的線會被讀成「全空」。
+ *
+ * ★★ 月份清單由呼叫端給（通常跟營收那張圖同一組）——
+ *   這支不自己生月份，不然兩張圖的 x 軸會各長一套而且一定會分岔。
+ */
+export function occupancyByMonth(
+  rooms: readonly { name: string; estate: string | null }[],
+  byRoom: Readonly<Record<string, readonly Stay[]>>,
+  months: readonly string[],
+  r: Range,
+): MonthOcc[] {
+  return (months ?? []).map((m) => {
+    const cl = clipToRange(m, r);
+    if (!cl) return { m, rooms: rooms.length, days: 0, used: 0, free: 0, rate: 0 };
+    return { m, ...totalOccupancy(occupancyByRoom(rooms, byRoom, cl)) };
+  });
 }
 
 /* ────────────────────────────────────────────────────────── */
