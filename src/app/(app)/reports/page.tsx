@@ -32,7 +32,7 @@ import { fmtSize, fileTooBig } from '@/lib/board';
 import {
   REPORT_KINDS, parseKind, periodText, options401, defaultStartFor,
   monthToStart, startToMonth, validateReport, suggestTitle, reportTitle,
-  sortReports, yearOf, matchReport, fileLine,
+  sortReports, yearOf, matchReport, fileLine, metaLine,
   reportFileKind, FILE_BADGE, reportFileName, REPORT_ACCEPT,
   type Report,
 } from '@/lib/report';
@@ -359,18 +359,26 @@ export default function ReportsPage() {
                     ★★ 「（沒填上傳日）」那句拿掉了 —— 上傳日現在自動帶，
                       沒有「忘了填」這回事，印出來只是噪音。
                   */}
-                  {(per && per !== reportTitle(r)) || r.note ? (
-                    <span className="block text-uisub text-gray-500 truncate">
-                      {per && per !== reportTitle(r) ? per : ''}
-                      {per && per !== reportTitle(r) && r.note ? '　·　' : ''}
-                      {r.note ?? ''}
-                    </span>
-                  ) : null}
+                  {(() => {
+                    /*
+                      ★★★ 第二行講的是**這份報表本身**:哪一期、什麼時候送出去的、備註
+                        （2026-09-18 使用者:「申報 和 備註 資訊放一起」）。
+                        檔案的事（誰傳的、多大、什麼時候進來）在第三行。
+                      ★ 標題跟期別一樣時不重複寫（README:重複的數字不要寫第二次）。
+                    */
+                    const line = metaLine({
+                      period: per && per !== reportTitle(r) ? per : '',
+                      filedOn: r.filed_on,
+                      note: r.note,
+                    });
+                    return line
+                      ? <span className="block text-uisub text-gray-500 truncate">{line}</span>
+                      : null;
+                  })()}
                   {/*
-                    第三行:誰傳的・檔名・大小・上傳日・申報日。
-                    ★★ 兩個日期排在一起,各自帶著名字(「上傳 09/18」「申報 09/10」)——
-                      分到兩行的話看的人得自己在兩行之間比對,
-                      不帶名字的話「09/18・09/10」讀不出誰是誰。
+                    第三行:誰傳的・檔名・大小・上傳日。
+                    ★★ 申報日**不在這裡** —— 它跟期別、備註同一類,在上面那一行
+                      (2026-09-18 使用者:「申報 和 備註 資訊放一起」)。
                     ★ 排法在 `fileLine`（lib，有測試）—— 空的那幾段整段不見，
                       不是留一個講不出自己是什麼的「—」。
                   */}
@@ -380,7 +388,6 @@ export default function ReportsPage() {
                       fileName: r.file_name,
                       size: r.file_size ? fmtSize(r.file_size) : '',
                       uploadedOn: r.uploaded_on,
-                      filedOn: r.filed_on,
                     });
                     return line
                       ? <span className="block text-xs text-gray-400 truncate">{line}</span>
@@ -579,22 +586,26 @@ function ReportDialog({ draft, onChange, onClose, onSave }: {
             ★ 沒有紅星就是非必填,不用再寫一次「(非必填)」（anxing-ui 二-10）。
             ★★★ 手機上直接疊成兩排 —— 日期輸入框在窄螢幕上擠不進三分之一。
           */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <label className="flex flex-col gap-1">
-              <span className="text-uisub text-gray-500">申報日</span>
-              <input type="date" value={draft.filed_on ?? ''} className={CTRL}
-                onChange={(e) => onChange({ ...draft, filed_on: e.target.value })} />
-              {/* ★ 一句話講完,寫給不知道前因後果的人看 */}
-              <span className="text-xs text-gray-400">還沒申報就留空。</span>
-            </label>
+          {/*
+            ★★★ 申報日與備註**各自一行**（2026-09-18 使用者:「表單 備註分開一行」）。
+              並排時備註只剩三分之二寬,「留底數：30,748」這種就已經快滿了 ——
+              而備註本來就是會愈寫愈長的那一欄。
+            ★ 申報日是日期框,不需要整行寬,所以留在左邊三分之一。
+          */}
+          <label className="flex flex-col gap-1 md:w-1/3">
+            <span className="text-uisub text-gray-500">申報日</span>
+            <input type="date" value={draft.filed_on ?? ''} className={CTRL}
+              onChange={(e) => onChange({ ...draft, filed_on: e.target.value })} />
+            {/* ★ 一句話講完,寫給不知道前因後果的人看 */}
+            <span className="text-xs text-gray-400">還沒申報就留空。</span>
+          </label>
 
-            <label className="flex flex-col gap-1 md:col-span-2">
-              <span className="text-uisub text-gray-500">備註</span>
-              <input value={draft.note ?? ''} className={CTRL}
-                placeholder="留底數 30,748"
-                onChange={(e) => onChange({ ...draft, note: e.target.value })} />
-            </label>
-          </div>
+          <label className="flex flex-col gap-1">
+            <span className="text-uisub text-gray-500">備註</span>
+            <input value={draft.note ?? ''} className={CTRL}
+              placeholder="留底數 30,748"
+              onChange={(e) => onChange({ ...draft, note: e.target.value })} />
+          </label>
 
           <div className="text-xs text-gray-400 leading-relaxed">
             只有總經理、會計、主管看得到與上傳。

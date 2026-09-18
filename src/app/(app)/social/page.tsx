@@ -15,6 +15,10 @@ import {
   type Platform,
 } from '@/lib/social-fb';
 import FbWall, { Collage, FbPhotoWarnings, photosOf } from './fb-wall';
+import {
+  MAX_IG_PHOTOS, addPhotos, movePhoto, removePhoto,
+  whyCannotAdd, addMessage, stepPhoto, clampIndex, RESET_INDEX,
+} from '@/lib/social-carousel';
 
 /*
  * ══════════════════════════════════════════════════════════
@@ -302,6 +306,12 @@ export default function SocialPage() {
   const acc = accounts.find((a) => a.id === accId) ?? null;
   const selRow = rows.find((r) => r.id === sel) ?? null;
   const selCell = cells.find((c) => c.item.id === sel && c.slice === 0) ?? null;
+  /*
+   * 這一則有幾張照片 —— 鍵盤 ← → 要知道到頭了沒。
+   * ★ 走 `photosOf()`（全站唯一一份）。切圖只有一張原圖。
+   */
+  const shotCount = selRow && selRow.kind === 'post' && selRow.posts[0]
+    ? photosOf(selRow.posts[0]).length : 1;
 
   /* ── FB 那一半 ───────────────────────────────────── */
   const isFb = plat === 'fb';
@@ -342,25 +352,20 @@ export default function SocialPage() {
   /* 每次換一則都回到「讀」—— 上一則停在編輯模式不該影響下一則 */
   useEffect(() => { setPmode('read'); }, [sel]);
 
-  /** 版面順序的 item id（一格一則，切圖算一則）—— 視窗裡的 ◀ ▶ 走這個 */
-  const walk = useMemo(() => {
-    /* ★ FB 是一則一則往下，沒有格子 —— 走的是牆上的順序 */
-    if (isFb) return fbPosts.map((p) => p.id);
-    const seen = new Set<string>();
-    const out: string[] = [];
-    cells.forEach((c) => {
-      if (!seen.has(c.item.id)) { seen.add(c.item.id); out.push(c.item.id); }
-    });
-    return out;
-  }, [cells, isFb, fbPosts]);
-  const goRel = useCallback((d: -1 | 1) => {
-    setSel((cur) => {
-      if (!cur) return cur;
-      const i = walk.indexOf(cur);
-      if (i < 0) return cur;
-      return walk[(i + d + walk.length) % walk.length];
-    });
-  }, [walk]);
+  /*
+   * ══════════════════════════════════════════════════════════
+   * 輪播:現在在看第幾張（2026-09-18）
+   * ══════════════════════════════════════════════════════════
+   *
+   * ★★★ 原本這裡是 `walk` ＋ `goRel`（視窗裡的上一則／下一則），
+   *   2026-09-18 **整組拿掉** —— 使用者:「換一則 要跳出來 —— 跳到九宮格」。
+   *   照片左右讓給了輪播，兩組箭頭不能疊在同一個位置。
+   *
+   * ★★ 換一則之後回到第 0 張。留在上一則的第 3 張的話，
+   *   下一則只有 1 張時畫面是空的 —— 而那看起來像「照片不見了」。
+   */
+  const [shot, setShot] = useState(RESET_INDEX);
+  useEffect(() => { setShot(RESET_INDEX); }, [sel]);
 
   /*
    * ★★ 鍵盤:Esc 關、左右換一則。
@@ -373,12 +378,21 @@ export default function SocialPage() {
       const typing = !!t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName);
       if (e.key === 'Escape') { setSel(null); return; }
       if (typing) return;
-      if (e.key === 'ArrowLeft') goRel(-1);
-      if (e.key === 'ArrowRight') goRel(1);
+      /*
+       * ★★★ ← → 是**換照片**，跟照片左右那兩顆做同一件事
+       *   （2026-09-18 使用者選了「甲 左右改成換照片」）。
+       *
+       *   鍵盤跟按鈕做不同的事，是最難查的那種 bug ——
+       *   畫面上沒有任何地方說得出差別，而使用者會以為系統時好時壞。
+       *
+       * ★ 換一則沒有快捷鍵了:Esc 回九宮格，再點下一則。
+       */
+      if (e.key === 'ArrowLeft') setShot((i) => stepPhoto(i, -1, shotCount));
+      if (e.key === 'ArrowRight') setShot((i) => stepPhoto(i, 1, shotCount));
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [sel, goRel]);
+  }, [sel, shotCount]);
 
   /* ── 寫 ───────────────────────────────────────────── */
 
@@ -934,27 +948,70 @@ export default function SocialPage() {
                     : <div className="w-full aspect-[4/5] flex items-center justify-center
                                       text-white/45 text-sm">還沒有照片</div>;
                 }
-                const src = selRow.kind === 'split'
-                  ? selRow.split?.source_path : selRow.posts[0]?.image_path;
-                const u = src ? urls[src] : null;
-                return u
-                  ? <img src={u} alt="" className="w-full aspect-[4/5] object-cover" />
-                  : <div className="w-full aspect-[4/5] flex items-center justify-center
-                                    text-white/45 text-sm">還沒有照片</div>;
+                /*
+                 * ★★★ 輪播（2026-09-18 使用者:「像 IG 一則貼文可以放多張滑過去」）。
+                 *   照片一律走 `photosOf()` —— `images` 有東西就用它，
+                 *   空的才退回 `image_path`（migration_283）。
+                 */
+                const shots = selRow.kind === 'split'
+                  ? (selRow.split?.source_path ? [selRow.split.source_path] : [])
+                  : (selRow.posts[0] ? photosOf(selRow.posts[0]) : []);
+                const at = clampIndex(shot, shots.length);
+                const u = shots[at] ? urls[shots[at]] : null;
+                if (!u) {
+                  return <div className="w-full aspect-[4/5] flex items-center justify-center
+                                         text-white/45 text-sm">還沒有照片</div>;
+                }
+                return <>
+                  <img src={u} alt="" className="w-full aspect-[4/5] object-cover" />
+                  {shots.length > 1 && <>
+                    {/*
+                      ★★★ 這一組是**換照片**，不是換一則
+                        （2026-09-18 使用者:「甲 左右改成換照片」）。
+                      ★ 到頭就停，而且**停住的那一顆整顆不出現**，不是灰掉 ——
+                        灰掉的鈕不會告訴人為什麼按不動（anxing-ui 二-6）。
+                        IG 本身也是到頭就停。
+                    */}
+                    {at > 0 && (
+                      <button onClick={() => setShot(stepPhoto(at, -1, shots.length))}
+                        title="上一張"
+                        className="absolute left-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full
+                                   bg-white/90 hover:bg-white text-mor-ink text-lg leading-none z-10">‹</button>
+                    )}
+                    {at < shots.length - 1 && (
+                      <button onClick={() => setShot(stepPhoto(at, 1, shots.length))}
+                        title="下一張"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full
+                                   bg-white/90 hover:bg-white text-mor-ink text-lg leading-none z-10">›</button>
+                    )}
+                    <span className="absolute right-2 top-2 rounded-full bg-black/60 text-white
+                                     text-[11px] px-2 py-0.5 z-10">{at + 1} / {shots.length}</span>
+                    <span className="absolute inset-x-0 bottom-2 flex justify-center gap-1 z-10">
+                      {shots.map((_, k) => (
+                        <button key={k} onClick={() => setShot(k)} title={`第 ${k + 1} 張`}
+                          className={`w-1.5 h-1.5 rounded-full ${
+                            k === at ? 'bg-white' : 'bg-white/45 hover:bg-white/70'}`} />
+                      ))}
+                    </span>
+                  </>}
+                </>;
               })()}
               {/*
                 ★ 上一則／下一則放在照片左右兩側（IG 也在那）。
                   ★★ 這不是排序 —— 排序的 ◀ ▶ 在右半「寫」那一面裡面。
                     兩組長得一樣但做的事不同，所以這一組用 ‹ ›、標題也寫清楚。
               */}
-              {walk.length > 1 && <>
-                <button onClick={() => goRel(-1)} title="上一則"
-                  className="absolute left-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full
-                             bg-white/90 hover:bg-white text-mor-ink text-lg leading-none">‹</button>
-                <button onClick={() => goRel(1)} title="下一則"
-                  className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full
-                             bg-white/90 hover:bg-white text-mor-ink text-lg leading-none">›</button>
-              </>}
+              {/*
+                ★★★ 這裡原本是「上一則／下一則」，2026-09-18 **整組拿掉**
+                  （使用者:「換一則 要跳出來 —— 跳到九宮格，之後再點下一則」）。
+
+                  照片左右現在是**換照片**。兩組長得一樣的箭頭疊在同一個位置，
+                  是手滑的來源 —— 而按錯的代價不一樣:換照片看一眼就知道，
+                  換一則會讓人以為自己剛剛改的那一則不見了。
+
+                ★ 換一則只剩一條路:Esc（或點外面）回九宮格，再點下一則。
+                  少一個控制項，但**不會有人搞錯自己按了什麼**。
+              */}
             </div>
 
             {/* ── 右:讀／寫 ── */}
@@ -1025,6 +1082,35 @@ export default function SocialPage() {
                   await patch(post, { images: [...photosOf(post), ...got] });
                 }}
                 onFbSet={async (post, paths) => { await patch(post, { images: paths }); }}
+                /*
+                 * ══════════════════════════════════════════════
+                 * IG 輪播（2026-09-18）
+                 * ══════════════════════════════════════════════
+                 * ★★★ 只寫 `images`。`image_path` 從 migration_283 起
+                 *   不再是真實來源 —— 兩邊都寫的話同一張圖存在兩個地方，
+                 *   改了一邊另一邊留在原地（migration_195 那條坑）。
+                 */
+                onIgSet={async (post, paths) => { await patch(post, { images: paths }); }}
+                onIgAdd={async (files, post) => {
+                  if (!files?.length) return;
+                  /*
+                   * ★★★ 一張一張傳完**再一次寫回去**。
+                   *   每傳一張就 patch 的話，第二次 patch 讀到的還是舊的
+                   *   `images`（state 還沒回來）—— 結果只留下最後一張。
+                   *   FB 那一支同一條坑，抄它的寫法。
+                   */
+                  const got: string[] = [];
+                  for (const f of Array.from(files)) {
+                    const path = await put(f);
+                    if (path) got.push(path);
+                  }
+                  if (!got.length) return;
+                  const r = addPhotos(photosOf(post), got);
+                  await patch(post, { images: r.next });
+                  /* ★ 超過上限時要講 —— 安靜吃掉的話他以為 12 張都在 */
+                  const msg = addMessage(r);
+                  if (msg) flash(msg);
+                }}
                 onPatch={patch} onPin={() => togglePin(selRow)} onDel={() => del(selRow)}
                 onNudge={(d) => nudge(selRow.id, d)}
                 onSlices={() => downloadSlices(selRow)}
@@ -1120,7 +1206,14 @@ function Cell({ cell, urls, clean, selected, onClick, draggable, onDragStart, on
 }) {
   const r = cell.item;
   const st = ST[r.status];
-  const path = r.kind === 'split' ? r.split?.source_path : r.posts[0]?.image_path;
+  /*
+   * ★★★ 照片一律走 `photosOf()`（全站唯一一份）——
+   *   `images` 有東西就用它、空的才退回 `image_path`（migration_283）。
+   *   這裡直接讀 `image_path` 的話，多圖那幾則會顯示舊的封面
+   *   而且沒有任何地方會叫（CLAUDE.md:一份資料存在兩個地方）。
+   */
+  const shots = r.kind === 'post' && r.posts[0] ? photosOf(r.posts[0]) : [];
+  const path = r.kind === 'split' ? r.split?.source_path : shots[0];
   const url = path ? urls[path] : null;
   const bg = r.kind === 'split' ? sliceBg(r.span, cell.slice) : null;
   return (
@@ -1141,6 +1234,23 @@ function Cell({ cell, urls, clean, selected, onClick, draggable, onDragStart, on
         </span>
       )}
 
+      {/*
+        ★★★ 多圖的疊圖記號。**放在 `!clean` 外面**是刻意的 ——
+          IG 真的會顯示它，所以「乾淨模式」（看起來像真的 IG）也要有。
+          虛線、序號、狀態籤那些是規劃用的，才藏。
+        ★ 不標的話九宮格上多圖與單圖長得一模一樣，
+          排版時看不出哪幾則其實有五張（2026-09-18 使用者:「要加」）。
+      */}
+      {shots.length > 1 && cell.slice === 0 && (
+        <span className="absolute right-1 top-1 w-[13px] h-[13px] pointer-events-none"
+              title={`${shots.length} 張`}>
+          <span className="absolute right-0 top-0 block w-[9px] h-[9px] rounded-[2px]
+                           border-[1.4px] border-white bg-black/20 drop-shadow" />
+          <span className="absolute right-[3px] top-[3px] block w-[9px] h-[9px] rounded-[2px]
+                           border-[1.4px] border-white bg-black/30 drop-shadow" />
+        </span>
+      )}
+
       {!clean && <>
         {/* 未發佈的畫虛線外框 —— 一眼分得出「這是計畫」還是「已經貼了」 */}
         {r.status !== 'published' && (
@@ -1152,8 +1262,10 @@ function Cell({ cell, urls, clean, selected, onClick, draggable, onDragStart, on
             {r.posts[0]?.planned_on ? `　${mdOf(r.posts[0].planned_on)}` : ''}
           </span>
         )}
+        {/* ★ 有疊圖記號時往下挪一點 —— 兩個東西疊在同一個角落會糊成一團 */}
         {r.pin > 0 && cell.slice === 0 && (
-          <span className="absolute right-1 top-1 text-[11px] drop-shadow">📌</span>
+          <span className={`absolute right-1 text-[11px] drop-shadow ${
+            shots.length > 1 ? 'top-[18px]' : 'top-1'}`}>📌</span>
         )}
         {/* 序號 ＝ 發佈順序。★ 釘選不會改它 —— 一個小號碼掛在左上角就是「舊貼文被釘上來」 */}
         <span className="absolute right-1 bottom-1 w-[17px] h-[17px] rounded-full
@@ -1170,7 +1282,8 @@ function Cell({ cell, urls, clean, selected, onClick, draggable, onDragStart, on
 /* ══════════════════════════════════════════════════════════ */
 
 function Panel({ row, seq, urls, savedAt, canEdit, cutting, isFb, pinCheck,
-  onPatch, onPin, onDel, onNudge, onSlices, onUpload, onFbAdd, onFbSet }: {
+  onPatch, onPin, onDel, onNudge, onSlices, onUpload, onFbAdd, onFbSet,
+  onIgSet, onIgAdd }: {
   row: Row; seq: number; urls: Record<string, string>;
   /** 剛存好的時間戳。0 ＝ 沒有剛存過 */
   savedAt: number;
@@ -1194,6 +1307,10 @@ function Panel({ row, seq, urls, savedAt, canEdit, cutting, isFb, pinCheck,
   onFbAdd: (files: FileList, post: Post) => void;
   /** FB：把照片換成這一串（刪除與換順序都走這支） */
   onFbSet: (post: Post, paths: string[]) => void;
+  /** IG 輪播：整批換掉這一則的照片（換順序、拿掉都走它） */
+  onIgSet: (post: Post, paths: string[]) => void;
+  /** IG 輪播：加幾張進去 */
+  onIgAdd: (files: FileList | null, post: Post) => void;
 }) {
   const file = useRef<HTMLInputElement>(null);
   const fbFile = useRef<HTMLInputElement>(null);
@@ -1201,8 +1318,16 @@ function Panel({ row, seq, urls, savedAt, canEdit, cutting, isFb, pinCheck,
   const pin = pinCheck;
   const fbPost = row.posts[0] ?? null;
   const fbPaths = fbPost ? photosOf(fbPost) : [];
-  const src = row.kind === 'split' ? row.split?.source_path : row.posts[0]?.image_path;
+  /*
+   * ★★★ IG 也是多張（2026-09-18）。照片一律走 `photosOf()` ——
+   *   `images` 有東西就用它、空的才退回 `image_path`（migration_283）。
+   * ★ 寫只寫 `images` —— `image_path` 從這一天起不再是真實來源。
+   */
+  const igPost = row.kind === 'post' ? (row.posts[0] ?? null) : null;
+  const igPaths = igPost ? photosOf(igPost) : [];
+  const src = row.kind === 'split' ? row.split?.source_path : igPaths[0];
   const url = src ? urls[src] : null;
+  const addBlocked = whyCannotAdd(igPaths);
   const { w, h } = sourceSize(row.span);
   const order = publishOrder(row.span, seq);
 
@@ -1354,25 +1479,18 @@ function Panel({ row, seq, urls, savedAt, canEdit, cutting, isFb, pinCheck,
         <div className="text-[11px] text-gray-500 mb-1">
           {row.kind === 'split' ? `原圖　建議 ${w} × ${h}` : `照片　建議 ${CELL_W} × ${CELL_H}`}
         </div>
+        {row.kind === 'split' ? (
         <div className="flex gap-3 items-start">
-          <div className={`shrink-0 rounded-lg overflow-hidden border border-mor-line bg-white relative ${
-            row.kind === 'split' ? 'w-[180px]' : 'w-24 aspect-[4/5]'}`}
-            style={row.kind === 'split' ? { aspectRatio: `${w} / ${h}` } : undefined}>
+          <div className="shrink-0 rounded-lg overflow-hidden border border-mor-line bg-white relative w-[180px]"
+            style={{ aspectRatio: `${w} / ${h}` }}>
             {url
               ? <img src={url} alt="" className="w-full h-full object-cover" />
               : <span className="absolute inset-0 flex items-center justify-center text-gray-300">無</span>}
-            {row.kind === 'post' && (
-              <span className="absolute left-0 right-0 top-1/2 -translate-y-1/2 aspect-square
-                               border border-dashed border-white/80 pointer-events-none" />
-            )}
           </div>
           <div className="text-[11px] text-gray-500 leading-relaxed">
-            {row.kind === 'split'
-              ? <>切成 {row.span} 張，每張 {CELL_W}×{CELL_H}。
-                  <b className="text-mor-ink block mt-1">格子之間那兩條白線是真的</b>
-                  IG 不會幫你留 —— 重要的字與人臉不要壓在接縫上。</>
-              : <>外框是九宮格的 <b>4:5</b>，中間虛線是 <b>1:1 安全區</b>。
-                  重點內容留在虛線裡 —— 這張圖在動態牆、搜尋頁還是可能被切成方的。</>}
+            切成 {row.span} 張，每張 {CELL_W}×{CELL_H}。
+            <b className="text-mor-ink block mt-1">格子之間那兩條白線是真的</b>
+            IG 不會幫你留 —— 重要的字與人臉不要壓在接縫上。
             {canEdit && !lock && (
               <div className="mt-2">
                 <input ref={file} type="file" accept="image/*" hidden
@@ -1385,6 +1503,89 @@ function Panel({ row, seq, urls, savedAt, canEdit, cutting, isFb, pinCheck,
             )}
           </div>
         </div>
+        ) : (
+        /*
+          ══════════════════════════════════════════════════════
+          IG 輪播：一排縮圖（2026-09-18 使用者選了「A 一排 76px 縮圖」）
+          ══════════════════════════════════════════════════════
+          ★ 跟 FB 拼貼那一區同一種做法 —— 兩邊學一次就好。
+          ★★ 差別是這裡的格子是 4:5（IG 九宮格的比例），FB 是正方形。
+        */
+        <div>
+          {igPaths.length > 0 && (
+            <div className="flex gap-2 flex-wrap items-start">
+              {igPaths.map((ph, i) => (
+                <div key={`${ph}/${i}`} className="w-[76px]">
+                  <div className="relative w-full aspect-[4/5] rounded-lg overflow-hidden
+                                  border border-mor-line bg-[#F3F1EC]">
+                    {urls[ph]
+                      ? <img src={urls[ph]} alt="" className="w-full h-full object-cover" />
+                      : <span className="absolute inset-0 bg-[#F3F1EC]" />}
+                    {/* 1:1 安全區 —— 每一張都要，不是只有封面 */}
+                    <span className="absolute left-0 right-0 top-1/2 -translate-y-1/2 aspect-square
+                                     border border-dashed border-white/80 pointer-events-none" />
+                    <span className="absolute left-0.5 top-0.5 rounded bg-black/55 text-white
+                                     text-[9px] font-bold px-1">{i + 1}</span>
+                    {/* ★★ 封面 ＝ 第一張 ＝ 九宮格上顯示的那一張。標出來，不然沒有人知道 */}
+                    {i === 0 && (
+                      <span className="absolute inset-x-0 bottom-0 bg-mor-slate/90 text-white
+                                       text-[9px] font-bold text-center leading-[14px]">封面</span>
+                    )}
+                  </div>
+                  {canEdit && !lock && igPost && (
+                    <div className="flex gap-[3px] justify-center mt-1">
+                      <button title="往前" disabled={i === 0}
+                        onClick={() => onIgSet(igPost, movePhoto(igPaths, i, -1))}
+                        className="h-[22px] px-1.5 rounded border border-mor-line bg-white
+                                   text-[11px] leading-none disabled:opacity-30">◀</button>
+                      <button title="往後" disabled={i === igPaths.length - 1}
+                        onClick={() => onIgSet(igPost, movePhoto(igPaths, i, 1))}
+                        className="h-[22px] px-1.5 rounded border border-mor-line bg-white
+                                   text-[11px] leading-none disabled:opacity-30">▶</button>
+                      <button title={i === 0 ? '拿掉封面 —— 第二張會遞補' : '拿掉這張'}
+                        onClick={() => onIgSet(igPost, removePhoto(igPaths, i))}
+                        className="h-[22px] px-1.5 rounded border border-red-200 bg-white
+                                   text-[11px] leading-none text-red-600">✕</button>
+                    </div>
+                  )}
+                </div>
+              ))}
+              {canEdit && !lock && igPost && (
+                <>
+                  <input ref={file} type="file" accept="image/*" hidden multiple
+                    onChange={(e) => { onIgAdd(e.target.files, igPost); e.target.value = ''; }} />
+                  {/* ★ 滿了就整顆不畫 —— 而底下那行字會說為什麼（anxing-ui 二-6） */}
+                  {!addBlocked && (
+                    <button onClick={() => file.current?.click()}
+                      className="w-[76px] aspect-[4/5] rounded-lg border border-dashed border-mor-line
+                                 bg-[#FAFAF9] text-[11px] text-gray-400 hover:border-mor-slate
+                                 hover:text-mor-slate">＋ 加照片</button>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {igPaths.length === 0 && canEdit && !lock && igPost && (
+            <div>
+              <input ref={file} type="file" accept="image/*" hidden multiple
+                onChange={(e) => { onIgAdd(e.target.files, igPost); e.target.value = ''; }} />
+              <button onClick={() => file.current?.click()}
+                className="h-7 rounded-lg border border-mor-line bg-white px-2.5 text-[11px]">
+                選照片（可以一次選好幾張）
+              </button>
+            </div>
+          )}
+
+          <p className="text-[11px] text-gray-500 mt-2 leading-relaxed">
+            外框是九宮格的 <b>4:5</b>，中間虛線是 <b>1:1 安全區</b>。
+            重點內容留在虛線裡 —— 這張圖在動態牆、搜尋頁還是可能被切成方的。
+            <br />
+            <b className="text-mor-ink">第一張是封面</b> —— 九宮格上顯示的就是它。◀ ▶ 換順序，✕ 拿掉。
+            {addBlocked && <b className="block text-amber-700 mt-1">{addBlocked}</b>}
+          </p>
+        </div>
+        )}
       </div>
       )}
 
