@@ -5,7 +5,7 @@ import {
   monthToStart, startToMonth, START_MONTHS_401,
   options401, default401, defaultMonthly, defaultStartFor,
   validateReport, suggestTitle, reportTitle, sortReports, yearOf,
-  matchReport, reportFileKind, extOf, FILE_BADGE, fileLine, metaLine,
+  matchReport, reportFileKind, extOf, FILE_BADGE, fileLine, metaLine, NOTE_LABEL,
   reportFileName, type Report,
 } from './report.ts';
 
@@ -316,81 +316,68 @@ describe('★★★ reportFileName —— 下載下來就叫標題', () => {
 /* ── 列上第三行（2026-09-18「給檔案明細 大小 上傳日期」）─────── */
 
 describe('★★ fileLine —— 空的整段不見，不是印「—」', () => {
-  test('四段都有', () => {
+  test('都有值時接起來', () => {
     assert.equal(
-      fileLine({ who: '芊', fileName: '401.pdf', size: '160 KB', uploadedOn: '2026-09-10' }),
-      '芊　·　401.pdf　·　160 KB　·　上傳 09/10');
+      fileLine({ who: '芊', size: '160 KB', uploadedOn: '2026-09-10' }),
+      '芊　·　160 KB　·　上傳 2026/09/10');
   });
 
-  test('★★ 沒有上傳者 → 整段不見（不是留一個孤零零的「—」）', () => {
-    const s = fileLine({ who: '', fileName: '401.pdf', size: '160 KB', uploadedOn: '2026-09-10' });
-    assert.equal(s, '401.pdf　·　160 KB　·　上傳 09/10');
-    assert.ok(!s.includes('—'));
+  test('★★★ 檔名不印（2026-09-18 使用者:「檔名不要」）', () => {
+    /*
+     * 下載下來的檔名早就是標題那一行,存在資料庫裡那個原始檔名沒有人會用到。
+     * 這一條釘住它不會被加回去 —— 它是這一行裡最長的東西。
+     */
+    const s = fileLine({ who: '芊', size: '62 KB', uploadedOn: '2026-09-18' });
+    assert.ok(!s.includes('.xlsx'), s);
+    assert.ok(!s.includes('FINAL'), s);
+    assert.equal(s, '芊　·　62 KB　·　上傳 2026/09/18');
   });
 
-  test('★ 沒有上傳日 → 那一段不見，其餘照舊', () => {
-    assert.equal(fileLine({ who: '芊', fileName: 'a.xlsx', size: '62 KB' }),
-                 '芊　·　a.xlsx　·　62 KB');
+  test('沒有上傳者就整段不見', () => {
+    assert.equal(fileLine({ size: '62 KB', uploadedOn: '2026-09-18' }),
+                 '62 KB　·　上傳 2026/09/18');
   });
 
-  test('★ 每一段自己帶著名字 —— 「上傳」兩個字不能省，不然分不出是哪個日期', () => {
-    assert.ok(fileLine({ uploadedOn: '2026-09-10' }).startsWith('上傳 '));
-  });
-
-  test('★ 一段都沒有回空字串 —— 畫面那邊整行不畫', () => {
+  test('一段都沒有 → 空字串（畫面那邊整行不畫）', () => {
     assert.equal(fileLine({}), '');
-    assert.equal(fileLine({ who: '  ', fileName: null, size: '', uploadedOn: null }), '');
+    assert.equal(fileLine({ who: '  ', size: '', uploadedOn: null }), '');
   });
 
-  test('日期只印月/日 —— 年份在期別裡已經有了', () => {
-    assert.equal(fileLine({ uploadedOn: '2026-09-10' }), '上傳 09/10');
+  test('★★★ 日期要印年份，而且是西元', () => {
+    assert.equal(fileLine({ uploadedOn: '2026-09-10' }), '上傳 2026/09/10');
   });
 });
 
-/*
- * ══════════════════════════════════════════════════════════
- * 申報日（2026-09-18 使用者:「還是可以填申報日 非必填」）
- *
- * ★★★ 它跟上傳日是**兩件事**:上傳日是檔案進系統那天（自動帶），
- *   申報日是送出去給國稅局那天（人填，常常是空的）。
- *   280 當時把 filed_on 改名成 uploaded_on,前提是「它們是同一件事」——
- *   而那個前提錯了。這幾條就是釘住它們不會再被合成一欄。
- * ══════════════════════════════════════════════════════════
- */
 describe('★★★ 申報日與上傳日是兩欄，而且不同行', () => {
   test('★★ 申報日在第二行（metaLine），不在檔案那一行', () => {
-    /*
-     * 2026-09-18 使用者:「申報 和 備註 資訊放一起」。
-     * 第二行講這份報表(期別、申報、備註),第三行講這個檔案。
-     */
-    const f = fileLine({ fileName: '401.pdf', size: '160 KB', uploadedOn: '2026-09-18' });
+    const f = fileLine({ size: '160 KB', uploadedOn: '2026-09-18' });
     assert.ok(!f.includes('申報'), f);
-    assert.ok(f.includes('上傳 09/18'), f);
+    assert.ok(f.includes('上傳 2026/09/18'), f);
 
-    const m = metaLine({ period: '115年 7-8月', filedOn: '2026-09-10', note: '留底數：30,748' });
-    assert.equal(m, '115年 7-8月　·　申報 09/10　·　留底數：30,748');
+    assert.equal(metaLine({ period: '115年 7-8月', filedOn: '2026-09-10' }),
+                 '115年 7-8月　·　申報 2026/09/10');
   });
 
-  test('★ 備註排最後 —— 它會愈寫愈長,排中間會把申報日擠出畫面', () => {
-    const m = metaLine({ period: '115年 8月', filedOn: '2026-09-10', note: '很長很長的一段備註' });
-    assert.ok(m.indexOf('申報 09/10') < m.indexOf('很長很長'), m);
+  test('★★★ 備註**不在** metaLine 裡（它自己一行）', () => {
+    /*
+     * 2026-09-18 使用者選了甲:備註自己一行、橫跨整列。
+     * 塞回第二行的話它只有約 180px,稍長就被截成「⋯」。
+     */
+    const m = metaLine({ period: '115年 7-8月', filedOn: '2026-09-10' } as never);
+    assert.ok(!m.includes('留底數'), m);
+    assert.equal(NOTE_LABEL, '備註');
   });
 
   test('空的那一段整段不見,不是印「—」', () => {
     assert.equal(metaLine({ period: '115年 8月' }), '115年 8月');
-    assert.equal(metaLine({ filedOn: '2026-09-10' }), '申報 09/10');
-    assert.equal(metaLine({ note: '備註' }), '備註');
+    assert.equal(metaLine({ filedOn: '2026-09-10' }), '申報 2026/09/10');
     assert.equal(metaLine({}), '');
-    assert.equal(metaLine({ period: '  ', filedOn: null, note: '' }), '');
+    assert.equal(metaLine({ period: '  ', filedOn: null }), '');
   });
 
   test('★★★ 上傳日與申報日一樣時,兩行各自都要印', () => {
-    /*
-     * 愛皮 115年7-8月 就是這一種:9/10 傳進來、9/10 也送出去。
-     * 少印一段的話,看的人會以為另一件事沒做。
-     */
-    assert.ok(fileLine({ uploadedOn: '2026-09-10' }).includes('上傳 09/10'));
-    assert.ok(metaLine({ filedOn: '2026-09-10' }).includes('申報 09/10'));
+    assert.ok(fileLine({ uploadedOn: '2026-09-10' }).includes('上傳 2026/09/10'));
+    assert.ok(metaLine({ filedOn: '2026-09-10' }).includes('申報 2026/09/10'));
   });
 
   test('matchReport 找得到申報日', () => {

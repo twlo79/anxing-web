@@ -32,10 +32,11 @@ import { fmtSize, fileTooBig } from '@/lib/board';
 import {
   REPORT_KINDS, parseKind, periodText, options401, defaultStartFor,
   monthToStart, startToMonth, validateReport, suggestTitle, reportTitle,
-  sortReports, yearOf, matchReport, fileLine, metaLine,
+  sortReports, yearOf, matchReport, fileLine, metaLine, NOTE_LABEL,
   reportFileKind, FILE_BADGE, reportFileName, REPORT_ACCEPT,
   type Report,
 } from '@/lib/report';
+import { deleteMatches, whyDeleteBlocked, DELETE_READY } from '@/lib/confirm-delete';
 
 const BUCKET = 'accounting-reports';
 
@@ -236,8 +237,16 @@ export default function ReportsPage() {
     load();
   };
 
+  /*
+   * ★★★ 這裡**沒有 `confirm()`**（2026-09-18 使用者:「不要那麼容易被刪掉」）。
+   *
+   *   瀏覽器的 confirm **按 Enter 就過了** —— 「點一下 ＋ 一個鍵」
+   *   就刪掉一個救不回來的檔案。
+   *
+   *   擋在前面的是編輯視窗裡那一段:要點紅字展開、**要把標題打一次**
+   *   （`lib/confirm-delete.ts`，有測試）。所以到得了這裡就是真的要刪。
+   */
   const del = async (r: Row) => {
-    if (!confirm(`刪掉「${reportTitle(r)}」？\n\n檔案會一起不見，而且救不回來。`)) return;
     const { data, error } = await supabase.from('accounting_reports')
       .delete().eq('id', r.id).select('id');
     if (error) return onMsg('刪不掉：' + error.message, true);
@@ -246,6 +255,7 @@ export default function ReportsPage() {
       const rm = await supabase.storage.from(BUCKET).remove([r.file_path]);
       if (rm.error) console.warn('[reports] 檔案沒刪掉：', rm.error.message);
     }
+    setDraft(null);
     load();
   };
 
@@ -332,14 +342,33 @@ export default function ReportsPage() {
             const fkd = reportFileKind(r.file_name);
             const per = periodText(r.kind, r.period_start);
             return (
+              /*
+                ══════════════════════════════════════════════
+                一列的骨架（2026-09-18 使用者過審的最終版）
+                ══════════════════════════════════════════════
+                　圖示 ／ 內容(封頂 30rem) ／ 下載 ／ 彈性空白 ／ 編輯
+                　第二個 grid row 給**備註**，橫跨到最右邊。
+
+                ★★★ 內容那一欄**封頂**，下載才會每一列都停在同一個 x
+                  —— 連按三份不用重新瞄準。不封頂的話下載會跟著標題長短跳。
+                ★★ 備註在第二個 grid row，所以它有整列的寬（約 870px）。
+                  擠在期別後面只有約 180px，稍長就被截成「⋯」，
+                  而備註是自由輸入的，多長都有可能。
+                ★ 沒有備註的那幾列**一格都不會變高** —— 那一格不存在，
+                  grid 的第二排高度就是 0。
+              */
               <div key={r.id}
-                className="flex items-start gap-2.5 px-4 py-3 border-t border-mor-line/60 first:border-t-0">
-                <span className={`w-9 h-9 shrink-0 rounded-lg flex items-center justify-center
-                                  text-[11px] font-bold text-white ${BADGE_CLASS[fkd]}`}>
+                className="grid items-center gap-y-1 gap-x-4 px-4 py-2.5
+                           border-t border-mor-line/60 first:border-t-0 hover:bg-[#FAFAF9]
+                           transition-colors
+                           [grid-template-columns:2.25rem_minmax(0,30rem)_auto_1fr_auto]
+                           [grid-template-areas:'ico_mid_dl_sp_acts'_'ico_note_note_note_note']">
+                <span className={`w-9 h-9 rounded-lg flex items-center justify-center self-start mt-0.5
+                                  text-[11px] font-bold text-white [grid-area:ico] ${BADGE_CLASS[fkd]}`}>
                   {FILE_BADGE[fkd]}
                 </span>
 
-                <span className="flex-1 min-w-0 block">
+                <span className="min-w-0 block [grid-area:mid]">
                   {/*
                     ★ 種類那顆籤畫在**標題前面**（2026-09-18 使用者:「放到表頭」）——
                       一眼看得出這一列是哪一種，不用往右找。
@@ -369,7 +398,6 @@ export default function ReportsPage() {
                     const line = metaLine({
                       period: per && per !== reportTitle(r) ? per : '',
                       filedOn: r.filed_on,
-                      note: r.note,
                     });
                     return line
                       ? <span className="block text-uisub text-gray-500 truncate">{line}</span>
@@ -385,7 +413,6 @@ export default function ReportsPage() {
                   {(() => {
                     const line = fileLine({
                       who: names.get(r.updated_by ?? r.created_by ?? '') ?? '',
-                      fileName: r.file_name,
                       size: r.file_size ? fmtSize(r.file_size) : '',
                       uploadedOn: r.uploaded_on,
                     });
@@ -395,26 +422,48 @@ export default function ReportsPage() {
                   })()}
                 </span>
 
-                <button onClick={() => setDraft({
-                  ...r, file: null, oldName: r.file_name, titleTouched: true,
-                  uploaded_on: r.uploaded_on ?? '', filed_on: r.filed_on ?? '',
-                  note: r.note ?? '',
-                })} className="shrink-0 mt-1 text-uisub text-mor-slate hover:text-mor-slatedark">編輯</button>
-                <button onClick={() => del(r)}
-                  className="shrink-0 mt-1 text-uisub text-red-400 hover:text-red-600">刪掉</button>
-
                 {/*
                   ★★★ 沒有檔案的那幾筆，鈕**不畫成「下載」** ——
                     畫了就是一顆按了沒反應的鈕，而使用者的結論是系統壞了。
+                  ★ 綠框不是實心（2026-09-18 使用者:「綠框好了」）。
+                    綠色的**邊框與字**一律 `mor-greendark` —— `mor-green` 只給「面」。
                 */}
                 <button onClick={() => download(r)} disabled={busyId === r.id}
                   title={r.file_path ? '下載' : '這一份還沒有檔案'}
-                  className={`shrink-0 h-10 rounded-lg border px-4 text-uisub font-medium
-                              disabled:opacity-50 ${
+                  className={`h-10 rounded-lg border px-4 text-uisub font-medium justify-self-start
+                              [grid-area:dl] disabled:opacity-50 ${
                     r.file_path ? 'border-mor-greendark text-mor-greendark hover:bg-mor-greenlight'
                                 : 'border-amber-300 text-amber-700 bg-amber-50'}`}>
-                  {busyId === r.id ? '準備中⋯' : r.file_path ? '下載' : '沒有檔案'}
+                  {busyId === r.id ? '準備中⋯' : r.file_path ? '↓ 下載' : '沒有檔案'}
                 </button>
+
+                {/*
+                  ★★★ 列上**只剩「編輯」**（2026-09-18 使用者:「刪除 移到編輯裡面」）。
+                    刪掉在編輯視窗最底下，而且要把標題打一次才按得下去。
+                  ★ 淡灰，滑上去才變色 —— 這一頁九成的動作是下載，
+                    編輯只有三個人按得到，平常不該搶注意力。
+                */}
+                <span className="[grid-area:acts] self-center">
+                  <button onClick={() => setDraft({
+                    ...r, file: null, oldName: r.file_name, titleTouched: true,
+                    uploaded_on: r.uploaded_on ?? '', filed_on: r.filed_on ?? '',
+                    note: r.note ?? '',
+                  })} className="text-uisub text-gray-400 hover:text-mor-slate">編輯</button>
+                </span>
+
+                {/*
+                  ★★★ 備註**自己一行、橫跨整列**（2026-09-18 使用者選的甲）。
+                    有 870px —— 擠在期別後面只有約 180px，稍長就被截成「⋯」。
+                  ★ 前面那兩個字不能省:這一行單獨出現時，
+                    一段沒有名字的灰字可能是任何東西。
+                  ★★ 沒有備註就**整段不畫** —— 那一列的高度一格都不會變。
+                */}
+                {r.note?.trim() && (
+                  <span className="[grid-area:note] min-w-0 truncate text-uisub text-gray-500">
+                    <span className="text-xs text-gray-400 mr-1">{NOTE_LABEL}</span>
+                    {r.note.trim()}
+                  </span>
+                )}
               </div>
             );
           })}
@@ -423,7 +472,9 @@ export default function ReportsPage() {
 
       {draft && (
         <ReportDialog draft={draft} onChange={setDraft}
-          onClose={() => setDraft(null)} onSave={save} />
+          onClose={() => setDraft(null)} onSave={save}
+          /* ★ 新增的時候沒有東西可以刪 —— 整段不畫，不是灰掉 */
+          onDelete={draft.id ? () => del(draft as Row) : null} />
       )}
     </div>
   );
@@ -431,16 +482,35 @@ export default function ReportsPage() {
 
 /* ══════════════════════════════════════════════════════════ */
 
-function ReportDialog({ draft, onChange, onClose, onSave }: {
+function ReportDialog({ draft, onChange, onClose, onSave, onDelete }: {
   draft: Draft;
   onChange: (d: Draft) => void;
   onClose: () => void;
   onSave: (d: Draft) => Promise<void> | void;
+  /** 只有編輯既有的那一份才有 —— 新增時沒有東西可以刪 */
+  onDelete: (() => Promise<void> | void) | null;
 }) {
   const [save, saving] = useOnce(async () => { await onSave(draft); });
   const pick = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
   const [fileErr, setFileErr] = useState<string | null>(null);
+
+  /*
+   * ══════════════════════════════════════════════════════════
+   * 刪掉（2026-09-18 使用者:「刪除 移到編輯裡面」「不要那麼容易被刪掉」）
+   * ══════════════════════════════════════════════════════════
+   * `delOpen` ＝ 那行紅字點開了沒;`typed` ＝ 打進去的字。
+   * 判斷式在 `lib/confirm-delete.ts`（有測試）—— 這裡只負責畫。
+   */
+  const [delOpen, setDelOpen] = useState(false);
+  const [typed, setTyped] = useState('');
+  const delTarget = draft.title?.trim() ?? '';
+  const delBad = whyDeleteBlocked(typed, delTarget);
+  const [doDelete, deleting] = useOnce(async () => {
+    /* ★★ 再擋一次 —— 畫面那一層灰掉了，但這一支是真的會刪東西的 */
+    if (!deleteMatches(typed, delTarget) || !onDelete) return;
+    await onDelete();
+  });
 
   const k = parseKind(draft.kind);
   const bad = validateReport(draft) ?? (!draft.id && !draft.file ? '要先選一個檔案' : null);
@@ -618,6 +688,60 @@ function ReportDialog({ draft, onChange, onClose, onSave }: {
           <div className="text-xs text-gray-400 leading-relaxed">
             只有總經理、會計、主管看得到與上傳。
           </div>
+
+          {/*
+            ══════════════════════════════════════════════════
+            刪掉這一份（2026-09-18 使用者過審）
+            ══════════════════════════════════════════════════
+            ★★★ **不跟「取消／儲存」排同一排**。那一排讀起來會變成
+              「毀掉它／算了／存起來」，而人進這個視窗是為了改東西然後存檔
+              —— 手滑的代價差太多（anxing-ui 四-3）。
+              所以它在上面、置中、紅色小字，中間隔一條線。
+            ★★ 三道關:① 先進這個視窗 ② 點那行紅字 ③ 把標題打一次。
+              原本是列上一顆鈕 ＋ 瀏覽器的 `confirm()`，而那個 **按 Enter 就過了**。
+            ★ 括號裡寫**實際後果**:這一份是真的救不回來（檔案會一起刪），
+              所以寫「救不回來」，不是「可以復原」。
+          */}
+          {onDelete && (
+            <div className="border-t border-mor-line pt-3">
+              {!delOpen ? (
+                <div className="text-center">
+                  <button onClick={() => setDelOpen(true)}
+                    className="text-xs text-red-400 underline hover:text-red-600">
+                    刪掉這一份報表
+                  </button>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-red-200 bg-red-50 p-3">
+                  <div className="text-xs font-bold text-red-700 leading-relaxed">
+                    ⚠ 刪掉之後<b>救不回來</b> —— 檔案會一起不見。
+                  </div>
+                  <div className="mt-1.5 text-xs text-red-900 leading-relaxed">
+                    確定的話，把標題打一次：
+                    <span className="block mt-1 w-fit rounded border border-red-200 bg-white
+                                     px-2 py-0.5 font-mono text-mor-ink">{delTarget || '（沒有標題）'}</span>
+                  </div>
+                  <input value={typed} onChange={(e) => setTyped(e.target.value)}
+                    placeholder="把上面那一行打進來"
+                    className="mt-2 h-11 md:h-10 w-full rounded-lg border border-red-200 bg-white
+                               px-3 text-ui" />
+                  <div className="mt-2 flex gap-2">
+                    <button onClick={() => { setDelOpen(false); setTyped(''); }}
+                      className="flex-1 h-11 md:h-10 rounded-lg border border-mor-line text-uisub">算了</button>
+                    {/* ★ 灰掉要說得出為什麼 —— 底下那一行就是（anxing-ui 二-6） */}
+                    <button onClick={doDelete} disabled={!!delBad || deleting} title={delBad ?? ''}
+                      className="flex-1 h-11 md:h-10 rounded-lg border border-red-300 text-uisub
+                                 text-red-600 enabled:hover:bg-red-600 enabled:hover:text-white
+                                 disabled:opacity-40">
+                      {deleting ? '刪除中⋯' : '刪掉'}</button>
+                  </div>
+                  <div className="mt-1.5 text-center text-xs text-gray-400">
+                    {delBad ?? DELETE_READY}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="sticky bottom-0 bg-white px-5 py-3 border-t border-mor-line flex justify-end gap-2">

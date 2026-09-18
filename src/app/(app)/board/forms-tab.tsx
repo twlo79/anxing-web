@@ -7,6 +7,7 @@ import {
   sortForms, matchForm, formHasFile,
   FILE_ACCEPT, fileKind, fmtSize, fileTooBig, FILE_BADGE, KIND_EXTS,
 } from '@/lib/board';
+import { deleteMatches, whyDeleteBlocked, DELETE_READY } from '@/lib/confirm-delete';
 
 /*
  * ══════════════════════════════════════════════════════════
@@ -242,7 +243,12 @@ export default function FormsTab({ role, meId, onMsg }: {
   };
 
   const del = async (f: Form) => {
-    if (!confirm(`刪掉「${f.title}」？\n\n檔案會一起不見，而且救不回來。`)) return;
+    /*
+     * ★★★ 這裡**沒有 `confirm()`**（2026-09-18 使用者:「不要那麼容易被刪掉」）。
+     *   瀏覽器的 confirm **按 Enter 就過了**。擋在前面的是編輯視窗裡
+     *   那一段:要點紅字展開、**要把檔案名稱打一次**
+     *   （`lib/confirm-delete.ts`，有測試）。
+     */
     const { data, error } = await supabase.from('board_forms')
       .delete().eq('id', f.id).select('id');
     if (error) return onMsg('刪不掉：' + error.message, true);
@@ -251,6 +257,7 @@ export default function FormsTab({ role, meId, onMsg }: {
       const rm = await supabase.storage.from(BUCKET).remove([f.file_path]);
       if (rm.error) console.warn('[board] 檔案沒刪掉：', rm.error.message);
     }
+    setDraft(null);
     load();
   };
 
@@ -293,13 +300,24 @@ export default function FormsTab({ role, meId, onMsg }: {
             const has = formHasFile(f);
             return (
               <div key={f.id} className="border-t border-mor-line/60 first:border-t-0">
-              <div className="flex items-start gap-3 px-4 py-3">
+              {/*
+                ══════════════════════════════════════════════
+                一列的骨架（2026-09-18 使用者過審的最終版）——
+                **跟會計報表那一頁一模一樣**，兩頁就是同一種列。
+                ══════════════════════════════════════════════
+                　圖示 ／ 內容(封頂 30rem) ／ 下載 ／ 彈性空白 ／ 編輯
+                　第二個 grid row 給**說明 ＋ 使用說明 ▾**，橫跨到最右邊。
+              */}
+              <div className="grid items-center gap-y-1 gap-x-4 px-4 py-2.5
+                              hover:bg-[#FAFAF9] transition-colors
+                              [grid-template-columns:2.25rem_minmax(0,30rem)_auto_1fr_auto]
+                              [grid-template-areas:'ico_mid_dl_sp_acts'_'ico_note_note_note_note']">
                 {/*
                   ★ 用副檔名當圖示，一眼看得出是 Word 還是 PDF ——
                     下載之前就知道等一下要用什麼開。
                 */}
-                <span className={`w-9 h-9 shrink-0 rounded-lg flex items-center justify-center
-                                  text-[11px] font-bold text-white ${BADGE_BG[k]}`}>
+                <span className={`w-9 h-9 rounded-lg flex items-center justify-center self-start mt-0.5
+                                  text-[11px] font-bold text-white [grid-area:ico] ${BADGE_BG[k]}`}>
                   {FILE_BADGE[k]}
                 </span>
 
@@ -307,60 +325,85 @@ export default function FormsTab({ role, meId, onMsg }: {
                   ★ 每一段各自一整排（2026-09-18 使用者:「資訊獨立一排」
                     「使用說明 獨立一行」）—— 擠成一行的話讀起來像壞掉的。
                 */}
-                <span className="flex-1 min-w-0 block">
-                  <span className="block text-ui font-medium truncate">{f.title}</span>
-                  {f.note && <span className="block text-uisub text-gray-500 truncate">{f.note}</span>}
-                  <span className="block text-xs text-gray-400 truncate">
-                    {names.get(f.updated_by ?? f.created_by ?? '') ?? '—'}
-                    {' · '}{f.updated_at.slice(5, 10).replace('-', '/')}
-                    {f.file_size ? ` · ${fmtSize(f.file_size)}` : ''}
+                <span className="min-w-0 block [grid-area:mid]">
+                  {/*
+                    ★★★ 分類籤畫在**標題前面**（2026-09-18 使用者過審）——
+                      跟會計報表的「月報」「401」同一個位置。
+                      原本它夾在內容與按鈕中間:它不是動作，卻站在動作那一排裡。
+                  */}
+                  <span className="flex items-center gap-1.5 min-w-0">
+                    <span className="shrink-0 rounded px-1.5 py-0.5 text-xs font-medium
+                                     bg-mor-bluelight text-mor-slatedark">
+                      {formIcon(cat)} {cat}
+                    </span>
+                    <span className="text-ui font-medium truncate">{f.title}</span>
                   </span>
                   {/*
-                    ★★★ **有使用說明才畫這一顆**。沒有內容還畫的話，
-                      那是一顆點了什麼都不會發生的鈕 ——
-                      使用者會以為壞掉，而不是以為「這一份沒有說明」。
+                    ★★★ 日期印**年月日**（2026-09-18 使用者:「顯示年月日」）。
+                      這一頁的檔案會放好幾年，只寫 09/18 的話，
+                      明年再看就分不出是今年傳的還是去年傳的。
+                    ★ 西元 —— 跟會計報表同一種寫法（使用者選的甲）。
                   */}
-                  {f.usage_note?.trim() && (
-                    <button onClick={() => setOpen((p) => {
-                      const n = { ...p };
-                      if (n[f.id]) delete n[f.id]; else n[f.id] = true;
-                      return n;
-                    })}
-                      className="block w-fit mt-1 text-uisub text-mor-slate hover:text-mor-slatedark">
-                      使用說明 {open[f.id] ? '▴' : '▾'}
-                    </button>
-                  )}
+                  <span className="block text-xs text-gray-400 truncate">
+                    {names.get(f.updated_by ?? f.created_by ?? '') ?? '—'}
+                    {' · '}{f.updated_at.slice(0, 10).replace(/-/g, '/')}
+                    {f.file_size ? ` · ${fmtSize(f.file_size)}` : ''}
+                  </span>
                 </span>
-
-                <span className="shrink-0 rounded px-2 py-0.5 text-xs
-                                 bg-mor-bluelight text-mor-slatedark">
-                  {formIcon(cat)} {cat}
-                </span>
-
-                {canEdit && (
-                  <>
-                    <button onClick={() => setDraft({
-                      id: f.id, title: f.title, category: parseFormCat(f.category),
-                      note: f.note ?? '', usage_note: f.usage_note ?? '',
-                      file: null, oldName: f.file_name,
-                    })} className="shrink-0 text-uisub text-mor-slate hover:text-mor-slatedark">編輯</button>
-                    <button onClick={() => del(f)}
-                      className="shrink-0 text-uisub text-red-400 hover:text-red-600">刪掉</button>
-                  </>
-                )}
 
                 {/*
                   ★★★ 沒有檔案的那幾筆，鈕**不畫成「下載」** ——
                     畫了就是一顆按了沒反應的鈕，而使用者的結論是系統壞了。
+                  ★ 綠框不是實心（2026-09-18 使用者:「綠框好了」）。
                 */}
                 <button onClick={() => download(f)} disabled={busyId === f.id}
                   title={has ? '下載' : '這一份還沒有檔案'}
-                  className={`shrink-0 h-10 rounded-lg border px-4 text-uisub font-medium
-                              disabled:opacity-50 ${
+                  className={`h-10 rounded-lg border px-4 text-uisub font-medium justify-self-start
+                              [grid-area:dl] disabled:opacity-50 ${
                     has ? 'border-mor-greendark text-mor-greendark hover:bg-mor-greenlight'
                         : 'border-amber-300 text-amber-700 bg-amber-50'}`}>
-                  {busyId === f.id ? '準備中⋯' : has ? '下載' : '沒有檔案'}
+                  {busyId === f.id ? '準備中⋯' : has ? '↓ 下載' : '沒有檔案'}
                 </button>
+
+                {/*
+                  ★★★ 列上**只剩「編輯」**（2026-09-18 使用者:「檔案下載 也把刪除放進 編輯」）。
+                    刪掉在編輯視窗最底下，而且要把檔案名稱打一次才按得下去。
+                */}
+                {canEdit && (
+                  <span className="[grid-area:acts] self-center">
+                    <button onClick={() => setDraft({
+                      id: f.id, title: f.title, category: parseFormCat(f.category),
+                      note: f.note ?? '', usage_note: f.usage_note ?? '',
+                      file: null, oldName: f.file_name,
+                    })} className="text-uisub text-gray-400 hover:text-mor-slate">編輯</button>
+                  </span>
+                )}
+
+                {/*
+                  ★★★ 說明**自己一行、橫跨整列**（2026-09-18 使用者選的甲）。
+                    有 870px —— 擠在上面那一欄只有 30rem，稍長就被截成「⋯」，
+                    而說明是自由輸入的，多長都有可能。
+                  ★ 「使用說明 ▾」接在它後面（**有內容才畫** —— 沒有內容還畫的話，
+                    那是一顆點了什麼都不會發生的鈕）。
+                  ★★ 兩個都沒有就整段不畫，那一列的高度一格都不會變。
+                */}
+                {(f.note?.trim() || f.usage_note?.trim()) && (
+                  <span className="[grid-area:note] min-w-0 truncate text-uisub text-gray-500">
+                    {f.note?.trim() && <>
+                      <span className="text-xs text-gray-400 mr-1">說明</span>{f.note.trim()}
+                    </>}
+                    {f.usage_note?.trim() && (
+                      <button onClick={() => setOpen((p) => {
+                        const n = { ...p };
+                        if (n[f.id]) delete n[f.id]; else n[f.id] = true;
+                        return n;
+                      })}
+                        className={`text-mor-slate hover:text-mor-slatedark ${f.note?.trim() ? 'ml-2.5' : ''}`}>
+                        使用說明 {open[f.id] ? '▴' : '▾'}
+                      </button>
+                    )}
+                  </span>
+                )}
               </div>
 
               {/*
@@ -383,7 +426,19 @@ export default function FormsTab({ role, meId, onMsg }: {
 
       {draft && (
         <FormDialog draft={draft} onChange={setDraft}
-          onClose={() => setDraft(null)} onSave={save} />
+          onClose={() => setDraft(null)} onSave={save}
+          /* ★ 新增的時候沒有東西可以刪 —— 整段不畫，不是灰掉 */
+          /*
+           * ★ 新增的時候沒有東西可以刪 —— 整段不畫，不是灰掉。
+           * ★★ 從清單裡撈**那一筆原始資料**，不要拿 `draft` 拼一個假的 ——
+           *   `del()` 要用 `file_path` 去清儲存桶，而 `draft` 沒有那一欄。
+           *   拼一個 `file_path: null` 進去的話，資料列刪掉了、檔案留在桶子裡，
+           *   而且**不會有任何地方叫**。
+           */
+          onDelete={(() => {
+            const f = draft.id ? list.find((x) => x.id === draft.id) : null;
+            return f ? () => del(f) : null;
+          })()} />
       )}
     </div>
   );
@@ -391,13 +446,32 @@ export default function FormsTab({ role, meId, onMsg }: {
 
 /* ══════════════════════════════════════════════════════════ */
 
-function FormDialog({ draft, onChange, onClose, onSave }: {
+function FormDialog({ draft, onChange, onClose, onSave, onDelete }: {
   draft: Draft;
   onChange: (d: Draft) => void;
   onClose: () => void;
   onSave: (d: Draft) => Promise<void> | void;
+  /** 只有編輯既有的那一份才有 —— 新增時沒有東西可以刪 */
+  onDelete: (() => Promise<void> | void) | null;
 }) {
   const [save, saving] = useOnce(async () => { await onSave(draft); });
+
+  /*
+   * ══════════════════════════════════════════════════════════
+   * 刪掉（2026-09-18 使用者:「檔案下載 也把刪除放進 編輯」「不要那麼容易被刪掉」）
+   * ══════════════════════════════════════════════════════════
+   * 跟會計報表那一頁**一模一樣**，只有要打的字不同（這裡是檔案名稱）。
+   * 判斷式在 `lib/confirm-delete.ts`（有測試）—— 這裡只負責畫。
+   */
+  const [delOpen, setDelOpen] = useState(false);
+  const [typed, setTyped] = useState('');
+  const delTarget = draft.title?.trim() ?? '';
+  const delBad = whyDeleteBlocked(typed, delTarget);
+  const [doDelete, deleting] = useOnce(async () => {
+    /* ★★ 再擋一次 —— 畫面那一層灰掉了，但這一支是真的會刪東西的 */
+    if (!deleteMatches(typed, delTarget) || !onDelete) return;
+    await onDelete();
+  });
   const pick = useRef<HTMLInputElement>(null);
   const bad = !draft.title.trim() || (!draft.id && !draft.file);
 
@@ -489,6 +563,58 @@ function FormDialog({ draft, onChange, onClose, onSave }: {
           <div className="text-xs text-gray-400 leading-relaxed">
             全公司都下載得到（含房務）。只有總經理、會計、主管可以上傳與換檔案。
           </div>
+
+          {/*
+            ══════════════════════════════════════════════════
+            刪掉這一份（2026-09-18 使用者過審）——
+            **跟會計報表那一頁同一種做法**，只有字不同。
+            ══════════════════════════════════════════════════
+            ★★★ 不跟「取消／儲存」排同一排:那一排讀起來會變成
+              「毀掉它／算了／存起來」，而人進這個視窗是為了改東西然後存檔
+              （anxing-ui 四-3）。
+            ★★ 三道關:① 先進這個視窗 ② 點那行紅字 ③ 把檔案名稱打一次。
+              原本是列上一顆鈕 ＋ 瀏覽器的 `confirm()`，而那個 **按 Enter 就過了**。
+          */}
+          {onDelete && (
+            <div className="border-t border-mor-line pt-3">
+              {!delOpen ? (
+                <div className="text-center">
+                  <button onClick={() => setDelOpen(true)}
+                    className="text-xs text-red-400 underline hover:text-red-600">
+                    刪掉這一份檔案
+                  </button>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-red-200 bg-red-50 p-3">
+                  <div className="text-xs font-bold text-red-700 leading-relaxed">
+                    ⚠ 刪掉之後<b>救不回來</b> —— 檔案會一起不見。
+                  </div>
+                  <div className="mt-1.5 text-xs text-red-900 leading-relaxed">
+                    確定的話，把檔案名稱打一次：
+                    <span className="block mt-1 w-fit rounded border border-red-200 bg-white
+                                     px-2 py-0.5 font-mono text-mor-ink">{delTarget || '（沒有名稱）'}</span>
+                  </div>
+                  <input value={typed} onChange={(e) => setTyped(e.target.value)}
+                    placeholder="把上面那一行打進來"
+                    className="mt-2 h-11 md:h-10 w-full rounded-lg border border-red-200 bg-white
+                               px-3 text-ui" />
+                  <div className="mt-2 flex gap-2">
+                    <button onClick={() => { setDelOpen(false); setTyped(''); }}
+                      className="flex-1 h-11 md:h-10 rounded-lg border border-mor-line text-uisub">算了</button>
+                    {/* ★ 灰掉要說得出為什麼 —— 底下那一行就是（anxing-ui 二-6） */}
+                    <button onClick={doDelete} disabled={!!delBad || deleting} title={delBad ?? ''}
+                      className="flex-1 h-11 md:h-10 rounded-lg border border-red-300 text-uisub
+                                 text-red-600 enabled:hover:bg-red-600 enabled:hover:text-white
+                                 disabled:opacity-40">
+                      {deleting ? '刪除中⋯' : '刪掉'}</button>
+                  </div>
+                  <div className="mt-1.5 text-center text-xs text-gray-400">
+                    {delBad ?? DELETE_READY}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="sticky bottom-0 bg-white px-5 py-3 border-t border-mor-line flex justify-end gap-2">
