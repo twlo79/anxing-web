@@ -213,12 +213,40 @@ export function fmtEventWhen(startsAt: string, withTime = true): string {
 
 /* ── 檔案 ─────────────────────────────────────────────────── */
 
-export type FileKind = 'pdf' | 'word' | 'other';
+export type FileKind = 'pdf' | 'word' | 'excel' | 'csv' | 'image' | 'other';
 
-/** 上傳時收哪些。★ 兩種都收（使用者 2026-09-17） */
-export const FILE_ACCEPT =
-  '.pdf,.doc,.docx,application/pdf,application/msword,'
-  + 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+/**
+ * 每一種收哪些副檔名 —— **唯一的一份清單**。
+ *
+ * ══════════════════════════════════════════════════════════
+ * 【★★★ 副檔名只寫在這裡一次】
+ *
+ * 原本 `FILE_ACCEPT`（給 `<input accept>`）與 `fileKind()`（判斷用）
+ * 各寫一份。兩份會漂 —— 而漂掉的症狀是
+ * **檔案選得起來、放進去卻被擋**，使用者只會覺得系統壞了。
+ * 現在兩邊都從這一份長出來，底下有測試釘住。
+ *
+ * ★ 2026-09-18 使用者:「也要能上傳 excel csv jpeg png 等」。
+ * ★★ 這一份是**佈告欄共用的** —— 表單下載與活動附件同一套規則，
+ *   所以共用一份清單（規則不同才要分開，見表單／帳密那兩格）。
+ * ══════════════════════════════════════════════════════════
+ */
+export const KIND_EXTS: Record<Exclude<FileKind, 'other'>, readonly string[]> = {
+  pdf:   ['.pdf'],
+  word:  ['.doc', '.docx'],
+  excel: ['.xls', '.xlsx'],
+  csv:   ['.csv'],
+  /* ★ heic 是 iPhone 的預設格式 —— 不收的話手機拍的照片一張都傳不上來 */
+  image: ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic'],
+};
+
+/** 清單上那個小方塊要寫什麼字。★ 下載之前就看得出等一下要用什麼開 */
+export const FILE_BADGE: Record<FileKind, string> = {
+  pdf: 'PDF', word: 'DOC', excel: 'XLS', csv: 'CSV', image: 'IMG', other: '—',
+};
+
+/** 上傳時收哪些。★ 從 `KIND_EXTS` 長出來，不要自己再打一次 */
+export const FILE_ACCEPT = Object.values(KIND_EXTS).flat().join(',');
 
 /**
  * 這是哪一種檔。
@@ -229,8 +257,9 @@ export const FILE_ACCEPT =
  */
 export function fileKind(name: string): FileKind {
   const n = (name ?? '').toLowerCase();
-  if (n.endsWith('.pdf')) return 'pdf';
-  if (n.endsWith('.docx') || n.endsWith('.doc')) return 'word';
+  for (const [kind, exts] of Object.entries(KIND_EXTS)) {
+    if (exts.some((e) => n.endsWith(e))) return kind as FileKind;
+  }
   return 'other';
 }
 
@@ -250,13 +279,27 @@ export const KIND_BADGE: Record<FileKind, { t: string; hint: string } | null> = 
     hint: '點開是解出來的內容，**排版跟原檔不一樣**'
       + '（頁首頁尾、頁碼、文字方塊、分欄、字型都不會出現）。要看原樣請下載。',
   },
+  /* ★ 圖片點開就是原圖，跟 PDF 同一個意思 —— 用同一個字 */
+  image: { t: '原樣', hint: '點開就是原圖。' },
+  /*
+   * ★★ 試算表**不標**。標了就是在說「點得開」，而它們只能下載 ——
+   *   一個說得出口卻按不動的小標比沒有更糟。
+   */
+  excel: null,
+  csv: null,
   other: null,
 };
 
-/** `.doc`（舊版 Word）解不開 —— 只有 `.docx` 可以 */
+/**
+ * 點得開嗎。
+ *
+ * ★ `.doc`（舊版 Word）解不開 —— 只有 `.docx` 可以。
+ * ★★ 圖片點得開（拿到網址直接畫出來）；試算表不行，只能下載 ——
+ *   在瀏覽器裡解試算表要再背一個函式庫，那不是這一格要解決的事。
+ */
 export function canPreview(name: string): boolean {
   const k = fileKind(name);
-  if (k === 'pdf') return true;
+  if (k === 'pdf' || k === 'image') return true;
   return (name ?? '').toLowerCase().endsWith('.docx');
 }
 
@@ -273,6 +316,8 @@ export function whyNoPreview(name: string): string {
     return '舊版 Word（.doc）在瀏覽器裡打不開 —— 請下載，'
       + '或用 Word 另存成 .docx 或 PDF 再傳一次。';
   }
+  const k = fileKind(name);
+  if (k === 'excel' || k === 'csv') return '試算表只能下載，用 Excel 開。';
   return '這種檔案只能下載，沒辦法在這裡打開。';
 }
 

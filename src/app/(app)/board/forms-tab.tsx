@@ -5,7 +5,7 @@ import { useOnce } from '@/lib/once';
 import {
   FORM_CATS, canEditForms, parseFormCat, formIcon,
   sortForms, matchForm, formHasFile,
-  FILE_ACCEPT, fileKind, fmtSize, fileTooBig,
+  FILE_ACCEPT, fileKind, fmtSize, fileTooBig, FILE_BADGE, KIND_EXTS,
 } from '@/lib/board';
 
 /*
@@ -74,6 +74,25 @@ type Draft = {
 const BLANK: Draft = { title: '', category: '人事', note: '', file: null };
 const BUCKET = 'board-forms';
 
+/*
+ * 圖示的底色。★ 一眼看得出是哪一種 ——
+ *   綠＝試算表（Excel 的顏色）、紅＝PDF、藍＝Word、紫＝圖片。
+ *   顏色有語意，借用會讓它失去意思（anxing-ui 五）。
+ */
+const BADGE_BG: Record<string, string> = {
+  pdf: 'bg-red-600', word: 'bg-blue-600', excel: 'bg-mor-greendark',
+  csv: 'bg-mor-greendark', image: 'bg-violet-500', other: 'bg-gray-400',
+};
+
+/**
+ * 「可以傳哪些」那一行字。
+ *
+ * ★★ 從 `KIND_EXTS` 長出來，**不要自己再打一次** ——
+ *   打第二次的話，哪天加了一種格式，畫面上那一行會留在舊的，
+ *   而使用者會照著它以為傳不了（README:同一條規則在三個地方各寫一次）。
+ */
+const ACCEPT_HINT = Object.values(KIND_EXTS).flat().join('　');
+
 export default function FormsTab({ role, meId, onMsg }: {
   role: string;
   meId: string;
@@ -139,7 +158,7 @@ export default function FormsTab({ role, meId, onMsg }: {
       const big = fileTooBig(d.file.size);
       if (big.bad) return onMsg(big.why, true);
       if (fileKind(d.file.name) === 'other') {
-        return onMsg('只收 PDF 與 Word（.pdf .doc .docx）。', true);
+        return onMsg('這種檔案收不了。可以傳：' + ACCEPT_HINT, true);
       }
       /*
        * ★ 路徑帶時間戳 —— 同名檔案換兩次不會互相蓋掉，
@@ -249,9 +268,8 @@ export default function FormsTab({ role, meId, onMsg }: {
                     下載之前就知道等一下要用什麼開。
                 */}
                 <span className={`w-9 h-9 shrink-0 rounded-lg flex items-center justify-center
-                                  text-[11px] font-bold text-white ${
-                  k === 'pdf' ? 'bg-red-600' : k === 'word' ? 'bg-blue-600' : 'bg-gray-400'}`}>
-                  {k === 'pdf' ? 'PDF' : k === 'word' ? 'DOC' : '—'}
+                                  text-[11px] font-bold text-white ${BADGE_BG[k]}`}>
+                  {FILE_BADGE[k]}
                 </span>
 
                 <span className="flex-1 min-w-0">
@@ -351,7 +369,7 @@ function FormDialog({ draft, onChange, onClose, onSave }: {
               ) : (
                 <>
                   <span className="block text-ui text-mor-slate">選擇檔案</span>
-                  <span className="block text-xs text-gray-400 mt-0.5">.pdf　.doc　.docx</span>
+                  <span className="block text-xs text-gray-400 mt-0.5">{ACCEPT_HINT}</span>
                 </>
               )}
             </button>

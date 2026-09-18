@@ -4,7 +4,7 @@ import {
   SECRET_ROLES, canSeeSecrets, SECRET_DENIED,
   EVENT_KINDS, KIND_LABEL, isEventKind, parseEventKind, kindLabel,
   eventOrder, nextEvent, isPast, daysUntil, untilLabel, fmtEventWhen,
-  FILE_ACCEPT, fileKind, KIND_BADGE, canPreview, whyNoPreview,
+  FILE_ACCEPT, fileKind, KIND_BADGE, canPreview, whyNoPreview, KIND_EXTS, FILE_BADGE,
   fmtSize, FILE_MAX_MB, fileTooBig,
 } from './board.ts';
 
@@ -186,9 +186,32 @@ test('壞掉的日期畫破折號', () => {
 
 /* ── 檔案 ─────────────────────────────────────────────────── */
 
-test('兩種都收', () => {
-  assert.match(FILE_ACCEPT, /\.pdf/);
-  assert.match(FILE_ACCEPT, /\.docx/);
+/*
+ * ══════════════════════════════════════════════════════════
+ * 2026-09-18 使用者:「也要能上傳 excel csv jpeg png 等」
+ * ══════════════════════════════════════════════════════════
+ */
+test('★★★ accept 與 fileKind 走同一份清單 —— 選得起來就一定放得進去', () => {
+  /*
+   * 兩份會漂,而漂掉的症狀是**檔案選得起來、放進去卻被擋** ——
+   * 使用者只會覺得系統壞了。
+   */
+  for (const ext of Object.values(KIND_EXTS).flat()) {
+    assert.ok(FILE_ACCEPT.includes(ext), `accept 少了 ${ext}`);
+    assert.notEqual(fileKind('檔案' + ext), 'other', `${ext} 被判成 other`);
+  }
+});
+
+test('★★ 六種格式都收得到', () => {
+  for (const ext of ['.pdf', '.docx', '.xlsx', '.csv', '.jpg', '.png']) {
+    assert.ok(FILE_ACCEPT.includes(ext), ext);
+  }
+});
+
+test('★ 沒列在清單裡的還是要擋 —— 不是什麼都收', () => {
+  assert.equal(fileKind('安裝檔.exe'), 'other');
+  assert.equal(fileKind('壓縮.zip'), 'other');
+  assert.equal(fileKind('影片.mp4'), 'other');
 });
 
 test('★★ 照副檔名判，不照 MIME —— Windows 傳上來的 docx 常常沒有 MIME', () => {
@@ -197,8 +220,23 @@ test('★★ 照副檔名判，不照 MIME —— Windows 傳上來的 docx 常�
   assert.equal(fileKind('九月營收.docx'), 'word');
   assert.equal(fileKind('九月營收.DOCX'), 'word');
   assert.equal(fileKind('舊檔.doc'), 'word');
-  assert.equal(fileKind('資料.xlsx'), 'other');
+  assert.equal(fileKind('資料.xlsx'), 'excel');
+  assert.equal(fileKind('資料.XLS'), 'excel');
+  assert.equal(fileKind('匯出.csv'), 'csv');
+  assert.equal(fileKind('照片.jpeg'), 'image');
+  assert.equal(fileKind('照片.PNG'), 'image');
+  /* ★★ heic 是 iPhone 的預設格式 —— 不收的話手機拍的照片一張都傳不上來 */
+  assert.equal(fileKind('IMG_0421.HEIC'), 'image');
   assert.equal(fileKind(''), 'other');
+});
+
+test('★ 每一種都有圖示上的字，而且不重複判', () => {
+  for (const k of ['pdf', 'word', 'excel', 'csv', 'image', 'other'] as const) {
+    assert.ok(FILE_BADGE[k].length > 0, k);
+  }
+  /* 一個副檔名只能對到一種 —— 清單裡不可以有重複的 */
+  const all = Object.values(KIND_EXTS).flat();
+  assert.equal(new Set(all).size, all.length);
 });
 
 test('★★★ PDF 標「原樣」、Word 標「預覽」—— 這兩個字是整個檔案功能的重點', () => {
@@ -207,6 +245,29 @@ test('★★★ PDF 標「原樣」、Word 標「預覽」—— 這兩個字是
   assert.equal(KIND_BADGE.other, null);
   // Word 的說明要講出排版會走樣
   assert.match(KIND_BADGE.word!.hint, /排版跟原檔不一樣/);
+  /* ★ 圖片點開就是原圖,跟 PDF 同一個意思 —— 用同一個字 */
+  assert.equal(KIND_BADGE.image?.t, '原樣');
+  /*
+   * ★★ 試算表**不標**。標了就是在說「點得開」,而它們只能下載 ——
+   *   一個說得出口卻按不動的小標比沒有更糟。
+   */
+  assert.equal(KIND_BADGE.excel, null);
+  assert.equal(KIND_BADGE.csv, null);
+});
+
+test('★★★ 小標跟 canPreview 不可以互相矛盾', () => {
+  /*
+   * 有小標＝說得出「點開會看到什麼」,那就一定要點得開。
+   * 兩邊各寫一次的話,會出現一個標著「原樣」卻按不動的檔。
+   */
+  const sample: Record<string, string> = {
+    pdf: 'a.pdf', word: 'a.docx', excel: 'a.xlsx', csv: 'a.csv',
+    image: 'a.png', other: 'a.zip',
+  };
+  for (const [k, name] of Object.entries(sample)) {
+    const hasBadge = KIND_BADGE[k as keyof typeof KIND_BADGE] != null;
+    assert.equal(hasBadge, canPreview(name), `${k} 的小標與 canPreview 對不上`);
+  }
 });
 
 test('★★ .doc 是舊格式，解不開 —— 不要畫一個點了沒反應的連結', () => {
@@ -214,12 +275,19 @@ test('★★ .doc 是舊格式，解不開 —— 不要畫一個點了沒反應
   assert.equal(canPreview('九月營收.docx'), true);
   assert.equal(canPreview('舊檔.doc'), false);
   assert.equal(canPreview('資料.xlsx'), false);
+  assert.equal(canPreview('匯出.csv'), false);
+  /* ★ 圖片點得開 —— 拿到網址直接畫出來,不用解檔 */
+  assert.equal(canPreview('照片.jpg'), true);
+  assert.equal(canPreview('IMG_0421.heic'), true);
 });
 
 test('★ 打不開的時候要講得出為什麼、還有怎麼辦', () => {
   assert.match(whyNoPreview('舊檔.doc'), /舊版 Word/);
   assert.match(whyNoPreview('舊檔.doc'), /另存成/);
   assert.match(whyNoPreview('資料.xlsx'), /只能下載/);
+  /* ★ 試算表要講「用 Excel 開」,不是一句籠統的「打不開」 */
+  assert.match(whyNoPreview('資料.xlsx'), /Excel/);
+  assert.match(whyNoPreview('匯出.csv'), /Excel/);
 });
 
 test('檔案大小', () => {

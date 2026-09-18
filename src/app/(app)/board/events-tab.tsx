@@ -6,7 +6,7 @@ import { ReqMark } from '@/components/Req';
 import {
   EVENT_KINDS, KIND_LABEL, parseEventKind, kindLabel,
   eventOrder, nextEvent, isPast, untilLabel, fmtEventWhen,
-  FILE_ACCEPT, fileKind, KIND_BADGE, canPreview, whyNoPreview,
+  FILE_ACCEPT, fileKind, KIND_BADGE, canPreview, whyNoPreview, KIND_EXTS,
   fmtSize, fileTooBig, type EventKind,
   linkify, urlHref, urlLabel, eventShareText, lineShareUrl, shareVia, type ShareVia,
   canUpload, filesByPerson,
@@ -204,7 +204,7 @@ export default function EventsTab({ meId, isAdmin, onMsg }: {
       const tooBig = fileTooBig(f.size);
       if (tooBig.bad) { onMsg(`${f.name}：${tooBig.why}`, true); continue; }
       if (fileKind(f.name) === 'other') {
-        onMsg(`${f.name} 不是 PDF 也不是 Word —— 這裡只收這兩種。`, true);
+        onMsg(`${f.name} 這種檔案收不了。可以傳：${Object.values(KIND_EXTS).flat().join('　')}`, true);
         continue;
       }
       /*
@@ -780,7 +780,11 @@ function FileViewer({ file, onClose, onMsg }: {
         setErr('拿不到這份檔案：' + (error?.message ?? '網址是空的'));
         return;
       }
-      if (k === 'pdf') { setUrl(data.signedUrl); return; }
+      /*
+       * ★ 圖片跟 PDF 一樣是**原樣** —— 拿到網址直接畫出來，
+       *   不用解檔（2026-09-18 開始收 jpg/png/heic）。
+       */
+      if (k === 'pdf' || k === 'image') { setUrl(data.signedUrl); return; }
 
       /* ── Word ── */
       try {
@@ -815,7 +819,7 @@ function FileViewer({ file, onClose, onMsg }: {
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="w-full max-w-[900px] h-[92vh] rounded-2xl bg-white overflow-hidden flex flex-col">
         <div className="flex items-center gap-2 px-4 py-2.5 border-b border-mor-line">
-          <span className="shrink-0">{k === 'pdf' ? '📕' : '📘'}</span>
+          <span className="shrink-0">{k === 'pdf' ? '📕' : k === 'image' ? '🖼' : '📘'}</span>
           <span className="font-semibold text-sm flex-1 min-w-0 truncate">{file.name}</span>
           <button onClick={download}
             className="rounded-lg border border-mor-line px-2.5 py-1 text-[11.5px]">下載原檔</button>
@@ -843,6 +847,21 @@ function FileViewer({ file, onClose, onMsg }: {
           {!err && k === 'pdf' && (
             url
               ? <iframe src={url} title={file.name} className="w-full h-full border-0" />
+              : <div className="p-6 text-sm text-gray-400">載入中…</div>
+          )}
+          {/*
+            ★★ 圖片置中、按比例縮到裝得下。`object-contain` 不能省 ——
+              直式的照片被拉成滿版的話，畫面上看起來像壞掉的。
+          */}
+          {!err && k === 'image' && (
+            url
+              ? (
+                <div className="w-full h-full flex items-center justify-center p-4">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={url} alt={file.name}
+                    className="max-w-full max-h-full object-contain rounded-lg" />
+                </div>
+              )
               : <div className="p-6 text-sm text-gray-400">載入中…</div>
           )}
           {!err && k === 'word' && (
