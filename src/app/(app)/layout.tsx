@@ -104,7 +104,34 @@ const NAV: { href: string; label: string; icon: string; roles: string[]; group?:
    *   2026-08-28 之後五群都有名字,空標題那一群已經沒有成員了。
    * ══════════════════════════════════════════════════════════
    */
-  // 出勤排第一：全公司每天最少點兩次,而且是「上班第一件事」。
+  /*
+   * ══════════ 佈告欄排第一（2026-09-17 使用者:「把布告欄 移到出勤上方」）══════════
+   *
+   * migration_262 / 265。公告從出勤日曆搬過來、新訊息從設定搬過來。
+   *
+   * ★★★ 它**併進「每日工作」**，不再自成一群「公司」。
+   *   自成一群的話畫面最上面會是一個只有一項的標題，而那個標題還收得起來 ——
+   *   收起來之後公告就從側欄上消失了，而沒有人看的公告等於沒發。
+   *
+   * ★★ 排在出勤前面的理由跟出勤自己一樣:上班第一件事。
+   *   公告、活動、新訊息都是「今天有沒有新的」——
+   *   排在下面的話，要看的人得先想起來有這一頁。
+   *
+   * ★ 房務 cleaner 也要開 —— 公告、新訊息、團聚都是全公司的事。
+   *   「帳密」那一格在頁裡面自己擋（`can_see_board_secrets`），
+   *   不是靠這一行 —— 靠這一行的話他連公告也看不到。
+   *
+   * ★★ 位置很要緊:`groupNav()` 是用「連續相同」切群的。
+   *   這一筆的 group 要跟下面出勤那幾項**一模一樣**是「每日工作」，
+   *   不然畫面上會多長出一個同名但分開的群。
+   *
+   * ★★★ 2026-09-18 補回來:這一行 9/17 寫好了，但**那一版 `layout.tsx`
+   *   沒有寫進 repo** —— 同一批的其他六支都進去了，只有這一支沒有。
+   *   症狀是「頁面活著但側欄沒有入口」:打得到網址的人照樣進得去，
+   *   其他人以為功能不見了，而沒有任何地方會叫。
+   */
+  { href: '/board', label: '佈告欄', icon: '📢', group: '每日工作', roles: ['cleaner', 'housekeeper', 'accountant', 'manager', 'super_admin'] },
+  // 出勤排第二：全公司每天最少點兩次,而且是「上班第一件事」。
   // 它原本排在清潔記錄後面 —— 每天要用的東西不該讓人往下找。
   { href: '/attendance', label: '出勤', icon: '🕐', group: '每日工作', roles: ['cleaner', 'housekeeper', 'accountant', 'manager', 'super_admin'] },
   /*
@@ -230,7 +257,8 @@ const NAV: { href: string; label: string; icon: string; roles: string[]; group?:
   { href: '/customers', label: '客戶管理', icon: '👥', group: '客戶經營', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/reviews', label: '房源評價', icon: '⭐', group: '客戶經營', roles: ['housekeeper', 'manager', 'super_admin'] },
   /*
-   * IG 版面模擬（migration_258，2026-09-16 使用者:「社群經營 併進去客戶經營裡」）。
+   * 社群模擬（migration_258，2026-09-16 使用者:「社群經營 併進去客戶經營裡」;
+   *   2026-09-17 使用者:「改成社群模擬」「分成 IG 跟 FB」）。
    *
    * ★★ **位置很要緊**:`groupNav()` 是用「連續相同」切群的。
    *   這一筆要緊接在 /reviews 後面、group 也填「客戶經營」，才會併進同一群 ——
@@ -244,7 +272,8 @@ const NAV: { href: string; label: string; icon: string; roles: string[]; group?:
    * ★ 同一條規則寫在兩個地方就會有一邊沒跟上（README 坑 A）——
    *   改這一行的時候，`social/page.tsx` 的 `CAN_EDIT` 與 migration 都要一起改。
    */
-  { href: '/social', label: 'IG 版面模擬', icon: '📱', group: '客戶經營', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  { href: '/social', label: '社群模擬', icon: '📱', group: '客戶經營', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
+  /* ★ 佈告欄搬到最上面了（2026-09-17）—— 見這份清單開頭的第一項。 */
   // 會計進得去，但只看得到「收付款帳號」與「常用帳號」兩個分頁
   // —— 改人員角色那一頁仍然只有總經理，見 admin 頁的 ACCOUNTANT_TABS
   /*
