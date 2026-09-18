@@ -32,7 +32,7 @@ import { fmtSize, fileTooBig } from '@/lib/board';
 import {
   REPORT_KINDS, parseKind, periodText, options401, defaultStartFor,
   monthToStart, startToMonth, validateReport, suggestTitle, reportTitle,
-  sortReports, yearOf, matchReport, findSamePeriod,
+  sortReports, yearOf, matchReport,
   reportFileKind, FILE_BADGE, reportFileName, REPORT_ACCEPT,
   type Report,
 } from '@/lib/report';
@@ -68,7 +68,7 @@ const BADGE_CLASS: Record<string, string> = {
 const blank = (): Draft => ({
   kind: '401', period_start: defaultStartFor('401'),
   title: suggestTitle('401', defaultStartFor('401')),
-  filed_on: '', note: '', file: null,
+  uploaded_on: '', note: '', file: null,
 });
 
 export default function ReportsPage() {
@@ -138,20 +138,19 @@ export default function ReportsPage() {
     if (!d.id && !d.file) return onMsg('要選一個檔案（PDF、Excel 或 Word）。', true);
 
     /*
-     * ★★ 同一個種類＋同一期已經有一份了 → 問一句，然後**改那一列**。
-     *   資料庫有 `ar_period_uniq` 擋著，不先問的話使用者會撞到一句
-     *   `duplicate key value violates unique constraint`，而那句話沒人看得懂。
+     * ══════════════════════════════════════════════════════════
+     * 【★★★ 不再問「已經有一份了，要換掉嗎」】（2026-09-18「開放多個」）
+     *
+     * 原本同一期傳第二份會跳一句確認。使用者:
+     * 「401 可以重複上傳」「會有不同公司」「月報 401 不必一對一」「開放多個」。
+     *
+     * 同一期的 401，正隆一份、愛皮一份、洪鯊一份 —— **每一份都是對的**，
+     * 每次都問一句只是擋路。要換掉舊的就在那一列按「編輯」。
+     *
+     * ★ 資料庫那條唯一索引也拿掉了（migration_279）。
+     * ══════════════════════════════════════════════════════════
      */
-    let targetId = d.id;
-    const dup = findSamePeriod(rows, d);
-    if (dup) {
-      const who = names.get(dup.updated_by ?? dup.created_by ?? '') ?? '';
-      if (!confirm(
-        `${periodText(d.kind, d.period_start)} 的${parseKind(d.kind)}已經有一份`
-        + `（${who}${dup.updated_at ? '・' + String(dup.updated_at).slice(0, 10) : ''}）。\n\n`
-        + '要換成這一份嗎？舊的檔案會被取代。')) return;
-      targetId = dup.id;
-    }
+    const targetId = d.id;
 
     let path: string | null = null;
     let oldPath: string | null = null;
@@ -174,7 +173,7 @@ export default function ReportsPage() {
       kind: parseKind(d.kind),
       period_start: d.period_start || null,
       title: d.title.trim(),
-      filed_on: d.filed_on || null,
+      uploaded_on: d.uploaded_on || null,
       note: d.note?.trim() || null,
       updated_at: new Date().toISOString(),
     };
@@ -328,7 +327,7 @@ export default function ReportsPage() {
                   */}
                   <span className="block text-uisub text-gray-500">
                     {per && per !== reportTitle(r) ? per + '　·　' : ''}
-                    {r.filed_on ? `申報日 ${r.filed_on}` : '（沒填申報日）'}
+                    {r.uploaded_on ? `上傳日 ${r.uploaded_on}` : '（沒填上傳日）'}
                     {r.note ? '　·　' + r.note : ''}
                   </span>
                   <span className="block text-xs text-gray-400">
@@ -339,7 +338,7 @@ export default function ReportsPage() {
 
                 <button onClick={() => setDraft({
                   ...r, file: null, oldName: r.file_name, titleTouched: true,
-                  filed_on: r.filed_on ?? '', note: r.note ?? '',
+                  uploaded_on: r.uploaded_on ?? '', note: r.note ?? '',
                 })} className="shrink-0 mt-1 text-uisub text-mor-slate hover:text-mor-slatedark">編輯</button>
                 <button onClick={() => del(r)}
                   className="shrink-0 mt-1 text-uisub text-red-400 hover:text-red-600">刪掉</button>
@@ -521,9 +520,9 @@ function ReportDialog({ draft, onChange, onClose, onSave }: {
           </label>
 
           <label className="flex flex-col gap-1">
-            <span className="text-uisub text-gray-500">申報日</span>
-            <input type="date" value={draft.filed_on ?? ''} className={CTRL}
-              onChange={(e) => onChange({ ...draft, filed_on: e.target.value })} /></label>
+            <span className="text-uisub text-gray-500">上傳日</span>
+            <input type="date" value={draft.uploaded_on ?? ''} className={CTRL}
+              onChange={(e) => onChange({ ...draft, uploaded_on: e.target.value })} /></label>
 
           <label className="flex flex-col gap-1">
             <span className="text-uisub text-gray-500">備註</span>

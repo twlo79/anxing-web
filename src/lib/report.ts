@@ -62,8 +62,13 @@ export type Report = {
    *   建議，不自動（README 的判斷原則）。
    */
   title: string;
-  /** 申報日（使用者說的「日期」）。選填。 */
-  filed_on?: string | null;
+  /**
+   * 上傳日（2026-09-18 使用者:「改成上傳日」）。選填。
+   *
+   * ★ 原本叫「申報日」。**跟期別沒有先後關係** ——
+   *   明年那一期今天先建起來是合法的（migration_280 拿掉了那條守衛）。
+   */
+  uploaded_on?: string | null;
   note?: string | null;
   file_path?: string | null;
   file_name?: string | null;
@@ -202,12 +207,12 @@ export function validateReport(r: Report): string | null {
   }
 
   /*
-   * ★ 申報日不能早於那一期的開始 —— 還沒發生的期間報不了。
-   *   等於或晚於都可以（有人當月就先報）。
+   * ★★★ 「申報日不早於期別」那一條**拿掉了**（migration_280）。
+   *   它對申報日是對的，對**上傳日**是錯的 ——
+   *   401 的下拉列到明年，先把 116 年 11-12 月建起來的話，
+   *   上傳日（今天）比期別早，會被擋掉。
+   *   上傳日跟期別本來就沒有先後關係。
    */
-  if (r.filed_on && r.period_start && r.filed_on < r.period_start) {
-    return `申報日 ${r.filed_on} 早於期別的開始 ${r.period_start}`;
-  }
   return null;
 }
 
@@ -230,23 +235,23 @@ export function reportTitle(r: Report): string {
 }
 
 /**
- * 排序：**期別新的在前**，沒有期別的（其他）照申報日。
+ * 排序：**期別新的在前**，沒有期別的（其他）照上傳日。
  *
  * ★ 用 `period_start` 排，不是那串中文 ——
  *   中文排序會讓「115年 9-10月」排在「115年 1-2月」後面（字典序）。
  */
 export function sortReports(rows: Report[]): Report[] {
   return [...(rows ?? [])].sort((a, b) => {
-    const ka = a.period_start || a.filed_on || '';
-    const kb = b.period_start || b.filed_on || '';
+    const ka = a.period_start || a.uploaded_on || '';
+    const kb = b.period_start || b.uploaded_on || '';
     if (ka !== kb) return ka < kb ? 1 : -1;
     return reportTitle(a).localeCompare(reportTitle(b));
   });
 }
 
-/** 那一列屬於哪一年（篩選藥丸用）。沒有期別就看申報日。 */
+/** 那一列屬於哪一年（篩選藥丸用）。沒有期別就看上傳日。 */
 export const yearOf = (r: Report): string =>
-  String(r.period_start || r.filed_on || '').slice(0, 4);
+  String(r.period_start || r.uploaded_on || '').slice(0, 4);
 
 /**
  * 關鍵字比對。
@@ -259,43 +264,26 @@ export function matchReport(r: Report, kw: string | null | undefined): boolean {
   if (!q) return true;
   const hay = [
     r.title ?? '', periodText(r.kind, r.period_start), parseKind(r.kind),
-    r.note ?? '', r.filed_on ?? '', r.file_name ?? '',
+    r.note ?? '', r.uploaded_on ?? '', r.file_name ?? '',
     r.period_start ?? '',
   ].join(' ').toLowerCase();
   return hay.includes(q);
 }
 
-/**
- * 同一份已經傳過了嗎（❷「換掉舊的」靠這個先問一句）。
- *
+/*
  * ══════════════════════════════════════════════════════════
- * 【★★★ 2026-09-18 改:同一期**可以有好幾份**】
+ * 【★★★ 沒有「已經有一份了」這個提醒了】（2026-09-18「開放多個」）
  *
- * 使用者:「401 可以重複上傳」「會有不同公司」「月報 401 不必一對一」。
+ * 原本傳同一期時會跳一句「要換掉那一份嗎」。使用者:
+ * 「401 可以重複上傳」「會有不同公司」「月報 401 不必一對一」「開放多個」。
  *
- * 安幸底下不只一家:同一期的 401，正隆一份、愛皮一份、洪鯊一份，
- * **每一份都是對的**。原本只比「種類＋期別」的話，
- * 傳第二家會被當成重複 —— 而資料庫那條唯一索引直接擋掉
- * （migration_279 已經拿掉它）。
+ * 同一期的 401，正隆一份、愛皮一份、洪鯊一份 —— **每一份都是對的**，
+ * 每次都問一句只是擋路。要換掉舊的就在那一列按「編輯」。
  *
- * ★ 所以再加一個條件:**標題也一樣**才算同一份。
- *   公司寫在標題裡（「正隆-115年 8月」），標題不同就不會被問。
- *
- * ★★ 標題前後的空白要收掉再比 —— 多一個空白就變成另一份的話，
- *   這個提醒等於沒有（README:兩個格式不同的字串拿去比對）。
- * ══════════════════════════════════════════════════════════
- */
-export function findSamePeriod(rows: Report[], r: Report): Report | null {
-  const k = parseKind(r.kind);
-  if (k === '其他' || !r.period_start) return null;
-  const title = (r.title ?? '').trim();
-  if (!title) return null;
-  return (rows ?? []).find((x) =>
-    x.id !== r.id
-    && parseKind(x.kind) === k
-    && x.period_start === r.period_start
-    && (x.title ?? '').trim() === title) ?? null;
-}
+ * ★ 所以 `findSamePeriod` 整支拿掉了，不是留著不呼叫 ——
+ *   留著的話下一個人會以為它還有用（README:留著一支沒人叫的函式
+ *   比刪掉更容易被誤用）。
+ * ══════════════════════════════════════════════════════════ */
 
 /* ══════════════ 檔案 ══════════════ */
 

@@ -5,13 +5,13 @@ import {
   monthToStart, startToMonth, START_MONTHS_401,
   options401, default401, defaultMonthly, defaultStartFor,
   validateReport, suggestTitle, reportTitle, sortReports, yearOf,
-  matchReport, findSamePeriod, reportFileKind, extOf, FILE_BADGE,
+  matchReport, reportFileKind, extOf, FILE_BADGE,
   reportFileName, type Report,
 } from './report.ts';
 
 const R = (o: Partial<Report> = {}): Report => ({
   kind: '401', period_start: '2026-07-01', title: '115年 7-8月',
-  filed_on: '2026-09-15', file_name: '401.pdf', ...o,
+  uploaded_on: '2026-09-15', file_name: '401.pdf', ...o,
 });
 
 /* ── 種類 ─────────────────────────────────────────── */
@@ -84,7 +84,7 @@ describe('★★★ options401 —— 不需要「新增年度」', () => {
 
   test('★ 每一個選項都通得過 validateReport —— 下拉不該給出存不進去的值', () => {
     for (const o of opts) {
-      assert.equal(validateReport(R({ period_start: o.start, filed_on: null })), null, o.label);
+      assert.equal(validateReport(R({ period_start: o.start, uploaded_on: null })), null, o.label);
     }
   });
 
@@ -141,13 +141,13 @@ describe('★★★ validateReport', () => {
 
   test('★ 標題必填對「其他」也一樣', () => {
     assert.equal(validateReport(R({ kind: '其他', period_start: null, title: '' })), '要填標題');
-    assert.equal(validateReport(R({ kind: '其他', period_start: null, title: '114 年度財簽報告', filed_on: null })), null);
+    assert.equal(validateReport(R({ kind: '其他', period_start: null, title: '114 年度財簽報告', uploaded_on: null })), null);
   });
 
   test('月報與 401 要有期別；其他不用', () => {
     assert.equal(validateReport(R({ period_start: null })), '要選期別');
     assert.equal(validateReport(R({ kind: '月報', period_start: null })), '要選期別');
-    assert.equal(validateReport(R({ kind: '其他', period_start: null, filed_on: null })), null);
+    assert.equal(validateReport(R({ kind: '其他', period_start: null, uploaded_on: null })), null);
   });
 
   test('★★ 401 的起月只能是單數月', () => {
@@ -156,20 +156,23 @@ describe('★★★ validateReport', () => {
   });
 
   test('★ 月報選 6 月是合法的 —— 單數月那條只管 401', () => {
-    assert.equal(validateReport(R({ kind: '月報', period_start: '2026-06-01', filed_on: '2026-07-05' })), null);
+    assert.equal(validateReport(R({ kind: '月報', period_start: '2026-06-01', uploaded_on: '2026-07-05' })), null);
   });
 
   test('期別一定是那一期的第一天', () => {
     assert.ok(validateReport(R({ period_start: '2026-07-15' }))?.includes('第一天'));
   });
 
-  test('★ 申報日不能早於期別的開始', () => {
-    const err = validateReport(R({ filed_on: '2026-06-30' }));
-    assert.ok(err?.includes('早於'), err ?? '');
-  });
-
-  test('★ 當期就先報是合法的（申報日等於或晚於期別開始）', () => {
-    assert.equal(validateReport(R({ filed_on: '2026-07-01' })), null);
+  /*
+   * ★★★ 2026-09-18:「申報日不早於期別」那一條**拿掉了**。
+   *   401 的下拉列到明年 —— 先把 116 年 11-12 月建起來的話，
+   *   上傳日（今天）比期別早，舊規則會把它擋掉。
+   *   上傳日跟期別本來就沒有先後關係。
+   */
+  test('★★★ 上傳日早於期別是合法的 —— 明年那一期今天先建得起來', () => {
+    assert.equal(validateReport(R({ uploaded_on: '2026-06-30' })), null);
+    assert.equal(validateReport(
+      R({ period_start: '2027-11-01', title: '116年 11-12月', uploaded_on: '2026-09-18' })), null);
   });
 
   test('★★ 一次只回一個錯 —— 人只看第一行', () => {
@@ -216,7 +219,7 @@ describe('sortReports —— 用 period_start 排，不是那串中文', () => {
 
   test('★ 沒有期別的（其他）用申報日排', () => {
     const rows = [
-      R({ id: 'x', kind: '其他', period_start: null, filed_on: '2026-06-30', title: '財簽' }),
+      R({ id: 'x', kind: '其他', period_start: null, uploaded_on: '2026-06-30', title: '財簽' }),
       R({ id: 'y', period_start: '2026-07-01' }),
     ];
     assert.equal(sortReports(rows)[0].id, 'y');
@@ -234,7 +237,7 @@ describe('sortReports —— 用 period_start 排，不是那串中文', () => {
 describe('yearOf / reportTitle', () => {
   test('有期別看期別，沒有看申報日', () => {
     assert.equal(yearOf(R()), '2026');
-    assert.equal(yearOf(R({ kind: '其他', period_start: null, filed_on: '2025-06-30' })), '2025');
+    assert.equal(yearOf(R({ kind: '其他', period_start: null, uploaded_on: '2025-06-30' })), '2025');
   });
   test('標題就是標題，不要在這裡編一個出來', () => {
     assert.equal(reportTitle(R({ title: '115年 7-8月 (更正)' })), '115年 7-8月 (更正)');
@@ -254,50 +257,6 @@ describe('★ matchReport —— 打「7-8」要找得到', () => {
   });
   test('空關鍵字全部通過', () => assert.equal(matchReport(R(), ''), true));
   test('沒中的回 false', () => assert.equal(matchReport(R({ title: 'a', note: null, file_name: null }), 'zzz'), false));
-});
-
-describe('★★★ findSamePeriod —— 同一期可以有好幾份（2026-09-18）', () => {
-  /* 使用者:「401 可以重複上傳」「會有不同公司」「月報 401 不必一對一」 */
-  const rows = [
-    R({ id: '1', kind: '401', period_start: '2026-07-01', title: '愛皮-115年 7-8月' }),
-    R({ id: '2', kind: '月報', period_start: '2026-07-01', title: '正隆-115年 7月' }),
-  ];
-
-  test('★★★ 同一期、不同公司 → **不算重複**，不要問他', () => {
-    assert.equal(findSamePeriod(rows,
-      R({ id: 'new', kind: '401', period_start: '2026-07-01', title: '正隆-115年 7-8月' })), null);
-    assert.equal(findSamePeriod(rows,
-      R({ id: 'new', kind: '401', period_start: '2026-07-01', title: '洪鯊-115年 7-8月' })), null);
-  });
-
-  test('★★ 種類、期別、標題**三個都一樣**才算同一份', () => {
-    assert.equal(findSamePeriod(rows,
-      R({ id: 'new', kind: '401', period_start: '2026-07-01', title: '愛皮-115年 7-8月' }))?.id, '1');
-  });
-
-  test('★ 標題前後的空白要收掉再比 —— 多一個空白就變成另一份的話這個提醒等於沒有', () => {
-    assert.equal(findSamePeriod(rows,
-      R({ id: 'new', kind: '401', period_start: '2026-07-01', title: '  愛皮-115年 7-8月 ' }))?.id, '1');
-  });
-
-  test('★ 種類不同不算 —— 7 月的月報跟 7-8 月的 401 是兩份', () => {
-    assert.equal(findSamePeriod(rows,
-      R({ id: 'new', kind: '401', period_start: '2026-09-01', title: '愛皮-115年 9-10月' })), null);
-  });
-
-  test('★★ 自己不算自己 —— 不然編輯既有的那一列會說「已經有一份」', () => {
-    assert.equal(findSamePeriod(rows, rows[0]), null);
-  });
-
-  test('★ 「其他」不比 —— 它本來就可以有很多份', () => {
-    assert.equal(findSamePeriod(rows,
-      R({ kind: '其他', period_start: '2026-07-01', title: '愛皮-115年 7-8月' })), null);
-  });
-
-  test('★ 標題空的不比 —— 那時候還沒填完，問了也沒意義', () => {
-    assert.equal(findSamePeriod(rows,
-      R({ id: 'new', kind: '401', period_start: '2026-07-01', title: '' })), null);
-  });
 });
 
 /* ── 檔案 ─────────────────────────────────────────── */
