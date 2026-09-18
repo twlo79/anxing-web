@@ -69,6 +69,20 @@ export type Report = {
    *   明年那一期今天先建起來是合法的（migration_280 拿掉了那條守衛）。
    */
   uploaded_on?: string | null;
+  /**
+   * 申報日（2026-09-18 使用者:「還是可以填申報日 非必填」）。選填。
+   *
+   * ★★★ 跟 `uploaded_on` 是**兩件事**:
+   *   · 上傳日 = 檔案什麼時候進系統（自動帶，人不用管）
+   *   · 申報日 = 什麼時候送出去給國稅局（人填，常常是空的）
+   *
+   * ★ 愛皮 115年7-8月 剛好兩個都是 9/10 —— 所以一開始看起來像同一欄。
+   *   280 當時把 filed_on 改名成 uploaded_on，前提就是「它們是同一件事」，
+   *   而那個前提是錯的（migration_282 把這一欄加回來，不是回退）。
+   * ★★ **沒有**「不早於期別」的守衛 —— 275 加過、280 拆過，
+   *   同一個位置不再用「講得通」當理由加規則。錯了就改。
+   */
+  filed_on?: string | null;
   note?: string | null;
   file_path?: string | null;
   file_name?: string | null;
@@ -264,7 +278,7 @@ export function matchReport(r: Report, kw: string | null | undefined): boolean {
   if (!q) return true;
   const hay = [
     r.title ?? '', periodText(r.kind, r.period_start), parseKind(r.kind),
-    r.note ?? '', r.uploaded_on ?? '', r.file_name ?? '',
+    r.note ?? '', r.uploaded_on ?? '', r.filed_on ?? '', r.file_name ?? '',
     r.period_start ?? '',
   ].join(' ').toLowerCase();
   return hay.includes(q);
@@ -319,7 +333,12 @@ export const FILE_BADGE: Record<ReportFileKind, string> = {
  *
  * ★ Windows 不准的字元換成 `_`，不然存不進資料夾。
  */
-const BAD_CHARS = /[\\/:*?"<>| -]/g;
+/*
+ * ★ 這兩個邊界寫成跳脫（`\u0000` / `\u001f`），不要直接打控制字元進來 ——
+ *   原本那一版是**真的 NUL byte**，`grep` 會把整支當成二進位檔而不吐結果
+ *   （2026-09-18 查東西時撞到，程式行為沒差，但查不到就等於這個檔不存在）。
+ */
+const BAD_CHARS = /[\\/:*?"<>|\u0000-\u001f]/g;
 
 export function reportFileName(r: Report): string {
   const ext = extOf(r.file_name);
@@ -347,17 +366,30 @@ export function reportFileName(r: Report): string {
  *   所以順序換了也不會讀錯。
  * ══════════════════════════════════════════════════════════
  */
+/**
+ * `2026-09-18` → `09/18`。年份在清單上是噪音（同一頁幾乎都是同一年），
+ * 而這一行本來就已經很擠。
+ */
+const dm = (d: string): string => String(d).slice(5).replace('-', '/');
+
 export function fileLine(p: {
   who?: string | null;
   fileName?: string | null;
   size?: string | null;
   uploadedOn?: string | null;
+  filedOn?: string | null;
 }): string {
   const parts = [
     (p.who ?? '').trim(),
     (p.fileName ?? '').trim(),
     (p.size ?? '').trim(),
-    p.uploadedOn ? `上傳 ${String(p.uploadedOn).slice(5).replace('-', '/')}` : '',
+    /*
+     * ★★ 兩個日期**排在一起**，而且各自帶著名字。
+     *   分到兩行的話看的人得自己在兩行之間比對;
+     *   不帶名字的話「09/18・09/10」根本讀不出誰是誰。
+     */
+    p.uploadedOn ? `上傳 ${dm(p.uploadedOn)}` : '',
+    p.filedOn ? `申報 ${dm(p.filedOn)}` : '',
   ].filter(Boolean);
   /* ★ 一段都沒有時回空字串 —— 畫面那邊整行不畫，不要留一條空的灰線 */
   return parts.join('　·　');

@@ -346,3 +346,56 @@ describe('★★ fileLine —— 空的整段不見，不是印「—」', () =>
     assert.equal(fileLine({ uploadedOn: '2026-09-10' }), '上傳 09/10');
   });
 });
+
+/*
+ * ══════════════════════════════════════════════════════════
+ * 申報日（2026-09-18 使用者:「還是可以填申報日 非必填」）
+ *
+ * ★★★ 它跟上傳日是**兩件事**:上傳日是檔案進系統那天（自動帶），
+ *   申報日是送出去給國稅局那天（人填，常常是空的）。
+ *   280 當時把 filed_on 改名成 uploaded_on,前提是「它們是同一件事」——
+ *   而那個前提錯了。這幾條就是釘住它們不會再被合成一欄。
+ * ══════════════════════════════════════════════════════════
+ */
+describe('★★★ 申報日與上傳日是兩欄', () => {
+  test('兩個都有時,兩段都印,而且各自帶著名字', () => {
+    const s = fileLine({
+      who: '芊', fileName: '401.pdf', size: '160 KB',
+      uploadedOn: '2026-09-18', filedOn: '2026-09-10',
+    });
+    assert.ok(s.includes('上傳 09/18'), s);
+    assert.ok(s.includes('申報 09/10'), s);
+    /* ★ 順序:上傳在前、申報在後 */
+    assert.ok(s.indexOf('上傳 09/18') < s.indexOf('申報 09/10'), s);
+  });
+
+  test('★★ 只有上傳日時,不會冒出一個空的「申報」', () => {
+    const s = fileLine({ fileName: 'a.xlsx', size: '62 KB', uploadedOn: '2026-09-18' });
+    assert.equal(s, 'a.xlsx　·　62 KB　·　上傳 09/18');
+    assert.ok(!s.includes('申報'), s);
+  });
+
+  test('★★ 只有申報日時（檔案還沒傳）也印得出來', () => {
+    assert.equal(fileLine({ filedOn: '2026-09-10' }), '申報 09/10');
+  });
+
+  test('null 與空字串都當成沒填', () => {
+    assert.equal(fileLine({ filedOn: null }), '');
+    assert.equal(fileLine({ filedOn: '' }), '');
+  });
+
+  test('★★★ 兩個日期一樣時**兩段都要印** —— 那是巧合不是重複', () => {
+    /*
+     * 愛皮 115年7-8月 就是這一種:9/10 傳進來、9/10 也送出去。
+     * 少印一段的話,看的人會以為另一件事沒做。
+     */
+    const s = fileLine({ uploadedOn: '2026-09-10', filedOn: '2026-09-10' });
+    assert.equal(s, '上傳 09/10　·　申報 09/10');
+  });
+
+  test('matchReport 找得到申報日', () => {
+    const r = { kind: '401', period_start: '2026-07-01', title: '愛皮', filed_on: '2026-09-10' };
+    assert.equal(matchReport(r, '09-10'), true);
+    assert.equal(matchReport(r, '09-11'), false);
+  });
+});

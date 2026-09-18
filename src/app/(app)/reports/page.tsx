@@ -68,7 +68,8 @@ const BADGE_CLASS: Record<string, string> = {
 const blank = (): Draft => ({
   kind: '401', period_start: defaultStartFor('401'),
   title: suggestTitle('401', defaultStartFor('401')),
-  note: '', file: null,
+  /* ★ 申報日預設空的 —— 剛傳上來的那一刻通常還沒申報 */
+  filed_on: '', note: '', file: null,
 });
 
 export default function ReportsPage() {
@@ -182,6 +183,13 @@ export default function ReportsPage() {
       kind: parseKind(d.kind),
       period_start: d.period_start || null,
       title: d.title.trim(),
+      /*
+       * ★★ 申報日是**人填的**，空的就存 null（不是空字串）——
+       *   `date` 欄位收到 '' 會直接爆 `invalid input syntax for type date`。
+       * ★ 這裡不自動帶今天:上傳日回答「檔案什麼時候進來」可以自動，
+       *   申報日回答「什麼時候送出去」，猜不得（README:對不上的不猜）。
+       */
+      filed_on: d.filed_on || null,
       note: d.note?.trim() || null,
       updated_at: new Date().toISOString(),
       updated_by: meId,
@@ -359,7 +367,10 @@ export default function ReportsPage() {
                     </span>
                   ) : null}
                   {/*
-                    第三行:誰傳的・檔名・大小・上傳日（2026-09-18 使用者指定）。
+                    第三行:誰傳的・檔名・大小・上傳日・申報日。
+                    ★★ 兩個日期排在一起,各自帶著名字(「上傳 09/18」「申報 09/10」)——
+                      分到兩行的話看的人得自己在兩行之間比對,
+                      不帶名字的話「09/18・09/10」讀不出誰是誰。
                     ★ 排法在 `fileLine`（lib，有測試）—— 空的那幾段整段不見，
                       不是留一個講不出自己是什麼的「—」。
                   */}
@@ -369,6 +380,7 @@ export default function ReportsPage() {
                       fileName: r.file_name,
                       size: r.file_size ? fmtSize(r.file_size) : '',
                       uploadedOn: r.uploaded_on,
+                      filedOn: r.filed_on,
                     });
                     return line
                       ? <span className="block text-xs text-gray-400 truncate">{line}</span>
@@ -378,7 +390,8 @@ export default function ReportsPage() {
 
                 <button onClick={() => setDraft({
                   ...r, file: null, oldName: r.file_name, titleTouched: true,
-                  uploaded_on: r.uploaded_on ?? '', note: r.note ?? '',
+                  uploaded_on: r.uploaded_on ?? '', filed_on: r.filed_on ?? '',
+                  note: r.note ?? '',
                 })} className="shrink-0 mt-1 text-uisub text-mor-slate hover:text-mor-slatedark">編輯</button>
                 <button onClick={() => del(r)}
                   className="shrink-0 mt-1 text-uisub text-red-400 hover:text-red-600">刪掉</button>
@@ -559,11 +572,29 @@ function ReportDialog({ draft, onChange, onClose, onSave }: {
             <span className="text-xs text-gray-400">下載下來的檔名就是這一行。</span>
           </label>
 
-          <label className="flex flex-col gap-1">
-            <span className="text-uisub text-gray-500">備註</span>
-            <input value={draft.note ?? ''} className={CTRL}
-              placeholder="已申報，含留抵 1,204"
-              onChange={(e) => onChange({ ...draft, note: e.target.value })} /></label>
+          {/*
+            ── 申報日 ＋ 備註 ──
+            ★★ 沒有上傳日那一格 —— 它自動帶（使用者:「不用上傳日，自動吃」）。
+              這一格是**申報日**,送出去給國稅局那一天,不一樣的東西。
+            ★ 沒有紅星就是非必填,不用再寫一次「(非必填)」（anxing-ui 二-10）。
+            ★★★ 手機上直接疊成兩排 —— 日期輸入框在窄螢幕上擠不進三分之一。
+          */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <label className="flex flex-col gap-1">
+              <span className="text-uisub text-gray-500">申報日</span>
+              <input type="date" value={draft.filed_on ?? ''} className={CTRL}
+                onChange={(e) => onChange({ ...draft, filed_on: e.target.value })} />
+              {/* ★ 一句話講完,寫給不知道前因後果的人看 */}
+              <span className="text-xs text-gray-400">還沒申報就留空。</span>
+            </label>
+
+            <label className="flex flex-col gap-1 md:col-span-2">
+              <span className="text-uisub text-gray-500">備註</span>
+              <input value={draft.note ?? ''} className={CTRL}
+                placeholder="留底數 30,748"
+                onChange={(e) => onChange({ ...draft, note: e.target.value })} />
+            </label>
+          </div>
 
           <div className="text-xs text-gray-400 leading-relaxed">
             只有總經理、會計、主管看得到與上傳。
