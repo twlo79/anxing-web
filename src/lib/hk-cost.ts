@@ -26,6 +26,7 @@
  * 所以分成兩袋:算得出錢的、算不出的。畫面上兩袋都要顯示。
  */
 
+import type { Purpose } from './purpose.ts';
 import type { LogEntry } from './hk-payroll.ts';
 import {
   splitJobKey, splitExpenseKey, hasSplit, type SplitLine,
@@ -370,16 +371,53 @@ export const LABOR_ITEM_NAME = '房務人事費';
 export type EstateFill<T> = { ok: T[]; missing: T[] };
 
 /**
+ * 「安幸辦公室」那一種用途（migration_212 / 235）。
+ *
+ * ★ 型別綁在 `lib/purpose.ts` 的 `Purpose` 上 —— 打錯字 tsc 會擋，
+ *   不是再開一份自由的字串常數。
+ */
+const OFFICE: Purpose = 'office';
+
+/**
  * 用房源去查物業，補進 `estate_id`。
+ *
+ * ══════════════════════════════════════════════════════════
+ * 【★★★ 安幸辦公室那一批要先放行】（2026-09-18 踩過）
+ *
+ * `exp_purpose_chk` 有**兩種**合法形狀:
+ *
+ *     purpose_type = 'estate'  →  estate_id **不可以**是 null
+ *     purpose_type = 'office'  →  estate_id **必須**是 null
+ *
+ * 這支原本只認得第一種。migration_235 把劉姐的時薪工資改成
+ * `purpose_type='office'`＋兩個 id 都 null 之後（那是**對的**形狀），
+ * 每一筆都被判成「查不到物業」而挑掉 ——
+ * **劉姐的工資從那之後一筆都沒產生過**。
+ *
+ * ★ 症狀特別難查:畫面說的是「去房源設定把它們的物業補上」，
+ *   而那件事做了也沒用 —— `hourRows` 的 `property_id` 是寫死的 null。
+ *   使用者照著做，什麼都不會變。
+ *
+ * ★★ 這是 README 那條「同一條規則在三個地方各寫一次」的另一種形狀:
+ *   `exp_purpose_chk` 認得兩種形狀，而這裡只抄了一種。
  *
  * @param estateOf 房源 id → 物業 id。查不到回 undefined
  */
 export function fillEstate<
-  T extends { estate_id?: string | null; property_id?: string | null },
+  T extends {
+    estate_id?: string | null;
+    property_id?: string | null;
+    purpose_type?: string | null;
+  },
 >(rows: T[], estateOf: (propertyId: string) => string | undefined): EstateFill<T> {
   const ok: T[] = [];
   const missing: T[] = [];
   for (const r of rows ?? []) {
+    /*
+     * ★★★ 安幸辦公室本來就沒有物業 —— 直接放行，不要去查表。
+     *   放在迴圈最前面是刻意的:底下那一行只要跑到就一定判它「缺物業」。
+     */
+    if (r.purpose_type === OFFICE) { ok.push(r); continue; }
     // 已經有物業就不動 —— 別讓查表覆蓋掉明確填好的值
     const est = r.estate_id || (r.property_id ? estateOf(r.property_id) : undefined) || null;
     if (est) ok.push({ ...r, estate_id: est });

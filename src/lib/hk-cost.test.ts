@@ -526,3 +526,44 @@ describe('★★★ 時薪人員（劉姐）獨做的工，清潔費照算', () 
     assert.ok(rows.some((r) => r.property_id === 'p3'));
   });
 });
+
+/* ══════════════════════════════════════════════════════════
+ * fillEstate —— 2026-09-18 踩過:劉姐的工資一筆都沒產生
+ * ══════════════════════════════════════════════════════════ */
+
+describe('★★★ fillEstate ② —— exp_purpose_chk 有**兩種**合法形狀（2026-09-18）', () => {
+  const estateOf = (pid: string) => ({ 'p-14B3': 'e-正隆' }[pid]);
+
+  /* 照 stats-tab.tsx 的 hourRows 建:office ＋ 兩個 id 都 null */
+  const office = {
+    purpose_type: 'office', property_id: null, estate_id: null,
+    item_name: '劉姐 2.5 小時 × $500・14B3',
+  };
+
+  test('★★★ 安幸辦公室的支出要放行 —— 它本來就沒有物業（migration_235）', () => {
+    const r = fillEstate([office], estateOf);
+    assert.equal(r.ok.length, 1, '被判成「查不到物業」了');
+    assert.equal(r.missing.length, 0);
+  });
+
+  test('★★★ 放行之後 estate_id 還是 null —— 補一個進去會撞 exp_purpose_chk', () => {
+    const r = fillEstate([office], estateOf);
+    assert.equal(r.ok[0].estate_id, null);
+    assert.equal(r.ok[0].property_id, null);
+  });
+
+  test('★★★ 混在一起時只挑掉該挑的那一筆', () => {
+    const r = fillEstate([
+      office,
+      { purpose_type: 'estate', property_id: 'p-14B3', estate_id: null, item_name: 'A' },
+      { purpose_type: 'estate', property_id: 'p-沒設定', estate_id: null, item_name: 'B' },
+    ], estateOf);
+    assert.equal(r.ok.length, 2);
+    assert.deepEqual(r.missing.map((x) => x.item_name), ['B']);
+  });
+
+  test('★ 沒寫 purpose_type 的照舊走查表那條路（不要改變既有行為）', () => {
+    const r = fillEstate([{ property_id: 'p-14B3', estate_id: null }], estateOf);
+    assert.equal(r.ok[0].estate_id, 'e-正隆');
+  });
+});
