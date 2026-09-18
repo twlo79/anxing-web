@@ -590,9 +590,17 @@ function ReportDialog({ draft, onChange, onClose, onSave }: {
             ★★★ 申報日與備註**各自一行**（2026-09-18 使用者:「表單 備註分開一行」）。
               並排時備註只剩三分之二寬,「留底數：30,748」這種就已經快滿了 ——
               而備註本來就是會愈寫愈長的那一欄。
-            ★ 申報日是日期框,不需要整行寬,所以留在左邊三分之一。
+            ★★★ 申報日的寬度是 **12rem，量出來的，不要改小**
+              （2026-09-18 使用者:「UI 截到了」）。
+              原本寫 `md:w-1/3` —— 在這個對話框裡算出來是 8rem，
+              而 `dd/mm/yyyy` ＋ 日曆圖示在 17px（text-ui）下要 10rem 才塞得下，
+              於是年份被切成 `yyy`、圖示疊在文字上。
+              實測（無頭瀏覽器，17px）:8rem 切掉 ／ 10rem 剛好貼齊 ／ 11rem 以上才有餘裕。
+            ★★ **用固定的 rem 不要用分數** —— 分數會跟著對話框寬度變，
+              而這一格能不能塞得下跟對話框多寬沒有關係，跟字級有關係。
+            ★ 手機上照樣整行（`w-full`），窄螢幕沒有擠的問題。
           */}
-          <label className="flex flex-col gap-1 md:w-1/3">
+          <label className="flex flex-col gap-1 w-full md:w-[12rem]">
             <span className="text-uisub text-gray-500">申報日</span>
             <input type="date" value={draft.filed_on ?? ''} className={CTRL}
               onChange={(e) => onChange({ ...draft, filed_on: e.target.value })} />
