@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>會計報表</title>
+<style>
+  :root{--bg:#F1F0EC;--line:#E0DDD5;--ink:#2E3840;--slate:#41689B;--slatedark:#345380;
+        --bluelight:#DFEDFA;--green:#3FAE7C;--greendark:#217346;--greenlight:#DFF2E8;--sand:#ECE8DF}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.6 -apple-system,"PingFang TC","Noto Sans TC",sans-serif;padding:20px 16px 90px}
+  .wrap{max-width:1040px;margin:0 auto}
+  h1{font-size:20px;margin:0 0 4px}
+  h2{font-size:14px;margin:30px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line);color:#6b7280}
+  .lead{color:#6b7280;font-size:13px;margin:0 0 14px}
+  .note{font-size:13px;color:#4b5563;background:#fff;border:1px solid var(--line);
+        border-radius:11px;padding:12px 14px;margin-top:10px;line-height:1.8}
+  .q{font-size:13px;background:#FFFBEB;border:1px solid #FCD34D;border-radius:11px;padding:12px 14px;margin-top:11px}
+  .q b{color:#92400E}
+  .sub{font-size:12px;color:#9ca3af}
+  .red{color:#dc2626}.grn{color:var(--greendark)}.mut{color:#9ca3af}
+  code{background:#F1F0EC;border-radius:4px;padding:1px 5px;font-size:12px}
+  ul{margin:5px 0 0;padding-left:19px}li{margin:5px 0}
+
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px}
+  @media(max-width:820px){.two{grid-template-columns:1fr}}
+  .panel{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px}
+  .panel.pick{border:2px solid var(--greendark)}
+  .ph{font-size:13px;font-weight:700;margin-bottom:2px}
+  .ph.g{color:var(--greendark)}
+
+  /* 側欄 */
+  .nav{background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 8px;max-width:210px}
+  .ng{font-size:12px;color:#9ca3af;padding:2px 8px 6px}
+  .ni{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:8px;font-size:13.5px}
+  .ni.new{background:var(--greenlight);color:var(--greendark);font-weight:700}
+
+  /* 藥丸 */
+  .pills{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
+  .pill{border:1px solid var(--line);background:#fff;border-radius:999px;padding:5px 12px;
+        font-size:12.5px;font-family:inherit;cursor:pointer;color:#4b5563}
+  .pill.on{background:var(--slate);border-color:var(--slate);color:#fff;font-weight:600}
+
+  /* 清單 */
+  .card{border:1px solid var(--line);border-radius:11px;background:#fff;overflow:hidden}
+  .row{display:flex;align-items:flex-start;gap:10px;padding:11px 12px;border-top:1px solid rgba(224,221,213,.6)}
+  .row:first-child{border-top:0}
+  .ico{width:34px;height:34px;flex:none;border-radius:9px;color:#fff;
+       display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700}
+  .i-pdf{background:#dc2626}.i-xls{background:#217346}.i-doc{background:#2563eb}
+  .mid{flex:1;min-width:0;display:block}
+  .t1{display:block;font-size:14px;font-weight:600}
+  .t2{display:block;font-size:12px;color:#6b7280;margin-top:1px}
+  .t3{display:block;font-size:11px;color:#9ca3af;margin-top:2px}
+  .tag{flex:none;font-size:11px;border-radius:4px;padding:2px 7px;margin-top:2px}
+  .g-m{background:var(--bluelight);color:var(--slatedark)}
+  .g-4{background:#EDE9FE;color:#6D28D9}
+  .g-o{background:#F1F0EC;color:#6b7280}
+  .lnk{flex:none;font-size:12px;color:var(--slate);cursor:pointer;margin-top:2px}
+  .lnk.d{color:#f87171}
+  .dl{flex:none;height:32px;border-radius:8px;border:1px solid var(--greendark);color:var(--greendark);
+      background:#fff;font-size:12px;font-family:inherit;padding:0 12px;cursor:pointer}
+
+  /* 對話框 */
+  .dlg{background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden;max-width:420px;margin:0 auto}
+  .dh{padding:11px 14px;border-bottom:1px solid var(--line);font-weight:700;font-size:14px;
+      display:flex;justify-content:space-between}
+  .db{padding:13px 14px;display:grid;gap:11px}
+  .lb{font-size:12px;color:#6b7280;display:block;margin-bottom:3px}
+  .req{color:#dc2626}
+  .in{border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:14px;background:#fff;
+      font-family:inherit;width:100%}
+  select.in{height:38px}
+  .drop{border:1.5px dashed var(--line);border-radius:10px;background:#FAFAF9;padding:18px 12px;text-align:center}
+  .df{padding:12px 14px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px}
+  .btn{background:var(--slate);color:#fff;border:none;border-radius:8px;padding:8px 16px;
+       font-size:13px;font-family:inherit;cursor:pointer}
+  .ghost{border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 14px;
+         font-size:13px;font-family:inherit;cursor:pointer}
+  .col2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+  table{width:100%;border-collapse:collapse;font-size:12.5px;background:#fff}
+  thead{background:rgba(236,232,223,.6);color:#6b7280;font-size:11px}
+  th,td{padding:7px 9px;text-align:left}
+  tbody tr{border-top:1px solid rgba(224,221,213,.5)}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>會計報表</h1>
+<p class="lead">新的一頁，放在<b>財務管理</b>底下。月報、401、其他報表都收在這裡。<b>還沒動程式碼。</b></p>
+
+<!-- ══════════════ 放哪裡 ══════════════ -->
+<h2>放哪裡</h2>
+<div class="nav">
+  <div class="ng">財務管理</div>
+  <div class="ni">💰　帳戶明細</div>
+  <div class="ni">📒　其他收支帳</div>
+  <div class="ni">📊　財務儀錶板</div>
+  <div class="ni new">📑　會計報表</div>
+</div>
+<div class="note">
+  排在<b>最後一個</b> —— 前三個是每天在看的，報表是一個月碰一次。<br>
+  ★ <b>看不到的人連這一項都不會出現</b>（房務、管家）。畫一個點進去說「沒有權限」的選項，
+  等於每天提醒他有個地方他進不去。
+</div>
+
+<!-- ══════════════ 清單 ══════════════ -->
+<h2>清單長什麼樣</h2>
+
+<div class="pills" id="pk"></div>
+<div class="pills" id="py"></div>
+<div class="card" id="list"></div>
+<div class="sub" style="margin-top:6px" id="cnt"></div>
+
+<div class="note">
+  <b>大字是「標題」，前面那顆籤是種類</b>（2026-09-18 使用者指定）。
+  選好種類與期別會<b>建議</b>一個標題（「115年 7-8月」），<b>隨時改得動</b> ——
+  改過之後換期別不會把你打的字蓋掉。<br>
+  ★★★ <b>下載下來的檔名就是標題</b>（使用者:「下載檔案 和標題一樣」）。<br>
+  ★ 401 自己寫成 <code>115年 7-8月</code>，月報寫成 <code>115年 8月</code> ——
+  <b>兩月一期看得出來，不用另外解釋</b>。<br>
+  ★★ 藥丸點一下開、再點一下清除；上排是種類、下排是年度，兩排之間是「且」。
+  （跟房源狀態那頁同一套規矩）
+</div>
+
+<!-- ══════════════ 上傳 ══════════════ -->
+<h2>上傳（版型跟「表單下載」同一套）</h2>
+
+<div class="two" style="grid-template-columns:1fr 1fr">
+  <div>
+    <div class="ph" style="margin-bottom:6px">種類選「月報」時</div>
+    <div class="dlg" id="d1"></div>
+  </div>
+  <div>
+    <div class="ph" style="margin-bottom:6px">種類選「401」時 —— 期別那一格自己換掉</div>
+    <div class="dlg" id="d2"></div>
+  </div>
+</div>
+
+<div class="note">
+  <b>那兩個下拉是真的可以切的</b> —— 在上面任何一個對話框裡把「種類」改掉，期別那一格會跟著換。
+  <ul>
+    <li><b>月報</b>　期別 ＝ 一個月（<code>115年 8月</code>）。用月份選擇器，<b>任何年月都選得到</b>，
+      沒有清單要維護</li>
+    <li><b>401</b>　期別 ＝ 兩個月（<code>115年 7-8月</code>）。<br>
+      下拉裡<b>只有 1-2／3-4／5-6／7-8／9-10／11-12</b> —— 選不到「6-7 月」這種不存在的期別。<br>
+      <b>年度是自己長出來的</b>：往前 2 年、<b>往後 1 年</b>，新的排前面，
+      <b>不需要「新增年度」這個動作</b>。<br>
+      <span class="sub">★ 要人先去某個地方把 116 年加進來的話，每年一月就會有一天報不了，
+      而那天沒有人知道要去哪裡加。</span><br>
+      <span class="sub">★★ 預設是<b>剛結束的那一期</b>（9 月打開就是 7-8 月）——
+      不是現在這一期，不然每次上傳都要先往下撥一格。</span></li>
+    <li><b>其他</b>　期別可以留空（財簽報告那種沒有期間的）</li>
+  </ul>
+</div>
+
+<div class="q">
+  <b>★★ 期別只存一支欄位，不存那串中文。</b><br>
+  存的是<b>那一期的第一天</b>（<code>2026-07-01</code>）＋ 種類，畫面上的
+  <code>115年 7-8月</code> 是<b>算出來的</b>。<br>
+  存中文的話「115年7-8月」「115 年 7~8 月」會同時存在，而排序、篩選、找重複全部對不上
+  （<code>README</code>：同一支欄位既拿來顯示又拿來當 key）。
+</div>
+
+<!-- ══════════════ 要挑的 ══════════════ -->
+<h2>要挑的兩題</h2>
+
+<div class="q">
+  <b>❶ 你說的「日期」是哪一個日期？</b>
+  <ul>
+    <li><b>申報日（建議）</b>　這份報表送出去那一天。<br>
+      <span class="sub">查「7-8 月那期什麼時候報的」用得到，而上傳日期系統自己會記。</span></li>
+    <li><b>不用這一欄</b>　只留期別。<br>
+      <span class="sub">上傳者與上傳時間本來就自動記著，畫面上照樣看得到。</span></li>
+  </ul>
+</div>
+
+<div class="q">
+  <b>❷ 同一期上傳第二次要怎麼處理？</b>（401 補申報、月報改過再送）
+  <ul>
+    <li><b>換掉舊的（建議）</b>　同一個種類＋同一期只留一份，換檔案但保留是誰傳的、什麼時候。<br>
+      <span class="sub">★ 清單上永遠只有一份 7-8 月的 401 —— 不用猜哪一份才是對的。</span></li>
+    <li><b>兩份都留</b>　變成「7-8月（第 2 版）」。<br>
+      <span class="sub">代價：三個月後看到兩份，而檔名看不出哪一份送出去了。</span></li>
+  </ul>
+</div>
+
+<!-- ══════════════ 權限 ══════════════ -->
+<h2>權限</h2>
+<div class="card">
+  <table>
+    <thead><tr><th>誰</th><th>看得到這一頁</th><th>下載</th><th>上傳／換檔案／刪除</th></tr></thead>
+    <tbody>
+      <tr><td>總經理</td><td class="grn">✅</td><td class="grn">✅</td><td class="grn">✅</td></tr>
+      <tr><td>會計</td><td class="grn">✅</td><td class="grn">✅</td><td class="grn">✅</td></tr>
+      <tr><td>主管</td><td class="grn">✅</td><td class="grn">✅</td><td class="grn">✅</td></tr>
+      <tr><td>管家</td><td class="red">✗</td><td class="red">✗</td><td class="red">✗</td></tr>
+      <tr><td>房務</td><td class="red">✗</td><td class="red">✗</td><td class="red">✗</td></tr>
+    </tbody>
+  </table>
+</div>
+<div class="note">
+  <b>跟「表單下載」不一樣的地方：</b>表單是發給全公司填的，房務看得到；
+  <b>會計報表只有那三個人看得到</b>，側欄整項都不出現。<br>
+  ★★ 所以<b>不共用同一份角色清單</b>。共用的話改其中一邊會連帶改掉另一邊，
+  而那件事不會有人發現（<code>README</code>：同一條規則在三個地方各寫一次）。<br>
+  ★★★ 真正擋住的是資料庫的 RLS，不是畫面 —— 檔案也放**另一個私有 bucket**，
+  不能跟表單共用，不然有下載表單權限的人可以用網址直接抓 401。
+</div>
+
+<!-- ══════════════ 檔案格式 ══════════════ -->
+<h2>收哪些檔案</h2>
+<div class="note">
+  <b>PDF・Excel・Word</b> —— <code>.pdf .xls .xlsx .doc .docx</code>。
+  圖示照副檔名上色（PDF 紅、Excel 綠、Word 藍），下載之前就知道要用什麼開。<br>
+  ★ 拖拉上傳與「下載的檔名用期別命名」跟表單下載那批一起做
+  （<code>115年7-8月_401.pdf</code>，不是亂碼）。
+</div>
+
+<h2>這次沒動的</h2>
+<div class="note">
+  佈告欄、表單下載、帳密、其他收支帳、帳戶明細 —— <b>一個字都不動</b>。
+  會計報表是<b>獨立的一頁</b>，不塞進佈告欄（那裡是全公司看的）。
+</div>
+
+<script>
+/* ══════ 期別：存「那一期的第一天」＋ 種類，中文是算出來的 ══════ */
+const KINDS = ['月報', '401', '其他'];
+const roc = (y) => y - 1911;
+
+function periodText(kind, start){
+  if (!start) return '—';
+  const [y, m] = start.split('-').map(Number);
+  if (kind === '401') return `${roc(y)}年 ${m}-${m + 1}月`;
+  return `${roc(y)}年 ${m}月`;
+}
+/**
+ * 401 的期別下拉。
+ *
+ * ★★★ 跨好幾年一次列完 —— **不用「新增年度」這個動作**。
+ *   要人先去某個地方把 116 年加進來的話，每年一月就會有一天報不了，
+ *   而那天沒有人知道要去哪裡加。
+ *
+ * ★ 合法起月只有單數月，所以選不到「6-7 月」這種不存在的期別。
+ * ★ 新的排前面 —— 最常選的是「剛結束的那一期」。
+ */
+const OPT401 = [1, 3, 5, 7, 9, 11];
+const Y_BACK = 2, Y_FWD = 1;          // 往前 2 年、往後 1 年
+
+function options401(today = new Date()){
+  const y0 = today.getFullYear();
+  const out = [];
+  for (let y = y0 + Y_FWD; y >= y0 - Y_BACK; y--) {
+    for (let i = OPT401.length - 1; i >= 0; i--) {
+      const m = OPT401[i];
+      out.push({ start: `${y}-${String(m).padStart(2, '0')}-01`,
+                 label: `${roc(y)}年 ${m}-${m + 1}月` });
+    }
+  }
+  return out;
+}
+
+/**
+ * 預設選哪一期 ＝ **剛結束的那一期**（不是現在這一期）。
+ *
+ * 台灣 401 是單數月申報前兩個月:9 月在報 7-8 月。
+ * 預設成 9-10 月的話，每一次上傳都要先把下拉往下撥一格。
+ */
+function default401(today = new Date()){
+  const y = today.getFullYear(), m = today.getMonth() + 1;
+  let s = m - ((m - 1) % 2) - 2;      // 現在這一期的起月，再退一期
+  let yy = y;
+  if (s < 1) { s += 12; yy -= 1; }
+  return `${yy}-${String(s).padStart(2, '0')}-01`;
+}
+
+/* ══════ 清單 ══════ */
+const D = [
+  { kind:'401',  start:'2026-07-01', filed:'2026-09-15', ext:'pdf',  size:'312 KB', who:'芊', title:'115年 7-8月', note:'已申報，含留抵 1,204' },
+  { kind:'月報', start:'2026-08-01', filed:'2026-09-08', ext:'xlsx', size:'86 KB',  who:'芊', note:'' },
+  { kind:'月報', start:'2026-07-01', filed:'2026-08-07', ext:'xlsx', size:'84 KB',  who:'芊', note:'' },
+  { kind:'401',  start:'2026-05-01', filed:'2026-07-14', ext:'pdf',  size:'298 KB', who:'芊', note:'' },
+  { kind:'月報', start:'2026-06-01', filed:'2026-07-05', ext:'xlsx', size:'81 KB',  who:'芊', note:'' },
+  { kind:'其他', start:null,         filed:'2026-06-30', ext:'docx', size:'1.2 MB', who:'David', title:'114 年度財簽報告', note:'' },
+  { kind:'401',  start:'2025-11-01', filed:'2026-01-13', ext:'pdf',  size:'305 KB', who:'芊', note:'' },
+];
+const YEARS = [...new Set(D.map((d) => (d.start || d.filed).slice(0, 4)))].sort().reverse();
+
+let fk = '', fy = '';
+const ICO = { pdf:['i-pdf','PDF'], xlsx:['i-xls','XLS'], xls:['i-xls','XLS'], docx:['i-doc','DOC'], doc:['i-doc','DOC'] };
+const GCLS = { '月報':'g-m', '401':'g-4', '其他':'g-o' };
+
+function shown(){
+  return D.filter((d) => (!fk || d.kind === fk) && (!fy || (d.start || d.filed).slice(0, 4) === fy));
+}
+
+function drawPills(){
+  document.getElementById('pk').innerHTML = KINDS
+    .map((k) => `<button class="pill${fk === k ? ' on' : ''}" data-k="${k}">${k}　${
+      D.filter((d) => d.kind === k).length}</button>`).join('');
+  document.getElementById('py').innerHTML = YEARS
+    .map((y) => `<button class="pill${fy === y ? ' on' : ''}" data-y="${y}">${roc(+y)} 年</button>`).join('');
+  document.querySelectorAll('#pk .pill').forEach((b) => b.addEventListener('click', () => {
+    fk = fk === b.dataset.k ? '' : b.dataset.k; draw();
+  }));
+  document.querySelectorAll('#py .pill').forEach((b) => b.addEventListener('click', () => {
+    fy = fy === b.dataset.y ? '' : b.dataset.y; draw();
+  }));
+}
+
+function draw(){
+  drawPills();
+  const rows = shown();
+  document.getElementById('list').innerHTML = rows.length ? rows.map((d) => {
+    const [cls, tx] = ICO[d.ext] || ['i-doc', '—'];
+    return `<div class="row">
+      <span class="ico ${cls}">${tx}</span>
+      <span class="mid">
+        <span class="t1"><span class="tag ${GCLS[d.kind]}" style="margin-right:6px">${d.kind}</span>${
+          d.title || periodText(d.kind, d.start)}</span>
+        <span class="t2">申報日 ${d.filed}${d.note ? '　·　' + d.note : ''}</span>
+        <span class="t3">${d.who}　·　${d.size}</span>
+      </span>
+      <span class="lnk">編輯</span><span class="lnk d">刪掉</span>
+      <button class="dl">下載</button>
+    </div>`;
+  }).join('') : '<div style="padding:34px;text-align:center;color:#9ca3af;font-size:14px">這個篩選沒有報表</div>';
+  document.getElementById('cnt').textContent = `共 ${rows.length} 份`;
+}
+draw();
+
+/* ══════ 兩個對話框 ══════ */
+function dialog(id, kind){
+  const el = document.getElementById(id);
+  const def = default401();
+  const per = kind === '401'
+    ? `<select class="in" data-p>${options401().map((o) =>
+        `<option value="${o.start}"${o.start === def ? ' selected' : ''}>${o.label}</option>`
+      ).join('')}</select>`
+    : kind === '其他'
+      ? `<input class="in" placeholder="沒有期間就留空">`
+      : `<input class="in" type="month" value="2026-08">`;
+  el.innerHTML = `
+    <div class="dh">上傳報表 <span class="mut">✕</span></div>
+    <div class="db">
+      <div><span class="lb">檔案<span class="req">*</span></span>
+        <div class="drop">
+          <div style="font-size:14px;color:var(--slate)">把檔案拖進來，或<u>點一下選擇</u></div>
+          <div class="sub" style="margin-top:3px">.pdf　.xls　.xlsx　.doc　.docx</div>
+        </div></div>
+      <div class="col2">
+        <div><span class="lb">種類<span class="req">*</span></span>
+          <select class="in" data-k>${KINDS.map((k) =>
+            `<option${k === kind ? ' selected' : ''}>${k}</option>`).join('')}</select></div>
+        <div><span class="lb">期別${kind === '其他' ? '' : '<span class="req">*</span>'}</span>${per}</div>
+      </div>
+      <div><span class="lb">標題<span class="req">*</span></span>
+        <input class="in" value="${kind === '其他' ? '114 年度財簽報告' : (kind === '401' ? '115年 7-8月' : '115年 8月')}">
+        <div class="sub" style="margin-top:3px">下載下來的檔名就是這一行。</div></div>
+      <div><span class="lb">申報日</span>
+        <input class="in" type="date" value="2026-09-15"></div>
+      <div><span class="lb">備註</span>
+        <input class="in" placeholder="已申報，含留抵 1,204"></div>
+      <div class="sub">只有總經理、會計、主管看得到與上傳。</div>
+    </div>
+    <div class="df"><button class="ghost">取消</button><button class="btn">上傳</button></div>`;
+  el.querySelector('[data-k]').addEventListener('change', (e) => dialog(id, e.target.value));
+}
+dialog('d1', '月報');
+dialog('d2', '401');
+</script>
+</div>
+</body>
+</html>

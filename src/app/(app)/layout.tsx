@@ -104,29 +104,7 @@ const NAV: { href: string; label: string; icon: string; roles: string[]; group?:
    *   2026-08-28 之後五群都有名字,空標題那一群已經沒有成員了。
    * ══════════════════════════════════════════════════════════
    */
-  /*
-   * ══════════ 佈告欄排第一（2026-09-17 使用者:「把布告欄 移到出勤上方」）══════════
-   *
-   * migration_262 / 265。公告從出勤日曆搬過來、新訊息從設定搬過來。
-   *
-   * ★★★ 它**併進「每日工作」**，不再自成一群「公司」。
-   *   自成一群的話畫面最上面會是一個只有一項的標題,而那個標題還收得起來 ——
-   *   收起來之後公告就從側欄上消失了,而沒有人看的公告等於沒發。
-   *
-   * ★★ 排在出勤前面的理由跟出勤自己一樣:上班第一件事。
-   *   公告、活動、新訊息都是「今天有沒有新的」——
-   *   排在下面的話,要看的人得先想起來有這一頁。
-   *
-   * ★ 房務 cleaner 也要開 —— 公告、新訊息、團聚都是全公司的事。
-   *   「帳密」那一格在頁裡面自己擋（can_see_board_secrets），
-   *   不是靠這一行 —— 靠這一行的話他連公告也看不到。
-   *
-   * ★★ 位置很要緊:`groupNav()` 是用「連續相同」切群的。
-   *   這一筆的 group 要跟下面出勤那幾項**一模一樣**是「每日工作」，
-   *   不然畫面上會多長出一個同名但分開的群。
-   */
-  { href: '/board', label: '佈告欄', icon: '📢', group: '每日工作', roles: ['cleaner', 'housekeeper', 'accountant', 'manager', 'super_admin'] },
-  // 出勤排第二：全公司每天最少點兩次,而且是「上班第一件事」。
+  // 出勤排第一：全公司每天最少點兩次,而且是「上班第一件事」。
   // 它原本排在清潔記錄後面 —— 每天要用的東西不該讓人往下找。
   { href: '/attendance', label: '出勤', icon: '🕐', group: '每日工作', roles: ['cleaner', 'housekeeper', 'accountant', 'manager', 'super_admin'] },
   /*
@@ -231,6 +209,20 @@ const NAV: { href: string; label: string; icon: string; roles: string[]; group?:
    */
   { href: '/otherbooks', label: '其他收支帳', icon: '🗂️', group: '財務管理', roles: ['accountant', 'super_admin'] },
   { href: '/dashboard', label: '財務儀錶板', icon: '📊', group: '財務管理', roles: ['accountant', 'manager', 'super_admin'] },
+  /*
+   * 會計報表 —— 月報、401、其他（migration_275，2026-09-18 使用者指定）。
+   *
+   * ★ 排在**財務管理的最後一項**:前三個是每天在看的，報表一個月碰一次。
+   * ★★ 房務與管家**整項不出現**（roles 不含他們）——
+   *   畫一個點進去說「沒有權限」的選項，等於每天提醒他有個地方他進不去。
+   * ★★★ 這裡藏起來**不是安全機制**，真正擋住的是
+   *   migration_275 的 `can_use_accounting_reports()`。
+   *   這份清單必須跟它一致 —— 不一致的兩種後果都很糟（見 lib/roles.ts 的註解）。
+   *
+   * 📑 是「一疊報表」。跟 📊 儀錶板、🗂️ 其他收支帳、💰 帳戶明細都不撞 ——
+   * 側邊欄收合成只剩圖示時要分得出來。
+   */
+  { href: '/reports', label: '會計報表', icon: '📑', group: '財務管理', roles: ['accountant', 'manager', 'super_admin'] },
   // 客戶管理跟房務、評價、清潔是同一組:都是「人在現場會用到的」。
   // 上面那半段是錢(訂單、契約、營收、請款、押金、支出、儀表板)。
   // 客戶資料原本散在訂單 guest_name 與契約 tenant_name 兩邊,
@@ -238,8 +230,7 @@ const NAV: { href: string; label: string; icon: string; roles: string[]; group?:
   { href: '/customers', label: '客戶管理', icon: '👥', group: '客戶經營', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   { href: '/reviews', label: '房源評價', icon: '⭐', group: '客戶經營', roles: ['housekeeper', 'manager', 'super_admin'] },
   /*
-   * 社群模擬（migration_258，2026-09-16 使用者:「社群經營 併進去客戶經營裡」;
- *   2026-09-17 使用者:「改成社群模擬」「分成 IG 跟 FB」）。
+   * IG 版面模擬（migration_258，2026-09-16 使用者:「社群經營 併進去客戶經營裡」）。
    *
    * ★★ **位置很要緊**:`groupNav()` 是用「連續相同」切群的。
    *   這一筆要緊接在 /reviews 後面、group 也填「客戶經營」，才會併進同一群 ——
@@ -253,8 +244,7 @@ const NAV: { href: string; label: string; icon: string; roles: string[]; group?:
    * ★ 同一條規則寫在兩個地方就會有一邊沒跟上（README 坑 A）——
    *   改這一行的時候，`social/page.tsx` 的 `CAN_EDIT` 與 migration 都要一起改。
    */
-  { href: '/social', label: '社群模擬', icon: '📱', group: '客戶經營', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
-  /* ★ 佈告欄搬到最上面了（2026-09-17）—— 見這份清單開頭的第一項。 */
+  { href: '/social', label: 'IG 版面模擬', icon: '📱', group: '客戶經營', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   // 會計進得去，但只看得到「收付款帳號」與「常用帳號」兩個分頁
   // —— 改人員角色那一頁仍然只有總經理，見 admin 頁的 ACCOUNTANT_TABS
   /*
