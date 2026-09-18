@@ -344,14 +344,18 @@ export default function ReportsPage() {
             return (
               /*
                 ══════════════════════════════════════════════
-                一列的骨架（2026-09-18 使用者過審的最終版）
+                一列的骨架（2026-09-18 使用者過審的 A 案）
                 ══════════════════════════════════════════════
-                　圖示 ／ 內容(封頂 30rem) ／ 下載 ／ 彈性空白 ／ 編輯
+                　圖示 ／ 內容(上限 30rem，撐到多寬就多寬) ／ 下載 ／ 檔案資料(靠右) ／ 編輯
                 　第二個 grid row 給**備註**，橫跨到最右邊。
 
-                ★★★ 內容那一欄**封頂**，下載才會每一列都停在同一個 x
-                  —— 連按三份不用重新瞄準。不封頂的話下載會跟著標題長短跳。
-                ★★ 備註在第二個 grid row，所以它有整列的寬（約 870px）。
+                ★★★ 下載**緊接在標題後面**（2026-09-18 使用者選 A 案:「下載在標題後一點」）。
+                  內容那一欄從固定 30rem 改成 auto —— 下載跟著標題走，
+                  一眼看得出這顆是下哪一份。代價是每一列的 x 不同,掃下來會參差。
+                  改回「每列同一個 x」的話,把 mid 那欄換回 minmax(0,30rem) 就行。
+                ★★★ 檔案資料（誰傳的、多大、什麼時候進來）移到**第一行最右邊**
+                  （2026-09-18 使用者:「檔案資訊往後放」）—— 右半邊本來空著約 900px。
+                ★★ 備註留在第二個 grid row，所以它有整列的寬（約 870px）。
                   擠在期別後面只有約 180px，稍長就被截成「⋯」，
                   而備註是自由輸入的，多長都有可能。
                 ★ 沒有備註的那幾列**一格都不會變高** —— 那一格不存在，
@@ -361,19 +365,21 @@ export default function ReportsPage() {
                 className="grid items-center gap-y-1 gap-x-4 px-4 py-2.5
                            border-t border-mor-line/60 first:border-t-0 hover:bg-[#FAFAF9]
                            transition-colors
-                           [grid-template-columns:2.25rem_minmax(0,30rem)_auto_1fr_auto]
-                           [grid-template-areas:'ico_mid_dl_sp_acts'_'ico_note_note_note_note'_'ico_meta_meta_meta_meta']">
+                           [grid-template-columns:2.25rem_auto_auto_1fr_auto]
+                           [grid-template-areas:'ico_mid_dl_meta_acts'_'ico_note_note_note_note']
+                           max-sm:[grid-template-columns:2.25rem_1fr_auto]
+                           max-sm:[grid-template-areas:'ico_mid_mid'_'ico_note_note'_'ico_dl_acts'_'ico_meta_meta']">
                 <span className={`w-9 h-9 rounded-lg flex items-center justify-center self-start mt-0.5
                                   text-[11px] font-bold text-white [grid-area:ico] ${BADGE_CLASS[fkd]}`}>
                   {FILE_BADGE[fkd]}
                 </span>
 
-                <span className="min-w-0 block [grid-area:mid]">
+                <span className="min-w-0 max-w-[30rem] block [grid-area:mid]">
                   {/*
                     ★ 種類那顆籤畫在**標題前面**（2026-09-18 使用者:「放到表頭」）——
                       一眼看得出這一列是哪一種，不用往右找。
                   */}
-                  <span className="block">
+                  <span className="block truncate">
                     <span className={`inline-block rounded px-1.5 py-0.5 text-xs font-medium mr-1.5
                                       align-middle ${KIND_CLASS[k] ?? ''}`}>{k}</span>
                     <span className="text-ui font-medium align-middle">{reportTitle(r)}</span>
@@ -449,10 +455,11 @@ export default function ReportsPage() {
                 )}
 
                 {/*
-                  ★★★ 檔案的資料放**最下面**（2026-09-18 使用者:「檔案 資料最下面」）。
-                    這一列由上往下讀是:這是什麼 → 哪一期、什麼時候申報 → 備註
-                    → **最後才是這個檔案本身**（誰傳的、多大、什麼時候進來）。
-                    檔案的事是附註,不該卡在報表的內容中間。
+                  ★★★ 檔案的資料靠在**第一行最右邊**（2026-09-18 使用者:「檔案資訊往後放」）。
+                    右半邊本來空著約 900px，而這一段是整列最不需要盯著看的東西 ——
+                    誰傳的、多大、什麼時候進來，只在對版本時才會讀。
+                  ★★ `whitespace-nowrap` 不能省:這一段拆行的話會把上面那一行的高度撐開，
+                    整排卡片就會一列高一列矮。寬度不夠時它自己被 truncate 掉。
                   ★ 排法在 `fileLine`（lib，有測試）—— 空的那幾段整段不見，
                     不是留一個講不出自己是什麼的「—」。
                 */}
@@ -463,7 +470,9 @@ export default function ReportsPage() {
                     uploadedOn: r.uploaded_on,
                   });
                   return line
-                    ? <span className="[grid-area:meta] min-w-0 truncate text-xs text-gray-400">{line}</span>
+                    ? <span className="[grid-area:meta] justify-self-end max-sm:justify-self-start
+                                       min-w-0 truncate whitespace-nowrap
+                                       text-xs text-gray-400">{line}</span>
                     : null;
                 })()}
               </div>
