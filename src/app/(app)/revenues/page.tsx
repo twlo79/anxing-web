@@ -12,6 +12,9 @@ import {
   isOffice, isCompany, isHkOffice, inEstateBlock, estateOf, estateKeyOf, guestOf, roomOf,
   itemLabel, oneoffItems, oneoffLabel, skeleton, reconcile, SHORT_SOURCES, ROOM_NONE, ONEOFF_LABEL,
 } from '@/lib/revenue-report';
+import {
+  sourceMatches, feeSourceValue, ONEOFF_FEE_SOURCES, isAnxingRevenue,
+} from '@/lib/revenue-source';
 // 【結算】區塊的算法（有測試）—— 這一頁只負責排版
 import { settleGrid, rocRange } from '@/lib/revenue-settle';
 import { roomCell, periodCell, amountCell, nightsText } from '@/lib/revenue-row';
@@ -55,7 +58,14 @@ const SOURCE_COLOR: Record<string, string> = {
   oneoff: 'bg-rose-50 text-rose-600', other: 'bg-gray-100 text-gray-500',
   partner: 'bg-teal-50 text-teal-700', airbnb_cancelled: 'bg-red-50 text-red-600',
 };
-const SOURCE_ORDER = ['airbnb', 'agoda', 'private', 'longterm', 'office', 'company', 'oneoff', 'other'];
+/*
+ * ★★ 「其他」（other ＝ 其他事業體）**故意不在這裡**
+ *   （2026-09-18 使用者:「不要有其他」）。那幾筆在載入時就濾掉了，
+ *   留著選項的話選了會是 0 筆 —— 而使用者看到的是「資料不見了」。
+ * ★ SOURCE_LABEL 那一份留著 other 的中文,因為別的地方（抽屜、排序）
+ *   還會拿它去翻譯;這裡只管下拉列哪幾項。
+ */
+const SOURCE_ORDER = ['airbnb', 'agoda', 'private', 'longterm', 'office', 'company', 'oneoff'];
 
 // 表頭排序:key 對應欄位型別與取值。
 // 「認列起訖」沿用原本 period_start 缺值時退回 checkin 的邏輯,避免舊資料被當成空值排到最後。
@@ -181,7 +191,20 @@ export default function RevenuesPage() {
       const list = await fetchMonthRows(y, m);
       for (const r of list) all.push({ ...r, order_id: `${r.order_id}_${y}${m}` });
     }
-    setRows(all);
+    /*
+     * ★★★ 這一頁只算**安幸**的營收（2026-09-18 使用者:「營收表只算安幸 營收」）。
+     *
+     *   愛皮（旅行社）與洪鯊（投資公司）的收入原本也在這張表裡，
+     *   來源那一欄叫「其他」—— 但這張表是包租代管的營收，
+     *   把團費加進去，當期營收總額就不是這門生意的數字。
+     *   那兩家的帳在**其他收支帳**（/otherbooks）那一頁。
+     *
+     * ★★ 濾在**這裡**（資料進來的那一刻），不是在 `filtered` 裡 ——
+     *   總額、長條圖、結算頁籤、Excel 匯出全部都讀 `rows` 的下游。
+     *   濾在下游的話漏掉一處，那一處的數字就跟畫面上的表對不起來，
+     *   而沒有任何地方會叫（CLAUDE.md:同一條規則寫在好幾個地方）。
+     */
+    setRows(all.filter(isAnxingRevenue));
     setLoading(false);
   }, [supabase, fromM, toM, fetchMonthRows]);
   useEffect(() => { load(); }, [load]);
@@ -193,7 +216,12 @@ export default function RevenuesPage() {
     if (estateFilter && estateKeyOf(r) !== estateFilter) return false;
     // 房源篩選只作用在物業段。辦公室與公司登記不掛房源,選了房號就不該出現
     if (roomFilter && (isOffice(r) || isCompany(r) || (r.property_raw ?? '') !== roomFilter)) return false;
-    if (sourceFilter && r.source !== sourceFilter) return false;
+    /*
+     * ★★ 來源的比對在 `lib/revenue-source.ts`（有測試）——
+     *   下拉裡「房務清潔」「人事費」那兩項其實是**科目**
+     *   （source 都是 oneoff），判斷式寫在這裡的話測不到。
+     */
+    if (!sourceMatches(sourceFilter, r)) return false;
     /*
      * ★ 搜尋字串裡**兩個都放**：`estate_name`（正隆）讓「這筆錢發生在哪」搜得到，
      *   `estateKeyOf`（安幸辦公室）讓「這筆錢算誰的」也搜得到。
@@ -796,7 +824,24 @@ export default function RevenuesPage() {
         <div>
           <label className="block text-xs text-gray-500 mb-1">來源</label>
           <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
-            <option value="">全部</option>{SOURCE_ORDER.map((s) => <option key={s} value={s}>{SOURCE_LABEL[s]}</option>)}
+            <option value="">全部</option>
+            {SOURCE_ORDER.map((s) => <option key={s} value={s}>{SOURCE_LABEL[s]}</option>)}
+            {/*
+              ★★★ 這一組**縮在「其他收入」底下**（2026-09-18 使用者:「來源要多 房務清潔 人事費」）。
+
+                它們不是真的來源 —— 房務收入的 source 就是 oneoff，差別在科目。
+                跟上面八項平排的話，看的人會以為選了「其他收入」就看不到它們，
+                而其實它們也在裡面（`optgroup` 的標題講的就是這件事）。
+
+              ★ 選了這兩項之後，上面那排來源藥丸**不會有任何一顆亮** ——
+                因為亮的條件是「等於某個真的來源」。這是對的:
+                現在篩的不是來源。
+            */}
+            <optgroup label="── 其他收入底下 ──">
+              {ONEOFF_FEE_SOURCES.map((f) => (
+                <option key={f} value={feeSourceValue(f)}>{f}</option>
+              ))}
+            </optgroup>
           </select>
         </div>
         <div>
