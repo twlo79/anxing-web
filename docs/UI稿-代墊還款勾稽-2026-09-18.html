@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>UI 稿 — 代墊還款怎麼勾稽</title>
+<style>
+  :root{--bg:#F1F0EC;--line:#E0DDD5;--ink:#2E3840;--slate:#41689B;--slatedark:#345380;
+        --bluelight:#DFEDFA;--green:#3FAE7C;--greendark:#217346;--greenlight:#DFF2E8;--sand:#ECE8DF}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.6 -apple-system,"PingFang TC","Noto Sans TC",sans-serif;padding:20px 16px 90px}
+  .wrap{max-width:1000px;margin:0 auto}
+  h1{font-size:20px;margin:0 0 4px}
+  h2{font-size:14px;margin:30px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line);color:#6b7280}
+  .lead{color:#6b7280;font-size:13px;margin:0 0 14px}
+  .note{font-size:13px;color:#4b5563;background:#fff;border:1px solid var(--line);
+        border-radius:11px;padding:12px 14px;margin-top:10px;line-height:1.8}
+  .big{background:#fff;border:2px solid var(--greendark);border-radius:12px;padding:14px 16px;
+       margin:14px 0;line-height:1.85;font-size:13.5px}
+  .big b{color:var(--greendark)}
+  .q{font-size:13px;background:#FFFBEB;border:1px solid #FCD34D;border-radius:11px;padding:12px 14px;margin-top:11px}
+  .q b{color:#92400E}
+  ul{margin:5px 0 0;padding-left:19px}li{margin:5px 0}
+  code{background:#F1F0EC;border-radius:4px;padding:1px 5px;font-size:12px}
+  .sub{font-size:12px;color:#9ca3af}
+
+  /* 流程 */
+  .flow{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px;overflow-x:auto}
+  .step{display:flex;gap:13px;align-items:flex-start;padding:11px 0}
+  .step+.step{border-top:1px dashed var(--line)}
+  .no{width:26px;height:26px;border-radius:50%;background:var(--slate);color:#fff;flex:none;
+      display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700}
+  .no.g{background:var(--greendark)}
+  .sc{flex:1;min-width:0}
+  .sc b{display:block;font-size:15px;margin-bottom:3px}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:6px}
+  @media(max-width:700px){.two{grid-template-columns:1fr}}
+  .card{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size:12.5px;background:#FAFAF9}
+  .card u{display:block;text-decoration:none;font-size:11px;color:#9ca3af;margin-bottom:2px}
+  .auto{background:var(--greenlight);border-color:var(--greendark)}
+  .auto u{color:var(--greendark)}
+
+  table{width:100%;border-collapse:collapse;font-size:13px;background:#fff}
+  thead{background:rgba(236,232,223,.6);color:#6b7280;font-size:11px}
+  th,td{padding:8px 10px;text-align:left;white-space:nowrap}
+  th.r,td.r{text-align:right}
+  th.c,td.c{text-align:center}
+  tbody tr{border-top:1px solid rgba(224,221,213,.5)}
+  .box{background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .num{font-variant-numeric:tabular-nums}
+  .mut{color:#9ca3af}.red{color:#dc2626}.grn{color:var(--greendark)}
+  .pill{font-size:10px;border-radius:4px;padding:1px 6px;font-weight:600}
+  .p-paid{background:#FEF3C7;color:#92400E}.p-back{background:var(--greenlight);color:var(--greendark)}
+  .cb{width:16px;height:16px;border:1.5px solid #9ca3af;border-radius:3px;display:inline-block;
+      vertical-align:-3px;position:relative;cursor:pointer;background:#fff}
+  .cb.on{background:var(--slate);border-color:var(--slate)}
+  .cb.on::after{content:"";position:absolute;left:4.5px;top:1px;width:4px;height:8px;
+                border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}
+  .bar{display:flex;gap:10px;align-items:center;background:var(--bluelight);
+       border:1px solid var(--slate);border-radius:10px;padding:10px 13px;margin-bottom:10px;flex-wrap:wrap}
+  .btn{background:var(--slate);color:#fff;border:none;border-radius:9px;padding:8px 15px;
+       font-size:14px;font-weight:500;font-family:inherit;cursor:pointer}
+  .btn.g{background:var(--greendark)}
+  .ghost{border:1px solid var(--line);background:#fff;border-radius:9px;padding:8px 14px;
+         font-size:14px;font-family:inherit;cursor:pointer}
+  .in{border:1px solid var(--line);border-radius:8px;padding:7px 9px;font-size:13px;font-family:inherit}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>代墊還款：怎麼自動勾稽</h1>
+<p class="lead">你問的是後半段。<b>先講結論，再講怎麼做。</b>還沒動程式碼。</p>
+
+<div class="big">
+  <b>★ 我的建議是：不要做「自動勾稽」，要讓它「不可能對不起來」。</b><br><br>
+  勾稽的前提是<b>兩份資料各自存在、需要比對</b>。如果愛皮的「實支」是另外存一份，
+  那它跟安幸的「已收回」就是同一筆錢的兩份紀錄 ——
+  總有一天會對不起來，<b>而且不會有任何地方報錯</b>（你的 README 上那條：
+  <code>deposits.amount</code> 與 <code>lines</code> 各存一次台幣金額）。<br><br>
+  所以：<b>愛皮的實支不存，直接讀那一列暫付的「實收回」算出來。</b>
+  同一個數字、同一個來源 —— 沒有兩份，就沒有東西要勾稽。
+</div>
+
+<h2>你問的兩個問題</h2>
+
+<div class="big" style="border-color:var(--slate)">
+  <b style="color:var(--slatedark)">Q1　在哪挑？→ 在安幸的「暫付」頁，不在其他帳本。</b><br><br>
+  理由不是習慣，是<b>錢在哪一側</b>：愛皮還錢 → 錢進<b>安幸的帳戶</b> →
+  記帳的動作就該在收到錢的那一側。而且暫付頁本來就有完整的收回流程
+  （收回日、實收回、進哪個帳戶、驗證），不用重做一套。<br><br>
+  ★ 其他帳本那一頁是<b>唯讀的結果</b> —— 它只是把那一列暫付的「實收回」印出來。
+  這正好強化了「只有一個寫入者」。<br>
+  ★★ 愛皮那一頁會放一條「<u>去暫付頁還款</u>」的連結，
+  <b>兩邊都進得去，但動作只有一個地方做得了</b>。
+</div>
+
+<div class="big" style="border-color:#b45309">
+  <b style="color:#b45309">Q2　「已付款」是誰付的？→ 是安幸。而那個字現在是錯的。</b><br><br>
+  你一眼就讀成「愛皮已付款」，那不是你看錯 —— 是<b>同一件事在那張表上有三個名字</b>：
+  <table style="width:100%;margin:8px 0;font-size:12.5px">
+    <tr><td style="width:7rem;color:#6b7280;padding:3px 0">欄位名</td><td>收回日　實收回</td></tr>
+    <tr><td style="color:#6b7280;padding:3px 0">狀態</td><td>已付<b>款</b>　已<b>退</b>款　部分<b>退</b></td></tr>
+  </table>
+  三個詞講同一條軸（錢出去 → 錢回來），而 <code>用語表</code> 的規矩是
+  <b>同一件事只准有一個名字</b>。<br><br>
+  <b>改法：狀態全部改用「收回」這個字。</b>
+</div>
+
+<div class="box" style="padding:0;overflow:hidden">
+  <table>
+    <thead><tr><th>現在</th><th>改成</th><th>對代墊來說是</th><th>對押金來說是</th></tr></thead>
+    <tbody>
+      <tr><td>待出款</td><td><b>待出款</b>（不變）</td><td>還沒付給廠商</td><td>還沒付給房東</td></tr>
+      <tr><td class="mut">已付款</td><td><b class="grn">待收回</b></td><td>安幸付了，等愛皮還</td><td>押金付了，等退回</td></tr>
+      <tr><td class="mut">已退款</td><td><b class="grn">已收回</b></td><td>愛皮還完了</td><td>押金退回來了</td></tr>
+      <tr><td class="mut">部分退</td><td><b class="grn">部分收回</b></td><td>愛皮還了一部分</td><td>被扣了一些</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="note">
+  <b>為什麼是「收回」不是加主詞（「安幸已付」）：</b>
+  那張表<b>每一列的付款方都是安幸</b>（它是安幸的暫付表），所以主詞是多餘的；
+  而「收回」正好是那兩個欄位已經在用的字。<br>
+  ★ 這會一起改到<b>押金與零用金</b>那幾列的標籤 —— 上面那張表右邊兩欄就是在驗這件事：
+  三種類別讀起來都通。<br>
+  ★★ <code>用語表</code> 要加一列：<b>收回</b>（不要用：退款、退回、還款）。
+</div>
+
+<h2>完整的流程（你寫的 ＋ 我補的細節）</h2>
+<div class="flow">
+  <div class="step"><span class="no">1</span><div class="sc">
+    <b>愛皮／洪鯊請款 → 勾「安幸代墊」</b>
+    <span class="sub">今天起選了事業體會自動勾（已上線）</span>
+  </div></div>
+
+  <div class="step"><span class="no">2</span><div class="sc">
+    <b>確認出款</b>
+    <div class="two">
+      <div class="card"><u>安幸</u>暫付 ＋1 列（<b>一個項目一列</b>，migration_272）<br>
+        狀態 <span class="pill p-paid">待收回</span></div>
+      <div class="card"><u>愛皮</u>支出 ＋1 筆 → <b>應支</b><br>實支 0（愛皮還沒付）</div>
+    </div>
+    <span class="sub">★ 這一段已經在跑了。</span>
+  </div></div>
+
+  <div class="step"><span class="no g">3</span><div class="sc">
+    <b>愛皮／洪鯊還錢 → 會計在「暫付」按收回</b>
+    <div class="two">
+      <div class="card"><u>安幸</u>填收回日、實收回、進哪個帳戶<br>
+        狀態自動變 <span class="pill p-back">已收回</span>
+        <span class="sub">（`statusOf()` 已經會算，不用新寫）</span></div>
+      <div class="card auto"><u>愛皮</u><b>不用做任何事</b><br>
+        實支＝讀那一列暫付的「實收回」</div>
+    </div>
+    <span class="sub">★ 要補的只有<b>批次</b> —— 一次還款涵蓋 8 列，不能讓會計按 8 次。</span>
+  </div></div>
+</div>
+
+<div class="note">
+  <b>所以真正要寫的只有兩件事：</b>
+  <ul>
+    <li><b>批次收回</b>　暫付頁選幾列 → 一次填收回日與帳戶 → 全部標已收回</li>
+    <li><b>愛皮那邊把實支讀出來</b>　<code>expenses</code> join <code>advance_payments</code>，
+      取 <code>refunded_amount</code>。<b>不新增欄位、不新增表、不用觸發器。</b></li>
+  </ul>
+  <span class="sub">★ 愛皮<b>自己付的</b>錢（不是代墊的）才需要手動記實支 —— 那種現在一筆都沒有，可以之後再做。</span>
+</div>
+
+<h2>你圈的那兩欄</h2>
+
+<div class="big" style="border-color:#b45309">
+  <b style="color:#b45309">那是<u>兩件不同的東西</u>，但我把名字取成了兄弟 —— 所以你讀成兩個日期。</b><br><br>
+  <table style="width:100%;margin:6px 0 10px;font-size:12.5px">
+    <tr><td style="width:6rem;padding:3px 0"><code>收回日</code></td>
+        <td><b>日期</b> —— 哪一天收到愛皮還的錢</td></tr>
+    <tr><td style="padding:3px 0"><code>實收回</code></td>
+        <td><b>金額</b> —— 實際收回多少錢（不是日期）</td></tr>
+  </table>
+  <b>而你說「只有一個吧」是對的。</b><br>
+  只要 ❸ 選「讓人挑哪幾筆」，每一列不是<u>全額收回</u>就是<u>完全沒動</u> ——
+  「實收回」永遠等於左邊的「金額」，等於<b>把同一個數字寫第二次</b>
+  （<code>README</code> 上那條：重複的數字不要寫第二次）。
+</div>
+
+<div class="two">
+  <div class="box" style="padding:12px;border-color:var(--greendark);border-width:2px">
+    <b style="font-size:13px;color:var(--greendark)">甲　只留「收回日」（建議）</b>
+    <div class="sub" style="margin:4px 0 8px">金額那一欄已經寫了，不再寫第二次。</div>
+    <table style="font-size:12px">
+      <thead><tr><th>項目</th><th class="r">金額</th><th>收回日</th><th>狀態</th></tr></thead>
+      <tbody>
+        <tr><td>旅平險</td><td class="r num">261</td><td class="mut">—</td>
+            <td><span class="pill p-paid">待收回</span></td></tr>
+        <tr><td>115/7月勞保費</td><td class="r num">3,102</td><td>09/30</td>
+            <td><span class="pill p-back">已收回</span></td></tr>
+        <tr><td>115/7-8月管理服務費</td><td class="r num">7,350</td><td>09/30</td>
+            <td><span class="pill p-back">已收回</span></td></tr>
+      </tbody>
+    </table>
+    <div class="sub" style="margin-top:8px">★ 短收的時候（愛皮只還了一部分）那一列才多一行紅字：<br>
+      <span class="red" style="font-size:12px">實收 2,500・短收 602</span></div>
+  </div>
+
+  <div class="box" style="padding:12px">
+    <b style="font-size:13px">乙　兩欄都留，但改名「收回金額」</b>
+    <div class="sub" style="margin:4px 0 8px">名字不再像日期，但正常情況下兩欄數字一樣。</div>
+    <table style="font-size:12px">
+      <thead><tr><th>項目</th><th class="r">金額</th><th>收回日</th><th class="r">收回金額</th><th>狀態</th></tr></thead>
+      <tbody>
+        <tr><td>旅平險</td><td class="r num">261</td><td class="mut">—</td><td class="r mut">—</td>
+            <td><span class="pill p-paid">待收回</span></td></tr>
+        <tr><td>115/7月勞保費</td><td class="r num">3,102</td><td>09/30</td><td class="r num">3,102</td>
+            <td><span class="pill p-back">已收回</span></td></tr>
+        <tr><td>115/7-8月管理服務費</td><td class="r num">7,350</td><td>09/30</td><td class="r num">7,350</td>
+            <td><span class="pill p-back">已收回</span></td></tr>
+      </tbody>
+    </table>
+    <div class="sub" style="margin-top:8px">★ 代價：一整欄的數字跟左邊一模一樣，
+      看的人要一列一列比才知道「有沒有哪一列不一樣」。</div>
+  </div>
+</div>
+
+<div class="note">
+  ★★ 但如果 ❸ 你選「照比例分攤」，<b>甲案就不能用</b> ——
+  那時候每一列的收回金額都是零頭，跟「金額」不會一樣，非得有一欄放它不可。
+  <b>所以這一題的答案綁在 ❸ 上面：挑哪幾筆 → 甲；照比例 → 乙。</b>
+</div>
+
+<h2>批次收回長什麼樣（下面這張是甲案）</h2>
+<div class="box" style="padding:12px">
+  <div class="bar" id="bar" style="display:none">
+    <b style="font-size:13px">已選 <span id="n">0</span> 列　合計 $<span id="s">0</span></b>
+    <label style="font-size:13px">收回日 <input class="in" type="date" value="2026-09-30" style="width:9.5rem"></label>
+    <label style="font-size:13px">進哪個帳戶
+      <select class="in"><option>(安幸)現金</option><option>永豐 ‧‧1234</option></select></label>
+    <button class="btn g">確認收回</button>
+    <button class="ghost" id="clr">取消</button>
+  </div>
+  <table>
+    <thead><tr>
+      <th class="c" style="width:2.4rem"><span class="cb" id="all"></span></th>
+      <th>出款日</th><th>項目</th><th class="r">金額</th><th>對象</th>
+      <th>收回日</th><th>狀態</th>
+    </tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+</div>
+
+<div class="note">
+  <b>只有「同一個對象」的列選得起來。</b>選了愛皮的之後，洪鯊那幾列的勾會停用 ——
+  一次收回是一筆錢進來，不會同時是兩家還的。<br>
+  ★ 押金、零用金那幾列也不在這個批次裡（它們的收回各有各的規矩）。
+</div>
+
+<div class="q">
+  <b>❸ 部分還款怎麼處理？</b>（愛皮只還 5,000，不是 13,209）
+  <ul>
+    <li><b>讓人挑哪幾筆（建議）</b>　勾起來的那幾列全額收回，沒勾的完全不動。<br>
+      <span class="sub">每一列不是「已收回」就是「待收回」，沒有中間狀態。三個月後看得懂。</span></li>
+    <li><b>照比例分攤</b>　5,000 按金額比例攤到 8 列，每一列都變「部分收回」。<br>
+      <span class="sub">代價：8 列全部卡在「部分收回」，而且每一列的零頭都不是真實發生的金額 ——
+      之後再還一次又要重攤，永遠收不乾淨。</span></li>
+  </ul>
+</div>
+
+<div class="q">
+  <b>❹ 愛皮那邊的「實支」金額，用哪一個？</b>
+  <ul>
+    <li><b>實收回（建議）</b>　安幸實際收到多少，愛皮就實支多少。</li>
+    <li><b>應支</b>　只要標成已收回就算全額付清。<br>
+      <span class="sub">代價：如果有短收（愛皮還少了），愛皮的帳上會顯示付清，而安幸那邊短收。</span></li>
+  </ul>
+</div>
+
+<h2>這樣做的代價（要先知道）</h2>
+<div class="note">
+  <b>愛皮的「實支」變成算出來的，不是存起來的。</b>好處是永遠對得起來，代價有兩個：
+  <ul>
+    <li>其他收支帳那一頁每次要多 join 一張表 —— 資料量小，不是問題</li>
+    <li>愛皮那邊<b>改不了</b>實支（要改就去安幸的暫付改）。
+      <span class="sub">★ 這其實是好事：一個地方改，兩邊一起變。</span></li>
+  </ul>
+</div>
+
+<script>
+const D = [
+  ['2026-09-09','旅平險',261,'愛皮'],
+  ['2026-09-09','115/8月電信費-0975792181',217,'愛皮'],
+  ['2026-09-09','115/7月電信費-27785700',300,'愛皮'],
+  ['2026-09-09','115/8月電信費-27785700',305,'愛皮'],
+  ['2026-09-09','115/7月勞保費',3102,'愛皮'],
+  ['2026-09-09','115/7月健保費',1428,'愛皮'],
+  ['2026-09-09','115/7月電信費-0975792181',246,'愛皮'],
+  ['2026-09-07','115/7-8月管理服務費',7350,'愛皮'],
+];
+const fm=(n)=>n.toLocaleString('en-US');
+const sel=new Set();
+function draw(){
+  document.getElementById('rows').innerHTML = D.map((d,i)=>{
+    const on=sel.has(i);
+    return '<tr'+(on?' style="background:rgba(223,237,250,.5)"':'')+'>'
+      + '<td class="c"><span class="cb'+(on?' on':'')+'" data-i="'+i+'"></span></td>'
+      + '<td class="mut">'+d[0]+'</td><td>'+d[1]+'</td>'
+      + '<td class="r num">'+fm(d[2])+'</td><td>'+d[3]+'</td>'
+      + '<td class="mut">—</td>'
+      + '<td><span class="pill p-paid">待收回</span></td></tr>';
+  }).join('');
+  document.querySelectorAll('.cb[data-i]').forEach((c)=>c.addEventListener('click',()=>{
+    const i=+c.dataset.i; sel.has(i)?sel.delete(i):sel.add(i); draw();
+  }));
+  const bar=document.getElementById('bar');
+  bar.style.display = sel.size ? 'flex' : 'none';
+  document.getElementById('n').textContent = sel.size;
+  document.getElementById('s').textContent = fm([...sel].reduce((n,i)=>n+D[i][2],0));
+  document.getElementById('all').classList.toggle('on', sel.size===D.length);
+}
+document.getElementById('all').addEventListener('click',()=>{
+  if(sel.size===D.length) sel.clear(); else D.forEach((_,i)=>sel.add(i));
+  draw();
+});
+document.getElementById('clr').addEventListener('click',()=>{sel.clear();draw();});
+draw();
+</script>
+</div>
+</body>
+</html>

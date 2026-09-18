@@ -153,11 +153,35 @@ export function statusOf(a: Advance): AdvanceStatus {
   return Number(a.refunded_amount) < Number(a.amount) ? 'partial' : 'refunded';
 }
 
+/**
+ * 狀態的名字。
+ *
+ * ============================================================
+ * 【★★★ 2026-09-18 改名：付款／退款 → 收回】
+ *
+ * 使用者看到愛皮那 8 列代墊寫著「已付款」，問「是誰已付款，
+ * 安幸還是愛皮？」—— 而他讀成「愛皮已付款」不是看錯:
+ * **同一條軸在那張表上有三個名字**。
+ *
+ *     欄位名   收回日      實收回        ← 收回
+ *     狀態     已付**款**  已**退**款    ← 付款／退款
+ *
+ * 那張表**每一列的付款方都是安幸**（它是安幸的暫付表），
+ * 所以主詞是多餘的 —— 真正缺的是讓狀態跟欄位名講同一個字。
+ *
+ * ★★ 三種用途都讀得通，這是改名的前提:
+ *     代墊    安幸付了等愛皮還 → 待收回 / 已收回
+ *     押金    付給房東等退回   → 待收回 / 已收回
+ *     零用金  撥出去等結清     → 待收回 / 已收回
+ *
+ * ★ 「待出款」不動 —— 它講的是還沒付出去，跟收回不同一條軸。
+ * ============================================================
+ */
 export const STATUS_LABEL: Record<AdvanceStatus, string> = {
   draft:    '待出款',
-  paid:     '已付款',
-  refunded: '已退款',
-  partial:  '部分退',
+  paid:     '待收回',
+  refunded: '已收回',
+  partial:  '部分收回',
 };
 
 /**
@@ -192,7 +216,7 @@ export function needsForfeitExpense(a: Advance): boolean {
     && !a.forfeit_expense_id;
 }
 
-/** 錢還在外面（已付款但還沒收回）。統計卡與「待收回」清單用。 */
+/** 錢還在外面（已經出款但還沒收回）。統計卡與「待收回」清單用。 */
 export const isOutstanding = (a: Advance) => statusOf(a) === 'paid';
 
 /**
@@ -355,4 +379,99 @@ export function statsOf(rows: Advance[]): AdvanceStats {
     out[k].amt = Math.round(out[k].amt * 100) / 100;
   }
   return out;
+}
+
+/* ══════════════════════════════════════════════════════════
+ * 批次收回（migration_274）
+ *
+ * 2026-09-18 使用者選的兩件事決定了這一段的形狀:
+ *
+ *   ❸ 部分還款 → **讓人挑哪幾筆**（不是照比例分攤）
+ *   ❹ 愛皮的實支 → **實收回**（不另外存一份）
+ *
+ * 所以每一列只有兩種下場:全額收回，或完全沒動。
+ * 沒有零頭，於是「實收回」永遠等於「金額」——
+ * 這也是清單上那一欄被拿掉的原因（同一個數字不寫第二次）。
+ * ══════════════════════════════════════════════════════════ */
+
+/**
+ * 批次只收代墊。
+ *
+ * ★★ 押金與保證金收回時常常**被扣**，而被扣的差額要選會計科目
+ *   （`validateRefund`）—— 批次那條路問不了這件事。
+ *   它們還是走原本的抽屜，一列一列來。
+ */
+export const BATCH_CATEGORY = '代墊';
+
+/** 這一列能不能進批次:代墊，而且錢已經付出去、還沒收回。 */
+export function canBatch(a: Advance): boolean {
+  return a.category === BATCH_CATEGORY && statusOf(a) === 'paid';
+}
+
+/**
+ * 已經勾了 `picked` 之後，這一次鎖定的對象是誰（沒勾就回 null）。
+ *
+ * ★ 一次收回是**一筆錢進來**。愛皮跟洪鯊各還各的，
+ *   混在同一次裡的話收回日與收款帳戶同時代表兩筆匯款。
+ */
+export function lockedParty(picked: Advance[]): string | null {
+  return picked.length ? (picked[0].counterparty ?? '') : null;
+}
+
+/** 這一列現在勾不勾得動。已經勾起來的**永遠勾得動**（不然取消不了）。 */
+export function batchDisabled(a: Advance, picked: Advance[]): boolean {
+  if (!canBatch(a)) return true;
+  const party = lockedParty(picked);
+  return party != null && party !== (a.counterparty ?? '');
+}
+
+/** 勾起來這幾列合計多少。★ 收到分，浮點數累加會漂而那個數字會印在按鈕旁邊。 */
+export const batchTotal = (picked: Advance[]): number =>
+  Math.round(picked.reduce((n, a) => n + (Number(a.amount) || 0), 0) * 100) / 100;
+
+/**
+ * 按下「確認收回」之前的檢查。回第一個錯，沒問題回 null。
+ *
+ * ★★★ 這幾條跟 `recover_advances()`（migration_274）**是同一組規則**。
+ *   兩邊都寫是刻意的:資料庫那層擋住任何路徑（含手改資料），
+ *   這一層負責在**按下去之前**就講出為什麼 ——
+ *   RPC 丟回來的 exception 使用者看得懂，但那時他已經按了。
+ *
+ * ★★ 一次只回一個錯。全部列出來會變成一段文章，而人只看第一行。
+ */
+export function validateBatch(picked: Advance[], on: string | null | undefined): string | null {
+  if (!picked.length) return '沒有選任何一列';
+  if (!on) return '要填收回日';
+
+  const notBatch = picked.find((a) => !canBatch(a));
+  if (notBatch) {
+    return `「${notBatch.usage || '（沒填項目）'}」不是待收回的代墊 —— 批次收回只處理代墊`;
+  }
+
+  const party = picked[0].counterparty ?? '';
+  const other = picked.find((a) => (a.counterparty ?? '') !== party);
+  if (other) {
+    return `一次只能收回同一個對象（選到了${party || '（沒填）'}和${other.counterparty || '（沒填）'}）`;
+  }
+
+  const early = picked.find((a) => a.paid_on && on < a.paid_on);
+  if (early) {
+    return `收回日 ${on} 早於「${early.usage || '（沒填項目）'}」的出款日 ${early.paid_on}`;
+  }
+  return null;
+}
+
+/**
+ * 這個畫面上「勾得動」的那幾列。
+ *
+ * ★★ 寫在 `.ts` 不是頁面裡:它決定**勾選框整欄要不要畫**，
+ *   而算錯的症狀是「有幾列勾不到」—— 沒有錯誤訊息，
+ *   使用者只會覺得那幾列沒辦法批次，自己一列一列開抽屜。
+ *
+ * ★ 還沒勾任何一列時，對象由**清單上第一個勾得動的列**決定 ——
+ *   這樣「全選」按下去一定是同一家的，不會選出一個 RPC 會擋的組合。
+ */
+export function batchSelectable(shown: Advance[], picked: Advance[]): Advance[] {
+  const party = lockedParty(picked) ?? shown.find((r) => canBatch(r))?.counterparty ?? null;
+  return (shown ?? []).filter((r) => canBatch(r) && (party == null || (r.counterparty ?? '') === party));
 }

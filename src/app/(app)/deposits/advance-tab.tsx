@@ -45,7 +45,9 @@ import {
   defaultRefundAccount, refundAccountWarning, needsForfeitExpense,
   CATEGORIES, MANUAL_CATEGORIES, type Advance, type AdvanceStatus,
   purposeFromSelect, purposeToSelect, purposeLabel, PURPOSE_OFFICE, OFFICE_LABEL,
+  canBatch, batchDisabled, batchTotal, lockedParty, validateBatch, batchSelectable,
 } from '@/lib/advance';
+import { todayStr } from '@/lib/period';
 
 const fmt = (n: number) => Math.round(Number(n) || 0).toLocaleString('en-US');
 
@@ -185,7 +187,7 @@ export function useAdvance(enabled: boolean) {
 
   /*
    * ★ 統計算在**篩選前**的全部資料上（`rows` 不是 `shown`）——
-   *   卡片是總覽，不是當前清單的重複。切到「已退款」之後
+   *   卡片是總覽，不是當前清單的重複。切到「已收回」之後
    *   「錢還在外面」那個數字還在，才看得出比例。
    *   跟暫收那邊同一條規則（那裡的註解寫著「筆數算在 base 上」）。
    */
@@ -219,9 +221,15 @@ export function AdvanceStats({ a }: { a: AdvanceState }) {
       <StatGroup label="暫付" tone="slate" />
       <StatRow className="mb-4">
         {([
-          { k: 'paid'      as const, title: '已付款', s: st.paid,      sub: '還沒收回' },
-          { k: 'refunded'  as const, title: '已退款', s: st.refunded,  sub: '實際收回' },
-          { k: 'forfeited' as const, title: '被扣',   s: st.forfeited, sub: '已轉支出' },
+          /*
+           * ★★ 標題讀 `STATUS_LABEL`，不要再手寫一次字串。
+           *   2026-09-18 改名（已付款 → 待收回）時，寫死的那一份
+           *   會留在原地 —— 於是卡片叫「已付款」、底下那一列叫「待收回」，
+           *   而使用者會以為那是兩群不同的資料。
+           */
+          { k: 'paid'      as const, title: STATUS_LABEL.paid,     s: st.paid,      sub: '還沒收回' },
+          { k: 'refunded'  as const, title: STATUS_LABEL.refunded, s: st.refunded,  sub: '實際收回' },
+          { k: 'forfeited' as const, title: '被扣',                s: st.forfeited, sub: '已轉支出' },
         ]).map((t) => (
           <StatCard key={t.k}
             label={t.title}
@@ -229,7 +237,7 @@ export function AdvanceStats({ a }: { a: AdvanceState }) {
             sub={`${t.s.n} 筆・${t.sub}`}
             muted={t.s.n === 0}
             /*
-             * ★ 「被扣」點下去篩「部分退」—— 那兩者是同一群列。
+             * ★ 「被扣」點下去篩「部分收回」—— 那兩者是同一群列。
              *   分開命名是因為卡片問的是「損失多少」，
              *   而狀態問的是「這一列走到哪了」。
              */
@@ -259,6 +267,91 @@ export function AdvanceList({
 
   const estateName = useMemo(
     () => Object.fromEntries(estates.map((e) => [e.id, e.name])), [estates]);
+
+  /* ══════════════════════════════════════════════════════════
+   * 批次收回（2026-09-18・migration_274）
+   *
+   * 愛皮 9/09 那一批是 8 列。一列一列開抽屜填收回日的話要開 8 次，
+   * 而那 8 次是**同一筆匯款** —— 中間停下來就會有幾列還躺在待收回，
+   * 於是愛皮那一頁的實支變成「還了 5 筆的金額」，
+   * 而每一列自己都合法，沒有地方會叫。
+   *
+   * ★ 所以寫入走 RPC:一個交易，要嘛 8 列全好，要嘛一列都沒動。
+   * ══════════════════════════════════════════════════════════ */
+  const [picked, setPicked] = useState<Record<string, true>>({});
+  const [bOn, setBOn] = useState(todayStr());
+  const [bAcct, setBAcct] = useState('');
+  /*
+   * ★★ 批次的錯誤留在批次那一條 bar 裡，不要丟到頁面最上方的 `msg`。
+   *   那個面板在畫面上半部，而使用者按的按鈕在清單旁邊 ——
+   *   他會看到「按了沒反應」（CLAUDE.md 2026-09-02 踩過的那條）。
+   */
+  const [bMsg, setBMsg] = useState<string | null>(null);
+
+  /*
+   * ★★★ 從 `rows`（全部）撈，不是從 `shown`（篩過的）——
+   *   勾完之後切換篩選的話，被篩掉的那幾列還在 `picked` 裡，
+   *   而 bar 上的「已選 N 列」必須講真話。
+   *   同時換篩選就清空選取（下面那個 effect），兩件事一起才不會出現
+   *   「畫面上看不到，但會被收回」的列。
+   */
+  const pickedRows = useMemo(() => rows.filter((r) => picked[r.id]), [rows, picked]);
+  const party = lockedParty(pickedRows);
+
+  useEffect(() => { setPicked({}); setBMsg(null); }, [statusF, estateF]);
+
+  /** 這個篩選底下，跟現在鎖定的對象同一家、而且勾得動的列。算式在 lib，有測試。 */
+  const selectable = useMemo(() => batchSelectable(shown, pickedRows) as Row[], [shown, pickedRows]);
+  const allPicked = selectable.length > 0 && selectable.every((r) => picked[r.id]);
+
+  function toggleOne(r: Row) {
+    setBMsg(null);
+    setPicked((prev) => {
+      const next = { ...prev };
+      if (next[r.id]) delete next[r.id]; else next[r.id] = true;
+      return next;
+    });
+  }
+  function toggleAll() {
+    setBMsg(null);
+    setPicked(allPicked ? {} : Object.fromEntries(selectable.map((r) => [r.id, true as const])));
+  }
+
+  async function recoverInner() {
+    setBMsg(null);
+    /*
+     * ★★★ 這幾條跟 `recover_advances()` 是同一組規則（lib/advance.ts 有註解）。
+     *   先在這裡擋是為了**按下去之前**就講得出原因 ——
+     *   RPC 丟回來的訊息一樣看得懂，但那時他已經按了。
+     */
+    const err = validateBatch(pickedRows, bOn);
+    if (err) { setBMsg(err); return; }
+
+    const { data, error } = await supabase.rpc('recover_advances', {
+      p_ids: pickedRows.map((r) => r.id),
+      p_on: bOn,
+      p_account: bAcct || null,
+    });
+    /*
+     * ★★ RPC 裡面會比「選了幾列 vs 改到幾列」，對不上就 raise ——
+     *   所以這裡收到 error 就是**真的一列都沒改**（交易回滾），
+     *   不會有「成功了一半」這種狀態。
+     */
+    if (error) { setBMsg('收回失敗：' + error.message); return; }
+
+    setPicked({});
+    setBAcct('');
+    setMsg(`已收回 ${data} 列・${party ?? ''} 共 ${fmt(batchTotal(pickedRows))}`);
+    await load();
+  }
+  const [recover, recovering] = useOnce(recoverInner);
+
+  /*
+   * 空狀態那一列要橫跨幾欄。
+   * ★ 跟表頭算在同一個地方 —— 寫死 10 的話，2026-09-18 拿掉「實收回」
+   *   之後那一列會多跨一欄，而畫面上只是「置中偏了一點」，沒有人會報。
+   */
+  const cols = 9 + (selectable.length > 0 ? 1 : 0);
 
   async function saveInner() {
     if (!edit) return;
@@ -365,6 +458,53 @@ export function AdvanceList({
         </div>
       </div>
 
+      {/*
+        ══════════ 批次收回（2026-09-18）══════════
+        ★ 一列都沒勾就整條不出現 —— 沒有東西可做的時候不要佔版面。
+      */}
+      {pickedRows.length > 0 && (
+        <div className="mb-3 rounded-xl border border-mor-slate bg-mor-bluelight px-3 py-2.5">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="text-sm font-medium">
+              已選 {pickedRows.length} 列　合計 NT$ {fmt(batchTotal(pickedRows))}
+              {party && <span className="ml-2 text-xs text-gray-600">（{party} 還的）</span>}
+            </div>
+            <label className="flex flex-col gap-1">
+              <span className="flex items-center text-xs text-gray-600">收回日<Req /></span>
+              <input type="date" value={bOn} onChange={(e) => { setBOn(e.target.value); setBMsg(null); }}
+                className={`${CTRL} ${bMsg && !bOn ? 'border-red-400 bg-red-50' : ''}`} /></label>
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-gray-600">進哪個帳戶</span>
+              <select value={bAcct} onChange={(e) => setBAcct(e.target.value)} className={CTRL}>
+                {/*
+                  ★ 預設是**原出款帳戶**（2026-09-02 使用者指定）——
+                    留空的話 RPC 會一列一列填回它自己的 paid_account，
+                    而那幾列的出款帳戶不一定相同，所以這裡不預先挑一個。
+                */}
+                <option value="">照原出款帳戶</option>
+                {payAccounts.map((p) => (
+                  <option key={p.code} value={p.code}>{p.code} {p.name}</option>
+                ))}
+              </select></label>
+            <button onClick={recover} disabled={recovering}
+              className="h-11 md:h-9 rounded-lg bg-mor-greendark text-white px-4 text-ui font-medium
+                         hover:opacity-90 disabled:opacity-50">
+              {recovering ? '收回中⋯' : '確認收回'}
+            </button>
+            <button onClick={() => { setPicked({}); setBMsg(null); }}
+              className="h-11 md:h-9 rounded-lg border border-mor-line bg-white px-3 text-ui">取消</button>
+          </div>
+          {/*
+            ★★ 錯誤留在這條 bar 裡 —— 丟到頁面最上方的話，
+              在清單旁邊按鈕的人看不到，結論會是「按鈕壞了」。
+          */}
+          {bMsg && <div className="mt-2 text-sm text-red-600">{bMsg}</div>}
+          <div className="mt-1.5 text-xs text-gray-500">
+            全額收回。只收代墊，而且一次只能收同一個對象 —— 一次收回是一筆錢進來。
+          </div>
+        </div>
+      )}
+
       <div className="rounded-xl glass overflow-x-auto mb-4">
         <table className="w-full text-sm">
           <thead>
@@ -380,24 +520,44 @@ export function AdvanceList({
                 ★★ 「對象」往後移，不是拿掉 —— 它是暫付才有的
                   （錢放在誰那裡），支出頁沒有對應欄。
               */}
+              {/*
+                ★ 勾選欄。整欄只在「有東西勾得動」時出現 —— 全部都是押金
+                  或全部已收回的話，畫一排永遠灰掉的框只是噪音。
+              */}
+              {selectable.length > 0 && (
+                <th className="px-3 py-2.5 w-10 text-center">
+                  <input type="checkbox" checked={allPicked} onChange={toggleAll}
+                    aria-label="全選" className="align-middle" />
+                </th>
+              )}
               <th className="px-3 py-2.5">出款日</th>
               <th className="px-3 py-2.5">項目</th>
               <th className="px-3 py-2.5 text-right">金額</th>
               <th className="px-3 py-2.5">類別</th>
               <th className="px-3 py-2.5">用途</th>
               <th className="px-3 py-2.5">對象</th>
+              {/*
+                ══════════ 2026-09-18:「實收回」整欄拿掉 ══════════
+
+                使用者圈起這兩欄問「收回 實收回日 是甚麼，只有一個吧」——
+                他讀成了兩個日期，而那是我把名字取成兄弟的錯
+                （一個是日期、一個是金額）。
+
+                ★★★ 而且他說得對:收回一律全額（2026-09-18 選「讓人挑哪幾筆」），
+                  所以「實收回」永遠等於左邊的「金額」——
+                  **同一個數字寫第二次**。短收的時候才在金額底下多一行紅字。
+              */}
               <th className="px-3 py-2.5">收回日</th>
-              <th className="px-3 py-2.5 text-right">實收回</th>
               <th className="px-3 py-2.5">狀態</th>
               <th className="px-3 py-2.5 text-right">操作</th>
             </tr>
           </thead>
           <tbody>
             {loading && (
-              <tr><td colSpan={10} className="px-3 py-6 text-center text-gray-400">讀取中⋯</td></tr>
+              <tr><td colSpan={cols} className="px-3 py-6 text-center text-gray-400">讀取中⋯</td></tr>
             )}
             {!loading && shown.length === 0 && (
-              <tr><td colSpan={10} className="px-3 py-6 text-center text-gray-400">
+              <tr><td colSpan={cols} className="px-3 py-6 text-center text-gray-400">
                 {rows.length === 0
                   ? '還沒有暫付。請款單填完在下方勾「這是暫支款」，確認出款後會出現在這裡。'
                   : '這個篩選沒有資料'}
@@ -407,11 +567,45 @@ export function AdvanceList({
               const s = statusOf(r);
               const lost = forfeitedOf(r);
               return (
-                <tr key={r.id} className="border-b border-mor-line/40 last:border-0">
+                <tr key={r.id} className={`border-b border-mor-line/40 last:border-0 ${
+                  picked[r.id] ? 'bg-mor-bluelight/50' : ''}`}>
+                  {selectable.length > 0 && (
+                    <td className="px-3 py-2.5 text-center">
+                      {/*
+                        ★★ 勾不動的列畫一個灰掉的框（不是空白）——
+                          空白的話使用者會以為那一列漏畫了，
+                          而 title 說得出為什麼勾不動。
+                      */}
+                      <input type="checkbox" checked={!!picked[r.id]}
+                        disabled={batchDisabled(r, pickedRows)}
+                        onChange={() => toggleOne(r)}
+                        title={
+                          !canBatch(r)
+                            ? (r.category === '代墊' ? '這一列已經收回過了' : '批次收回只處理代墊')
+                            : batchDisabled(r, pickedRows)
+                              ? `已經選了${party}的，一次只能收同一個對象`
+                              : ''
+                        }
+                        className="align-middle disabled:opacity-30" />
+                    </td>
+                  )}
                   <td className="px-3 py-2.5 text-gray-500 whitespace-nowrap">{r.paid_on ?? '—'}</td>
                   {/* ★ 物業不再擠在項目後面當灰字 —— 它有自己的「用途」欄了 */}
                   <td className="px-3 py-2.5">{r.usage}</td>
-                  <td className="px-3 py-2.5 text-right tabular-nums">{fmt(r.amount)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">
+                    {fmt(r.amount)}
+                    {/*
+                      ★★★ 差額搬到金額底下（2026-09-18）。原本它掛在「實收回」欄，
+                        而那一欄整個拿掉了 —— 沒搬的話這一行字會跟著消失，
+                        於是一筆收不回來的錢在畫面上**完全看不出來**。
+                      ★ 只有差額 > 0 才出現。全額收回的列什麼都不多。
+                    */}
+                    {lost > 0 && (
+                      <div className="text-xs text-red-500">
+                        實收 {fmt(r.refunded_amount ?? 0)}・差 {fmt(lost)}
+                      </div>
+                    )}
+                  </td>
                   <td className="px-3 py-2.5">
                     <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${CAT_CLASS[r.category] ?? ''}`}>
                       {r.category}
@@ -421,12 +615,7 @@ export function AdvanceList({
                     {purposeLabel(r.purpose_type, r.estate_id, (id) => estateName[id])}
                   </td>
                   <td className="px-3 py-2.5">{r.counterparty}</td>
-                  <td className="px-3 py-2.5 text-gray-500">{r.refunded_on ?? '—'}</td>
-                  <td className="px-3 py-2.5 text-right tabular-nums">
-                    {r.refunded_amount == null ? '—' : fmt(r.refunded_amount)}
-                    {/* ★ 被扣的金額寫在旁邊 —— 那是這一列唯一真的損失 */}
-                    {lost > 0 && <div className="text-xs text-red-500">被扣 {fmt(lost)}</div>}
-                  </td>
+                  <td className="px-3 py-2.5 text-gray-500 whitespace-nowrap">{r.refunded_on ?? '—'}</td>
                   <td className="px-3 py-2.5">
                     <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${STATUS_CLASS[s]}`}>
                       {STATUS_LABEL[s]}

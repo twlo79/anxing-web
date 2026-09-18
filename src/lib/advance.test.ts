@@ -5,6 +5,8 @@ import {
   validateAdvance, advanceMissing, validateRefund, statsOf, defaultRefundAccount,
   refundAccountWarning, MANUAL_CATEGORIES, type Advance,
   CATEGORIES, purposeFromSelect, purposeToSelect, purposeLabel,
+  BATCH_CATEGORY, canBatch, lockedParty, batchDisabled, batchTotal, validateBatch,
+  batchSelectable,
 } from './advance.ts';
 
 const A = (o: Partial<Advance> = {}): Advance => ({
@@ -405,5 +407,182 @@ describe('★★★ CATEGORIES 要跟資料庫的 check 一致', () => {
       assert.ok((CATEGORIES as readonly string[]).includes(c), `${c} 不在 CATEGORIES 裡`);
     }
     assert.equal(MANUAL_CATEGORIES.length, CATEGORIES.length - 1);
+  });
+});
+
+// ── 狀態的名字（2026-09-18 改名）──────────────────────────
+
+describe('★★★ STATUS_LABEL —— 同一條軸只准有一個字', () => {
+  /*
+   * 2026-09-18 使用者看著愛皮那 8 列問「已付款是誰已付款，
+   * 安幸 or 愛皮 | 洪鯊？」—— 欄位名叫「收回日／實收回」，
+   * 狀態卻叫「已付款／已退款／部分退」，三個詞講同一件事。
+   */
+  test('★★★ 收回那條軸上，三個狀態都用「收回」這個字', () => {
+    for (const s of ['paid', 'refunded', 'partial'] as const) {
+      assert.ok(STATUS_LABEL[s].includes('收回'), `${s} = ${STATUS_LABEL[s]}`);
+    }
+  });
+
+  test('★★ 再也沒有「付款」「退款」—— 那是被讀成別人動作的兩個字', () => {
+    for (const s of ['paid', 'refunded', 'partial'] as const) {
+      assert.ok(!STATUS_LABEL[s].includes('付款'), `${s} 還寫著付款`);
+      assert.ok(!STATUS_LABEL[s].includes('退款'), `${s} 還寫著退款`);
+    }
+  });
+
+  test('★ 「待出款」不動 —— 它講的是還沒付出去，不在收回那條軸上', () => {
+    assert.equal(STATUS_LABEL.draft, '待出款');
+  });
+
+  test('四個狀態都有名字，而且互不相同', () => {
+    const all = (['draft', 'paid', 'refunded', 'partial'] as const).map((s) => STATUS_LABEL[s]);
+    assert.equal(new Set(all).size, 4);
+    for (const n of all) assert.ok(n.length > 0);
+  });
+});
+
+// ── 批次收回（migration_274）──────────────────────────────
+
+const L = (o: Partial<Advance> = {}): Advance => ({
+  category: '代墊' as never, counterparty: '愛皮', usage: '旅平險',
+  amount: 261, paid_on: '2026-09-09', paid_account: 'CASH', ...o,
+});
+
+describe('canBatch —— 只有待收回的代墊進得了批次', () => {
+  test('代墊 ＋ 已出款 ＋ 還沒收回 → 可以', () => assert.equal(canBatch(L()), true));
+
+  test('★★ 押金不行 —— 被扣的差額要選會計科目，批次問不了', () => {
+    assert.equal(canBatch(L({ category: '押金' })), false);
+    assert.equal(canBatch(L({ category: '保證金' })), false);
+    assert.equal(canBatch(L({ category: '零用金' })), false);
+  });
+
+  test('還沒出款不行 —— 錢還沒出去，沒有東西可以收回', () => {
+    assert.equal(canBatch(L({ paid_on: null })), false);
+  });
+
+  test('★ 已經收回過的不行 —— 不然按兩次就把收回日改成新的', () => {
+    assert.equal(canBatch(L({ refunded_on: '2026-09-30', refunded_amount: 261 })), false);
+  });
+
+  test('★ 全額被扣（收回 0）也算收回過了 —— null 跟 0 是兩件事', () => {
+    assert.equal(canBatch(L({ refunded_on: '2026-09-30', refunded_amount: 0 })), false);
+  });
+
+  test('BATCH_CATEGORY 一定是合法類別', () => {
+    assert.ok((CATEGORIES as readonly string[]).includes(BATCH_CATEGORY));
+  });
+});
+
+describe('★★ batchDisabled —— 一次收回是一筆錢進來', () => {
+  const aipi1 = L({ id: '1' });
+  const aipi2 = L({ id: '2', usage: '勞保費', amount: 3102 });
+  const hong  = L({ id: '3', counterparty: '洪鯊', usage: '網路費', amount: 500 });
+
+  test('一個都沒勾的時候，能進批次的都勾得動', () => {
+    assert.equal(batchDisabled(aipi1, []), false);
+    assert.equal(batchDisabled(hong, []), false);
+    assert.equal(batchDisabled(L({ category: '押金' }), []), true);
+  });
+
+  test('★★ 勾了愛皮之後，洪鯊那幾列勾不動', () => {
+    assert.equal(batchDisabled(aipi2, [aipi1]), false);
+    assert.equal(batchDisabled(hong, [aipi1]), true);
+  });
+
+  test('★★★ 已經勾起來的那一列自己永遠勾得動 —— 不然取消不了', () => {
+    assert.equal(batchDisabled(aipi1, [aipi1]), false);
+    assert.equal(batchDisabled(hong, [hong]), false);
+  });
+
+  test('lockedParty：沒勾回 null，勾了回那個對象', () => {
+    assert.equal(lockedParty([]), null);
+    assert.equal(lockedParty([aipi1, aipi2]), '愛皮');
+  });
+});
+
+describe('batchTotal', () => {
+  test('加總，收到分', () => {
+    assert.equal(batchTotal([L({ amount: 261 }), L({ amount: 3102 }), L({ amount: 7350 })]), 10713);
+  });
+  test('★ 浮點數不漂 —— 這個數字會印在按鈕旁邊', () => {
+    assert.equal(batchTotal([L({ amount: 0.1 }), L({ amount: 0.2 })]), 0.3);
+  });
+  test('沒勾是 0，不是 NaN', () => assert.equal(batchTotal([]), 0));
+});
+
+describe('★★★ validateBatch —— 跟 recover_advances() 同一組規則', () => {
+  test('一切正常回 null', () => {
+    assert.equal(validateBatch([L({ id: '1' }), L({ id: '2', amount: 3102 })], '2026-09-30'), null);
+  });
+
+  test('沒勾', () => assert.equal(validateBatch([], '2026-09-30'), '沒有選任何一列'));
+
+  test('沒填收回日', () => assert.equal(validateBatch([L()], ''), '要填收回日'));
+
+  test('★★ 混進押金 → 擋，而且說出是哪一列', () => {
+    const err = validateBatch([L({ id: '1' }), L({ id: '2', category: '押金', usage: '辦公室押金' })], '2026-09-30');
+    assert.ok(err?.includes('辦公室押金'), err ?? '');
+    assert.ok(err?.includes('代墊'), err ?? '');
+  });
+
+  test('★★ 兩個對象 → 擋，而且兩個名字都講出來', () => {
+    const err = validateBatch([L({ id: '1' }), L({ id: '2', counterparty: '洪鯊' })], '2026-09-30');
+    assert.ok(err?.includes('愛皮'), err ?? '');
+    assert.ok(err?.includes('洪鯊'), err ?? '');
+  });
+
+  test('★★ 收回日早於出款日 → 擋，而且說出是哪一列、哪一天', () => {
+    const err = validateBatch([L({ id: '1', paid_on: '2026-09-09' }),
+                               L({ id: '2', usage: '網路費', paid_on: '2026-09-20' })], '2026-09-15');
+    assert.ok(err?.includes('網路費'), err ?? '');
+    assert.ok(err?.includes('2026-09-20'), err ?? '');
+  });
+
+  test('★ 收回日等於出款日是合法的（當天付當天還）', () => {
+    assert.equal(validateBatch([L({ paid_on: '2026-09-09' })], '2026-09-09'), null);
+  });
+
+  test('★ 已經收回過的混進來 → 擋', () => {
+    const err = validateBatch([L({ id: '1', usage: '已經還過的', refunded_on: '2026-09-11', refunded_amount: 261 })], '2026-09-30');
+    assert.ok(err?.includes('已經還過的'), err ?? '');
+  });
+
+  test('★★ 一次只回一個錯 —— 人只看第一行', () => {
+    const err = validateBatch([L({ id: '1', category: '押金' }), L({ id: '2', counterparty: '洪鯊' })], '2026-09-30');
+    assert.equal(typeof err, 'string');
+    assert.ok(!err!.includes('\n'));
+  });
+});
+
+describe('★★ batchSelectable —— 勾選框整欄要不要畫', () => {
+  const list: Advance[] = [
+    L({ id: '1', counterparty: '愛皮', usage: '旅平險' }),
+    L({ id: '2', counterparty: '愛皮', usage: '勞保費', amount: 3102 }),
+    L({ id: '3', counterparty: '洪鯊', usage: '網路費', amount: 500 }),
+    L({ id: '4', category: '押金', counterparty: '房東', usage: '辦公室押金', amount: 10000 }),
+    L({ id: '5', counterparty: '愛皮', usage: '已還過的', refunded_on: '2026-09-11', refunded_amount: 261 }),
+  ];
+
+  test('還沒勾 → 跟著清單上第一個勾得動的列（愛皮）', () => {
+    assert.deepEqual(batchSelectable(list, []).map((r) => r.id), ['1', '2']);
+  });
+
+  test('★★ 勾了洪鯊之後，選得動的只剩洪鯊那一列', () => {
+    const hong = list[2];
+    assert.deepEqual(batchSelectable(list, [hong]).map((r) => r.id), ['3']);
+  });
+
+  test('★ 全部都是押金或已收回 → 空的（那時整欄不畫）', () => {
+    assert.deepEqual(batchSelectable([list[3], list[4]], []), []);
+  });
+
+  test('★ 空清單不會爆', () => assert.deepEqual(batchSelectable([], []), []));
+
+  test('★★★ 挑出來的組合一定過得了 validateBatch —— 全選不會選出一個 RPC 會擋的組合', () => {
+    const sel = batchSelectable(list, []);
+    assert.ok(sel.length > 0);
+    assert.equal(validateBatch(sel, '2026-09-30'), null);
   });
 });
