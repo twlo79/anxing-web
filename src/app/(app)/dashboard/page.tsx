@@ -1,5 +1,9 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  DASH_TABS, parseTab, pillsApply, whyPillsOff,
+  sourcePills, applyPill, togglePill, perf,
+} from '@/lib/dash';
 import { createClient } from '@/lib/supabase';
 import { useProfile } from '@/lib/profile';
 /*
@@ -22,7 +26,8 @@ import {
 } from '@/lib/compare';
 import RangeInput from '@/components/RangeInput';
 /*
- * 入住率（2026-09-16 使用者:「財務儀錶板多一個入住率，各房源期間都有入住率」）。
+ * 住房率（2026-09-16 使用者:「財務儀錶板多一個入住率，各房源期間都有入住率」）
+ * ★ 2026-09-18 起全站改叫**住房率**（使用者指定）—— 上面那句是當時的原話。。
  *
  * ★★★ 算式在 `lib/occupancy.ts`（28 個測試），差一天的規則沿用
  *   `lib/room-calendar.ts` 的 `occupies()`（59 個測試）——
@@ -85,9 +90,9 @@ type Estate = { id: string; name: string; active: boolean };
 type Property = {
   id: string; name: string; estate_id: string | null;
   /*
-   * ★★★ 入住率的**分母**靠這兩欄。
+   * ★★★ 住房率的**分母**靠這兩欄。
    *   停用的、以及沒勾「排房表」的（2B10 那種只用來記支出、
-   *   根本沒在出租的房源）留在分母裡，會把整體入住率一路往下拉，
+   *   根本沒在出租的房源）留在分母裡，會把整體住房率一路往下拉，
    *   而畫面上完全看不出原因 —— 兩個開關不是一個（migration_255）。
    */
   active?: boolean | null;
@@ -164,10 +169,10 @@ export default function DashboardPage() {
   const [codes, setCodes] = useState<Code[]>([]);
   const [pending, setPending] = useState<Pending[]>([]);
   /*
-   * 入住率的佔用資料。**自己一條 useEffect**，不併進 `load()`。
+   * 住房率的佔用資料。**自己一條 useEffect**，不併進 `load()`。
    *
    * ★★ 併進去的話，「載入中」要等到最慢那一支才消失，
-   *   而入住率不是打開儀錶板第一眼要看的東西（同一頁上面
+   *   而住房率不是打開儀錶板第一眼要看的東西（同一頁上面
    *   「兩批」那段註解寫的理由）。它自己顯示「計算中…」。
    *
    * ★ 也不併進 `later`：那個陣列的解構順序有一條白紙黑字的警告，
@@ -230,6 +235,34 @@ export default function DashboardPage() {
    *   記住的話下次打開會看到一個扣過的數字而不知道為什麼。
    * ══════════════════════════════════════════════════════════
    */
+  /*
+   * ══════════════════════════════════════════════════════════
+   * 分頁（2026-09-18 使用者:「財務儀錶板 裡面分一下 各種 tab」）
+   * ══════════════════════════════════════════════════════════
+   * ★★★ 篩選列（期間、物業、房源、只算本業）**在分頁的上面**，
+   *   四頁共用 —— 切分頁不會把剛才選的條件清掉
+   *   （使用者:「統一 上面有期間 filter 物業 filter」）。
+   * ★★ 分頁記在網址的 `?tab=` 上:把「支出分析」傳給會計，
+   *   她點開看到的才是支出分析，不是營收分析。
+   */
+  const [tab, setTabRaw] = useState(() => parseTab(
+    typeof window === 'undefined' ? '' : new URLSearchParams(location.search).get('tab')));
+  const setTab = useCallback((t: string) => {
+    const v = parseTab(t);
+    setTabRaw(v);
+    if (typeof window !== 'undefined') {
+      const u = new URL(location.href);
+      u.searchParams.set('tab', v);
+      history.replaceState(null, '', u.toString());
+    }
+  }, []);
+
+  /*
+   * 營收來源膠囊（2026-09-18 使用者:「營收來源 膠囊 可以點 計算所有營收」）。
+   * `null` ＝ 沒篩。★ 再點一下就是清除，不用另外做一顆「全部」。
+   */
+  const [srcPill, setSrcPill] = useState<string | null>(null);
+
   const [exOneoff, setExOneoff] = useState(false);
   const [exNonOp, setExNonOp] = useState(false);
   /** 載入編號。比較期是背景補的，回來時要確認自己還是最新那一次 */
@@ -460,11 +493,11 @@ export default function DashboardPage() {
 
   /*
    * ══════════════════════════════════════════════════════════
-   * 入住率的佔用資料。
+   * 住房率的佔用資料。
    *
    * ★★★ 撈的條件是「跟這段**有交集**」，不是「起日落在這段裡」——
    *   後者會漏掉跨進來的長住（8/20 住到 9/10 那種），
-   *   而那間房會被算成整個月空著。入住率是用來做決定的數字，
+   *   而那間房會被算成整個月空著。住房率是用來做決定的數字，
    *   偏低的那種錯**看起來完全正常**。
    *
    * ★★ 訂單的 `checkout` 是退房日，所以條件是 `> fromD` 不是 `>=`:
@@ -484,13 +517,13 @@ export default function DashboardPage() {
     /*
      * ★★★ 契約也要分頁。Supabase 預設最多回 1000 列而且不報錯 ——
      *   長租契約累積幾年就會超過，而超過之後那幾間房會被算成整段空著，
-     *   入住率安靜地變低。
+     *   住房率安靜地變低。
      */
     const cq = await fetchAll<any>((a, b) => supabase.from('contracts')
       .select('id, room, tenant_name, display_name, start_date, end_date, active')
       .lte('start_date', toD).gte('end_date', fromD).range(a, b));
 
-    /* 撈不完就明講 —— 少一列就是入住率偏低，而那個數字看起來很正常 */
+    /* 撈不完就明講 —— 少一列就是住房率偏低，而那個數字看起來很正常 */
     if (oq.error) setOccErr('訂單沒有撈完：' + oq.error);
     else if (cq.error) setOccErr('契約沒有撈完：' + cq.error);
 
@@ -515,7 +548,7 @@ export default function DashboardPage() {
 
     /*
      * ★★★ 契約產生的月租單跟契約畫的是同一段期間 —— 兩筆都留的話
-     *   是同一件事被算兩次。逐日計算讓它不會把入住率灌爆（同一天只算一次），
+     *   是同一件事被算兩次。逐日計算讓它不會把住房率灌爆（同一天只算一次），
      *   但留著它等於讓一份資料有兩個來源，而哪天算法一變就會出事。
      */
     setOccStays(dropContractOrders([...oStays, ...cStays]));
@@ -537,16 +570,16 @@ export default function DashboardPage() {
 
   /*
    * ══════════════════════════════════════════════════════════
-   * 入住率。
+   * 住房率。
    *
    * ★★★ 分母是**房源**，不是有訂單的房源。
    *   從訂單反推的話，「整段期間都空著」的房間根本不會進到分子分母裡 ——
-   *   入住率會變成「有客人的房間有多滿」，永遠接近 100%，
+   *   住房率會變成「有客人的房間有多滿」，永遠接近 100%，
    *   而那正是最不想被藏起來的那幾間。
    *
    * ★★ 停用的、沒勾「排房表」的排掉（理由在 `Property` 的註解）。
    *   `active` 欄位讀不到的時候（舊資料 null）當成**有效** ——
-   *   預設把房源踢出分母的話，入住率會無聲地變高。
+   *   預設把房源踢出分母的話，住房率會無聲地變高。
    *
    * ★ 篩選跟著頁面上的物業／房源走，跟其他圖表同一組條件。
    * ══════════════════════════════════════════════════════════
@@ -568,11 +601,12 @@ export default function DashboardPage() {
 
   /*
    * ══════════════════════════════════════════════════════════
-   * 各物業入住率。（2026-09-16 使用者:「入住率不需要到房源，
-   * 需要整體表現，各物業入住率就好 —— 入住天數 / 期間天數」）
+   * 各物業住房率。（2026-09-16 使用者:「入住率不需要到房源，
+   * 需要整體表現，各物業入住率就好 —— 入住天數 / 期間天數」。
+   *   ★ 2026-09-18 起叫**住房率**，上面是當時的原話）
    *
-   * ★★★ 一個物業的入住率 ＝ **那棟所有房間的入住天數總和**
-   *   ÷（那棟幾間房 × 期間天數）。不是各房入住率的平均 ——
+   * ★★★ 一個物業的住房率 ＝ **那棟所有房間的入住天數總和**
+   *   ÷（那棟幾間房 × 期間天數）。不是各房住房率的平均 ——
    *   兩者在房數天數一樣時剛好相等，所以特別容易寫錯（算式在 lib，有測試）。
    *
    * ★★ 房源那一層還是算，因為它是這個加總的輸入 ——
@@ -684,6 +718,17 @@ export default function DashboardPage() {
   }), [rvs, estF, propF, properties]);
 
   // ── 核心數字 ────────────────────────────────────────
+  /*
+   * ★★★ 膠囊**只在營收分析那一頁生效**（`lib/dash.ts` 有寫理由，有測試）。
+   *   別頁有支出與淨額，而支出沒有「來源」這個欄位 ——
+   *   只篩營收的話「淨額 ＝ 營收 − 支出」會變成
+   *   「長租的營收 − 全部的支出」，一個看起來很正常的錯數字。
+   */
+  const pillOn = pillsApply(tab) ? srcPill : null;
+  const pRevs = useMemo(() => applyPill(fRevs, pillOn), [fRevs, pillOn]);
+  const pills = useMemo(() => sourcePills(fRevs), [fRevs]);
+  const perfNow = useMemo(() => perf(pRevs, fRevs, !!pillOn), [pRevs, fRevs, pillOn]);
+
   const totalRev = useMemo(() => fRevs.reduce((s, r) => s + Number(r.month_amount || 0), 0), [fRevs]);
   const totalExp = useMemo(() => fExps.reduce((s, e) => s + Number(e.amount || 0), 0), [fExps]);
   /*
@@ -976,6 +1021,62 @@ export default function DashboardPage() {
       </FilterBar>
 
       {/*
+        ══════════════════════════════════════════════════════
+        營收來源膠囊（2026-09-18 使用者:「可以點 計算所有營收，做得像互動式的」）
+        ══════════════════════════════════════════════════════
+        ★★★ 規矩照 anxing-ui 四-1:**點一下開、再點一下清除**，
+          一顆都沒亮就是沒有篩選 —— 不用另外做一顆「全部」。
+        ★★ 不能用的那幾頁**整排淡掉並且寫出原因**，不是默默沒反應。
+          一個點了沒動靜的東西，使用者的結論是系統壞了（anxing-ui 二-6）。
+      */}
+      {pills.length > 0 && (
+        <div className="-mt-2 mb-4 flex flex-wrap items-center gap-2">
+          <span className="text-xs text-gray-500 mr-0.5">營收來源</span>
+          {pills.map((pl) => {
+            const on = pillOn === pl.key;
+            const dim = (pillOn && !on) || !pillsApply(tab);
+            return (
+              <button key={pl.key} type="button"
+                disabled={!pillsApply(tab)}
+                title={whyPillsOff(tab) ?? `只看${srcLabel(pl.key)}`}
+                onClick={() => setSrcPill(togglePill(srcPill, pl.key))}
+                className={`h-8 rounded-full border px-3 text-xs inline-flex items-center gap-1.5
+                            transition-colors ${dim ? 'opacity-40' : ''} ${
+                  on ? 'bg-mor-slate border-mor-slate text-white font-semibold'
+                     : 'bg-white border-mor-line hover:border-mor-slate'}`}>
+                {srcLabel(pl.key)}
+                <span className={`tabular-nums ${on ? 'text-white/75' : 'text-gray-400'}`}>
+                  {Math.round(pl.amount / 10000).toLocaleString('en-US')} 萬
+                </span>
+              </button>
+            );
+          })}
+          {whyPillsOff(tab) && (
+            <span className="text-xs text-gray-400">—— {whyPillsOff(tab)}</span>
+          )}
+        </div>
+      )}
+
+      {/*
+        ══════════════════════════════════════════════════════
+        分頁（2026-09-18 使用者過審）
+        ══════════════════════════════════════════════════════
+        ★ 篩選列與膠囊在**上面**，四頁共用 —— 切分頁不清掉條件。
+        ★★ 橫向可捲（手機上四個籤放不下一行）。
+      */}
+      <div className="mb-4 flex gap-0.5 overflow-x-auto border-b-2 border-mor-line">
+        {DASH_TABS.map((t) => (
+          <button key={t.key} type="button" onClick={() => setTab(t.key)}
+            className={`-mb-0.5 shrink-0 border-b-[2.5px] px-4 py-2 text-ui transition-colors ${
+              tab === t.key
+                ? 'border-mor-slate text-mor-slatedark font-bold'
+                : 'border-transparent text-gray-500 hover:text-mor-ink'}`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/*
         ★★★ 開著的時候**在畫面上明講**（2026-08-29）。
 
           不講的話:上面的卡說支出 913 萬、換個人看是 870 萬,兩個數字都對,
@@ -1019,14 +1120,14 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* ═══ 環比與同比 ═══
+      {/* ═══ 環比與同比（分頁:財報比較）═══
         兩個一起看,少一個都會誤判:
           環比(比上一期) 看短期動能
           同比(比去年同期) 避開季節性 —— 短租淡旺季差很多,
                           八月比七月掉 20% 可能完全正常,
                           但比去年八月掉 20% 就是真的在退。
       */}
-      {cmp && (() => {
+      {tab === 'compare' && cmp && (() => {
         const part = partialMonth(toD);
         const sameYoY = yoySameAsPrev(mode);
         const [pf, pt] = prevPeriod(mode, fromD, toD);
@@ -1204,12 +1305,69 @@ export default function DashboardPage() {
         );
       })()}
 
-      {/* ═══ 入住率 ═══ */}
-      <Panel title="入住率"
+      {/*
+        ══════════════════════════════════════════════════════
+        營收表現（2026-09-18 新做的，使用者過審）
+        ══════════════════════════════════════════════════════
+        ★★★ 這一排**跟著膠囊變**:點「長租」就是長租的營收、筆數、單價
+          —— 「哪個通路單價高」不用自己拿計算機按。
+        ★★ 住房率**不跟著膠囊變** —— 它算的是房間有沒有人住，
+          跟這筆錢從哪個通路來的無關。所以它不放在深底那一張。
+        ★ 筆數 0 時平均單價是 **0 不是 NaN**（`lib/dash.ts`，有測試）——
+          「NT$NaN」在畫面上看起來是壞掉，不是「這段期間沒有東西」。
+      */}
+      {tab === 'revenue' && (
+        <Panel title="營收表現"
+          hint={pillOn ? `只看${srcLabel(pillOn)}` : '全部來源'}>
+          <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(170px,1fr))]">
+            <div className="rounded-xl bg-mor-ink text-white px-3.5 py-3">
+              <div className="text-xs text-gray-400">營收</div>
+              <div className="text-[25px] font-bold tabular-nums leading-tight">
+                {money(perfNow.revenue)}</div>
+              <div className="text-xs text-gray-400 tabular-nums">
+                {perfNow.shareRev !== null
+                  ? `佔全部 ${(perfNow.shareRev * 100).toFixed(1)}%`
+                  : '這段期間的認列營收'}</div>
+            </div>
+            <div className="rounded-xl border border-mor-line px-3.5 py-3">
+              <div className="text-xs text-gray-500">訂單數</div>
+              <div className="text-[25px] font-bold tabular-nums leading-tight">
+                {nf(perfNow.count)}</div>
+              <div className="text-xs text-gray-400 tabular-nums">
+                {perfNow.shareCnt !== null
+                  ? `佔全部 ${(perfNow.shareCnt * 100).toFixed(1)}%` : '認列筆數'}</div>
+            </div>
+            <div className="rounded-xl border border-mor-line px-3.5 py-3">
+              <div className="text-xs text-gray-500">平均單價</div>
+              <div className="text-[25px] font-bold tabular-nums leading-tight">
+                {money(perfNow.avg)}</div>
+              <div className="text-xs text-gray-400">營收 ÷ 訂單數</div>
+            </div>
+            <div className="rounded-xl border border-mor-line px-3.5 py-3">
+              <div className="text-xs text-gray-500">住房率</div>
+              <div className="text-[25px] font-bold tabular-nums leading-tight">
+                {/*
+                  ★★ `occAll` 是 `totalOccupancy()` 回的物件（rooms/days/used/rate），
+                    不是一個數字 —— 直接乘 100 會是型別錯誤（tsc 抓到的）。
+                  ★ `days` 是 0 的時候（沒有房源或期間是空的）印「—」，
+                    不要印 0.0% —— 0% 的意思是「都沒人住」，那是另一件事。
+                */}
+                {!occAll || occAll.days === 0 ? '—' : `${(occAll.rate * 100).toFixed(1)}%`}</div>
+              {/* ★ 這一格不跟膠囊變 —— 講出來，不然看的人會以為它沒反應 */}
+              <div className="text-xs text-gray-400">不分來源</div>
+            </div>
+          </div>
+        </Panel>
+      )}
+
+      {/* ═══ 住房率（分頁:營收分析）═══
+        ★ 2026-09-18 使用者指定全站改叫「住房率」（原本叫住房率）。 */}
+      {tab === 'revenue' && (
+      <Panel title="住房率"
         hint="各物業在這段期間裡被住掉幾成 —— 入住天數 ÷（房間數 × 期間天數），逐日計算，重疊的訂單只算一次">
         {occErr && (
           <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-            ⚠ {occErr}　—— 下面的入住率會<b>偏低</b>，先不要拿它做決定。
+            ⚠ {occErr}　—— 下面的住房率會<b>偏低</b>，先不要拿它做決定。
           </div>
         )}
         {occLoading ? (
@@ -1221,7 +1379,7 @@ export default function DashboardPage() {
         ) : (
           <>
             {/*
-              整體。★★★ 是「總住宿天數 ÷ 總可住天數」，不是各物業入住率的平均 ——
+              整體。★★★ 是「總住宿天數 ÷ 總可住天數」，不是各物業住房率的平均 ——
               兩者在房數天數一樣時剛好相等，所以很容易寫錯（算式在 lib，有測試）。
             */}
             <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 mb-4
@@ -1240,14 +1398,14 @@ export default function DashboardPage() {
               </span>
             </div>
 
-            {/* 各物業。★ 排序照側邊選單的物業順序，不是按入住率也不是筆劃 */}
+            {/* 各物業。★ 排序照側邊選單的物業順序，不是按住房率也不是筆劃 */}
             <div className="overflow-x-auto">
               <table className="w-full text-sm min-w-[460px]">
                 <thead>
                   <tr className="text-left text-xs text-gray-500 border-b border-mor-line">
                     <th className="py-2 pr-3">物業</th>
                     <th className="py-2 pr-3 text-right whitespace-nowrap">間數</th>
-                    <th className="py-2 pr-3">入住率</th>
+                    <th className="py-2 pr-3">住房率</th>
                     <th className="py-2 pr-3 w-1/2">　</th>
                     <th className="py-2 pr-3 text-right whitespace-nowrap">住 / 可住</th>
                   </tr>
@@ -1286,8 +1444,8 @@ export default function DashboardPage() {
             </div>
 
             <p className="mt-3 text-[11px] text-gray-400 leading-relaxed">
-              ★ 一棟的入住率＝<b>那棟所有房間的入住天數總和 ÷（那棟幾間房 × 期間天數）</b>，
-              不是各房入住率的平均。<br />
+              ★ 一棟的住房率＝<b>那棟所有房間的入住天數總和 ÷（那棟幾間房 × 期間天數）</b>，
+              不是各房住房率的平均。<br />
               ★ 訂單的退房日那天<b>不算</b>住（最後一晚是前一天），契約的租期迄那天<b>算</b>。
               兩種來源的邊界不一樣，這是最容易差一格的地方 —— 跟房源狀態走同一份算式。<br />
               ★ 停用的房源、以及沒勾「排房表」的房源不列入分母。
@@ -1295,39 +1453,54 @@ export default function DashboardPage() {
           </>
         )}
       </Panel>
+      )}
 
-      {/* ═══ 趨勢 ═══ */}
-      <Panel title="營收與支出趨勢" hint="營收用已按月拆分的認列金額，跨月訂單已經分好了">
-        {trend.length === 0 ? <Empty /> : <TrendChart data={trend} />}
-      </Panel>
+      {/* ═══ 趨勢（分頁:財報比較）═══ */}
+      {tab === 'compare' && (
+        <Panel title="營收與支出趨勢" hint="營收用已按月拆分的認列金額，跨月訂單已經分好了">
+          {trend.length === 0 ? <Empty /> : <TrendChart data={trend} />}
+        </Panel>
+      )}
 
+      {/* ═══ 營收來源 ＋ 訂單分布（分頁:營收分析）═══ */}
+      {tab === 'revenue' && (
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-        <Panel title="營收來源" hint="點圖例可以只看單一來源的佔比">
+        <Panel title="營收來源" hint="上面那排膠囊也可以篩 —— 被篩掉的淡掉不是消失">
           <BarList rows={revBySource.map(([k, v]) => ({
-            label: srcLabel(k), value: v, color: SRC_COLOR[k] ?? '#7A8B99',
+            label: srcLabel(k), value: v,
+            /* ★ 被篩掉的**淡掉不是消失** —— 它們的錢還在總額裡（anxing-ui 四-1） */
+            color: (pillOn && pillOn !== k) ? '#D6DBE0' : (SRC_COLOR[k] ?? '#7A8B99'),
           }))} fmt={money} />
         </Panel>
-        <Panel title="訂單數分布" hint="看的是筆數不是金額 —— 跟營收比對得出「哪個通路單價高」">
+        <Panel title="訂單分布" hint="看的是筆數不是金額 —— 跟營收比對得出「哪個通路單價高」">
           <BarList rows={ordBySource.map(([k, v]) => ({
-            label: srcLabel(k), value: v, color: SRC_COLOR[k] ?? '#7A8B99',
+            label: srcLabel(k), value: v,
+            color: (pillOn && pillOn !== k) ? '#D6DBE0' : (SRC_COLOR[k] ?? '#7A8B99'),
           }))} fmt={(n) => nf(n) + ' 筆'} />
         </Panel>
       </div>
+      )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+      {/* ═══ 各物業營收（分頁:營收分析）═══ */}
+      {tab === 'revenue' && (
         <Panel title="各物業營收">
           <BarList rows={revByEstate.map(([k, v], i) => ({
             label: nameOf(k), value: v, color: PALETTE[i % PALETTE.length],
           }))} fmt={money} />
         </Panel>
+      )}
+
+      {/* ═══ 各物業支出（分頁:支出分析）═══ */}
+      {tab === 'expense' && (
         <Panel title="各物業支出" hint="辦公室的支出不屬於任何物業，另外列">
           <BarList rows={expByEstate.map(([k, v], i) => ({
             label: nameOf(k), value: v, color: PALETTE[(i + 3) % PALETTE.length],
           }))} fmt={money} />
         </Panel>
-      </div>
+      )}
 
-      {/* ═══ 各物業損益 ═══ */}
+      {/* ═══ 各物業損益（分頁:財報比較）═══ */}
+      {tab === 'compare' && (
       <Panel
         title="各物業損益"
         hint="營收減去該物業的支出。這是系統裡唯一把收入鏈與支出鏈接在一起的地方">
@@ -1374,15 +1547,20 @@ export default function DashboardPage() {
           </div>
         )}
       </Panel>
+      )}
 
-      {/* ═══ 支出科目 ═══ */}
-      <Panel title="支出科目" hint="錢花在哪些類別。連續幾個月都在同一科目衝高，通常是有東西該修了">
-        <BarList rows={expByCode.map(([k, v], i) => ({
-          label: codeName[k] ?? k, value: v, color: PALETTE[(i + 1) % PALETTE.length],
-        }))} fmt={money} />
-      </Panel>
+      {/* ═══ 會計科目（分頁:支出分析）═══
+        ★ 2026-09-18 使用者指定改叫「會計科目」（原本叫支出科目）。 */}
+      {tab === 'expense' && (
+        <Panel title="會計科目" hint="錢花在哪些類別。連續幾個月都在同一科目衝高，通常是有東西該修了">
+          <BarList rows={expByCode.map(([k, v], i) => ({
+            label: codeName[k] ?? k, value: v, color: PALETTE[(i + 1) % PALETTE.length],
+          }))} fmt={money} />
+        </Panel>
+      )}
 
-      {/* ═══ 評價 ═══ */}
+      {/* ═══ 旅客評價（分頁:其他）═══ */}
+      {tab === 'other' && (
       <Panel title="旅客評價" hint="依退房日期計算，跟營收同一條時間軸">
         {!revStats ? <Empty /> : (
           <>
@@ -1427,14 +1605,42 @@ export default function DashboardPage() {
           </>
         )}
       </Panel>
+      )}
 
       {/*
-        關注支出。放在最後 —— 它是「要追的那幾筆」,不是總覽,
+        ═══ 清潔記錄（分頁:其他）═══
+        ★★★ 這一塊 2026-09-18 使用者要「這段期間的清潔摘要」。
+          **還沒接資料** —— 它要的是房務那邊的工單與點數，
+          跟這一頁現在載的東西不是同一批。
+        ★ 先把位置與入口放出來，而且**明講還沒接** ——
+          畫一組假的 0 在那裡的話，看的人會以為這段期間一份工都沒有
+          （CLAUDE.md:自檢的母體是空的 → 每一條都回綠，同一種病）。
+      */}
+      {tab === 'other' && (
+        <Panel title="清潔記錄" hint="這段期間的清潔摘要">
+          <div className="rounded-xl border border-dashed border-mor-line bg-[#FAFAF9]
+                          px-4 py-6 text-center text-uisub text-gray-500">
+            <b className="text-mor-ink">這一塊還沒接資料。</b>
+            <div className="mt-1 text-xs text-gray-400 leading-relaxed">
+              要的是「幾份工、幾間、打掃點數、房務成本」，依物業分組 ——
+              那批資料在房務那邊，跟這一頁現在載的不是同一批。
+              <br />先不畫假的 0 在這裡：那會讓人以為這段期間一份工都沒有。
+            </div>
+            <a href="/housekeeping" className="mt-3 inline-flex h-10 items-center rounded-lg border
+                       border-mor-slate px-4 text-uisub text-mor-slate hover:bg-mor-bluelight">
+              先到房務看 →
+            </a>
+          </div>
+        </Panel>
+      )}
+
+      {/*
+        關注支出（分頁:支出分析）。放在最後 —— 它是「要追的那幾筆」,不是總覽,
         看完上面的數字之後才會想看細節。
 
         沒有關注時整塊不出現,不留一個空面板佔位置。
       */}
-      {starred.length > 0 && (
+      {tab === 'expense' && starred.length > 0 && (
         <Panel title={`關注支出（${starred.length} 筆・合計 $${nf(starredTotal)}）`}>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[560px] text-sm">
@@ -1497,7 +1703,7 @@ export default function DashboardPage() {
  * 標籤跟數字差不多大時，整張卡看起來就是兩行普通文字，沒有主從。
  */
 /*
- * 入住率的顏色。★★ 門檻本身在 `lib/occupancy.ts` 的 `occTone()` ——
+ * 住房率的顏色。★★ 門檻本身在 `lib/occupancy.ts` 的 `occTone()` ——
  * 這裡只決定「high/mid/low 長什麼樣」，三個地方各寫一次 `> 0.8` 的話，
  * 改門檻時一定會漏掉一個。
  *
