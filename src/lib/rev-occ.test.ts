@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   toWan, wanParts, pickedLabel, noSrcFilter, toggleSrc, splitBySrc, cardRows,
   applySrcPicks, bySourceOf, ymDash, monthLabel,
+  PAIR_L, PAIR_R, pairMinWidth, pairStep, pairCx, pairIdx,
 } from './rev-occ.ts';
 
 const KEYS = ['longterm', 'airbnb', 'private', 'office', 'other', 'company'];
@@ -215,4 +216,65 @@ test('★ 壞掉的值不要爆', () => {
   assert.equal(ymDash(''), '');
   assert.equal(ymDash(null), '');
   assert.equal(monthLabel(undefined), '');
+});
+
+/* ── 圖與表共用的幾何 ─────────────────────────────────────
+   ★★★ 這一組測試在守的是「圖的長條中心 ＝ 表格那一欄的中心」。
+   表格那邊是 <colgroup> 照 PAIR_L / pairStep() / PAIR_R 排的，
+   所以只要下面這幾條成立，兩邊就一定對得上。 */
+
+test('★★★ 第 i 格的中心，等於表格前 i 欄加完之後那一欄的正中間', () => {
+  const W = 1126, N = 12;
+  const s = pairStep(W, N);
+  for (let i = 0; i < N; i++) {
+    /* 表格那邊:第一欄 PAIR_L，然後 i 個 step，再取那一格的一半 */
+    const cellCenter = PAIR_L + s * i + s / 2;
+    assert.equal(pairCx(i, W, N), cellCenter);
+  }
+});
+
+test('★★ 最後一格的右緣剛好是圖的右邊界 —— 不多不少', () => {
+  const W = 1126, N = 12;
+  const s = pairStep(W, N);
+  assert.equal(PAIR_L + s * N, W - PAIR_R);
+});
+
+test('★★ 換一個寬度、換一個格數，中心還是落在同一個比例上', () => {
+  for (const W of [760, 900, 1126, 1600]) {
+    for (const N of [1, 5, 12, 24]) {
+      const s = pairStep(W, N);
+      assert.ok(Math.abs(pairCx(0, W, N) - (PAIR_L + s / 2)) < 1e-9, `W=${W} N=${N}`);
+      assert.ok(Math.abs(pairCx(N - 1, W, N) - (W - PAIR_R - s / 2)) < 1e-9, `W=${W} N=${N}`);
+    }
+  }
+});
+
+test('★★★ 左右邊界外面回 null —— 滑到左軸的數字上不可以標到第一格', () => {
+  const W = 1126, N = 12;
+  assert.equal(pairIdx(0, W, N), null);
+  assert.equal(pairIdx(PAIR_L - 1, W, N), null);
+  assert.equal(pairIdx(PAIR_L, W, N), 0);
+  assert.equal(pairIdx(W - PAIR_R - 1, W, N), N - 1);
+  assert.equal(pairIdx(W - PAIR_R, W, N), null);
+  assert.equal(pairIdx(W, W, N), null);
+});
+
+test('★ pairIdx 與 pairCx 對得起來:每一格的中心都要判回自己', () => {
+  const W = 883, N = 7;
+  for (let i = 0; i < N; i++) assert.equal(pairIdx(pairCx(i, W, N), W, N), i);
+});
+
+test('★★ 格數多到擠不下時，最小寬度要跟著長 —— 圖跟表一起捲', () => {
+  assert.equal(pairMinWidth(12), PAIR_L + PAIR_R + 12 * 52);
+  assert.ok(pairMinWidth(24) > pairMinWidth(12));
+  /* 0 格也要有寬度，不然 ResizeObserver 量到 0、step 變 Infinity */
+  assert.ok(pairMinWidth(0) > 0);
+});
+
+test('★ 一格都沒有的時候 pairStep 不可以回 Infinity 或 NaN', () => {
+  assert.ok(Number.isFinite(pairStep(1000, 0)));
+  assert.ok(pairStep(1000, 0) > 0);
+  /* 容器比左右邊界還窄（手機 ＋ 還沒量完）也一樣 */
+  assert.ok(Number.isFinite(pairStep(80, 12)));
+  assert.ok(pairStep(80, 12) > 0);
 });

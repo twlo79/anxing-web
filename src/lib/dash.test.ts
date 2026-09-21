@@ -5,6 +5,7 @@ import {
   pillsApply, whyPillsOff, sourcePills, perf,
   COMBO_MODES, parseComboMode, effectiveComboMode, monthsBetween,
   comboRow, occSegments, moneyTop, textWidth, fitLabel, axisLabels,
+  liveEstateRows,
 } from './dash.ts';
 
 const R = (source: string | null, amt: number) => ({ source, month_amount: amt });
@@ -316,4 +317,40 @@ test('step 是 0 也不會當掉（量測還沒完成的那一瞬間）', () => 
 test('comboRow：partial 預設是 false', () => {
   assert.equal(comboRow('a', 'A', 1, null).partial, false);
   assert.equal(comboRow('a', 'A', 1, null, true).partial, true);
+});
+
+/* ── liveEstateRows ─────────────────────────────────────── */
+
+describe('liveEstateRows', () => {
+  const ROWS = [
+    { key: 'id-正隆', label: '正隆' },          // 營收那邊來的，key 是 id
+    { key: 'id-洪家', label: '洪家' },          // 已停用
+    { key: '(未指定物業)', label: '未指定物業' }, // 不是一棟房子
+    { key: '信陽', label: '信陽' },             // 住房率補上來的，key 是名字、已停用
+    { key: '開封', label: '開封' },             // 住房率補上來的，key 是名字、營運中
+  ];
+  const IDS = new Set(['id-正隆']);
+  const NAMES = new Set(['正隆', '開封']);
+
+  test('★★★ 停用的物業與「未指定物業」都不列', () => {
+    assert.deepEqual(liveEstateRows(ROWS, IDS, NAMES).map((r) => r.label), ['正隆', '開封']);
+  });
+
+  test('★★★ key 是名字的那一列也要留住 —— 有房間但這期沒收到錢的就是它', () => {
+    /* 只比 id 的話「開封」會被掃掉，而畫面上只是少一根長條，不會叫。
+       這一條就是在守那件事:名字對得上就留。 */
+    const onlyById = ROWS.filter((r) => IDS.has(r.key));
+    assert.equal(onlyById.length, 1);
+    assert.ok(liveEstateRows(ROWS, IDS, NAMES).some((r) => r.label === '開封'));
+  });
+
+  test('★ 兩個集合都空的時候回空陣列，不是整份回傳', () => {
+    assert.deepEqual(liveEstateRows(ROWS, new Set(), new Set()), []);
+  });
+
+  test('★ 順序不變 —— 排序是呼叫端的事', () => {
+    const wide = new Set(['正隆', '洪家', '開封', '信陽', '未指定物業']);
+    assert.deepEqual(liveEstateRows(ROWS, new Set(), wide).map((r) => r.label),
+      ['正隆', '洪家', '未指定物業', '信陽', '開封']);
+  });
 });

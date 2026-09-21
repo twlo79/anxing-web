@@ -225,3 +225,56 @@ export function monthLabel(ym: string | null | undefined): string {
   const d = ymDash(ym);
   return d.length === 7 ? `${d.slice(5)}月` : d;
 }
+
+/* ══════════════════════════════════════════════════════════
+ * 圖與表共用的幾何（使用者 2026-09-21：「月分和表要對一起」）
+ *
+ * ★★★ 本來是圖的左邊界寫 54、表格第一欄寫 122 ——
+ *   **兩個地方各寫一個數字**，所以每一欄都往右偏。量出來 62～104px，
+ *   而且會隨螢幕寬度變:靠眼睛把其中一個調到「看起來對了」，
+ *   換一台螢幕就又歪了，而沒有任何地方會叫。
+ *
+ * ★★ 修法不是把 122 改成 54，是讓**表格的欄寬從圖的幾何算出來**:
+ *   第一欄 ＝ `PAIR_L`、每一格 ＝ `pairStep()`、最後一欄 ＝ `PAIR_R`。
+ *   只有一份數字，改了一邊另一邊一定跟。
+ *
+ * ★ 表格要 `table-layout: fixed` 才會照 `<colgroup>` 排 ——
+ *   不寫的話瀏覽器會照內容再分配一次，那就又歪了。
+ * ══════════════════════════════════════════════════════════ */
+
+/** 左邊界 ＝ 表格第一欄的寬。容得下「選定營收 / 單位：萬」與左軸的「2000 萬」 */
+export const PAIR_L = 112;
+/** 右邊界 ＝ 表格「合計／平均」那一欄的寬 */
+export const PAIR_R = 100;
+/** 一格最窄多少。再窄的話 `1,057` 這種數字會滿出格子 */
+export const PAIR_MINCOL = 52;
+
+/**
+ * 圖＋表這一整組至少要多寬。比容器窄就用容器的寬（不捲），
+ * 比容器寬就讓**圖跟表一起**橫向捲 —— 只捲表格的話，捲到一半兩邊就對不上了。
+ */
+export function pairMinWidth(n: number, l = PAIR_L, r = PAIR_R, col = PAIR_MINCOL): number {
+  return l + r + Math.max(n, 1) * col;
+}
+
+/** 一格多寬 */
+export function pairStep(w: number, n: number, l = PAIR_L, r = PAIR_R): number {
+  return Math.max(w - l - r, 1) / Math.max(n, 1);
+}
+
+/** 第 i 格的中心 x */
+export function pairCx(i: number, w: number, n: number, l = PAIR_L, r = PAIR_R): number {
+  const s = pairStep(w, n, l, r);
+  return l + s * i + s / 2;
+}
+
+/**
+ * 座標 x 落在第幾格。**左右邊界外面回 null** ——
+ * 夾到 0 或最後一格的話，滑鼠在左軸的數字上也會標到 01月，
+ * 而使用者看到的是「我沒滑到那裡它卻亮了」。
+ */
+export function pairIdx(x: number, w: number, n: number, l = PAIR_L, r = PAIR_R): number | null {
+  if (n <= 0) return null;
+  const i = Math.floor((x - l) / pairStep(w, n, l, r));
+  return i < 0 || i >= n ? null : i;
+}

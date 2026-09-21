@@ -364,3 +364,26 @@ export function axisLabels(
     stride: Math.max(1, Math.ceil((widest + 8) / Math.max(step, 1))),
   };
 }
+
+/**
+ * 「各物業比較」只列營運中的物業（使用者 2026-09-21：「這些不要顯示」）。
+ *
+ * ★★★ 兩種 key 都要吃。營收那邊的列 key 是**物業 id**（`estKey()`），
+ *   而「有房間但這期一毛錢都沒有」那幾列是從 `occupancyByEstate` 補上來的，
+ *   key 是**物業名稱**。只比 id 的話會把後者整批掃掉 ——
+ *   而那正是這張圖最該讓人看到的一種列（畫面上只會少幾根長條，不會叫）。
+ *
+ * ★★ 「未指定物業」也在這裡被拿掉:它不是一棟房子，沒有房源、
+ *   畫不出住房率，留著就是一根貼地的長條 ＋ 一個空的折線點，
+ *   還把 x 軸擠掉一格。它的 key 與 label 兩邊都對不上，所以自然落掉。
+ *
+ * ★ 代價:長條加起來會**比總營收少**（沒掛到物業的那一塊）。
+ *   這是使用者過審時知道並接受的取捨，不是漏算。
+ */
+export function liveEstateRows<T extends { key: string; label: string }>(
+  rows: readonly T[],
+  liveIds: ReadonlySet<string>,
+  liveNames: ReadonlySet<string>,
+): T[] {
+  return rows.filter((r) => liveIds.has(r.key) || liveNames.has(r.label));
+}

@@ -4,7 +4,7 @@ import {
   DASH_TABS, parseTab, pillsApply, whyPillsOff,
   sourcePills, perf,
   COMBO_MODES, parseComboMode, effectiveComboMode, monthsBetween,
-  comboRow, occSegments, moneyTop, MONEY_TICKS, axisLabels,
+  comboRow, occSegments, moneyTop, MONEY_TICKS, axisLabels, liveEstateRows,
   type ComboMode, type ComboRow, type ComboOcc,
 } from '@/lib/dash';
 import { createClient } from '@/lib/supabase';
@@ -26,6 +26,7 @@ import { srcLabel, rentOnly } from '@/lib/revenue-report';
 import {
   toWan, pickedLabel, noSrcFilter, toggleSrc, splitBySrc, cardRows,
   applySrcPicks, bySourceOf, ymDash, monthLabel, type BySource,
+  PAIR_L, PAIR_R, pairMinWidth, pairStep, pairCx, pairIdx,
 } from '@/lib/rev-occ';
 import { isExcluded, toggleExcl, exclLabel } from '@/lib/exclude';
 import {
@@ -1079,8 +1080,21 @@ export default function DashboardPage() {
       if (seen.has(o.estate)) return;
       rows.push(comboRow(o.estate || '(未指定物業)', o.estate || '未指定物業', 0, o));
     });
-    return rows;
-  }, [pRevs, occByEst, estKey, estateName, propName]);
+    /*
+     * ★★★ 只列營運中的物業（使用者 2026-09-21:「這些不要顯示」）——
+     *   跟「期間比較」那張表同一條規則（`revByEstateCmp` 的 `live`）。
+     *   停用的（洪家、信陽）與「未指定物業」都只畫得出一根貼地的長條
+     *   ＋ 一個空的折線點，而各自佔掉 x 軸一格。
+     * ★★ id 與名字兩種 key 都要比 —— 上面那個 forEach 補進來的列
+     *   key 是**名字**，只比 id 的話會把「有房間但這期沒收到錢」
+     *   那幾棟整批掃掉，而那正是最該被看到的。
+     */
+    return liveEstateRows(
+      rows,
+      new Set(estates.filter((e) => e.active).map((e) => e.id)),
+      new Set(estates.filter((e) => e.active).map((e) => e.name)),
+    );
+  }, [pRevs, occByEst, estKey, estateName, propName, estates]);
   /*
    * ★★★ 「訂單數分布」也改成跟依來源同一套（2026-08-29 使用者:「都算阿」）。
    *
@@ -2150,11 +2164,18 @@ function RevOccPair({ rows, keys, picks, scopeName }: {
 
   const on = !noSrcFilter(picks, keys);
   const splits = rows.map((r) => splitBySrc(r.bySrc, keys, picks));
-  /* ★ 兩張圖的左邊界要一樣寬，不然 x 軸對不齊 —— 對不齊的十字線比沒有更糟 */
-  const L = 54, R = 16;
-  const iw = Math.max(W - L - R, 40);
-  const step = iw / Math.max(rows.length, 1);
-  const cx = (i: number) => L + step * i + step / 2;
+  /*
+   * ★★★ 圖與表**共用同一組幾何**（使用者 2026-09-21:「月分和表要對一起」）。
+   *   本來圖的左邊界寫 54、表格第一欄寫 122 —— 兩個地方各寫一個數字，
+   *   所以每一欄都往右偏（量出來 62～104px，而且會隨螢幕寬度變）。
+   *   現在表格的 `<colgroup>` 直接吃 `PAIR_L` / `step` / `PAIR_R`:
+   *   只有一份數字，改了一邊另一邊一定跟。
+   * ★★ 兩張圖的左邊界也因此一定一樣寬 —— 對不齊的十字線比沒有更糟。
+   */
+  const L = PAIR_L, R = PAIR_R;
+  const minW = pairMinWidth(rows.length);
+  const step = pairStep(W, rows.length);
+  const cx = (i: number) => pairCx(i, W, rows.length);
   const top = moneyTop(Math.max(...splits.map((x) => x.total), 0));
 
   const H1 = 210, T1 = 16, B1 = 20, ih1 = H1 - T1 - B1;
@@ -2167,20 +2188,27 @@ function RevOccPair({ rows, keys, picks, scopeName }: {
   const axisMoney = (v: number) =>
     (v === 0 ? '0' : top >= 10000 ? `${Math.round(v / 10000)} 萬` : nf(Math.round(v)));
 
-  /** 滑鼠在哪一格。★ 用座標算，不要靠 event.target —— SVG 內容會重畫 */
+  /**
+   * 滑鼠在哪一格。
+   * ★ 用座標算，不要靠 event.target —— SVG 內容會重畫。
+   * ★★ 邊界外面回 `null`（`pairIdx` 有測試）。本來是夾到第一／最後一格 ——
+   *   滑到左軸的「2000 萬」上面也會把 01月 標亮，而使用者看到的是
+   *   「我沒滑到那裡它卻亮了」。
+   */
   function idxAt(ev: React.MouseEvent<SVGSVGElement>) {
     const b = ev.currentTarget.getBoundingClientRect();
     const x = ((ev.clientX - b.left) / b.width) * W;
-    return Math.max(0, Math.min(rows.length - 1, Math.floor((x - L) / step)));
+    return pairIdx(x, W, rows.length);
   }
   function move(ev: React.MouseEvent<SVGSVGElement>) {
     if (pin) return;
-    setHi(idxAt(ev));
-    setTip({ x: ev.clientX, y: ev.clientY });
+    const i = idxAt(ev);
+    setHi(i);
+    setTip(i == null ? null : { x: ev.clientX, y: ev.clientY });
   }
   function click(ev: React.MouseEvent<SVGSVGElement>) {
     const i = idxAt(ev);
-    if (pin && i === hi) { setPin(false); setHi(null); setTip(null); return; }
+    if (i == null || (pin && i === hi)) { setPin(false); setHi(null); setTip(null); return; }
     setPin(true); setHi(i); setTip({ x: ev.clientX, y: ev.clientY });
   }
   /*
@@ -2192,6 +2220,19 @@ function RevOccPair({ rows, keys, picks, scopeName }: {
    * ★★ 外層包著這三個東西，所以在它們之間移動永遠不算離開。
    */
   function leave() { if (!pin) { setHi(null); setTip(null); } }
+  /*
+   * ★★★ 表格那幾格也要**把座標寫進去**（使用者 2026-09-21:「資訊卡太遠」）。
+   *   本來只寫 `setHi(i)`、沒有動 `tip` —— 於是卡片停在
+   *   **上一次滑過圖時**的位置，人在表格上而卡片在圖那邊，
+   *   看起來就是「資訊卡跑到很遠的地方」。
+   * ★★ 一個不叫的 bug:標亮是對的、數字是對的、只有卡片的位置是舊的。
+   *   `hi` 與 `tip` 一起變才是一件事，分開寫就會分岔。
+   */
+  const cellHover = (i: number) => (ev: React.MouseEvent<HTMLTableCellElement>) => {
+    if (pin) return;
+    setHi(i);
+    setTip({ x: ev.clientX, y: ev.clientY });
+  };
 
   const card = hi == null ? null : cardRows(rows[hi].bySrc, keys, picks, srcLabel);
   const sumSel = splits.reduce((n, x) => n + x.sel, 0);
@@ -2201,7 +2242,16 @@ function RevOccPair({ rows, keys, picks, scopeName }: {
     ? occRows.reduce((n, r) => n + (r.occ?.rate ?? 0), 0) / occRows.length : 0;
 
   return (
-    <div ref={box} className="relative" onMouseLeave={leave}>
+    <div className="relative" onMouseLeave={leave}>
+      {/*
+        ★★★ 圖與表在**同一個**橫向捲軸裡，而且量的是內層（吃 minWidth 的那一個）。
+          本來只有表格會捲、圖不會 —— 捲到一半兩邊就對不上了，
+          而那正是「01月的長條對到表上 02月」看起來最明顯的時候。
+        ★★ 第一欄本來是 `sticky left-0`:捲的時候它不動、圖在動，
+          兩邊必然錯開。對齊與釘住只能選一個，使用者選的是對齊。
+      */}
+      <div className="overflow-x-auto">
+      <div ref={box} style={{ minWidth: minW }}>
       {/* ── 上：營收 ── */}
       <svg viewBox={`0 0 ${W} ${H1}`} width="100%" height={H1} style={{ display: 'block' }}
         onMouseMove={move} onClick={click} className="cursor-crosshair">
@@ -2311,53 +2361,66 @@ function RevOccPair({ rows, keys, picks, scopeName }: {
         選定來源：<b className="text-mor-slatedark">{scopeName}</b>
         <span className="ml-1.5 text-gray-400">（住房率不分來源）</span>
       </div>
-      <div className="mt-1.5 overflow-x-auto rounded-lg border border-mor-line bg-white">
-        <table className="w-full border-collapse text-xs tabular-nums">
+      <div className="mt-1.5 rounded-lg border border-mor-line bg-white">
+        {/*
+          ★★★ 欄寬來自圖的幾何（`<colgroup>`），不是各自寫死一個數字。
+            `tableLayout: 'fixed'` 不能省 —— 不寫的話瀏覽器會照內容
+            再分配一次，`<colgroup>` 就形同沒寫。
+          ★★ 數字**置中**（使用者 2026-09-21:「字體也致中好嗎」）——
+            欄位對齊了但數字靠右的話，數字還是會落在長條的右邊。
+            這條只限這張表，其他頁的金額欄照舊靠右。
+        */}
+        <table className="border-collapse text-xs tabular-nums"
+          style={{ tableLayout: 'fixed', width: W }}>
+          <colgroup>
+            <col style={{ width: L }} />
+            {rows.map((r) => <col key={`c${r.key}`} style={{ width: step }} />)}
+            <col style={{ width: R }} />
+          </colgroup>
           <thead>
             <tr className="bg-[#FAFAF9] text-gray-500">
-              <th className="sticky left-0 z-10 w-[122px] min-w-[122px] bg-[#FAFAF9]
-                             px-2 py-1.5 text-left font-semibold"> </th>
+              <th className="px-2 py-1.5 text-left font-semibold"> </th>
               {rows.map((r, i) => (
-                <th key={`h${r.key}`} onMouseMove={() => !pin && setHi(i)}
-                  className={`px-2 py-1.5 text-right font-semibold whitespace-nowrap
+                <th key={`h${r.key}`} onMouseMove={cellHover(i)}
+                  className={`px-2 py-1.5 text-center font-semibold whitespace-nowrap
                               ${hi === i ? 'bg-amber-100' : ''}`}>{r.label}</th>
               ))}
-              <th className="bg-[#EAF0F7] px-2 py-1.5 text-right font-bold whitespace-nowrap">
+              <th className="bg-[#EAF0F7] px-2 py-1.5 text-center font-bold whitespace-nowrap">
                 合計／平均</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td className="sticky left-0 z-10 w-[122px] min-w-[122px] bg-white
-                             border-b border-mor-line px-2 py-1.5 text-left">
+              <td className="border-b border-mor-line bg-white px-2 py-1.5 text-left">
                 <b className="block font-semibold">{on ? '選定營收' : '營收'}</b>
                 <span className="block text-[11px] font-normal text-gray-400">單位：萬</span>
               </td>
               {rows.map((r, i) => (
-                <td key={`r${r.key}`} onMouseMove={() => !pin && setHi(i)}
-                  className={`border-b border-mor-line px-2 py-1.5 text-right font-semibold
+                <td key={`r${r.key}`} onMouseMove={cellHover(i)}
+                  className={`border-b border-mor-line px-2 py-1.5 text-center font-semibold
                               text-mor-slatedark ${hi === i ? 'bg-amber-100' : ''}`}>
                   {toWan(splits[i].sel)}</td>
               ))}
               <td className="border-b border-mor-line bg-[#F3F6FA] px-2 py-1.5
-                             text-right font-bold">{toWan(sumSel)}</td>
+                             text-center font-bold">{toWan(sumSel)}</td>
             </tr>
             <tr>
-              <td className="sticky left-0 z-10 w-[122px] min-w-[122px] bg-white
-                             px-2 py-1.5 text-left">
+              <td className="bg-white px-2 py-1.5 text-left">
                 <b className="block font-semibold">住房率</b>
                 <span className="block text-[11px] font-normal text-gray-400">不分來源</span>
               </td>
               {rows.map((r, i) => (
-                <td key={`o${r.key}`} onMouseMove={() => !pin && setHi(i)}
-                  className={`px-2 py-1.5 text-right ${hi === i ? 'bg-amber-100' : ''}`}>
+                <td key={`o${r.key}`} onMouseMove={cellHover(i)}
+                  className={`px-2 py-1.5 text-center ${hi === i ? 'bg-amber-100' : ''}`}>
                   {r.occ ? fmtPct(r.occ.rate, 0) : '—'}</td>
               ))}
-              <td className="bg-[#F3F6FA] px-2 py-1.5 text-right font-bold">
+              <td className="bg-[#F3F6FA] px-2 py-1.5 text-center font-bold">
                 {occRows.length ? fmtPct(avgOcc, 0) : '—'}</td>
             </tr>
           </tbody>
         </table>
+      </div>
+      </div>
       </div>
       <p className="mt-1.5 text-[11px] text-gray-400">
         <b>選定營收那一列跟圖上深色那段是同一個數字</b>；期間合計 {toWan(sumSel)} 萬
@@ -2468,6 +2531,15 @@ function TipCard({ x, y, pin, children }: {
  */
 function RevOccChart({ rows }: { rows: ComboRow[] }) {
   const [hover, setHover] = useState<number | null>(null);
+  /*
+   * ★★★ 卡片（使用者 2026-09-21:「havor 圖上要有 營收 與 住房率」）。
+   *   本來那兩個數字印在**圖例那一行的最右邊** —— 在圖的外面、
+   *   手機上還會換行到下一排，滑過長條的時候眼睛根本不在那裡。
+   *   現在跟著游標走，營收與住房率在同一張卡上。
+   * ★★ `TipCard` 是 `fixed` ＋ 量完再夾:畫在 SVG 裡會被
+   *   外層 `overflow-auto` 的容器裁掉，而最右邊那幾棟最常被滑到。
+   */
+  const [tip, setTip] = useState<{ x: number; y: number } | null>(null);
   const box = useRef<HTMLDivElement>(null);
   const [W, setW] = useState(1000);
   useEffect(() => {
@@ -2509,7 +2581,14 @@ function RevOccChart({ rows }: { rows: ComboRow[] }) {
     (v === 0 ? '0' : top >= 10000 ? `${Math.round(v / 10000)} 萬` : nf(Math.round(v)));
 
   return (
-    <div ref={box} className="relative">
+    /*
+     * ★★★ `onMouseLeave` 掛在**外層**，不是掛在每一格的感應區上。
+     *   掛在感應區上的話，從第 3 格滑到第 4 格會先收到一個 leave ——
+     *   而 leave 與新元素的 move 誰先誰後**沒有保證**。leave 排在後面
+     *   就把剛標好的那一格清掉，症狀是「滑過去卡片一閃一閃的」。
+     */
+    <div ref={box} className="relative"
+      onMouseLeave={() => { setHover(null); setTip(null); }}>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} style={{ display: 'block' }}>
         {/* 格線 ＋ 左軸（錢）＋ 右軸（%）。四等分之後每一格都是好讀的數字（moneyTop） */}
         {Array.from({ length: MONEY_TICKS + 1 }, (_, g) => {
@@ -2562,8 +2641,13 @@ function RevOccChart({ rows }: { rows: ComboRow[] }) {
         {rows.map((r, i) => (
           <rect key={`h${r.key}`} x={L + step * i} y={T} width={step} height={ih}
             fill={hover === i ? '#2E3840' : 'transparent'} fillOpacity={hover === i ? 0.04 : 0}
-            onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}
-            onTouchStart={() => setHover(i)} />
+            onMouseMove={(ev) => { setHover(i); setTip({ x: ev.clientX, y: ev.clientY }); }}
+            /* ★ 手機沒有 hover —— 點一下也要出來，座標取第一根手指 */
+            onTouchStart={(ev) => {
+              const t = ev.touches[0];
+              setHover(i);
+              if (t) setTip({ x: t.clientX, y: t.clientY });
+            }} />
         ))}
       </svg>
 
@@ -2573,32 +2657,46 @@ function RevOccChart({ rows }: { rows: ComboRow[] }) {
         {anyPartial && (
           <span className="text-[11px] text-amber-700">淡色的那一格是還沒過完的月份</span>
         )}
-        <span className="w-full sm:w-auto sm:ml-auto text-gray-500 tabular-nums">
-          {hover != null && rows[hover] ? (
-            <>
-              {/* ★ 分隔的全形空白要寫成 {'　'} —— 直接打在行尾的話，
-                  JSX 會把「含換行的空白」整段吃掉，兩段字就黏在一起
-                  （2026-09-18 在無頭瀏覽器裡看到「…4,889,954（這個月還沒過完）住房率」）。 */}
-              <b className="text-mor-ink">{rows[hover].label}</b>{'　'}營收 {money(rows[hover].rev)}
-              {rows[hover].partial && <span className="text-amber-700">（這個月還沒過完）</span>}
-              {'　'}
-              {rows[hover].occ ? (
-                <>
-                  住房率 <span className={`font-semibold ${OCC_CLS[occTone(rows[hover].occ!.rate)]}`}>
-                    {fmtPct(rows[hover].occ!.rate)}</span>
-                  <span className="text-gray-400">
-                    （住 {nf(rows[hover].occ!.used)} / 可住 {nf(rows[hover].occ!.days)} 天）</span>
-                </>
-              ) : <span className="text-gray-400">這一格沒有房源可以算住房率</span>}
-            </>
-          ) : (
-            <span className="text-gray-400">
-              <span className="sm:hidden">點一下看那一格的數字</span>
-              <span className="hidden sm:inline">滑過去看那一格的數字</span>
-            </span>
-          )}
+        <span className="w-full sm:w-auto sm:ml-auto text-gray-400">
+          <span className="sm:hidden">點一下看那一格的營收與住房率</span>
+          <span className="hidden sm:inline">滑過去看那一格的營收與住房率</span>
         </span>
       </div>
+
+      {/* ── 卡片：營收 ＋ 住房率，在同一張上 ── */}
+      {hover != null && tip && rows[hover] && (
+        <TipCard x={tip.x} y={tip.y} pin={false}>
+          <div className="mb-1.5 text-[13px] font-bold">
+            {rows[hover].label}
+            {rows[hover].partial && (
+              <span className="ml-1.5 text-[11px] font-semibold text-amber-700">
+                這個月還沒過完</span>
+            )}
+          </div>
+          <div className="flex items-center justify-between gap-5 text-xs tabular-nums">
+            <span className="inline-flex items-center gap-1.5 text-gray-500">
+              <i className="inline-block h-2 w-2 rounded-sm bg-mor-slate" />營收</span>
+            <b>{money(rows[hover].rev)}</b>
+          </div>
+          <div className="mt-1 flex items-center justify-between gap-5 text-xs tabular-nums">
+            <span className="inline-flex items-center gap-1.5 text-gray-500">
+              <svg width="14" height="8"><line x1="0" y1="4" x2="14" y2="4"
+                stroke="#2E3840" strokeWidth="2.5" /></svg>住房率</span>
+            {rows[hover].occ
+              ? <b className={OCC_CLS[occTone(rows[hover].occ!.rate)]}>
+                  {fmtPct(rows[hover].occ!.rate)}</b>
+              /* ★ 沒有房源寫「沒有房源」不寫 0% —— 0% 的意思是
+                   「有房但都空著」，那是一個要處理的事實；
+                   這一棟根本沒有房，寫 0% 是在報一個假的壞消息 */
+              : <span className="text-gray-400">沒有房源</span>}
+          </div>
+          {rows[hover].occ && (
+            <div className="mt-1 text-right text-[11px] text-gray-400 tabular-nums">
+              住 {nf(rows[hover].occ!.used)} / 可住 {nf(rows[hover].occ!.days)} 天
+            </div>
+          )}
+        </TipCard>
+      )}
     </div>
   );
 }
