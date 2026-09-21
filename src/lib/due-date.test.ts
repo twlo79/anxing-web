@@ -305,6 +305,9 @@ test('allowEmpty 時租期填完整還是要檢查前後順序', () => {
 
 
 test('沒傳 opts 時行為跟以前一模一樣（既有呼叫端不會鬆掉）', () => {
-  assert.equal(checkContractDates('', '', null).ok, false);
-  assert.equal(checkContractDates('', '', null, { allowEmpty: false }).ok, false);
+  /* ★ 這兩行原本寫成 `(…, null)` 與四個參數 —— 那個簽章不存在。
+       `--experimental-strip-types` 把型別剝掉所以測試照跑,
+       紅的只有 `tsc`,而沒有人看（2026-09-21 修）。 */
+  assert.equal(checkContractDates('', '').ok, false);
+  assert.equal(checkContractDates('', '', { allowEmpty: false }).ok, false);
 });

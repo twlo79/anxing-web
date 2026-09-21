@@ -203,6 +203,21 @@ export function payAccountsFor<T extends { method: string }>(
  */
 export type BookedAccount = { book?: string | null };
 
+/*
+ * ★★★ 下面兩支的 `T` 是 `object` 不是 `BookedAccount` —— 這不是偷懶。
+ *
+ *   `BookedAccount` 的每一個欄位都是選填,TypeScript 叫它「弱型別」:
+ *   一個**完全沒有共同欄位**的物件（`{ code, method }` —— 284 還沒跑時
+ *   的帳號形狀）傳進來會被擋掉,理由是「沒有任何共同屬性」。
+ *
+ *   而那正是這支函式**設計上要處理的那一種**（見下面的 ★★★）。
+ *   型別擋掉自己的主要案例,等於那個 JSDoc 在說謊。
+ *
+ * ★ 2026-09-21:`npx tsc --noEmit` 為此紅了 6 行（在測試檔裡,
+ *   `next build` 看不到 —— 它只檢查 build 走得到的檔案）。
+ *   一個長期紅著的檢查等於沒有檢查。
+ */
+
 /**
  * 這一本帳可以用哪些帳戶。
  *
@@ -216,14 +231,14 @@ export type BookedAccount = { book?: string | null };
  *   一律當成**安幸**。回「哪一組都不是」的話，284 跑完之前
  *   整個下拉會是空的 —— 而那看起來像權限問題，不像沒跑 migration。
  */
-export function accountsForBook<T extends BookedAccount>(
+export function accountsForBook<T extends object>(
   accounts: T[] | null | undefined,
   book: string | null | undefined,
   allowAnxing = false,
 ): T[] {
   const want = String(book ?? '').trim() || 'anxing';
   return (accounts ?? []).filter((a) => {
-    const b = String(a.book ?? '').trim() || 'anxing';
+    const b = String((a as BookedAccount).book ?? '').trim() || 'anxing';
     return b === want || (allowAnxing && b === 'anxing');
   });
 }
@@ -235,7 +250,7 @@ export function accountsForBook<T extends BookedAccount>(
  *   就會有人只套了其中一個 —— 而那個下拉看起來完全正常
  *   （README 坑 A:同一條規則寫在兩個地方）。
  */
-export function payAccountsForBook<T extends { method: string } & BookedAccount>(
+export function payAccountsForBook<T extends { method: string }>(
   accounts: T[] | null | undefined,
   m: string | null | undefined,
   book: string | null | undefined,

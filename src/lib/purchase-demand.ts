@@ -98,10 +98,68 @@ export const DEMAND_PAID_CLASS = 'bg-mor-greenlight text-mor-green';
  *   而報表分不開。緩衝是畫面上**只給下拉、不給自由打字**。
  *
  * ★ 順序照常用程度排 —— 下拉不用捲就選得到最常用的那個。
+ *
+ * ★ 2026-09-21 使用者：「多加 momo pchome 大全聯」——
+ *   照他講的順序接在後面（我不知道這三個誰比較常用，猜一個順序
+ *   不如照他寫的來，要調隨時可以調）。
+ *   牌子的寫法照官方：`momo` 全小寫、`PChome` 大寫 P 與 C。
  */
-export const PURCHASE_PLATFORMS = ['蝦皮', '酷澎', '淘寶', '好市多', '萬家福'] as const;
+export const PURCHASE_PLATFORMS =
+  ['蝦皮', '酷澎', '淘寶', '好市多', '萬家福', 'momo', 'PChome', '大全聯'] as const;
 
 export type PurchasePlatform = typeof PURCHASE_PLATFORMS[number];
+
+/* ══════════════════════════════════════════════════════════
+ * 「其他」 —— 清單以外的平台自己打（2026-09-21 使用者指定）
+ *
+ * ★★★ `其他` **不是**一個平台，是下拉上的一個記號。
+ *   它不在 `PURCHASE_PLATFORMS` 裡，也**不會**被存進資料庫 ——
+ *   存進去的是使用者打的那個名字。
+ *   （存成「其他」的話，報表上那一格會變成一個問不出答案的分類，
+ *     而那比沒有這個選項更糟。）
+ *
+ * ★★ 這三支把「資料庫存的值」翻成「畫面上那兩格長什麼樣」，
+ *   翻譯只寫這一份 —— 畫面那一層不要再判一次（CLAUDE.md：
+ *   同一條規則在三個地方各寫一次）。
+ *
+ * ★ 代價講在前面：自由打字就擋不住錯字，「蝦皮購物」還是進得來。
+ *   `normalizePlatform()` 只收得回**大小寫或空白**不一樣的那種
+ *   （` momo ` → `momo`）；語意上的同義詞它管不到。
+ * ══════════════════════════════════════════════════════════ */
+
+/** 下拉最後那一項。★ 是畫面的記號，不是會被存起來的值 */
+export const PLATFORM_OTHER = '其他';
+
+function inList(v: string): boolean {
+  return (PURCHASE_PLATFORMS as readonly string[]).includes(v);
+}
+
+/** 資料庫存的值 → 下拉該選哪一項（空的＝還沒選；清單外的＝「其他」） */
+export function platformSelectValue(platform?: string | null): string {
+  const v = String(platform ?? '').trim();
+  if (!v) return '';
+  return inList(v) ? v : PLATFORM_OTHER;
+}
+
+/** 資料庫存的值 → 旁邊那格文字框要顯示什麼（清單內的就不該有文字框） */
+export function platformCustomText(platform?: string | null): string {
+  const v = String(platform ?? '').trim();
+  return !v || inList(v) ? '' : v;
+}
+
+/**
+ * 使用者打的字 → 要存進資料庫的值。空的收成 `null`
+ * （跟「還沒選」同一個形狀 —— 空字串在下拉裡跟沒選長得一模一樣）。
+ *
+ * ★ 打到清單裡已經有的就**收回清單那一份**：` MOMO ` → `momo`。
+ *   不收的話同一個平台會有兩個寫法，而報表分不開。
+ */
+export function normalizePlatform(text?: string | null): string | null {
+  const v = String(text ?? '').trim().replace(/\s+/g, ' ');
+  if (!v) return null;
+  return (PURCHASE_PLATFORMS as readonly string[])
+    .find((p) => p.toLowerCase() === v.toLowerCase()) ?? v;
+}
 
 export type DemandItemLike = {
   status: DemandItemStatus;

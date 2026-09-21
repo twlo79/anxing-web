@@ -2,6 +2,7 @@ import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   demandProgress, progressText, demandClass, PURCHASE_PLATFORMS,
+  PLATFORM_OTHER, platformSelectValue, platformCustomText, normalizePlatform,
   DEMAND_STATUS_LABEL, DEMAND_STATUS_CLASS, DEMAND_PAID_CLASS, ITEM_STATUS_LABEL,
   manualStatusOptions, manualStatusPatch, manualStatusNote, isOrphanRequested,
   type DemandItemLike, type DemandItemStatus,
@@ -295,4 +296,68 @@ test('★★ 不能有空值 —— 空字串在下拉裡跟「還沒選」長�
 
 test('萬家福加進去了', () => {
   assert.ok((PURCHASE_PLATFORMS as readonly string[]).includes('萬家福'));
+});
+
+test('momo／PChome／大全聯加進去了（2026-09-21）', () => {
+  const list = PURCHASE_PLATFORMS as readonly string[];
+  for (const p of ['momo', 'PChome', '大全聯']) {
+    assert.ok(list.includes(p), `少了「${p}」`);
+  }
+});
+
+/* ══════════════════════════════════════════════════════════
+ * 「其他」可以自己打（2026-09-21 使用者:「其他可以自己打入」）
+ *
+ * ★★★ 這一組釘的是**「其他」不可以變成一個平台**。
+ *   它是下拉上的記號，存進資料庫的必須是使用者打的那個名字 ——
+ *   存成「其他」的話，報表上那一格會變成一個問不出答案的分類。
+ * ══════════════════════════════════════════════════════════ */
+
+test('★★★ 「其他」不在平台清單裡 —— 它是記號不是平台', () => {
+  assert.ok(!(PURCHASE_PLATFORMS as readonly string[]).includes(PLATFORM_OTHER),
+    `「${PLATFORM_OTHER}」跑進清單了 —— 那樣文字框就永遠不會出現`);
+});
+
+test('清單內的平台:下拉選它自己,文字框是空的', () => {
+  for (const p of PURCHASE_PLATFORMS) {
+    assert.equal(platformSelectValue(p), p, `「${p}」對不回自己`);
+    assert.equal(platformCustomText(p), '', `「${p}」不該跳出文字框`);
+  }
+});
+
+test('清單外的平台:下拉停在「其他」,文字框放原值', () => {
+  assert.equal(platformSelectValue('家樂福'), PLATFORM_OTHER);
+  assert.equal(platformCustomText('家樂福'), '家樂福');
+});
+
+test('沒填:兩格都是空的（不要變成「其他」＋空文字框）', () => {
+  for (const v of [null, undefined, '', '   ']) {
+    assert.equal(platformSelectValue(v), '', `「${String(v)}」被當成有值`);
+    assert.equal(platformCustomText(v), '');
+  }
+});
+
+test('★★ 存進去又讀回來要是同一個（清單內、清單外、空的都試）', () => {
+  for (const v of ['蝦皮', 'PChome', '家樂福', '全家', null]) {
+    const stored = normalizePlatform(
+      platformSelectValue(v) === PLATFORM_OTHER ? platformCustomText(v) : platformSelectValue(v));
+    assert.equal(stored, v === null ? null : v, `「${String(v)}」繞一圈變了`);
+  }
+});
+
+test('★★★ 打的字收得回清單那一份 —— 不然同一個平台會有兩個寫法', () => {
+  assert.equal(normalizePlatform(' MOMO '), 'momo');
+  assert.equal(normalizePlatform('pchome'), 'PChome');
+  assert.equal(normalizePlatform('  蝦皮  '), '蝦皮');
+});
+
+test('打的字前後空白要修掉,中間連續空白收成一個', () => {
+  assert.equal(normalizePlatform('  家樂福  '), '家樂福');
+  assert.equal(normalizePlatform('美廉社  A 店'), '美廉社 A 店');
+});
+
+test('★★ 打空白＝沒填,要收成 null 不是空字串', () => {
+  for (const v of ['', '   ', null, undefined]) {
+    assert.equal(normalizePlatform(v), null, `「${String(v)}」沒收成 null`);
+  }
 });

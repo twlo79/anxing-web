@@ -10,7 +10,8 @@ import { submitGate, gateCls } from '@/lib/required';
 import {
   demandProgress, progressText, demandClass, ITEM_STATUS_LABEL,
   manualStatusOptions, manualStatusPatch, manualStatusNote, isOrphanRequested,
-  PURCHASE_PLATFORMS,
+  PURCHASE_PLATFORMS, PLATFORM_OTHER,
+  platformSelectValue, platformCustomText, normalizePlatform,
   type DemandItemStatus,
 } from '@/lib/purchase-demand';
 import {
@@ -180,6 +181,47 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
    */
   const [split, setSplit] = useState<
     { demandId: string; item: Demand['items'][number]; text: string } | null>(null);
+
+  /*
+   * ★★★ 正在自己打平台的那幾項（2026-09-21 使用者:「其他可以自己打入」,
+   *   版面選 B —— 文字框取代下拉）。
+   *
+   * key 是項目 id、value 是**打到一半**的字。
+   *
+   * ★ 為什麼要這支 state:剛選「其他」的那一瞬間,資料庫裡的
+   *   `platform` 還是舊值（或空的）—— 光看資料判不出「使用者想自己打」。
+   *   有 key 就是打開文字框,跟那一格現在存著什麼無關。
+   *
+   * ★★ 存檔時機是**離開那一格或按 Enter**,不是邊打邊存。
+   *   旁邊兩個日期是改一次存一次,但文字框那樣做會變成打一個字寫一次資料庫。
+   */
+  const [platformDraft, setPlatformDraft] = useState<Record<string, string>>({});
+  /** 收掉某一項的文字框（不動資料庫） */
+  const closePlatformDraft = (id: string) => setPlatformDraft((d) => {
+    const n = { ...d }; delete n[id]; return n;
+  });
+
+  /** 這一項現在要顯示文字框（true）還是下拉（false） */
+  const platformOtherOpen = (i: Demand['items'][number]) =>
+    (!!i.id && platformDraft[i.id] !== undefined) || platformCustomText(i.platform) !== '';
+  /** 文字框裡放什麼:打到一半的字優先,沒有就用資料庫存的 */
+  const platformText = (i: Demand['items'][number]) =>
+    (!!i.id && platformDraft[i.id] !== undefined)
+      ? platformDraft[i.id] : platformCustomText(i.platform);
+
+  /**
+   * 文字框存檔（離開欄位或按 Enter）。
+   *
+   * ★ 沒變就不寫 —— 每離開一次就打一次資料庫是沒必要的。
+   * ★★ 打空白＝清掉（`normalizePlatform` 收成 null）,跟沒選同一個形狀。
+   */
+  async function savePlatformText(i: Demand['items'][number]) {
+    if (!i.id) return;
+    const v = normalizePlatform(platformText(i));
+    closePlatformDraft(i.id);
+    if (v === (i.platform ?? null)) return;
+    await setItemField(i, { platform: v });
+  }
 
   const togglePick = (id: string) => setPicked((s) => {
     const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n;
@@ -826,25 +868,82 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                           ★ 三個都只有會計以上改得動 —— 跟狀態下拉同一組權限。
                             房務與管家看得到值，但那是唯讀的文字。
 
-                          ★★★ 平台**只給下拉不給打字**。自由打字的話
-                            「蝦皮」跟「蝦皮購物」會變成兩個平台，而報表分不開
-                            —— 資料庫那一欄刻意沒有 check（多一個平台不該要
-                            一支 migration），所以擋錯字的責任在這裡。
+                          ★★★ 平台是下拉 ＋ 最後一項「其他⋯」可以自己打
+                            （2026-09-21 使用者指定，版面選 B:文字框取代下拉）。
+
+                          ★ 代價講在前面:自由打字就擋不住錯字，「蝦皮」跟
+                            「蝦皮購物」還是會變成兩個平台而報表分不開 ——
+                            資料庫那一欄刻意沒有 check（多一個平台不該要
+                            一支 migration），所以這裡是唯一擋得住的地方，
+                            而現在只擋得住大小寫與空白（`normalizePlatform`）。
                         */}
                         {seesAll ? (
-                          <span className="flex items-center gap-1.5 text-xs">
-                            <select value={i.platform ?? ''}
-                              disabled={acting || !i.id}
-                              onClick={(e) => e.stopPropagation()}
-                              onChange={(e) => i.id && void setItemField(i, { platform: e.target.value })}
-                              className="rounded-lg border border-mor-line bg-white px-1.5 py-0.5 text-xs disabled:opacity-40">
-                              <option value="">平台</option>
-                              {PURCHASE_PLATFORMS.map((p) => <option key={p} value={p}>{p}</option>)}
-                              {/* ★ 舊資料的值不在清單裡也要選得回來，不然一改就掉 */}
-                              {i.platform && !PURCHASE_PLATFORMS.includes(i.platform as never) && (
-                                <option value={i.platform}>{i.platform}</option>
-                              )}
-                            </select>
+                          /*
+                            ★★★ `flex-wrap` 不能省。這一排（平台＋兩個日期）
+                              在 360px 寬的手機上**本來就已經超出畫面 26px**
+                              ——「採購」那一格跑到右邊看不到的地方,而外層的
+                              `flex-wrap` 救不了它（它自己是一個不換行的 flex）。
+                              換成文字框之後會變成突出 102px,整頁橫向捲動。
+                              2026-09-21 用實際 class 量出來的。
+                          */
+                          <span className="flex flex-wrap items-center gap-1.5 text-xs">
+                            {platformOtherOpen(i) ? (
+                              /*
+                                自己打的那一格。★ 文字框**取代**下拉（使用者 2026-09-21 選 B）
+                                  —— 那一列的寬度不變。代價是畫面上看不出這格是「其他」。
+                                ★★ 「‹」＝不打了,回下拉。**會把這一格清掉** ——
+                                  不清的話值還在,下次打開又會跳回文字框,那顆鈕等於沒反應。
+                              */
+                              <>
+                                <button type="button" title="回下拉（會清掉這一格）"
+                                  disabled={acting || !i.id}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (!i.id) return;
+                                    closePlatformDraft(i.id);
+                                    if (i.platform) void setItemField(i, { platform: null });
+                                  }}
+                                  className="rounded-lg border border-mor-line bg-white px-1.5 py-0.5
+                                             text-xs text-gray-500 disabled:opacity-40">‹</button>
+                                <input value={platformText(i)} placeholder="在哪買的"
+                                  disabled={acting || !i.id}
+                                  /* ★ 只有「剛按下其他」那一刻才會聚焦:載入時還沒有 draft,
+                                       所以有舊資料的那幾格不會搶走游標 */
+                                  autoFocus={!!i.id && platformDraft[i.id] !== undefined}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onChange={(e) => i.id
+                                    && setPlatformDraft((d) => ({ ...d, [i.id as string]: e.target.value }))}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+                                    if (e.key === 'Escape' && i.id) closePlatformDraft(i.id);
+                                  }}
+                                  onBlur={() => void savePlatformText(i)}
+                                  className="w-[7rem] rounded-lg border border-mor-line bg-white
+                                             px-1.5 py-0.5 text-xs disabled:opacity-40" />
+                              </>
+                            ) : (
+                              <select value={platformSelectValue(i.platform)}
+                                disabled={acting || !i.id}
+                                onClick={(e) => e.stopPropagation()}
+                                onChange={(e) => {
+                                  if (!i.id) return;
+                                  /* ★★★ 選「其他」只是打開文字框,**不寫資料庫** ——
+                                       存一個「其他」進去的話,報表上那一格會變成
+                                       一個問不出答案的分類,比沒填更糟。 */
+                                  if (e.target.value === PLATFORM_OTHER) {
+                                    setPlatformDraft((d) => ({ ...d, [i.id as string]: '' }));
+                                    return;
+                                  }
+                                  void setItemField(i, { platform: e.target.value });
+                                }}
+                                className="rounded-lg border border-mor-line bg-white px-1.5 py-0.5 text-xs disabled:opacity-40">
+                                <option value="">平台</option>
+                                {PURCHASE_PLATFORMS.map((p) => <option key={p} value={p}>{p}</option>)}
+                                {/* ★ 清單外的舊值不用在這裡補一個 option 了 ——
+                                      那種值會讓 platformOtherOpen 成立,走上面文字框那一側 */}
+                                <option value={PLATFORM_OTHER}>{PLATFORM_OTHER}⋯</option>
+                              </select>
+                            )}
                             <label className="flex items-center gap-1 rounded-lg border border-mor-line bg-white px-1.5 py-0.5">
                               <span className="text-gray-400">到貨</span>
                               <input type="date" value={i.eta ?? ''}
