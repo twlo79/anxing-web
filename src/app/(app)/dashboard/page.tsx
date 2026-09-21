@@ -2,10 +2,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DASH_TABS, parseTab, pillsApply, whyPillsOff,
-  sourcePills, applyPill, togglePill, perf,
+  sourcePills, perf,
   COMBO_MODES, parseComboMode, effectiveComboMode, monthsBetween,
   comboRow, occSegments, moneyTop, MONEY_TICKS, axisLabels,
-  type ComboMode, type ComboRow,
+  type ComboMode, type ComboRow, type ComboOcc,
 } from '@/lib/dash';
 import { createClient } from '@/lib/supabase';
 import { useProfile } from '@/lib/profile';
@@ -24,6 +24,10 @@ import { fetchAll } from '@/lib/fetch-all';
 import { FilterBar, FilterSelect, FilterDateRange, FilterClear } from '@/lib/filters';
 import { srcLabel, rentOnly } from '@/lib/revenue-report';
 import {
+  toWan, pickedLabel, noSrcFilter, toggleSrc, splitBySrc, cardRows,
+  applySrcPicks, bySourceOf, type BySource,
+} from '@/lib/rev-occ';
+import {
   type PeriodMode, yearRange, monthRange, prevPeriod, lastYearPeriod,
   yoySameAsPrev, growth, partialMonth, sameMonthRange,
 } from '@/lib/compare';
@@ -39,6 +43,7 @@ import RangeInput from '@/components/RangeInput';
  */
 import {
   occupancyByRoom, occupancyByEstate, totalOccupancy, occupancyByMonth, isPartialMonth,
+  subtreeOf, contractOccupiesRoom, type RoomNode,
   fmtPct, occTone, type RoomOcc,
 } from '@/lib/occupancy';
 import { dropContractOrders, type Stay } from '@/lib/room-calendar';
@@ -101,6 +106,16 @@ type Property = {
    */
   active?: boolean | null;
   show_in_room_calendar?: boolean | null;
+  /*
+   * ★★★ 子母房源（migration_287）。整棟／整層是父，底下那幾間是子 ——
+   *   兩邊都留在分母裡的話，開封住房率會是 24.4% 而實際是七成。
+   *   `units` 是打通房（台1+2 一列算兩間）。
+   * ★★ `count_in_occupancy` 跟 `show_in_room_calendar` 是**兩件事**：
+   *   開封1F-1 整年有人住但不排房 —— 以前借同一個開關，所以一天都沒算到。
+   */
+  parent_id?: string | null;
+  units?: number | null;
+  count_in_occupancy?: boolean | null;
 };
 type Code = { code: string; name: string };
 type Pending = { total_amount: number; planned_transfer_on: string | null };
@@ -263,9 +278,11 @@ export default function DashboardPage() {
 
   /*
    * 營收來源膠囊（2026-09-18 使用者:「營收來源 膠囊 可以點 計算所有營收」）。
-   * `null` ＝ 沒篩。★ 再點一下就是清除，不用另外做一顆「全部」。
+   * ★★★ 2026-09-21 改成**複選**（使用者:「不是 mece 可以複選」）——
+   *   來源本來就不是互斥的分類，一次只能看一種答不了「這兩個加起來多少」。
+   * ★ 再點一下拿掉;空陣列 ＝ 沒篩。**全部都亮也是沒篩**（`noSrcFilter`）。
    */
-  const [srcPill, setSrcPill] = useState<string | null>(null);
+  const [srcPicks, setSrcPicks] = useState<string[]>([]);
 
   /*
    * 「營收與住房率」那張圖要畫哪一種。
@@ -438,7 +455,8 @@ export default function DashboardPage() {
        * 那些認列就會從物業視角的營收裡整塊消失，而且沒有跡象。
        */
       fetchAll<Property>((f, t) => supabase.from('properties')
-        .select('id, name, estate_id, active, show_in_room_calendar').order('name').range(f, t)),
+        .select('id, name, estate_id, active, show_in_room_calendar, parent_id, units, count_in_occupancy')
+        .order('name').range(f, t)),
       fetchAll<Code>((f, t) => supabase.from('account_codes')
         .select('code, name').range(f, t)),
     ]);
@@ -530,7 +548,7 @@ export default function DashboardPage() {
      *   住房率安靜地變低。
      */
     const cq = await fetchAll<any>((a, b) => supabase.from('contracts')
-      .select('id, room, tenant_name, display_name, start_date, end_date, active')
+      .select('id, room, tenant_name, display_name, start_date, end_date, active, type')
       .lte('start_date', toD).gte('end_date', fromD).range(a, b));
 
     /* 撈不完就明講 —— 少一列就是住房率偏低，而那個數字看起來很正常 */
@@ -547,7 +565,9 @@ export default function DashboardPage() {
         contractId: o.contract_id as string | null,
       }));
     const cStays: Stay[] = ((cq.rows as any[]) ?? [])
-      .filter((c) => c.room && c.active !== false)
+      /* ★★★ 公司登記／辦公室登記只掛物業、沒有房號 —— 不佔房間。
+           以前是靠「room 是空字串」偶然擋住的，規則現在寫在 lib 裡。 */
+      .filter((c) => c.active !== false && contractOccupiesRoom(c))
       .map((c) => ({
         id: `c${c.id}`, srcId: c.id as string,
         room: c.room as string, kind: 'contract' as const,
@@ -594,12 +614,34 @@ export default function DashboardPage() {
    * ★ 篩選跟著頁面上的物業／房源走，跟其他圖表同一組條件。
    * ══════════════════════════════════════════════════════════
    */
-  const occRooms = useMemo(() => properties
-    .filter((p) => p.active !== false && p.show_in_room_calendar !== false)
-    .filter((p) => !estF || p.estate_id === estF)
-    .filter((p) => !propF || p.id === propF)
-    .map((p) => ({ name: p.name, estate: p.estate_id ? (estateName[p.estate_id] ?? null) : null })),
-  [properties, estF, propF, estateName]);
+  const occRooms = useMemo<RoomNode[]>(() => {
+    /* ★★★ 停用的**物業**底下那些房也要排掉（2026-09-21 使用者：
+         「停用物業不用算」）。以前只看房源那兩個開關，物業停用了
+         底下的房還在分母裡，而畫面上只是住房率低了一點。 */
+    const liveEst = new Set(estates.filter((e) => e.active !== false).map((e) => e.id));
+    const nameOf: Record<string, string> = {};
+    properties.forEach((p) => { nameOf[p.id] = p.name; });
+
+    const pool: RoomNode[] = properties
+      .filter((p) => p.active !== false)
+      /* ★★ 用 count_in_occupancy 不是 show_in_room_calendar —— 兩件事 */
+      .filter((p) => p.count_in_occupancy !== false)
+      .filter((p) => !p.estate_id || liveEst.has(p.estate_id))
+      .map((p) => ({
+        name: p.name,
+        estate: p.estate_id ? (estateName[p.estate_id] ?? null) : null,
+        parent: p.parent_id ? (nameOf[p.parent_id] ?? null) : null,
+        units: p.units ?? 1,
+      }));
+
+    if (!estF && !propF) return pool;
+    /* ★ 篩選要連子孫一起帶（選「開封整棟」＝ 看它底下那四間），
+         祖先也要帶（選「開封3F」時，記在整棟上的那幾天不能消失）。 */
+    const picked = properties
+      .filter((p) => (!estF || p.estate_id === estF) && (!propF || p.id === propF))
+      .map((p) => p.name);
+    return subtreeOf(pool, picked);
+  }, [properties, estates, estF, propF, estateName]);
 
   /*
    * ★ 抽出來是因為「按月」那張圖也要用同一份。
@@ -743,10 +785,17 @@ export default function DashboardPage() {
    *   只篩營收的話「淨額 ＝ 營收 − 支出」會變成
    *   「長租的營收 − 全部的支出」，一個看起來很正常的錯數字。
    */
-  const pillOn = pillsApply(tab) ? srcPill : null;
-  const pRevs = useMemo(() => applyPill(fRevs, pillOn), [fRevs, pillOn]);
   const pills = useMemo(() => sourcePills(fRevs), [fRevs]);
-  const perfNow = useMemo(() => perf(pRevs, fRevs, !!pillOn), [pRevs, fRevs, pillOn]);
+  /** 全部來源的 key，順序照膠囊（金額大的在前）—— 圖、表、卡片共用同一個順序 */
+  const srcKeys = useMemo(() => pills.map((p) => p.key), [pills]);
+  const picks = useMemo(() => (pillsApply(tab) ? srcPicks : []), [tab, srcPicks]);
+  /** 有沒有真的在篩（一顆都沒亮、或全部都亮，兩種都是沒篩） */
+  const srcOn = !noSrcFilter(picks, srcKeys);
+  /** 選中的那幾個叫什麼。`max` 小的地方封頂，有一整行可以寫的地方傳大的 */
+  const pickName = (max = 3) => pickedLabel(picks.map(srcLabel), srcKeys.length, max);
+  const pRevs = useMemo(
+    () => applySrcPicks(fRevs, picks, srcKeys), [fRevs, picks, srcKeys]);
+  const perfNow = useMemo(() => perf(pRevs, fRevs, srcOn), [pRevs, fRevs, srcOn]);
 
   const totalRev = useMemo(() => fRevs.reduce((s, r) => s + Number(r.month_amount || 0), 0), [fRevs]);
   const totalExp = useMemo(() => fExps.reduce((s, e) => s + Number(e.amount || 0), 0), [fExps]);
@@ -918,6 +967,36 @@ export default function DashboardPage() {
   const occMonths = useMemo(
     () => occupancyByMonth(occRooms, occByRoom, comboMonths, { from: fromD, to: toD }),
     [occRooms, occByRoom, comboMonths, fromD, toD]);
+
+  /*
+   * ★★★ 這一份**刻意不套膠囊**。長條的總高度永遠是全部來源，
+   *   選中的那幾個只是變深 —— 舊做法「沒選的整段消失」正是讓住房率
+   *   看起來壞掉的原因（營收掉一半、住房率沒變，而那不是真的）。
+   */
+  const revBySrcMonth = useMemo(() => {
+    const byYm = new Map<string, { source?: string | null; month_amount: number }[]>();
+    fRevs.forEach((r) => {
+      const a = byYm.get(r.ym);
+      const row = { source: r.source, month_amount: Number(r.month_amount || 0) };
+      if (a) a.push(row); else byYm.set(r.ym, [row]);
+    });
+    const m: Record<string, BySource> = {};
+    /* ★ 走 `bySourceOf()` 而不是自己再 group 一次 —— 「沒填 source 當 other」
+         這條規則跟膠囊那邊（`sourcePills`）必須是同一套，
+         兩邊不一致的話膠囊上的金額跟圖上的加總會對不起來。 */
+    byYm.forEach((rs, ym) => { m[ym] = bySourceOf(rs, (r) => r.month_amount); });
+    return m;
+  }, [fRevs]);
+
+  /** 上下兩張圖要用的每一格：全部來源的錢 ＋ 那一格的住房率 */
+  const pairRows = useMemo<PairRow[]>(
+    () => occMonths.map((o) => ({
+      key: o.m, label: ymMonth(o.m),
+      bySrc: revBySrcMonth[o.m] ?? {},
+      occ: o.days > 0 ? o : null,
+      partial: isPartialMonth(o.m, { from: fromD, to: toD }),
+    })),
+    [occMonths, revBySrcMonth, fromD, toD]);
 
   const comboTime = useMemo<ComboRow[]>(() => {
     const rev: Record<string, number> = {};
@@ -1114,13 +1193,13 @@ export default function DashboardPage() {
         <div className="-mt-2 mb-4 flex flex-wrap items-center gap-2">
           <span className="text-xs text-gray-500 mr-0.5">營收來源</span>
           {pills.map((pl) => {
-            const on = pillOn === pl.key;
-            const dim = (pillOn && !on) || !pillsApply(tab);
+            const on = picks.includes(pl.key);
+            const dim = (srcOn && !on) || !pillsApply(tab);
             return (
               <button key={pl.key} type="button"
                 disabled={!pillsApply(tab)}
-                title={whyPillsOff(tab) ?? `只看${srcLabel(pl.key)}`}
-                onClick={() => setSrcPill(togglePill(srcPill, pl.key))}
+                title={whyPillsOff(tab) ?? `加上${srcLabel(pl.key)}（可以複選）`}
+                onClick={() => setSrcPicks(toggleSrc(srcPicks, pl.key, srcKeys))}
                 className={`h-8 rounded-full border px-3 text-xs inline-flex items-center gap-1.5
                             transition-colors ${dim ? 'opacity-40' : ''} ${
                   on ? 'bg-mor-slate border-mor-slate text-white font-semibold'
@@ -1132,6 +1211,15 @@ export default function DashboardPage() {
               </button>
             );
           })}
+          {/* ★ 複選之後「再點一下清除」只清得掉一顆 —— 亮了三顆要點三下。
+                 所以要有一顆「清掉」（anxing-ui 四-1 那條規矩是寫給單選的）。 */}
+          {picks.length > 0 && pillsApply(tab) && (
+            <button type="button" onClick={() => setSrcPicks([])}
+              className="h-8 rounded-full border border-dashed border-mor-line px-3
+                         text-xs text-gray-500 hover:border-mor-slate hover:text-mor-ink">
+              清掉
+            </button>
+          )}
           {whyPillsOff(tab) && (
             <span className="text-xs text-gray-400">—— {whyPillsOff(tab)}</span>
           )}
@@ -1399,7 +1487,7 @@ export default function DashboardPage() {
       */}
       {tab === 'revenue' && (
         <Panel title="營收表現"
-          hint={pillOn ? `只看${srcLabel(pillOn)}` : '全部來源'}>
+          hint={srcOn ? `只看${pickName()}` : '全部來源'}>
           <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(170px,1fr))]">
             <div className="rounded-xl bg-mor-ink text-white px-3.5 py-3">
               <div className="text-xs text-gray-400">營收</div>
@@ -1454,7 +1542,9 @@ export default function DashboardPage() {
       */}
       {tab === 'revenue' && (
       <Panel title="營收與住房率"
-        hint="長條＝營收（左軸）・折線＝住房率（右軸，固定 0~100%）">
+        hint={comboMode === 'time'
+          ? '上下兩張共用一條 x 軸 —— 滑過去看那個月的營收組成與住房率'
+          : '長條＝營收（左軸）・折線＝住房率（右軸，固定 0~100%）'}>
         {occErr && (
           <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
             ⚠ {occErr}　—— 折線的住房率會<b>偏低</b>，先不要拿它做決定。
@@ -1475,10 +1565,10 @@ export default function DashboardPage() {
               </button>
             ))}
           </div>
-          {/* ★ 折線不跟膠囊走 —— 講出來，不然看的人會以為它壞了 */}
-          {pillOn && (
+          {/* ★ 住房率不跟膠囊走 —— 講出來，不然看的人會以為它壞了 */}
+          {srcOn && (
             <span className="text-[11px] text-gray-400">
-              長條只看{srcLabel(pillOn)}・折線不分來源
+              深色＝{pickName()}・住房率不分來源
             </span>
           )}
           {/*
@@ -1498,10 +1588,20 @@ export default function DashboardPage() {
 
         {occLoading ? (
           <p className="py-8 text-center text-sm text-gray-400">計算中…</p>
-        ) : (comboMode === 'time' ? comboTime : comboEstate).length === 0 ? (
+        ) : (comboMode === 'time' ? pairRows : comboEstate).length === 0 ? (
           <Empty />
+        ) : comboMode === 'time' ? (
+          /*
+           * ★★★ 2026-09-21 起按月這張**不再用雙軸**（使用者過審）。
+           *   上下兩張、共用一條 x 軸與一條十字線，各有各的軸。
+           *   雙軸的問題是右軸範圍由畫圖的人隨便訂 —— 同一份資料，
+           *   右軸 0~100% 看起來「沒關係」、44~68% 看起來「完全同步」。
+           * ★★ 「各物業比較」那個模式還是舊的雙軸圖，還沒換。
+           */
+          <RevOccPair rows={pairRows} keys={srcKeys} picks={picks}
+            scopeName={pickedLabel(picks.map(srcLabel), srcKeys.length, srcKeys.length)} />
         ) : (
-          <RevOccChart rows={comboMode === 'time' ? comboTime : comboEstate} />
+          <RevOccChart rows={comboEstate} />
         )}
 
         {/*
@@ -1530,6 +1630,9 @@ export default function DashboardPage() {
           ★ 訂單的退房日那天<b>不算</b>住（最後一晚是前一天），契約的租期迄那天<b>算</b>。
           兩種來源的邊界不一樣，這是最容易差一格的地方 —— 跟房源狀態走同一份算式。<br />
           ★ 折線<b>斷掉</b>的那一格代表那裡沒有房源可以算，不是住房率 0%。<br />
+          ★ <b>按月</b>是上下兩張圖、各有各的軸 —— 兩個軸擠成一張的話，
+          右軸的範圍怎麼訂都行，同一份資料可以畫成「完全同步」也可以畫成「毫無關係」。
+          <b>「各物業比較」那個模式還是舊的雙軸圖，還沒換。</b><br />
           ★ 長條<b>淡掉</b>的那一格是還沒過完的月份 —— 它只有半個月的錢，
           跟前面幾格比會偏矮，那不是衰退。住房率沒有這個問題（分母也跟著只算到今天）。
         </p>
@@ -1550,13 +1653,13 @@ export default function DashboardPage() {
           <BarList rows={revBySource.map(([k, v]) => ({
             label: srcLabel(k), value: v,
             /* ★ 被篩掉的**淡掉不是消失** —— 它們的錢還在總額裡（anxing-ui 四-1） */
-            color: (pillOn && pillOn !== k) ? '#D6DBE0' : (SRC_COLOR[k] ?? '#7A8B99'),
+            color: (srcOn && !picks.includes(k)) ? '#D6DBE0' : (SRC_COLOR[k] ?? '#7A8B99'),
           }))} fmt={money} />
         </Panel>
         <Panel title="訂單分布" hint="看的是筆數不是金額 —— 跟營收比對得出「哪個通路單價高」">
           <BarList rows={ordBySource.map(([k, v]) => ({
             label: srcLabel(k), value: v,
-            color: (pillOn && pillOn !== k) ? '#D6DBE0' : (SRC_COLOR[k] ?? '#7A8B99'),
+            color: (srcOn && !picks.includes(k)) ? '#D6DBE0' : (SRC_COLOR[k] ?? '#7A8B99'),
           }))} fmt={(n) => nf(n) + ' 筆'} />
         </Panel>
       </div>
@@ -1886,6 +1989,353 @@ function BarList({ rows, fmt }: { rows: { label: string; value: number; color: s
  * 解法是讓座標系跟著實際寬度走：**1 個 SVG 單位 = 1 個 CSS px**，
  * 縮放比例永遠是 1，什麼都不會變形。也不必猜斷點。
  */
+/** 上下兩張圖的一格 */
+type PairRow = {
+  key: string; label: string;
+  /** 這一格在各來源上的錢（**全部來源**，不套膠囊） */
+  bySrc: BySource;
+  occ: ComboOcc | null;
+  /** 這一格不是完整的一個月（區間切在月中） */
+  partial?: boolean;
+};
+
+/**
+ * 營收（上，長條）＋ 住房率（下，折線），**共用一條 x 軸與一條十字線**。
+ *
+ * ══════════════════════════════════════════════════════════
+ * 【★★★ 為什麼不是一張雙軸圖】（2026-09-21 使用者過審）
+ *
+ * 兩個 Y 軸之間怎麼對齊是**畫圖的人隨便訂的**。同一份資料，
+ * 右軸 0~100% 看起來「沒什麼關係」、右軸 44~68% 看起來「幾乎完全同步」——
+ * 能證明任何結論的圖，等於什麼都沒證明。
+ *
+ * 而且舊版還有第二個問題:長條跟著來源膠囊變、折線不跟 ——
+ * **兩條線量的不是同一群人**。
+ *
+ * 【★★ 長條的總高度永遠是全部來源】
+ *
+ * 選中的那幾個只是變深（貼著基線）。舊做法「沒選的整段消失」
+ * 才是讓住房率看起來壞掉的原因。
+ *
+ * 【★★★ 卡片一定要有「點一下」的版本】
+ *
+ * 手機沒有 hover。而且 `draw` 會重畫整個 SVG，點到長條時那個 <rect>
+ * 會離開 DOM —— React 這邊是用同一份 state 重繪，不會有那個問題，
+ * 但「點外面關掉」那條還是要靠座標判斷，不要靠 event.target。
+ * ══════════════════════════════════════════════════════════
+ */
+function RevOccPair({ rows, keys, picks, scopeName }: {
+  rows: PairRow[]; keys: readonly string[]; picks: readonly string[]; scopeName: string;
+}) {
+  const [hi, setHi] = useState<number | null>(null);
+  const [pin, setPin] = useState(false);
+  const [tip, setTip] = useState<{ x: number; y: number } | null>(null);
+  const box = useRef<HTMLDivElement>(null);
+  const [W, setW] = useState(1000);
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([e]) => setW(Math.max(280, Math.round(e.contentRect.width))));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const on = !noSrcFilter(picks, keys);
+  const splits = rows.map((r) => splitBySrc(r.bySrc, keys, picks));
+  /* ★ 兩張圖的左邊界要一樣寬，不然 x 軸對不齊 —— 對不齊的十字線比沒有更糟 */
+  const L = 54, R = 16;
+  const iw = Math.max(W - L - R, 40);
+  const step = iw / Math.max(rows.length, 1);
+  const cx = (i: number) => L + step * i + step / 2;
+  const top = moneyTop(Math.max(...splits.map((x) => x.total), 0));
+
+  const H1 = 210, T1 = 16, B1 = 20, ih1 = H1 - T1 - B1;
+  const H2 = 150, T2 = 10, B2 = 30, ih2 = H2 - T2 - B2;
+  const yRev = (v: number) => T1 + ih1 - (Math.max(v, 0) / top) * ih1;
+  const yOcc = (r: number) => T2 + ih2 - Math.min(Math.max(r, 0), 1) * ih2;
+  const barW = Math.max(Math.min(step * 0.56, 46), 2);
+  const { labels: xLabels } = axisLabels(rows, step);
+  const segs = occSegments(rows.map((r) => ({ key: r.key, label: r.label, rev: 0, occ: r.occ })));
+  const axisMoney = (v: number) =>
+    (v === 0 ? '0' : top >= 10000 ? `${Math.round(v / 10000)} 萬` : nf(Math.round(v)));
+
+  /** 滑鼠在哪一格。★ 用座標算，不要靠 event.target —— SVG 內容會重畫 */
+  function idxAt(ev: React.MouseEvent<SVGSVGElement>) {
+    const b = ev.currentTarget.getBoundingClientRect();
+    const x = ((ev.clientX - b.left) / b.width) * W;
+    return Math.max(0, Math.min(rows.length - 1, Math.floor((x - L) / step)));
+  }
+  function move(ev: React.MouseEvent<SVGSVGElement>) {
+    if (pin) return;
+    setHi(idxAt(ev));
+    setTip({ x: ev.clientX, y: ev.clientY });
+  }
+  function click(ev: React.MouseEvent<SVGSVGElement>) {
+    const i = idxAt(ev);
+    if (pin && i === hi) { setPin(false); setHi(null); setTip(null); return; }
+    setPin(true); setHi(i); setTip({ x: ev.clientX, y: ev.clientY });
+  }
+  /*
+   * ★★★ `onMouseLeave` 掛在**外層容器**上，不是掛在兩張 SVG 與表格上。
+   *   掛在各自身上的話，從上圖滑到下圖、或從表格滑到圖上時會先收到
+   *   一個 leave —— 而 leave 與新元素的 move 誰先誰後**沒有保證**。
+   *   leave 排在後面就把剛標好的那一格清掉，症狀是
+   *   「滑過去十字線不見了」，而且只有某一個方向會壞。
+   * ★★ 外層包著這三個東西，所以在它們之間移動永遠不算離開。
+   */
+  function leave() { if (!pin) { setHi(null); setTip(null); } }
+
+  const card = hi == null ? null : cardRows(rows[hi].bySrc, keys, picks, srcLabel);
+  const sumSel = splits.reduce((n, x) => n + x.sel, 0);
+  const sumAll = splits.reduce((n, x) => n + x.total, 0);
+  const occRows = rows.filter((r) => r.occ);
+  const avgOcc = occRows.length
+    ? occRows.reduce((n, r) => n + (r.occ?.rate ?? 0), 0) / occRows.length : 0;
+
+  return (
+    <div ref={box} className="relative" onMouseLeave={leave}>
+      {/* ── 上：營收 ── */}
+      <svg viewBox={`0 0 ${W} ${H1}`} width="100%" height={H1} style={{ display: 'block' }}
+        onMouseMove={move} onClick={click} className="cursor-crosshair">
+        {Array.from({ length: MONEY_TICKS + 1 }, (_, g) => {
+          const y = T1 + ih1 - (ih1 * g) / MONEY_TICKS;
+          return (
+            <g key={g}>
+              <line x1={L} x2={W - R} y1={y} y2={y} stroke="#EFEEE9" strokeWidth="1" />
+              <text x={L - 8} y={y + 4} textAnchor="end" fontSize="10.5" fill="#b6bcc4">
+                {axisMoney((top * g) / MONEY_TICKS)}</text>
+            </g>
+          );
+        })}
+        {rows.map((r, i) => {
+          const sp = splits[i];
+          const hSel = Math.max(T1 + ih1 - yRev(sp.sel), 0);
+          const hAll = Math.max(T1 + ih1 - yRev(sp.total), 0);
+          const dim = hi != null && hi !== i ? 0.45 : 1;
+          return (
+            <g key={`b${r.key}`} opacity={dim}>
+              {/* ★ 淡色那段是「其餘來源」—— 疊在選中的上面，總高度不變 */}
+              {on && sp.rest > 0 && (
+                <rect x={cx(i) - barW / 2} y={yRev(sp.total)} width={barW}
+                  height={Math.max(hAll - hSel - 2, 1)} rx="3"
+                  fill={r.partial ? '#E7EAEE' : '#C3CCD6'} />
+              )}
+              {/* ★ 選中的那段**貼著基線** —— 長度要從 0 開始量才比得準 */}
+              <rect x={cx(i) - barW / 2} y={yRev(sp.sel)} width={barW}
+                height={hSel} rx="3"
+                fill={r.partial ? '#A9BCD4' : '#41689B'} />
+              <text x={cx(i)} y={yRev(sp.total) - 6} textAnchor="middle" fontSize="10"
+                fill={hi === i ? '#2E3840' : '#6b7280'} fontWeight={hi === i ? 700 : 400}>
+                {toWan(sp.total)}</text>
+            </g>
+          );
+        })}
+        {hi != null && (
+          <line x1={cx(hi)} x2={cx(hi)} y1={T1} y2={T1 + ih1}
+            stroke="#9AA7B4" strokeDasharray="3 3" />
+        )}
+      </svg>
+
+      {/* ── 下：住房率。**自己的軸**，跟上面沒有換算關係 ── */}
+      <svg viewBox={`0 0 ${W} ${H2}`} width="100%" height={H2} style={{ display: 'block' }}
+        onMouseMove={move} onClick={click} className="cursor-crosshair">
+        {Array.from({ length: MONEY_TICKS + 1 }, (_, g) => {
+          const y = T2 + ih2 - (ih2 * g) / MONEY_TICKS;
+          return (
+            <g key={g}>
+              <line x1={L} x2={W - R} y1={y} y2={y} stroke="#EFEEE9" strokeWidth="1" />
+              <text x={L - 8} y={y + 4} textAnchor="end" fontSize="10.5" fill="#b6bcc4">
+                {(g * 100) / MONEY_TICKS}%</text>
+            </g>
+          );
+        })}
+        {/* ★★ 折線遇到沒有房源可以算的那一格要**斷開**，不要接過去 */}
+        {segs.map((seg, k) => (
+          <polyline key={`s${k}`} fill="none" stroke="#2E3840" strokeWidth="2.5"
+            points={seg.map((i) => `${cx(i)},${yOcc(rows[i].occ?.rate ?? 0)}`).join(' ')} />
+        ))}
+        {rows.map((r, i) => r.occ && (
+          <g key={`o${r.key}`}>
+            <circle cx={cx(i)} cy={yOcc(r.occ.rate)} r={hi === i ? 5.5 : 4}
+              fill={hi === i ? '#2E3840' : '#fff'} stroke="#2E3840" strokeWidth="2.5" />
+            <text x={cx(i)} y={yOcc(r.occ.rate) - 11} textAnchor="middle" fontSize="10"
+              fill={hi === i ? '#2E3840' : '#6b7280'} fontWeight={hi === i ? 700 : 400}>
+              {fmtPct(r.occ.rate, 0)}</text>
+          </g>
+        ))}
+        {hi != null && (
+          <line x1={cx(hi)} x2={cx(hi)} y1={T2} y2={T2 + ih2}
+            stroke="#9AA7B4" strokeDasharray="3 3" />
+        )}
+        {xLabels.map((t, i) => t && (
+          <text key={`x${rows[i].key}`} x={cx(i)} y={T2 + ih2 + 19} textAnchor="middle"
+            fontSize="11" fill={hi === i ? '#2E3840' : '#8b929a'}
+            fontWeight={hi === i ? 700 : 400}>{t}</text>
+        ))}
+      </svg>
+
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-600">
+        <span className="inline-flex items-center gap-1.5">
+          <i className="inline-block h-2.5 w-2.5 rounded-sm bg-mor-slate" />
+          {on ? pickedLabel(picks.map(srcLabel), keys.length) : '全部來源'}
+        </span>
+        {on && (
+          <span className="inline-flex items-center gap-1.5">
+            <i className="inline-block h-2.5 w-2.5 rounded-sm bg-[#C3CCD6]" />其餘來源
+          </span>
+        )}
+        <span className="inline-flex items-center gap-1.5">
+          <svg width="22" height="10"><line x1="1" y1="5" x2="21" y2="5"
+            stroke="#2E3840" strokeWidth="2.5" /></svg>住房率
+        </span>
+      </div>
+
+      {/*
+        ── 圖底下的比較表（使用者 2026-09-21 指定：兩列）──
+        ★★★ 來源名字放在**表上方獨立一行**（使用者選的做法 A），
+          第一欄因此鎖得住寬度 —— 名字一長就把 12 個月的欄位擠扁，
+          那是使用者圈出來的那一個。
+        ★★ 「不分來源」四個字**還是留在住房率那一列上**：
+          上面那一行看起來像整張表的範圍，不在列上再講一次的話，
+          住房率會被讀成也只算選中的來源。
+      */}
+      <div className="mt-3 text-xs text-gray-500">
+        選定來源：<b className="text-mor-slatedark">{scopeName}</b>
+        <span className="ml-1.5 text-gray-400">（住房率不分來源）</span>
+      </div>
+      <div className="mt-1.5 overflow-x-auto rounded-lg border border-mor-line bg-white">
+        <table className="w-full border-collapse text-xs tabular-nums">
+          <thead>
+            <tr className="bg-[#FAFAF9] text-gray-500">
+              <th className="sticky left-0 z-10 w-[122px] min-w-[122px] bg-[#FAFAF9]
+                             px-2 py-1.5 text-left font-semibold"> </th>
+              {rows.map((r, i) => (
+                <th key={`h${r.key}`} onMouseMove={() => !pin && setHi(i)}
+                  className={`px-2 py-1.5 text-right font-semibold whitespace-nowrap
+                              ${hi === i ? 'bg-amber-100' : ''}`}>{r.label}</th>
+              ))}
+              <th className="bg-[#EAF0F7] px-2 py-1.5 text-right font-bold whitespace-nowrap">
+                合計／平均</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td className="sticky left-0 z-10 w-[122px] min-w-[122px] bg-white
+                             border-b border-mor-line px-2 py-1.5 text-left">
+                <b className="block font-semibold">{on ? '選定營收' : '營收'}</b>
+                <span className="block text-[11px] font-normal text-gray-400">單位：萬</span>
+              </td>
+              {rows.map((r, i) => (
+                <td key={`r${r.key}`} onMouseMove={() => !pin && setHi(i)}
+                  className={`border-b border-mor-line px-2 py-1.5 text-right font-semibold
+                              text-mor-slatedark ${hi === i ? 'bg-amber-100' : ''}`}>
+                  {toWan(splits[i].sel)}</td>
+              ))}
+              <td className="border-b border-mor-line bg-[#F3F6FA] px-2 py-1.5
+                             text-right font-bold">{toWan(sumSel)}</td>
+            </tr>
+            <tr>
+              <td className="sticky left-0 z-10 w-[122px] min-w-[122px] bg-white
+                             px-2 py-1.5 text-left">
+                <b className="block font-semibold">住房率</b>
+                <span className="block text-[11px] font-normal text-gray-400">不分來源</span>
+              </td>
+              {rows.map((r, i) => (
+                <td key={`o${r.key}`} onMouseMove={() => !pin && setHi(i)}
+                  className={`px-2 py-1.5 text-right ${hi === i ? 'bg-amber-100' : ''}`}>
+                  {r.occ ? fmtPct(r.occ.rate, 0) : '—'}</td>
+              ))}
+              <td className="bg-[#F3F6FA] px-2 py-1.5 text-right font-bold">
+                {occRows.length ? fmtPct(avgOcc, 0) : '—'}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-1.5 text-[11px] text-gray-400">
+        <b>選定營收那一列跟圖上深色那段是同一個數字</b>；期間合計 {toWan(sumSel)} 萬
+        {on && sumAll > 0 && <>，佔全部來源 {((sumSel / sumAll) * 100).toFixed(1)}%</>}。
+        住房率那一格是<b>月平均</b>，不跟著來源變。
+      </p>
+
+      {/* ── 卡片：六個來源的組成 ＋ 小計 ＋ 合計 ＋ 住房率 ── */}
+      {hi != null && tip && card && (
+        <TipCard x={tip.x} y={tip.y} pin={pin}>
+          <div className="mb-1.5 flex items-center justify-between gap-2.5 text-[13px] font-bold">
+            <span>{rows[hi].label}</span>
+            {pin && <em className="not-italic text-[11px] font-semibold text-gray-400">
+              再點一下關掉</em>}
+          </div>
+          <table className="w-full border-collapse text-xs tabular-nums">
+            <tbody>
+              {card.rows.map((r) => (
+                <tr key={r.key} className={on && !r.on ? 'text-[#b6bcc4]' : ''}>
+                  <td className="py-0.5 whitespace-nowrap">
+                    <i className="mr-1.5 inline-block h-2 w-2 rounded-sm align-[1px]"
+                      style={{ background: !on || r.on ? '#41689B' : '#C3CCD6' }} />
+                    {r.label}</td>
+                  <td className="py-0.5 pl-3 text-right whitespace-nowrap">{r.wan} 萬</td>
+                  <td className="w-[38px] py-0.5 pl-2 text-right text-gray-400">
+                    {(r.share * 100).toFixed(0)}%</td>
+                </tr>
+              ))}
+              {on && (
+                <tr className="border-t border-mor-line font-bold">
+                  <td className="pt-1 whitespace-nowrap">
+                    小計　{pickedLabel(picks.map(srcLabel), keys.length)}</td>
+                  <td className="pt-1 pl-3 text-right">{card.selWan} 萬</td>
+                  <td className="pt-1 pl-2 text-right">{(card.selShare * 100).toFixed(0)}%</td>
+                </tr>
+              )}
+              <tr className="font-bold">
+                <td className="py-0.5">合計</td>
+                <td className="py-0.5 pl-3 text-right">{card.totalWan} 萬</td>
+                <td className="py-0.5 pl-2 text-right">100%</td>
+              </tr>
+            </tbody>
+          </table>
+          <div className="mt-1.5 flex justify-between gap-3 border-t border-mor-line pt-1.5 text-xs">
+            <span>住房率 <b>{rows[hi].occ ? fmtPct(rows[hi].occ!.rate, 0) : '—'}</b></span>
+            <span className="text-gray-500">
+              {rows[hi].occ ? <>每間房 <b>{(splits[hi].total / 10000
+                / Math.max(rows[hi].occ!.rooms, 1)).toFixed(2)}</b> 萬</> : null}</span>
+          </div>
+        </TipCard>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 跟著滑鼠的卡片。
+ *
+ * ★★★ 用 `fixed` ＋ **把座標夾在視窗內**。畫在格子裡的話會被
+ *   `overflow-auto` 的容器裁掉，而最後一個月與畫面下緣那幾格
+ *   正是最常被看的（anxing-ui 三）。
+ */
+function TipCard({ x, y, pin, children }: {
+  x: number; y: number; pin: boolean; children: React.ReactNode;
+}) {
+  const el = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ left: x + 16, top: y + 16 });
+  useEffect(() => {
+    const n = el.current;
+    if (!n) return;
+    const w = n.offsetWidth, h = n.offsetHeight, pad = 10;
+    let left = x + 16, top = y + 16;
+    if (left + w + pad > window.innerWidth) left = x - w - 16;
+    if (top + h + pad > window.innerHeight) top = y - h - 16;
+    setPos({ left: Math.max(pad, left), top: Math.max(pad, top) });
+  }, [x, y, children]);
+  return (
+    <div ref={el} style={{ position: 'fixed', left: pos.left, top: pos.top, zIndex: 50 }}
+      className={`min-w-[232px] rounded-xl border border-mor-line bg-white px-3 py-2.5
+                  shadow-[0_8px_26px_rgba(46,56,64,.16)]
+                  ${pin ? '' : 'pointer-events-none'}`}>
+      {children}
+    </div>
+  );
+}
+
 /**
  * 營收（長條，左軸）＋ 住房率（折線，右軸）。
  *

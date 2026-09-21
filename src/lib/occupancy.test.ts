@@ -4,6 +4,8 @@ import {
   usedDays, occupancyOf, occupancyByRoom, totalOccupancy, occupancyByEstate,
   fmtPct, occTone, OCC_HIGH, OCC_LOW,
   clipToRange, occupancyByMonth,
+  leafRooms, ancestryOf, unitsOf, totalUnits, subtreeOf, contractOccupiesRoom,
+  type RoomNode,
 } from './occupancy.ts';
 import type { Stay } from './room-calendar.ts';
 
@@ -298,4 +300,230 @@ test('區間最後一個月被截斷時，分母跟著變小', () => {
 
 test('月份清單是空的 → 空陣列（不自己生月份）', () => {
   assert.deepEqual(occupancyByMonth(ROOMS2, {}, [], { from: '2026-09-01', to: '2026-09-30' }), []);
+});
+
+
+/* ══════════════════════════════════════════════════════════
+ * 子母房源（2026-09-21）
+ *
+ * 開封的真實形狀：
+ *     開封整棟 ─┬─ 開封2F ─┬─ 開封2-1
+ *               │          └─ 開封2-2
+ *               ├─ 開封3F
+ *               └─ 開封4F
+ *     開封1F-1（沒有父層 —— 「整棟」不含 1 樓）
+ * ══════════════════════════════════════════════════════════ */
+
+const KAI: RoomNode[] = [
+  { name: '開封整棟', estate: '開封', parent: null },
+  { name: '開封2F',   estate: '開封', parent: '開封整棟' },
+  { name: '開封2-1',  estate: '開封', parent: '開封2F' },
+  { name: '開封2-2',  estate: '開封', parent: '開封2F' },
+  { name: '開封3F',   estate: '開封', parent: '開封整棟' },
+  { name: '開封4F',   estate: '開封', parent: '開封整棟' },
+  { name: '開封1F-1', estate: '開封', parent: null },
+];
+
+test('★★★ 父層不進分母 —— 葉子才算間數', () => {
+  const leaves = leafRooms(KAI).map((r) => r.name).sort();
+  // 整棟與 2F 有小孩 → 不是葉子
+  assert.deepEqual(leaves, ['開封1F-1', '開封2-1', '開封2-2', '開封3F', '開封4F']);
+  assert.equal(totalUnits(KAI), 5);
+});
+
+test('★★ 葉子是用「有沒有小孩」判斷，不是用名字裡有沒有「整棟」', () => {
+  // 改個名字不該改變算法
+  const renamed = KAI.map((r) => ({
+    ...r,
+    name: r.name === '開封整棟' ? 'XX' : r.name,
+    parent: r.parent === '開封整棟' ? 'XX' : r.parent,
+  }));
+  assert.equal(totalUnits(renamed), 5);
+  assert.ok(!leafRooms(renamed).some((r) => r.name === 'XX'));
+});
+
+test('自己 ＋ 所有祖先（由下往上）', () => {
+  assert.deepEqual(ancestryOf(KAI, '開封2-1'), ['開封2-1', '開封2F', '開封整棟']);
+  assert.deepEqual(ancestryOf(KAI, '開封3F'), ['開封3F', '開封整棟']);
+  assert.deepEqual(ancestryOf(KAI, '開封1F-1'), ['開封1F-1']);
+});
+
+test('★★★ 訂了「整棟」→ 底下每一個葉子都算有人', () => {
+  const by = { 開封整棟: [order('w', '開封整棟', '2026-09-01', '2026-09-11')] };  // 10 晚
+  const list = occupancyByRoom(KAI, by, R);
+  const get = (n: string) => list.find((o) => o.room === n)!;
+  assert.equal(get('開封2-1').used, 10);
+  assert.equal(get('開封2-2').used, 10);
+  assert.equal(get('開封3F').used, 10);
+  assert.equal(get('開封4F').used, 10);
+  // ★ 「整棟」不含 1 樓 —— 1F-1 沒有父層，所以一天都不算
+  assert.equal(get('開封1F-1').used, 0);
+  const t = totalOccupancy(list);
+  assert.equal(t.rooms, 5);
+  assert.equal(t.used, 40);              // 4 間 × 10 天
+  assert.equal(t.days, 150);             // 5 間 × 30 天
+});
+
+test('★★ 訂了中間那層「2F」→ 只有 2-1 與 2-2，3F／4F 不算', () => {
+  const by = { 開封2F: [order('f', '開封2F', '2026-09-01', '2026-09-06')] };      // 5 晚
+  const list = occupancyByRoom(KAI, by, R);
+  const get = (n: string) => list.find((o) => o.room === n)!;
+  assert.equal(get('開封2-1').used, 5);
+  assert.equal(get('開封2-2').used, 5);
+  assert.equal(get('開封3F').used, 0);
+  assert.equal(get('開封4F').used, 0);
+});
+
+test('★★★ 父子同一天都被訂（撞房）→ 那天只算一次，不會超過 100%', () => {
+  const by = {
+    開封整棟: [order('w', '開封整棟', '2026-09-01', '2026-09-11')],   // 9/01~9/10
+    開封3F:   [order('c', '開封3F',   '2026-09-05', '2026-09-09')],   // 9/05~9/08，整段都在裡面
+  };
+  const list = occupancyByRoom(KAI, by, R);
+  const f3 = list.find((o) => o.room === '開封3F')!;
+  assert.equal(f3.used, 10);            // 不是 14
+  assert.ok(f3.rate <= 1);
+});
+
+test('★★ 修好之前是什麼樣子 —— 父層留在分母、佔用不展開', () => {
+  /* 沒有 parent 的那一版（現在線上的形狀）：七列全部是葉子，
+     訂了整棟只有整棟那一列有天數 → 10 / (7×30) = 4.8%，
+     而實際是 40 / (5×30) = 26.7%。這條釘住「差很多」這件事本身。 */
+  const flat: RoomNode[] = KAI.map((r) => ({ name: r.name, estate: r.estate }));
+  const by = { 開封整棟: [order('w', '開封整棟', '2026-09-01', '2026-09-11')] };
+  const before = totalOccupancy(occupancyByRoom(flat, by, R));
+  const after = totalOccupancy(occupancyByRoom(KAI, by, R));
+  assert.equal(before.rooms, 7);
+  assert.equal(before.used, 10);
+  assert.equal(after.rooms, 5);
+  assert.equal(after.used, 40);
+  assert.ok(after.rate > before.rate * 5);
+});
+
+/* ── units（打通房） ────────────────────────────────────── */
+
+const TAI: RoomNode[] = [
+  { name: '台1+2', estate: '台視', units: 2 },
+  { name: '台3',   estate: '台視' },
+  { name: '台4',   estate: '台視' },
+];
+
+test('★★★ 打通房一列算兩間 —— 分子分母都乘 2，單間的 rate 不變', () => {
+  const by = { '台1+2': [order('a', '台1+2', '2026-09-01', '2026-09-11')] };   // 10 晚
+  const list = occupancyByRoom(TAI, by, R);
+  const t12 = list.find((o) => o.room === '台1+2')!;
+  assert.equal(t12.units, 2);
+  assert.equal(t12.used, 10);
+  assert.equal(t12.rate, 10 / 30);        // ★ 兩間一起租，住房率一樣
+  const t = totalOccupancy(list);
+  assert.equal(t.rooms, 4);               // 2 ＋ 1 ＋ 1
+  assert.equal(t.days, 120);              // 4 間 × 30
+  assert.equal(t.used, 20);               // 10 天 × 2 間
+});
+
+test('★ units 沒填／0／負數／NaN 都當 1 —— 分母不能被一個沒填好的欄位吃掉', () => {
+  assert.equal(unitsOf({}), 1);
+  assert.equal(unitsOf({ units: 0 }), 1);
+  assert.equal(unitsOf({ units: -3 }), 1);
+  assert.equal(unitsOf({ units: null }), 1);
+  assert.equal(unitsOf({ units: NaN }), 1);
+  assert.equal(unitsOf({ units: 2.9 }), 2);   // 無條件捨去
+  assert.equal(unitsOf({ units: 3 }), 3);
+});
+
+/* ── 防呆 ───────────────────────────────────────────────── */
+
+test('★★★ 父子成環不會無限迴圈（資料庫也擋，但畫面不能靠資料一定是對的活著）', () => {
+  const loop: RoomNode[] = [
+    { name: 'A', estate: null, parent: 'B' },
+    { name: 'B', estate: null, parent: 'A' },
+  ];
+  assert.deepEqual(ancestryOf(loop, 'A'), ['A', 'B']);
+  // 兩列互為父子 → 都不是葉子 → 分母 0，而不是掛掉
+  assert.equal(totalUnits(loop), 0);
+});
+
+test('★ 指到一個不存在的父層 → 就當它沒有父層，不要爆', () => {
+  const orphan: RoomNode[] = [{ name: 'A', estate: null, parent: '不存在' }];
+  assert.deepEqual(ancestryOf(orphan, 'A'), ['A', '不存在']);
+  assert.equal(totalUnits(orphan), 1);      // 沒有人指 A 當父層 → A 是葉子
+});
+
+test('★★ 同名兩列（洪家 C房 那種）→ ancestryOf 只認第一筆，不看順序', () => {
+  const dupe: RoomNode[] = [
+    { name: 'C房', estate: '洪家', parent: null },
+    { name: 'C房', estate: '洪家', parent: '別的' },
+  ];
+  assert.deepEqual(ancestryOf(dupe, 'C房'), ['C房']);
+});
+
+test('★ 沒有 parent 也沒有 units 的舊資料 —— 行為跟以前完全一樣', () => {
+  const plain = [{ name: 'A', estate: '正隆' }, { name: 'B', estate: '正隆' }];
+  const by = { A: [order('a', 'A', '2026-09-01', '2026-09-11')] };
+  const t = totalOccupancy(occupancyByRoom(plain, by, R));
+  assert.equal(t.rooms, 2);
+  assert.equal(t.days, 60);
+  assert.equal(t.used, 10);
+});
+
+test('★★ 按月切也要吃子母 —— 十二格加起來等於整體（跟舊的那條測試同一個性質）', () => {
+  const by = { 開封整棟: [order('w', '開封整棟', '2026-09-01', '2026-09-11')] };
+  const ms = occupancyByMonth(KAI, by, ['2026-09'], R);
+  assert.equal(ms[0].rooms, 5);
+  assert.equal(ms[0].used, 40);
+  // 沒有交集的月份也要報 5 間，不是 7 列
+  const none = occupancyByMonth(KAI, by, ['2026-01'], R);
+  assert.equal(none[0].rooms, 5);
+  assert.equal(none[0].days, 0);
+});
+
+/* ── subtreeOf（篩選單一房源時用） ──────────────────────── */
+
+test('★★★ 篩「只看開封整棟」→ 底下五間都要進來，分母是 4 間不是 1 間', () => {
+  const sub = subtreeOf(KAI, ['開封整棟']);
+  assert.deepEqual(leafRooms(sub).map((r) => r.name).sort(),
+    ['開封2-1', '開封2-2', '開封3F', '開封4F']);
+  assert.equal(totalUnits(sub), 4);
+  const by = { 開封整棟: [order('w', '開封整棟', '2026-09-01', '2026-09-11')] };
+  const t = totalOccupancy(occupancyByRoom(sub, by, R));
+  assert.equal(t.rooms, 4);
+  assert.equal(t.used, 40);
+});
+
+test('★★ 篩「只看開封3F」→ 祖先要帶進來，不然記在整棟上的那幾天會消失', () => {
+  const sub = subtreeOf(KAI, ['開封3F']);
+  assert.deepEqual(leafRooms(sub).map((r) => r.name), ['開封3F']);   // 整棟有小孩，不是葉子
+  const by = { 開封整棟: [order('w', '開封整棟', '2026-09-01', '2026-09-11')] };
+  const t = totalOccupancy(occupancyByRoom(sub, by, R));
+  assert.equal(t.rooms, 1);
+  assert.equal(t.used, 10);                                          // 不是 0
+});
+
+test('★ 篩「只看開封2F」→ 2-1 與 2-2 進來（2 間），整棟當祖先跟著進來', () => {
+  const sub = subtreeOf(KAI, ['開封2F']);
+  assert.equal(totalUnits(sub), 2);
+  assert.ok(sub.some((r) => r.name === '開封整棟'));
+});
+
+test('★ 沒有指定任何房源 → 全部', () => {
+  assert.equal(subtreeOf(KAI, []).length, KAI.length);
+});
+
+/* ── 公司登記／辦公室登記不佔房 ─────────────────────────── */
+
+test('★★★ 公司登記填了房號也不算佔房 —— 問的是類別，不是有沒有填房號', () => {
+  assert.equal(contractOccupiesRoom({ room: '開封3F', type: 'company' }), false);
+  assert.equal(contractOccupiesRoom({ room: '開封3F', type: 'office' }), false);
+  assert.equal(contractOccupiesRoom({ room: '開封3F', type: 'longterm' }), true);
+});
+
+test('★ 沒有房號的一律不算（公司登記現在就是這個形狀）', () => {
+  assert.equal(contractOccupiesRoom({ room: '', type: 'company' }), false);
+  assert.equal(contractOccupiesRoom({ room: '  ', type: 'longterm' }), false);
+  assert.equal(contractOccupiesRoom({ room: null, type: null }), false);
+});
+
+test('★ 類別是空的（舊資料）→ 有房號就算佔房，不要把舊資料踢掉', () => {
+  assert.equal(contractOccupiesRoom({ room: 'A', type: null }), true);
+  assert.equal(contractOccupiesRoom({ room: 'A' }), true);
 });

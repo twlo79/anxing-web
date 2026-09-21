@@ -112,30 +112,13 @@ export function sourcePills(revs: readonly RevLike[]): Pill[] {
     .sort((a, b) => b.amount - a.amount || a.key.localeCompare(b.key));
 }
 
-/**
- * 套上膠囊之後剩下哪幾列。
- *
- * ★ 沒選（`null` / 空字串）＝全部都留。
- * ★★ 選了一個不存在的來源會得到空陣列 —— 那是對的，
- *   畫面那邊要寫「這個來源在這段期間沒有營收」，不是顯示 0 就算了。
- */
-export function applyPill<T extends RevLike>(
-  revs: readonly T[], sel: string | null | undefined,
-): T[] {
-  const s = String(sel ?? '').trim();
-  if (!s) return [...(revs ?? [])];
-  return (revs ?? []).filter((r) => (String(r.source ?? '').trim() || 'other') === s);
-}
+/* ★★★ `applyPill` / `togglePill`（單選版）2026-09-21 拿掉 ——
+     來源膠囊改成**複選**了（使用者:「不是 mece 可以複選」），
+     換到 `lib/rev-occ.ts` 的 `applySrcPicks()` / `toggleSrc()`。
+   ★★ 沒有留著「以後可能用得到」:同一件事有兩支函式的話，
+     遲早有一條路用舊的那支，而兩條路對同一組選擇給出不同答案 ——
+     畫面上完全看不出來（CLAUDE.md:同一條規則在三個地方各寫一次）。 */
 
-/**
- * 點膠囊之後的新選擇。
- *
- * ★★★ **再點一下＝清除**（anxing-ui 四-1）——
- *   一顆都沒亮就是沒有篩選，不用另外做一顆「全部」。
- */
-export function togglePill(cur: string | null, clicked: string): string | null {
-  return cur === clicked ? null : clicked;
-}
 
 /* ══════════════════════════════════════════════════════════
  * 營收表現（那一排大數字）

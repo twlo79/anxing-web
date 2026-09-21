@@ -40,6 +40,13 @@ export type RoomOcc = {
   room: string;
   /** 沒設物業的話是 null */
   estate: string | null;
+  /**
+   * 這一列代表幾間房（打通房「台1+2」是 2）。
+   *
+   * ★ 選填 —— 舊的呼叫端沒帶，當 1。`rate` **不受它影響**
+   *   （兩間一起租，住房率一樣），它只放大合計的分子與分母。
+   */
+  units?: number;
   /** 可住天數 ＝ 這段期間有幾天 */
   days: number;
   /** 有人的天數 */
@@ -87,28 +94,171 @@ export function occupancyOf(stays: readonly Stay[], r: Range, ds?: readonly Ymd[
   return { days, used, free: days - used, rate: days ? used / days : 0 };
 }
 
+/* ══════════════════════════════════════════════════════════
+ * 子母房源（2026-09-21 使用者：「有的是子母房源關係
+ *   jpr 整棟 = JPR1+JPR2；開封整棟 = 2樓(2-1+2-2) + 3樓 + 4樓」）
+ *
+ * ★★★ 為什麼非做不可：整棟跟底下那幾間是**同一個空間**。
+ *   兩邊都留在分母裡的話：
+ *     開封分母算 6 間，而訂了「整棟」那 93 天只記在整棟那一列上，
+ *     底下五列全是 0 → 住房率 24.4%，實際七成。
+ *   **低報三分之二，而畫面上完全正常 —— 沒有任何地方會叫。**
+ *
+ * ★★ 規則兩條：
+ *   ① 分母只算**葉子**（沒有小孩的房源）。整棟、2F 這種父層不算間數。
+ *   ② 父層的佔用**往下展開** —— 訂了整棟那幾天，底下每個葉子都算有人。
+ *
+ * ★ `units` 是另一件事：台1+2 是兩間打通一起租 —— 一列，但分母算 2 間。
+ *   不拆成「台1」「台2」兩列，是因為那兩列永遠不會被單獨訂，
+ *   卻會出現在排房表與每一個下拉選單裡。
+ * ══════════════════════════════════════════════════════════ */
+
+/**
+ * 不佔房間的契約類別。
+ *
+ * ★★★ 公司登記／辦公室登記**只掛物業，沒有房號**（使用者 2026-09-21：
+ *   「辦公室登記沒掛房源 只掛物業 不用算」）。近 12 個月有 34 張這種契約。
+ *
+ * ★★ 現在擋住它們的是「`room` 是空字串所以 falsy」—— 那是**偶然**。
+ *   哪天有人給一張公司登記填了房號，那間房就會被算成整年有人，
+ *   而住房率只是「變高了」，沒有任何地方會叫。要問的是「它是哪一類」，
+ *   不是「它有沒有填房號」。
+ */
+export const NON_ROOM_CONTRACT: ReadonlySet<string> = new Set(['company', 'office']);
+
+/** 這張契約佔不佔房間 —— 要有房號，而且不是公司／辦公室登記 */
+export function contractOccupiesRoom(c: { room?: string | null; type?: string | null }): boolean {
+  if (!String(c?.room ?? '').trim()) return false;
+  return !NON_ROOM_CONTRACT.has(String(c?.type ?? '').trim());
+}
+
+/** 住房率要看的房源。`parent`／`units` 沒帶的話行為跟以前完全一樣 */
+export type RoomNode = {
+  name: string;
+  /** 沒設物業的話是 null */
+  estate: string | null;
+  /** 父房源的 name（整棟／整層）。空的＝自己就是最上層 */
+  parent?: string | null;
+  /** 這一列代表幾間房。打通房是 2，預設 1 */
+  units?: number;
+};
+
+/**
+ * `units` 沒填、填 0、填負數、填字串都當 1。
+ *
+ * ★ 分母不能被一個沒填好的欄位吃掉 —— units 是 0 的話那間房會從分母
+ *   整個消失，而住房率只是「變高了一點」，沒有人看得出少了一間。
+ */
+export function unitsOf(r: { units?: number | null }): number {
+  const n = Math.floor(Number(r?.units ?? 1));
+  return Number.isFinite(n) && n >= 1 ? n : 1;
+}
+
+/**
+ * 葉子 ＝ 沒有任何人指它當父層。
+ *
+ * ★★ 用「有沒有小孩」判斷，**不是**用名字裡有沒有「整棟」——
+ *   名字是給人看的，改個名字不該改變算法（而那種規則改了不會叫）。
+ */
+export function leafRooms<T extends RoomNode>(rooms: readonly T[]): T[] {
+  const hasChild = new Set<string>();
+  for (const r of rooms ?? []) {
+    const p = String(r.parent ?? '').trim();
+    if (p) hasChild.add(p);
+  }
+  return (rooms ?? []).filter((r) => !hasChild.has(r.name));
+}
+
+/**
+ * 挑出這幾個房源**連同它們底下的所有子孫**。
+ *
+ * ★★★ 篩選「只看開封整棟」的時候要用這支。只留整棟自己的話，
+ *   它在那份子集合裡變成沒有小孩 ＝ 葉子，分母就變成「1 間」——
+ *   而整棟根本不是一間房，那個住房率會是四倍。
+ *
+ * ★ 同時也要留**祖先**：篩「只看開封3F」時，3F 的佔用有一部分
+ *   記在「開封整棟」上，不把整棟帶進來的話那幾天會消失。
+ *   祖先進來之後 3F 就不是葉子了嗎？不會 —— 葉子是「沒有小孩」，
+ *   3F 沒有小孩。整棟有小孩（3F），所以整棟不進分母。兩件事剛好都對。
+ */
+export function subtreeOf<T extends RoomNode>(
+  rooms: readonly T[], names: readonly string[],
+): T[] {
+  const want = new Set(names ?? []);
+  if (!want.size) return [...(rooms ?? [])];
+  /* 往下：一路把小孩加進來（層數有限，最多掃 rooms.length 輪） */
+  for (let i = 0; i < (rooms ?? []).length; i++) {
+    let grew = false;
+    for (const r of rooms ?? []) {
+      const par = String(r.parent ?? '').trim();
+      if (par && want.has(par) && !want.has(r.name)) { want.add(r.name); grew = true; }
+    }
+    if (!grew) break;
+  }
+  /* 往上：把祖先也帶進來 —— 它們不進分母，但它們身上的佔用要收得到 */
+  for (const n of [...want]) for (const a of ancestryOf(rooms ?? [], n)) want.add(a);
+  return (rooms ?? []).filter((r) => want.has(r.name));
+}
+
+/** 這些房源一共幾間（葉子的 units 加總）—— 合計的分母就是它 */
+export function totalUnits(rooms: readonly RoomNode[]): number {
+  return leafRooms(rooms ?? []).reduce((n, r) => n + unitsOf(r), 0);
+}
+
+/**
+ * 自己 ＋ 所有祖先的名字（由下往上）。佔用要從這些名字一起收。
+ *
+ * ★★★ 防成環。A 的父是 B、B 的父是 A 的話這支會無限迴圈，
+ *   而症狀是整個儀錶板**白畫面**。資料庫那邊也擋（migration_287 的
+ *   觸發器），但畫面這邊不能靠「資料一定是對的」活著。
+ */
+export function ancestryOf(rooms: readonly RoomNode[], name: string): string[] {
+  const by = new Map<string, RoomNode>();
+  /* ★ 同名的列有好幾筆時只認第一筆 —— 房源表裡真的有同名列（洪家 C房）。
+       兩筆的 parent 不一樣的話這裡要有一個確定的答案，不能看順序。 */
+  for (const r of rooms ?? []) if (!by.has(r.name)) by.set(r.name, r);
+  const out: string[] = [];
+  const seen = new Set<string>();
+  let cur = String(name ?? '');
+  while (cur && !seen.has(cur)) {
+    seen.add(cur);
+    out.push(cur);
+    cur = String(by.get(cur)?.parent ?? '').trim();
+  }
+  return out;
+}
+
 /**
  * 每一間房各算一次。
  *
- * ★★★ `rooms` 傳進來的是**要納入計算的房源**，這支不負責篩。
- *   停用的、沒在出租的（`show_in_room_calendar = false`）要在外面就排掉 ——
+ * ★★★ `rooms` 傳進來的是**要納入計算的房源**，這支不負責篩「有沒有在租」。
+ *   停用的、不算住房率的（`count_in_occupancy = false`）要在外面就排掉 ——
  *   2B10 那種只用來記支出、根本沒在租的房源留在分母裡，
  *   會把整體住房率一路往下拉，而畫面上完全看不出原因。
+ *
+ * ★★ 但**子母關係這支自己折**（只留葉子、父層的佔用往下展開）——
+ *   那是結構不是政策，放到外面去做的話遲早有一個呼叫端會忘記，
+ *   而忘記的症狀是一個看起來很正常、低了三分之二的數字。
  *
  * ★ 排序照房號的自然順序（10 排在 9 後面），不是按住房率。
  *   按率排的話每次區間一換順序就全部重來，找不到自己要看的那一間。
  */
 export function occupancyByRoom(
-  rooms: readonly { name: string; estate: string | null }[],
+  rooms: readonly RoomNode[],
   byRoom: Readonly<Record<string, readonly Stay[]>>,
   r: Range,
 ): RoomOcc[] {
   const ds = eachDay(r);
-  return [...rooms]
+  return leafRooms(rooms ?? [])
     .sort((a, b) => compareRoomName(a.name, b.name))
     .map((rm) => {
-      const o = occupancyOf(byRoom[rm.name] ?? [], r, ds);
-      return { room: rm.name, estate: rm.estate, ...o };
+      /* ★ 自己的佔用 ＋ 每一個祖先的佔用。`usedDays` 是逐日去重的，
+           所以父子同一天都被訂（撞房）也只算一天，不會超過 100%。
+           撞房本身由房源狀態頁去報，不在這裡偷偷吸收掉。 */
+      const stays = ancestryOf(rooms ?? [], rm.name)
+        .flatMap((n) => byRoom[n] ?? []);
+      const o = occupancyOf(stays, r, ds);
+      return { room: rm.name, estate: rm.estate, units: unitsOf(rm), ...o };
     });
 }
 
@@ -121,9 +271,16 @@ export function occupancyByRoom(
  *   「所有房間合起來被住掉幾成」才是這個數字要回答的問題。
  */
 export function totalOccupancy(list: readonly RoomOcc[]): OccTotal {
-  let days = 0, used = 0;
-  for (const o of list) { days += o.days; used += o.used; }
-  return { rooms: list.length, days, used, free: days - used, rate: days ? used / days : 0 };
+  let days = 0, used = 0, rooms = 0;
+  for (const o of list) {
+    /* ★★ `rooms` 是**幾間房**不是幾列 —— 台1+2 一列算兩間。
+         沒帶 units 的舊呼叫端當 1，所以這個改動對它們沒有差別。 */
+    const u = unitsOf(o);
+    rooms += u;
+    days += o.days * u;
+    used += o.used * u;
+  }
+  return { rooms, days, used, free: days - used, rate: days ? used / days : 0 };
 }
 
 /** 依物業彙總。物業是 null 的收在 key `''` —— 畫面自己決定要不要顯示 */
@@ -195,14 +352,16 @@ export type MonthOcc = OccTotal & { m: string };
  *   這支不自己生月份，不然兩張圖的 x 軸會各長一套而且一定會分岔。
  */
 export function occupancyByMonth(
-  rooms: readonly { name: string; estate: string | null }[],
+  rooms: readonly RoomNode[],
   byRoom: Readonly<Record<string, readonly Stay[]>>,
   months: readonly string[],
   r: Range,
 ): MonthOcc[] {
   return (months ?? []).map((m) => {
     const cl = clipToRange(m, r);
-    if (!cl) return { m, rooms: rooms.length, days: 0, used: 0, free: 0, rate: 0 };
+    /* ★ 沒交集的月份也要報**幾間房**（不是幾列）—— 跟有交集的月份
+         用同一個數字，不然折線斷掉那幾格的房間數會跳。 */
+    if (!cl) return { m, rooms: totalUnits(rooms ?? []), days: 0, used: 0, free: 0, rate: 0 };
     return { m, ...totalOccupancy(occupancyByRoom(rooms, byRoom, cl)) };
   });
 }

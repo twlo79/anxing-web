@@ -2,7 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DASH_TABS, DEFAULT_TAB, parseTab, tabLabel,
-  pillsApply, whyPillsOff, sourcePills, applyPill, togglePill, perf,
+  pillsApply, whyPillsOff, sourcePills, perf,
   COMBO_MODES, parseComboMode, effectiveComboMode, monthsBetween,
   comboRow, occSegments, moneyTop, textWidth, fitLabel, axisLabels,
 } from './dash.ts';
@@ -95,22 +95,8 @@ describe('膠囊本身', () => {
     assert.deepEqual(sourcePills([]), []);
   });
 
-  test('★★★ 再點一下＝清除（不用另外做一顆「全部」）', () => {
-    assert.equal(togglePill(null, 'airbnb'), 'airbnb');
-    assert.equal(togglePill('airbnb', 'airbnb'), null);
-    assert.equal(togglePill('airbnb', 'longterm'), 'longterm');
-  });
-
-  test('套上膠囊', () => {
-    assert.equal(applyPill(ROWS, 'airbnb').length, 2);
-    assert.equal(applyPill(ROWS, 'other').length, 1);
-    assert.equal(applyPill(ROWS, null).length, ROWS.length);
-    assert.equal(applyPill(ROWS, '').length, ROWS.length);
-  });
-
-  test('★★ 選了一個這段期間沒有的來源 → 空陣列（畫面要講出來）', () => {
-    assert.deepEqual(applyPill(ROWS, 'agoda'), []);
-  });
+  /* ★ 膠囊的開關與篩選改成複選了，測試搬到 `rev-occ.test.ts`
+       （`toggleSrc` / `applySrcPicks`）。 */
 });
 
 describe('★★★ 營收表現那一排大數字', () => {
@@ -124,7 +110,7 @@ describe('★★★ 營收表現那一排大數字', () => {
   });
 
   test('篩了 Airbnb:單價要是 Airbnb 自己的', () => {
-    const shown = applyPill(ROWS, 'airbnb');
+    const shown = ROWS.filter((r) => (String(r.source ?? '').trim() || 'other') === 'airbnb');
     const p = perf(shown, ROWS, true);
     assert.equal(p.revenue, 1265904);
     assert.equal(p.count, 2);
