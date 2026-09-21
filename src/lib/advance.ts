@@ -144,13 +144,37 @@ export function purposeToSelect(
  *   用 `!refunded_amount` 判斷的話兩者都是 true，於是一筆被全額沒收的
  *   押金會永遠躺在「錢還在外面」的清單裡等一個不會來的退款。
  */
-export type AdvanceStatus = 'draft' | 'paid' | 'refunded' | 'partial';
+export type AdvanceStatus = 'draft' | 'paid' | 'partial' | 'refunded' | 'shortfall';
 
+/*
+ * ══════════════════════════════════════════════════════════
+ * 【★★★ 2026-09-21：`partial` 換了意思，而且多了 `shortfall`】
+ *
+ * migration_286 之後兩個欄位各自收斂成一件事：
+ *
+ *     refunded_on      **結清日** —— 有值＝這一列結束了，不再追
+ *     refunded_amount  **累計已還** —— 會隨著每一張還款單長大
+ *
+ * 於是「還沒收足」有**兩種**完全不同的意思，處理方式相反：
+ *
+ *     沒結清 ＋ 還了一部分  → `partial`   部分收回，差額是**應收**
+ *     結清了 ＋ 還不夠      → `shortfall` 已結清（被扣），差額記成**費用**
+ *
+ * ★★ 分界就是 `refunded_on` 有沒有值。合成一個的話，攤還到一半的列
+ *   會被 `needsForfeitExpense()` 當成被扣而**自動產生一筆支出** ——
+ *   7,350 收了 6,000，那 1,350 會變成安幸的費用，而事實是下個月就會還。
+ *
+ * ★ `partial` 這個 key 本來指的是被扣，那個意思搬去 `shortfall` 了
+ *   （使用者 2026-09-21 選的命名）。**改 key 不是改字串** ——
+ *   讀它的地方 tsc 會全部指出來。
+ * ══════════════════════════════════════════════════════════
+ */
 export function statusOf(a: Advance): AdvanceStatus {
   if (!a.paid_on) return 'draft';
-  // ★ 用 `== null` 同時涵蓋 null 與 undefined，但**不涵蓋 0**
-  if (a.refunded_on == null || a.refunded_amount == null) return 'paid';
-  return Number(a.refunded_amount) < Number(a.amount) ? 'partial' : 'refunded';
+  /* ★ `?? 0` 讓 null 與 undefined 都算成「一毛還沒還」，但 0 本身就是 0 */
+  const got = Number(a.refunded_amount ?? 0);
+  if (a.refunded_on == null) return got > 0 ? 'partial' : 'paid';
+  return got < Number(a.amount) ? 'shortfall' : 'refunded';
 }
 
 /**
@@ -178,10 +202,13 @@ export function statusOf(a: Advance): AdvanceStatus {
  * ============================================================
  */
 export const STATUS_LABEL: Record<AdvanceStatus, string> = {
-  draft:    '待出款',
-  paid:     '待收回',
-  refunded: '已收回',
-  partial:  '部分收回',
+  draft:     '待出款',
+  paid:      '待收回',
+  /* ★★★ 2026-09-21：這四個字從「被扣」搬到「還在攤」，使用者指定的 */
+  partial:   '部分收回',
+  refunded:  '已收回',
+  /* ★ 「結清」＝人按下去說這筆不追了；括號裡寫出後果（差額變費用） */
+  shortfall: '已結清（被扣）',
 };
 
 /**
@@ -195,6 +222,11 @@ export const STATUS_LABEL: Record<AdvanceStatus, string> = {
  *   會直接變成一筆支出的金額寫進資料庫。
  */
 export function forfeitedOf(a: Advance): number {
+  /*
+   * ★★★ 沒結清就回 0 —— 攤還到一半的差額是**應收**不是被扣
+   *   （2026-09-21・migration_286）。少了這一行，7,350 收了 6,000
+   *   那 1,350 會被當成公司賠掉的錢記成費用。
+   */
   if (a.refunded_on == null || a.refunded_amount == null) return 0;
   const diff = Number(a.amount) - Number(a.refunded_amount);
   return Math.max(0, Math.round(diff * 100) / 100);
@@ -211,13 +243,35 @@ export function forfeitedOf(a: Advance): number {
  *   · 而且已經收回了（`statusOf` 是 partial）
  */
 export function needsForfeitExpense(a: Advance): boolean {
-  return statusOf(a) === 'partial'
+  /* ★★★ 是 `shortfall`（已結清但沒收足）不是 `partial`（還在攤）—— 見 statusOf */
+  return statusOf(a) === 'shortfall'
     && forfeitedOf(a) > 0
     && !a.forfeit_expense_id;
 }
 
-/** 錢還在外面（已經出款但還沒收回）。統計卡與「待收回」清單用。 */
-export const isOutstanding = (a: Advance) => statusOf(a) === 'paid';
+/**
+ * 錢還在外面（已經出款、還沒結清，而且還欠著）。
+ *
+ * ★★ 2026-09-21 起**包含「部分收回」** —— 還了一半的那一列，
+ *   剩下的那一半還在外面。只算 `paid` 的話統計卡會少掉那些錢，
+ *   而畫面上看起來完全正常。
+ */
+export const isOutstanding = (a: Advance) =>
+  statusOf(a) === 'paid' || statusOf(a) === 'partial';
+
+/**
+ * 這一列**還欠多少** —— 剩餘款（2026-09-21 使用者：「也要能看出剩餘款」）。
+ *
+ * ★ 結清的回 0:不管差多少，那筆差額已經是被扣不是應收了。
+ * ★★ 這支跟 `lib/advance-repay.ts` 的 `oweOf()` 是同一條算式。
+ *   那邊給攤還用（型別只認得還款要的幾個欄位），這邊給畫面用。
+ *   兩邊都改到才算改完 —— 有測試釘住它們一致。
+ */
+export function remainingOf(a: Advance): number {
+  if (a.refunded_on != null) return 0;
+  const left = Number(a.amount) - Number(a.refunded_amount ?? 0);
+  return Math.max(0, Math.round(left * 100) / 100);
+}
 
 /**
  * 新增／編輯的必填檢查。回傳錯誤訊息，沒問題回 null。
@@ -283,9 +337,17 @@ export function validateRefund(a: Advance): string | null {
   const hasDate = !!a.refunded_on;
   const hasAmt = a.refunded_amount != null && a.refunded_amount !== ('' as unknown as number);
 
-  // ★ 成對。只有其中一個的話，狀態落在「已退款」與「已付款」之間
-  if (hasDate !== hasAmt) {
-    return hasDate ? '填了收回日就要填收回金額（全額被扣就填 0）' : '填了收回金額就要填收回日';
+  /*
+   * ★★★ 2026-09-21 放寬成**單向**，跟 migration_286 的 `ap_refund_pair_chk` 一致:
+   *
+   *     結清了 → 一定要有「已還多少」（全額被扣就是 0）
+   *     有金額而沒結清 → **合法**，那是「部分收回」，還在攤
+   *
+   *   舊版是雙向相等，而那條正是擋住攤還的那一條。
+   *   兩邊都要放寬 —— 只放資料庫那邊的話，畫面會在存之前就先擋下來。
+   */
+  if (hasDate && !hasAmt) {
+    return '填了結清日就要填已還多少（全額被扣就填 0）';
   }
   if (!hasDate) return null;
 
@@ -347,9 +409,16 @@ export function refundAccountWarning(a: Advance): string | null {
 
 /** 一組暫付的統計。暫付分頁的三張卡用。 */
 export type AdvanceStats = {
-  paid:      { n: number; amt: number };   // 錢還在外面
-  refunded:  { n: number; amt: number };   // 收回了（含部分退收回的部分）
-  forfeited: { n: number; amt: number };   // 被扣掉的
+  /**
+   * 錢還在外面。
+   * ★★★ `amt` 是**剩餘款**（代墊 − 累計已還），不是暫付原價。
+   *   還了 6,000 之後還印 13,209 的話，那張卡會永遠說欠原價。
+   */
+  paid:      { n: number; amt: number };
+  /** 收回了 —— 累計已還（含結清時已經收到的那部分） */
+  refunded:  { n: number; amt: number };
+  /** 被扣掉的（只有結清而沒收足的才算） */
+  forfeited: { n: number; amt: number };
 };
 
 /**
@@ -364,13 +433,26 @@ export function statsOf(rows: Advance[]): AdvanceStats {
   for (const a of rows ?? []) {
     const st = statusOf(a);
     if (st === 'draft') continue;   // 還沒出款的錢還在我們帳上，不算暫付
-    if (st === 'paid') {
+
+    /*
+     * ★★★ 「部分收回」**同時**算進兩格（2026-09-21）:
+     *     還沒還的那部分 → 錢還在外面（剩餘款）
+     *     已經還的那部分 → 收回了
+     *   只放一格的話另一格會少一截，而兩張卡看起來都很正常。
+     * ★ 所以 paid.n + refunded.n **不等於**總筆數 —— 那是對的，
+     *   卡片問的是「有幾列還欠錢」與「有幾列收過錢」，不是分家。
+     */
+    if (st === 'paid' || st === 'partial') {
       out.paid.n += 1;
-      out.paid.amt += Number(a.amount) || 0;
-      continue;
+      out.paid.amt += remainingOf(a);
     }
-    out.refunded.n += 1;
-    out.refunded.amt += Number(a.refunded_amount) || 0;
+    if (st !== 'paid') {
+      const got = Number(a.refunded_amount) || 0;
+      if (got > 0 || st === 'refunded' || st === 'shortfall') {
+        out.refunded.n += 1;
+        out.refunded.amt += got;
+      }
+    }
     const lost = forfeitedOf(a);
     if (lost > 0) { out.forfeited.n += 1; out.forfeited.amt += lost; }
   }

@@ -20,8 +20,26 @@ describe('statusOf —— null 與 0 是兩件事', () => {
   test('全額收回', () => {
     assert.equal(statusOf(A({ refunded_on: '2026-08-01', refunded_amount: 150000 })), 'refunded');
   });
-  test('部分收回', () => {
-    assert.equal(statusOf(A({ refunded_on: '2026-08-01', refunded_amount: 148000 })), 'partial');
+  /*
+   * ★★★ 2026-09-21（migration_286）：`partial` 換了意思。
+   *
+   *     結清了 ＋ 沒收足  → `shortfall`  已結清（被扣），差額記成**費用**
+   *     沒結清 ＋ 還了一些 → `partial`    部分收回，差額是**應收**
+   *
+   *   合成一個的話，攤還到一半的列會被 `needsForfeitExpense()` 當成被扣
+   *   而自動產生一筆支出 —— 7,350 收了 6,000，那 1,350 會變成安幸的費用，
+   *   而事實是愛皮下個月就會還。
+   */
+  test('★★★ 結清了但沒收足 → shortfall（已結清、被扣）', () => {
+    assert.equal(statusOf(A({ refunded_on: '2026-08-01', refunded_amount: 148000 })), 'shortfall');
+  });
+
+  test('★★★ 沒結清但還了一部分 → partial（還在攤，差額是應收）', () => {
+    const a = A({ refunded_amount: 100000 });          // 結清日是空的
+    assert.equal(statusOf(a), 'partial');
+    assert.equal(forfeitedOf(a), 0, '還在攤的差額不是被扣');
+    assert.equal(needsForfeitExpense(a), false, '★ 這一條錯了就會自動產生一筆假費用');
+    assert.equal(isOutstanding(a), true, '沒還完的那部分還在外面');
   });
 
   /*
@@ -29,19 +47,23 @@ describe('statusOf —— null 與 0 是兩件事', () => {
    *   0 會被當成 null，於是一筆被全額沒收的押金永遠躺在
    *   「錢還在外面」的清單裡，等一個不會來的退款。
    */
-  test('★★★ 收回 0 元（全額被扣）是「已收回」，不是「還沒收回」', () => {
+  test('★★★ 收回 0 元（全額被扣）是「已結清」，不是「還沒收回」', () => {
     const a = A({ refunded_on: '2026-08-01', refunded_amount: 0 });
-    assert.equal(statusOf(a), 'partial');
+    assert.equal(statusOf(a), 'shortfall');
     assert.equal(isOutstanding(a), false);
     assert.equal(forfeitedOf(a), 150000);
   });
 
-  test('只有日期沒有金額 → 還當成已付款（資料庫會擋，畫面不能爆）', () => {
-    assert.equal(statusOf(A({ refunded_on: '2026-08-01' })), 'paid');
+  /*
+   * ★★ 只有結清日沒有金額:migration_286 的 `ap_refund_pair_chk` 會擋，
+   *   但畫面拿到髒資料不能爆。`refunded_amount ?? 0` → 0 < 150000 → shortfall。
+   */
+  test('只有結清日沒有金額 → 當成已結清（資料庫會擋，畫面不能爆）', () => {
+    assert.equal(statusOf(A({ refunded_on: '2026-08-01' })), 'shortfall');
   });
 
   test('每個狀態都有中文標籤', () => {
-    for (const s of ['draft', 'paid', 'refunded', 'partial'] as const) {
+    for (const s of ['draft', 'paid', 'partial', 'refunded', 'shortfall'] as const) {
       assert.ok(STATUS_LABEL[s].length > 0, s);
     }
   });
@@ -129,8 +151,21 @@ describe('validateRefund —— 跟資料庫的約束同一組規則', () => {
    * ★★ 只有其中一個的話，狀態落在「已退款」與「已付款」之間 ——
    *   而畫面上要據此決定顯示哪個標籤，兩邊都不對。
    */
-  test('只有日期', () => assert.match(validateRefund(A({ refunded_on: '2026-08-01' })) ?? '', /收回金額/));
-  test('只有金額', () => assert.match(validateRefund(A({ refunded_amount: 1000 })) ?? '', /收回日/));
+  /*
+   * ★★★ 2026-09-21：成對規則從**雙向**放寬成**單向**，跟 migration_286 的
+   *   `ap_refund_pair_chk` 一致：
+   *
+   *       結清了 → 一定要有「已還多少」（全額被扣就是 0）
+   *       有金額而沒結清 → **合法**，那是「部分收回」，還在攤
+   *
+   *   舊版是「兩個要嘛都有、要嘛都沒有」，而那條正是擋住攤還的那一條。
+   *   兩邊都要放寬 —— 只放資料庫那邊的話，畫面會在存之前就先擋下來。
+   */
+  test('只有結清日沒有金額 → 擋', () =>
+    assert.match(validateRefund(A({ refunded_on: '2026-08-01' })) ?? '', /已還多少/));
+
+  test('★★★ 只有金額沒有結清日 → 放行（那是部分收回，還在攤）', () =>
+    assert.equal(validateRefund(A({ refunded_amount: 1000 })), null));
 
   test('收回比付出去的多', () => {
     const m = validateRefund(A({ refunded_on: '2026-08-01', refunded_amount: 160000 })) ?? '';
