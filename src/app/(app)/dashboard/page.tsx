@@ -293,6 +293,32 @@ export default function DashboardPage() {
    */
   const [exclEst, setExclEst] = useState<string[]>([]);
   const [exclOpen, setExclOpen] = useState(false);
+  /*
+   * ★★★ 下拉的位置要**量完再夾**，不能用 `absolute left-0`。
+   *   篩選列會換行，按鈕的 x 位置跟著視窗寬度跑 ——
+   *   `left:0` 在 390px 往右超出 23px、改成 `right:0` 又在 560px 往左跑出畫面。
+   *   **沒有一個固定的方向是永遠對的**（兩種我都量過）。
+   *   跟營收圖那張卡片同一套做法。
+   */
+  const exclBtn = useRef<HTMLButtonElement>(null);
+  const exclBox = useRef<HTMLDivElement>(null);
+  const [exclPos, setExclPos] = useState({ left: -9999, top: -9999 });
+  useEffect(() => {
+    if (!exclOpen) return;
+    const put = () => {
+      const b = exclBtn.current?.getBoundingClientRect();
+      const n = exclBox.current;
+      if (!b || !n) return;
+      const w = n.offsetWidth, h = n.offsetHeight, pad = 12;
+      let left = b.left, top = b.bottom + 4;
+      if (left + w + pad > window.innerWidth) left = window.innerWidth - w - pad;
+      if (top + h + pad > window.innerHeight) top = b.top - h - 4;
+      setExclPos({ left: Math.max(pad, left), top: Math.max(pad, top) });
+    };
+    put();
+    window.addEventListener('resize', put);
+    return () => window.removeEventListener('resize', put);
+  }, [exclOpen, exclEst]);
 
   /*
    * 「營收與住房率」那張圖要畫哪一種。
@@ -1182,8 +1208,8 @@ export default function DashboardPage() {
             而使用者會拿著一個被動過的數字做決定。
           ★★ 排除中的時候按鈕變色並寫出排除了誰，不是只變個顏色。
         */}
-        <div className="relative">
-          <button type="button" onClick={() => setExclOpen((v) => !v)}
+        <div>
+          <button ref={exclBtn} type="button" onClick={() => setExclOpen((v) => !v)}
             className={`h-9 rounded-lg border px-3 text-uisub inline-flex items-center gap-1.5
                         transition-colors ${exclEst.length
               ? 'border-amber-400 bg-amber-50 text-amber-800 font-semibold'
@@ -1196,8 +1222,9 @@ export default function DashboardPage() {
               {/* ★ 點外面關起來。蓋一層透明的，不要靠 document listener ——
                      那條路在重繪時會抓不到已經離開 DOM 的元素 */}
               <div className="fixed inset-0 z-10" onClick={() => setExclOpen(false)} />
-              <div className="absolute left-0 top-full z-20 mt-1 min-w-[190px] rounded-xl border
-                              border-mor-line bg-white p-2 shadow-[0_8px_26px_rgba(46,56,64,.16)]">
+              <div ref={exclBox} style={{ position: 'fixed', left: exclPos.left, top: exclPos.top }}
+                className="z-20 w-[min(220px,calc(100vw-24px))] rounded-xl border
+                           border-mor-line bg-white p-2 shadow-[0_8px_26px_rgba(46,56,64,.16)]">
                 <div className="px-1.5 pb-1.5 text-[11px] text-gray-400">
                   勾起來的不算進去（本期、上一期、去年同期一起扣）
                 </div>
