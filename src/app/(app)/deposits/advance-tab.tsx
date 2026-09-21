@@ -626,11 +626,14 @@ export function AdvanceList({
         <div className={`mb-3 rounded-xl border px-3 py-2.5 ${
           repayErr && bPay ? 'border-red-400 bg-red-50' : 'border-mor-slate bg-mor-bluelight'}`}>
           <div className="flex flex-wrap items-end gap-3">
-            <div className="text-sm font-medium">
-              {byEach
-                ? `已選 ${scope.length} 列`
-                : `${rParty} 全部待收回 ${scope.length} 列`}
-              　剩餘 NT$ {fmt(scopeOwed)}
+            {/*
+              ★★ 2026-09-21「字太多」那一輪砍過:抬頭只講**誰、幾筆、還欠多少**。
+                「全部待收回」是方式下拉已經說過的事，「NT$」在這一頁
+                每個數字都是台幣 —— 兩個都是多的。
+            */}
+            <div className="text-sm font-medium whitespace-nowrap">
+              {rParty}・{byEach ? `已選 ${scope.length}` : scope.length} 筆
+              　剩餘 <span className="tabular-nums">{fmt(scopeOwed)}</span>
             </div>
             {/*
               ★★★ 還款方式（2026-09-21 使用者指定）。
@@ -638,15 +641,20 @@ export function AdvanceList({
                 剛好把全部勾起來時,兩條路長得一模一樣而答案不同。
             */}
             <label className="flex flex-col gap-1">
-              <span className="flex items-center text-xs text-gray-600">還款方式<Req /></span>
+              <span className="flex items-center text-xs text-gray-600">方式<Req /></span>
+              {/*
+                ★★★ 選項只留四個字。括號裡那串說明把 select 撐到 500px，
+                  後面的欄位全部被擠到第二排（2026-09-21 量出來:1280px 兩排）。
+                  說明搬到底下那一行 —— 它會跟著方式變。
+              */}
               <select value={bMode}
                 onChange={(e) => {
                   setBMode(e.target.value as 'each' | 'sum');
                   setBPay(''); setBMsg(null);
                 }}
                 className={CTRL}>
-                <option value="each">逐筆還款（勾哪幾列，就剛好還完那幾列）</option>
-                <option value="sum">金額還款（填總數，從最舊的一筆開始扣）</option>
+                <option value="each">逐筆還款</option>
+                <option value="sum">金額還款</option>
               </select></label>
             {/* ★ 對象只有一個時不畫下拉 —— 一個選項的下拉是噪音 */}
             {!byEach && parties.length > 1 && (
@@ -666,22 +674,27 @@ export function AdvanceList({
                 ★★ 勾了的時候把「要剛好多少」寫在標籤上 ——
                   只說「配不上」的話，人得自己把那幾列加一遍才知道差多少。
               */}
-              <span className="flex items-center text-xs text-gray-600">
-                還款金額{byEach
-                  ? `（要剛好 ${fmt(scopeOwed)}）`
-                  : `（最多 ${fmt(scopeOwed)}）`}<Req /></span>
+              {/*
+                ★★★ 標籤只寫「金額」（2026-09-21 使用者指定）。
+                  「要剛好多少／最多多少」是**不填會怎樣**，那種話進 placeholder
+                  不進標籤（anxing-ui:標籤長過欄位就是寫錯地方了）。
+                ★ 而且提示字就在框裡，要填的時候正好看著它。
+              */}
+              <span className="flex items-center text-xs text-gray-600">金額<Req /></span>
               <input type="number" inputMode="decimal" value={bPay} min="0"
+                placeholder={byEach ? `要剛好 ${fmt(scopeOwed)}` : `最多 ${fmt(scopeOwed)}`}
                 onChange={(e) => { setBPay(e.target.value); setBMsg(null); }}
-                className={`${CTRL} w-36 text-right tabular-nums ${
+                className={`${CTRL} w-32 text-right tabular-nums ${
                   bPay && repayErr ? 'border-red-400 bg-red-50' : ''}`} /></label>
             <label className="flex flex-col gap-1">
-              <span className="flex items-center text-xs text-gray-600">還入帳號（安幸）<Req /></span>
+              {/* ★ 括號拿掉 —— 選項本來就印著 (安幸)／(愛皮)，標籤再寫一次是多的 */}
+              <span className="flex items-center text-xs text-gray-600">還入<Req /></span>
               <select value={bIn} onChange={(e) => setBIn(e.target.value)} className={CTRL}>
                 <option value="">請選擇</option>
                 {inAccts.map((p) => <option key={p.code} value={p.code}>{p.code} {p.name}</option>)}
               </select></label>
             <label className="flex flex-col gap-1">
-              <span className="flex items-center text-xs text-gray-600">出帳帳號（{rParty}）<Req /></span>
+              <span className="flex items-center text-xs text-gray-600">出帳<Req /></span>
               <select value={bOut} onChange={(e) => setBOut(e.target.value)} className={CTRL}>
                 <option value="">請選擇</option>
                 {outAccts.map((p) => <option key={p.code} value={p.code}>{p.code} {p.name}</option>)}
@@ -694,7 +707,7 @@ export function AdvanceList({
               title={repayErr ?? ''}
               className="h-11 md:h-9 rounded-lg bg-mor-greendark text-white px-4 text-ui font-medium
                          hover:opacity-90 disabled:opacity-50">
-              {recovering ? '還款中⋯' : `確認還款${!repayErr && bPay ? ' ' + fmt(Number(bPay)) : ''}`}
+              {recovering ? '還款中⋯' : `還款${!repayErr && bPay ? ' ' + fmt(Number(bPay)) : ''}`}
             </button>
             <button onClick={() => { setPicked({}); setBMsg(null); setBOpen(false); setBPay(''); }}
               className="h-11 md:h-9 rounded-lg border border-mor-line bg-white px-3 text-ui">取消</button>
@@ -708,10 +721,12 @@ export function AdvanceList({
             <div className="mt-2 text-sm text-red-600">{bMsg ?? repayErr}</div>
           )}
           {/* ★ 一句話講完,寫給不知道前因後果的人看（CLAUDE.md） */}
+          {/*
+            ★ 一句話講完。「清單的『這次扣』會先畫出來」拿掉了 ——
+              那件事畫面自己會演（欄位真的跳出來），用文字再說一次是多的。
+          */}
           <div className="mt-1.5 text-xs text-gray-500">
-            {byEach
-              ? '勾起來的那幾列要剛好還完，金額對不上會擋 —— 想留零頭就改用「金額還款」。'
-              : '從最舊的一筆開始扣，扣完才輪到下一筆。清單的「這次扣」會先畫出來。'}
+            {byEach ? '勾起來的那幾筆要剛好還完。' : '從最舊的一筆開始扣。'}
           </div>
         </div>
       )}
