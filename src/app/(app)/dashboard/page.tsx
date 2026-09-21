@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   DASH_TABS, parseTab, pillsApply, whyPillsOff,
   sourcePills, perf,
@@ -1231,13 +1232,18 @@ export default function DashboardPage() {
             {exclLabel(exclEst.map((id) => estateName[id] ?? id))}
             <span className="text-xs text-gray-400">{exclOpen ? '▴' : '▾'}</span>
           </button>
+          {/* ★★★ 下拉整組搬到 <body> 底下（`Portal`）—— 留在這裡的話，
+                 外面那張 `.glass` 會變成 fixed 的容器塊:下拉被推到畫面外
+                 （2026-09-21 在線上量到 x=2145，而視窗只有 1536 寬），
+                 而那層「點外面關起來」的 `inset-0` 也只蓋得住那張卡，
+                 不是整個畫面。 */}
           {exclOpen && (
-            <>
+            <Portal>
               {/* ★ 點外面關起來。蓋一層透明的，不要靠 document listener ——
                      那條路在重繪時會抓不到已經離開 DOM 的元素 */}
-              <div className="fixed inset-0 z-10" onClick={() => setExclOpen(false)} />
+              <div className="fixed inset-0 z-[60]" onClick={() => setExclOpen(false)} />
               <div ref={exclBox} style={{ position: 'fixed', left: exclPos.left, top: exclPos.top }}
-                className="z-20 w-[min(220px,calc(100vw-24px))] rounded-xl border
+                className="z-[61] w-[min(220px,calc(100vw-24px))] rounded-xl border
                            border-mor-line bg-white p-2 shadow-[0_8px_26px_rgba(46,56,64,.16)]">
                 <div className="px-1.5 pb-1.5 text-[11px] text-gray-400">
                   勾起來的不算進去（本期、上一期、去年同期一起扣）
@@ -1265,7 +1271,7 @@ export default function DashboardPage() {
                   </button>
                 )}
               </div>
-            </>
+            </Portal>
           )}
         </div>
         {/*
@@ -2477,11 +2483,52 @@ function RevOccPair({ rows, keys, picks, scopeName }: {
 }
 
 /**
+ * 把 `position: fixed` 的東西搬到 `<body>` 底下再畫。
+ *
+ * ★★★ 為什麼非要不可（2026-09-21 在線上量出來）:
+ *   帶 `backdrop-filter`／`transform`／`filter`／`will-change` 的祖先
+ *   會**變成 `position: fixed` 的容器塊**。儀表板每一張卡都是 `.glass`
+ *   （`backdrop-filter: blur(16px)`），於是 `left/top` 不再是
+ *   「離視窗左上角」而是「離那張玻璃卡左上角」——
+ *   卡片與下拉**整個被推到畫面外**，而 CSS 不會講、tsc 不會叫。
+ *
+ * ★★ 量到的兩筆:
+ *   資訊卡　游標 (762, 832) → 實際畫在 (1043, 1291)，視窗只有 960 高
+ *   排除下拉 `left: 1550px` → 實際畫在 x=2145，視窗只有 1536 寬
+ *   兩個偏移量都剛好等於那張 `.glass` 的位置。
+ *
+ * ★ 判斷法:算出來的座標跟實際位置差一個固定量，而那個量等於
+ *   某個祖先的位置 —— 就是這件事。往上找哪一層有上面那四個屬性。
+ */
+function Portal({ children }: { children: React.ReactNode }) {
+  const [ready, setReady] = useState(false);
+  useEffect(() => { setReady(true); }, []);          // SSR 沒有 document
+  return ready ? createPortal(children, document.body) : null;
+}
+
+/**
  * 跟著滑鼠的卡片。
  *
  * ★★★ 用 `fixed` ＋ **把座標夾在視窗內**。畫在格子裡的話會被
  *   `overflow-auto` 的容器裁掉，而最後一個月與畫面下緣那幾格
  *   正是最常被看的（anxing-ui 三）。
+ *
+ * ★★★★ **一定要 `createPortal` 到 `document.body`。**（2026-09-21 踩過）
+ *   儀表板的卡片是 `.glass`，而 `.glass` 有 `backdrop-filter`——
+ *   帶 `backdrop-filter`（或 `transform`／`filter`／`will-change`）的祖先
+ *   會**變成 `position: fixed` 的容器塊**，於是 `left/top` 不再是
+ *   「離視窗左上角」而是「離那張玻璃卡左上角」。
+ *
+ *   量出來:游標在 (762, 832)，卡片跑到 (1043, 1291) —— 偏移剛好等於
+ *   `.glass` 的 (264, 582)。視窗只有 960 高，所以卡片整張在畫面外，
+ *   使用者看到的是「資訊卡跟游標差太遠」與「各物業比較沒有資訊卡」
+ *   **兩件事，同一個原因**。
+ *
+ * ★★★ 為什麼難抓:座標算對了、`fixed` 也寫對了、夾在視窗內那段邏輯
+ *   也對 —— 錯的是「視窗」這個參考點被祖先換掉了，而 CSS 不會講。
+ *   我憑截圖猜了兩次（猜「座標沒更新」、猜「卡片吃掉滑鼠」）都是錯的，
+ *   最後是**在真的頁面上量一次**才看到。
+ *   ★ 判斷法:卡片的偏移量如果剛好等於某個祖先的位置，就是這件事。
  */
 function TipCard({ x, y, pin, children }: {
   x: number; y: number; pin: boolean; children: React.ReactNode;
@@ -2495,15 +2542,22 @@ function TipCard({ x, y, pin, children }: {
     let left = x + 16, top = y + 16;
     if (left + w + pad > window.innerWidth) left = x - w - 16;
     if (top + h + pad > window.innerHeight) top = y - h - 16;
-    setPos({ left: Math.max(pad, left), top: Math.max(pad, top) });
+    setPos((old) => {
+      const next = { left: Math.max(pad, left), top: Math.max(pad, top) };
+      /* 值沒變就回舊的那個物件 —— 每次都給新物件的話，
+         這個 effect 會把自己再叫醒一次 */
+      return old.left === next.left && old.top === next.top ? old : next;
+    });
   }, [x, y, children]);
   return (
+    <Portal>
     <div ref={el} style={{ position: 'fixed', left: pos.left, top: pos.top, zIndex: 50 }}
       className={`min-w-[232px] rounded-xl border border-mor-line bg-white px-3 py-2.5
                   shadow-[0_8px_26px_rgba(46,56,64,.16)]
                   ${pin ? '' : 'pointer-events-none'}`}>
       {children}
     </div>
+    </Portal>
   );
 }
 
