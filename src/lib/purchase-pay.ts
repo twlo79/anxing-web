@@ -159,3 +159,104 @@ export function payAccountsFor<T extends { method: string }>(
   const want = new Set(accountMethodsFor(m));
   return (accounts ?? []).filter((a) => want.has(a.method));
 }
+
+/* ══════════════════════════════════════════════════════════
+ * 帳戶屬於哪一本帳（migration_284 / 285）
+ *
+ * 【使用者 2026-09-21】
+ *   「我要把帳號切出來，分成 安幸帳號／愛皮帳號／洪鯊帳號」
+ *   「安幸的支出頁 這些只能用 安幸的支出」
+ *   「其他收支帳的 進款 出款 是出在各事業體的帳本」
+ *
+ * ══════════════════════════════════════════════════════════
+ * 【★★★ 為什麼這件事非做不可】
+ *
+ * 支出頁那個欄位**已經叫「安幸付款帳號」**，但它列出全部 11 個帳號 ——
+ * 標籤說安幸，內容不是（README 坑 D:標籤說謊）。
+ * 而畫面上沒有任何地方會叫。
+ *
+ * ══════════════════════════════════════════════════════════
+ * 【★★★ 這跟資料庫那條規則是同一件事的兩半，不要各寫一份】
+ *
+ *   資料庫　`public.lend_book_for(付款帳戶, 這張單的帳本)`（migration_285）
+ *           決定「這筆算不算代墊」
+ *   畫面　　這裡的 `accountsForBook()`
+ *           決定「這張單可以選哪些帳戶」
+ *
+ * 兩邊要對得起來:畫面只讓人選得到**同一本帳**的帳戶時，
+ * 資料庫那支永遠回 null（不是代墊）——
+ * 而代墊那條路是**刻意留給請款單**的（安幸的戶頭付別本帳）。
+ *
+ * ★ 所以 `accountsForBook` 有一個 `allowAnxing` 參數:
+ *   請款單要開著（代墊靠它），支出頁與其他收支帳要關著。
+ * ══════════════════════════════════════════════════════════ */
+
+/**
+ * 一列帳號裡這一支用得到的欄位。`book` 是 migration_284 加的。
+ *
+ * ★★ **只要 `book`，不要 `method`** —— 其他收支帳那一頁的帳號清單
+ *   只撈了 `code, name, book`（它不需要付款方式）。
+ *   把 `method` 寫進來的話那一頁連編譯都過不了，
+ *   而修法會變成「去那一頁多撈一個用不到的欄位」——
+ *   那是讓型別去決定查詢，方向反了。
+ * ★ 需要 `method` 的是 `payAccountsForBook`，它自己在簽章上加。
+ */
+export type BookedAccount = { book?: string | null };
+
+/**
+ * 這一本帳可以用哪些帳戶。
+ *
+ * @param book        這一頁／這張單屬於哪一本帳
+ * @param allowAnxing 要不要**同時**列出安幸的帳戶（代墊用）。預設 false
+ *
+ * ★★ `book` 是空的時候當成安幸（跟 `toBook()` 同一條規則）——
+ *   不要因為值怪掉就回空陣列，那會讓下拉整個空掉而畫面不說為什麼。
+ *
+ * ★★★ 沒有 `book` 欄位的帳號（migration_284 還沒跑，或舊快取）
+ *   一律當成**安幸**。回「哪一組都不是」的話，284 跑完之前
+ *   整個下拉會是空的 —— 而那看起來像權限問題，不像沒跑 migration。
+ */
+export function accountsForBook<T extends BookedAccount>(
+  accounts: T[] | null | undefined,
+  book: string | null | undefined,
+  allowAnxing = false,
+): T[] {
+  const want = String(book ?? '').trim() || 'anxing';
+  return (accounts ?? []).filter((a) => {
+    const b = String(a.book ?? '').trim() || 'anxing';
+    return b === want || (allowAnxing && b === 'anxing');
+  });
+}
+
+/**
+ * 付款方式 ＋ 帳本一起篩。畫面上的下拉都走這一支。
+ *
+ * ★ 兩個條件分成兩支函式再在呼叫端 `.filter().filter()` 的話，
+ *   就會有人只套了其中一個 —— 而那個下拉看起來完全正常
+ *   （README 坑 A:同一條規則寫在兩個地方）。
+ */
+export function payAccountsForBook<T extends { method: string } & BookedAccount>(
+  accounts: T[] | null | undefined,
+  m: string | null | undefined,
+  book: string | null | undefined,
+  allowAnxing = false,
+): T[] {
+  return accountsForBook(payAccountsFor(accounts, m), book, allowAnxing);
+}
+
+/*
+ * ══════════════════════════════════════════════════════════
+ * 【★★ 為什麼沒有一支「非安幸的單一定要選帳戶嗎」】
+ *
+ * 因為 `needsPayout()` **本來就包含現金**（2026-09-09 加的），
+ * 所以每一種付款方式都會問付款帳戶 —— 不用再開第二條規則。
+ *
+ * ★ 2026-09-21 查到的 PR-202609-006／007 之所以是空的，
+ *   是因為它們的日期是 **09-08**，比那次改動早一天。
+ *   那兩張已經出款，不會再跑觸發器（migration_285 的自檢 ③ 是 0 張）。
+ *
+ * ★★ 寫一支「兩個分支回一樣的值」的函式比不寫更糟:
+ *   它看起來像一條規則，而它什麼都沒判斷 ——
+ *   下一個人會以為那裡已經處理過了。
+ * ══════════════════════════════════════════════════════════
+ */

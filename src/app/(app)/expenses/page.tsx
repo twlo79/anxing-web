@@ -60,10 +60,13 @@ type Expense = {
 /** kind：expense=只用於支出 / income=只用於收入 / both=兩邊都用（migration_90） */
 type AccountCode = { code: string; name: string; sort: number; active: boolean; kind?: string };
 type Estate = { id: string; name: string; sort: number; active: boolean };
-type PayAccount = { code: string; name: string; method: string };
+/** ★ `book` 是 migration_284 加的 —— 決定這個帳號出現在哪一頁的下拉裡 */
+type PayAccount = { code: string; name: string; method: string; book?: string | null };
 type Property = { id: string; name: string; estate_id: string | null };
 
-import { PAY_LABEL, PAY_OPTS, needsPayout, payAccountsFor } from '@/lib/purchase-pay';
+import {
+  PAY_LABEL, PAY_OPTS, needsPayout, accountsForBook, payAccountsForBook,
+} from '@/lib/purchase-pay';
 import RangeInput from '@/components/RangeInput';
 import StatHero from '@/components/StatHero';
 
@@ -152,7 +155,7 @@ export default function ExpensesPage() {
   useEffect(() => {
     supabase.from('account_codes').select('code, name, sort, active, kind').order('sort').then(({ data }) => setCodes(data ?? []));
     supabase.from('estates').select('id, name, sort, active').order('sort').then(({ data }) => setEstates(data ?? []));
-    supabase.from('payment_accounts').select('code, name, method')
+    supabase.from('payment_accounts').select('code, name, method, book')
       .eq('for_payment', true).eq('active', true).order('sort')
       .then(({ data }) => setPayAccounts(data ?? []));
     supabase.from('properties').select('id, name, estate_id').order('name')
@@ -683,7 +686,10 @@ export default function ExpensesPage() {
           <select value={acctF} onChange={(e) => setAcctF(e.target.value)} className="rounded-lg border border-mor-line px-2 py-1.5">
             <option value="">全部</option>
             <option value="__cash">現金/未指定</option>
-            {payAccounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
+            {/* ★ 篩選也只列安幸的 —— 這一頁本來就只有安幸的支出，
+                  列出愛皮的帳戶只會讓人選一個永遠篩出 0 筆的值 */}
+            {accountsForBook(payAccounts, 'anxing')
+              .map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
           </select></label>
         {/* ★ 原本用 `title` 提示可以搜哪些欄位 —— 手機沒有 hover，那句話等於不存在。
               改放 placeholder（全站一致，2026-08-29） */}
@@ -1155,13 +1161,22 @@ export default function ExpensesPage() {
                     className="rounded-lg border border-mor-line px-2 py-1.5">
                     {PAY_OPTS.map((p) => <option key={p} value={p}>{PAY_LABEL[p]}</option>)}
                   </select></label>
-                {/* 現金沒有帳號可選,匯款與信用卡才需要 */}
+                {/*
+                  ★★★ 這一頁是**安幸的**支出，所以下拉只列安幸的帳戶
+                    （2026-09-21 使用者:「這些只能用 安幸的支出」）。
+                    這個欄位本來就叫「安幸付款帳號」，但它一直列出全部 11 個 ——
+                    標籤說安幸，內容不是（README 坑 D:標籤說謊），
+                    而畫面上沒有任何地方會叫。
+
+                  ★★ `allowAnxing` 不用傳（預設 false）——
+                    代墊那條路是留給**請款單**的，支出頁不該選得到別本帳的戶頭。
+                */}
                 {needsPayout(edit.payment_method) && (
                   <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">安幸付款帳號</span>
                     <select value={edit.pay_account ?? ''} onChange={(e) => setEdit({ ...edit, pay_account: e.target.value || null })}
                       className="rounded-lg border border-mor-line px-2 py-1.5">
                       <option value="">請選擇</option>
-                      {payAccountsFor(payAccounts, edit.payment_method)
+                      {payAccountsForBook(payAccounts, edit.payment_method, 'anxing')
                         .map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
                     </select></label>
                 )}

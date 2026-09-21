@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { useProfile } from '@/lib/profile';
 import { fetchAll } from '@/lib/fetch-all';
+import { accountsForBook } from '@/lib/purchase-pay';
 import Req from '@/components/Req';
 import MoneyInput from '@/components/MoneyInput';
 import Toast from '@/components/Toast';
@@ -87,7 +88,24 @@ export default function OtherBooksPage() {
   /** 打開的抽屜是哪一列 */
   const [view, setView] = useState<Entry | null>(null);
   const [codes, setCodes] = useState<Code[]>([]);
-  const [accounts, setAccounts] = useState<{ code: string; name: string }[]>([]);
+  const [accounts, setAccounts] = useState<{ code: string; name: string; book?: string | null }[]>([]);
+
+  /*
+   * ══════════════════════════════════════════════════════════
+   * 這一個分頁看得到哪些帳戶（migration_284）。
+   *
+   * 【使用者 2026-09-21】「這邊表單 進款 出款 是出在各事業體的帳本」
+   *
+   * ★★★ 只列**這個分頁的事業體**的帳戶:愛皮分頁只有愛皮的、洪鯊只有洪鯊的。
+   *   不篩的話，愛皮的收入會被記到安幸的戶頭上 ——
+   *   而兩邊的數字各自看起來都正常，只有對帳時差一截（README 坑 J）。
+   *
+   * ★★ `allowAnxing` 不傳（預設 false）——
+   *   代墊那條路是留給**請款單**的（安幸的戶頭付別本帳），
+   *   這一頁直接記帳的收入與實支不該走安幸的戶頭。
+   * ══════════════════════════════════════════════════════════
+   */
+  const bookAccounts = useMemo(() => accountsForBook(accounts, book), [accounts, book]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
@@ -219,8 +237,9 @@ export default function OtherBooksPage() {
   }, [supabase, book, canSee]);
   useEffect(() => {
     if (!canSee) return;
-    supabase.from('payment_accounts').select('code, name').eq('active', true).order('sort')
-      .then(({ data }) => setAccounts((data ?? []) as { code: string; name: string }[]));
+    /* ★ 連 book 一起撈（migration_284）—— 下面要照分頁的事業體篩 */
+    supabase.from('payment_accounts').select('code, name, book').eq('active', true).order('sort')
+      .then(({ data }) => setAccounts((data ?? []) as { code: string; name: string; book?: string | null }[]));
   }, [supabase, canSee]);
 
   const codeName = useMemo(
@@ -736,7 +755,7 @@ export default function OtherBooksPage() {
           pays={pays[view.id] ?? []}
           paid={paidFor(view)}
           nameOf={nameOf}
-          accounts={accounts}
+          accounts={bookAccounts}
           onClose={() => setView(null)}
           onEdit={() => { setRow({ ...view }); setView(null); }}
           onReload={() => { void load(); }}
@@ -849,7 +868,7 @@ export default function OtherBooksPage() {
               <select value={inc.account} onChange={(e) => setInc({ ...inc, account: e.target.value })} className={CTRL}>
                 <option value="">—</option>
                 <option value="現金">現金</option>
-                {accounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
+                {bookAccounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
               </select>
             </label>
           </div>
@@ -916,7 +935,7 @@ export default function OtherBooksPage() {
               <span className="text-xs text-gray-500">付款帳號</span>
               <select value={exp.account} onChange={(e) => setExp({ ...exp, account: e.target.value })} className={CTRL}>
                 <option value="">—（現金）</option>
-                {accounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
+                {bookAccounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
               </select>
             </label>
             <label className="flex flex-col gap-1">
@@ -1411,6 +1430,7 @@ function ViewDrawer({
                           onChange={(ev) => setDraft({ ...draft, account: ev.target.value })}
                           className="h-10 rounded-lg border border-mor-line px-2 text-sm bg-white">
                           <option value="">—</option>
+                          {/* ★ 這裡是抽屜元件，收到的 prop 已經是篩過的（頁面傳 bookAccounts 進來） */}
                           {accounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
                         </select></label>
                     </div>

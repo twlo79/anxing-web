@@ -38,7 +38,7 @@ import {
 } from '@/lib/book';
 import {
   PAY_LABEL, PAY_OPTS, needsPayout as payMethodNeedsPayout, needsPayeeAccount,
-  needsPlan, hasTransferFee, dateWord, acctWord, payAccountsFor,
+  needsPlan, hasTransferFee, dateWord, acctWord, payAccountsForBook,
 } from '@/lib/purchase-pay';
 // 排匯款／確認退款日 —— 押金管理頁用同一支，兩邊的規則不會漂走
 import DepositRefundStep, { type StepMode } from '@/components/DepositRefundStep';
@@ -136,7 +136,8 @@ type AccountCode = { code: string; name: string; kind?: string; active?: boolean
 type Payee = { id: string; label: string; bank_code: string | null; account: string;
                company: string | null; tax_id: string | null };
 type Estate = { id: string; name: string };
-type PayAccount = { code: string; name: string; method: string };
+/** ★ `book` 是 migration_284 加的 —— 決定這個帳號出現在哪一本帳的下拉裡 */
+type PayAccount = { code: string; name: string; method: string; book?: string | null };
 type Profile = { id: string; name: string; role: string };
 
 const FREE_THRESHOLD = 3000;   // 與 migration 的 pr_apply_status() 一致
@@ -400,7 +401,7 @@ export default function PurchasesPage() {
     supabase.from('estates').select('id, name').eq('active', true).order('sort').order('name').then(({ data }) => setEstates(data ?? []));
     // 停用的房源不出現在下拉,但既有項目仍要顯示得出名字,所以不篩 active
     supabase.from('properties').select('id, name, estate_id').order('name').then(({ data }) => setProperties(data ?? []));
-    supabase.from('payment_accounts').select('code, name, method')
+    supabase.from('payment_accounts').select('code, name, method, book')
       .eq('for_payment', true).eq('active', true).order('sort')
       .then(({ data }) => setPayAccounts(data ?? []));
   }, [supabase]);
@@ -3415,7 +3416,14 @@ export default function PurchasesPage() {
                           onChange={(e) => setEdit({ ...edit, payout_account: e.target.value || null })}
                           className="w-full h-12 md:h-auto bg-white rounded-lg border border-mor-line px-2 md:py-1.5 disabled:bg-gray-50">
                           <option value="">未指定</option>
-                          {payAccountsFor(payAccounts, edit.payment_method)
+                          {/*
+                            ★★★ 只列「這張單那一本帳」＋「安幸」的戶頭（migration_284/285）。
+                              `allowAnxing` 開著是**刻意的** —— 代墊就是
+                              「安幸的戶頭付別本帳」，關掉的話代墊那條路就不存在了。
+                            ★★ 資料庫那一半是 `lend_book_for()`:付款帳戶的帳本
+                              跟這張單的帳本不一樣才算代墊。畫面這邊只是**讓他選得到**。
+                          */}
+                          {payAccountsForBook(payAccounts, edit.payment_method, edit.book, true)
                             .map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
                         </select></label>
                     )}
@@ -3799,7 +3807,8 @@ export default function PurchasesPage() {
                   <select value={dateAcct} onChange={(e) => setDateAcct(e.target.value)}
                     className="w-full rounded-lg border border-mor-line px-2 py-1.5">
                     <option value="">請選擇</option>
-                    {payAccountsFor(payAccounts, dateMethod || dating.payment_method)
+                    {payAccountsForBook(payAccounts, dateMethod || dating.payment_method,
+                                        dating.book, true)
                       .map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
                   </select>
                 </>
@@ -3851,7 +3860,8 @@ export default function PurchasesPage() {
                   <select value={planAcct} onChange={(e) => setPlanAcct(e.target.value)}
                     className="rounded-lg border border-mor-line px-2 py-1.5">
                     <option value="">請選擇</option>
-                    {payAccountsFor(payAccounts, planMethod || planning.payment_method)
+                    {payAccountsForBook(payAccounts, planMethod || planning.payment_method,
+                                        planning.book, true)
                       .map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
                   </select></label>
               )}

@@ -14,6 +14,7 @@ import { extraDetails, needsCrawlerDetail } from '@/lib/sync-extra';
 import { findListingOwner, listingOwnerHint } from '@/lib/listing-owner';
 import { useProfile } from '@/lib/profile';
 import { softDelete } from '@/lib/trash';
+import { BOOKS, BOOK_LABEL, DEFAULT_BOOK, toBook } from '@/lib/book';
 import { Tabs } from '@/components/Tabs';
 import {
   ymOf, ymLabel, ymOptions, nextCloseYm, closeConfirm, reopenConfirm,
@@ -152,9 +153,18 @@ type Payee = {
 type PayAccount = {
   id: string; method: string; code: string; name: string;
   for_income: boolean; for_payment: boolean; sort: number; active: boolean;
+  /** 屬於哪一本帳（migration_284）。舊快取可能沒有，讀的時候當安幸 */
+  book?: string | null;
 };
 
-const METHOD_LABEL: Record<string, string> = { transfer: '匯款', credit_card: '信用卡' };
+/*
+ * ★ 2026-09-21 補上 cash —— 原本這張表少了它，畫面上那兩列現金帳號
+ *   的「方式」欄直接印出英文 `cash`，而旁邊幾列都是中文。
+ *   純 bug 修（畫面本來就壞的）。
+ */
+const METHOD_LABEL: Record<string, string> = {
+  transfer: '匯款', credit_card: '信用卡', cash: '現金',
+};
 
 const TAB_LABEL = {
   people: '權限管理', estates: '物業與負責人', accounts: '收付款帳號',
@@ -898,6 +908,18 @@ export default function AdminPage() {
 
   // ---- 收付款帳號 ----
   const [newAcctMethod, setNewAcctMethod] = useState('transfer');
+  /** 新增帳號時屬於哪一本帳（migration_284）。預設安幸 —— 九成的帳號是它 */
+  const [newAcctBook, setNewAcctBook] = useState<string>(DEFAULT_BOOK);
+
+  /*
+   * 照帳本分組（2026-09-21 使用者選的甲案）。
+   * ★★ 組的順序固定照 `BOOKS`（安幸 → 愛皮 → 洪鯊），不是照資料出現的順序 ——
+   *   順序會變的清單，人每次都要重新找自己要的那一組。
+   * ★ 空的組不畫。洪鯊還沒有帳號時畫一個空標題，看起來像壞掉。
+   */
+  const acctGroups = useMemo(() => BOOKS
+    .map((b) => [b, payAccounts.filter((a) => toBook(a.book) === b)] as const)
+    .filter(([, rows]) => rows.length > 0), [payAccounts]);
   const [newAcctCode, setNewAcctCode] = useState('');
   const [newAcctName, setNewAcctName] = useState('');
 
@@ -945,11 +967,13 @@ export default function AdminPage() {
     if (!code) return flash('請填代號');
     const { error } = await supabase.from('payment_accounts').insert({
       method: newAcctMethod, code, name,
-      for_income: newAcctMethod === 'transfer',   // 信用卡預設只用於付款
+      for_income: newAcctMethod === 'transfer',   // 信用卡與現金預設只用於付款
       for_payment: true, sort: 50,
+      book: newAcctBook,                          // migration_284
     });
     if (error) return flash('新增失敗:' + error.message);
-    setNewAcctCode(''); setNewAcctName(''); flash('已新增 ' + code); load();
+    setNewAcctCode(''); setNewAcctName('');
+    flash(`已新增 ${code}（${BOOK_LABEL[toBook(newAcctBook)]}）`); load();
   }
   async function updatePayAccount(id: string, patch: Partial<PayAccount>) {
     const { error } = await supabase.from('payment_accounts').update(patch).eq('id', id);
@@ -1574,6 +1598,7 @@ export default function AdminPage() {
                   <th className="px-4 py-2.5">方式</th>
                   <th className="px-4 py-2.5">代號</th>
                   <th className="px-4 py-2.5">顯示名稱</th>
+                  <th className="px-4 py-2.5">帳本</th>
                   <th className="px-4 py-2.5 text-center">可收款</th>
                   <th className="px-4 py-2.5 text-center">可付款</th>
                   <th className="px-4 py-2.5 w-20">排序</th>
@@ -1581,7 +1606,23 @@ export default function AdminPage() {
                 </tr>
               </thead>
               <tbody>
-                {payAccounts.map((a) => (
+                {/*
+                  ★★★ 照帳本分組（2026-09-21 使用者選的甲案）。
+                    分組只是**排版** —— 底下還是同一張表，排序欄照舊全域，
+                    代號一個都沒動。
+                  ★★ 分組鍵用 `toBook()` 收斂:值怪掉的帳號會落在安幸那一組，
+                    而不是「哪一組都不出現」——
+                    後者是一個看起來很正常的空清單，沒有地方會叫。
+                */}
+                {acctGroups.map(([bk, rows]) => (
+                  <Fragment key={bk}>
+                    <tr>
+                      <td colSpan={8} className="px-4 py-1.5 bg-mor-sand/40 text-xs font-bold text-[#5b5344]">
+                        {BOOK_LABEL[bk]}
+                        <span className="ml-2 font-normal text-gray-400">· {rows.length} 個帳號</span>
+                      </td>
+                    </tr>
+                {rows.map((a) => (
                   <tr key={a.id} className={`border-b border-mor-line/60 last:border-0 ${a.active ? '' : 'opacity-50'}`}>
                     <td className="px-4 py-2">{METHOD_LABEL[a.method] ?? a.method}</td>
                     <td className="px-4 py-2 font-medium">{a.code}</td>
@@ -1589,6 +1630,18 @@ export default function AdminPage() {
                       <input defaultValue={a.name}
                         onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== a.name) updatePayAccount(a.id, { name: v }); }}
                         className="rounded-lg border border-gray-300 px-2 py-1 w-44" />
+                    </td>
+                    {/*
+                      ★★★ 改帳本 = 改「這個帳號出現在哪一頁的下拉裡」。
+                        代號一個字都沒動，所以舊資料不受影響
+                        （畫面上那句「代號一旦有交易掛上就不要再改」照舊）。
+                    */}
+                    <td className="px-4 py-2">
+                      <select value={toBook(a.book)}
+                        onChange={(e) => updatePayAccount(a.id, { book: e.target.value })}
+                        className="rounded-lg border border-gray-300 px-2 py-1 text-sm">
+                        {BOOKS.map((b) => <option key={b} value={b}>{BOOK_LABEL[b]}</option>)}
+                      </select>
                     </td>
                     <td className="px-4 py-2 text-center">
                       <input type="checkbox" checked={a.for_income} className="w-4 h-4"
@@ -1609,8 +1662,10 @@ export default function AdminPage() {
                     </td>
                   </tr>
                 ))}
+                  </Fragment>
+                ))}
                 {payAccounts.length === 0 && (
-                  <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-400">尚無帳號</td></tr>
+                  <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-400">尚無帳號</td></tr>
                 )}
               </tbody>
             </table>
@@ -1619,6 +1674,17 @@ export default function AdminPage() {
             <select value={newAcctMethod} onChange={(e) => setNewAcctMethod(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
               <option value="transfer">匯款</option>
               <option value="credit_card">信用卡</option>
+              {/* ★ 現金本來選不到 —— 而現金帳號是真的存在的（安幸現金／愛皮現金⋯） */}
+              <option value="cash">現金</option>
+            </select>
+            {/*
+              ★★ 新增時就要指定帳本。事後才補的話，中間那段時間它會
+                出現在安幸的下拉裡（`book` 的 default 是 anxing）——
+                而那正是這次要擋掉的東西。
+            */}
+            <select value={newAcctBook} onChange={(e) => setNewAcctBook(e.target.value)}
+              className="rounded-lg border border-gray-300 px-2 py-1.5">
+              {BOOKS.map((b) => <option key={b} value={b}>{BOOK_LABEL[b]}</option>)}
             </select>
             <input value={newAcctCode} onChange={(e) => setNewAcctCode(e.target.value)} placeholder="代號(如 8088)"
               className="rounded-lg border border-gray-300 px-2 py-1.5 w-32" />
