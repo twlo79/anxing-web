@@ -25,8 +25,9 @@ import { FilterBar, FilterSelect, FilterDateRange, FilterClear } from '@/lib/fil
 import { srcLabel, rentOnly } from '@/lib/revenue-report';
 import {
   toWan, pickedLabel, noSrcFilter, toggleSrc, splitBySrc, cardRows,
-  applySrcPicks, bySourceOf, type BySource,
+  applySrcPicks, bySourceOf, ymDash, monthLabel, type BySource,
 } from '@/lib/rev-occ';
+import { isExcluded, toggleExcl, exclLabel } from '@/lib/exclude';
 import {
   type PeriodMode, yearRange, monthRange, prevPeriod, lastYearPeriod,
   yoySameAsPrev, growth, partialMonth, sameMonthRange,
@@ -283,6 +284,15 @@ export default function DashboardPage() {
    * ★ 再點一下拿掉;空陣列 ＝ 沒篩。**全部都亮也是沒篩**（`noSrcFilter`）。
    */
   const [srcPicks, setSrcPicks] = useState<string[]>([]);
+  /*
+   * ★★★ 排除物業（2026-09-21 使用者:「filter 要怎麼排除呢？」）。
+   *   跟「選物業」是相反的預設:**預設全部都在**，把不想看的踢出去。
+   *   七棟裡不想看一棟，用選的要點六下，用排除的點一下。
+   * ★★ 關掉分頁就重置（不存到帳號）—— 要記住的話之後加一支存偏好的 API，
+   *   不影響現在這個架構。
+   */
+  const [exclEst, setExclEst] = useState<string[]>([]);
+  const [exclOpen, setExclOpen] = useState(false);
 
   /*
    * 「營收與住房率」那張圖要畫哪一種。
@@ -323,10 +333,19 @@ export default function DashboardPage() {
     estate_id ?? (property_id ? estateOfProp[property_id] : null) ?? '(未指定物業)', [estateOfProp]);
 
   const matchScope = useCallback((estate_id: string | null, property_id: string | null) => {
+    /*
+     * ★★★ 排除也套在這裡，因為這是**唯一的咽喉點** ——
+     *   `fRevs`／`fExps`（本期）跟 `roll()`（上一期、去年同期）都走它。
+     *   在別的地方各濾一次的話，環比會變成「排除後的本期」對
+     *   「沒排除的上一期」，百分比是假的而畫面上完全看不出來
+     *   （「只算本業」那兩顆當初就是為了這件事寫在最上游的）。
+     */
+    const ek = estate_id ?? (property_id ? estateOfProp[property_id] : null);
+    if (isExcluded(exclEst, ek ?? '(未指定物業)')) return false;
     if (propF) return property_id === propF;
-    if (estF) return (estate_id ?? (property_id ? estateOfProp[property_id] : null)) === estF;
+    if (estF) return ek === estF;
     return true;
-  }, [estF, propF, estateOfProp]);
+  }, [estF, propF, estateOfProp, exclEst]);
 
   const load = useCallback(async () => {
     /*
@@ -590,6 +609,10 @@ export default function DashboardPage() {
   function pickEstate(v: string) { setEstF(v); setPropF(''); }
   function clearFilters() {
     setFromD(monthsAgo(0)); setToD(todayStr()); setEstF(''); setPropF('');
+    /* ★★ 排除也要清。不清的話「清除篩選」之後還有一個看不見的篩選在作用，
+         而使用者會以為自己在看全部（anxing-ui:會篩選的東西消失時，
+         它篩出來的狀態要跟著收掉）。 */
+    setExclEst([]);
   }
 
   const estateName = useMemo(() => Object.fromEntries(estates.map((e) => [e.id, e.name])), [estates]);
@@ -976,9 +999,14 @@ export default function DashboardPage() {
   const revBySrcMonth = useMemo(() => {
     const byYm = new Map<string, { source?: string | null; month_amount: number }[]>();
     fRevs.forEach((r) => {
-      const a = byYm.get(r.ym);
+      /* ★★★ `revenue_recognitions.ym` 是 `YYYYMM`，而住房率那邊的月份是
+           `YYYY-MM` —— 不轉的話每一格都查不到，`?? 0` 把它變成一根
+           高度 0 的長條，**沒有任何地方會叫**（2026-09-21 踩過:
+           十二個月營收全是 0，而住房率那條線好好的）。 */
+      const k = ymDash(r.ym);
+      const a = byYm.get(k);
       const row = { source: r.source, month_amount: Number(r.month_amount || 0) };
-      if (a) a.push(row); else byYm.set(r.ym, [row]);
+      if (a) a.push(row); else byYm.set(k, [row]);
     });
     const m: Record<string, BySource> = {};
     /* ★ 走 `bySourceOf()` 而不是自己再 group 一次 —— 「沒填 source 當 other」
@@ -991,21 +1019,19 @@ export default function DashboardPage() {
   /** 上下兩張圖要用的每一格：全部來源的錢 ＋ 那一格的住房率 */
   const pairRows = useMemo<PairRow[]>(
     () => occMonths.map((o) => ({
-      key: o.m, label: ymMonth(o.m),
-      bySrc: revBySrcMonth[o.m] ?? {},
+      key: o.m,
+      /* ★★ `ymMonth()` 吃的是 `YYYYMM` —— 餵 `YYYY-MM` 進去會回 `'-1'`、
+           `'-0'`（`slice(4,6)`），x 軸上就是那幾個看不懂的東西。tsc 不會叫。 */
+      label: monthLabel(o.m),
+      bySrc: revBySrcMonth[ymDash(o.m)] ?? {},
       occ: o.days > 0 ? o : null,
       partial: isPartialMonth(o.m, { from: fromD, to: toD }),
     })),
     [occMonths, revBySrcMonth, fromD, toD]);
 
-  const comboTime = useMemo<ComboRow[]>(() => {
-    const rev: Record<string, number> = {};
-    pRevs.forEach((r) => { rev[r.ym] = (rev[r.ym] ?? 0) + Number(r.month_amount || 0); });
-    /* ★★★ 最後一個月通常還沒過完 —— 那根長條只有半個月的錢，
-       看起來像營收暴跌。標出來（畫面把它畫淡並在下面寫一句）。 */
-    return occMonths.map((o) => comboRow(
-      o.m, ymMonth(o.m), rev[o.m] ?? 0, o, isPartialMonth(o.m, { from: fromD, to: toD })));
-  }, [pRevs, occMonths, fromD, toD]);
+  /* ★ `comboTime` 2026-09-21 刪掉 —— 按月那張改用 `pairRows` 了。
+       留著的話就是第二條算同一件事的路，而它身上還帶著
+       「`ym` 兩種形狀沒對起來」那個 bug。 */
 
   const comboEstate = useMemo<ComboRow[]>(() => {
     const rev = groupSum(pRevs, (r) => estKey(r.estate_id, r.property_id),
@@ -1146,6 +1172,61 @@ export default function DashboardPage() {
           options={estates.map((e) => ({ value: e.id, label: e.name }))} />
         <FilterSelect label="房源" value={propF} onChange={setPropF}
           options={propsOfEstate.map((p2) => ({ value: p2.id, label: p2.name }))} />
+        {/*
+          ══════════════════════════════════════════════════════
+          排除物業（2026-09-21 使用者指定）
+          ══════════════════════════════════════════════════════
+          ★★★ 放在篩選列**不是放在財報比較那一頁裡面**:它走 `matchScope`，
+            所以整頁（含營收分析、支出分析）都會生效。
+            只在某一頁看得到、卻在每一頁作用 —— 那是一個看不見的篩選，
+            而使用者會拿著一個被動過的數字做決定。
+          ★★ 排除中的時候按鈕變色並寫出排除了誰，不是只變個顏色。
+        */}
+        <div className="relative">
+          <button type="button" onClick={() => setExclOpen((v) => !v)}
+            className={`h-9 rounded-lg border px-3 text-uisub inline-flex items-center gap-1.5
+                        transition-colors ${exclEst.length
+              ? 'border-amber-400 bg-amber-50 text-amber-800 font-semibold'
+              : 'border-mor-line bg-white text-mor-ink hover:border-mor-slate'}`}>
+            {exclLabel(exclEst.map((id) => estateName[id] ?? id))}
+            <span className="text-xs text-gray-400">{exclOpen ? '▴' : '▾'}</span>
+          </button>
+          {exclOpen && (
+            <>
+              {/* ★ 點外面關起來。蓋一層透明的，不要靠 document listener ——
+                     那條路在重繪時會抓不到已經離開 DOM 的元素 */}
+              <div className="fixed inset-0 z-10" onClick={() => setExclOpen(false)} />
+              <div className="absolute left-0 top-full z-20 mt-1 min-w-[190px] rounded-xl border
+                              border-mor-line bg-white p-2 shadow-[0_8px_26px_rgba(46,56,64,.16)]">
+                <div className="px-1.5 pb-1.5 text-[11px] text-gray-400">
+                  勾起來的不算進去（本期、上一期、去年同期一起扣）
+                </div>
+                {estates.filter((e) => e.active).map((e) => {
+                  const on = isExcluded(exclEst, e.id);
+                  /* ★ 會把全部排光的那一顆按不動 —— 而且要說得出為什麼 */
+                  const next = toggleExcl(exclEst, e.id, estates.filter((x) => x.active).map((x) => x.id));
+                  return (
+                    <label key={e.id}
+                      title={next === null ? '至少要留一個物業，不然整頁會變成 0' : ''}
+                      className={`flex items-center gap-2 rounded-lg px-1.5 py-1 text-sm
+                                  ${next === null ? 'opacity-40' : 'cursor-pointer hover:bg-mor-bg'}`}>
+                      <input type="checkbox" checked={on} disabled={next === null}
+                        onChange={() => { if (next) setExclEst(next); }} />
+                      {e.name}
+                    </label>
+                  );
+                })}
+                {exclEst.length > 0 && (
+                  <button type="button" onClick={() => setExclEst([])}
+                    className="mt-1 w-full rounded-lg border border-dashed border-mor-line
+                               px-2 py-1 text-xs text-gray-500 hover:border-mor-slate">
+                    全部放回來
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+        </div>
         {/*
           ══════════════════════════════════════════════════════
           ★★★ 「只算本業」的兩顆開關（2026-08-29 使用者選 B 案:

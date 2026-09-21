@@ -197,3 +197,31 @@ export function bySourceOf<T extends { source?: string | null }>(
   }
   return m;
 }
+
+/**
+ * 把月份統一成 `YYYY-MM`。
+ *
+ * ★★★ 這個專案裡月份有**兩種形狀**:
+ *     `revenue_recognitions.ym`   是 `YYYYMM`（`ymOf()` 產生的）
+ *     `monthsBetween()` / 住房率  是 `YYYY-MM`
+ *   拿其中一種去查另一種做的 map，**每一格都查不到** ——
+ *   而 `?? 0` 會把它變成一根高度 0 的長條，**沒有任何地方會叫**。
+ *   症狀就是「營收趨勢圖十二個月全部是 0」，而住房率那條線好好的。
+ *
+ * ★★ 同一個坑的第二種形狀:`ymMonth()` 吃的是 `YYYYMM`，
+ *   餵 `YYYY-MM` 進去會回 `slice(4,6)` ＝ `'-1'`、`'-0'` ——
+ *   x 軸上就是那幾個看不懂的東西。tsc 不會叫（兩邊都是 string）。
+ *
+ * ★ 所以這支**兩種都吃**。不要在呼叫端各自 replace('-','')。
+ */
+export function ymDash(ym: string | null | undefined): string {
+  const v = String(ym ?? '').trim();
+  if (v.includes('-')) return v.slice(0, 7);
+  return v.length >= 6 ? `${v.slice(0, 4)}-${v.slice(4, 6)}` : v;
+}
+
+/** `YYYY-MM` 或 `YYYYMM` → `10月`。x 軸與表頭用 */
+export function monthLabel(ym: string | null | undefined): string {
+  const d = ymDash(ym);
+  return d.length === 7 ? `${d.slice(5)}月` : d;
+}

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   toWan, wanParts, pickedLabel, noSrcFilter, toggleSrc, splitBySrc, cardRows,
-  applySrcPicks, bySourceOf,
+  applySrcPicks, bySourceOf, ymDash, monthLabel,
 } from './rev-occ.ts';
 
 const KEYS = ['longterm', 'airbnb', 'private', 'office', 'other', 'company'];
@@ -189,4 +189,30 @@ test('★ 各來源加起來等於全部', () => {
   const by = bySourceOf(ROWS, (r) => r.month_amount);
   assert.equal(Object.values(by).reduce((a, b) => a + b, 0),
     ROWS.reduce((n, r) => n + r.month_amount, 0));
+});
+
+/* ── ymDash / monthLabel ────────────────────────────────── */
+
+test('★★★ 兩種月份形狀都要吃 —— 拿錯一種，十二格營收全部變 0 而且不會叫', () => {
+  assert.equal(ymDash('202510'), '2025-10');      // revenue_recognitions.ym
+  assert.equal(ymDash('2025-10'), '2025-10');     // monthsBetween / 住房率
+  assert.equal(ymDash('2025-10-01'), '2025-10');  // 日期也收得起來
+});
+
+test('★★ 用 ymDash 對起來的 map，兩種形狀查得到同一格', () => {
+  const m: Record<string, number> = {};
+  m[ymDash('202510')] = 999;
+  assert.equal(m[ymDash('2025-10')], 999);
+});
+
+test('★★ 月份標籤：餵 YYYY-MM 進舊的 ymMonth() 會變成 "-1"，這支不會', () => {
+  assert.equal(monthLabel('2025-10'), '10月');
+  assert.equal(monthLabel('202510'), '10月');
+  assert.equal(monthLabel('2026-01'), '01月');
+});
+
+test('★ 壞掉的值不要爆', () => {
+  assert.equal(ymDash(''), '');
+  assert.equal(ymDash(null), '');
+  assert.equal(monthLabel(undefined), '');
 });
