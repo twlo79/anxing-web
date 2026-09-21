@@ -428,7 +428,7 @@ export function AdvanceList({
 
   /** 存檔前的擋。★ 回 null 才按得下去 */
   const repayErr = useMemo(() => (byEach && !pickedRows.length
-    ? '逐筆還款要先勾起要還的那幾列 —— 不想勾的話改用「金額還款」'
+    ? '逐筆退款要先勾起要退的那幾筆 —— 不想勾的話改用「金額退款」'
     : validateRepay(scope as RepayRow[], {
       on: bOn, pay: bPay, inAccount: bIn, outAccount: bOut, picked: byEach,
     })), [byEach, pickedRows.length, scope, bOn, bPay, bIn, bOut]);
@@ -470,11 +470,11 @@ export function AdvanceList({
      *   所以收到 error 就是**真的一列都沒寫進去**（交易回滾），
      *   不會有「成功了一半」這種狀態。
      */
-    if (error) { setBMsg('還款失敗：' + error.message); return; }
+    if (error) { setBMsg('退款失敗：' + error.message); return; }
 
     const n = plan.lines.filter((l) => l.cut > 0).length;
     setPicked({}); setBPay(''); setBOpen(false);
-    setMsg(`${rParty} 還款 ${fmt(Number(bPay))}・扣了 ${n} 列・其中 ${plan.cleared} 列還完`);
+    setMsg(`${rParty} 退款 ${fmt(Number(bPay))}・扣了 ${n} 筆・其中 ${plan.cleared} 筆退完`);
     await load();
   }
   const [recover, recovering] = useOnce(recoverInner);
@@ -604,11 +604,19 @@ export function AdvanceList({
             ★★ 沒有代墊可還的時候整顆不出現 —— 灰掉一顆按鈕而不解釋，
               使用者會以為系統壞了而一直點（anxing-ui）。
           */}
+          {/*
+            ★★★ 叫「批量退款」不叫「代墊還款」（2026-09-21 使用者：
+              「代墊的勾法＝其實就是退款的批量操作」）。
+              列上那顆是單筆退款，這顆是同一件事一次做好幾筆 ——
+              **同一件事只准有一個名字**（CLAUDE.md 統一用語）。
+            ★ 沒有代墊可退的時候整顆不出現 —— 灰掉一顆按鈕而不解釋，
+              使用者會以為系統壞了（anxing-ui）。
+          */}
           {openLent.length > 0 && (
             <button onClick={() => { setBOpen(true); setBMsg(null); }}
               className="h-11 md:h-9 rounded-lg border border-mor-greendark bg-white text-mor-greendark
                          px-3 text-ui font-medium hover:bg-mor-greenlight">
-              代墊還款
+              批量退款
             </button>
           )}
           <button onClick={() => setEdit(blank())}
@@ -619,7 +627,7 @@ export function AdvanceList({
       </div>
 
       {/*
-        ══════════ 代墊還款（2026-09-18 批次收回 → 2026-09-21 改成攤還）══════════
+        ══════════ 批量退款（2026-09-18 批次收回 → 2026-09-21 改成攤還）══════════
         ★ 一列都沒勾就整條不出現 —— 沒有東西可做的時候不要佔版面。
       */}
       {(pickedRows.length > 0 || bOpen) && openLent.length > 0 && (
@@ -653,8 +661,8 @@ export function AdvanceList({
                   setBPay(''); setBMsg(null);
                 }}
                 className={CTRL}>
-                <option value="each">逐筆還款</option>
-                <option value="sum">金額還款</option>
+                <option value="each">逐筆退款</option>
+                <option value="sum">金額退款</option>
               </select></label>
             {/* ★ 對象只有一個時不畫下拉 —— 一個選項的下拉是噪音 */}
             {!byEach && parties.length > 1 && (
@@ -666,7 +674,7 @@ export function AdvanceList({
                 </select></label>
             )}
             <label className="flex flex-col gap-1">
-              <span className="flex items-center text-xs text-gray-600">還款日<Req /></span>
+              <span className="flex items-center text-xs text-gray-600">退款日<Req /></span>
               <input type="date" value={bOn} onChange={(e) => { setBOn(e.target.value); setBMsg(null); }}
                 className={CTRL} /></label>
             <label className="flex flex-col gap-1">
@@ -707,7 +715,7 @@ export function AdvanceList({
               title={repayErr ?? ''}
               className="h-11 md:h-9 rounded-lg bg-mor-greendark text-white px-4 text-ui font-medium
                          hover:opacity-90 disabled:opacity-50">
-              {recovering ? '還款中⋯' : `還款${!repayErr && bPay ? ' ' + fmt(Number(bPay)) : ''}`}
+              {recovering ? '退款中⋯' : `退款${!repayErr && bPay ? ' ' + fmt(Number(bPay)) : ''}`}
             </button>
             <button onClick={() => { setPicked({}); setBMsg(null); setBOpen(false); setBPay(''); }}
               className="h-11 md:h-9 rounded-lg border border-mor-line bg-white px-3 text-ui">取消</button>
@@ -878,8 +886,17 @@ export function AdvanceList({
                     </span>
                   </td>
                   <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                    <button onClick={() => setEdit(r)} className="text-xs text-mor-blue underline">改</button>
-                    <button onClick={() => delOne(r)} className="ml-2 text-xs text-red-500 underline">刪</button>
+                    {/*
+                      ══════════ 2026-09-21 使用者指定 ══════════
+                      「改」改叫**退款** —— 開這個抽屜十次有九次是為了結清，
+                        「改」講的是實作（編輯一列），不是使用者要做的事。
+
+                      ★★★ 「刪」**收進抽屜裡**（anxing-ui:刪除是底下一行紅色
+                        小字，不是按鈕）。跟「退款」並排而且長得一樣的話，
+                        手滑的代價差太多 —— 一個是記帳，一個是把資料弄不見。
+                    */}
+                    <button onClick={() => setEdit(r)}
+                      className="text-xs text-mor-blue">退款</button>
                   </td>
                 </tr>
               );
@@ -922,7 +939,7 @@ export function AdvanceList({
           onClick={() => setEdit(null)}>
           <div className="bg-white rounded-t-2xl md:rounded-2xl w-full md:max-w-lg max-h-[90vh] overflow-y-auto p-4"
             onClick={(e) => e.stopPropagation()}>
-            <div className="text-ui font-medium mb-3">{edit.id ? '編輯暫付' : '新增暫付'}</div>
+            <div className="text-ui font-medium mb-3">{edit.id ? '退款' : '新增暫付'}</div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {/*
@@ -1010,7 +1027,7 @@ export function AdvanceList({
                 */}
                 <div className="text-xs text-gray-500 mb-2">
                   結清（還要繼續收就留空）
-                  {lockedGot && <span className="ml-1 text-gray-400">・已還由還款明細算出來</span>}
+                  {lockedGot && <span className="ml-1 text-gray-400">・已還由退款明細算出來</span>}
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">結清日</span>
@@ -1041,8 +1058,8 @@ export function AdvanceList({
                 */}
                 {lockedGot && (
                   <div className="mt-1.5 text-xs text-gray-500">
-                    這一列有還款明細，已還 {fmt(Number(edit.refunded_amount ?? 0))} 是加總出來的 ——
-                    要改金額請改那張還款單。
+                    這一筆有退款明細，已還 {fmt(Number(edit.refunded_amount ?? 0))} 是加總出來的 ——
+                    要改金額請改那張退款單。
                   </div>
                 )}
                 {/* ★ 還欠多少要看得到,不然「該不該結清」沒有依據 */}
@@ -1128,11 +1145,32 @@ export function AdvanceList({
             <div className="flex justify-end gap-2 mt-4">
               <button onClick={() => setEdit(null)}
                 className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>
-{/* ★ aria-disabled 不是 disabled —— 點得下去，點下去把紅框亮起來 */}
-                            <button onClick={save} aria-disabled={gate.blocked} title={gate.title}
-                className={`rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium hover:bg-mor-slatedark  ${gateCls(gate.dim)}`}>
+              {/* ★ aria-disabled 不是 disabled —— 點得下去，點下去把紅框亮起來 */}
+              <button onClick={save} aria-disabled={gate.blocked} title={gate.title}
+                className={`rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium hover:bg-mor-slatedark ${gateCls(gate.dim)}`}>
                 {saveBusy ? '儲存中⋯' : '儲存'}</button>
             </div>
+
+            {/*
+              ══════════ 刪除（2026-09-21 使用者：「刪除 > 收進去」）══════════
+
+              ★★★ **不跟「取消／儲存」排一起**（anxing-ui）——
+                那一排讀起來會變成「算了／存起來／毀掉它」，而人來這個視窗
+                是為了記一筆退款然後存檔。手滑的代價差太多。
+
+              ★★ 括號裡寫**實際後果**。暫付沒有回收桶，刪掉就是真的不見了 ——
+                寫「可以復原」而其實不行，那句話會害人按下去。
+
+              ★ 只有已經存在的那一列才畫 —— 新增中的還沒有東西可以刪。
+            */}
+            {edit.id && (
+              <div className="mt-3 pt-3 border-t border-mor-line text-center">
+                <button onClick={() => { const r = edit as Row; setEdit(null); void delOne(r); }}
+                  className="text-xs text-red-400 underline hover:text-red-600">
+                  刪除這筆暫付（不可復原）
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
