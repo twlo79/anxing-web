@@ -1,7 +1,7 @@
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  demandProgress, progressText, demandClass,
+  demandProgress, progressText, demandClass, PURCHASE_PLATFORMS,
   DEMAND_STATUS_LABEL, DEMAND_STATUS_CLASS, DEMAND_PAID_CLASS, ITEM_STATUS_LABEL,
   manualStatusOptions, manualStatusPatch, manualStatusNote, isOrphanRequested,
   type DemandItemLike, type DemandItemStatus,
@@ -265,4 +265,34 @@ describe('手動改狀態（2026-09-05）', () => {
     assert.equal(manualStatusNote('done', true), null);
     assert.equal(manualStatusNote('quoted', false), null);
   });
+});
+
+/* ══════════════════════════════════════════════════════════
+ * 平台清單（2026-09-21 使用者:「多 萬家福」）
+ *
+ * ★★★ 這裡**不重打一次清單**去比對。
+ *   「把清單再抄一遍然後拿它當答案」比的是我寫的跟我寫的，永遠會綠
+ *   （README 坑:262 的帳密權限就是這樣修的）。
+ *   要釘的是**加一個平台時真正會出錯的那幾件事**。
+ * ══════════════════════════════════════════════════════════ */
+
+test('★★★ 平台不能重複 —— 重複的話下拉會出現兩個一樣的選項', () => {
+  const seen = new Set(PURCHASE_PLATFORMS);
+  assert.equal(seen.size, PURCHASE_PLATFORMS.length,
+    `有重複:${PURCHASE_PLATFORMS.join('、')}`);
+});
+
+test('★★★ 前後不能有空白 —— 「蝦皮」與「蝦皮 」會變成兩個平台而報表分不開', () => {
+  for (const p of PURCHASE_PLATFORMS) {
+    assert.equal(p, p.trim(), `「${p}」前後有空白`);
+    assert.ok(p.length > 0, '有空字串');
+  }
+});
+
+test('★★ 不能有空值 —— 空字串在下拉裡跟「還沒選」長得一模一樣', () => {
+  assert.ok(PURCHASE_PLATFORMS.every((p) => !!p));
+});
+
+test('萬家福加進去了', () => {
+  assert.ok((PURCHASE_PLATFORMS as readonly string[]).includes('萬家福'));
 });

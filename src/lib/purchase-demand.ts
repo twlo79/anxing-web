@@ -99,7 +99,7 @@ export const DEMAND_PAID_CLASS = 'bg-mor-greenlight text-mor-green';
  *
  * ★ 順序照常用程度排 —— 下拉不用捲就選得到最常用的那個。
  */
-export const PURCHASE_PLATFORMS = ['蝦皮', '酷澎', '淘寶', '好市多'] as const;
+export const PURCHASE_PLATFORMS = ['蝦皮', '酷澎', '淘寶', '好市多', '萬家福'] as const;
 
 export type PurchasePlatform = typeof PURCHASE_PLATFORMS[number];
 
