@@ -116,7 +116,16 @@ type Property = {
    * ★★ `count_in_occupancy` 跟 `show_in_room_calendar` 是**兩件事**：
    *   開封1F-1 整年有人住但不排房 —— 以前借同一個開關，所以一天都沒算到。
    */
-  parent_id?: string | null;
+  /*
+   * 上層房源。**全站唯一一支是 `parent_property_id`**（migration_289）——
+   * 房源設定頁那個「上層」下拉寫的就是它，訂單頁與營收表也讀它。
+   *
+   * ★★★ migration_287 曾經另外開了一支 `parent_id` 給住房率用，
+   *   結果變成:使用者在畫面上設上層 → 寫進 `parent_property_id`
+   *   → **住房率看不到**。畫面正常、數字正常、沒有地方會叫。
+   *   289 把資料合併回這一支，`parent_id` 由 290 刪掉。
+   */
+  parent_property_id?: string | null;
   units?: number | null;
   count_in_occupancy?: boolean | null;
 };
@@ -502,7 +511,7 @@ export default function DashboardPage() {
        * 那些認列就會從物業視角的營收裡整塊消失，而且沒有跡象。
        */
       fetchAll<Property>((f, t) => supabase.from('properties')
-        .select('id, name, estate_id, active, show_in_room_calendar, parent_id, units, count_in_occupancy')
+        .select('id, name, estate_id, active, show_in_room_calendar, parent_property_id, units, count_in_occupancy')
         .order('name').range(f, t)),
       fetchAll<Code>((f, t) => supabase.from('account_codes')
         .select('code, name').range(f, t)),
@@ -681,7 +690,7 @@ export default function DashboardPage() {
       .map((p) => ({
         name: p.name,
         estate: p.estate_id ? (estateName[p.estate_id] ?? null) : null,
-        parent: p.parent_id ? (nameOf[p.parent_id] ?? null) : null,
+        parent: p.parent_property_id ? (nameOf[p.parent_property_id] ?? null) : null,
         units: p.units ?? 1,
       }));
 
