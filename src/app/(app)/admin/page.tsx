@@ -617,7 +617,13 @@ export default function AdminPage() {
         || (a.first_seen ?? '').localeCompare(b.first_seen ?? ''));
     }
     return g;
-  }, [issues]);
+    /*
+     * ★ showDismissed 一定要在相依陣列裡 —— 上面的迴圈讀了它。
+     *   漏掉的話「顯示已忽略的」按下去畫面完全不動（memo 不重算），
+     *   要等到 issues 換了一份（按「重新整理」）才會生效。
+     *   2026-09-22：14 筆全是已忽略時，整頁看起來像「沒事」。
+     */
+  }, [issues, showDismissed]);
 
   /**
    * 分組的顯示順序：要處理的在最上面。
@@ -2399,6 +2405,22 @@ export default function AdminPage() {
             <div className="rounded-xl glass px-4 py-10 text-center text-sm text-gray-400">
               沒有待處理的差異。<br />
               <span className="text-xs">這份清單每次同步會整批換掉 —— 空的就代表爬蟲跟系統對得起來。</span>
+            </div>
+          ) : issueOrder.length === 0 ? (
+            /*
+             * 有差異、但這個檢視下一列都畫不出來（全部都被忽略）。
+             * 不補這一塊的話畫面是「共 14 筆」配一片空白 ——
+             * 而空白在這一頁的意思是「對得起來」，剛好相反。
+             */
+            <div className="rounded-xl glass px-4 py-10 text-center text-sm text-gray-500">
+              這 {issues.length} 筆都被忽略了，所以沒有列在下面。<br />
+              <span className="text-xs text-gray-400">忽略不等於處理完 —— 數字再變它們會自己回來。</span>
+              <div className="mt-3">
+                <button onClick={() => setShowDismissed(true)}
+                  className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50">
+                  顯示這 {issues.length} 筆
+                </button>
+              </div>
             </div>
           ) : (
             <div className="space-y-3">
