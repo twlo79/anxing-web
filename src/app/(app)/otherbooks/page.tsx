@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase';
+import AdvanceLedger from '@/components/AdvanceLedger';
 import { useProfile } from '@/lib/profile';
 import { fetchAll } from '@/lib/fetch-all';
 import { accountsForBook } from '@/lib/purchase-pay';
@@ -1549,10 +1550,21 @@ function ViewDrawer({
                 （資料庫的 trg_obp_block_lent 也擋著，這裡只是先講）。
             */}
             {lent ? (
-              <div className="rounded-lg bg-mor-bluelight border border-mor-slate/30 px-3 py-2.5
-                              text-xs text-mor-slatedark leading-relaxed">
-                這筆是<b>安幸代墊</b>的 —— 實支跟著安幸那邊走。<br />
-                到「暫收付管理 → 暫付」把它勾起來按<b>收回</b>，這裡的實支就會自己變。
+              /*
+                ★★★ 2026-09-22 使用者:「哪一天付多少 暫付那邊也要有」。
+                  原本這裡只有底下那段藍框 —— 它說了**去哪裡改**，
+                  卻沒說**已經發生過什麼**。那 6,000 是哪一天還的？看不到。
+                ★★ 明細跟暫付頁共用同一個元件（`AdvanceLedger`），
+                  只有講法不同（`variant="book"`:這本帳的立場，金額不帶正負號）。
+                ★ 藍框留著，搬到明細底下 —— 它回答的是「還欠的怎麼辦」。
+              */
+              <div className="space-y-2.5">
+                <AdvanceLedger advanceId={e.advanceId as string} variant="book" />
+                <div className="rounded-lg bg-mor-bluelight border border-mor-slate/30 px-3 py-2.5
+                                text-xs text-mor-slatedark leading-relaxed">
+                  還欠的要到「暫收付管理 → 暫付」把它勾起來按<b>收回</b>，
+                  這裡的實支就會自己變。
+                </div>
               </div>
             ) : (
               <>

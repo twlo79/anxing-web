@@ -51,6 +51,7 @@ import {
   allocate, validateRepay, owedTotal, isOpen as repayOpen, type RepayRow,
 } from '@/lib/advance-repay';
 import { accountsForBook } from '@/lib/purchase-pay';
+import AdvanceLedger from '@/components/AdvanceLedger';
 import { todayStr } from '@/lib/period';
 
 const fmt = (n: number) => Math.round(Number(n) || 0).toLocaleString('en-US');
@@ -1011,6 +1012,54 @@ export function AdvanceList({
                 <input type="date" value={edit.paid_on ?? ''}
                   onChange={(e) => setEdit({ ...edit, paid_on: e.target.value })}
                   className={CTRL} /></label>
+
+              {/*
+                ══════════ 來龍去脈（2026-09-22 使用者指定）══════════
+
+                ★★★ 「哪一天付多少、哪一天還多少」——
+                  `advance_repayments` ＋ `advance_repayment_lines`
+                  從 migration_286 就在寫，但**沒有任何一頁去讀它**。
+                  抽屜裡只有一個「已還 6,000」的加總。
+
+                ★★ 只有代墊有：押金／保證金／零用金走的是舊路
+                  （自己填結清日與已還），沒有還款明細可以讀。
+                  硬畫一張空表的話，使用者會以為那幾筆的還款紀錄不見了。
+
+                ★ 新增中的列（還沒有 id）不畫 —— 它還沒有任何歷史。
+              */}
+              {edit.id && edit.category === '代墊' && (
+                <div className="sm:col-span-2 border-t border-mor-line pt-3 mt-1">
+                  <AdvanceLedger advanceId={edit.id} advance={edit} reloadKey={rows} />
+                  {/*
+                    ★★★ 收得回來的時候給一條路（2026-09-22 使用者：
+                      「那剩餘沒結清 要去哪還款」）。原本抽屜說「還欠 1,350」
+                      然後**沒有任何一顆按鈕可以收它** —— 得自己關掉抽屜、
+                      回清單、在十列裡找到那一列、勾起來、拉到上面的面板。
+
+                    ★★ 外框綠不是實心：一排裡只有「儲存」那一顆是實心
+                      （anxing-ui 抽屜按鈕排法）。
+                  */}
+                  {canBatch(edit) && (
+                    <div className="mt-2.5">
+                      <button
+                        onClick={() => {
+                          setEdit(null);
+                          setBMode('each');
+                          setPicked({ [edit.id as string]: true });
+                          setBOpen(true); setBMsg(null);
+                        }}
+                        className="w-full h-10 rounded-lg border border-mor-greendark text-mor-greendark
+                                   bg-white text-sm font-medium hover:bg-mor-greenlight">
+                        收回剩下的 {fmt(remainingOf(edit))}
+                      </button>
+                      <div className="mt-1 text-[11px] text-gray-400 leading-relaxed">
+                        會把這一列勾起來、打開上面的「批量退款」面板，金額自動帶
+                        {' '}{fmt(remainingOf(edit))}。
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="sm:col-span-2 border-t border-mor-line pt-3 mt-1">
                 {/*

@@ -9,6 +9,7 @@ import {
 import { METHOD_LABEL, METHOD_OPTS, needsAccount, normalizeMethod, methodText } from '@/lib/pay-method';
 import { shouldAutoSettle, autoSettleBlockedReason, lastPaidOn } from '@/lib/period-settle';
 import { softDelete } from '@/lib/trash';
+import { invYm, invoiceMissing } from '@/lib/invoice';
 
 /**
  * 短租訂單的收款視窗。
@@ -45,7 +46,6 @@ type Order = {
 type Inv = { id: string; invoice_no: string; invoice_date: string; note: string | null };
 
 /** 發票號碼格式:2 碼英文 + 8 碼數字。跟契約頁同一條規則。 */
-const INV_NO_RE = /^[A-Z]{2}[0-9]{8}$/;
 
 const fmt = (n: number | null | undefined) => Math.round(Number(n) || 0).toLocaleString('en-US');
 const today = () => new Date().toISOString().slice(0, 10);
@@ -261,13 +261,15 @@ export default function OrderPayments({
    */
   async function saveInv() {
     const no = invNo.trim().toUpperCase();
-    if (!INV_NO_RE.test(no)) return flash('發票號碼格式應為 2 碼英文 + 8 碼數字,例 AB12345678');
-    if (!invDate) return flash('請填開票日期');
+    const ym = invYm(order.checkin ?? today());
+    /* ★ 跟契約頁共用同一份檢查（含 `ym` 六碼那一條，對應 `invoices_ym_chk`） */
+    const bad = invoiceMissing({ ym, invoice_no: no, invoice_date: invDate });
+    if (bad) return flash(bad);
     setBusy(true);
     const payload = {
       order_id: order.id, contract_id: null,
       room: order.room ?? order.property_raw ?? null,
-      ym: (order.checkin ?? today()).slice(0, 7).replace('-', ''),
+      ym,
       amount: Math.round(Number(order.amount) || 0) || null,
       invoice_no: no, invoice_date: invDate,
       title: order.invoice_title || order.guest_name || null,

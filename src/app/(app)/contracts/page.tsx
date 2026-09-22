@@ -25,6 +25,7 @@ import { dueDateOf, payDayOf, dueDayText, fmtDue, periodRange, fmtPeriodRange, r
 import { keyBase, onlyKeyOf } from '@/lib/ltKey';
 // 關帳：畫面上擋住的判斷跟資料庫那支守衛走**同一份規則**（migration_249）
 import { isLocked, lockedMsg, lockYmOf, ymLabel, type Ym } from '@/lib/period-lock';
+import { INV_NO_RE, invYm, invoiceMissing } from '@/lib/invoice';
 // 「這筆收入算誰的」—— 畫面與存檔共用同一份規則（migration_247）
 import { contractPurpose, purposeLockedByType } from '@/lib/purpose';
 // 一期的應收與收齊判斷都走這支 —— 畫面、確認視窗、收款三處共用同一份算式
@@ -1747,7 +1748,6 @@ const fmtYm = (ym: string) => `${+ym.slice(0, 4)}/${+ym.slice(4, 6)}`;
 // 待開發票清單回溯的月數(本月往前推幾個月)。調大會翻出更多歷史未開月份。
 const INVOICE_LOOKBACK = 2;
 // 台灣統一發票號碼:2 碼英文 + 8 碼數字
-const INV_NO_RE = /^[A-Z]{2}[0-9]{8}$/;
 
 function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
   contract: any; onClose: () => void; supabase: any;
@@ -2281,8 +2281,13 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
   async function saveInvoice() {
     if (!invDraft) return;
     const no = invDraft.no.trim().toUpperCase();
-    if (!INV_NO_RE.test(no)) { alert('發票號碼格式應為 2 碼英文 + 8 碼數字,例 AB12345678'); return; }
-    if (!invDraft.date) { alert('請填開票日期'); return; }
+    /*
+     * ★★★ `ym` 那一條不能省：資料庫的 `invoices_ym_chk` 只收六碼，
+     *   擋不住的話使用者看到的是一句英文的 check constraint，
+     *   而那句話不會告訴他要去補哪一格（2026-09-22 踩過）。
+     */
+    const bad = invoiceMissing({ ym: invDraft.ym, invoice_no: no, invoice_date: invDraft.date });
+    if (bad) { alert(bad); return; }
     const o = existing[kb + invDraft.ym];
     /*
      * ★★ 加費列開的發票掛在**那筆加費單**上（`orderId`），
@@ -2522,7 +2527,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                 而且永遠不會自己修正（2026-08 遇過整排顯示 2023 年）。
               */
               const due = fmtDue(dueDateOf(c.start_date, c.cadence, i, payDay));
-              const pfees = feeRows.filter((f: any) => f.checkin && chunk.some((mm: any) => (f.checkin.slice(0, 4) + f.checkin.slice(5, 7)) === mm.ym));
+              const pfees = feeRows.filter((f: any) => chunk.some((mm: any) => invYm(f.checkin) === mm.ym));
               /*
                * 這一期的應收 = 房租 ＋ 固定加費 ＋ 一次性費用 − 折讓，**一個數字**。
                *
@@ -2989,7 +2994,16 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                       const canInv = !auto && Number(f.amount) > 0 && canInvoiceFee(f.fee_type);
                       const fInv = invRows.filter((v: any) => v.order_id === f.id);
                       const feeName = auto ? feeLabel(f.fee_type, f.item_name) : f.fee_type;
-                      const feeYm = String(f.checkin ?? '').slice(0, 7);
+                      /*
+                       * ★★★ 2026-09-22 修：原本是 `.slice(0, 7)` → `'2026-08'`，
+                       *   七碼帶橫線，而 `invoices_ym_chk` 只收六碼 ——
+                       *   **加費的發票從上線到現在一次都沒存進去過**，
+                       *   按下儲存跳的是一句英文的 check constraint。
+                       * ★★ 而同一個檔案往上四十行，`pfees` 的篩選用的是正確的六碼寫法：
+                       *   同一條規則在同一個檔案裡寫兩次、兩個答案（CLAUDE.md 的老坑）。
+                       *   現在兩邊都走 `invYm()`。
+                       */
+                      const feeYm = invYm(f.checkin);
                       return (
                         <div key={f.id}>
                           <div className={`flex items-center justify-between text-xs py-0.5 ${Number(f.amount) < 0 ? 'text-orange-600' : 'text-gray-600'}`}>
