@@ -15,6 +15,7 @@ import {
   paidOf, dueOf, gapOf, isSettledExpense, bookTotals,
   validatePayment, overpayWarning, PAY_METHODS,
   drawerShape, delIncomeMsg,
+  cumulativeTotals,
 } from './other-book.ts';
 
 const ex = (id: string, amount: number, advanceId?: string | null): Entry => ({
@@ -320,4 +321,61 @@ test('★★★ 括號裡要寫實際後果 —— 這一筆進回收桶，所�
   assert.ok(m.includes('回收桶'), m);
   assert.ok(/復原/.test(m), m);
   assert.ok(!m.includes('不可復原'), m);
+});
+
+
+/* ── cumulativeTotals ───────────────────────────────────
+   ★★★ 在守的是「7 月收的錢，8 月還看得到」。
+   原本三張卡全部只講當月 —— 7 月 50,634、8 月沒進出 → 淨額 0，
+   那筆錢從畫面上消失（2026-09-22 使用者:「淨額要累積」）。 */
+
+const E = (kind: 'income' | 'expense', date: string | null, amount: number) => ({
+  id: `${kind}-${date}-${amount}`, kind, date, name: 'x',
+  account_code: null, party: null, amount, note: null, settled: true,
+} as const);
+const NOPAY = () => 0;
+
+test('★★★ 7 月收的錢，到了 8 月底還算在累積裡', () => {
+  const rows = [E('income', '2026-07-31', 50634)];
+  assert.equal(cumulativeTotals(rows, '2026-07-31', NOPAY).net, 50634);
+  assert.equal(cumulativeTotals(rows, '2026-08-31', NOPAY).net, 50634);
+  assert.equal(cumulativeTotals(rows, '2026-09-30', NOPAY).net, 50634);
+});
+
+test('★★★ 還沒發生的月份不可以算進來', () => {
+  const rows = [E('income', '2026-07-31', 50634)];
+  assert.equal(cumulativeTotals(rows, '2026-06-30', NOPAY).net, 0);
+  /* 剛好是月底那一天要算進去 —— 這是最容易差一天的地方 */
+  assert.equal(cumulativeTotals(rows, '2026-07-30', NOPAY).net, 0);
+  assert.equal(cumulativeTotals(rows, '2026-07-31', NOPAY).net, 50634);
+});
+
+test('★★ 淨額扣的是實支不是應支', () => {
+  const rows = [E('income', '2026-09-01', 1000), E('expense', '2026-09-02', 300)];
+  /* 應支 300、實支 0（安幸代墊還沒結）→ 淨額還是 1000 */
+  assert.deepEqual(cumulativeTotals(rows, '2026-09-30', NOPAY), { net: 1000, unpaid: 300 });
+  /* 付掉之後 → 淨額 700、未付 0 */
+  assert.deepEqual(cumulativeTotals(rows, '2026-09-30', (e) => (e.kind === 'expense' ? 300 : 0)),
+    { net: 700, unpaid: 0 });
+});
+
+test('★★ 付超過的那一筆不可以把別人的未付抵掉', () => {
+  const rows = [E('expense', '2026-09-01', 100), E('expense', '2026-09-02', 500)];
+  /* 第一筆付了 300（多付 200），第二筆一毛沒付 → 未付應該是 500 不是 300 */
+  const paid = (e: { amount: number }) => (e.amount === 100 ? 300 : 0);
+  assert.equal(cumulativeTotals(rows, '2026-09-30', paid).unpaid, 500);
+});
+
+test('★★ 沒有日期的那幾列不算 —— 不要猜它是哪個月', () => {
+  const rows = [E('income', null, 999), E('income', '2026-09-01', 1)];
+  assert.equal(cumulativeTotals(rows, '2026-09-30', NOPAY).net, 1);
+});
+
+test('★ 空的回 0，不是 NaN', () => {
+  assert.deepEqual(cumulativeTotals([], '2026-09-30', NOPAY), { net: 0, unpaid: 0 });
+});
+
+test('★ 支出比收入多的時候累積是負的', () => {
+  const rows = [E('income', '2026-09-01', 100), E('expense', '2026-09-02', 500)];
+  assert.equal(cumulativeTotals(rows, '2026-09-30', () => 500).net, -400);
 });

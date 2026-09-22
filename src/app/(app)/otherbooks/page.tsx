@@ -16,7 +16,7 @@ import {
 import {
   totals, byMonth, byCode, unsettled, applyFilters, monthRange, prevMonth, pctChange,
   isLent, lentTotal, lentSiblings,
-  paidOf, dueOf, gapOf, bookTotals, validatePayment, overpayWarning,
+  paidOf, dueOf, gapOf, bookTotals, cumulativeTotals, validatePayment, overpayWarning,
   PAY_METHODS, type Payment,
   drawerShape, delIncomeMsg,
   type Entry, type Filters,
@@ -124,18 +124,24 @@ export default function OtherBooksPage() {
   function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 4000); }
 
   /*
-   * 撈**近 13 個月**而不是只撈當月。
+   * 撈**從第一筆到選定月份的月底**，不是只撈當月，也不再只撈近 13 個月。
    *
-   * 儀錶板要畫近 12 個月的趨勢，再多一個月是為了算「跟上月比」。
-   * 只撈當月的話切到儀錶板要再查一次 —— 而那一次的等待
-   * 剛好落在使用者已經以為載完了的時候。
+   * ① 儀錶板要畫近 12 個月的趨勢，再多一個月是為了算「跟上月比」。
+   * ② 「淨額（累積）」要算到這本帳的第一筆（2026-09-22 使用者選的 A 案）——
+   *
+   * ★★★ 只撈 13 個月的話，**帳本滿 13 個月的那一天累積會開始少算**，
+   *   而畫面上就是一個看起來很正常的數字，沒有任何地方會叫。
+   *   一個會在未來某天安靜變錯的數字，比現在就錯更糟。
+   *
+   * ★ 量的問題:兩張表都有 `book` 可以篩（愛皮／洪鯊各自幾十列），
+   *   而 `fetchAll` 本來就分頁（Supabase 預設只回 1000 列且不報錯）。
+   *   真的長到會慢的那天，要做的是改成資料庫端加總的 RPC，
+   *   不是把範圍砍回去。
    */
   const load = useCallback(async () => {
     if (!canSee) { setLoading(false); return; }
     setLoading(true);
     setErr('');
-    const [y, m] = ym.split('-').map(Number);
-    const from = `${new Date(Date.UTC(y, m - 13, 1)).toISOString().slice(0, 7)}-01`;
     const { to } = monthRange(ym);
 
     /*
@@ -152,11 +158,11 @@ export default function OtherBooksPage() {
       fetchAll<Record<string, unknown>>((a, b) => supabase.from('orders')
         .select('id, checkin, guest_name, account_code, item_name, fee_type, amount, note, paid, account')
         .eq('book', book).eq('source', OTHER_BIZ_SOURCE)
-        .gte('checkin', from).lte('checkin', to).range(a, b)),
+        .lte('checkin', to).range(a, b)),
       fetchAll<Record<string, unknown>>((a, b) => supabase.from('expenses')
         .select('id, spent_on, item_name, account_code, amount, note, request_id, advance_id')
         .eq('book', book)
-        .gte('spent_on', from).lte('spent_on', to).range(a, b)),
+        .lte('spent_on', to).range(a, b)),
     ]);
 
     /*
@@ -370,6 +376,14 @@ export default function OtherBooksPage() {
     e, (id) => pays[id], (advId) => adv[advId]), [pays, adv]);
 
   const sum = useMemo(() => bookTotals(shown, paidFor), [shown, paidFor]);
+
+  /*
+   * ★★ 累積**不套篩選**（用 `rows` 不是 `shown`）——
+   *   篩選是「這個月我想看哪幾筆」，累積是整本帳的餘額。
+   *   跟著篩選跑的話，搜尋一個關鍵字就會得到一個不存在的餘額。
+   */
+  const cum = useMemo(
+    () => cumulativeTotals(rows, monthRange(ym).to, paidFor), [rows, ym, paidFor]);
 
   /* ══════════════ 新增 ══════════════ */
 
@@ -595,8 +609,20 @@ export default function OtherBooksPage() {
               <StatCard label="支出（實支）"
                 value={<span className="text-red-600">{fmt(sum.expense)}</span>}
                 sub={sum.due !== sum.expense ? `應支 ${fmt(sum.due)}` : undefined} />
-              <StatCard label="淨額"
-                value={<span className={sum.net < 0 ? 'text-red-600' : ''}>{fmt(sum.net)}</span>} />
+              {/*
+                ══════════ 淨額那張是**累積**（2026-09-22 使用者選 A 案）══════════
+
+                ★★★ 「收入 − 支出」因此**不再等於**這張卡的數字 ——
+                  所以底下那行「本月 ±N」不能省。沒有它的話，
+                  三個數字擺在一起會被讀成算錯了。
+                ★★ 標題要把「到幾月底」寫出來:同一張卡在不同月份是不同的值，
+                  沒寫的話切了月份也看不出它有沒有跟著動。
+                ★ 未付只在**有**的時候印（重複的數字不要寫第二次）。
+              */}
+              <StatCard label={`淨額（累積到 ${Number(ym.slice(5))} 月底）`}
+                value={<span className={cum.net < 0 ? 'text-red-600' : ''}>{fmt(cum.net)}</span>}
+                sub={`本月 ${sum.net >= 0 ? '+' : '−'}${fmt(Math.abs(sum.net))}`
+                  + (cum.unpaid ? `　・　未付 ${fmt(cum.unpaid)}` : '')} />
             </StatRow>
 
             {loading ? (

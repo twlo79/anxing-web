@@ -327,6 +327,46 @@ export function bookTotals(entries: Entry[], paid: (e: Entry) => number): BookTo
 }
 
 /**
+ * 累積到「選定月份的月底」為止（使用者 2026-09-22：「淨額要累積」，選 A 案）。
+ *
+ * ★★★ 為什麼要有:原本那三張卡全部只講「這個月」。7 月收了 50,634、
+ *   8 月沒有進出 —— 於是 8 月的淨額是 0，那 50,634 從畫面上消失。
+ *   使用者要看的是「到現在口袋裡剩多少」，那是一條累積線不是一格。
+ *
+ * ★★ **不套篩選**。篩選是「這個月我想看哪幾筆」，累積是整本帳的餘額 ——
+ *   跟著篩選跑的話，搜尋一個關鍵字就會得到一個不存在的餘額。
+ *
+ * ★★ 淨額用**實支**，跟「支出（實支）」那張卡同一個口徑。
+ *   還沒付的另外用 `unpaid` 帶出來（使用者 2026-09-22 確認:不扣） ——
+ *   累積餘額是「口袋裡剩多少」，而還沒付的錢還在口袋裡。
+ *
+ * ★ 沒有日期的那幾列不算。`date` 是 null 的話它落在哪個月是不知道的，
+ *   猜一個月份放進去比漏掉更糟（「對不上的不猜」）。
+ */
+export type CumTotals = {
+  /** 累積收入 − 累積實支 */
+  net: number;
+  /** 累積應支 − 累積實支。0 就是都付清了 */
+  unpaid: number;
+};
+
+export function cumulativeTotals(
+  entries: readonly Entry[], toDate: string, paid: (e: Entry) => number,
+): CumTotals {
+  let net = 0; let unpaid = 0;
+  for (const e of entries ?? []) {
+    const d = e.date ?? '';
+    if (!d || d > toDate) continue;
+    if (e.kind === 'income') { net += round(e.amount); continue; }
+    const p = round(paid(e));
+    net -= p;
+    /* ★ 夾在 0 以上:付超過的那幾筆不可以把別人的未付抵掉 */
+    unpaid += Math.max(round(e.amount) - p, 0);
+  }
+  return { net, unpaid };
+}
+
+/**
  * 記一筆實支之前的檢查。回第一個錯，沒問題回 null。
  *
  * ★★ 這幾條跟資料庫是同一組規則（migration_277 的 `obp_amount_chk`、
