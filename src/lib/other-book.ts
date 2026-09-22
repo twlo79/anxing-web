@@ -33,6 +33,13 @@ export type Entry = {
   /** 收入:已收款沒；支出:一律已付（支出是錢出去之後才產生的） */
   settled: boolean;
   /**
+   * 收款方式（`orders.account`，收付款帳號的 code）。**只有收入有。**
+   *
+   * ★ 本來沒帶到畫面上 —— 表單填得到、存得進去，但抽屜上看不到，
+   *   於是「這筆到底收進哪個帳」只能回頭按編輯才知道（2026-09-22 補）。
+   */
+  payAccount?: string | null;
+  /**
    * 這一筆是**請款單產生的**（2026-09-10）。
    *
    * ★★★ 金額不給改。請款單那邊還留著原始金額，
@@ -361,4 +368,52 @@ export function overpayWarning(due: number, paid: number, adding: number): strin
   const after = round(paid) + round(adding);
   if (after <= round(due)) return null;
   return `記完會變成實支 ${after}，比應支 ${round(due)} 多 ${round(after - round(due))} —— 確定嗎？`;
+}
+
+
+/* ══════════════════════════════════════════════════════════
+ * 檢視抽屜長什麼樣（2026-09-22 使用者：「收入都是實收／要可以刪除／
+ * 不用記一筆實支」）
+ *
+ * ★★★ 為什麼要有這支:那個抽屜本來**完全沒有分收入跟支出**，
+ *   兩種都印支出的樣子 —— 標題寫「這筆支出」、看板是
+ *   「應支／實支／差距」、底下掛著「＋ 記一筆實支」。
+ *   收入根本沒有「應收多少 vs 實際收到多少」這個落差。
+ *
+ * ★★ 寫成一支純函式而不是在 `.tsx` 裡散三個 `kind === 'income'`:
+ *   散著寫的話，以後補第三段時很容易只改到其中兩個，
+ *   而畫面上就是「收入又冒出實支明細」—— 沒有地方會叫
+ *   （「同一條規則在三個地方各寫一次」那條坑）。
+ * ══════════════════════════════════════════════════════════ */
+export type DrawerShape = {
+  /** 上面那一段的標題 */
+  title: string;
+  /** 看板:收入是一個金額，支出是三格 */
+  board: 'amount' | 'due-paid-gap';
+  /** 有沒有「收款方式」那一列（收入才有的欄位） */
+  payAccount: boolean;
+  /** 有沒有「實支明細」那一段（含「＋ 記一筆實支」） */
+  payments: boolean;
+  /** 底下有沒有「刪除」 */
+  del: boolean;
+};
+
+export function drawerShape(kind: Entry['kind']): DrawerShape {
+  return kind === 'income'
+    ? { title: '這筆收入', board: 'amount', payAccount: true, payments: false, del: true }
+    : { title: '這筆支出', board: 'due-paid-gap', payAccount: false, payments: true, del: false };
+}
+
+/**
+ * 刪收入之前要問的那一句。
+ *
+ * ★★ 括號裡寫**實際後果** —— 進回收桶的寫「可以復原」，真的 cascade 的
+ *   寫「不可復原」。兩種寫成同一句話的話，那句話就不再有意義
+ *   （anxing-ui 四-3）。這一筆走 `soft_delete`，所以是可以復原的那一種。
+ * ★ 金額要印出來 —— 「刪除這筆收入?」自己講不出刪掉的是哪一筆。
+ */
+export function delIncomeMsg(name: string, amountText: string): string {
+  return `刪除這筆收入「${name}」?\n\n`
+    + `金額 $${amountText}\n\n`
+    + `會移到回收桶 —— 復原之後這筆收入也會回來。`;
 }

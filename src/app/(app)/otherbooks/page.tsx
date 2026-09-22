@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase';
 import { useProfile } from '@/lib/profile';
 import { fetchAll } from '@/lib/fetch-all';
 import { accountsForBook } from '@/lib/purchase-pay';
+import { softDelete } from '@/lib/trash';
 import Req from '@/components/Req';
 import MoneyInput from '@/components/MoneyInput';
 import Toast from '@/components/Toast';
@@ -17,6 +18,7 @@ import {
   isLent, lentTotal, lentSiblings,
   paidOf, dueOf, gapOf, bookTotals, validatePayment, overpayWarning,
   PAY_METHODS, type Payment,
+  drawerShape, delIncomeMsg,
   type Entry, type Filters,
 } from '@/lib/other-book';
 import {
@@ -148,7 +150,7 @@ export default function OtherBooksPage() {
      */
     const [ordRes, expRes] = await Promise.all([
       fetchAll<Record<string, unknown>>((a, b) => supabase.from('orders')
-        .select('id, checkin, guest_name, account_code, item_name, fee_type, amount, note, paid')
+        .select('id, checkin, guest_name, account_code, item_name, fee_type, amount, note, paid, account')
         .eq('book', book).eq('source', OTHER_BIZ_SOURCE)
         .gte('checkin', from).lte('checkin', to).range(a, b)),
       fetchAll<Record<string, unknown>>((a, b) => supabase.from('expenses')
@@ -178,6 +180,8 @@ export default function OtherBooksPage() {
         amount: Number(o.amount) || 0,
         note: (o.note as string) ?? null,
         settled: !!o.paid,
+        // ★ 收款方式:表單填得到、存得進去，但本來沒帶到畫面上（2026-09-22）
+        payAccount: (o.account as string) ?? null,
       })),
       ...expRes.rows.map((e) => ({
         id: String(e.id), kind: 'expense' as const,
@@ -1256,6 +1260,11 @@ function Modal({
  *   ② 看板       應支／實支／差距
  *   ③ 實支明細   一筆一列，底下可以再記一筆
  *
+ * ★★★ 收入跟支出不是同一個形狀（2026-09-22 使用者:「收入都是實收／
+ *   要可以刪除／不用記一筆實支」）。本來兩種都印支出的樣子 ——
+ *   收入沒有「應收多少 vs 實際收到多少」的落差，那三格永遠相等。
+ *   形狀寫在 `drawerShape()`（有測試），這裡只照著畫。
+ *
  * ★ 看板挪到中間 —— 打開先看「這是什麼」，錢的事跟付款明細擺在一起。
  *
  * ★★ 按鈕照契約與押金那一套（anxing-ui 四-2）:
@@ -1279,11 +1288,31 @@ function ViewDrawer({
   const due = dueOf(e);
   const gap = gapOf(due, paid);
   const lent = isLent(e);
+  /* ★ 收入／支出的差別全部收在這裡 —— 不要散成三個 kind === 'income' */
+  const shape = drawerShape(e.kind);
 
   const [adding, setAdding] = useState(false);
+  const [delBusy, setDelBusy] = useState(false);
   const [draft, setDraft] = useState<Partial<Payment>>({});
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+
+  /*
+   * 刪掉這筆收入。
+   *
+   * ★★ 走 `soft_delete` —— 跟訂單那邊同一條路，進回收桶、復原得回來。
+   *   所以問句的括號裡寫的是「可以復原」（`delIncomeMsg`，有測試）。
+   * ★ 刪完把抽屜關掉再 reload:留著抽屜的話它顯示的是一筆
+   *   已經不在清單上的資料，而畫面上看不出來。
+   */
+  async function delIncome() {
+    if (!confirm(delIncomeMsg(e.name, fmt(e.amount)))) return;
+    setDelBusy(true);
+    const r = await softDelete(supabase, 'orders', e.id);
+    setDelBusy(false);
+    onMsg(r.message);
+    if (r.ok) { onClose(); onReload(); }
+  }
 
   async function addPay() {
     setErr('');
@@ -1343,30 +1372,57 @@ function ViewDrawer({
         <div className="px-4 py-3 space-y-4">
           {/* ── ① 這筆支出 ── */}
           <div>
-            <div className="text-[11px] font-bold tracking-wide text-gray-500 mb-1">這筆支出</div>
+            <div className="text-[11px] font-bold tracking-wide text-gray-500 mb-1">{shape.title}</div>
             <L k="日期" v={e.date ?? '—'} />
             <L k="項目" v={e.name} />
             <L k="會計科目" v={e.account_code
               ? nameOf(e.account_code)
               : <span className="text-amber-700">未分類</span>} />
             <L k="對象" v={e.party || '—'} />
+            {/* ★ 收款方式只有收入有。code 要換成看得懂的名字 —— 畫面上不印代碼 */}
+            {shape.payAccount && (
+              <L k="收款方式" v={e.payAccount
+                ? (accounts.find((a) => a.code === e.payAccount)?.name ?? e.payAccount)
+                : '—'} />
+            )}
             <L k="備註" v={e.note || '—'} />
           </div>
 
           {/* ── ② 看板 ── */}
           <div className="rounded-xl border border-mor-line bg-[#FAFAF9] p-3">
-            <div className="grid grid-cols-3 gap-2 text-center">
-              {([['應支', due, ''], ['實支', paid, 'text-red-600'],
-                 ['差距', gap, gap > 0 ? 'text-amber-700' : '']] as const).map(([l, v, c]) => (
-                <div key={l}>
-                  <div className="text-[11px] text-gray-500">{l}</div>
-                  <div className={`text-lg font-bold tabular-nums ${c}`}>{fmt(v)}</div>
+            {shape.board === 'amount' ? (
+              /*
+               * ★★★ 收入是**一個金額** —— 沒有「應收 vs 實收」的落差。
+               *   印成三格相等的數字是在報一個不存在的對帳結果。
+               * ★ 旁邊那顆籤就是新增收入表單上的「已收」那個勾。
+               */
+              <div className="flex items-baseline justify-between gap-2.5">
+                <div>
+                  <div className="text-[11px] text-gray-500">金額</div>
+                  <div className="text-2xl font-bold tabular-nums text-mor-greendark">
+                    {fmt(e.amount)}</div>
                 </div>
-              ))}
-            </div>
+                <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold
+                  ${e.settled
+                    ? 'bg-mor-greenlight text-mor-greendark'
+                    : 'border border-amber-400 bg-amber-50 text-amber-700'}`}>
+                  {e.settled ? '已收' : '還沒收'}</span>
+              </div>
+            ) : (
+              <div className="grid grid-cols-3 gap-2 text-center">
+                {([['應支', due, ''], ['實支', paid, 'text-red-600'],
+                   ['差距', gap, gap > 0 ? 'text-amber-700' : '']] as const).map(([l, v, c]) => (
+                  <div key={l}>
+                    <div className="text-[11px] text-gray-500">{l}</div>
+                    <div className={`text-lg font-bold tabular-nums ${c}`}>{fmt(v)}</div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
-          {/* ── ③ 實支明細 ── */}
+          {/* ── ③ 實支明細。★ 收入沒有這一段（2026-09-22 使用者:「不用記一筆實支」）── */}
+          {shape.payments && (
           <div>
             <div className="text-[11px] font-bold tracking-wide text-gray-500 mb-1">實支明細</div>
 
@@ -1449,6 +1505,7 @@ function ViewDrawer({
               </>
             )}
           </div>
+          )}
 
           {/*
             ★★ 一排裡只有一顆實心，而且它是「打開這一筆的內容」（anxing-ui 四-2）。
@@ -1456,6 +1513,22 @@ function ViewDrawer({
           <button onClick={onEdit}
             className="w-full h-11 rounded-lg bg-mor-slate text-white text-sm font-medium
                        hover:bg-mor-slatedark">編輯</button>
+
+          {/*
+            ★★★ 刪除是**底下一行紅色小字**，不是按鈕，也不跟「編輯」排在一起
+              —— 那一排讀起來會變成「毀掉它／改它」，而手滑的代價差太多
+              （anxing-ui 四-3）。括號裡寫的是實際後果。
+            ★ 支出沒有這一行:支出是請款單／代墊那條鏈產生的，
+              在這裡刪掉會跟上游對不起來。要拿掉就回上游拿。
+          */}
+          {shape.del && (
+            <div className="mt-2 text-center">
+              <button onClick={delIncome} disabled={delBusy}
+                className="text-xs text-red-400 underline hover:text-red-600 disabled:opacity-50">
+                {delBusy ? '刪除中⋯' : '刪除這筆收入（會移到回收桶，可以復原）'}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

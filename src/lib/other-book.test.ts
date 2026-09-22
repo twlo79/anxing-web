@@ -14,6 +14,7 @@ import {
   isLent, lentTotal, lentSiblings, type Entry,
   paidOf, dueOf, gapOf, isSettledExpense, bookTotals,
   validatePayment, overpayWarning, PAY_METHODS,
+  drawerShape, delIncomeMsg,
 } from './other-book.ts';
 
 const ex = (id: string, amount: number, advanceId?: string | null): Entry => ({
@@ -262,4 +263,61 @@ describe('overpayWarning —— 提醒不是禁止', () => {
     assert.match(m, /5000/);
     assert.match(m, /1000/);
   });
+});
+
+
+/* ── 檢視抽屜的形狀 ────────────────────────────────────
+   ★★★ 這一組在守的是「收入跟支出不是同一個形狀」。
+   本來兩種都印支出的樣子:標題寫「這筆支出」、看板三格、
+   底下掛著「＋ 記一筆實支」—— 而收入沒有應收 vs 實收的落差。 */
+
+test('★★★ 收入:標題是「這筆收入」、看板只有一個金額', () => {
+  const sh = drawerShape('income');
+  assert.equal(sh.title, '這筆收入');
+  assert.equal(sh.board, 'amount');
+});
+
+test('★★★ 收入沒有「實支明細」那一段', () => {
+  assert.equal(drawerShape('income').payments, false);
+});
+
+test('★★★ 收入有刪除，支出沒有', () => {
+  assert.equal(drawerShape('income').del, true);
+  assert.equal(drawerShape('expense').del, false);
+});
+
+test('★★ 收款方式只有收入有 —— 支出沒有這個欄位', () => {
+  assert.equal(drawerShape('income').payAccount, true);
+  assert.equal(drawerShape('expense').payAccount, false);
+});
+
+test('★★★ 支出那一邊一個字都不准變（這次改動不該碰到它）', () => {
+  assert.deepEqual(drawerShape('expense'), {
+    title: '這筆支出',
+    board: 'due-paid-gap',
+    payAccount: false,
+    payments: true,
+    del: false,
+  });
+});
+
+test('★ 兩種形狀不可以是同一個東西', () => {
+  assert.notDeepEqual(drawerShape('income'), drawerShape('expense'));
+});
+
+/* ── 刪收入的問句 ─────────────────────────────────── */
+
+test('★★ 問句要講得出刪的是哪一筆、多少錢', () => {
+  const m = delIncomeMsg('團費收入', '50,634');
+  assert.ok(m.includes('團費收入'), m);
+  assert.ok(m.includes('50,634'), m);
+});
+
+test('★★★ 括號裡要寫實際後果 —— 這一筆進回收桶，所以是「可以復原」', () => {
+  /* 走 soft_delete 卻寫「不可復原」，或真的 cascade 卻寫「可以復原」，
+     那句話就不再有意義（anxing-ui 四-3）。 */
+  const m = delIncomeMsg('X', '1');
+  assert.ok(m.includes('回收桶'), m);
+  assert.ok(/復原/.test(m), m);
+  assert.ok(!m.includes('不可復原'), m);
 });
