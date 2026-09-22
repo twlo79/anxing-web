@@ -394,6 +394,12 @@ export default function FormsTab({ role, meId, onMsg }: {
                   ★★ 箭頭**收起來時向右 ▸、展開之後向下 ▾**（使用者指定）——
                     向右是「這裡面還有東西，點開」，向下是「已經開了，就在下面」。
                     兩種狀態長得一樣的話，那顆箭頭就沒有在報告任何事。
+                  ★★★ 箭頭放在**文字前面**（2026-09-22 使用者:「toggle 移到前面」）——
+                    跟原生 `<details>` 與側邊選單同一個方向。放後面的話它的位置
+                    會跟著標籤長度跑，好幾列疊起來就對不齊;放前面每一列都從同一個
+                    x 開始，掃一眼就知道哪幾列點得開。
+                  ★ 箭頭用固定寬度的格子（`inline-block w-3`）—— ▸ 與 ▾ 的字寬不一樣，
+                    不固定的話展開／收起時後面那四個字會左右跳一格。
                   ★ **有內容才畫** —— 沒有內容還畫的話，那是一顆點了什麼都不會發生的鈕。
                 */}
                 {f.usage_note?.trim() && (
@@ -403,8 +409,11 @@ export default function FormsTab({ role, meId, onMsg }: {
                       if (n[f.id]) delete n[f.id]; else n[f.id] = true;
                       return n;
                     })}
-                      className="text-sm text-mor-slate hover:text-mor-slatedark">
-                      使用說明 {open[f.id] ? '▾' : '▸'}
+                      className="inline-flex items-center gap-1 text-sm text-mor-slate
+                                 hover:text-mor-slatedark">
+                      <span className="inline-block w-3 shrink-0 text-center leading-none">
+                        {open[f.id] ? '▾' : '▸'}</span>
+                      使用說明
                     </button>
                   </span>
                 )}
