@@ -77,3 +77,6 @@ sync-backups/
 # Cowork 產出的暫存資料夾與 TimeTree 的本機同步檔（都不該進版控）
 Claude outputs/
 timetree-sync/
+
+# Claude 用完的暫存檔會先搬到這裡等你刪（device_bash 刪不掉檔案）
+_to_delete/

@@ -9,12 +9,253 @@ Next.js 14 (App Router) + Supabase(Auth + PostgreSQL + RLS)。
 > 給非工程同仁的操作說明請看 **[`docs/會計手冊.md`](docs/會計手冊.md)**;
 > 請款與支出模組的設計決策見 **[`docs/expenses.md`](docs/expenses.md)**。
 
+**第一次看這份文件**:先讀 **〈〇、名詞定義〉** —— 那一章是字典加三張流程圖，
+後面每一章都在用它的詞。
+
 **動手前先讀三件事**:〈角色與權限〉、〈Migration 怎麼跑〉、以及文末的〈已知缺口〉—— 這三處是踩坑最多的地方。
 
 **要動畫面的話**,先讀〈十、介面規則〉—— 尤其是 **10.4「UI 改版一律先過審」**。
 
 ---
 
+
+# 〇、名詞定義（先讀這一章）
+
+> 這一章是**字典 ＋ 三張流程圖**。
+> 後面每一章都會用到這裡的詞 —— 看不懂某個名詞就回來這裡查，不要用猜的。
+>
+> ★ 命名規矩：**同一件事只准有一個名字**。
+> 新名詞要先加進這一章再用；同一個東西在兩頁叫不同名字，
+> 使用者會以為那是兩件事 —— 而那不會有人來報，只會變成「這系統很難用」。
+
+---
+
+## 0.1 一張圖看懂錢怎麼走
+
+左邊是錢進來，右邊是錢出去。**灰色的是系統自己做的，不是人做的。**
+
+```mermaid
+flowchart TD
+  subgraph IN["收入：錢進來"]
+    direction TB
+    C["契約<br/>contracts"] -->|"每期自動產生"| LT["契約訂單（月租單）<br/>orders・LT_/LTC_"]
+    ST["短租訂單<br/>orders・Airbnb/Agoda/私下"]
+    ONE["一次性費用<br/>orders・oneoff"]
+    LT --> PAY["收款<br/>order_payments"]
+    ST --> PAY
+    ONE --> PAY
+    LT -.->|"觸發器自動"| REC["營收認列<br/>revenue_recognitions"]
+    ST -.->|"觸發器自動"| REC
+    ONE -.->|"觸發器自動"| REC
+  end
+
+  subgraph OUT["支出：錢出去"]
+    direction TB
+    DEM["採購需求<br/>purchase_demands"] -->|"挑幾項開單"| PR["請款單<br/>purchase_requests"]
+    PR -->|"送審"| AP["核可<br/>1～2 票"]
+    AP -->|"確認出款"| EXP["支出<br/>expenses"]
+    EXP -.->|"金額大又跨月"| DEF["遞延認列<br/>母單＋子單"]
+    EXP -.-> TAX["稅務管理<br/>tax_invoice"]
+  end
+
+  REC --> DASH["財務儀錶板<br/>只算安幸"]
+  EXP --> DASH
+
+  classDef auto fill:#F1F0EC,stroke:#9AA7B4,color:#6b7280;
+  class REC,DEF,TAX auto;
+```
+
+**三件事要記住：**
+
+1. **認列沒有人要做。** 訂單存檔時資料庫觸發器就產生認列列了 —— 畫面上沒有「認列」按鈕。
+2. **支出沒有認列表。** 營收有 `revenue_recognitions`，支出沒有 —— 所有報表直接 `sum(expenses.amount)`。這就是遞延認列要動母單金額的原因（見 0.5）。
+3. **財務儀錶板只算安幸**（`migration_159`）。愛皮、洪鯊的錢不進去。
+
+---
+
+## 0.2 組織：事業體 × 物業 × 房源
+
+```mermaid
+flowchart LR
+  subgraph B["事業體（帳本 book）"]
+    A1["安幸<br/>anxing"]
+    A2["愛皮旅行社<br/>aipi"]
+    A3["洪鯊<br/>hongsha"]
+  end
+  A1 --> E["物業 estates<br/>正隆・時兆・開封⋯"]
+  E --> P["房源 properties<br/>一間可以租的房"]
+  P --> P2["子房源<br/>parent_property_id"]
+  A2 --> O2["沒有房子<br/>只有收入與支出"]
+  A3 --> O3["沒有房子<br/>只有收入與支出"]
+```
+
+| 名詞 | 定義 | 在資料庫 | 不要叫它 |
+|---|---|---|---|
+| **事業體** | 三家公司的帳各自獨立。每一筆收入與支出都要標是哪一本 | `book` ∈ `anxing` / `aipi` / `hongsha` | 公司、帳套 |
+| **物業** | 一整棟／一個案場 | `estates` | 建案、案場 |
+| **房源** | 一間可以單獨出租的房 | `properties` | 房間、物件 |
+| **子母房源** | 「開封整棟」底下有 2F／3F／4F。**只有葉子進住房率的分母**，父層的佔用往下展開 | `properties.parent_property_id` | 母房、上層房 |
+| **打通房** | 一列代表兩間（台1+2） | `properties.units` | 併房 |
+| **用途** | 這筆錢算物業的、安幸辦公室的、還是別的事業體的 | `purpose_type` ∈ `estate`／`office`／`other_biz` | 物業欄、歸屬 |
+
+---
+
+## 0.3 人：職位 ≠ 權限
+
+**這兩個是分開的兩欄，不要混。** 同一個人可以是「職位＝經理、權限＝主管」。
+
+```mermaid
+flowchart TD
+  U["一個人<br/>staff ＋ profiles"] --> J["職位 staff.staff_type<br/>他在公司做什麼"]
+  U --> R["權限 profiles.role<br/>他在系統看得到什麼"]
+  J --> J1["管家 / 房務 / 經理 / 會計 / 總經理"]
+  R --> R1["cleaner 房務"]
+  R --> R2["housekeeper 管家"]
+  R --> R3["manager 主管"]
+  R --> R4["accountant 會計"]
+  R --> R5["super_admin 總經理"]
+  R1 --> V1["只看得到自己的班與清潔記錄"]
+  R3 --> V2["＋ 核可請款單（第一票）"]
+  R4 --> V3["＋ 支出、稅務、帳戶明細"]
+  R5 --> V4["全部 ＋ 核可第二票 ＋ 權限管理"]
+```
+
+| 名詞 | 定義 | 在資料庫 |
+|---|---|---|
+| **職位** | 這個人在公司做什麼 | `staff.staff_type` |
+| **權限** | 這個人在系統看得到、動得了什麼 | `profiles.role` |
+| **物業負責人** | **那個時間點**負責某物業的人，可能是管家也可能是經理 | `estate_managers` |
+
+★ 「誰可以做這件事」**不要寫成職位的等號比對**（`staff_type === 'housekeeper'`）——
+經理兼管家時會選不進去，而畫面上只是負責人欄空著，沒有地方會叫。
+
+---
+
+## 0.4 收入側
+
+```mermaid
+stateDiagram-v2
+  direction LR
+  [*] --> 建單
+  建單 --> 未收: 存檔
+  未收 --> 部分收款: 收了一部分
+  部分收款 --> 已結清: 收滿
+  未收 --> 已結清: 一次收滿
+  已結清 --> [*]
+  note right of 建單
+    存檔的同時，資料庫觸發器
+    就把營收認列產生好了。
+    認列不等收款。
+  end note
+```
+
+| 名詞 | 定義 | 在資料庫 |
+|---|---|---|
+| **契約** | 長租的約。租期、租金、繳法（月繳／季繳／年繳）、押金都在這裡 | `contracts` |
+| **契約訂單（月租單）** | 契約**每一期**該收的錢，由觸發器自動產生 | `orders`，`order_key` 是 `LT_{房號}_{YYYYMM}`；沒房號的（公司登記、辦公室登記）走前端產生 `LTC_{契約id}_{YYYYMM}` |
+| **短租訂單** | Airbnb／Agoda／私下的一筆住宿 | `orders`，`source` ∈ `airbnb`／`agoda`／`private`／`partner` |
+| **一次性費用** | 沒有住宿的收入：加費、取消費、賠償、前期餘額⋯ | `orders`，`source = oneoff`；入住＝退房＝同一天、`nights = 0` |
+| **其他事業體收入** | 愛皮／洪鯊的收入。也是寫進 `orders` | `source = other_biz` |
+| **收款** | 錢真的收到了。一張訂單可以收很多次 | `order_payments` |
+| **認列費用（營收認列）** | 這筆錢算在哪一個月。**首尾按天數比例拆** | `revenue_recognitions` |
+| **住房率** | 入住天數 ÷（房間數 × 期間天數）。逐日計算，重疊的訂單只算一次 | 算出來的，沒有存 |
+
+★★ **應繳 ≠ 認列**（詳見〈三組容易搞混的概念〉）：
+應繳照契約週期切（每期整月），認列照日曆月切（首尾按天數）。**兩邊各算各的，互不參照。**
+
+★★★ **一次性費用有兩條路**都會產生：短租頁手動開、契約加費自動開。
+判定「某類資料不存在」之前，先 grep 那個鍵的字首 —— 只找到一條產生路徑就當成唯一的，是這個專案踩過的坑。
+
+---
+
+## 0.5 支出側
+
+```mermaid
+stateDiagram-v2
+  direction LR
+  [*] --> 草稿: 建請款單
+  草稿 --> 待核可: 送出審核
+  待核可 --> 已駁回: 任一票否決
+  已駁回 --> 草稿: 改完重送
+  待核可 --> 已核可: 未滿 3000 自動放行<br/>或 主管＋總經理兩票
+  已核可 --> 已出款: 確認出款
+  已出款 --> [*]
+  note right of 已出款
+    支出（expenses）在這一步
+    才自動產生。出款日填了就鎖住。
+  end note
+```
+
+| 名詞 | 定義 | 在資料庫 |
+|---|---|---|
+| **採購需求** | 「我想買這個」。還沒有金額、還沒有人核可 | `purchase_demands` / `purchase_demand_items` |
+| **請款單** | 「這幾筆要向公司拿錢」。走核可流程 | `purchase_requests` / `purchase_request_items` |
+| **核可** | 未滿 3,000 自動放行；超過要**主管一票 ＋ 總經理一票** | `approved_by_manager` / `approved_by_admin` |
+| **出款** | 錢真的匯出去了 | `paid_on` |
+| **支出** | 出款之後自動產生的那一列。**報表算的是它** | `expenses` |
+| **應支** | 這筆**應該**付多少 | `expenses.amount` |
+| **實支** | 這筆**真的**付出去多少 | `other_book_payments` 加總，或代墊那邊的 `refunded_amount` |
+| **代墊** | 安幸先幫別的事業體付 | `expenses.advance_id` → `advance_payments` |
+| **暫付** | 安幸先墊出去、之後要收回來的錢 | `advance_payments` |
+| **會計科目** | 這筆支出分到哪一類（保險費、辦公費⋯） | `account_codes` |
+| **遞延認列** | 一次付一年的錢，要分月攤 | 母單 ＋ 子單，見下圖 |
+
+### 遞延認列：為什麼母單的金額會變小
+
+**系統裡沒有支出認列表。** 所有報表都是 `sum(expenses.amount) group by spent_on`。
+所以母單留著全額、又生出子單的話，**那筆錢會被算兩次**。
+
+```mermaid
+flowchart LR
+  P["實際付款<br/>8/8 付 120,000"] --> M["母單 expenses<br/>spent_on 8/8<br/>amount = 10,000<br/>gross_amount = 120,000"]
+  P --> S1["子單 9/8<br/>amount 10,000"]
+  P --> S2["子單 10/8<br/>amount 10,000"]
+  P --> S3["⋯共 11 張子單"]
+  M --> SUM["sum(amount) 恆等於 120,000<br/>既有報表一行都不用改"]
+  S1 --> SUM
+  S2 --> SUM
+  S3 --> SUM
+```
+
+- `amount` 的語意從「付了多少」變成「**這一天認列多少**」
+- `gross_amount` 才是實付總額（對發票、對銀行用）
+- 代價：母單那一列的金額**可能是 0**，畫面上一定要把實付總額顯示出來
+
+★★★ 遞延要**包成一支 RPC**（`migration_228`）。
+拆成三次 PostgREST 呼叫的話，每個請求各自一個交易，中間那一刻等式不成立必爆。
+
+---
+
+## 0.6 房務
+
+| 名詞 | 定義 | 不要叫它 |
+|---|---|---|
+| **工單** | 排班表上一格：誰、哪天、哪個房源、做什麼 | 工作項目、一份工、打掃紀錄 |
+| **間數** | 這份工算幾間 | 工作量、數量、打掃量 |
+| **打掃點數** | 房源的難度分。報酬點數 = 間數 × 房源點數 | 清潔點數、點數（單獨用） |
+| **拆帳** | 一份工的錢記到好幾間房 | 分攤、拆單、拆開 |
+| **取用** | 備品從櫃子裡拿走（−） | 領用、出庫、消耗 |
+| **補貨** | 備品放進櫃子（＋） | 入庫、進貨、補充 |
+| **盤點** | 月底數實際有多少 | 清點、對帳、校正 |
+| **餘量** | 備品現在還剩多少（**算出來的**） | 庫存、結存、現有數量 |
+
+---
+
+## 0.7 全站共通的動作詞
+
+| 名詞 | 定義 | 不要叫它 |
+|---|---|---|
+| **補登** | 系統沒抓到的，人工補一筆 | 手動補、手動加入、補建 |
+| **按掉** | 這則建議我看過了，不要再出現 | 忽略、略過、關閉 |
+| **實支／非實支** | 錢真的出去了／內部成本、應計未付 | 真的付款、已付現／房務、內部成本 |
+| **項目** | 這筆在做什麼 | 用途、說明、摘要 |
+| **回收桶** | 刪掉的東西先進這裡，復原得回來 | 垃圾桶、刪除區 |
+| **防呆模式** | 把「看起來怪怪的」那幾筆標出來，人決定要不要處理 | 檢查模式、稽核模式 |
+
+★ **系統負責看見，人負責決定。**
+所有「防呆」「建議」都是列出來給人打勾接受或打叉忽略，**不自動改資料**。
+
+---
 
 # 一、系統架構
 
@@ -1877,12 +2118,17 @@ supabase/
   audits/           ← 唯讀查詢。**可以重複跑的健檢**（現金流、對帳、找漏）
   checks/           ← 單次的健檢腳本
   一次性腳本/        ← 修過一次就不會再用的（修-押金移房-B6轉B5 之類）
-  schema-baseline.sql ← 舊的 dump。**會過期，不要當真**（見 12.3）
+  schema-baseline.sql ← 舊的 dump（2026-08-04）。**會過期，不要當真**（見 12.3）
+  schema-live.txt     ← **線上 schema 的匯出結果**（2026-09-22）。附錄 A 的圖與
+                        `docs/資料庫欄位清單.md` 都是從它生出來的
+  匯出-schema給ER圖.sql ← 重新產生上面那一份（只讀，貼進 SQL Editor 跑）
 archive/
   migrations-pre-30 / 30-99 / 100-145 / 146-170 / 171-199 / 200-215
   audits-已結案/     ← 綁定單一事件、查完就結束的診斷（2026-09-05 建）
 docs/
   系統參考手冊.md     ← 查表用的:各表欄位、Migration 索引、目錄結構
+  資料庫欄位清單.md   ← **從線上匯出的**每一張表的每一欄（2026-09-22，附錄 A 的細節）
+  ER圖預覽.html      ← 附錄 A 那 15 張圖的看圖頁（用瀏覽器開，要連得上網路）
   設計筆記/          ← 舊的設計文件與體檢報告（不是現況說明）
   報表/              ← 產出的 xlsx（gitignore，只在本機）
 ```
@@ -2131,3 +2377,1217 @@ psql \
 Sources:
 - [Backup and Restore using the CLI | Supabase Docs](https://supabase.com/docs/guides/platform/migrating-within-supabase/backup-restore)
 - [Supabase CLI - db dump](https://supabase.com/docs/reference/cli/supabase-db-dump)
+
+---
+
+# 附錄 A、資料庫結構（ER 圖與欄位清單）
+
+> **這一章是 2026-09-22 從線上資料庫直接匯出來的**，不是從 `schema-baseline.sql` 抄的。
+> 原始匯出結果在 `supabase/schema-live.txt`，重跑的腳本是 `supabase/匯出-schema給ER圖.sql`。
+> 完整欄位清單（每一張表的每一欄）另外放在 **`docs/資料庫欄位清單.md`**。
+
+## A.0 看圖之前要知道的四件事
+
+**1. 「大約幾列」是 Postgres 的估計值，`0` 不代表空。**
+那個數字來自 `pg_class.reltuples` —— 沒跑過 `ANALYZE` 的表就是 0。
+`estates`、`profiles`、`payment_accounts` 都顯示 0，而它們當然有資料。
+**要真的筆數就去 `count(*)`，不要引用這一欄。**
+
+**2. 圖上故意少畫了 36 條邊。**
+`created_by`／`approved_by`／`dismissed_by` 這種「誰做的」欄位幾乎每張表都有一條，
+全畫出來的話圖會被撐成一條橫線而看不出真正的結構。
+那 36 條全部指向 `profiles` 或 `auth.users`，清單見 A.19。
+
+**3. `ON DELETE` 決定「刪父列會發生什麼」，圖上每條線都標了。**
+
+| 標的 | 意思 | 刪父列時 |
+|---|---|---|
+| `CASCADE` | 連刪 | 子列跟著消失 |
+| `SET NULL` | 清空 | 子列留著，那一欄變 null |
+| `NO ACTION` / `RESTRICT` | **擋住** | 刪不掉，跳英文錯誤 |
+
+★ 「房源刪不掉」就是這一格的事 —— `properties` 被 **11** 條 `NO ACTION` 指著。見 A.16。
+
+**4. 100 張表裡有 6 張是備份／一次性的**，不算系統的一部分。見 A.18。
+
+---
+
+## A.1 領域總覽
+
+只畫「哪個領域指到哪個領域」，不畫欄位。箭頭上的數字是外鍵條數，**只畫 2 條以上的**。
+
+```mermaid
+flowchart LR
+    D0["主檔<br/>9 張表"]
+    D1["收入 ① 契約與訂單<br/>9 張表"]
+    D2["收入 ② 收款、押金與認列<br/>6 張表"]
+    D3["支出 ① 請款到支出<br/>6 張表"]
+    D4["憑證附件<br/>1 張表"]
+    D5["支出 ② 暫付與代碼主檔<br/>6 張表"]
+    D6["銀行與稅<br/>6 張表"]
+    D7["房務 ① 排班與工單<br/>7 張表"]
+    D8["房務 ② 設定、人事費與評價<br/>8 張表"]
+    D9["備品<br/>3 張表"]
+    D10["人事與出勤<br/>9 張表"]
+    D11["系統 ① 通知、稽核與回收桶<br/>7 張表"]
+    D12["系統 ② 公告與董事會<br/>7 張表"]
+    D13["外部資料與行銷<br/>10 張表"]
+    D1 -->|8| D2
+    D0 -->|7| D10
+    D0 -->|6| D3
+    D0 -->|5| D7
+    D0 -->|5| D8
+    D0 -->|5| D1
+    D0 -->|3| D12
+    D3 -->|3| D4
+    D3 -->|3| D5
+    D5 -->|3| D3
+    D2 -->|3| D4
+    D0 -->|2| D2
+    D0 -->|2| D6
+    D5 -->|2| D2
+```
+
+★ 每一條箭頭都從 **主檔** 出發或經過它 —— `estates`／`properties`／`staff`／`profiles`
+這四張是全站的原點，改它們的欄位會牽動所有領域。
+
+---
+
+## A.2 主檔
+
+誰、哪裡 —— 其他每一張表都指回這裡
+
+```mermaid
+erDiagram
+    customers {
+        uuid id PK
+        uuid estate_id FK
+        uuid property_id FK
+        text name
+        _ 另有16欄
+    }
+    estate_fee_default {
+        uuid estate_id PK
+        _ 另有5欄
+    }
+    estate_managers {
+        uuid id PK
+        uuid estate_id FK
+        uuid staff_id FK
+        _ 另有5欄
+    }
+    estates {
+        uuid id PK
+        text name
+        _ 另有7欄
+    }
+    profiles {
+        uuid id PK
+        text name
+        _ 另有7欄
+    }
+    properties {
+        uuid id PK
+        text name
+        uuid estate_id FK
+        uuid parent_property_id FK
+        _ 另有13欄
+    }
+    property_listings {
+        text listing_id PK
+        uuid property_id FK
+        _ 另有3欄
+    }
+    staff {
+        uuid id PK
+        text name
+        _ 另有8欄
+    }
+    staff_properties {
+        uuid staff_id PK
+        uuid property_id PK
+    }
+    estates ||--o{ customers : "estate_id / SET NULL"
+    properties ||--o{ customers : "property_id / SET NULL"
+    estates ||--|{ estate_fee_default : "estate_id / CASCADE"
+    estates ||--|{ estate_managers : "estate_id / CASCADE"
+    staff ||--|{ estate_managers : "staff_id / NO ACTION"
+    users ||--|{ profiles : "id / NO ACTION"
+    estates ||--o{ properties : "estate_id / NO ACTION"
+    properties ||--o{ properties : "parent_property_id / NO ACTION"
+    properties ||--|{ property_listings : "property_id / CASCADE"
+    properties ||--|{ staff_properties : "property_id / CASCADE"
+    staff ||--|{ staff_properties : "staff_id / CASCADE"
+```
+
+| 表 | 在做什麼 | 欄位 | 大約幾列 |
+|---|---|---:|---:|
+| `estates` | 物業主檔（安幸辦公室也是一筆） | 9 | 0 |
+| `properties` | 房源主檔。`parent_property_id` 指向上層房源（整層拆成小房間時用），`units` 是這一筆算幾間、`count_in_occupancy` 決定要不要進住房率分母 | 17 | 180 |
+| `property_listings` | 房源 ↔ Airbnb listing 的對應（一間房換過幾次 listing 都留著，`is_current` 標現在那一個） | 5 | 76 |
+| `staff` | 員工主檔。`staff_type` 是**職位**（管家／房務／經理…），`role` 是**權限** —— 同一張表放了兩件事 | 10 | 11 |
+| `profiles` | 登入帳號的側寫。`id` 就是 `auth.users.id`，`role` 是**權限** | 9 | 0 |
+| `staff_properties` | 員工負責哪些房源 | 2 | 0 |
+| `estate_managers` | 物業負責人的**任期**（有起訖日，所以查得到「那一天是誰負責」） | 8 | 0 |
+| `estate_fee_default` | 物業層級的預設費用（可不可以帶寵物、寵物押金與費用） | 6 | 0 |
+| `customers` | 住客名冊。從訂單彙整出來的，`customers_key_uniq` 用「物業＋房源＋姓名」去重 | 20 | 2,100 |
+
+---
+
+## A.3 收入 ① 契約與訂單
+
+長租契約自動長出月租單，短租訂單從 Airbnb 同步進來
+
+```mermaid
+erDiagram
+    contract_order_conflicts {
+        uuid contract_id PK
+        text ym PK
+        _ 另有6欄
+    }
+    contract_payments {
+        uuid id PK
+        uuid contract_id FK
+        uuid order_id FK
+        _ 另有5欄
+    }
+    contract_recurring_charges {
+        uuid id PK
+        uuid contract_id FK
+        text item_name
+        _ 另有7欄
+    }
+    contracts {
+        uuid id PK
+        text name
+        uuid estate_id FK
+        _ 另有37欄
+    }
+    order_lock_pending {
+        uuid id PK
+        uuid order_id FK
+        text ym
+        _ 另有5欄
+    }
+    orders {
+        uuid id PK
+        text order_key
+        uuid estate_id FK
+        uuid property_id FK
+        uuid contract_id FK
+        text account_code FK
+        uuid deposit_id FK
+        _ 另有34欄
+    }
+    period_lock {
+        text ym PK
+        _ 另有7欄
+    }
+    period_unlock {
+        uuid id PK
+        text ym
+        uuid order_id FK
+        uuid contract_id FK
+        _ 另有4欄
+    }
+    recurring_charges {
+        uuid id PK
+        uuid estate_id FK
+        uuid property_id FK
+        text item_name
+        _ 另有8欄
+    }
+    contracts ||--|{ contract_order_conflicts : "contract_id / CASCADE"
+    contracts ||--o{ contract_payments : "contract_id / CASCADE"
+    orders ||--o{ contract_payments : "order_id / NO ACTION"
+    contracts ||--|{ contract_recurring_charges : "contract_id / CASCADE"
+    estates ||--o{ contracts : "estate_id / NO ACTION"
+    orders ||--|{ order_lock_pending : "order_id / CASCADE"
+    account_codes ||--o{ orders : "account_code / NO ACTION"
+    contracts ||--o{ orders : "contract_id / CASCADE"
+    deposits ||--o{ orders : "deposit_id / SET NULL"
+    estates ||--o{ orders : "estate_id / NO ACTION"
+    properties ||--o{ orders : "property_id / NO ACTION"
+    contracts ||--o{ period_unlock : "contract_id / CASCADE"
+    orders ||--o{ period_unlock : "order_id / CASCADE"
+    estates ||--|{ recurring_charges : "estate_id / NO ACTION"
+    properties ||--o{ recurring_charges : "property_id / NO ACTION"
+```
+
+| 表 | 在做什麼 | 欄位 | 大約幾列 |
+|---|---|---:|---:|
+| `contracts` | 長租契約。月租單由它自動長出來 | 40 | 110 |
+| `contract_payments` | 契約的分期收款（每一期起訖、金額、收了沒） | 8 | 0 |
+| `contract_recurring_charges` | 契約的固定加收（管理費、車位…），每個月跟著月租單一起產生 | 10 | 0 |
+| `contract_order_conflicts` | 月租單該產生卻產生不了的紀錄（撞到已存在的單），給畫面提示用 | 8 | 0 |
+| `recurring_charges` | 物業／房源層級的定期收費（跟契約無關的那種） | 12 | 0 |
+| `orders` | **訂單** —— 短租、月租單、一次性費用、加費全部在這一張。`order_key` 是冪等鍵，`imported_via` 說它從哪來 | 41 | 5,310 |
+| `period_lock` | 月結關帳。關掉之後那個月的單不能改 | 8 | 0 |
+| `period_unlock` | 臨時解鎖（30 分鐘後自動失效），每一次解鎖都留一筆 | 8 | 61 |
+| `order_lock_pending` | 關帳後被擋下來的修改，留著等人決定要不要補 | 8 | 0 |
+
+---
+
+## A.4 收入 ② 收款、押金與認列
+
+錢進來，以及「這筆算哪個月的營收」
+
+```mermaid
+erDiagram
+    deposit_payments {
+        uuid id PK
+        uuid deposit_id FK
+        text account FK
+        _ 另有8欄
+    }
+    deposits {
+        uuid id PK
+        uuid order_id FK
+        uuid contract_id FK
+        uuid estate_id FK
+        uuid property_id FK
+        uuid transfer_to_id FK
+        uuid transfer_from_id FK
+        uuid converted_to_deposit_id FK
+        uuid converted_from_earnest_id FK
+        uuid forfeit_order_id FK
+        _ 另有38欄
+    }
+    invoices {
+        uuid id PK
+        uuid contract_id FK
+        uuid order_id FK
+        text ym
+        _ 另有10欄
+    }
+    order_payments {
+        uuid id PK
+        uuid order_id FK
+        text account FK
+        _ 另有8欄
+    }
+    revenue_recognitions {
+        uuid id PK
+        uuid order_id FK
+        text ym
+        uuid contract_id FK
+        _ 另有18欄
+    }
+    revenue_snapshots {
+        uuid id PK
+        text ym
+        _ 另有12欄
+    }
+    payment_accounts ||--o{ deposit_payments : "account / NO ACTION"
+    deposits ||--|{ deposit_payments : "deposit_id / CASCADE"
+    contracts ||--o{ deposits : "contract_id / SET NULL"
+    deposits ||--o{ deposits : "converted_from_earnest_id / NO ACTION"
+    deposits ||--o{ deposits : "converted_to_deposit_id / NO ACTION"
+    estates ||--o{ deposits : "estate_id / NO ACTION"
+    orders ||--o{ deposits : "forfeit_order_id / SET NULL"
+    orders ||--o{ deposits : "order_id / SET NULL"
+    properties ||--o{ deposits : "property_id / NO ACTION"
+    deposits ||--o{ deposits : "transfer_from_id / SET NULL"
+    deposits ||--o{ deposits : "transfer_to_id / SET NULL"
+    contracts ||--o{ invoices : "contract_id / SET NULL"
+    orders ||--o{ invoices : "order_id / SET NULL"
+    payment_accounts ||--o{ order_payments : "account / NO ACTION"
+    orders ||--|{ order_payments : "order_id / CASCADE"
+    contracts ||--o{ revenue_recognitions : "contract_id / CASCADE"
+    orders ||--o{ revenue_recognitions : "order_id / CASCADE"
+```
+
+| 表 | 在做什麼 | 欄位 | 大約幾列 |
+|---|---|---:|---:|
+| `order_payments` | 訂單的收款紀錄（一張單可以收好幾次） | 11 | 199 |
+| `deposits` | 押金與訂金。`kind` 分兩種，`lines` 存多幣別明細，退款走三段式核准 | 48 | 115 |
+| `deposit_payments` | 押金的收款紀錄 | 11 | 95 |
+| `revenue_recognitions` | **營收認列** —— 一張跨月的單拆成每個月多少錢 | 22 | 5,951 |
+| `revenue_snapshots` | 早期匯入的營收快照（沒有訂單可以對應的歷史資料） | 14 | 0 |
+| `invoices` | 開出去的發票（安幸自己開的，不是稅務那張） | 14 | 49 |
+
+---
+
+## A.5 支出 ① 請款到支出
+
+需求 → 請款單 → 核准 → 支出 → 出款
+
+```mermaid
+erDiagram
+    expenses {
+        uuid id PK
+        date spent_on
+        text account_code FK
+        uuid property_id FK
+        uuid source_item_id FK
+        uuid estate_id FK
+        uuid request_id FK
+        uuid fee_request_id FK
+        uuid parent_expense_id FK
+        uuid fee_payment_id FK
+        uuid advance_id FK
+        _ 另有21欄
+    }
+    other_book_payments {
+        uuid id PK
+        uuid expense_id FK
+        _ 另有7欄
+    }
+    purchase_demand_items {
+        uuid id PK
+        uuid demand_id FK
+        text item_name
+        uuid estate_id FK
+        uuid request_item_id FK
+        _ 另有11欄
+    }
+    purchase_demands {
+        uuid id PK
+        uuid requester_id FK
+        _ 另有8欄
+    }
+    purchase_request_items {
+        uuid id PK
+        uuid request_id FK
+        text item_name
+        text account_code FK
+        uuid property_id FK
+        uuid estate_id FK
+        _ 另有7欄
+    }
+    purchase_requests {
+        uuid id PK
+        text req_no
+        uuid requester_id FK
+        _ 另有32欄
+    }
+    account_codes ||--o{ expenses : "account_code / NO ACTION"
+    advance_payments ||--o{ expenses : "advance_id / SET NULL"
+    estates ||--o{ expenses : "estate_id / NO ACTION"
+    order_payments ||--o{ expenses : "fee_payment_id / CASCADE"
+    purchase_requests ||--o{ expenses : "fee_request_id / SET NULL"
+    expenses ||--o{ expenses : "parent_expense_id / CASCADE"
+    properties ||--o{ expenses : "property_id / NO ACTION"
+    purchase_requests ||--o{ expenses : "request_id / SET NULL"
+    purchase_request_items ||--o{ expenses : "source_item_id / SET NULL"
+    expenses ||--|{ other_book_payments : "expense_id / CASCADE"
+    purchase_demands ||--|{ purchase_demand_items : "demand_id / CASCADE"
+    estates ||--o{ purchase_demand_items : "estate_id / NO ACTION"
+    purchase_request_items ||--o{ purchase_demand_items : "request_item_id / SET NULL"
+    profiles ||--|{ purchase_demands : "requester_id / NO ACTION"
+    account_codes ||--o{ purchase_request_items : "account_code / NO ACTION"
+    estates ||--o{ purchase_request_items : "estate_id / NO ACTION"
+    properties ||--o{ purchase_request_items : "property_id / NO ACTION"
+    purchase_requests ||--|{ purchase_request_items : "request_id / CASCADE"
+    users ||--|{ purchase_requests : "requester_id / NO ACTION"
+```
+
+| 表 | 在做什麼 | 欄位 | 大約幾列 |
+|---|---|---:|---:|
+| `purchase_demands` | 採購需求單（想買什麼，還沒報價） | 10 | 6 |
+| `purchase_demand_items` | 需求單的品項。`qty` 是 text —— 「3 箱」「一組」都填得進去 | 16 | 8 |
+| `purchase_requests` | **請款單**。走「送出 → 經理核 → 會計核 → 付款」 | 35 | 110 |
+| `purchase_request_items` | 請款單的品項，每一項有自己的會計科目與用途 | 13 | 298 |
+| `expenses` | **支出**。`deferred` 是遞延認列、`parent_expense_id` 是遞延的子單、`book` 分事業體 | 32 | 419 |
+| `other_book_payments` | 其他收支帳的實支紀錄（愛皮／洪鯊那本） | 9 | 0 |
+
+---
+
+## A.6 憑證附件
+
+一張 attachments 掛在九種單據上
+
+```mermaid
+erDiagram
+    attachments {
+        uuid id PK
+        uuid request_id FK
+        uuid expense_id FK
+        uuid deposit_id FK
+        uuid order_payment_id FK
+        uuid deposit_payment_id FK
+        uuid request_item_id FK
+        uuid tender_id FK
+        uuid order_id FK
+        uuid bank_transaction_id FK
+        _ 另有6欄
+    }
+    bank_transactions ||--o{ attachments : "bank_transaction_id / CASCADE"
+    deposits ||--o{ attachments : "deposit_id / CASCADE"
+    deposit_payments ||--o{ attachments : "deposit_payment_id / CASCADE"
+    expenses ||--o{ attachments : "expense_id / CASCADE"
+    orders ||--o{ attachments : "order_id / CASCADE"
+    order_payments ||--o{ attachments : "order_payment_id / CASCADE"
+    purchase_requests ||--o{ attachments : "request_id / CASCADE"
+    purchase_request_items ||--o{ attachments : "request_item_id / CASCADE"
+    tenders ||--o{ attachments : "tender_id / CASCADE"
+```
+
+| 表 | 在做什麼 | 欄位 | 大約幾列 |
+|---|---|---:|---:|
+| `attachments` | 憑證附件。一張表掛九種單據，每一種一個 `*_id` 欄位（同時只會有一個有值） | 16 | 275 |
+
+---
+
+## A.7 支出 ② 暫付與代碼主檔
+
+先墊的錢，以及會計科目／收付款方式
+
+```mermaid
+erDiagram
+    account_codes {
+        text code PK
+        _ 另有5欄
+    }
+    advance_payments {
+        uuid id PK
+        uuid estate_id FK
+        uuid forfeit_expense_id FK
+        uuid request_id FK
+        uuid source_item_id FK
+        _ 另有15欄
+    }
+    advance_repayment_lines {
+        uuid id PK
+        uuid repayment_id FK
+        uuid advance_id FK
+        _ 另有2欄
+    }
+    advance_repayments {
+        uuid id PK
+        _ 另有9欄
+    }
+    payee_presets {
+        uuid id PK
+        _ 另有10欄
+    }
+    payment_accounts {
+        uuid id PK
+        text code
+        _ 另有8欄
+    }
+    estates ||--o{ advance_payments : "estate_id / SET NULL"
+    expenses ||--o{ advance_payments : "forfeit_expense_id / SET NULL"
+    purchase_requests ||--o{ advance_payments : "request_id / SET NULL"
+    purchase_request_items ||--o{ advance_payments : "source_item_id / SET NULL"
+    advance_payments ||--|{ advance_repayment_lines : "advance_id / RESTRICT"
+    advance_repayments ||--|{ advance_repayment_lines : "repayment_id / CASCADE"
+```
+
+| 表 | 在做什麼 | 欄位 | 大約幾列 |
+|---|---|---:|---:|
+| `advance_payments` | **暫付** —— 先墊出去的錢（押金、代墊），還沒還回來 | 20 | 5 |
+| `advance_repayments` | 暫付的還款（一次還可以沖掉好幾筆） | 10 | 0 |
+| `advance_repayment_lines` | 還款沖掉了哪幾筆暫付、各沖多少 | 5 | 0 |
+| `account_codes` | 會計科目。`kind` 分收入／支出，`book` 分事業體 | 6 | 60 |
+| `payment_accounts` | 收付款方式（現金、各家銀行帳戶…）。`code` 是外鍵鍵值 | 10 | 0 |
+| `payee_presets` | 常用收款人（銀行代碼、帳號、統編），請款單上下拉選 | 11 | 27 |
+
+---
+
+## A.8 銀行與稅
+
+對帳單、發票、營業稅
+
+```mermaid
+erDiagram
+    accounting_reports {
+        uuid id PK
+        text title
+        _ 另有12欄
+    }
+    bank_accounts {
+        uuid id PK
+        text name
+        _ 另有11欄
+    }
+    bank_statements {
+        uuid id PK
+        uuid account_id FK
+        _ 另有13欄
+    }
+    bank_transactions {
+        uuid id PK
+        uuid account_id FK
+        uuid statement_id FK
+        _ 另有14欄
+    }
+    tax_invoice {
+        uuid id PK
+        text period
+        uuid estate_id FK
+        uuid property_id FK
+        uuid expense_id FK
+        _ 另有19欄
+    }
+    tax_period {
+        uuid id PK
+        text period
+        _ 另有11欄
+    }
+    bank_accounts ||--|{ bank_statements : "account_id / CASCADE"
+    bank_accounts ||--|{ bank_transactions : "account_id / CASCADE"
+    bank_statements ||--o{ bank_transactions : "statement_id / SET NULL"
+    estates ||--o{ tax_invoice : "estate_id / NO ACTION"
+    expenses ||--o{ tax_invoice : "expense_id / SET NULL"
+    properties ||--o{ tax_invoice : "property_id / NO ACTION"
+```
+
+| 表 | 在做什麼 | 欄位 | 大約幾列 |
+|---|---|---:|---:|
+| `bank_accounts` | 銀行帳戶主檔。`manual_entry` 標「這本是手動記帳不是對帳單匯入」 | 13 | 0 |
+| `bank_statements` | 上傳過的對帳單（一個檔案一筆） | 15 | 40 |
+| `bank_transactions` | 銀行交易明細。`balance` 由觸發器維護（`migration_203` 之後），`bank_balance` 是對帳單上原本印的 | 17 | 2,088 |
+| `tax_invoice` | **稅務**的進銷項發票（跟 `invoices` 不是同一件事） | 24 | 72 |
+| `tax_period` | 營業稅期別（兩個月一期），留期初留抵與應納稅額 | 13 | 0 |
+| `accounting_reports` | 外部會計師給的報表檔案 | 14 | 0 |
+
+---
+
+## A.9 房務 ① 排班與工單
+
+TimeTree 匯入 → 工單 → 拆帳
+
+```mermaid
+erDiagram
+    hk_day {
+        text period
+        date work_date PK
+        uuid staff_id PK
+        _ 另有4欄
+    }
+    hk_event {
+        uuid id PK
+        text period
+        _ 另有11欄
+    }
+    hk_property {
+        uuid id PK
+        text code
+        uuid property_id FK
+        _ 另有8欄
+    }
+    hk_staff {
+        uuid id PK
+        text code
+        uuid staff_id FK
+        _ 另有11欄
+    }
+    hk_task {
+        uuid id PK
+        date work_date
+        uuid property_id FK
+        uuid staff_id FK
+        uuid order_id FK
+        _ 另有11欄
+    }
+    hk_work_item {
+        uuid id PK
+        uuid event_id FK
+        text period
+        uuid staff_id FK
+        _ 另有10欄
+    }
+    hk_work_split {
+        uuid id PK
+        text period
+        uuid property_id FK
+        _ 另有7欄
+    }
+    hk_staff ||--|{ hk_day : "staff_id / CASCADE"
+    properties ||--o{ hk_property : "property_id / NO ACTION"
+    staff ||--o{ hk_staff : "staff_id / NO ACTION"
+    orders ||--o{ hk_task : "order_id / CASCADE"
+    properties ||--o{ hk_task : "property_id / SET NULL"
+    staff ||--o{ hk_task : "staff_id / SET NULL"
+    hk_event ||--o{ hk_work_item : "event_id / SET NULL"
+    hk_staff ||--|{ hk_work_item : "staff_id / NO ACTION"
+    properties ||--|{ hk_work_split : "property_id / NO ACTION"
+```
+
+| 表 | 在做什麼 | 欄位 | 大約幾列 |
+|---|---|---:|---:|
+| `hk_event` | 從 TimeTree 匯進來的原始行程（還沒變成工單） | 13 | 235 |
+| `hk_work_item` | 房務**工單** —— 誰、哪天、哪個房源、做什麼。`units_override`／`points_override`／`amount_override` 是覆寫的間數／點數／金額 | 14 | 184 |
+| `hk_work_split` | **拆帳** —— 一份工的錢記到好幾間房源 | 10 | 0 |
+| `hk_task` | 排班表上的一格（含系統自動產生的清潔工單，`auto_kind` 標來源） | 16 | 422 |
+| `hk_day` | 某人某天的出勤狀態（請假、時數） | 7 | 56 |
+| `hk_staff` | 房務人員（跟 `staff` 對應，`count_mode` 決定怎麼算她的量） | 14 | 9 |
+| `hk_property` | 房務用的房源代碼與別名（跟 `properties` 對應） | 11 | 70 |
+
+---
+
+## A.10 房務 ② 設定、人事費與評價
+
+每月設定、人事費攤提、清潔記錄與 Airbnb 評價
+
+```mermaid
+erDiagram
+    cleaning_records {
+        uuid id PK
+        uuid staff_id FK
+        uuid property_id FK
+        _ 另有11欄
+    }
+    hk_audit {
+        bigint id PK
+        _ 另有6欄
+    }
+    hk_labor_cost {
+        uuid id PK
+        uuid estate_id FK
+        uuid property_id FK
+        _ 另有4欄
+    }
+    hk_month_property {
+        text period PK
+        text property_code PK
+        _ 另有2欄
+    }
+    hk_period {
+        text period PK
+        _ 另有4欄
+    }
+    hk_setting {
+        text key PK
+        _ 另有5欄
+    }
+    hk_work_type {
+        text code PK
+        _ 另有5欄
+    }
+    reviews {
+        uuid id PK
+        uuid property_id FK
+        _ 另有24欄
+    }
+    properties ||--o{ cleaning_records : "property_id / NO ACTION"
+    staff ||--o{ cleaning_records : "staff_id / NO ACTION"
+    estates ||--o{ hk_labor_cost : "estate_id / CASCADE"
+    properties ||--o{ hk_labor_cost : "property_id / CASCADE"
+    properties ||--o{ reviews : "property_id / NO ACTION"
+```
+
+| 表 | 在做什麼 | 欄位 | 大約幾列 |
+|---|---|---:|---:|
+| `hk_period` | 每個月的房務設定（怎麼算量、含不含贈送） | 5 | 0 |
+| `hk_month_property` | 某個月某個房源的覆寫（間數、布巾取用） | 4 | 23 |
+| `hk_setting` | 房務的全域設定 | 6 | 0 |
+| `hk_work_type` | 工作類型（清潔、退房、布巾…）與它算不算量 | 6 | 0 |
+| `hk_labor_cost` | 房務人事費的月攤提（掛在物業或房源上） | 7 | 0 |
+| `hk_audit` | 房務資料的異動紀錄 | 7 | 104 |
+| `cleaning_records` | 清潔檢查記錄（評分、備註、文件連結） | 14 | 172 |
+| `reviews` | Airbnb 評價。`hidden_at` 是人工隱藏 | 26 | 1,610 |
+
+---
+
+## A.11 備品
+
+取用／補貨／盤點 —— 餘量是算出來的
+
+```mermaid
+erDiagram
+    supply_count {
+        uuid id PK
+        uuid item_id FK
+        text ym
+        _ 另有6欄
+    }
+    supply_item {
+        uuid id PK
+        uuid estate_id FK
+        text name
+        _ 另有8欄
+    }
+    supply_txn {
+        uuid id PK
+        uuid item_id FK
+        _ 另有7欄
+    }
+    supply_item ||--|{ supply_count : "item_id / CASCADE"
+    estates ||--o{ supply_item : "estate_id / NO ACTION"
+    supply_item ||--|{ supply_txn : "item_id / CASCADE"
+```
+
+| 表 | 在做什麼 | 欄位 | 大約幾列 |
+|---|---|---:|---:|
+| `supply_item` | 備品品項（哪個物業、規格、廠商、效期） | 11 | 0 |
+| `supply_txn` | 備品異動:**取用**（−）與**補貨**（＋）。★ 餘量是這張表加總出來的，沒有存成欄位 | 9 | 0 |
+| `supply_count` | 月底**盤點**:系統算出來多少 vs 實際數到多少 | 9 | 0 |
+
+---
+
+## A.12 人事與出勤
+
+打卡、請假、加班
+
+```mermaid
+erDiagram
+    attendance {
+        uuid id PK
+        uuid user_id FK
+        date work_date
+        uuid in_estate_id FK
+        uuid out_estate_id FK
+        _ 另有17欄
+    }
+    attendance_fixes {
+        uuid id PK
+        uuid user_id FK
+        date work_date
+        _ 另有8欄
+    }
+    holidays {
+        date d PK
+        text name
+        _ 另有2欄
+    }
+    leave_balances {
+        uuid id PK
+        uuid user_id FK
+        text type_code FK
+        _ 另有5欄
+    }
+    leave_requests {
+        uuid id PK
+        uuid user_id FK
+        text type_code FK
+        _ 另有12欄
+    }
+    leave_seniority {
+        integer threshold_months PK
+        _ 另有2欄
+    }
+    leave_types {
+        text code PK
+        _ 另有6欄
+    }
+    overtime_requests {
+        uuid id PK
+        uuid user_id FK
+        date work_date
+        _ 另有10欄
+    }
+    work_settings {
+        integer id PK
+        _ 另有6欄
+    }
+    estates ||--o{ attendance : "in_estate_id / NO ACTION"
+    estates ||--o{ attendance : "out_estate_id / NO ACTION"
+    profiles ||--|{ attendance : "user_id / CASCADE"
+    profiles ||--|{ attendance_fixes : "user_id / CASCADE"
+    leave_types ||--|{ leave_balances : "type_code / NO ACTION"
+    profiles ||--|{ leave_balances : "user_id / CASCADE"
+    leave_types ||--|{ leave_requests : "type_code / NO ACTION"
+    profiles ||--|{ leave_requests : "user_id / CASCADE"
+    profiles ||--|{ overtime_requests : "user_id / CASCADE"
+```
+
+| 表 | 在做什麼 | 欄位 | 大約幾列 |
+|---|---|---:|---:|
+| `attendance` | 打卡紀錄（含 GPS 與距離，判斷有沒有在範圍內） | 22 | 0 |
+| `attendance_fixes` | 補打卡申請 | 11 | 0 |
+| `leave_types` | 假別 | 7 | 0 |
+| `leave_balances` | 每人每年每個假別的額度與已用 | 8 | 0 |
+| `leave_requests` | 請假單 | 15 | 0 |
+| `leave_seniority` | 年資 → 特休天數的對照 | 3 | 0 |
+| `overtime_requests` | 加班單 | 13 | 0 |
+| `work_settings` | 全站的上下班時間與每日工時（只有一列） | 7 | 0 |
+| `holidays` | 國定假日與補班日 | 4 | 0 |
+
+---
+
+## A.13 系統 ① 通知、稽核與回收桶
+
+誰改了什麼、誰該被通知、刪掉的東西去哪
+
+```mermaid
+erDiagram
+    app_secrets {
+        text name PK
+        _ 另有2欄
+    }
+    data_audit {
+        bigint id PK
+        _ 另有7欄
+    }
+    notification_prefs {
+        uuid user_id PK
+        _ 另有7欄
+    }
+    notifications {
+        bigint id PK
+        uuid user_id FK
+        text title
+        _ 另有5欄
+    }
+    push_subscriptions {
+        uuid id PK
+        uuid user_id FK
+        _ 另有7欄
+    }
+    schema_migrations {
+        text name PK
+        _ 另有3欄
+    }
+    trash {
+        uuid id PK
+        _ 另有13欄
+    }
+    users ||--|{ notification_prefs : "user_id / CASCADE"
+    profiles ||--|{ notifications : "user_id / CASCADE"
+    users ||--|{ push_subscriptions : "user_id / CASCADE"
+```
+
+| 表 | 在做什麼 | 欄位 | 大約幾列 |
+|---|---|---:|---:|
+| `notifications` | 站內通知 | 8 | 64 |
+| `notification_prefs` | 每個人要收哪幾類通知 | 8 | 0 |
+| `push_subscriptions` | 瀏覽器推播的訂閱端點 | 9 | 0 |
+| `data_audit` | **全站異動稽核** —— 誰在什麼時候改了哪一筆的哪一欄 | 8 | 9,518 |
+| `trash` | **回收桶**。刪掉的東西連同子資料存成 jsonb，可以復原 | 14 | 150 |
+| `schema_migrations` | 跑過哪幾支 migration。★ 有洞 —— 沒呼叫 `record_migration()` 的那幾支不在裡面 | 4 | 235 |
+| `app_secrets` | 系統層的金鑰（不是給人看的那本） | 3 | 0 |
+
+---
+
+## A.14 系統 ② 公告與董事會
+
+公告、會議、表單、帳密
+
+```mermaid
+erDiagram
+    announcement_reads {
+        uuid ann_id PK
+        uuid user_id PK
+        _ 另有1欄
+    }
+    announcements {
+        uuid id PK
+        text title
+        _ 另有6欄
+    }
+    board_events {
+        uuid id PK
+        text title
+        _ 另有7欄
+    }
+    board_files {
+        uuid id PK
+        uuid event_id FK
+        text name
+        uuid author_id FK
+        _ 另有4欄
+    }
+    board_forms {
+        uuid id PK
+        text title
+        _ 另有10欄
+    }
+    board_secret_reads {
+        uuid id PK
+        uuid secret_id FK
+        uuid user_id FK
+        _ 另有1欄
+    }
+    board_secrets {
+        uuid id PK
+        text title
+        _ 另有8欄
+    }
+    announcements ||--|{ announcement_reads : "ann_id / CASCADE"
+    profiles ||--|{ announcement_reads : "user_id / CASCADE"
+    profiles ||--o{ board_files : "author_id / SET NULL"
+    board_events ||--|{ board_files : "event_id / CASCADE"
+    board_secrets ||--|{ board_secret_reads : "secret_id / CASCADE"
+    profiles ||--o{ board_secret_reads : "user_id / SET NULL"
+```
+
+| 表 | 在做什麼 | 欄位 | 大約幾列 |
+|---|---|---:|---:|
+| `announcements` | 公告 | 8 | 0 |
+| `announcement_reads` | 誰讀過哪一則公告 | 3 | 0 |
+| `board_events` | 董事會／會議 | 9 | 0 |
+| `board_files` | 會議的附件 | 8 | 0 |
+| `board_forms` | 表單下載區 | 12 | 0 |
+| `board_secrets` | 帳密本（受限角色才讀得到） | 10 | 33 |
+| `board_secret_reads` | 誰在什麼時候看了哪一筆帳密 | 4 | 0 |
+
+---
+
+## A.15 外部資料與行銷
+
+Airbnb 同步、社群、標案
+
+```mermaid
+erDiagram
+    airbnb_snapshots {
+        text code PK
+        _ 另有17欄
+    }
+    social_accounts {
+        uuid id PK
+        text name
+        _ 另有12欄
+    }
+    social_posts {
+        uuid id PK
+        uuid account_id FK
+        uuid split_id FK
+        _ 另有12欄
+    }
+    social_splits {
+        uuid id PK
+        uuid account_id FK
+        _ 另有4欄
+    }
+    sync_issue_log {
+        bigint id PK
+        text code
+        _ 另有10欄
+    }
+    sync_issues {
+        text kind PK
+        text code PK
+        text field PK
+        _ 另有12欄
+    }
+    sync_runs {
+        bigint id PK
+        _ 另有10欄
+    }
+    sync_state {
+        text key PK
+        _ 另有2欄
+    }
+    tender_feed {
+        uuid id PK
+        text title
+        _ 另有9欄
+    }
+    tenders {
+        uuid id PK
+        text name
+        uuid feed_id FK
+        _ 另有9欄
+    }
+    social_accounts ||--|{ social_posts : "account_id / CASCADE"
+    social_splits ||--o{ social_posts : "split_id / CASCADE"
+    social_accounts ||--|{ social_splits : "account_id / CASCADE"
+    tender_feed ||--o{ tenders : "feed_id / SET NULL"
+```
+
+| 表 | 在做什麼 | 欄位 | 大約幾列 |
+|---|---|---:|---:|
+| `airbnb_snapshots` | Airbnb 爬回來的原始快照（進訂單之前的中繼站） | 18 | 578 |
+| `sync_issues` | 同步時發現的**待處理**差異（`dismissed_at` 是按掉） | 15 | 14 |
+| `sync_issue_log` | 已經處理掉的差異 | 12 | 113 |
+| `sync_runs` | 每一次同步跑了什麼（收到幾筆、新增幾筆…） | 11 | 141 |
+| `sync_state` | 同步的游標與狀態 | 3 | 0 |
+| `social_accounts` | 社群帳號（IG／FB） | 14 | 0 |
+| `social_posts` | 貼文排程與草稿 | 15 | 18 |
+| `social_splits` | 一張大圖切成輪播多圖的來源 | 6 | 0 |
+| `tender_feed` | 標案爬蟲抓回來的清單 | 11 | 0 |
+| `tenders` | 追蹤中的標案 | 12 | 0 |
+
+---
+
+## A.16 每一張表刪得掉嗎
+
+刪一筆主檔（房源、物業、員工）之前先看這裡。
+**「擋」那一欄不是 0 的話，只要有任何一筆子資料指著它就刪不掉** —— 而畫面上跳的是英文錯誤。
+
+| 被指到的表 | 擋住刪除 | 連刪子資料 | 把子資料清空 |
+|---|---:|---:|---:|
+| `profiles` | **21** | 7 | 12 |
+| `estates` | **12** | 3 | 2 |
+| `properties` | **11** | 3 | 2 |
+| `users` | **8** | 2 | 0 |
+| `staff` | **3** | 1 | 1 |
+| `account_codes` | **3** | 0 | 0 |
+| `payment_accounts` | **2** | 0 | 0 |
+| `deposits` | **2** | 2 | 3 |
+| `leave_types` | **2** | 0 | 0 |
+| `advance_payments` | **1** | 0 | 1 |
+| `orders` | **1** | 6 | 3 |
+| `hk_staff` | **1** | 1 | 0 |
+
+只被 `CASCADE`／`SET NULL` 指著（＝刪得掉，但會連帶動到別的資料）：
+
+| 被指到的表 | 連刪 | 清空 |
+|---|---:|---:|
+| `advance_repayments` | 1 | 0 |
+| `announcements` | 1 | 0 |
+| `bank_accounts` | 2 | 0 |
+| `bank_statements` | 0 | 1 |
+| `bank_transactions` | 1 | 0 |
+| `board_events` | 1 | 0 |
+| `board_secrets` | 1 | 0 |
+| `contracts` | 6 | 2 |
+| `deposit_payments` | 1 | 0 |
+| `expenses` | 3 | 2 |
+| `hk_event` | 0 | 1 |
+| `order_payments` | 2 | 0 |
+| `purchase_demands` | 1 | 0 |
+| `purchase_request_items` | 1 | 3 |
+| `purchase_requests` | 2 | 3 |
+| `social_accounts` | 2 | 0 |
+| `social_splits` | 1 | 0 |
+| `supply_item` | 2 | 0 |
+| `tender_feed` | 0 | 1 |
+| `tenders` | 1 | 0 |
+
+### 擋住 `properties` 的 11 條
+
+| 從哪張表 | 哪一欄 |
+|---|---|
+| `cleaning_records` | `property_id` |
+| `deposits` | `property_id` |
+| `expenses` | `property_id` |
+| `hk_property` | `property_id` |
+| `hk_work_split` | `property_id` |
+| `orders` | `property_id` |
+| `properties` | `parent_property_id` |
+| `purchase_request_items` | `property_id` |
+| `recurring_charges` | `property_id` |
+| `reviews` | `property_id` |
+| `tax_invoice` | `property_id` |
+
+★ 這就是 2026-09-22「為何 B18 刪不掉」的答案。
+**刪除鈕的確認訊息寫「會移到回收桶,可以復原」是假的** —— 它根本沒走到回收桶就被資料庫擋下來了。
+
+---
+
+## A.17 從這份 schema 直接看得出來的問題
+
+這幾條不是猜的，是把匯出結果拿去算出來的。**都還沒修。**
+
+### 1. 三組重複的唯一索引
+
+| 表 | 欄位 | 兩個索引 |
+|---|---|---|
+| `expenses` | `fee_request_id` | `expenses_fee_request_uidx` ／ `uq_expense_fee_request` |
+| `expenses` | `source_item_id` | `expenses_source_item_id_key` ／ `expenses_source_item_uidx` |
+| `orders` | `order_key` | `orders_order_key_key` ／ `uq_orders_order_key` |
+
+★ `WHERE (x IS NOT NULL)` 跟沒有 WHERE **語意相同** —— 唯一索引本來就允許多個 NULL。
+所以這三組真的是同一條規則建了兩次（`migration_221` 拿掉 partial 版本時，舊的那支沒刪）。
+壞處不是佔空間，是**下次有人要改那條規則時只會改到其中一支**。
+
+### 2. 十條外鍵指到 `auth.users` 而不是 `profiles`
+
+| 表 | 欄位 | ON DELETE |
+|---|---|---|
+| `bank_statements` | `uploaded_by` | NO ACTION |
+| `expenses` | `created_by` | NO ACTION |
+| `notification_prefs` | `user_id` | CASCADE |
+| `order_payments` | `created_by` | NO ACTION |
+| `profiles` | `id` | NO ACTION |
+| `purchase_requests` | `admin_approved_by` | NO ACTION |
+| `purchase_requests` | `manager_approved_by` | NO ACTION |
+| `purchase_requests` | `rejected_by` | NO ACTION |
+| `purchase_requests` | `requester_id` | NO ACTION |
+| `push_subscriptions` | `user_id` | CASCADE |
+
+★ `profiles.id` 本來就等於 `auth.users.id`，所以**資料是對的**。
+問題在查詢:PostgREST 對 `auth` schema 做不了 join，
+所以這幾欄**拿不到人名**，畫面上只會是一串 uuid 或一片空白。
+要顯示「誰建的」就得另外查一次 `profiles`。
+
+### 3. `staff` 同時有 `staff_type` 與 `role`
+
+`staff_type` 是**職位**（管家／房務／經理／會計／總經理），
+`role` 是**權限** —— 而權限的真實來源是 `profiles.role`。
+`staff.role` 是第二份，沒有任何東西保證它跟 `profiles.role` 一致。
+★ 這正是 README 第九章那條「一份資料存在兩個地方」。
+
+### 4. 五張表沒有主鍵
+
+| 表 | 大約幾列 |
+|---|---:|
+| `bank_statements_backup_144` | 0 |
+| `bank_statements_last_wipe` | 0 |
+| `deleted_stub_orders_93` | 0 |
+| `deposits_fix_b6_b5` | 0 |
+| `orders_backup_136` | 2,681 |
+
+★ 全部是備份表（`create table as select` 不帶主鍵）。不影響系統，但也代表**這幾張沒有人在維護**。
+
+### 5. 六條自我參照 —— 改這幾欄要小心無窮迴圈
+
+| 表 | 欄位 | 用途 | ON DELETE |
+|---|---|---|---|
+| `deposits` | `converted_from_earnest_id` | 這筆押金是哪張訂金轉的 | NO ACTION |
+| `deposits` | `converted_to_deposit_id` | 訂金轉成的押金 | NO ACTION |
+| `deposits` | `transfer_from_id` | 押金從哪一筆移來 | SET NULL |
+| `deposits` | `transfer_to_id` | 押金移到哪一筆 | SET NULL |
+| `expenses` | `parent_expense_id` | 遞延認列的母單 | CASCADE |
+| `properties` | `parent_property_id` | 房源的上層（整層拆成小房間） | NO ACTION |
+
+★ `properties` 上有兩支守衛（`properties_no_cycle` 與 `properties_parent_guard`）擋自我指向與迴圈 —— **它們的規則有重疊，要拆掉一支**（待辦）。
+
+---
+
+## A.18 六張備份／一次性的表
+
+**這幾張不是系統的一部分**，沒有任何程式讀它們。留著是為了「萬一」，但沒有人在管。
+
+| 表 | 在做什麼 | 欄位 | 大約幾列 |
+|---|---|---:|---:|
+| `bank_statements_backup_144` | `migration_144` 的備份 | 17 | 0 |
+| `bank_statements_last_wipe` | 清空對帳單前的備份 | 18 | 0 |
+| `deleted_contract_orders_81` | `migration_81` 刪掉的月租單 | 10 | 757 |
+| `deleted_stub_orders_93` | `migration_93` 刪掉的空殼訂單 | 38 | 0 |
+| `deposits_fix_b6_b5` | 押金 B6→B5 移房前的備份 | 39 | 0 |
+| `orders_backup_136` | `migration_136` 的備份 | 35 | 2,681 |
+
+★ `orders_backup_136` 有 2,681 列 —— 那是 `orders` 的一半。**要不要清掉是一個決定，不是一個 migration。**
+
+---
+
+## A.19 圖上省略的 36 條「誰做的」外鍵
+
+每一條都指向 `profiles` 或 `auth.users`，全部是稽核用的時間戳欄位。
+
+| 表 | 欄位 | 指到 | ON DELETE |
+|---|---|---|---|
+| `accounting_reports` | `created_by` | `profiles` | SET NULL |
+| `accounting_reports` | `updated_by` | `profiles` | SET NULL |
+| `advance_repayments` | `created_by` | `profiles` | SET NULL |
+| `announcements` | `created_by` | `profiles` | NO ACTION |
+| `attachments` | `uploaded_by` | `profiles` | NO ACTION |
+| `attendance` | `edited_by` | `profiles` | NO ACTION |
+| `attendance_fixes` | `reviewed_by` | `profiles` | NO ACTION |
+| `bank_statements` | `uploaded_by` | `users` | NO ACTION |
+| `board_events` | `created_by` | `profiles` | SET NULL |
+| `board_files` | `uploaded_by` | `profiles` | SET NULL |
+| `board_forms` | `created_by` | `profiles` | SET NULL |
+| `board_forms` | `updated_by` | `profiles` | SET NULL |
+| `board_secrets` | `created_by` | `profiles` | SET NULL |
+| `board_secrets` | `updated_by` | `profiles` | SET NULL |
+| `deposit_payments` | `created_by` | `profiles` | NO ACTION |
+| `deposit_payments` | `deleted_by` | `profiles` | NO ACTION |
+| `deposits` | `admin_approved_by` | `profiles` | NO ACTION |
+| `deposits` | `manager_approved_by` | `profiles` | NO ACTION |
+| `deposits` | `refund_requested_by` | `profiles` | NO ACTION |
+| `deposits` | `rejected_by` | `profiles` | NO ACTION |
+| `deposits` | `transferred_by` | `profiles` | NO ACTION |
+| `expenses` | `created_by` | `users` | NO ACTION |
+| `hk_event` | `dismissed_by` | `profiles` | NO ACTION |
+| `leave_requests` | `admin_by` | `profiles` | NO ACTION |
+| `leave_requests` | `manager_by` | `profiles` | NO ACTION |
+| `order_payments` | `created_by` | `users` | NO ACTION |
+| `other_book_payments` | `created_by` | `profiles` | SET NULL |
+| `overtime_requests` | `manager_by` | `profiles` | NO ACTION |
+| `purchase_requests` | `admin_approved_by` | `users` | NO ACTION |
+| `purchase_requests` | `manager_approved_by` | `users` | NO ACTION |
+| `purchase_requests` | `rejected_by` | `users` | NO ACTION |
+| `sync_issue_log` | `acted_by` | `profiles` | NO ACTION |
+| `sync_issues` | `dismissed_by` | `profiles` | NO ACTION |
+| `trash` | `deleted_by` | `profiles` | NO ACTION |
+| `trash` | `purged_by` | `profiles` | NO ACTION |
+| `trash` | `restored_by` | `profiles` | NO ACTION |
+
+---
+
+★ **這一章要更新時**：跑 `supabase/匯出-schema給ER圖.sql`，把結果存成 `supabase/schema-live.txt`，圖與清單是從它生出來的。

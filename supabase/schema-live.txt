@@ -1,0 +1,1846 @@
+T|account_codes|60
+C|account_codes|code|text|NOT NULL|
+C|account_codes|name|text|NOT NULL|
+C|account_codes|sort|integer|NOT NULL|0
+C|account_codes|active|boolean|NOT NULL|true
+C|account_codes|kind|text|NOT NULL|'expense'::text
+C|account_codes|book|text|NOT NULL|'anxing'::text
+K|account_codes|code
+T|accounting_reports|0
+C|accounting_reports|id|uuid|NOT NULL|gen_random_uuid()
+C|accounting_reports|kind|text|NOT NULL|
+C|accounting_reports|period_start|date|null|
+C|accounting_reports|title|text|NOT NULL|
+C|accounting_reports|uploaded_on|date|null|CURRENT_DATE
+C|accounting_reports|note|text|null|
+C|accounting_reports|file_path|text|null|
+C|accounting_reports|file_name|text|null|
+C|accounting_reports|file_size|bigint|null|
+C|accounting_reports|created_by|uuid|null|
+C|accounting_reports|created_at|timestamp with time zone|NOT NULL|now()
+C|accounting_reports|updated_by|uuid|null|
+C|accounting_reports|updated_at|timestamp with time zone|NOT NULL|clock_timestamp()
+C|accounting_reports|filed_on|date|null|
+K|accounting_reports|id
+F|accounting_reports|created_by|profiles|id|SET NULL
+F|accounting_reports|updated_by|profiles|id|SET NULL
+I|accounting_reports|ar_kind_period_idx|—|CREATE INDEX ar_kind_period_idx ON public.accounting_reports USING btree (kind, period_start DESC)
+T|advance_payments|5
+C|advance_payments|id|uuid|NOT NULL|gen_random_uuid()
+C|advance_payments|category|text|NOT NULL|
+C|advance_payments|counterparty|text|NOT NULL|
+C|advance_payments|usage|text|NOT NULL|
+C|advance_payments|estate_id|uuid|null|
+C|advance_payments|amount|numeric(14,2)|NOT NULL|
+C|advance_payments|paid_on|date|null|
+C|advance_payments|paid_account|text|null|
+C|advance_payments|refunded_on|date|null|
+C|advance_payments|refunded_amount|numeric(14,2)|null|
+C|advance_payments|refund_account|text|null|
+C|advance_payments|forfeit_expense_id|uuid|null|
+C|advance_payments|note|text|null|
+C|advance_payments|created_by|uuid|null|
+C|advance_payments|created_at|timestamp with time zone|NOT NULL|now()
+C|advance_payments|updated_at|timestamp with time zone|NOT NULL|now()
+C|advance_payments|request_id|uuid|null|
+C|advance_payments|purpose_type|text|NOT NULL|'estate'::text
+C|advance_payments|for_book|text|null|
+C|advance_payments|source_item_id|uuid|null|
+K|advance_payments|id
+F|advance_payments|estate_id|estates|id|SET NULL
+F|advance_payments|forfeit_expense_id|expenses|id|SET NULL
+F|advance_payments|request_id|purchase_requests|id|SET NULL
+F|advance_payments|source_item_id|purchase_request_items|id|SET NULL
+I|advance_payments|ap_item_uniq|UNIQUE|CREATE UNIQUE INDEX ap_item_uniq ON public.advance_payments USING btree (source_item_id) WHERE (source_item_id IS NOT NULL)
+I|advance_payments|ap_open_idx|—|CREATE INDEX ap_open_idx ON public.advance_payments USING btree (paid_on) WHERE ((paid_on IS NOT NULL) AND (refunded_on IS NULL))
+I|advance_payments|ap_paid_idx|—|CREATE INDEX ap_paid_idx ON public.advance_payments USING btree (paid_on DESC)
+I|advance_payments|ap_request_uniq|UNIQUE|CREATE UNIQUE INDEX ap_request_uniq ON public.advance_payments USING btree (request_id) WHERE ((request_id IS NOT NULL) AND (category <> '代墊'::text))
+T|advance_repayment_lines|0
+C|advance_repayment_lines|id|uuid|NOT NULL|gen_random_uuid()
+C|advance_repayment_lines|repayment_id|uuid|NOT NULL|
+C|advance_repayment_lines|advance_id|uuid|NOT NULL|
+C|advance_repayment_lines|amount|numeric|NOT NULL|
+C|advance_repayment_lines|created_at|timestamp with time zone|NOT NULL|clock_timestamp()
+K|advance_repayment_lines|id
+F|advance_repayment_lines|advance_id|advance_payments|id|RESTRICT
+F|advance_repayment_lines|repayment_id|advance_repayments|id|CASCADE
+I|advance_repayment_lines|arl_advance_idx|—|CREATE INDEX arl_advance_idx ON public.advance_repayment_lines USING btree (advance_id, created_at)
+I|advance_repayment_lines|arl_once_uniq|UNIQUE|CREATE UNIQUE INDEX arl_once_uniq ON public.advance_repayment_lines USING btree (repayment_id, advance_id)
+T|advance_repayments|0
+C|advance_repayments|id|uuid|NOT NULL|gen_random_uuid()
+C|advance_repayments|counterparty|text|NOT NULL|
+C|advance_repayments|for_book|text|null|
+C|advance_repayments|repaid_on|date|NOT NULL|
+C|advance_repayments|amount|numeric|NOT NULL|
+C|advance_repayments|in_account|text|NOT NULL|
+C|advance_repayments|out_account|text|NOT NULL|
+C|advance_repayments|note|text|null|
+C|advance_repayments|created_by|uuid|null|
+C|advance_repayments|created_at|timestamp with time zone|NOT NULL|clock_timestamp()
+K|advance_repayments|id
+F|advance_repayments|created_by|profiles|id|SET NULL
+T|airbnb_snapshots|578
+C|airbnb_snapshots|code|text|NOT NULL|
+C|airbnb_snapshots|listing_id|text|null|
+C|airbnb_snapshots|guest|text|null|
+C|airbnb_snapshots|start_date|date|null|
+C|airbnb_snapshots|end_date|date|null|
+C|airbnb_snapshots|nights|integer|null|
+C|airbnb_snapshots|status_key|text|null|
+C|airbnb_snapshots|earnings|numeric|null|
+C|airbnb_snapshots|cohost|numeric|null|
+C|airbnb_snapshots|revenue|numeric|null|
+C|airbnb_snapshots|first_seen|timestamp with time zone|NOT NULL|now()
+C|airbnb_snapshots|last_seen|timestamp with time zone|NOT NULL|now()
+C|airbnb_snapshots|changed_at|timestamp with time zone|null|
+C|airbnb_snapshots|change_note|text|null|
+C|airbnb_snapshots|missing_since|timestamp with time zone|null|
+C|airbnb_snapshots|raw|jsonb|null|
+C|airbnb_snapshots|seen_count|integer|NOT NULL|1
+C|airbnb_snapshots|miss_streak|integer|NOT NULL|0
+K|airbnb_snapshots|code
+I|airbnb_snapshots|idx_airbnb_snapshots_changed|—|CREATE INDEX idx_airbnb_snapshots_changed ON public.airbnb_snapshots USING btree (changed_at DESC NULLS LAST)
+I|airbnb_snapshots|idx_airbnb_snapshots_missing|—|CREATE INDEX idx_airbnb_snapshots_missing ON public.airbnb_snapshots USING btree (missing_since) WHERE (missing_since IS NOT NULL)
+I|airbnb_snapshots|idx_airbnb_snapshots_start|—|CREATE INDEX idx_airbnb_snapshots_start ON public.airbnb_snapshots USING btree (start_date)
+T|announcement_reads|0
+C|announcement_reads|ann_id|uuid|NOT NULL|
+C|announcement_reads|user_id|uuid|NOT NULL|
+C|announcement_reads|read_at|timestamp with time zone|NOT NULL|now()
+K|announcement_reads|ann_id
+K|announcement_reads|user_id
+F|announcement_reads|ann_id|announcements|id|CASCADE
+F|announcement_reads|user_id|profiles|id|CASCADE
+T|announcements|0
+C|announcements|id|uuid|NOT NULL|gen_random_uuid()
+C|announcements|title|text|NOT NULL|
+C|announcements|body|text|NOT NULL|
+C|announcements|pinned|boolean|NOT NULL|false
+C|announcements|active|boolean|NOT NULL|true
+C|announcements|created_by|uuid|null|
+C|announcements|created_at|timestamp with time zone|NOT NULL|now()
+C|announcements|updated_at|timestamp with time zone|NOT NULL|now()
+K|announcements|id
+F|announcements|created_by|profiles|id|NO ACTION
+I|announcements|ann_list_idx|—|CREATE INDEX ann_list_idx ON public.announcements USING btree (pinned DESC, created_at DESC) WHERE active
+T|app_secrets|0
+C|app_secrets|name|text|NOT NULL|
+C|app_secrets|value|text|NOT NULL|
+C|app_secrets|updated_at|timestamp with time zone|NOT NULL|clock_timestamp()
+K|app_secrets|name
+T|attachments|275
+C|attachments|id|uuid|NOT NULL|gen_random_uuid()
+C|attachments|request_id|uuid|null|
+C|attachments|expense_id|uuid|null|
+C|attachments|path|text|NOT NULL|
+C|attachments|file_name|text|null|
+C|attachments|mime_type|text|null|
+C|attachments|size_bytes|integer|null|
+C|attachments|uploaded_by|uuid|null|
+C|attachments|created_at|timestamp with time zone|NOT NULL|now()
+C|attachments|deposit_id|uuid|null|
+C|attachments|order_payment_id|uuid|null|
+C|attachments|deposit_payment_id|uuid|null|
+C|attachments|request_item_id|uuid|null|
+C|attachments|tender_id|uuid|null|
+C|attachments|order_id|uuid|null|
+C|attachments|bank_transaction_id|uuid|null|
+K|attachments|id
+F|attachments|bank_transaction_id|bank_transactions|id|CASCADE
+F|attachments|deposit_id|deposits|id|CASCADE
+F|attachments|deposit_payment_id|deposit_payments|id|CASCADE
+F|attachments|expense_id|expenses|id|CASCADE
+F|attachments|order_id|orders|id|CASCADE
+F|attachments|order_payment_id|order_payments|id|CASCADE
+F|attachments|request_id|purchase_requests|id|CASCADE
+F|attachments|request_item_id|purchase_request_items|id|CASCADE
+F|attachments|tender_id|tenders|id|CASCADE
+F|attachments|uploaded_by|profiles|id|NO ACTION
+I|attachments|att_bank_txn_idx|—|CREATE INDEX att_bank_txn_idx ON public.attachments USING btree (bank_transaction_id) WHERE (bank_transaction_id IS NOT NULL)
+I|attachments|att_dep_idx|—|CREATE INDEX att_dep_idx ON public.attachments USING btree (deposit_id)
+I|attachments|att_dep_pay_idx|—|CREATE INDEX att_dep_pay_idx ON public.attachments USING btree (deposit_payment_id)
+I|attachments|att_exp_idx|—|CREATE INDEX att_exp_idx ON public.attachments USING btree (expense_id)
+I|attachments|att_op_idx|—|CREATE INDEX att_op_idx ON public.attachments USING btree (order_payment_id)
+I|attachments|att_req_idx|—|CREATE INDEX att_req_idx ON public.attachments USING btree (request_id)
+I|attachments|att_req_item_idx|—|CREATE INDEX att_req_item_idx ON public.attachments USING btree (request_item_id)
+I|attachments|att_tender_idx|—|CREATE INDEX att_tender_idx ON public.attachments USING btree (tender_id) WHERE (tender_id IS NOT NULL)
+I|attachments|attachments_order_id_idx|—|CREATE INDEX attachments_order_id_idx ON public.attachments USING btree (order_id) WHERE (order_id IS NOT NULL)
+I|attachments|attachments_path_key|UNIQUE|CREATE UNIQUE INDEX attachments_path_key ON public.attachments USING btree (path)
+T|attendance|0
+C|attendance|id|uuid|NOT NULL|gen_random_uuid()
+C|attendance|user_id|uuid|NOT NULL|
+C|attendance|work_date|date|NOT NULL|
+C|attendance|in_at|timestamp with time zone|null|
+C|attendance|in_lat|numeric|null|
+C|attendance|in_lng|numeric|null|
+C|attendance|in_estate_id|uuid|null|
+C|attendance|in_distance_m|numeric|null|
+C|attendance|in_in_range|boolean|null|
+C|attendance|out_at|timestamp with time zone|null|
+C|attendance|out_lat|numeric|null|
+C|attendance|out_lng|numeric|null|
+C|attendance|out_estate_id|uuid|null|
+C|attendance|out_distance_m|numeric|null|
+C|attendance|out_in_range|boolean|null|
+C|attendance|note|text|null|
+C|attendance|edited_by|uuid|null|
+C|attendance|created_at|timestamp with time zone|NOT NULL|now()
+C|attendance|updated_at|timestamp with time zone|NOT NULL|now()
+C|attendance|status|text|NOT NULL|'normal'::text
+C|attendance|late_min|integer|null|
+C|attendance|early_min|integer|null|
+K|attendance|id
+F|attendance|edited_by|profiles|id|NO ACTION
+F|attendance|in_estate_id|estates|id|NO ACTION
+F|attendance|out_estate_id|estates|id|NO ACTION
+F|attendance|user_id|profiles|id|CASCADE
+I|attendance|attendance_date_idx|—|CREATE INDEX attendance_date_idx ON public.attendance USING btree (work_date)
+I|attendance|attendance_user_date_uniq|UNIQUE|CREATE UNIQUE INDEX attendance_user_date_uniq ON public.attendance USING btree (user_id, work_date)
+T|attendance_fixes|0
+C|attendance_fixes|id|uuid|NOT NULL|gen_random_uuid()
+C|attendance_fixes|user_id|uuid|NOT NULL|
+C|attendance_fixes|work_date|date|NOT NULL|
+C|attendance_fixes|kind|text|NOT NULL|
+C|attendance_fixes|fix_time|time without time zone|NOT NULL|
+C|attendance_fixes|reason|text|NOT NULL|
+C|attendance_fixes|status|text|NOT NULL|'pending'::text
+C|attendance_fixes|reviewed_by|uuid|null|
+C|attendance_fixes|reviewed_at|timestamp with time zone|null|
+C|attendance_fixes|review_note|text|null|
+C|attendance_fixes|created_at|timestamp with time zone|NOT NULL|now()
+K|attendance_fixes|id
+F|attendance_fixes|reviewed_by|profiles|id|NO ACTION
+F|attendance_fixes|user_id|profiles|id|CASCADE
+I|attendance_fixes|att_fix_pending_idx|—|CREATE INDEX att_fix_pending_idx ON public.attendance_fixes USING btree (status) WHERE (status = 'pending'::text)
+I|attendance_fixes|att_fix_user_idx|—|CREATE INDEX att_fix_user_idx ON public.attendance_fixes USING btree (user_id, work_date)
+T|bank_accounts|0
+C|bank_accounts|id|uuid|NOT NULL|gen_random_uuid()
+C|bank_accounts|name|text|NOT NULL|
+C|bank_accounts|bank|text|NOT NULL|
+C|bank_accounts|account_no|text|null|
+C|bank_accounts|account_no_tail|text|null|
+C|bank_accounts|parser|text|null|
+C|bank_accounts|opening_balance|numeric(14,2)|null|
+C|bank_accounts|opening_balance_on|date|null|
+C|bank_accounts|sort|integer|NOT NULL|0
+C|bank_accounts|active|boolean|NOT NULL|true
+C|bank_accounts|created_at|timestamp with time zone|NOT NULL|now()
+C|bank_accounts|kind|text|NOT NULL|'bank'::text
+C|bank_accounts|manual_entry|boolean|NOT NULL|false
+K|bank_accounts|id
+I|bank_accounts|uq_bank_accounts_tail|UNIQUE|CREATE UNIQUE INDEX uq_bank_accounts_tail ON public.bank_accounts USING btree (account_no_tail)
+T|bank_statements|40
+C|bank_statements|id|uuid|NOT NULL|gen_random_uuid()
+C|bank_statements|account_id|uuid|NOT NULL|
+C|bank_statements|period_from|date|NOT NULL|
+C|bank_statements|period_to|date|NOT NULL|
+C|bank_statements|closing_balance|numeric(14,2)|null|
+C|bank_statements|total_debit|numeric(14,2)|null|
+C|bank_statements|total_credit|numeric(14,2)|null|
+C|bank_statements|parsed_count|integer|NOT NULL|0
+C|bank_statements|inserted_count|integer|NOT NULL|0
+C|bank_statements|skipped_count|integer|NOT NULL|0
+C|bank_statements|warnings|text[]|null|
+C|bank_statements|file_name|text|null|
+C|bank_statements|uploaded_by|uuid|null|
+C|bank_statements|uploaded_at|timestamp with time zone|NOT NULL|now()
+C|bank_statements|note|text|null|
+K|bank_statements|id
+F|bank_statements|account_id|bank_accounts|id|CASCADE
+F|bank_statements|uploaded_by|users|id|NO ACTION
+I|bank_statements|idx_bank_statements_acct|—|CREATE INDEX idx_bank_statements_acct ON public.bank_statements USING btree (account_id, period_to DESC)
+T|bank_statements_backup_144|0
+C|bank_statements_backup_144|id|uuid|null|
+C|bank_statements_backup_144|account_id|uuid|null|
+C|bank_statements_backup_144|period_from|date|null|
+C|bank_statements_backup_144|period_to|date|null|
+C|bank_statements_backup_144|closing_balance|numeric(14,2)|null|
+C|bank_statements_backup_144|total_debit|numeric(14,2)|null|
+C|bank_statements_backup_144|total_credit|numeric(14,2)|null|
+C|bank_statements_backup_144|parsed_count|integer|null|
+C|bank_statements_backup_144|inserted_count|integer|null|
+C|bank_statements_backup_144|skipped_count|integer|null|
+C|bank_statements_backup_144|warnings|text[]|null|
+C|bank_statements_backup_144|file_name|text|null|
+C|bank_statements_backup_144|uploaded_by|uuid|null|
+C|bank_statements_backup_144|uploaded_at|timestamp with time zone|null|
+C|bank_statements_backup_144|note|text|null|
+C|bank_statements_backup_144|account_name|text|null|
+C|bank_statements_backup_144|txn_count|bigint|null|
+T|bank_statements_last_wipe|0
+C|bank_statements_last_wipe|id|uuid|null|
+C|bank_statements_last_wipe|account_id|uuid|null|
+C|bank_statements_last_wipe|period_from|date|null|
+C|bank_statements_last_wipe|period_to|date|null|
+C|bank_statements_last_wipe|closing_balance|numeric(14,2)|null|
+C|bank_statements_last_wipe|total_debit|numeric(14,2)|null|
+C|bank_statements_last_wipe|total_credit|numeric(14,2)|null|
+C|bank_statements_last_wipe|parsed_count|integer|null|
+C|bank_statements_last_wipe|inserted_count|integer|null|
+C|bank_statements_last_wipe|skipped_count|integer|null|
+C|bank_statements_last_wipe|warnings|text[]|null|
+C|bank_statements_last_wipe|file_name|text|null|
+C|bank_statements_last_wipe|uploaded_by|uuid|null|
+C|bank_statements_last_wipe|uploaded_at|timestamp with time zone|null|
+C|bank_statements_last_wipe|note|text|null|
+C|bank_statements_last_wipe|account_name|text|null|
+C|bank_statements_last_wipe|txn_count|bigint|null|
+C|bank_statements_last_wipe|wiped_at|timestamp with time zone|null|
+T|bank_transactions|2088
+C|bank_transactions|id|uuid|NOT NULL|gen_random_uuid()
+C|bank_transactions|account_id|uuid|NOT NULL|
+C|bank_transactions|statement_id|uuid|null|
+C|bank_transactions|seq|integer|null|
+C|bank_transactions|txn_date|date|null|
+C|bank_transactions|post_date|date|NOT NULL|
+C|bank_transactions|txn_time|time without time zone|null|
+C|bank_transactions|description|text|null|
+C|bank_transactions|counterparty|text|null|
+C|bank_transactions|debit|numeric(14,2)|NOT NULL|0
+C|bank_transactions|credit|numeric(14,2)|NOT NULL|0
+C|bank_transactions|balance|numeric(14,2)|NOT NULL|
+C|bank_transactions|memo|text|null|
+C|bank_transactions|ref_no|text|null|
+C|bank_transactions|created_at|timestamp with time zone|NOT NULL|now()
+C|bank_transactions|bank_balance|numeric(14,2)|null|
+C|bank_transactions|balance_note|text|null|
+K|bank_transactions|id
+F|bank_transactions|account_id|bank_accounts|id|CASCADE
+F|bank_transactions|statement_id|bank_statements|id|SET NULL
+I|bank_transactions|idx_bank_txn_list|—|CREATE INDEX idx_bank_txn_list ON public.bank_transactions USING btree (account_id, post_date DESC, seq DESC)
+I|bank_transactions|uq_bank_txn|UNIQUE|CREATE UNIQUE INDEX uq_bank_txn ON public.bank_transactions USING btree (account_id, post_date, bank_balance, COALESCE(txn_time, '00:00:00'::time without time zone))
+T|board_events|0
+C|board_events|id|uuid|NOT NULL|gen_random_uuid()
+C|board_events|kind|text|NOT NULL|'meeting'::text
+C|board_events|title|text|NOT NULL|
+C|board_events|starts_at|timestamp with time zone|NOT NULL|
+C|board_events|all_day|boolean|NOT NULL|false
+C|board_events|note|text|null|
+C|board_events|created_by|uuid|null|
+C|board_events|created_at|timestamp with time zone|NOT NULL|now()
+C|board_events|uploads_open|boolean|NOT NULL|false
+K|board_events|id
+F|board_events|created_by|profiles|id|SET NULL
+I|board_events|board_events_starts_idx|—|CREATE INDEX board_events_starts_idx ON public.board_events USING btree (starts_at DESC)
+T|board_files|0
+C|board_files|id|uuid|NOT NULL|gen_random_uuid()
+C|board_files|event_id|uuid|NOT NULL|
+C|board_files|path|text|NOT NULL|
+C|board_files|name|text|NOT NULL|
+C|board_files|size_bytes|bigint|null|
+C|board_files|uploaded_by|uuid|null|
+C|board_files|created_at|timestamp with time zone|NOT NULL|now()
+C|board_files|author_id|uuid|null|
+K|board_files|id
+F|board_files|author_id|profiles|id|SET NULL
+F|board_files|event_id|board_events|id|CASCADE
+F|board_files|uploaded_by|profiles|id|SET NULL
+I|board_files|board_files_event_idx|—|CREATE INDEX board_files_event_idx ON public.board_files USING btree (event_id, created_at)
+T|board_forms|0
+C|board_forms|id|uuid|NOT NULL|gen_random_uuid()
+C|board_forms|title|text|NOT NULL|
+C|board_forms|category|text|NOT NULL|'其他'::text
+C|board_forms|note|text|null|
+C|board_forms|file_path|text|null|
+C|board_forms|file_name|text|null|
+C|board_forms|file_size|bigint|null|
+C|board_forms|created_by|uuid|null|
+C|board_forms|created_at|timestamp with time zone|NOT NULL|now()
+C|board_forms|updated_by|uuid|null|
+C|board_forms|updated_at|timestamp with time zone|NOT NULL|clock_timestamp()
+C|board_forms|usage_note|text|null|
+K|board_forms|id
+F|board_forms|created_by|profiles|id|SET NULL
+F|board_forms|updated_by|profiles|id|SET NULL
+I|board_forms|board_forms_cat_idx|—|CREATE INDEX board_forms_cat_idx ON public.board_forms USING btree (category, title)
+T|board_secret_reads|0
+C|board_secret_reads|id|uuid|NOT NULL|gen_random_uuid()
+C|board_secret_reads|secret_id|uuid|NOT NULL|
+C|board_secret_reads|user_id|uuid|null|
+C|board_secret_reads|read_at|timestamp with time zone|NOT NULL|clock_timestamp()
+K|board_secret_reads|id
+F|board_secret_reads|secret_id|board_secrets|id|CASCADE
+F|board_secret_reads|user_id|profiles|id|SET NULL
+I|board_secret_reads|board_secret_reads_secret_idx|—|CREATE INDEX board_secret_reads_secret_idx ON public.board_secret_reads USING btree (secret_id, read_at DESC)
+T|board_secrets|33
+C|board_secrets|id|uuid|NOT NULL|gen_random_uuid()
+C|board_secrets|title|text|NOT NULL|
+C|board_secrets|account|text|null|
+C|board_secrets|secret|text|null|
+C|board_secrets|note|text|null|
+C|board_secrets|created_by|uuid|null|
+C|board_secrets|created_at|timestamp with time zone|NOT NULL|now()
+C|board_secrets|updated_by|uuid|null|
+C|board_secrets|updated_at|timestamp with time zone|NOT NULL|clock_timestamp()
+C|board_secrets|url|text|null|
+K|board_secrets|id
+F|board_secrets|created_by|profiles|id|SET NULL
+F|board_secrets|updated_by|profiles|id|SET NULL
+T|cleaning_records|172
+C|cleaning_records|id|uuid|NOT NULL|gen_random_uuid()
+C|cleaning_records|record_key|text|NOT NULL|
+C|cleaning_records|record_date|date|NOT NULL|
+C|cleaning_records|staff_name|text|NOT NULL|
+C|cleaning_records|staff_id|uuid|null|
+C|cleaning_records|staff_type|text|null|
+C|cleaning_records|property_id|uuid|null|
+C|cleaning_records|property_raw|text|null|
+C|cleaning_records|estate_name|text|null|
+C|cleaning_records|overall_rating|integer|null|
+C|cleaning_records|note|text|null|
+C|cleaning_records|doc_url|text|null|
+C|cleaning_records|source|text|null|'seed'::text
+C|cleaning_records|created_at|timestamp with time zone|NOT NULL|now()
+K|cleaning_records|id
+F|cleaning_records|property_id|properties|id|NO ACTION
+F|cleaning_records|staff_id|staff|id|NO ACTION
+I|cleaning_records|cleaning_records_record_key_key|UNIQUE|CREATE UNIQUE INDEX cleaning_records_record_key_key ON public.cleaning_records USING btree (record_key)
+I|cleaning_records|idx_clean_date|—|CREATE INDEX idx_clean_date ON public.cleaning_records USING btree (record_date)
+I|cleaning_records|idx_clean_note_trgm|—|CREATE INDEX idx_clean_note_trgm ON public.cleaning_records USING gin (note gin_trgm_ops)
+I|cleaning_records|idx_clean_property|—|CREATE INDEX idx_clean_property ON public.cleaning_records USING btree (property_id)
+I|cleaning_records|idx_clean_rating|—|CREATE INDEX idx_clean_rating ON public.cleaning_records USING btree (overall_rating)
+I|cleaning_records|idx_clean_staff|—|CREATE INDEX idx_clean_staff ON public.cleaning_records USING btree (staff_id)
+T|contract_order_conflicts|0
+C|contract_order_conflicts|contract_id|uuid|NOT NULL|
+C|contract_order_conflicts|ym|text|NOT NULL|
+C|contract_order_conflicts|room|text|null|
+C|contract_order_conflicts|want_start|date|null|
+C|contract_order_conflicts|want_end|date|null|
+C|contract_order_conflicts|want_amount|numeric|null|
+C|contract_order_conflicts|blocked_by_key|text|null|
+C|contract_order_conflicts|seen_at|timestamp with time zone|NOT NULL|now()
+K|contract_order_conflicts|contract_id
+K|contract_order_conflicts|ym
+F|contract_order_conflicts|contract_id|contracts|id|CASCADE
+T|contract_payments|0
+C|contract_payments|id|uuid|NOT NULL|gen_random_uuid()
+C|contract_payments|contract_id|uuid|null|
+C|contract_payments|period_start|date|NOT NULL|
+C|contract_payments|period_end|date|NOT NULL|
+C|contract_payments|amount|numeric|NOT NULL|
+C|contract_payments|confirmed|boolean|NOT NULL|false
+C|contract_payments|confirmed_at|timestamp with time zone|null|
+C|contract_payments|order_id|uuid|null|
+K|contract_payments|id
+F|contract_payments|contract_id|contracts|id|CASCADE
+F|contract_payments|order_id|orders|id|NO ACTION
+I|contract_payments|contract_payments_contract_id_period_start_key|UNIQUE|CREATE UNIQUE INDEX contract_payments_contract_id_period_start_key ON public.contract_payments USING btree (contract_id, period_start)
+T|contract_recurring_charges|0
+C|contract_recurring_charges|id|uuid|NOT NULL|gen_random_uuid()
+C|contract_recurring_charges|contract_id|uuid|NOT NULL|
+C|contract_recurring_charges|fee_type|text|NOT NULL|
+C|contract_recurring_charges|item_name|text|null|
+C|contract_recurring_charges|amount|numeric|NOT NULL|0
+C|contract_recurring_charges|start_ym|text|NOT NULL|
+C|contract_recurring_charges|end_ym|text|null|
+C|contract_recurring_charges|active|boolean|NOT NULL|true
+C|contract_recurring_charges|note|text|null|
+C|contract_recurring_charges|created_at|timestamp with time zone|NOT NULL|now()
+K|contract_recurring_charges|id
+F|contract_recurring_charges|contract_id|contracts|id|CASCADE
+I|contract_recurring_charges|crc_contract_idx|—|CREATE INDEX crc_contract_idx ON public.contract_recurring_charges USING btree (contract_id)
+T|contracts|110
+C|contracts|id|uuid|NOT NULL|gen_random_uuid()
+C|contracts|name|text|NOT NULL|
+C|contracts|type|text|NOT NULL|'longterm'::text
+C|contracts|estate_id|uuid|null|
+C|contracts|property_raw|text|null|
+C|contracts|tenant_name|text|null|
+C|contracts|start_date|date|null|
+C|contracts|end_date|date|null|
+C|contracts|amount_per_period|numeric|null|
+C|contracts|cadence|text|NOT NULL|'monthly'::text
+C|contracts|account|text|null|
+C|contracts|note|text|null|
+C|contracts|active|boolean|NOT NULL|true
+C|contracts|created_at|timestamp with time zone|NOT NULL|now()
+C|contracts|room|text|null|
+C|contracts|monthly_rent|numeric|null|
+C|contracts|deposit|numeric|null|
+C|contracts|phone|text|null|
+C|contracts|paid|boolean|null|false
+C|contracts|pay_day|integer|null|
+C|contracts|deposit_received|boolean|null|false
+C|contracts|deposit_received_at|date|null|
+C|contracts|deposit_returned|boolean|null|false
+C|contracts|deposit_returned_at|date|null|
+C|contracts|first_payment_date|date|null|
+C|contracts|auto_renew|boolean|NOT NULL|false
+C|contracts|watch|boolean|NOT NULL|false
+C|contracts|display_name|text|null|
+C|contracts|invoice_required|boolean|NOT NULL|false
+C|contracts|invoice_day|smallint|null|
+C|contracts|invoice_after_paid|boolean|NOT NULL|true
+C|contracts|invoice_title|text|null|
+C|contracts|invoice_tax_id|text|null|
+C|contracts|invoice_note|text|null|
+C|contracts|concessions|jsonb|NOT NULL|'[]'::jsonb
+C|contracts|fx_deposit|jsonb|NOT NULL|'[]'::jsonb
+C|contracts|earnest_amount|numeric|NOT NULL|0
+C|contracts|earnest_only|boolean|NOT NULL|false
+C|contracts|tax_free|boolean|NOT NULL|false
+C|contracts|purpose_type|text|NOT NULL|'estate'::text
+K|contracts|id
+F|contracts|estate_id|estates|id|NO ACTION
+T|customers|2100
+C|customers|id|uuid|NOT NULL|gen_random_uuid()
+C|customers|estate_id|uuid|null|
+C|customers|property_id|uuid|null|
+C|customers|property_label|text|null|
+C|customers|name|text|NOT NULL|
+C|customers|stay_from|date|null|
+C|customers|stay_to|date|null|
+C|customers|stay_count|integer|NOT NULL|0
+C|customers|src_phone|text|null|
+C|customers|src_kind|text|null|
+C|customers|phone|text|null|
+C|customers|email|text|null|
+C|customers|note|text|null|
+C|customers|estate_key|text|null|COALESCE((estate_id)::text, '-'::text)
+C|customers|prop_key|text|null|COALESCE((property_id)::text, NULLIF(btrim(COALESCE(property_label, ''::text)), ''::text), '-'::text)
+C|customers|name_key|text|null|lower(regexp_replace(COALESCE(name, ''::text), '\\s+'::text, ''::text, 'g'::text))
+C|customers|stale|boolean|NOT NULL|false
+C|customers|synced_at|timestamp with time zone|null|
+C|customers|updated_at|timestamp with time zone|NOT NULL|now()
+C|customers|created_at|timestamp with time zone|NOT NULL|now()
+K|customers|id
+F|customers|estate_id|estates|id|SET NULL
+F|customers|property_id|properties|id|SET NULL
+I|customers|cust_estate_idx|—|CREATE INDEX cust_estate_idx ON public.customers USING btree (estate_id, name)
+I|customers|cust_stay_idx|—|CREATE INDEX cust_stay_idx ON public.customers USING btree (stay_to DESC)
+I|customers|customers_key_uniq|UNIQUE|CREATE UNIQUE INDEX customers_key_uniq ON public.customers USING btree (estate_key, prop_key, name_key)
+T|data_audit|9518
+C|data_audit|id|bigint|NOT NULL|nextval('data_audit_id_seq'::regclass)
+C|data_audit|at|timestamp with time zone|NOT NULL|now()
+C|data_audit|user_id|uuid|null|
+C|data_audit|table_name|text|NOT NULL|
+C|data_audit|record_id|uuid|null|
+C|data_audit|label|text|null|
+C|data_audit|action|text|NOT NULL|
+C|data_audit|changes|jsonb|NOT NULL|'{}'::jsonb
+K|data_audit|id
+I|data_audit|idx_data_audit_at|—|CREATE INDEX idx_data_audit_at ON public.data_audit USING btree (at DESC)
+I|data_audit|idx_data_audit_record|—|CREATE INDEX idx_data_audit_record ON public.data_audit USING btree (record_id)
+I|data_audit|idx_data_audit_table|—|CREATE INDEX idx_data_audit_table ON public.data_audit USING btree (table_name, at DESC)
+I|data_audit|idx_data_audit_user|—|CREATE INDEX idx_data_audit_user ON public.data_audit USING btree (user_id, at DESC)
+T|deleted_contract_orders_81|757
+C|deleted_contract_orders_81|id|uuid|NOT NULL|
+C|deleted_contract_orders_81|contract_id|uuid|NOT NULL|
+C|deleted_contract_orders_81|guest_name|text|null|
+C|deleted_contract_orders_81|order_key|text|null|
+C|deleted_contract_orders_81|checkin|date|null|
+C|deleted_contract_orders_81|amount|numeric|null|
+C|deleted_contract_orders_81|paid|boolean|null|
+C|deleted_contract_orders_81|imported_via|text|null|
+C|deleted_contract_orders_81|row_json|jsonb|NOT NULL|
+C|deleted_contract_orders_81|deleted_at|timestamp with time zone|NOT NULL|now()
+K|deleted_contract_orders_81|id
+T|deleted_stub_orders_93|0
+C|deleted_stub_orders_93|id|uuid|null|
+C|deleted_stub_orders_93|order_key|text|null|
+C|deleted_stub_orders_93|source|text|null|
+C|deleted_stub_orders_93|estate_id|uuid|null|
+C|deleted_stub_orders_93|property_id|uuid|null|
+C|deleted_stub_orders_93|property_raw|text|null|
+C|deleted_stub_orders_93|guest_name|text|null|
+C|deleted_stub_orders_93|checkin|date|null|
+C|deleted_stub_orders_93|checkout|date|null|
+C|deleted_stub_orders_93|nights|integer|null|
+C|deleted_stub_orders_93|amount|numeric|null|
+C|deleted_stub_orders_93|deposit|numeric|null|
+C|deleted_stub_orders_93|account|text|null|
+C|deleted_stub_orders_93|note|text|null|
+C|deleted_stub_orders_93|contract_id|uuid|null|
+C|deleted_stub_orders_93|imported_via|text|null|
+C|deleted_stub_orders_93|created_at|timestamp with time zone|null|
+C|deleted_stub_orders_93|paid|boolean|null|
+C|deleted_stub_orders_93|deposit_received|boolean|null|
+C|deleted_stub_orders_93|deposit_returned|boolean|null|
+C|deleted_stub_orders_93|parent_order_id|uuid|null|
+C|deleted_stub_orders_93|fee_type|text|null|
+C|deleted_stub_orders_93|fx_revenue|jsonb|null|
+C|deleted_stub_orders_93|fx_deposit|jsonb|null|
+C|deleted_stub_orders_93|move_group|uuid|null|
+C|deleted_stub_orders_93|deposit_received_at|date|null|
+C|deleted_stub_orders_93|deposit_returned_at|date|null|
+C|deleted_stub_orders_93|paid_at|date|null|
+C|deleted_stub_orders_93|item_name|text|null|
+C|deleted_stub_orders_93|paid_amount|numeric|null|
+C|deleted_stub_orders_93|invoice_required|boolean|null|
+C|deleted_stub_orders_93|invoice_title|text|null|
+C|deleted_stub_orders_93|invoice_tax_id|text|null|
+C|deleted_stub_orders_93|account_code|text|null|
+C|deleted_stub_orders_93|start_date|date|null|
+C|deleted_stub_orders_93|end_date|date|null|
+C|deleted_stub_orders_93|cadence|text|null|
+C|deleted_stub_orders_93|backed_up_at|timestamp with time zone|null|
+T|deposit_payments|95
+C|deposit_payments|id|uuid|NOT NULL|gen_random_uuid()
+C|deposit_payments|deposit_id|uuid|NOT NULL|
+C|deposit_payments|paid_on|date|NOT NULL|
+C|deposit_payments|amount|numeric|NOT NULL|
+C|deposit_payments|method|text|null|
+C|deposit_payments|account|text|null|
+C|deposit_payments|note|text|null|
+C|deposit_payments|created_at|timestamp with time zone|NOT NULL|now()
+C|deposit_payments|created_by|uuid|null|
+C|deposit_payments|deleted_at|timestamp with time zone|null|
+C|deposit_payments|deleted_by|uuid|null|
+K|deposit_payments|id
+F|deposit_payments|account|payment_accounts|code|NO ACTION
+F|deposit_payments|created_by|profiles|id|NO ACTION
+F|deposit_payments|deleted_by|profiles|id|NO ACTION
+F|deposit_payments|deposit_id|deposits|id|CASCADE
+I|deposit_payments|dep_pay_alive_idx|—|CREATE INDEX dep_pay_alive_idx ON public.deposit_payments USING btree (deposit_id) WHERE (deleted_at IS NULL)
+I|deposit_payments|dep_pay_dep_idx|—|CREATE INDEX dep_pay_dep_idx ON public.deposit_payments USING btree (deposit_id, paid_on)
+T|deposits|115
+C|deposits|id|uuid|NOT NULL|gen_random_uuid()
+C|deposits|order_id|uuid|null|
+C|deposits|contract_id|uuid|null|
+C|deposits|estate_id|uuid|null|
+C|deposits|property_id|uuid|null|
+C|deposits|room|text|null|
+C|deposits|guest_name|text|null|
+C|deposits|currency|text|NOT NULL|'TWD'::text
+C|deposits|amount|numeric|NOT NULL|0
+C|deposits|received_on|date|null|
+C|deposits|received_method|text|null|
+C|deposits|received_account|text|null|
+C|deposits|returned_on|date|null|
+C|deposits|returned_method|text|null|
+C|deposits|returned_account|text|null|
+C|deposits|note|text|null|
+C|deposits|orphaned|boolean|NOT NULL|false
+C|deposits|created_at|timestamp with time zone|NOT NULL|now()
+C|deposits|is_manual|boolean|NOT NULL|false
+C|deposits|refund_status|text|NOT NULL|'none'::text
+C|deposits|payee_bank_code|text|null|
+C|deposits|payee_name|text|null|
+C|deposits|payee_account|text|null|
+C|deposits|planned_refund_on|date|null|
+C|deposits|refund_requested_by|uuid|null|
+C|deposits|refund_requested_at|timestamp with time zone|null|
+C|deposits|manager_approved_by|uuid|null|
+C|deposits|manager_approved_at|timestamp with time zone|null|
+C|deposits|admin_approved_by|uuid|null|
+C|deposits|admin_approved_at|timestamp with time zone|null|
+C|deposits|rejected_by|uuid|null|
+C|deposits|rejected_at|timestamp with time zone|null|
+C|deposits|reject_reason|text|null|
+C|deposits|lines|jsonb|NOT NULL|'[]'::jsonb
+C|deposits|transfer_to_id|uuid|null|
+C|deposits|transfer_from_id|uuid|null|
+C|deposits|transferred_by|uuid|null|
+C|deposits|transferred_at|timestamp with time zone|null|
+C|deposits|received_amount|numeric|NOT NULL|0
+C|deposits|refund_amount|numeric|null|
+C|deposits|kind|text|NOT NULL|'deposit'::text
+C|deposits|converted_to_deposit_id|uuid|null|
+C|deposits|converted_from_earnest_id|uuid|null|
+C|deposits|converted_by|uuid|null|
+C|deposits|converted_at|timestamp with time zone|null|
+C|deposits|forfeited_on|date|null|
+C|deposits|forfeit_order_id|uuid|null|
+C|deposits|forfeited_by|uuid|null|
+K|deposits|id
+F|deposits|admin_approved_by|profiles|id|NO ACTION
+F|deposits|contract_id|contracts|id|SET NULL
+F|deposits|converted_from_earnest_id|deposits|id|NO ACTION
+F|deposits|converted_to_deposit_id|deposits|id|NO ACTION
+F|deposits|estate_id|estates|id|NO ACTION
+F|deposits|forfeit_order_id|orders|id|SET NULL
+F|deposits|manager_approved_by|profiles|id|NO ACTION
+F|deposits|order_id|orders|id|SET NULL
+F|deposits|property_id|properties|id|NO ACTION
+F|deposits|refund_requested_by|profiles|id|NO ACTION
+F|deposits|rejected_by|profiles|id|NO ACTION
+F|deposits|transfer_from_id|deposits|id|SET NULL
+F|deposits|transfer_to_id|deposits|id|SET NULL
+F|deposits|transferred_by|profiles|id|NO ACTION
+I|deposits|dep_estate_idx|—|CREATE INDEX dep_estate_idx ON public.deposits USING btree (estate_id)
+I|deposits|dep_received_idx|—|CREATE INDEX dep_received_idx ON public.deposits USING btree (received_on)
+I|deposits|deposits_contract_kind_uidx|UNIQUE|CREATE UNIQUE INDEX deposits_contract_kind_uidx ON public.deposits USING btree (contract_id, currency, kind) WHERE (contract_id IS NOT NULL)
+I|deposits|deposits_order_kind_uidx|UNIQUE|CREATE UNIQUE INDEX deposits_order_kind_uidx ON public.deposits USING btree (order_id, kind) WHERE (order_id IS NOT NULL)
+T|deposits_fix_b6_b5|0
+C|deposits_fix_b6_b5|id|uuid|null|
+C|deposits_fix_b6_b5|order_id|uuid|null|
+C|deposits_fix_b6_b5|contract_id|uuid|null|
+C|deposits_fix_b6_b5|estate_id|uuid|null|
+C|deposits_fix_b6_b5|property_id|uuid|null|
+C|deposits_fix_b6_b5|room|text|null|
+C|deposits_fix_b6_b5|guest_name|text|null|
+C|deposits_fix_b6_b5|currency|text|null|
+C|deposits_fix_b6_b5|amount|numeric|null|
+C|deposits_fix_b6_b5|received_on|date|null|
+C|deposits_fix_b6_b5|received_method|text|null|
+C|deposits_fix_b6_b5|received_account|text|null|
+C|deposits_fix_b6_b5|returned_on|date|null|
+C|deposits_fix_b6_b5|returned_method|text|null|
+C|deposits_fix_b6_b5|returned_account|text|null|
+C|deposits_fix_b6_b5|note|text|null|
+C|deposits_fix_b6_b5|orphaned|boolean|null|
+C|deposits_fix_b6_b5|created_at|timestamp with time zone|null|
+C|deposits_fix_b6_b5|is_manual|boolean|null|
+C|deposits_fix_b6_b5|refund_status|text|null|
+C|deposits_fix_b6_b5|payee_bank_code|text|null|
+C|deposits_fix_b6_b5|payee_name|text|null|
+C|deposits_fix_b6_b5|payee_account|text|null|
+C|deposits_fix_b6_b5|planned_refund_on|date|null|
+C|deposits_fix_b6_b5|refund_requested_by|uuid|null|
+C|deposits_fix_b6_b5|refund_requested_at|timestamp with time zone|null|
+C|deposits_fix_b6_b5|manager_approved_by|uuid|null|
+C|deposits_fix_b6_b5|manager_approved_at|timestamp with time zone|null|
+C|deposits_fix_b6_b5|admin_approved_by|uuid|null|
+C|deposits_fix_b6_b5|admin_approved_at|timestamp with time zone|null|
+C|deposits_fix_b6_b5|rejected_by|uuid|null|
+C|deposits_fix_b6_b5|rejected_at|timestamp with time zone|null|
+C|deposits_fix_b6_b5|reject_reason|text|null|
+C|deposits_fix_b6_b5|lines|jsonb|null|
+C|deposits_fix_b6_b5|transfer_to_id|uuid|null|
+C|deposits_fix_b6_b5|transfer_from_id|uuid|null|
+C|deposits_fix_b6_b5|transferred_by|uuid|null|
+C|deposits_fix_b6_b5|transferred_at|timestamp with time zone|null|
+C|deposits_fix_b6_b5|_backup_at|timestamp with time zone|null|
+T|estate_fee_default|0
+C|estate_fee_default|estate_id|uuid|NOT NULL|
+C|estate_fee_default|pet_allowed|boolean|NOT NULL|true
+C|estate_fee_default|pet_deposit|numeric(14,2)|null|
+C|estate_fee_default|pet_fee|numeric(14,2)|null|
+C|estate_fee_default|updated_at|timestamp with time zone|NOT NULL|now()
+C|estate_fee_default|updated_by|uuid|null|
+K|estate_fee_default|estate_id
+F|estate_fee_default|estate_id|estates|id|CASCADE
+T|estate_managers|0
+C|estate_managers|id|uuid|NOT NULL|gen_random_uuid()
+C|estate_managers|estate_id|uuid|NOT NULL|
+C|estate_managers|staff_id|uuid|NOT NULL|
+C|estate_managers|start_date|date|NOT NULL|
+C|estate_managers|end_date|date|null|
+C|estate_managers|note|text|null|
+C|estate_managers|created_at|timestamp with time zone|NOT NULL|now()
+C|estate_managers|created_by|uuid|null|
+K|estate_managers|id
+F|estate_managers|estate_id|estates|id|CASCADE
+F|estate_managers|staff_id|staff|id|NO ACTION
+I|estate_managers|estate_managers_no_overlap|—|CREATE INDEX estate_managers_no_overlap ON public.estate_managers USING gist (estate_id, daterange(start_date, COALESCE(end_date, 'infinity'::date), '[]'::text))
+I|estate_managers|idx_estate_managers_estate|—|CREATE INDEX idx_estate_managers_estate ON public.estate_managers USING btree (estate_id, start_date)
+I|estate_managers|idx_estate_managers_staff|—|CREATE INDEX idx_estate_managers_staff ON public.estate_managers USING btree (staff_id)
+T|estates|0
+C|estates|id|uuid|NOT NULL|gen_random_uuid()
+C|estates|name|text|NOT NULL|
+C|estates|manager|text|null|
+C|estates|sort|integer|null|99
+C|estates|created_at|timestamp with time zone|NOT NULL|now()
+C|estates|active|boolean|NOT NULL|true
+C|estates|gps_lat|numeric|null|
+C|estates|gps_lng|numeric|null|
+C|estates|gps_radius_m|integer|NOT NULL|500
+K|estates|id
+I|estates|estates_name_key|UNIQUE|CREATE UNIQUE INDEX estates_name_key ON public.estates USING btree (name)
+T|expenses|419
+C|expenses|id|uuid|NOT NULL|gen_random_uuid()
+C|expenses|spent_on|date|NOT NULL|
+C|expenses|item_name|text|NOT NULL|
+C|expenses|amount|numeric|NOT NULL|0
+C|expenses|account_code|text|null|
+C|expenses|purpose_type|text|NOT NULL|'estate'::text
+C|expenses|property_id|uuid|null|
+C|expenses|voucher_no|text|null|
+C|expenses|payment_method|text|null|
+C|expenses|pay_account|text|null|
+C|expenses|note|text|null|
+C|expenses|source_item_id|uuid|null|
+C|expenses|created_by|uuid|null|
+C|expenses|created_at|timestamp with time zone|NOT NULL|now()
+C|expenses|estate_id|uuid|null|
+C|expenses|currency|text|NOT NULL|'TWD'::text
+C|expenses|fx_rate|numeric|NOT NULL|1
+C|expenses|amount_original|numeric|null|
+C|expenses|no_voucher|boolean|NOT NULL|false
+C|expenses|request_id|uuid|null|
+C|expenses|fee_request_id|uuid|null|
+C|expenses|parent_expense_id|uuid|null|
+C|expenses|gross_amount|numeric|null|
+C|expenses|deferred|boolean|NOT NULL|false
+C|expenses|starred|boolean|NOT NULL|false
+C|expenses|book|text|NOT NULL|'anxing'::text
+C|expenses|fee_payment_id|uuid|null|
+C|expenses|non_operating|boolean|NOT NULL|false
+C|expenses|tags|text[]|NOT NULL|'{}'::text[]
+C|expenses|hk_job_key|text|null|
+C|expenses|hk_labor_key|text|null|
+C|expenses|advance_id|uuid|null|
+K|expenses|id
+F|expenses|account_code|account_codes|code|NO ACTION
+F|expenses|advance_id|advance_payments|id|SET NULL
+F|expenses|created_by|users|id|NO ACTION
+F|expenses|estate_id|estates|id|NO ACTION
+F|expenses|fee_payment_id|order_payments|id|CASCADE
+F|expenses|fee_request_id|purchase_requests|id|SET NULL
+F|expenses|parent_expense_id|expenses|id|CASCADE
+F|expenses|property_id|properties|id|NO ACTION
+F|expenses|request_id|purchase_requests|id|SET NULL
+F|expenses|source_item_id|purchase_request_items|id|SET NULL
+I|expenses|exp_account_idx|—|CREATE INDEX exp_account_idx ON public.expenses USING btree (account_code)
+I|expenses|exp_estate_idx|—|CREATE INDEX exp_estate_idx ON public.expenses USING btree (estate_id)
+I|expenses|exp_parent_idx|—|CREATE INDEX exp_parent_idx ON public.expenses USING btree (parent_expense_id)
+I|expenses|exp_prop_idx|—|CREATE INDEX exp_prop_idx ON public.expenses USING btree (property_id)
+I|expenses|exp_request_idx|—|CREATE INDEX exp_request_idx ON public.expenses USING btree (request_id)
+I|expenses|exp_spent_idx|—|CREATE INDEX exp_spent_idx ON public.expenses USING btree (spent_on DESC)
+I|expenses|exp_src_idx|—|CREATE INDEX exp_src_idx ON public.expenses USING btree (source_item_id)
+I|expenses|exp_starred_idx|—|CREATE INDEX exp_starred_idx ON public.expenses USING btree (starred) WHERE starred
+I|expenses|expenses_book_idx|—|CREATE INDEX expenses_book_idx ON public.expenses USING btree (book)
+I|expenses|expenses_fee_payment_uidx|UNIQUE|CREATE UNIQUE INDEX expenses_fee_payment_uidx ON public.expenses USING btree (fee_payment_id)
+I|expenses|expenses_fee_request_uidx|UNIQUE|CREATE UNIQUE INDEX expenses_fee_request_uidx ON public.expenses USING btree (fee_request_id)
+I|expenses|expenses_hk_job_uniq|UNIQUE|CREATE UNIQUE INDEX expenses_hk_job_uniq ON public.expenses USING btree (hk_job_key)
+I|expenses|expenses_hk_labor_uniq|UNIQUE|CREATE UNIQUE INDEX expenses_hk_labor_uniq ON public.expenses USING btree (hk_labor_key)
+I|expenses|expenses_non_operating_idx|—|CREATE INDEX expenses_non_operating_idx ON public.expenses USING btree (spent_on) WHERE non_operating
+I|expenses|expenses_source_item_id_key|UNIQUE|CREATE UNIQUE INDEX expenses_source_item_id_key ON public.expenses USING btree (source_item_id)
+I|expenses|expenses_source_item_uidx|UNIQUE|CREATE UNIQUE INDEX expenses_source_item_uidx ON public.expenses USING btree (source_item_id)
+I|expenses|expenses_tags_idx|—|CREATE INDEX expenses_tags_idx ON public.expenses USING gin (tags)
+I|expenses|uq_expense_fee_request|UNIQUE|CREATE UNIQUE INDEX uq_expense_fee_request ON public.expenses USING btree (fee_request_id) WHERE (fee_request_id IS NOT NULL)
+T|hk_audit|104
+C|hk_audit|id|bigint|NOT NULL|nextval('hk_audit_id_seq'::regclass)
+C|hk_audit|table_name|text|NOT NULL|
+C|hk_audit|record_key|text|NOT NULL|
+C|hk_audit|action|text|NOT NULL|
+C|hk_audit|changes|jsonb|null|
+C|hk_audit|user_id|uuid|null|
+C|hk_audit|at|timestamp with time zone|NOT NULL|now()
+K|hk_audit|id
+I|hk_audit|hk_audit_at_idx|—|CREATE INDEX hk_audit_at_idx ON public.hk_audit USING btree (at DESC)
+T|hk_day|56
+C|hk_day|period|text|NOT NULL|
+C|hk_day|work_date|date|NOT NULL|
+C|hk_day|staff_id|uuid|NOT NULL|
+C|hk_day|status|text|null|
+C|hk_day|hours|numeric|null|
+C|hk_day|note|text|null|
+C|hk_day|rooms_override|numeric(6,2)|null|
+K|hk_day|work_date
+K|hk_day|staff_id
+F|hk_day|staff_id|hk_staff|id|CASCADE
+T|hk_event|235
+C|hk_event|id|uuid|NOT NULL|gen_random_uuid()
+C|hk_event|period|text|NOT NULL|
+C|hk_event|event_date|date|NOT NULL|
+C|hk_event|title|text|NOT NULL|
+C|hk_event|label|text|null|
+C|hk_event|assignees|text[]|NOT NULL|'{}'::text[]
+C|hk_event|external_id|text|null|
+C|hk_event|parsed_code|text|null|
+C|hk_event|work_type|text|null|
+C|hk_event|excluded|text|null|
+C|hk_event|imported_at|timestamp with time zone|NOT NULL|now()
+C|hk_event|dismissed_at|timestamp with time zone|null|
+C|hk_event|dismissed_by|uuid|null|
+K|hk_event|id
+F|hk_event|dismissed_by|profiles|id|NO ACTION
+I|hk_event|hk_event_period_event_date_title_external_id_key|UNIQUE|CREATE UNIQUE INDEX hk_event_period_event_date_title_external_id_key ON public.hk_event USING btree (period, event_date, title, external_id)
+I|hk_event|hk_event_period_idx|—|CREATE INDEX hk_event_period_idx ON public.hk_event USING btree (period, event_date)
+I|hk_event|hk_event_todo_idx|—|CREATE INDEX hk_event_todo_idx ON public.hk_event USING btree (period, event_date) WHERE (dismissed_at IS NULL)
+T|hk_labor_cost|0
+C|hk_labor_cost|id|uuid|NOT NULL|gen_random_uuid()
+C|hk_labor_cost|estate_id|uuid|null|
+C|hk_labor_cost|property_id|uuid|null|
+C|hk_labor_cost|monthly_amount|numeric(12,2)|NOT NULL|
+C|hk_labor_cost|note|text|null|
+C|hk_labor_cost|active|boolean|NOT NULL|true
+C|hk_labor_cost|created_at|timestamp with time zone|NOT NULL|now()
+K|hk_labor_cost|id
+F|hk_labor_cost|estate_id|estates|id|CASCADE
+F|hk_labor_cost|property_id|properties|id|CASCADE
+I|hk_labor_cost|hklc_estate_uniq|UNIQUE|CREATE UNIQUE INDEX hklc_estate_uniq ON public.hk_labor_cost USING btree (estate_id) WHERE (active AND (estate_id IS NOT NULL))
+I|hk_labor_cost|hklc_property_uniq|UNIQUE|CREATE UNIQUE INDEX hklc_property_uniq ON public.hk_labor_cost USING btree (property_id) WHERE (active AND (property_id IS NOT NULL))
+T|hk_month_property|23
+C|hk_month_property|period|text|NOT NULL|
+C|hk_month_property|property_code|text|NOT NULL|
+C|hk_month_property|count_override|integer|null|
+C|hk_month_property|linen_taken|integer|NOT NULL|0
+K|hk_month_property|period
+K|hk_month_property|property_code
+T|hk_period|0
+C|hk_period|period|text|NOT NULL|
+C|hk_period|count_mode|text|NOT NULL|'clean'::text
+C|hk_period|include_gift|boolean|NOT NULL|true
+C|hk_period|note|text|null|
+C|hk_period|updated_at|timestamp with time zone|NOT NULL|now()
+K|hk_period|period
+T|hk_property|70
+C|hk_property|id|uuid|NOT NULL|gen_random_uuid()
+C|hk_property|code|text|NOT NULL|
+C|hk_property|name|text|null|
+C|hk_property|aliases|text[]|NOT NULL|'{}'::text[]
+C|hk_property|beds|integer|null|
+C|hk_property|linen_group|text|NOT NULL|'other'::text
+C|hk_property|active|boolean|NOT NULL|true
+C|hk_property|sort|integer|NOT NULL|0
+C|hk_property|count_linen|boolean|NOT NULL|true
+C|hk_property|ptype|text|NOT NULL|'room'::text
+C|hk_property|property_id|uuid|null|
+K|hk_property|id
+F|hk_property|property_id|properties|id|NO ACTION
+I|hk_property|hk_property_code_key|UNIQUE|CREATE UNIQUE INDEX hk_property_code_key ON public.hk_property USING btree (code)
+I|hk_property|hk_property_property_id_idx|—|CREATE INDEX hk_property_property_id_idx ON public.hk_property USING btree (property_id) WHERE (property_id IS NOT NULL)
+I|hk_property|hk_property_property_id_uniq|UNIQUE|CREATE UNIQUE INDEX hk_property_property_id_uniq ON public.hk_property USING btree (property_id) WHERE (property_id IS NOT NULL)
+T|hk_setting|0
+C|hk_setting|key|text|NOT NULL|
+C|hk_setting|value|text|null|
+C|hk_setting|vtype|text|NOT NULL|'text'::text
+C|hk_setting|options|text[]|null|
+C|hk_setting|description|text|null|
+C|hk_setting|sort|integer|NOT NULL|0
+K|hk_setting|key
+T|hk_staff|9
+C|hk_staff|id|uuid|NOT NULL|gen_random_uuid()
+C|hk_staff|code|text|NOT NULL|
+C|hk_staff|name|text|NOT NULL|
+C|hk_staff|count_mode|text|NOT NULL|'none'::text
+C|hk_staff|count_cleans|boolean|NOT NULL|true
+C|hk_staff|color|text|null|
+C|hk_staff|leave_prefix|text|null|
+C|hk_staff|active|boolean|NOT NULL|true
+C|hk_staff|sort|integer|NOT NULL|0
+C|hk_staff|source_names|text[]|NOT NULL|'{}'::text[]
+C|hk_staff|color_text|text|null|
+C|hk_staff|color_bar|text|null|
+C|hk_staff|staff_id|uuid|null|
+C|hk_staff|hourly_rate|numeric(10,2)|null|
+K|hk_staff|id
+F|hk_staff|staff_id|staff|id|NO ACTION
+I|hk_staff|hk_staff_staff_id_uniq|UNIQUE|CREATE UNIQUE INDEX hk_staff_staff_id_uniq ON public.hk_staff USING btree (staff_id) WHERE (staff_id IS NOT NULL)
+T|hk_task|422
+C|hk_task|id|uuid|NOT NULL|gen_random_uuid()
+C|hk_task|work_date|date|NOT NULL|
+C|hk_task|property_id|uuid|null|
+C|hk_task|work_type|text|NOT NULL|'清潔'::text
+C|hk_task|staff_id|uuid|null|
+C|hk_task|order_id|uuid|null|
+C|hk_task|auto_kind|text|null|
+C|hk_task|note|text|null|
+C|hk_task|done_at|timestamp with time zone|null|
+C|hk_task|created_at|timestamp with time zone|NOT NULL|now()
+C|hk_task|created_by|uuid|null|
+C|hk_task|accepted|boolean|NOT NULL|true
+C|hk_task|all_day|boolean|NOT NULL|true
+C|hk_task|start_time|time without time zone|null|
+C|hk_task|end_time|time without time zone|null|
+C|hk_task|title|text|null|
+K|hk_task|id
+F|hk_task|order_id|orders|id|CASCADE
+F|hk_task|property_id|properties|id|SET NULL
+F|hk_task|staff_id|staff|id|SET NULL
+I|hk_task|hk_task_pending_idx|—|CREATE INDEX hk_task_pending_idx ON public.hk_task USING btree (work_date) WHERE (NOT accepted)
+I|hk_task|hk_task_time_idx|—|CREATE INDEX hk_task_time_idx ON public.hk_task USING btree (work_date, start_time NULLS FIRST)
+I|hk_task|idx_hk_task_date|—|CREATE INDEX idx_hk_task_date ON public.hk_task USING btree (work_date)
+I|hk_task|idx_hk_task_staff|—|CREATE INDEX idx_hk_task_staff ON public.hk_task USING btree (staff_id, work_date)
+I|hk_task|uq_hk_task_auto|UNIQUE|CREATE UNIQUE INDEX uq_hk_task_auto ON public.hk_task USING btree (order_id, auto_kind) WHERE ((order_id IS NOT NULL) AND (auto_kind IS NOT NULL))
+T|hk_work_item|184
+C|hk_work_item|id|uuid|NOT NULL|gen_random_uuid()
+C|hk_work_item|event_id|uuid|null|
+C|hk_work_item|period|text|NOT NULL|
+C|hk_work_item|work_date|date|NOT NULL|
+C|hk_work_item|property_code|text|null|
+C|hk_work_item|work_type|text|NOT NULL|'清潔'::text
+C|hk_work_item|staff_id|uuid|NOT NULL|
+C|hk_work_item|created_at|timestamp with time zone|NOT NULL|now()
+C|hk_work_item|source|text|NOT NULL|'timetree'::text
+C|hk_work_item|note|text|null|
+C|hk_work_item|version|integer|NOT NULL|1
+C|hk_work_item|units_override|numeric(6,2)|null|
+C|hk_work_item|points_override|numeric(8,2)|null|
+C|hk_work_item|amount_override|numeric(14,2)|null|
+K|hk_work_item|id
+F|hk_work_item|event_id|hk_event|id|SET NULL
+F|hk_work_item|staff_id|hk_staff|id|NO ACTION
+I|hk_work_item|hk_wi_period_idx|—|CREATE INDEX hk_wi_period_idx ON public.hk_work_item USING btree (period, work_date)
+I|hk_work_item|hk_wi_prop_idx|—|CREATE INDEX hk_wi_prop_idx ON public.hk_work_item USING btree (period, property_code)
+T|hk_work_split|0
+C|hk_work_split|id|uuid|NOT NULL|gen_random_uuid()
+C|hk_work_split|period|text|NOT NULL|
+C|hk_work_split|work_date|date|NOT NULL|
+C|hk_work_split|job_code|text|NOT NULL|
+C|hk_work_split|work_type|text|NOT NULL|
+C|hk_work_split|property_id|uuid|NOT NULL|
+C|hk_work_split|amount|numeric(14,2)|NOT NULL|
+C|hk_work_split|seq|integer|NOT NULL|0
+C|hk_work_split|note|text|null|
+C|hk_work_split|created_at|timestamp with time zone|NOT NULL|now()
+K|hk_work_split|id
+F|hk_work_split|property_id|properties|id|NO ACTION
+I|hk_work_split|hk_work_split_period_idx|—|CREATE INDEX hk_work_split_period_idx ON public.hk_work_split USING btree (period, work_date)
+I|hk_work_split|hk_work_split_property_idx|—|CREATE INDEX hk_work_split_property_idx ON public.hk_work_split USING btree (property_id)
+I|hk_work_split|hk_work_split_uniq|UNIQUE|CREATE UNIQUE INDEX hk_work_split_uniq ON public.hk_work_split USING btree (work_date, job_code, work_type, property_id)
+T|hk_work_type|0
+C|hk_work_type|code|text|NOT NULL|
+C|hk_work_type|name|text|NOT NULL|
+C|hk_work_type|count_workload|boolean|NOT NULL|true
+C|hk_work_type|count_linen|boolean|NOT NULL|true
+C|hk_work_type|sort|integer|NOT NULL|0
+C|hk_work_type|active|boolean|NOT NULL|true
+K|hk_work_type|code
+T|holidays|0
+C|holidays|d|date|NOT NULL|
+C|holidays|name|text|NOT NULL|
+C|holidays|kind|text|NOT NULL|'holiday'::text
+C|holidays|note|text|null|
+K|holidays|d
+T|invoices|49
+C|invoices|id|uuid|NOT NULL|gen_random_uuid()
+C|invoices|contract_id|uuid|null|
+C|invoices|order_id|uuid|null|
+C|invoices|room|text|NOT NULL|
+C|invoices|ym|text|NOT NULL|
+C|invoices|amount|numeric|null|
+C|invoices|invoice_no|text|NOT NULL|
+C|invoices|invoice_date|date|NOT NULL|
+C|invoices|title|text|null|
+C|invoices|tax_id|text|null|
+C|invoices|note|text|null|
+C|invoices|status|text|NOT NULL|'issued'::text
+C|invoices|issued_by|uuid|null|auth.uid()
+C|invoices|created_at|timestamp with time zone|NOT NULL|now()
+K|invoices|id
+F|invoices|contract_id|contracts|id|SET NULL
+F|invoices|order_id|orders|id|SET NULL
+I|invoices|inv_order_once_idx|UNIQUE|CREATE UNIQUE INDEX inv_order_once_idx ON public.invoices USING btree (order_id) WHERE ((order_id IS NOT NULL) AND (contract_id IS NULL) AND (status = 'issued'::text))
+I|invoices|invoices_contract_id_idx|—|CREATE INDEX invoices_contract_id_idx ON public.invoices USING btree (contract_id)
+I|invoices|invoices_no_uniq|UNIQUE|CREATE UNIQUE INDEX invoices_no_uniq ON public.invoices USING btree (invoice_no) WHERE (status = 'issued'::text)
+I|invoices|invoices_order_id_idx|—|CREATE INDEX invoices_order_id_idx ON public.invoices USING btree (order_id)
+I|invoices|invoices_ym_idx|—|CREATE INDEX invoices_ym_idx ON public.invoices USING btree (ym)
+T|leave_balances|0
+C|leave_balances|id|uuid|NOT NULL|gen_random_uuid()
+C|leave_balances|user_id|uuid|NOT NULL|
+C|leave_balances|year|integer|NOT NULL|
+C|leave_balances|type_code|text|NOT NULL|
+C|leave_balances|quota_hours|numeric|NOT NULL|0
+C|leave_balances|used_hours|numeric|NOT NULL|0
+C|leave_balances|note|text|null|
+C|leave_balances|updated_at|timestamp with time zone|NOT NULL|now()
+K|leave_balances|id
+F|leave_balances|type_code|leave_types|code|NO ACTION
+F|leave_balances|user_id|profiles|id|CASCADE
+I|leave_balances|leave_bal_uniq|UNIQUE|CREATE UNIQUE INDEX leave_bal_uniq ON public.leave_balances USING btree (user_id, year, type_code)
+T|leave_requests|0
+C|leave_requests|id|uuid|NOT NULL|gen_random_uuid()
+C|leave_requests|user_id|uuid|NOT NULL|
+C|leave_requests|type_code|text|NOT NULL|
+C|leave_requests|start_at|timestamp with time zone|NOT NULL|
+C|leave_requests|end_at|timestamp with time zone|NOT NULL|
+C|leave_requests|hours|numeric|NOT NULL|
+C|leave_requests|reason|text|null|
+C|leave_requests|status|text|NOT NULL|'pending'::text
+C|leave_requests|manager_by|uuid|null|
+C|leave_requests|manager_at|timestamp with time zone|null|
+C|leave_requests|admin_by|uuid|null|
+C|leave_requests|admin_at|timestamp with time zone|null|
+C|leave_requests|reject_reason|text|null|
+C|leave_requests|created_at|timestamp with time zone|NOT NULL|now()
+C|leave_requests|updated_at|timestamp with time zone|NOT NULL|now()
+K|leave_requests|id
+F|leave_requests|admin_by|profiles|id|NO ACTION
+F|leave_requests|manager_by|profiles|id|NO ACTION
+F|leave_requests|type_code|leave_types|code|NO ACTION
+F|leave_requests|user_id|profiles|id|CASCADE
+I|leave_requests|leave_no_overlap|—|CREATE INDEX leave_no_overlap ON public.leave_requests USING gist (user_id, tstzrange(start_at, end_at)) WHERE (status = ANY (ARRAY['pending'::text, 'approved'::text]))
+I|leave_requests|leave_req_pending_idx|—|CREATE INDEX leave_req_pending_idx ON public.leave_requests USING btree (status) WHERE (status = 'pending'::text)
+I|leave_requests|leave_req_range_idx|—|CREATE INDEX leave_req_range_idx ON public.leave_requests USING btree (start_at, end_at)
+I|leave_requests|leave_req_user_idx|—|CREATE INDEX leave_req_user_idx ON public.leave_requests USING btree (user_id, start_at)
+T|leave_seniority|0
+C|leave_seniority|threshold_months|integer|NOT NULL|
+C|leave_seniority|days|numeric|NOT NULL|
+C|leave_seniority|note|text|null|
+K|leave_seniority|threshold_months
+T|leave_types|0
+C|leave_types|code|text|NOT NULL|
+C|leave_types|name|text|NOT NULL|
+C|leave_types|has_quota|boolean|NOT NULL|true
+C|leave_types|paid|boolean|NOT NULL|true
+C|leave_types|sort|integer|NOT NULL|0
+C|leave_types|active|boolean|NOT NULL|true
+C|leave_types|note|text|null|
+K|leave_types|code
+T|notification_prefs|0
+C|notification_prefs|user_id|uuid|NOT NULL|
+C|notification_prefs|orders|boolean|NOT NULL|false
+C|notification_prefs|approvals|boolean|NOT NULL|true
+C|notification_prefs|reviews|boolean|NOT NULL|false
+C|notification_prefs|cleaning|boolean|NOT NULL|false
+C|notification_prefs|updated_at|timestamp with time zone|NOT NULL|now()
+C|notification_prefs|purchasing|boolean|NOT NULL|true
+C|notification_prefs|board|boolean|NOT NULL|true
+K|notification_prefs|user_id
+F|notification_prefs|user_id|users|id|CASCADE
+T|notifications|64
+C|notifications|id|bigint|NOT NULL|nextval('notifications_id_seq'::regclass)
+C|notifications|user_id|uuid|NOT NULL|
+C|notifications|kind|text|NOT NULL|
+C|notifications|title|text|NOT NULL|
+C|notifications|body|text|NOT NULL|''::text
+C|notifications|url|text|null|
+C|notifications|created_at|timestamp with time zone|NOT NULL|now()
+C|notifications|read_at|timestamp with time zone|null|
+K|notifications|id
+F|notifications|user_id|profiles|id|CASCADE
+I|notifications|notifications_unread_idx|—|CREATE INDEX notifications_unread_idx ON public.notifications USING btree (user_id) WHERE (read_at IS NULL)
+I|notifications|notifications_user_idx|—|CREATE INDEX notifications_user_idx ON public.notifications USING btree (user_id, created_at DESC)
+T|order_lock_pending|0
+C|order_lock_pending|id|uuid|NOT NULL|gen_random_uuid()
+C|order_lock_pending|order_id|uuid|NOT NULL|
+C|order_lock_pending|ym|text|NOT NULL|
+C|order_lock_pending|changes|jsonb|NOT NULL|
+C|order_lock_pending|attempted_at|timestamp with time zone|NOT NULL|now()
+C|order_lock_pending|resolved|boolean|NOT NULL|false
+C|order_lock_pending|resolved_at|timestamp with time zone|null|
+C|order_lock_pending|resolved_by|uuid|null|
+K|order_lock_pending|id
+F|order_lock_pending|order_id|orders|id|CASCADE
+I|order_lock_pending|order_lock_pending_open_idx|—|CREATE INDEX order_lock_pending_open_idx ON public.order_lock_pending USING btree (ym) WHERE (NOT resolved)
+T|order_payments|199
+C|order_payments|id|uuid|NOT NULL|gen_random_uuid()
+C|order_payments|order_id|uuid|NOT NULL|
+C|order_payments|paid_on|date|NOT NULL|
+C|order_payments|amount|numeric|NOT NULL|
+C|order_payments|account|text|null|
+C|order_payments|note|text|null|
+C|order_payments|created_by|uuid|null|
+C|order_payments|created_at|timestamp with time zone|NOT NULL|now()
+C|order_payments|method|text|NOT NULL|'transfer'::text
+C|order_payments|fee_amount|numeric|NOT NULL|0
+C|order_payments|fee_on|date|null|
+K|order_payments|id
+F|order_payments|account|payment_accounts|code|NO ACTION
+F|order_payments|created_by|users|id|NO ACTION
+F|order_payments|order_id|orders|id|CASCADE
+I|order_payments|op_order_idx|—|CREATE INDEX op_order_idx ON public.order_payments USING btree (order_id)
+I|order_payments|op_paid_on_idx|—|CREATE INDEX op_paid_on_idx ON public.order_payments USING btree (paid_on DESC)
+T|orders|5310
+C|orders|id|uuid|NOT NULL|gen_random_uuid()
+C|orders|order_key|text|NOT NULL|
+C|orders|source|text|NOT NULL|
+C|orders|estate_id|uuid|null|
+C|orders|property_id|uuid|null|
+C|orders|property_raw|text|null|
+C|orders|guest_name|text|null|
+C|orders|checkin|date|null|
+C|orders|checkout|date|null|
+C|orders|nights|integer|NOT NULL|0
+C|orders|amount|numeric|NOT NULL|0
+C|orders|deposit|numeric|null|0
+C|orders|account|text|null|
+C|orders|note|text|null|
+C|orders|contract_id|uuid|null|
+C|orders|imported_via|text|null|'manual'::text
+C|orders|created_at|timestamp with time zone|NOT NULL|now()
+C|orders|paid|boolean|NOT NULL|false
+C|orders|deposit_received|boolean|null|false
+C|orders|deposit_returned|boolean|null|false
+C|orders|parent_order_id|uuid|null|
+C|orders|fee_type|text|null|
+C|orders|fx_revenue|jsonb|NOT NULL|'[]'::jsonb
+C|orders|fx_deposit|jsonb|NOT NULL|'[]'::jsonb
+C|orders|move_group|uuid|null|
+C|orders|deposit_received_at|date|null|
+C|orders|deposit_returned_at|date|null|
+C|orders|paid_at|date|null|
+C|orders|item_name|text|null|
+C|orders|paid_amount|numeric|NOT NULL|0
+C|orders|invoice_required|boolean|NOT NULL|false
+C|orders|invoice_title|text|null|
+C|orders|invoice_tax_id|text|null|
+C|orders|account_code|text|null|
+C|orders|deposit_id|uuid|null|
+C|orders|book|text|NOT NULL|'anxing'::text
+C|orders|pet_deposit|numeric(14,2)|null|
+C|orders|purpose_type|text|NOT NULL|'estate'::text
+C|orders|move_chain|text|null|
+C|orders|earnest_amount|numeric|NOT NULL|0
+C|orders|earnest_only|boolean|NOT NULL|false
+K|orders|id
+F|orders|account_code|account_codes|code|NO ACTION
+F|orders|contract_id|contracts|id|CASCADE
+F|orders|deposit_id|deposits|id|SET NULL
+F|orders|estate_id|estates|id|NO ACTION
+F|orders|property_id|properties|id|NO ACTION
+I|orders|idx_orders_checkin|—|CREATE INDEX idx_orders_checkin ON public.orders USING btree (checkin)
+I|orders|idx_orders_checkout|—|CREATE INDEX idx_orders_checkout ON public.orders USING btree (checkout)
+I|orders|idx_orders_contract_id|—|CREATE INDEX idx_orders_contract_id ON public.orders USING btree (contract_id) WHERE (contract_id IS NOT NULL)
+I|orders|idx_orders_estate|—|CREATE INDEX idx_orders_estate ON public.orders USING btree (estate_id)
+I|orders|idx_orders_item_name|—|CREATE INDEX idx_orders_item_name ON public.orders USING btree (item_name) WHERE (item_name IS NOT NULL)
+I|orders|idx_orders_source|—|CREATE INDEX idx_orders_source ON public.orders USING btree (source)
+I|orders|orders_account_code_idx|—|CREATE INDEX orders_account_code_idx ON public.orders USING btree (account_code)
+I|orders|orders_book_idx|—|CREATE INDEX orders_book_idx ON public.orders USING btree (book)
+I|orders|orders_deposit_id_idx|—|CREATE INDEX orders_deposit_id_idx ON public.orders USING btree (deposit_id) WHERE (deposit_id IS NOT NULL)
+I|orders|orders_order_key_key|UNIQUE|CREATE UNIQUE INDEX orders_order_key_key ON public.orders USING btree (order_key)
+I|orders|uq_contract_order_month|UNIQUE|CREATE UNIQUE INDEX uq_contract_order_month ON public.orders USING btree (contract_id, checkin) WHERE ((imported_via = 'contract'::text) AND (contract_id IS NOT NULL))
+I|orders|uq_orders_order_key|UNIQUE|CREATE UNIQUE INDEX uq_orders_order_key ON public.orders USING btree (order_key) WHERE (order_key IS NOT NULL)
+T|orders_backup_136|2681
+C|orders_backup_136|id|uuid|null|
+C|orders_backup_136|order_key|text|null|
+C|orders_backup_136|source|text|null|
+C|orders_backup_136|estate_id|uuid|null|
+C|orders_backup_136|property_id|uuid|null|
+C|orders_backup_136|property_raw|text|null|
+C|orders_backup_136|guest_name|text|null|
+C|orders_backup_136|checkin|date|null|
+C|orders_backup_136|checkout|date|null|
+C|orders_backup_136|nights|integer|null|
+C|orders_backup_136|amount|numeric|null|
+C|orders_backup_136|deposit|numeric|null|
+C|orders_backup_136|account|text|null|
+C|orders_backup_136|note|text|null|
+C|orders_backup_136|contract_id|uuid|null|
+C|orders_backup_136|imported_via|text|null|
+C|orders_backup_136|created_at|timestamp with time zone|null|
+C|orders_backup_136|paid|boolean|null|
+C|orders_backup_136|deposit_received|boolean|null|
+C|orders_backup_136|deposit_returned|boolean|null|
+C|orders_backup_136|parent_order_id|uuid|null|
+C|orders_backup_136|fee_type|text|null|
+C|orders_backup_136|fx_revenue|jsonb|null|
+C|orders_backup_136|fx_deposit|jsonb|null|
+C|orders_backup_136|move_group|uuid|null|
+C|orders_backup_136|deposit_received_at|date|null|
+C|orders_backup_136|deposit_returned_at|date|null|
+C|orders_backup_136|paid_at|date|null|
+C|orders_backup_136|item_name|text|null|
+C|orders_backup_136|paid_amount|numeric|null|
+C|orders_backup_136|invoice_required|boolean|null|
+C|orders_backup_136|invoice_title|text|null|
+C|orders_backup_136|invoice_tax_id|text|null|
+C|orders_backup_136|account_code|text|null|
+C|orders_backup_136|backed_up_at|timestamp with time zone|null|
+T|other_book_payments|0
+C|other_book_payments|id|uuid|NOT NULL|gen_random_uuid()
+C|other_book_payments|expense_id|uuid|NOT NULL|
+C|other_book_payments|paid_on|date|NOT NULL|
+C|other_book_payments|amount|numeric|NOT NULL|
+C|other_book_payments|method|text|null|
+C|other_book_payments|account|text|null|
+C|other_book_payments|note|text|null|
+C|other_book_payments|created_by|uuid|null|
+C|other_book_payments|created_at|timestamp with time zone|NOT NULL|clock_timestamp()
+K|other_book_payments|id
+F|other_book_payments|created_by|profiles|id|SET NULL
+F|other_book_payments|expense_id|expenses|id|CASCADE
+I|other_book_payments|obp_expense_idx|—|CREATE INDEX obp_expense_idx ON public.other_book_payments USING btree (expense_id, paid_on)
+T|overtime_requests|0
+C|overtime_requests|id|uuid|NOT NULL|gen_random_uuid()
+C|overtime_requests|user_id|uuid|NOT NULL|
+C|overtime_requests|work_date|date|NOT NULL|
+C|overtime_requests|start_at|timestamp with time zone|NOT NULL|
+C|overtime_requests|end_at|timestamp with time zone|NOT NULL|
+C|overtime_requests|hours|numeric|NOT NULL|
+C|overtime_requests|reason|text|NOT NULL|
+C|overtime_requests|status|text|NOT NULL|'pending'::text
+C|overtime_requests|manager_by|uuid|null|
+C|overtime_requests|manager_at|timestamp with time zone|null|
+C|overtime_requests|reject_reason|text|null|
+C|overtime_requests|created_at|timestamp with time zone|NOT NULL|now()
+C|overtime_requests|updated_at|timestamp with time zone|NOT NULL|now()
+K|overtime_requests|id
+F|overtime_requests|manager_by|profiles|id|NO ACTION
+F|overtime_requests|user_id|profiles|id|CASCADE
+I|overtime_requests|ot_no_overlap|—|CREATE INDEX ot_no_overlap ON public.overtime_requests USING gist (user_id, tstzrange(start_at, end_at)) WHERE (status = ANY (ARRAY['pending'::text, 'approved'::text]))
+I|overtime_requests|ot_pending_idx|—|CREATE INDEX ot_pending_idx ON public.overtime_requests USING btree (status) WHERE (status = 'pending'::text)
+I|overtime_requests|ot_user_idx|—|CREATE INDEX ot_user_idx ON public.overtime_requests USING btree (user_id, work_date)
+T|payee_presets|27
+C|payee_presets|id|uuid|NOT NULL|gen_random_uuid()
+C|payee_presets|label|text|NOT NULL|
+C|payee_presets|bank_code|text|null|
+C|payee_presets|account|text|NOT NULL|
+C|payee_presets|company|text|null|
+C|payee_presets|tax_id|text|null|
+C|payee_presets|note|text|null|
+C|payee_presets|sort|integer|NOT NULL|0
+C|payee_presets|active|boolean|NOT NULL|true
+C|payee_presets|created_at|timestamp with time zone|NOT NULL|now()
+C|payee_presets|updated_at|timestamp with time zone|NOT NULL|now()
+K|payee_presets|id
+I|payee_presets|payee_presets_account_uniq|UNIQUE|CREATE UNIQUE INDEX payee_presets_account_uniq ON public.payee_presets USING btree (account) WHERE active
+I|payee_presets|payee_presets_sort_idx|—|CREATE INDEX payee_presets_sort_idx ON public.payee_presets USING btree (sort, label)
+T|payment_accounts|0
+C|payment_accounts|id|uuid|NOT NULL|gen_random_uuid()
+C|payment_accounts|method|text|NOT NULL|
+C|payment_accounts|code|text|NOT NULL|
+C|payment_accounts|name|text|NOT NULL|
+C|payment_accounts|for_income|boolean|NOT NULL|true
+C|payment_accounts|for_payment|boolean|NOT NULL|true
+C|payment_accounts|sort|integer|NOT NULL|50
+C|payment_accounts|active|boolean|NOT NULL|true
+C|payment_accounts|created_at|timestamp with time zone|NOT NULL|now()
+C|payment_accounts|book|text|NOT NULL|'anxing'::text
+K|payment_accounts|id
+I|payment_accounts|pay_acct_method_idx|—|CREATE INDEX pay_acct_method_idx ON public.payment_accounts USING btree (method)
+I|payment_accounts|payment_accounts_code_key|UNIQUE|CREATE UNIQUE INDEX payment_accounts_code_key ON public.payment_accounts USING btree (code)
+T|period_lock|0
+C|period_lock|ym|text|NOT NULL|
+C|period_lock|locked|boolean|NOT NULL|true
+C|period_lock|auto|boolean|NOT NULL|false
+C|period_lock|locked_at|timestamp with time zone|null|
+C|period_lock|locked_by|uuid|null|
+C|period_lock|reopened_at|timestamp with time zone|null|
+C|period_lock|reopened_by|uuid|null|
+C|period_lock|note|text|null|
+K|period_lock|ym
+T|period_unlock|61
+C|period_unlock|id|uuid|NOT NULL|gen_random_uuid()
+C|period_unlock|user_id|uuid|null|auth.uid()
+C|period_unlock|ym|text|NOT NULL|
+C|period_unlock|order_id|uuid|null|
+C|period_unlock|contract_id|uuid|null|
+C|period_unlock|granted_at|timestamp with time zone|NOT NULL|now()
+C|period_unlock|expires_at|timestamp with time zone|NOT NULL|(now() + '00:30:00'::interval)
+C|period_unlock|note|text|null|
+K|period_unlock|id
+F|period_unlock|contract_id|contracts|id|CASCADE
+F|period_unlock|order_id|orders|id|CASCADE
+I|period_unlock|period_unlock_live_idx|—|CREATE INDEX period_unlock_live_idx ON public.period_unlock USING btree (user_id, ym, expires_at)
+T|profiles|0
+C|profiles|id|uuid|NOT NULL|
+C|profiles|name|text|NOT NULL|
+C|profiles|role|text|NOT NULL|'housekeeper'::text
+C|profiles|active|boolean|NOT NULL|true
+C|profiles|work_start|time without time zone|null|
+C|profiles|work_end|time without time zone|null|
+C|profiles|work_hours_per_day|numeric|null|
+C|profiles|hired_on|date|null|
+C|profiles|is_social_editor|boolean|NOT NULL|false
+K|profiles|id
+F|profiles|id|users|id|NO ACTION
+T|properties|180
+C|properties|id|uuid|NOT NULL|gen_random_uuid()
+C|properties|name|text|NOT NULL|
+C|properties|airbnb_listing_id|text|null|
+C|properties|name_aliases|text[]|null|'{}'::text[]
+C|properties|active|boolean|NOT NULL|true
+C|properties|created_at|timestamp with time zone|NOT NULL|now()
+C|properties|estate_id|uuid|null|
+C|properties|parent_property_id|uuid|null|
+C|properties|beds|integer|null|
+C|properties|linen_group|text|NOT NULL|'other'::text
+C|properties|ptype|text|NOT NULL|'room'::text
+C|properties|count_linen|boolean|NOT NULL|true
+C|properties|clean_points|numeric(4,1)|null|
+C|properties|clean_price|numeric(12,2)|null|
+C|properties|show_in_room_calendar|boolean|NOT NULL|true
+C|properties|units|integer|NOT NULL|1
+C|properties|count_in_occupancy|boolean|NOT NULL|true
+K|properties|id
+F|properties|estate_id|estates|id|NO ACTION
+F|properties|parent_property_id|properties|id|NO ACTION
+I|properties|idx_properties_parent|—|CREATE INDEX idx_properties_parent ON public.properties USING btree (parent_property_id) WHERE (parent_property_id IS NOT NULL)
+I|properties|properties_airbnb_listing_id_key|UNIQUE|CREATE UNIQUE INDEX properties_airbnb_listing_id_key ON public.properties USING btree (airbnb_listing_id)
+T|property_listings|76
+C|property_listings|listing_id|text|NOT NULL|
+C|property_listings|property_id|uuid|NOT NULL|
+C|property_listings|is_current|boolean|NOT NULL|false
+C|property_listings|note|text|null|
+C|property_listings|created_at|timestamp with time zone|NOT NULL|now()
+K|property_listings|listing_id
+F|property_listings|property_id|properties|id|CASCADE
+I|property_listings|property_listings_prop_idx|—|CREATE INDEX property_listings_prop_idx ON public.property_listings USING btree (property_id)
+T|purchase_demand_items|8
+C|purchase_demand_items|id|uuid|NOT NULL|gen_random_uuid()
+C|purchase_demand_items|demand_id|uuid|NOT NULL|
+C|purchase_demand_items|item_name|text|NOT NULL|
+C|purchase_demand_items|spec|text|null|
+C|purchase_demand_items|qty|text|null|
+C|purchase_demand_items|estate_id|uuid|null|
+C|purchase_demand_items|unit_price_est|numeric|null|
+C|purchase_demand_items|note|text|null|
+C|purchase_demand_items|status|text|NOT NULL|'pending'::text
+C|purchase_demand_items|request_item_id|uuid|null|
+C|purchase_demand_items|created_at|timestamp with time zone|NOT NULL|now()
+C|purchase_demand_items|buy_link|text|null|
+C|purchase_demand_items|purpose_type|text|NOT NULL|'estate'::text
+C|purchase_demand_items|purchased_on|date|null|
+C|purchase_demand_items|eta|date|null|
+C|purchase_demand_items|platform|text|null|
+K|purchase_demand_items|id
+F|purchase_demand_items|demand_id|purchase_demands|id|CASCADE
+F|purchase_demand_items|estate_id|estates|id|NO ACTION
+F|purchase_demand_items|request_item_id|purchase_request_items|id|SET NULL
+I|purchase_demand_items|pdi_demand_idx|—|CREATE INDEX pdi_demand_idx ON public.purchase_demand_items USING btree (demand_id)
+I|purchase_demand_items|pdi_reqitem_idx|—|CREATE INDEX pdi_reqitem_idx ON public.purchase_demand_items USING btree (request_item_id) WHERE (request_item_id IS NOT NULL)
+I|purchase_demand_items|pdi_status_idx|—|CREATE INDEX pdi_status_idx ON public.purchase_demand_items USING btree (status) WHERE (status = ANY (ARRAY['pending'::text, 'quoted'::text]))
+T|purchase_demands|6
+C|purchase_demands|id|uuid|NOT NULL|gen_random_uuid()
+C|purchase_demands|demand_no|text|null|
+C|purchase_demands|requester_id|uuid|NOT NULL|
+C|purchase_demands|requested_on|date|NOT NULL|((now() AT TIME ZONE 'Asia/Taipei'::text))::date
+C|purchase_demands|note|text|null|
+C|purchase_demands|status|text|NOT NULL|'open'::text
+C|purchase_demands|created_at|timestamp with time zone|NOT NULL|now()
+C|purchase_demands|updated_at|timestamp with time zone|NOT NULL|now()
+C|purchase_demands|ship_to|text|null|
+C|purchase_demands|ship_floor|text|null|
+K|purchase_demands|id
+F|purchase_demands|requester_id|profiles|id|NO ACTION
+I|purchase_demands|purchase_demands_demand_no_key|UNIQUE|CREATE UNIQUE INDEX purchase_demands_demand_no_key ON public.purchase_demands USING btree (demand_no)
+T|purchase_request_items|298
+C|purchase_request_items|id|uuid|NOT NULL|gen_random_uuid()
+C|purchase_request_items|request_id|uuid|NOT NULL|
+C|purchase_request_items|item_name|text|NOT NULL|
+C|purchase_request_items|amount|numeric|null|
+C|purchase_request_items|account_code|text|null|
+C|purchase_request_items|purpose_type|text|NOT NULL|'estate'::text
+C|purchase_request_items|property_id|uuid|null|
+C|purchase_request_items|note|text|null|
+C|purchase_request_items|sort|integer|NOT NULL|0
+C|purchase_request_items|estate_id|uuid|null|
+C|purchase_request_items|amount_original|numeric|null|
+C|purchase_request_items|voucher_no|text|null|
+C|purchase_request_items|no_voucher|boolean|NOT NULL|false
+K|purchase_request_items|id
+F|purchase_request_items|account_code|account_codes|code|NO ACTION
+F|purchase_request_items|estate_id|estates|id|NO ACTION
+F|purchase_request_items|property_id|properties|id|NO ACTION
+F|purchase_request_items|request_id|purchase_requests|id|CASCADE
+I|purchase_request_items|pri_estate_idx|—|CREATE INDEX pri_estate_idx ON public.purchase_request_items USING btree (estate_id)
+I|purchase_request_items|pri_request_idx|—|CREATE INDEX pri_request_idx ON public.purchase_request_items USING btree (request_id)
+T|purchase_requests|110
+C|purchase_requests|id|uuid|NOT NULL|gen_random_uuid()
+C|purchase_requests|req_no|text|NOT NULL|
+C|purchase_requests|requester_id|uuid|NOT NULL|
+C|purchase_requests|status|text|NOT NULL|'draft'::text
+C|purchase_requests|total_amount|numeric|NOT NULL|0
+C|purchase_requests|payment_method|text|null|
+C|purchase_requests|payee_bank_code|text|null|
+C|purchase_requests|payee_account|text|null|
+C|purchase_requests|payee_company|text|null|
+C|purchase_requests|payee_tax_id|text|null|
+C|purchase_requests|note|text|null|
+C|purchase_requests|submitted_at|timestamp with time zone|null|
+C|purchase_requests|manager_approved_by|uuid|null|
+C|purchase_requests|manager_approved_at|timestamp with time zone|null|
+C|purchase_requests|admin_approved_by|uuid|null|
+C|purchase_requests|admin_approved_at|timestamp with time zone|null|
+C|purchase_requests|rejected_by|uuid|null|
+C|purchase_requests|rejected_at|timestamp with time zone|null|
+C|purchase_requests|reject_reason|text|null|
+C|purchase_requests|purchased_on|date|null|
+C|purchase_requests|expense_generated_at|timestamp with time zone|null|
+C|purchase_requests|created_at|timestamp with time zone|NOT NULL|now()
+C|purchase_requests|planned_transfer_on|date|null|
+C|purchase_requests|payout_account|text|null|
+C|purchase_requests|currency|text|NOT NULL|'TWD'::text
+C|purchase_requests|fx_rate|numeric|NOT NULL|1
+C|purchase_requests|voucher_no|text|null|
+C|purchase_requests|no_voucher|boolean|NOT NULL|false
+C|purchase_requests|fee_mode|text|NOT NULL|'included'::text
+C|purchase_requests|fee_amount|numeric|NOT NULL|0
+C|purchase_requests|shared_voucher|boolean|NOT NULL|false
+C|purchase_requests|book|text|NOT NULL|'anxing'::text
+C|purchase_requests|advance_category|text|null|
+C|purchase_requests|advance_usage|text|null|
+C|purchase_requests|advance_for_book|text|null|
+K|purchase_requests|id
+F|purchase_requests|admin_approved_by|users|id|NO ACTION
+F|purchase_requests|manager_approved_by|users|id|NO ACTION
+F|purchase_requests|rejected_by|users|id|NO ACTION
+F|purchase_requests|requester_id|users|id|NO ACTION
+I|purchase_requests|pr_book_idx|—|CREATE INDEX pr_book_idx ON public.purchase_requests USING btree (book)
+I|purchase_requests|pr_created_idx|—|CREATE INDEX pr_created_idx ON public.purchase_requests USING btree (created_at DESC)
+I|purchase_requests|pr_planned_idx|—|CREATE INDEX pr_planned_idx ON public.purchase_requests USING btree (planned_transfer_on)
+I|purchase_requests|pr_requester_idx|—|CREATE INDEX pr_requester_idx ON public.purchase_requests USING btree (requester_id)
+I|purchase_requests|pr_status_idx|—|CREATE INDEX pr_status_idx ON public.purchase_requests USING btree (status)
+I|purchase_requests|purchase_requests_req_no_key|UNIQUE|CREATE UNIQUE INDEX purchase_requests_req_no_key ON public.purchase_requests USING btree (req_no)
+T|push_subscriptions|0
+C|push_subscriptions|id|uuid|NOT NULL|gen_random_uuid()
+C|push_subscriptions|user_id|uuid|NOT NULL|
+C|push_subscriptions|endpoint|text|NOT NULL|
+C|push_subscriptions|p256dh|text|NOT NULL|
+C|push_subscriptions|auth|text|NOT NULL|
+C|push_subscriptions|user_agent|text|null|
+C|push_subscriptions|created_at|timestamp with time zone|NOT NULL|now()
+C|push_subscriptions|fail_count|integer|NOT NULL|0
+C|push_subscriptions|last_sent_at|timestamp with time zone|null|
+K|push_subscriptions|id
+F|push_subscriptions|user_id|users|id|CASCADE
+I|push_subscriptions|push_sub_user_idx|—|CREATE INDEX push_sub_user_idx ON public.push_subscriptions USING btree (user_id)
+I|push_subscriptions|push_subscriptions_endpoint_key|UNIQUE|CREATE UNIQUE INDEX push_subscriptions_endpoint_key ON public.push_subscriptions USING btree (endpoint)
+T|recurring_charges|0
+C|recurring_charges|id|uuid|NOT NULL|gen_random_uuid()
+C|recurring_charges|estate_id|uuid|NOT NULL|
+C|recurring_charges|property_id|uuid|null|
+C|recurring_charges|property_raw|text|null|
+C|recurring_charges|fee_type|text|NOT NULL|
+C|recurring_charges|item_name|text|NOT NULL|
+C|recurring_charges|amount|numeric|NOT NULL|0
+C|recurring_charges|start_ym|text|NOT NULL|
+C|recurring_charges|end_ym|text|null|
+C|recurring_charges|active|boolean|NOT NULL|true
+C|recurring_charges|note|text|null|
+C|recurring_charges|created_at|timestamp with time zone|NOT NULL|now()
+K|recurring_charges|id
+F|recurring_charges|estate_id|estates|id|NO ACTION
+F|recurring_charges|property_id|properties|id|NO ACTION
+I|recurring_charges|uq_recurring_charge|UNIQUE|CREATE UNIQUE INDEX uq_recurring_charge ON public.recurring_charges USING btree (estate_id, COALESCE(property_id, '00000000-0000-0000-0000-000000000000'::uuid), fee_type, item_name)
+T|revenue_recognitions|5951
+C|revenue_recognitions|id|uuid|NOT NULL|gen_random_uuid()
+C|revenue_recognitions|order_id|uuid|null|
+C|revenue_recognitions|ym|text|NOT NULL|
+C|revenue_recognitions|period_start|date|NOT NULL|
+C|revenue_recognitions|period_end|date|NOT NULL|
+C|revenue_recognitions|source|text|NOT NULL|
+C|revenue_recognitions|estate_id|uuid|null|
+C|revenue_recognitions|property_id|uuid|null|
+C|revenue_recognitions|estate_name|text|null|
+C|revenue_recognitions|property_raw|text|null|
+C|revenue_recognitions|guest_name|text|null|
+C|revenue_recognitions|checkin|date|null|
+C|revenue_recognitions|checkout|date|null|
+C|revenue_recognitions|total_amount|numeric|null|
+C|revenue_recognitions|total_nights|integer|null|
+C|revenue_recognitions|month_nights|integer|null|
+C|revenue_recognitions|month_amount|numeric|NOT NULL|
+C|revenue_recognitions|created_at|timestamp with time zone|NOT NULL|now()
+C|revenue_recognitions|fee_type|text|null|
+C|revenue_recognitions|item_name|text|null|
+C|revenue_recognitions|contract_id|uuid|null|
+C|revenue_recognitions|purpose_type|text|null|
+K|revenue_recognitions|id
+F|revenue_recognitions|contract_id|contracts|id|CASCADE
+F|revenue_recognitions|order_id|orders|id|CASCADE
+I|revenue_recognitions|idx_recog_contract|—|CREATE INDEX idx_recog_contract ON public.revenue_recognitions USING btree (contract_id)
+I|revenue_recognitions|idx_recog_order|—|CREATE INDEX idx_recog_order ON public.revenue_recognitions USING btree (order_id)
+I|revenue_recognitions|idx_recog_ym|—|CREATE INDEX idx_recog_ym ON public.revenue_recognitions USING btree (ym)
+I|revenue_recognitions|uq_recognition_order_month|UNIQUE|CREATE UNIQUE INDEX uq_recognition_order_month ON public.revenue_recognitions USING btree (order_id, ym) WHERE (order_id IS NOT NULL)
+T|revenue_snapshots|0
+C|revenue_snapshots|id|uuid|NOT NULL|gen_random_uuid()
+C|revenue_snapshots|ym|text|NOT NULL|
+C|revenue_snapshots|source|text|NOT NULL|
+C|revenue_snapshots|estate_name|text|null|
+C|revenue_snapshots|property_raw|text|null|
+C|revenue_snapshots|guest_name|text|null|
+C|revenue_snapshots|checkin|date|null|
+C|revenue_snapshots|checkout|date|null|
+C|revenue_snapshots|total_amount|numeric|null|
+C|revenue_snapshots|month_amount|numeric|NOT NULL|
+C|revenue_snapshots|month_nights|integer|null|
+C|revenue_snapshots|total_nights|integer|null|
+C|revenue_snapshots|note|text|null|
+C|revenue_snapshots|created_at|timestamp with time zone|NOT NULL|now()
+K|revenue_snapshots|id
+I|revenue_snapshots|idx_snap_estate|—|CREATE INDEX idx_snap_estate ON public.revenue_snapshots USING btree (estate_name)
+I|revenue_snapshots|idx_snap_ym|—|CREATE INDEX idx_snap_ym ON public.revenue_snapshots USING btree (ym)
+T|reviews|1610
+C|reviews|id|uuid|NOT NULL|gen_random_uuid()
+C|reviews|airbnb_review_id|text|NOT NULL|
+C|reviews|property_id|uuid|null|
+C|reviews|listing_name_raw|text|null|
+C|reviews|guest_name|text|NOT NULL|
+C|reviews|checkin_date|date|null|
+C|reviews|checkout_date|date|null|
+C|reviews|nights|integer|null|
+C|reviews|overall_rating|numeric(2,1)|NOT NULL|
+C|reviews|comment|text|null|
+C|reviews|comment_original|text|null|
+C|reviews|comment_language|text|null|
+C|reviews|rating_checkin|integer|null|
+C|reviews|rating_cleanliness|integer|null|
+C|reviews|rating_accuracy|integer|null|
+C|reviews|rating_communication|integer|null|
+C|reviews|rating_location|integer|null|
+C|reviews|rating_value|integer|null|
+C|reviews|detail_comments|jsonb|null|
+C|reviews|host_reply|text|null|
+C|reviews|source_url|text|null|
+C|reviews|scraped_at|timestamp with time zone|NOT NULL|now()
+C|reviews|imported_via|text|null|'csv'::text
+C|reviews|hidden_at|timestamp with time zone|null|
+C|reviews|hidden_by|uuid|null|
+C|reviews|hidden_reason|text|null|
+K|reviews|id
+F|reviews|property_id|properties|id|NO ACTION
+I|reviews|idx_reviews_checkout|—|CREATE INDEX idx_reviews_checkout ON public.reviews USING btree (checkout_date)
+I|reviews|idx_reviews_property|—|CREATE INDEX idx_reviews_property ON public.reviews USING btree (property_id)
+I|reviews|idx_reviews_rating|—|CREATE INDEX idx_reviews_rating ON public.reviews USING btree (overall_rating)
+I|reviews|reviews_airbnb_review_id_key|UNIQUE|CREATE UNIQUE INDEX reviews_airbnb_review_id_key ON public.reviews USING btree (airbnb_review_id)
+I|reviews|reviews_visible_idx|—|CREATE INDEX reviews_visible_idx ON public.reviews USING btree (checkout_date DESC) WHERE (hidden_at IS NULL)
+T|schema_migrations|235
+C|schema_migrations|name|text|NOT NULL|
+C|schema_migrations|applied_at|timestamp with time zone|NOT NULL|now()
+C|schema_migrations|applied_by|uuid|null|
+C|schema_migrations|source|text|NOT NULL|'recorded'::text
+K|schema_migrations|name
+T|social_accounts|0
+C|social_accounts|id|uuid|NOT NULL|gen_random_uuid()
+C|social_accounts|name|text|NOT NULL|
+C|social_accounts|handle|text|NOT NULL|
+C|social_accounts|bio|text|null|
+C|social_accounts|sort|integer|NOT NULL|0
+C|social_accounts|active|boolean|NOT NULL|true
+C|social_accounts|created_at|timestamp with time zone|NOT NULL|now()
+C|social_accounts|created_by|uuid|null|auth.uid()
+C|social_accounts|avatar_path|text|null|
+C|social_accounts|followers|text|null|
+C|social_accounts|following|text|null|
+C|social_accounts|platform|text|NOT NULL|'ig'::text
+C|social_accounts|cover_path|text|null|
+C|social_accounts|category|text|null|
+K|social_accounts|id
+I|social_accounts|social_accounts_handle_uidx|UNIQUE|CREATE UNIQUE INDEX social_accounts_handle_uidx ON public.social_accounts USING btree (lower(handle))
+T|social_posts|18
+C|social_posts|id|uuid|NOT NULL|gen_random_uuid()
+C|social_posts|account_id|uuid|NOT NULL|
+C|social_posts|sort|integer|NOT NULL|0
+C|social_posts|caption|text|NOT NULL|''::text
+C|social_posts|image_path|text|null|
+C|social_posts|planned_on|date|null|
+C|social_posts|published_on|date|null|
+C|social_posts|status|text|NOT NULL|'draft'::text
+C|social_posts|pin|integer|NOT NULL|0
+C|social_posts|split_id|uuid|null|
+C|social_posts|split_index|integer|null|
+C|social_posts|created_at|timestamp with time zone|NOT NULL|now()
+C|social_posts|created_by|uuid|null|auth.uid()
+C|social_posts|deleted_at|timestamp with time zone|null|
+C|social_posts|images|text[]|NOT NULL|'{}'::text[]
+K|social_posts|id
+F|social_posts|account_id|social_accounts|id|CASCADE
+F|social_posts|split_id|social_splits|id|CASCADE
+I|social_posts|social_posts_acc_idx|—|CREATE INDEX social_posts_acc_idx ON public.social_posts USING btree (account_id, sort) WHERE (deleted_at IS NULL)
+I|social_posts|social_posts_split_uidx|UNIQUE|CREATE UNIQUE INDEX social_posts_split_uidx ON public.social_posts USING btree (split_id, split_index) WHERE ((split_id IS NOT NULL) AND (deleted_at IS NULL))
+T|social_splits|0
+C|social_splits|id|uuid|NOT NULL|gen_random_uuid()
+C|social_splits|account_id|uuid|NOT NULL|
+C|social_splits|source_path|text|null|
+C|social_splits|span|integer|NOT NULL|
+C|social_splits|created_at|timestamp with time zone|NOT NULL|now()
+C|social_splits|created_by|uuid|null|auth.uid()
+K|social_splits|id
+F|social_splits|account_id|social_accounts|id|CASCADE
+T|staff|11
+C|staff|id|uuid|NOT NULL|gen_random_uuid()
+C|staff|name|text|NOT NULL|
+C|staff|aliases|text[]|null|'{}'::text[]
+C|staff|staff_type|text|NOT NULL|'housekeeper'::text
+C|staff|active|boolean|NOT NULL|true
+C|staff|sort|integer|null|99
+C|staff|created_at|timestamp with time zone|NOT NULL|now()
+C|staff|email|text|null|
+C|staff|role|text|null|'housekeeper'::text
+C|staff|auth_uid|uuid|null|
+K|staff|id
+I|staff|staff_name_key|UNIQUE|CREATE UNIQUE INDEX staff_name_key ON public.staff USING btree (name)
+T|staff_properties|0
+C|staff_properties|staff_id|uuid|NOT NULL|
+C|staff_properties|property_id|uuid|NOT NULL|
+K|staff_properties|staff_id
+K|staff_properties|property_id
+F|staff_properties|property_id|properties|id|CASCADE
+F|staff_properties|staff_id|staff|id|CASCADE
+T|supply_count|0
+C|supply_count|id|uuid|NOT NULL|gen_random_uuid()
+C|supply_count|item_id|uuid|NOT NULL|
+C|supply_count|ym|text|NOT NULL|
+C|supply_count|system_qty|numeric(14,2)|NOT NULL|
+C|supply_count|counted_qty|numeric(14,2)|NOT NULL|
+C|supply_count|diff|numeric(14,2)|NOT NULL|
+C|supply_count|reason|text|null|
+C|supply_count|counted_at|timestamp with time zone|NOT NULL|now()
+C|supply_count|counted_by|uuid|null|
+K|supply_count|id
+F|supply_count|item_id|supply_item|id|CASCADE
+I|supply_count|supply_count_uniq|UNIQUE|CREATE UNIQUE INDEX supply_count_uniq ON public.supply_count USING btree (item_id, ym)
+T|supply_item|0
+C|supply_item|id|uuid|NOT NULL|gen_random_uuid()
+C|supply_item|estate_id|uuid|null|
+C|supply_item|name|text|NOT NULL|
+C|supply_item|spec|text|null|
+C|supply_item|vendor|text|null|
+C|supply_item|expire_on|date|null|
+C|supply_item|note|text|null|
+C|supply_item|active|boolean|NOT NULL|true
+C|supply_item|sort|integer|NOT NULL|0
+C|supply_item|created_at|timestamp with time zone|NOT NULL|now()
+C|supply_item|created_by|uuid|null|
+K|supply_item|id
+F|supply_item|estate_id|estates|id|NO ACTION
+I|supply_item|supply_item_uniq|UNIQUE|CREATE UNIQUE INDEX supply_item_uniq ON public.supply_item USING btree (estate_id, name, spec) NULLS NOT DISTINCT
+T|supply_txn|0
+C|supply_txn|id|uuid|NOT NULL|gen_random_uuid()
+C|supply_txn|item_id|uuid|NOT NULL|
+C|supply_txn|kind|text|NOT NULL|
+C|supply_txn|qty|numeric(14,2)|NOT NULL|
+C|supply_txn|happened_on|date|NOT NULL|((now() AT TIME ZONE 'Asia/Taipei'::text))::date
+C|supply_txn|note|text|null|
+C|supply_txn|count_id|uuid|null|
+C|supply_txn|created_at|timestamp with time zone|NOT NULL|now()
+C|supply_txn|created_by|uuid|null|
+K|supply_txn|id
+F|supply_txn|item_id|supply_item|id|CASCADE
+I|supply_txn|supply_txn_item_idx|—|CREATE INDEX supply_txn_item_idx ON public.supply_txn USING btree (item_id, happened_on)
+T|sync_issue_log|113
+C|sync_issue_log|id|bigint|NOT NULL|nextval('sync_issue_log_id_seq'::regclass)
+C|sync_issue_log|kind|text|NOT NULL|
+C|sync_issue_log|code|text|NOT NULL|
+C|sync_issue_log|field|text|NOT NULL|
+C|sync_issue_log|from_val|text|null|
+C|sync_issue_log|to_val|text|null|
+C|sync_issue_log|reason|text|null|
+C|sync_issue_log|severity|text|null|
+C|sync_issue_log|opened_at|timestamp with time zone|NOT NULL|
+C|sync_issue_log|closed_at|timestamp with time zone|NOT NULL|now()
+C|sync_issue_log|resolution|text|NOT NULL|
+C|sync_issue_log|acted_by|uuid|null|
+K|sync_issue_log|id
+F|sync_issue_log|acted_by|profiles|id|NO ACTION
+I|sync_issue_log|idx_sync_issue_log_closed|—|CREATE INDEX idx_sync_issue_log_closed ON public.sync_issue_log USING btree (closed_at DESC)
+I|sync_issue_log|idx_sync_issue_log_code|—|CREATE INDEX idx_sync_issue_log_code ON public.sync_issue_log USING btree (code)
+T|sync_issues|14
+C|sync_issues|kind|text|NOT NULL|
+C|sync_issues|code|text|NOT NULL|
+C|sync_issues|field|text|NOT NULL|
+C|sync_issues|first_seen|timestamp with time zone|NOT NULL|now()
+C|sync_issues|last_seen|timestamp with time zone|NOT NULL|now()
+C|sync_issues|from_val|text|null|
+C|sync_issues|to_val|text|null|
+C|sync_issues|listing_id|text|null|
+C|sync_issues|extra|jsonb|NOT NULL|'{}'::jsonb
+C|sync_issues|severity|text|NOT NULL|'mid'::text
+C|sync_issues|reason|text|null|
+C|sync_issues|airbnb_changed|boolean|NOT NULL|false
+C|sync_issues|dismissed_at|timestamp with time zone|null|
+C|sync_issues|dismissed_by|uuid|null|
+C|sync_issues|dismissed_sig|text|null|
+K|sync_issues|kind
+K|sync_issues|code
+K|sync_issues|field
+F|sync_issues|dismissed_by|profiles|id|NO ACTION
+I|sync_issues|idx_sync_issues_field|—|CREATE INDEX idx_sync_issues_field ON public.sync_issues USING btree (kind, field)
+I|sync_issues|idx_sync_issues_listing|—|CREATE INDEX idx_sync_issues_listing ON public.sync_issues USING btree (listing_id)
+I|sync_issues|idx_sync_issues_open|—|CREATE INDEX idx_sync_issues_open ON public.sync_issues USING btree (kind, severity) WHERE (dismissed_at IS NULL)
+I|sync_issues|idx_sync_issues_severity|—|CREATE INDEX idx_sync_issues_severity ON public.sync_issues USING btree (kind, severity, airbnb_changed DESC)
+T|sync_runs|141
+C|sync_runs|id|bigint|NOT NULL|nextval('sync_runs_id_seq'::regclass)
+C|sync_runs|at|timestamp with time zone|NOT NULL|now()
+C|sync_runs|kind|text|NOT NULL|
+C|sync_runs|received|integer|NOT NULL|0
+C|sync_runs|inserted|integer|NOT NULL|0
+C|sync_runs|updated|integer|NOT NULL|0
+C|sync_runs|voided|integer|NOT NULL|0
+C|sync_runs|skipped|integer|NOT NULL|0
+C|sync_runs|detail|jsonb|NOT NULL|'{}'::jsonb
+C|sync_runs|scan_from|date|null|
+C|sync_runs|scan_to|date|null|
+K|sync_runs|id
+I|sync_runs|idx_sync_runs_at|—|CREATE INDEX idx_sync_runs_at ON public.sync_runs USING btree (at DESC)
+T|sync_state|0
+C|sync_state|key|text|NOT NULL|
+C|sync_state|value|jsonb|NOT NULL|'{}'::jsonb
+C|sync_state|updated_at|timestamp with time zone|NOT NULL|now()
+K|sync_state|key
+T|tax_invoice|72
+C|tax_invoice|id|uuid|NOT NULL|gen_random_uuid()
+C|tax_invoice|period|text|NOT NULL|
+C|tax_invoice|company_tax_id|text|NOT NULL|
+C|tax_invoice|kind|text|NOT NULL|
+C|tax_invoice|category|text|null|
+C|tax_invoice|tax_code|text|null|
+C|tax_invoice|invoice_date|date|NOT NULL|
+C|tax_invoice|invoice_no|text|NOT NULL|
+C|tax_invoice|counterparty|text|null|
+C|tax_invoice|counterparty_tax_id|text|null|
+C|tax_invoice|summary|text|null|
+C|tax_invoice|item_name|text|null|
+C|tax_invoice|estate_id|uuid|null|
+C|tax_invoice|property_id|uuid|null|
+C|tax_invoice|net_amount|numeric(14,0)|NOT NULL|0
+C|tax_invoice|tax_amount|numeric(14,0)|NOT NULL|0
+C|tax_invoice|total_amount|numeric(14,0)|NOT NULL|0
+C|tax_invoice|voucher_ref|text|null|
+C|tax_invoice|note|text|null|
+C|tax_invoice|voided|boolean|NOT NULL|false
+C|tax_invoice|source|text|NOT NULL|'manual'::text
+C|tax_invoice|created_at|timestamp with time zone|NOT NULL|now()
+C|tax_invoice|created_by|uuid|null|
+C|tax_invoice|expense_id|uuid|null|
+K|tax_invoice|id
+F|tax_invoice|estate_id|estates|id|NO ACTION
+F|tax_invoice|expense_id|expenses|id|SET NULL
+F|tax_invoice|property_id|properties|id|NO ACTION
+I|tax_invoice|tax_invoice_date_idx|—|CREATE INDEX tax_invoice_date_idx ON public.tax_invoice USING btree (invoice_date)
+I|tax_invoice|tax_invoice_expense_uniq|UNIQUE|CREATE UNIQUE INDEX tax_invoice_expense_uniq ON public.tax_invoice USING btree (expense_id) WHERE (expense_id IS NOT NULL)
+I|tax_invoice|tax_invoice_period_idx|—|CREATE INDEX tax_invoice_period_idx ON public.tax_invoice USING btree (company_tax_id, period, kind)
+I|tax_invoice|tax_invoice_uniq|UNIQUE|CREATE UNIQUE INDEX tax_invoice_uniq ON public.tax_invoice USING btree (company_tax_id, kind, invoice_no)
+T|tax_period|0
+C|tax_period|id|uuid|NOT NULL|gen_random_uuid()
+C|tax_period|period|text|NOT NULL|
+C|tax_period|company_tax_id|text|NOT NULL|
+C|tax_period|status|text|NOT NULL|'open'::text
+C|tax_period|carry_in|numeric(14,0)|NOT NULL|0
+C|tax_period|out_tax|numeric(14,0)|null|
+C|tax_period|in_tax|numeric(14,0)|null|
+C|tax_period|payable|numeric(14,0)|null|
+C|tax_period|carry_out|numeric(14,0)|null|
+C|tax_period|closed_at|timestamp with time zone|null|
+C|tax_period|closed_by|uuid|null|
+C|tax_period|note|text|null|
+C|tax_period|created_at|timestamp with time zone|NOT NULL|now()
+K|tax_period|id
+I|tax_period|tax_period_uniq|UNIQUE|CREATE UNIQUE INDEX tax_period_uniq ON public.tax_period USING btree (company_tax_id, period)
+T|tender_feed|0
+C|tender_feed|id|uuid|NOT NULL|gen_random_uuid()
+C|tender_feed|source|text|NOT NULL|
+C|tender_feed|title|text|NOT NULL|
+C|tender_feed|url|text|NOT NULL|''::text
+C|tender_feed|agency|text|null|
+C|tender_feed|posted_on|text|null|
+C|tender_feed|run_at|timestamp with time zone|NOT NULL|now()
+C|tender_feed|starred_at|timestamp with time zone|null|
+C|tender_feed|starred_by|uuid|null|
+C|tender_feed|tender_id|uuid|null|
+C|tender_feed|created_at|timestamp with time zone|NOT NULL|now()
+K|tender_feed|id
+I|tender_feed|tender_feed_open_idx|—|CREATE INDEX tender_feed_open_idx ON public.tender_feed USING btree (run_at DESC) WHERE (tender_id IS NULL)
+I|tender_feed|tender_feed_run_idx|—|CREATE INDEX tender_feed_run_idx ON public.tender_feed USING btree (run_at DESC)
+I|tender_feed|tender_feed_uniq|UNIQUE|CREATE UNIQUE INDEX tender_feed_uniq ON public.tender_feed USING btree (source, url, title)
+T|tenders|0
+C|tenders|id|uuid|NOT NULL|gen_random_uuid()
+C|tenders|name|text|NOT NULL|
+C|tenders|source|text|null|
+C|tenders|url|text|null|
+C|tenders|address|text|null|
+C|tenders|due_on|date|null|
+C|tenders|status|text|NOT NULL|'watching'::text
+C|tenders|note|text|null|
+C|tenders|feed_id|uuid|null|
+C|tenders|created_by|uuid|null|
+C|tenders|created_at|timestamp with time zone|NOT NULL|now()
+C|tenders|updated_at|timestamp with time zone|NOT NULL|now()
+K|tenders|id
+F|tenders|feed_id|tender_feed|id|SET NULL
+I|tenders|tenders_due_idx|—|CREATE INDEX tenders_due_idx ON public.tenders USING btree (due_on)
+T|trash|150
+C|trash|id|uuid|NOT NULL|gen_random_uuid()
+C|trash|table_name|text|NOT NULL|
+C|trash|record_id|uuid|NOT NULL|
+C|trash|label|text|null|
+C|trash|payload|jsonb|null|
+C|trash|children|jsonb|NOT NULL|'[]'::jsonb
+C|trash|child_count|integer|NOT NULL|0
+C|trash|reason|text|null|
+C|trash|deleted_by|uuid|null|
+C|trash|deleted_at|timestamp with time zone|NOT NULL|now()
+C|trash|restored_at|timestamp with time zone|null|
+C|trash|restored_by|uuid|null|
+C|trash|purged_at|timestamp with time zone|null|
+C|trash|purged_by|uuid|null|
+K|trash|id
+F|trash|deleted_by|profiles|id|NO ACTION
+F|trash|purged_by|profiles|id|NO ACTION
+F|trash|restored_by|profiles|id|NO ACTION
+I|trash|trash_at_idx|—|CREATE INDEX trash_at_idx ON public.trash USING btree (deleted_at DESC)
+I|trash|trash_open_idx|—|CREATE INDEX trash_open_idx ON public.trash USING btree (deleted_at DESC) WHERE ((restored_at IS NULL) AND (purged_at IS NULL))
+I|trash|trash_table_idx|—|CREATE INDEX trash_table_idx ON public.trash USING btree (table_name, deleted_at DESC)
+T|work_settings|0
+C|work_settings|id|integer|NOT NULL|1
+C|work_settings|work_hours_per_day|numeric|NOT NULL|8
+C|work_settings|work_start|time without time zone|NOT NULL|'09:00:00'::time without time zone
+C|work_settings|work_end|time without time zone|NOT NULL|'18:00:00'::time without time zone
+C|work_settings|updated_at|timestamp with time zone|NOT NULL|now()
+C|work_settings|punch_before_min|integer|NOT NULL|120
+C|work_settings|punch_after_min|integer|NOT NULL|120
+K|work_settings|id

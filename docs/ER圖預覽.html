@@ -1,0 +1,747 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>安幸 ERP 資料庫 ER 圖</title>
+<style>
+:root{--bg:#F1F0EC;--line:#E0DDD5;--ink:#2E3840;--slate:#41689B}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+ font:15px/1.7 system-ui,"Noto Sans TC","PingFang TC",sans-serif;padding:20px 16px 80px}
+.wrap{max-width:1200px;margin:0 auto}
+h1{font-size:22px;margin:0 0 4px}
+.lead{font-size:13px;color:#6b7280;margin:0 0 16px}
+nav{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:22px}
+nav a{font-size:12px;text-decoration:none;color:var(--slate);background:#fff;
+ border:1px solid var(--line);border-radius:999px;padding:4px 11px;white-space:nowrap}
+nav a:hover{background:var(--slate);color:#fff}
+section{background:#fff;border:1px solid var(--line);border-radius:14px;
+ padding:16px 18px 10px;margin-bottom:18px}
+h2{font-size:17px;margin:0 0 4px;scroll-margin-top:12px}
+.sub{font-size:13px;color:#6b7280;margin:0 0 12px}
+.mm{overflow-x:auto;white-space:pre}
+.mm svg{max-width:none;height:auto}
+code{font-size:12px;background:#ECE8DF;border-radius:4px;padding:1px 5px}
+</style></head><body><div class="wrap">
+<h1>安幸 ERP — 資料庫 ER 圖</h1>
+<p class="lead">2026-09-22 從線上資料庫匯出。這一份只是<b>方便看圖</b>；文字版在
+<code>README.md</code> 的〈附錄 A〉，欄位清單在 <code>docs/資料庫欄位清單.md</code>。圖太寬時左右捲動。<br>★ 這一頁的繪圖程式走 CDN，<b>要連得上網路</b>。</p>
+<nav><a href="#d0">A.1 領域總覽</a><a href="#d1">A.2 主檔</a><a href="#d2">A.3 收入 ① 契約與訂單</a><a href="#d3">A.4 收入 ② 收款、押金與認列</a><a href="#d4">A.5 支出 ① 請款到支出</a><a href="#d5">A.6 憑證附件</a><a href="#d6">A.7 支出 ② 暫付與代碼主檔</a><a href="#d7">A.8 銀行與稅</a><a href="#d8">A.9 房務 ① 排班與工單</a><a href="#d9">A.10 房務 ② 設定、人事費與評價</a><a href="#d10">A.11 備品</a><a href="#d11">A.12 人事與出勤</a><a href="#d12">A.13 系統 ① 通知、稽核與回收桶</a><a href="#d13">A.14 系統 ② 公告與董事會</a><a href="#d14">A.15 外部資料與行銷</a></nav>
+<section id="d0"><h2>A.1 領域總覽</h2><p class="sub">只畫「哪個領域指到哪個領域」，不畫欄位。箭頭上的數字是外鍵條數，<b>只畫 2 條以上的</b>。</p><div class="mm">flowchart LR
+    D0[&quot;主檔&lt;br/&gt;9 張表&quot;]
+    D1[&quot;收入 ① 契約與訂單&lt;br/&gt;9 張表&quot;]
+    D2[&quot;收入 ② 收款、押金與認列&lt;br/&gt;6 張表&quot;]
+    D3[&quot;支出 ① 請款到支出&lt;br/&gt;6 張表&quot;]
+    D4[&quot;憑證附件&lt;br/&gt;1 張表&quot;]
+    D5[&quot;支出 ② 暫付與代碼主檔&lt;br/&gt;6 張表&quot;]
+    D6[&quot;銀行與稅&lt;br/&gt;6 張表&quot;]
+    D7[&quot;房務 ① 排班與工單&lt;br/&gt;7 張表&quot;]
+    D8[&quot;房務 ② 設定、人事費與評價&lt;br/&gt;8 張表&quot;]
+    D9[&quot;備品&lt;br/&gt;3 張表&quot;]
+    D10[&quot;人事與出勤&lt;br/&gt;9 張表&quot;]
+    D11[&quot;系統 ① 通知、稽核與回收桶&lt;br/&gt;7 張表&quot;]
+    D12[&quot;系統 ② 公告與董事會&lt;br/&gt;7 張表&quot;]
+    D13[&quot;外部資料與行銷&lt;br/&gt;10 張表&quot;]
+    D1 --&gt;|8| D2
+    D0 --&gt;|7| D10
+    D0 --&gt;|6| D3
+    D0 --&gt;|5| D7
+    D0 --&gt;|5| D8
+    D0 --&gt;|5| D1
+    D0 --&gt;|3| D12
+    D3 --&gt;|3| D4
+    D3 --&gt;|3| D5
+    D5 --&gt;|3| D3
+    D2 --&gt;|3| D4
+    D0 --&gt;|2| D2
+    D0 --&gt;|2| D6
+    D5 --&gt;|2| D2
+</div></section><section id="d1"><h2>A.2 主檔</h2><p class="sub">誰、哪裡 —— 其他每一張表都指回這裡</p><div class="mm">erDiagram
+    customers {
+        uuid id PK
+        uuid estate_id FK
+        uuid property_id FK
+        text name
+        _ 另有16欄
+    }
+    estate_fee_default {
+        uuid estate_id PK
+        _ 另有5欄
+    }
+    estate_managers {
+        uuid id PK
+        uuid estate_id FK
+        uuid staff_id FK
+        _ 另有5欄
+    }
+    estates {
+        uuid id PK
+        text name
+        _ 另有7欄
+    }
+    profiles {
+        uuid id PK
+        text name
+        _ 另有7欄
+    }
+    properties {
+        uuid id PK
+        text name
+        uuid estate_id FK
+        uuid parent_property_id FK
+        _ 另有13欄
+    }
+    property_listings {
+        text listing_id PK
+        uuid property_id FK
+        _ 另有3欄
+    }
+    staff {
+        uuid id PK
+        text name
+        _ 另有8欄
+    }
+    staff_properties {
+        uuid staff_id PK
+        uuid property_id PK
+    }
+    estates ||--o{ customers : &quot;estate_id / SET NULL&quot;
+    properties ||--o{ customers : &quot;property_id / SET NULL&quot;
+    estates ||--|{ estate_fee_default : &quot;estate_id / CASCADE&quot;
+    estates ||--|{ estate_managers : &quot;estate_id / CASCADE&quot;
+    staff ||--|{ estate_managers : &quot;staff_id / NO ACTION&quot;
+    users ||--|{ profiles : &quot;id / NO ACTION&quot;
+    estates ||--o{ properties : &quot;estate_id / NO ACTION&quot;
+    properties ||--o{ properties : &quot;parent_property_id / NO ACTION&quot;
+    properties ||--|{ property_listings : &quot;property_id / CASCADE&quot;
+    properties ||--|{ staff_properties : &quot;property_id / CASCADE&quot;
+    staff ||--|{ staff_properties : &quot;staff_id / CASCADE&quot;
+</div></section><section id="d2"><h2>A.3 收入 ① 契約與訂單</h2><p class="sub">長租契約自動長出月租單，短租訂單從 Airbnb 同步進來</p><div class="mm">erDiagram
+    contract_order_conflicts {
+        uuid contract_id PK
+        text ym PK
+        _ 另有6欄
+    }
+    contract_payments {
+        uuid id PK
+        uuid contract_id FK
+        uuid order_id FK
+        _ 另有5欄
+    }
+    contract_recurring_charges {
+        uuid id PK
+        uuid contract_id FK
+        text item_name
+        _ 另有7欄
+    }
+    contracts {
+        uuid id PK
+        text name
+        uuid estate_id FK
+        _ 另有37欄
+    }
+    order_lock_pending {
+        uuid id PK
+        uuid order_id FK
+        text ym
+        _ 另有5欄
+    }
+    orders {
+        uuid id PK
+        text order_key
+        uuid estate_id FK
+        uuid property_id FK
+        uuid contract_id FK
+        text account_code FK
+        uuid deposit_id FK
+        _ 另有34欄
+    }
+    period_lock {
+        text ym PK
+        _ 另有7欄
+    }
+    period_unlock {
+        uuid id PK
+        text ym
+        uuid order_id FK
+        uuid contract_id FK
+        _ 另有4欄
+    }
+    recurring_charges {
+        uuid id PK
+        uuid estate_id FK
+        uuid property_id FK
+        text item_name
+        _ 另有8欄
+    }
+    contracts ||--|{ contract_order_conflicts : &quot;contract_id / CASCADE&quot;
+    contracts ||--o{ contract_payments : &quot;contract_id / CASCADE&quot;
+    orders ||--o{ contract_payments : &quot;order_id / NO ACTION&quot;
+    contracts ||--|{ contract_recurring_charges : &quot;contract_id / CASCADE&quot;
+    estates ||--o{ contracts : &quot;estate_id / NO ACTION&quot;
+    orders ||--|{ order_lock_pending : &quot;order_id / CASCADE&quot;
+    account_codes ||--o{ orders : &quot;account_code / NO ACTION&quot;
+    contracts ||--o{ orders : &quot;contract_id / CASCADE&quot;
+    deposits ||--o{ orders : &quot;deposit_id / SET NULL&quot;
+    estates ||--o{ orders : &quot;estate_id / NO ACTION&quot;
+    properties ||--o{ orders : &quot;property_id / NO ACTION&quot;
+    contracts ||--o{ period_unlock : &quot;contract_id / CASCADE&quot;
+    orders ||--o{ period_unlock : &quot;order_id / CASCADE&quot;
+    estates ||--|{ recurring_charges : &quot;estate_id / NO ACTION&quot;
+    properties ||--o{ recurring_charges : &quot;property_id / NO ACTION&quot;
+</div></section><section id="d3"><h2>A.4 收入 ② 收款、押金與認列</h2><p class="sub">錢進來，以及「這筆算哪個月的營收」</p><div class="mm">erDiagram
+    deposit_payments {
+        uuid id PK
+        uuid deposit_id FK
+        text account FK
+        _ 另有8欄
+    }
+    deposits {
+        uuid id PK
+        uuid order_id FK
+        uuid contract_id FK
+        uuid estate_id FK
+        uuid property_id FK
+        uuid transfer_to_id FK
+        uuid transfer_from_id FK
+        uuid converted_to_deposit_id FK
+        uuid converted_from_earnest_id FK
+        uuid forfeit_order_id FK
+        _ 另有38欄
+    }
+    invoices {
+        uuid id PK
+        uuid contract_id FK
+        uuid order_id FK
+        text ym
+        _ 另有10欄
+    }
+    order_payments {
+        uuid id PK
+        uuid order_id FK
+        text account FK
+        _ 另有8欄
+    }
+    revenue_recognitions {
+        uuid id PK
+        uuid order_id FK
+        text ym
+        uuid contract_id FK
+        _ 另有18欄
+    }
+    revenue_snapshots {
+        uuid id PK
+        text ym
+        _ 另有12欄
+    }
+    payment_accounts ||--o{ deposit_payments : &quot;account / NO ACTION&quot;
+    deposits ||--|{ deposit_payments : &quot;deposit_id / CASCADE&quot;
+    contracts ||--o{ deposits : &quot;contract_id / SET NULL&quot;
+    deposits ||--o{ deposits : &quot;converted_from_earnest_id / NO ACTION&quot;
+    deposits ||--o{ deposits : &quot;converted_to_deposit_id / NO ACTION&quot;
+    estates ||--o{ deposits : &quot;estate_id / NO ACTION&quot;
+    orders ||--o{ deposits : &quot;forfeit_order_id / SET NULL&quot;
+    orders ||--o{ deposits : &quot;order_id / SET NULL&quot;
+    properties ||--o{ deposits : &quot;property_id / NO ACTION&quot;
+    deposits ||--o{ deposits : &quot;transfer_from_id / SET NULL&quot;
+    deposits ||--o{ deposits : &quot;transfer_to_id / SET NULL&quot;
+    contracts ||--o{ invoices : &quot;contract_id / SET NULL&quot;
+    orders ||--o{ invoices : &quot;order_id / SET NULL&quot;
+    payment_accounts ||--o{ order_payments : &quot;account / NO ACTION&quot;
+    orders ||--|{ order_payments : &quot;order_id / CASCADE&quot;
+    contracts ||--o{ revenue_recognitions : &quot;contract_id / CASCADE&quot;
+    orders ||--o{ revenue_recognitions : &quot;order_id / CASCADE&quot;
+</div></section><section id="d4"><h2>A.5 支出 ① 請款到支出</h2><p class="sub">需求 → 請款單 → 核准 → 支出 → 出款</p><div class="mm">erDiagram
+    expenses {
+        uuid id PK
+        date spent_on
+        text account_code FK
+        uuid property_id FK
+        uuid source_item_id FK
+        uuid estate_id FK
+        uuid request_id FK
+        uuid fee_request_id FK
+        uuid parent_expense_id FK
+        uuid fee_payment_id FK
+        uuid advance_id FK
+        _ 另有21欄
+    }
+    other_book_payments {
+        uuid id PK
+        uuid expense_id FK
+        _ 另有7欄
+    }
+    purchase_demand_items {
+        uuid id PK
+        uuid demand_id FK
+        text item_name
+        uuid estate_id FK
+        uuid request_item_id FK
+        _ 另有11欄
+    }
+    purchase_demands {
+        uuid id PK
+        uuid requester_id FK
+        _ 另有8欄
+    }
+    purchase_request_items {
+        uuid id PK
+        uuid request_id FK
+        text item_name
+        text account_code FK
+        uuid property_id FK
+        uuid estate_id FK
+        _ 另有7欄
+    }
+    purchase_requests {
+        uuid id PK
+        text req_no
+        uuid requester_id FK
+        _ 另有32欄
+    }
+    account_codes ||--o{ expenses : &quot;account_code / NO ACTION&quot;
+    advance_payments ||--o{ expenses : &quot;advance_id / SET NULL&quot;
+    estates ||--o{ expenses : &quot;estate_id / NO ACTION&quot;
+    order_payments ||--o{ expenses : &quot;fee_payment_id / CASCADE&quot;
+    purchase_requests ||--o{ expenses : &quot;fee_request_id / SET NULL&quot;
+    expenses ||--o{ expenses : &quot;parent_expense_id / CASCADE&quot;
+    properties ||--o{ expenses : &quot;property_id / NO ACTION&quot;
+    purchase_requests ||--o{ expenses : &quot;request_id / SET NULL&quot;
+    purchase_request_items ||--o{ expenses : &quot;source_item_id / SET NULL&quot;
+    expenses ||--|{ other_book_payments : &quot;expense_id / CASCADE&quot;
+    purchase_demands ||--|{ purchase_demand_items : &quot;demand_id / CASCADE&quot;
+    estates ||--o{ purchase_demand_items : &quot;estate_id / NO ACTION&quot;
+    purchase_request_items ||--o{ purchase_demand_items : &quot;request_item_id / SET NULL&quot;
+    profiles ||--|{ purchase_demands : &quot;requester_id / NO ACTION&quot;
+    account_codes ||--o{ purchase_request_items : &quot;account_code / NO ACTION&quot;
+    estates ||--o{ purchase_request_items : &quot;estate_id / NO ACTION&quot;
+    properties ||--o{ purchase_request_items : &quot;property_id / NO ACTION&quot;
+    purchase_requests ||--|{ purchase_request_items : &quot;request_id / CASCADE&quot;
+    users ||--|{ purchase_requests : &quot;requester_id / NO ACTION&quot;
+</div></section><section id="d5"><h2>A.6 憑證附件</h2><p class="sub">一張 attachments 掛在九種單據上</p><div class="mm">erDiagram
+    attachments {
+        uuid id PK
+        uuid request_id FK
+        uuid expense_id FK
+        uuid deposit_id FK
+        uuid order_payment_id FK
+        uuid deposit_payment_id FK
+        uuid request_item_id FK
+        uuid tender_id FK
+        uuid order_id FK
+        uuid bank_transaction_id FK
+        _ 另有6欄
+    }
+    bank_transactions ||--o{ attachments : &quot;bank_transaction_id / CASCADE&quot;
+    deposits ||--o{ attachments : &quot;deposit_id / CASCADE&quot;
+    deposit_payments ||--o{ attachments : &quot;deposit_payment_id / CASCADE&quot;
+    expenses ||--o{ attachments : &quot;expense_id / CASCADE&quot;
+    orders ||--o{ attachments : &quot;order_id / CASCADE&quot;
+    order_payments ||--o{ attachments : &quot;order_payment_id / CASCADE&quot;
+    purchase_requests ||--o{ attachments : &quot;request_id / CASCADE&quot;
+    purchase_request_items ||--o{ attachments : &quot;request_item_id / CASCADE&quot;
+    tenders ||--o{ attachments : &quot;tender_id / CASCADE&quot;
+</div></section><section id="d6"><h2>A.7 支出 ② 暫付與代碼主檔</h2><p class="sub">先墊的錢，以及會計科目／收付款方式</p><div class="mm">erDiagram
+    account_codes {
+        text code PK
+        _ 另有5欄
+    }
+    advance_payments {
+        uuid id PK
+        uuid estate_id FK
+        uuid forfeit_expense_id FK
+        uuid request_id FK
+        uuid source_item_id FK
+        _ 另有15欄
+    }
+    advance_repayment_lines {
+        uuid id PK
+        uuid repayment_id FK
+        uuid advance_id FK
+        _ 另有2欄
+    }
+    advance_repayments {
+        uuid id PK
+        _ 另有9欄
+    }
+    payee_presets {
+        uuid id PK
+        _ 另有10欄
+    }
+    payment_accounts {
+        uuid id PK
+        text code
+        _ 另有8欄
+    }
+    estates ||--o{ advance_payments : &quot;estate_id / SET NULL&quot;
+    expenses ||--o{ advance_payments : &quot;forfeit_expense_id / SET NULL&quot;
+    purchase_requests ||--o{ advance_payments : &quot;request_id / SET NULL&quot;
+    purchase_request_items ||--o{ advance_payments : &quot;source_item_id / SET NULL&quot;
+    advance_payments ||--|{ advance_repayment_lines : &quot;advance_id / RESTRICT&quot;
+    advance_repayments ||--|{ advance_repayment_lines : &quot;repayment_id / CASCADE&quot;
+</div></section><section id="d7"><h2>A.8 銀行與稅</h2><p class="sub">對帳單、發票、營業稅</p><div class="mm">erDiagram
+    accounting_reports {
+        uuid id PK
+        text title
+        _ 另有12欄
+    }
+    bank_accounts {
+        uuid id PK
+        text name
+        _ 另有11欄
+    }
+    bank_statements {
+        uuid id PK
+        uuid account_id FK
+        _ 另有13欄
+    }
+    bank_transactions {
+        uuid id PK
+        uuid account_id FK
+        uuid statement_id FK
+        _ 另有14欄
+    }
+    tax_invoice {
+        uuid id PK
+        text period
+        uuid estate_id FK
+        uuid property_id FK
+        uuid expense_id FK
+        _ 另有19欄
+    }
+    tax_period {
+        uuid id PK
+        text period
+        _ 另有11欄
+    }
+    bank_accounts ||--|{ bank_statements : &quot;account_id / CASCADE&quot;
+    bank_accounts ||--|{ bank_transactions : &quot;account_id / CASCADE&quot;
+    bank_statements ||--o{ bank_transactions : &quot;statement_id / SET NULL&quot;
+    estates ||--o{ tax_invoice : &quot;estate_id / NO ACTION&quot;
+    expenses ||--o{ tax_invoice : &quot;expense_id / SET NULL&quot;
+    properties ||--o{ tax_invoice : &quot;property_id / NO ACTION&quot;
+</div></section><section id="d8"><h2>A.9 房務 ① 排班與工單</h2><p class="sub">TimeTree 匯入 → 工單 → 拆帳</p><div class="mm">erDiagram
+    hk_day {
+        text period
+        date work_date PK
+        uuid staff_id PK
+        _ 另有4欄
+    }
+    hk_event {
+        uuid id PK
+        text period
+        _ 另有11欄
+    }
+    hk_property {
+        uuid id PK
+        text code
+        uuid property_id FK
+        _ 另有8欄
+    }
+    hk_staff {
+        uuid id PK
+        text code
+        uuid staff_id FK
+        _ 另有11欄
+    }
+    hk_task {
+        uuid id PK
+        date work_date
+        uuid property_id FK
+        uuid staff_id FK
+        uuid order_id FK
+        _ 另有11欄
+    }
+    hk_work_item {
+        uuid id PK
+        uuid event_id FK
+        text period
+        uuid staff_id FK
+        _ 另有10欄
+    }
+    hk_work_split {
+        uuid id PK
+        text period
+        uuid property_id FK
+        _ 另有7欄
+    }
+    hk_staff ||--|{ hk_day : &quot;staff_id / CASCADE&quot;
+    properties ||--o{ hk_property : &quot;property_id / NO ACTION&quot;
+    staff ||--o{ hk_staff : &quot;staff_id / NO ACTION&quot;
+    orders ||--o{ hk_task : &quot;order_id / CASCADE&quot;
+    properties ||--o{ hk_task : &quot;property_id / SET NULL&quot;
+    staff ||--o{ hk_task : &quot;staff_id / SET NULL&quot;
+    hk_event ||--o{ hk_work_item : &quot;event_id / SET NULL&quot;
+    hk_staff ||--|{ hk_work_item : &quot;staff_id / NO ACTION&quot;
+    properties ||--|{ hk_work_split : &quot;property_id / NO ACTION&quot;
+</div></section><section id="d9"><h2>A.10 房務 ② 設定、人事費與評價</h2><p class="sub">每月設定、人事費攤提、清潔記錄與 Airbnb 評價</p><div class="mm">erDiagram
+    cleaning_records {
+        uuid id PK
+        uuid staff_id FK
+        uuid property_id FK
+        _ 另有11欄
+    }
+    hk_audit {
+        bigint id PK
+        _ 另有6欄
+    }
+    hk_labor_cost {
+        uuid id PK
+        uuid estate_id FK
+        uuid property_id FK
+        _ 另有4欄
+    }
+    hk_month_property {
+        text period PK
+        text property_code PK
+        _ 另有2欄
+    }
+    hk_period {
+        text period PK
+        _ 另有4欄
+    }
+    hk_setting {
+        text key PK
+        _ 另有5欄
+    }
+    hk_work_type {
+        text code PK
+        _ 另有5欄
+    }
+    reviews {
+        uuid id PK
+        uuid property_id FK
+        _ 另有24欄
+    }
+    properties ||--o{ cleaning_records : &quot;property_id / NO ACTION&quot;
+    staff ||--o{ cleaning_records : &quot;staff_id / NO ACTION&quot;
+    estates ||--o{ hk_labor_cost : &quot;estate_id / CASCADE&quot;
+    properties ||--o{ hk_labor_cost : &quot;property_id / CASCADE&quot;
+    properties ||--o{ reviews : &quot;property_id / NO ACTION&quot;
+</div></section><section id="d10"><h2>A.11 備品</h2><p class="sub">取用／補貨／盤點 —— 餘量是算出來的</p><div class="mm">erDiagram
+    supply_count {
+        uuid id PK
+        uuid item_id FK
+        text ym
+        _ 另有6欄
+    }
+    supply_item {
+        uuid id PK
+        uuid estate_id FK
+        text name
+        _ 另有8欄
+    }
+    supply_txn {
+        uuid id PK
+        uuid item_id FK
+        _ 另有7欄
+    }
+    supply_item ||--|{ supply_count : &quot;item_id / CASCADE&quot;
+    estates ||--o{ supply_item : &quot;estate_id / NO ACTION&quot;
+    supply_item ||--|{ supply_txn : &quot;item_id / CASCADE&quot;
+</div></section><section id="d11"><h2>A.12 人事與出勤</h2><p class="sub">打卡、請假、加班</p><div class="mm">erDiagram
+    attendance {
+        uuid id PK
+        uuid user_id FK
+        date work_date
+        uuid in_estate_id FK
+        uuid out_estate_id FK
+        _ 另有17欄
+    }
+    attendance_fixes {
+        uuid id PK
+        uuid user_id FK
+        date work_date
+        _ 另有8欄
+    }
+    holidays {
+        date d PK
+        text name
+        _ 另有2欄
+    }
+    leave_balances {
+        uuid id PK
+        uuid user_id FK
+        text type_code FK
+        _ 另有5欄
+    }
+    leave_requests {
+        uuid id PK
+        uuid user_id FK
+        text type_code FK
+        _ 另有12欄
+    }
+    leave_seniority {
+        integer threshold_months PK
+        _ 另有2欄
+    }
+    leave_types {
+        text code PK
+        _ 另有6欄
+    }
+    overtime_requests {
+        uuid id PK
+        uuid user_id FK
+        date work_date
+        _ 另有10欄
+    }
+    work_settings {
+        integer id PK
+        _ 另有6欄
+    }
+    estates ||--o{ attendance : &quot;in_estate_id / NO ACTION&quot;
+    estates ||--o{ attendance : &quot;out_estate_id / NO ACTION&quot;
+    profiles ||--|{ attendance : &quot;user_id / CASCADE&quot;
+    profiles ||--|{ attendance_fixes : &quot;user_id / CASCADE&quot;
+    leave_types ||--|{ leave_balances : &quot;type_code / NO ACTION&quot;
+    profiles ||--|{ leave_balances : &quot;user_id / CASCADE&quot;
+    leave_types ||--|{ leave_requests : &quot;type_code / NO ACTION&quot;
+    profiles ||--|{ leave_requests : &quot;user_id / CASCADE&quot;
+    profiles ||--|{ overtime_requests : &quot;user_id / CASCADE&quot;
+</div></section><section id="d12"><h2>A.13 系統 ① 通知、稽核與回收桶</h2><p class="sub">誰改了什麼、誰該被通知、刪掉的東西去哪</p><div class="mm">erDiagram
+    app_secrets {
+        text name PK
+        _ 另有2欄
+    }
+    data_audit {
+        bigint id PK
+        _ 另有7欄
+    }
+    notification_prefs {
+        uuid user_id PK
+        _ 另有7欄
+    }
+    notifications {
+        bigint id PK
+        uuid user_id FK
+        text title
+        _ 另有5欄
+    }
+    push_subscriptions {
+        uuid id PK
+        uuid user_id FK
+        _ 另有7欄
+    }
+    schema_migrations {
+        text name PK
+        _ 另有3欄
+    }
+    trash {
+        uuid id PK
+        _ 另有13欄
+    }
+    users ||--|{ notification_prefs : &quot;user_id / CASCADE&quot;
+    profiles ||--|{ notifications : &quot;user_id / CASCADE&quot;
+    users ||--|{ push_subscriptions : &quot;user_id / CASCADE&quot;
+</div></section><section id="d13"><h2>A.14 系統 ② 公告與董事會</h2><p class="sub">公告、會議、表單、帳密</p><div class="mm">erDiagram
+    announcement_reads {
+        uuid ann_id PK
+        uuid user_id PK
+        _ 另有1欄
+    }
+    announcements {
+        uuid id PK
+        text title
+        _ 另有6欄
+    }
+    board_events {
+        uuid id PK
+        text title
+        _ 另有7欄
+    }
+    board_files {
+        uuid id PK
+        uuid event_id FK
+        text name
+        uuid author_id FK
+        _ 另有4欄
+    }
+    board_forms {
+        uuid id PK
+        text title
+        _ 另有10欄
+    }
+    board_secret_reads {
+        uuid id PK
+        uuid secret_id FK
+        uuid user_id FK
+        _ 另有1欄
+    }
+    board_secrets {
+        uuid id PK
+        text title
+        _ 另有8欄
+    }
+    announcements ||--|{ announcement_reads : &quot;ann_id / CASCADE&quot;
+    profiles ||--|{ announcement_reads : &quot;user_id / CASCADE&quot;
+    profiles ||--o{ board_files : &quot;author_id / SET NULL&quot;
+    board_events ||--|{ board_files : &quot;event_id / CASCADE&quot;
+    board_secrets ||--|{ board_secret_reads : &quot;secret_id / CASCADE&quot;
+    profiles ||--o{ board_secret_reads : &quot;user_id / SET NULL&quot;
+</div></section><section id="d14"><h2>A.15 外部資料與行銷</h2><p class="sub">Airbnb 同步、社群、標案</p><div class="mm">erDiagram
+    airbnb_snapshots {
+        text code PK
+        _ 另有17欄
+    }
+    social_accounts {
+        uuid id PK
+        text name
+        _ 另有12欄
+    }
+    social_posts {
+        uuid id PK
+        uuid account_id FK
+        uuid split_id FK
+        _ 另有12欄
+    }
+    social_splits {
+        uuid id PK
+        uuid account_id FK
+        _ 另有4欄
+    }
+    sync_issue_log {
+        bigint id PK
+        text code
+        _ 另有10欄
+    }
+    sync_issues {
+        text kind PK
+        text code PK
+        text field PK
+        _ 另有12欄
+    }
+    sync_runs {
+        bigint id PK
+        _ 另有10欄
+    }
+    sync_state {
+        text key PK
+        _ 另有2欄
+    }
+    tender_feed {
+        uuid id PK
+        text title
+        _ 另有9欄
+    }
+    tenders {
+        uuid id PK
+        text name
+        uuid feed_id FK
+        _ 另有9欄
+    }
+    social_accounts ||--|{ social_posts : &quot;account_id / CASCADE&quot;
+    social_splits ||--o{ social_posts : &quot;split_id / CASCADE&quot;
+    social_accounts ||--|{ social_splits : &quot;account_id / CASCADE&quot;
+    tender_feed ||--o{ tenders : &quot;feed_id / SET NULL&quot;
+</div></section>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>
+mermaid.initialize({ startOnLoad:false });
+(async () => {
+  const els = document.querySelectorAll('.mm');
+  for (let i=0;i<els.length;i++) {
+    const src = els[i].textContent;
+    try { const {svg} = await mermaid.render('m'+i, src); els[i].innerHTML = svg; }
+    catch (e) { els[i].innerHTML = '<pre style="color:#b91c1c">畫不出來：'+e.message+'</pre>'; }
+  }
+})();
+</script></body></html>
