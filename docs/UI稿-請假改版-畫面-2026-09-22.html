@@ -1,0 +1,553 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>請假改版：哪一種做法比較簡單</title>
+<style>
+:root{--bg:#F1F0EC;--line:#E0DDD5;--ink:#2E3840;--slate:#41689B;--slated:#345380;
+ --green:#3FAE7C;--greend:#217346;--greenl:#DFF2E8;--sand:#ECE8DF;--bluel:#DFEDFA}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+ font:15px/1.65 system-ui,"Noto Sans TC","PingFang TC",sans-serif;padding:20px 16px 90px}
+.wrap{max-width:1040px;margin:0 auto}
+h1{font-size:21px;margin:0 0 4px}
+.lead{font-size:13px;color:#6b7280;margin:0 0 18px}
+.sec{display:flex;align-items:center;gap:8px;margin:26px 0 10px}
+.sec b{font-size:11px;font-weight:700;letter-spacing:.08em;color:#6b7280;white-space:nowrap}
+.sec i.ln{flex:1;height:1px;background:var(--line);display:block}
+.card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 18px}
+.card+.card{margin-top:13px}
+.cmpwrap{overflow-x:auto}
+table.cmp{width:100%;min-width:640px;border-collapse:collapse;font-size:13px}
+table.cmp th,table.cmp td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+table.cmp thead th{font-size:11px;color:#6b7280;background:#FAFAF9;font-weight:600}
+table.cmp td.y{color:var(--greend)}
+table.cmp td.n{color:#b91c1c}
+table.cmp col.hi{background:var(--bluel)}
+.pick{border:2px solid var(--slate);border-radius:14px;padding:14px 16px;background:var(--bluel);
+ font-size:13px;line-height:1.85;margin-top:13px}
+.pick b{color:var(--slated)}
+/* 表單 */
+.hdr{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+label.f{display:block;font-size:12px;color:#6b7280;margin-bottom:3px}
+.req{color:#dc2626;margin-left:2px}
+.in{height:40px;border:1px solid var(--line);border-radius:10px;background:#fff;
+ padding:0 11px;font:inherit;font-size:15px;color:var(--ink)}
+.in:focus{outline:2px solid rgba(65,104,155,.25);border-color:var(--slate)}
+.nav{margin-left:auto;display:flex;align-items:center;gap:10px}
+.nav button{width:34px;height:34px;border:1px solid var(--line);background:#fff;border-radius:9px;
+ cursor:pointer;font:inherit;color:#4b5563}
+.nav button:hover{border-color:var(--slate);color:var(--slate)}
+.nav span{font-size:15px;font-weight:600;min-width:104px;text-align:center}
+/* 月曆 */
+.cg{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+.cg .dow{font-size:12px;color:#9aa3ac;text-align:center;padding-bottom:2px}
+.d{height:74px;min-width:0;border:1px solid var(--line);border-radius:10px;background:#fff;
+ font:inherit;cursor:pointer;display:flex;flex-direction:column;align-items:center;
+ justify-content:center;gap:3px;padding:0;color:var(--ink)}
+.d .n{font-size:16px;font-weight:600;line-height:1}
+.d .t{font-size:11px;color:#9aa3ac;line-height:1}
+.d.pad{border:0;background:0;cursor:default}
+.d.pad .n{color:#c9cdd2;font-weight:400}
+.d.off,.d.hol{background:var(--sand);cursor:not-allowed}
+.d.off .n,.d.hol .n{color:#9aa3ac;font-weight:400}
+.d.on{background:var(--slate);border-color:var(--slate)}
+.d.on .n{color:#fff}.d.on .t{color:rgba(255,255,255,.85)}
+.d.half{background:linear-gradient(180deg,var(--slate) 50%,#fff 50%);border-color:var(--slate)}
+.d.half.pm{background:linear-gradient(0deg,var(--slate) 50%,#fff 50%)}
+.d.half .n{color:var(--slated)}.d.half .t{color:var(--slated);font-weight:600}
+.calhint{font-size:12px;color:#9aa3ac;margin-top:9px}
+/* 明細 */
+.seg{display:flex;align-items:center;gap:10px;margin:14px 0 2px}
+.seg b{font-size:12px;color:#4b5563;font-weight:600;white-space:nowrap}
+.seg i.ln{flex:1;height:1px;background:var(--line);display:block}
+.seg span{font-size:12px;color:#9aa3ac;white-space:nowrap}
+.dl{display:flex;align-items:center;gap:12px;padding:9px 0;border-bottom:1px dashed rgba(224,221,213,.9)}
+.dl:last-of-type{border-bottom:0}
+.dl .dt{flex:1;font-size:15px;min-width:0}
+.dl .dt em{font-style:normal;color:#9aa3ac}
+.dl select{width:150px;height:38px;border:1px solid var(--line);border-radius:9px;background:#fff;
+ padding:0 9px;font:inherit;font-size:14px;color:var(--ink)}
+.dl .hh{width:64px;height:38px;border:1px solid var(--line);border-radius:9px;padding:0 8px;
+ font:inherit;font-size:14px;text-align:right}
+.dl .xb{width:38px;height:38px;border:1px solid var(--line);background:#fff;border-radius:9px;
+ cursor:pointer;color:#9aa3ac;font-size:15px;font-family:inherit}
+.dl .xb:hover{border-color:#FCA5A5;color:#dc2626}
+.empty{text-align:center;color:#9aa3ac;font-size:13px;padding:22px 0}
+/* 彙總 */
+.tot{background:#FAFAF9;border:1px solid var(--line);border-radius:12px;padding:11px 14px;margin-top:14px}
+.tot .big{font-size:17px}
+.tot .big b{font-size:20px;font-variant-numeric:tabular-nums}
+.chip{font-size:11px;border-radius:999px;padding:2px 9px;white-space:nowrap;border:1px solid;
+ vertical-align:2px;margin-left:7px}
+.chip.g{background:var(--sand);color:#6b5b3f;border-color:var(--line)}
+.chip.wait{background:#FFFBEB;color:#b45309;border-color:#FCD34D}
+.chip.ok{background:var(--greenl);color:var(--greend);border-color:var(--green)}
+.tot .s{font-size:12px;color:#9aa3ac;margin-top:2px}
+.tot .s.bad{color:#b91c1c}
+.btnrow{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:14px}
+.btnP{height:44px;border:0;border-radius:10px;background:var(--slate);color:#fff;
+ font-size:15px;font-weight:600;padding:0 24px;font-family:inherit;cursor:pointer}
+.btnP:hover{background:var(--slated)}
+.btnP:disabled{background:#c7cdd4;cursor:not-allowed}
+.btnO{height:40px;border:1px solid var(--greend);color:var(--greend);background:#fff;
+ border-radius:9px;font-size:14px;font-weight:600;padding:0 16px;font-family:inherit;cursor:pointer}
+.btnR{height:40px;border:1px solid #FCA5A5;color:#dc2626;background:#fff;
+ border-radius:9px;font-size:14px;padding:0 16px;font-family:inherit;cursor:pointer}
+.mini{border:1px solid var(--line);background:#fff;border-radius:8px;padding:3px 10px;
+ font-size:12px;cursor:pointer;font-family:inherit;color:#4b5563}
+.mini:hover{border-color:var(--slate);color:var(--slate)}
+.mini.on{background:var(--slate);border-color:var(--slate);color:#fff;font-weight:600}
+/* 資料列 */
+.rows{font-size:13px}
+.rows .r{display:flex;gap:10px;padding:7px 0;border-bottom:1px solid rgba(224,221,213,.6)}
+.rows .r:last-child{border-bottom:0}
+.rows .r span:first-child{flex:1;min-width:0}
+.rows .r code{font-size:12px;background:var(--sand);border-radius:4px;padding:1px 6px}
+.rows .t{max-width:46%;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums;color:#6b7280;white-space:nowrap}
+.warnbox{background:#FEF2F2;border:1px solid #FCA5A5;border-radius:11px;padding:10px 13px;
+ font-size:12px;line-height:1.8;color:#7f1d1d;margin-top:10px}
+.okbox{background:var(--greenl);border:1px solid var(--green);border-radius:11px;padding:10px 13px;
+ font-size:12px;line-height:1.8;color:#14532d;margin-top:10px}
+.note{background:#fff;border:1px solid var(--line);border-radius:14px;padding:15px 17px;
+ font-size:13px;line-height:1.85;margin-top:16px}
+.note ul{margin:6px 0 0;padding-left:18px}.note li{margin:7px 0}
+.q{background:#FFFBEB;border:1px solid #FCD34D;border-radius:14px;padding:15px 17px;
+ font-size:13px;line-height:1.85;margin-top:14px}
+.q b{color:#92400E}
+.ded summary{list-style:none;cursor:pointer;display:inline-flex;width:16px;height:16px;
+ border-radius:999px;background:var(--sand);font-size:10px;font-weight:700;color:#6b5b3f;
+ align-items:center;justify-content:center;user-select:none;vertical-align:1px}
+.ded div{margin-top:6px;font-size:12px;color:#6b7280}
+</style></head><body><div class="wrap">
+
+<h1>請假改版 —— 哪一種做法比較簡單</h1>
+<p class="lead">
+  你問的是「怎麼做比較簡單」，所以先回答那一題（§1），再給畫面（§2）。
+  數字是真的：2026 年 22 個國定假日照 <code>migration_97</code> 灌進來，週末與假日的判斷跟
+  <code>is_workday()</code> 同一套。<b>畫面可以直接玩。</b>
+</p>
+
+<!-- ═══ §1 ═══ -->
+<div class="sec"><b>§1　三種做法，代價差在哪</b><i class="ln"></i></div>
+<div class="card">
+  <p style="margin:0 0 12px;font-size:13px;color:#6b7280">
+    同一件事：<b>9/24 請一天、9/29 請一天、9/30 請下午半天</b>（中間 9/25 中秋、9/28 教師節、週末）。
+    三種做法的畫面可以長得一模一樣，差別全在<b>資料庫裡存成什麼</b>，以及<b>要動到幾個既有的東西</b>。
+  </p>
+  <div class="cmpwrap"><table class="cmp">
+    <colgroup><col style="width:24%"><col style="width:25%"><col class="hi" style="width:26%"><col style="width:25%"></colgroup>
+    <thead><tr><th></th>
+      <th>甲　一張單橫跨</th>
+      <th>乙　送出時拆成多張<br><span style="font-weight:400;color:#9aa3ac">＋ 畫面收成一列</span></th>
+      <th>丙　一張單 ＋ 明細子表</th></tr></thead>
+    <tbody>
+      <tr><td><b>資料庫怎麼存</b></td>
+        <td>1 列，9/24 09:00 → 9/30 18:00</td>
+        <td class="y"><b>3 列</b>，各自一段連續時間<br>多一欄 <code>batch_id</code> 綁同批</td>
+        <td>1 列 ＋ <b>新表</b> <code>leave_days</code> 3 列</td></tr>
+      <tr><td><b>要新增的表</b></td><td class="y">不用</td><td class="y">不用（加一欄）</td>
+        <td class="n">要（＋ RLS ＋ policy）</td></tr>
+      <tr><td><code>leave_hours_on()</code></td><td class="n">要改（現在算錯）</td>
+        <td class="y"><b>不用改</b></td><td class="n">要改</td></tr>
+      <tr><td><code>attendance_report()</code></td>
+        <td class="n">要改 —— 不然中秋會被印成「年假」</td>
+        <td class="y"><b>不用改</b></td><td class="n">要改</td></tr>
+      <tr><td><code>leave_no_overlap</code><br><span style="font-size:11px;color:#9aa3ac">那條 EXCLUDE 看門規則</span></td>
+        <td class="n">會鎖住整段六天，中間插不進任何單</td>
+        <td class="y"><b>不用動</b></td>
+        <td class="n">要從 tstzrange 改成逐日 —— <b>動一條現有的看門規則</b></td></tr>
+      <tr><td><b>核可畫面</b></td><td>現狀</td><td class="y">現狀 ＋ 把同批收成一列</td>
+        <td class="n">重做（逐日剔除是新語意）</td></tr>
+      <tr><td><b>取消 / 扣額度 / 通知</b></td><td>現狀</td><td class="y">整批一起收</td>
+        <td class="n">全部跟著改</td></tr>
+      <tr><td><b>半天、指定時數</b></td><td class="n">同一張單只能一種</td>
+        <td class="y">可以（單位不同就多拆一張）</td><td class="y">可以</td></tr>
+      <tr><td><b>紀錄列</b></td><td>1 列</td>
+        <td>畫面 1 列（<code>batch_id</code> 收合）</td><td>1 列</td></tr>
+      <tr><td><b>要改幾個既有的東西</b></td><td class="n">4</td>
+        <td class="y"><b>0</b></td><td class="n">5</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="pick">
+    <b>我建議乙。</b>它不是「比較將就的那個」——
+    <b>畫面上跟丙一模一樣</b>（一張單、一份日期明細、一列紀錄），
+    差別只在資料庫把它存成三列而不是一列＋一張子表。<br>
+    而那個差別換到的是：<b>四支既有的函式與一條看門規則完全不用碰。</b>
+    丙要改 <code>leave_no_overlap</code> —— 那是目前唯一在擋「同一天請兩次假」的東西，
+    改壞了不會報錯，只會變成有人請了兩次假而沒有人發現。
+    <div style="margin-top:8px;color:#4b5563">
+      ★ 乙唯一的代價：<b>資料庫裡會有三列</b>。
+      所以取消、扣額度、通知都要「認得同批」—— 那正是 <code>batch_id</code> 的用途，
+      而它只是一欄 uuid。
+    </div>
+  </div>
+</div>
+
+<!-- ═══ §2 ═══ -->
+<div class="sec"><b>§2　畫面（三種做法都長這樣，可以玩）</b><i class="ln"></i></div>
+
+<div class="card">
+  <div class="hdr">
+    <div>
+      <label class="f">假別<span class="req">*</span></label>
+      <select class="in" id="ty" style="width:190px">
+        <option>年假（特休）</option><option>事假</option><option>病假</option>
+      </select>
+    </div>
+    <div class="nav">
+      <button id="pm">‹</button><span id="mlabel">—</span><button id="nm">›</button>
+    </div>
+  </div>
+
+  <div class="cg" id="cg"></div>
+  <div class="calhint">點一下選，再點一下取消。灰色那些不用請假，點不下去。</div>
+</div>
+
+<div class="card">
+  <div style="font-size:15px;font-weight:600;margin-bottom:2px">這張單的明細</div>
+  <div id="detail"></div>
+
+  <div class="tot">
+    <div class="big" id="totLine">還沒選任何一天</div>
+    <div class="s" id="totSub">&nbsp;</div>
+  </div>
+
+  <div class="btnrow">
+    <button class="btnP" id="submit">送出請假</button>
+    <span style="font-size:12px;color:#9aa3ac" id="submitHint">一張單，主管與總經理各核一次。</span>
+  </div>
+</div>
+
+<!-- ═══ §3 ═══ -->
+<div class="sec"><b>§3　送出之後，資料庫裡長什麼樣</b><i class="ln"></i></div>
+<div class="card">
+  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px" id="wayPills"></div>
+  <div class="rows" id="dbrows"></div>
+  <div id="dbnote"></div>
+</div>
+
+<!-- ═══ §4 ═══ -->
+<div class="sec"><b>§4　主管看到的（乙案，同批收成一列）</b><i class="ln"></i></div>
+<div class="card">
+  <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">
+    <div style="flex:1;min-width:220px">
+      <div style="font-size:15px;font-weight:600">李小美　<span id="apTitle">—</span></div>
+      <div style="font-size:12px;color:#6b7280;margin-top:2px" id="apSub">—</div>
+    </div>
+    <div style="display:flex;gap:6px;align-items:center">
+      <span class="chip ok">主管 ✓</span><span class="chip wait">總經理待核</span>
+    </div>
+  </div>
+  <div id="apRows" style="margin-top:10px"></div>
+  <div style="min-height:22px;margin-top:8px"><div class="s" id="apHint" style="font-size:12px;color:#6b7280">&nbsp;</div></div>
+  <div class="btnrow" style="margin-top:6px">
+    <button class="btnO" id="apOk">核可</button>
+    <button class="btnR">駁回</button>
+    <details class="ded"><summary>i</summary>
+      <div>剔除某一天 ＝ 只駁回同批裡的那一張，其他照過。申請人會收到「其中 1 天沒過」的通知，不用整張重送。</div>
+    </details>
+  </div>
+</div>
+
+<!-- ═══ 說明 ═══ -->
+<div class="note">
+  <b>不管選哪一個，這三件事都會做</b>
+  <ul>
+    <li><b>時數不再用「結束 − 開始」算。</b>現在 9/24 09:00 → 9/30 18:00 會被算成
+      <b>153 小時</b>（午休、晚上、週末、中秋全部算進特休），而年假總共只有 56 小時 ——
+      所以多天請假從來沒有成功過。改成「每天填多少就扣多少」。</li>
+    <li><b>週末與國定假日點不下去</b>，也不會被算進天數。</li>
+    <li><b>送出前就看得到</b>共幾天、幾小時、連不連續、扣完還剩多少。</li>
+  </ul>
+  <div style="margin-top:9px">
+    ★ <b>沒動的</b>：加班、補登打卡、打卡分頁、「我的假」那三張額度卡。
+    核可還是主管 → 總經理<b>依次</b>兩段。
+  </div>
+</div>
+
+<div class="q">
+  <b>兩件要你決定的</b>
+  <ul style="margin:6px 0 0;padding-left:20px">
+    <li style="margin:6px 0"><b>甲／乙／丙選哪一個？</b>我建議 <b>乙</b>（§1 那張表）。</li>
+    <li style="margin:6px 0"><b>半天的「上午 / 下午」要不要寫死時間？</b>
+      設定裡只存「上班 09:00、下班 18:00、每日 8 小時」，<b>午休幾點沒有存</b>。
+      我暫用上午 09:00–13:00、下午 14:00–18:00。
+      要精確的話得在「管理」頁加一個午休欄位 ——
+      <span style="color:#6b7280">不加也能跑，只有「指定時數」跨午休時會差一小時。</span></li>
+  </ul>
+  <div style="margin-top:8px">回一句 <b>「做乙」</b>（或甲／丙），再回一句午休要不要加欄位。</div>
+</div>
+
+<script>
+/* ═══ 2026 國定假日（照 migration_97 原樣） ═══ */
+const HOL={'2026-01-01':'元旦','2026-02-15':'小年夜','2026-02-16':'除夕','2026-02-17':'春節初一',
+ '2026-02-18':'春節初二','2026-02-19':'春節初三','2026-02-20':'補假','2026-02-27':'和平補假',
+ '2026-02-28':'和平紀念日','2026-04-03':'兒童節補假','2026-04-04':'兒童節','2026-04-05':'清明',
+ '2026-04-06':'清明補假','2026-05-01':'勞動節','2026-06-19':'端午節','2026-09-25':'中秋節',
+ '2026-09-28':'教師節','2026-10-09':'補假','2026-10-10':'國慶日','2026-10-25':'光復節',
+ '2026-10-26':'光復補假','2026-12-25':'行憲紀念日'};
+const DAILY=8, QUOTA=56, USED=0;
+const MODE={full:['整天',8,'09:00','18:00'],am:['上午半天',4,'09:00','13:00'],pm:['下午半天',4,'14:00','18:00']};
+
+const pad=n=>String(n).padStart(2,'0');
+const iso=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+const mk=s=>{const[y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d)};
+const dow=s=>mk(s).getDay();
+const isWeekend=s=>dow(s)===0||dow(s)===6;
+const isHol=s=>!!HOL[s];
+const isWork=s=>!isWeekend(s)&&!isHol(s);
+const addD=(s,n)=>{const d=mk(s);d.setDate(d.getDate()+n);return iso(d)};
+const WD=['日','一','二','三','四','五','六'];
+const md=s=>Number(s.slice(5,7))+'/'+Number(s.slice(8,10));
+const r2=n=>Math.round(n*100)/100;
+
+/* 狀態 */
+let picks=new Map([['2026-09-24',{mode:'full'}],['2026-09-29',{mode:'full'}],['2026-09-30',{mode:'pm'}]]);
+let view={y:2026,m:9};
+let way='b';
+let cut=new Set();
+
+const hoursOf=v=>v.mode==='custom'?v.hours:MODE[v.mode][1];
+const sorted=()=>[...picks.keys()].sort();
+
+/** 段：連續的請假日，中間只隔週末／國定假日也算同一段 */
+function segments(){
+  const ds=sorted(), segs=[];
+  for(const d of ds){
+    const last=segs[segs.length-1];
+    if(last){
+      let p=last[last.length-1], ok=true, g=0;
+      let x=addD(p,1);
+      while(x<d && g++<40){ if(isWork(x)){ok=false;break;} x=addD(x,1); }
+      if(ok){ last.push(d); continue; }
+    }
+    segs.push([d]);
+  }
+  return segs;
+}
+/** 批次：一張實體單 ＝ 連續工作日 ＋ 同一種單位 */
+function batches(){
+  const ds=sorted(), out=[];
+  for(const d of ds){
+    const last=out[out.length-1];
+    if(last){
+      const p=last.days[last.days.length-1];
+      let x=addD(p,1), bridged=true, g=0;
+      while(x<d && g++<40){ if(isWork(x)){bridged=false;break;} x=addD(x,1); }
+      const sameMode=picks.get(d).mode===picks.get(p).mode
+        && (picks.get(d).mode!=='custom'||picks.get(d).hours===picks.get(p).hours);
+      // 實體單不能跨假日（跨了日曆就會把假日印成請假）
+      const contiguous = addD(p,1)===d;
+      if(contiguous && sameMode){ last.days.push(d); continue; }
+      void bridged;
+    }
+    out.push({days:[d],mode:picks.get(d).mode,hours:picks.get(d).hours});
+  }
+  return out;
+}
+function totals(){
+  let h=0; for(const v of picks.values()) h+=hoursOf(v);
+  return {h:r2(h), days:r2(h/DAILY)};
+}
+function gapDays(segs){
+  let n=0;
+  for(const seg of segs){
+    for(let i=1;i<seg.length;i++){ let d=addD(seg[i-1],1); while(d<seg[i]){n++;d=addD(d,1);} }
+  }
+  return n;
+}
+
+/* ═══ 月曆 ═══ */
+function drawCal(){
+  document.getElementById('mlabel').textContent=`${view.y} 年 ${view.m} 月`;
+  const first=new Date(view.y,view.m-1,1), lead=first.getDay(), last=new Date(view.y,view.m,0).getDate();
+  const prevLast=new Date(view.y,view.m-1,0).getDate();
+  let h=WD.map(d=>`<div class="dow">${d}</div>`).join('');
+  for(let i=lead;i>0;i--) h+=`<button class="d pad" disabled><span class="n">${prevLast-i+1}</span></button>`;
+  for(let i=1;i<=last;i++){
+    const s=`${view.y}-${pad(view.m)}-${pad(i)}`, v=picks.get(s);
+    let cls='d', t='';
+    if(isHol(s)){cls+=' hol';t=HOL[s];}
+    else if(isWeekend(s)){cls+=' off';t='例假日';}
+    if(v){
+      cls=cls.replace(' hol','').replace(' off','');
+      if(v.mode==='full'){cls+=' on';t='已選';}
+      else {cls+=' half'+(v.mode==='pm'?' pm':'');t=v.mode==='custom'?v.hours+' 小時':MODE[v.mode][0];}
+    }
+    const dis=(!isWork(s)&&!v)?' disabled':'';
+    h+=`<button class="${cls}"${dis} data-d="${s}"><span class="n">${i}</span><span class="t">${t||'&nbsp;'}</span></button>`;
+  }
+  const tail=(7-((lead+last)%7))%7;
+  for(let i=1;i<=tail;i++) h+=`<button class="d pad" disabled><span class="n">${i}</span></button>`;
+  const cg=document.getElementById('cg'); cg.innerHTML=h;
+  cg.querySelectorAll('.d[data-d]').forEach(b=>b.onclick=()=>{
+    const s=b.dataset.d;
+    if(picks.has(s)) picks.delete(s); else { if(!isWork(s))return; picks.set(s,{mode:'full'}); }
+    cut.delete(s); render();
+  });
+}
+
+/* ═══ 明細 ═══ */
+function drawDetail(){
+  const box=document.getElementById('detail'), segs=segments();
+  if(!segs.length){ box.innerHTML='<div class="empty">還沒有任何一天 —— 上面點月曆選日子。</div>'; return; }
+  let h='';
+  segs.forEach((seg,i)=>{
+    const dd=r2(seg.reduce((s,d)=>s+hoursOf(picks.get(d)),0)/DAILY);
+    h+=`<div class="seg"><b>第 ${i+1} 段　${md(seg[0])}（${WD[dow(seg[0])]}）`
+      + (seg.length>1?`～${md(seg[seg.length-1])}（${WD[dow(seg[seg.length-1])]}）`:'')
+      + `</b><i class="ln"></i><span>${dd} 天</span></div>`;
+    seg.forEach(d=>{
+      const v=picks.get(d);
+      h+=`<div class="dl"><div class="dt">${md(d)}<em>（${WD[dow(d)]}）</em></div>`
+       + `<select data-m="${d}">`
+       + ['full','am','pm'].map(m=>`<option value="${m}"${v.mode===m?' selected':''}>${MODE[m][0]}</option>`).join('')
+       + `<option value="custom"${v.mode==='custom'?' selected':''}>指定時數</option></select>`
+       + (v.mode==='custom'?`<input class="hh" type="number" min="0.5" max="8" step="0.5" value="${v.hours}" data-h="${d}">`:'')
+       + `<button class="xb" data-x="${d}" title="把這一天拿掉">×</button></div>`;
+    });
+  });
+  box.innerHTML=h;
+  box.querySelectorAll('select[data-m]').forEach(s=>s.onchange=()=>{
+    const v=picks.get(s.dataset.m); v.mode=s.value;
+    if(v.mode==='custom'&&!v.hours) v.hours=4;
+    picks.set(s.dataset.m,v); render();
+  });
+  box.querySelectorAll('input[data-h]').forEach(i=>i.onchange=()=>{
+    const v=picks.get(i.dataset.h);
+    v.hours=Math.max(0.5,Math.min(8,Number(i.value)||0.5)); picks.set(i.dataset.h,v); render();
+  });
+  box.querySelectorAll('.xb[data-x]').forEach(b=>b.onclick=()=>{picks.delete(b.dataset.x);cut.delete(b.dataset.x);render();});
+}
+
+/* ═══ 彙總 ═══ */
+function drawTot(){
+  const t=totals(), segs=segments(), ds=sorted(), gaps=gapDays(segs);
+  const remain=QUOTA-USED, after=r2(remain-t.h), over=after<0;
+  document.getElementById('totLine').innerHTML = ds.length
+    ? `共 <b>${t.days}</b> 天 · <b>${t.h}</b> 小時`
+      + (segs.length===1?'<span class="chip g">連續</span>'
+         :`<span class="chip g">分成 ${segs.length} 段</span>`)
+    : '還沒選任何一天';
+  document.getElementById('totSub').className = 's'+(over?' bad':'');
+  document.getElementById('totSub').innerHTML = !ds.length ? '&nbsp;'
+    : over ? `⚠ 年假不夠 —— 還差 ${Math.abs(after)} 小時。拿掉幾天，或改請事假。`
+    : `請完剩 ${after} 小時（現在 ${remain}）`
+      + (gaps? `　・　中間 ${gaps} 天是例假日或國定假日，不佔假` : '');
+  document.getElementById('submit').disabled = over || !ds.length;
+  const nb=batches().length;
+  document.getElementById('submitHint').textContent =
+    !ds.length ? '一張單，主管與總經理各核一次。'
+    : way==='b' && nb>1
+      ? `畫面一張單；資料庫會存 ${nb} 列（同批）。主管與總經理各核一次。`
+      : '一張單，主管與總經理各核一次。';
+}
+
+/* ═══ §3 資料庫 ═══ */
+const WAYS={
+  a:['甲　一張單橫跨','n'],
+  b:['乙　拆成多張 ＋ 畫面收成一列','y'],
+  c:['丙　一張單 ＋ 明細子表','n'],
+};
+function drawDb(){
+  document.getElementById('wayPills').innerHTML =
+    Object.entries(WAYS).map(([k,[l]])=>
+      `<button class="mini ${way===k?'on':''}" data-w="${k}">${l}</button>`).join('');
+  document.querySelectorAll('.mini[data-w]').forEach(b=>b.onclick=()=>{way=b.dataset.w;render();});
+
+  const ds=sorted(), t=totals(), rows=document.getElementById('dbrows');
+  if(!ds.length){ rows.innerHTML='<div class="empty">—</div>'; document.getElementById('dbnote').innerHTML=''; return; }
+  let h='', note='';
+  if(way==='a'){
+    const a=ds[0], b=ds[ds.length-1], vb=picks.get(b);
+    let span=0; let d=a; while(d<=b){span++;d=addD(d,1);}
+    h=`<div class="r"><span><code>leave_requests</code> 1 列　年假（特休）</span>`
+     + `<span class="t">${a} 09:00 → ${b} ${MODE[vb.mode]?MODE[vb.mode][3]:'18:00'}</span></div>`;
+    note=`<div class="warnbox">`
+      + `★ 這一列跨了 <b>${span}</b> 天，其中 <b>${span-ds.length}</b> 天不是請假日。<br>`
+      + `① <code>attendance_report</code> 只問「這天在不在單子的區間內」，所以`
+      + `<b>中秋節會被印成「年假（特休）」</b> —— 出勤日曆、月結表、匯出的 Excel 三個地方都會這樣寫。<br>`
+      + `② <code>leave_no_overlap</code> 會把這 ${span} 天整段鎖住，中間要再插任何一張單都會被擋，`
+      + `而錯誤訊息是「這段時間你已經有一張請假單」—— 人看不懂為什麼國定假日會跟他撞。`
+      + `</div>`;
+  } else if(way==='b'){
+    const bs=batches();
+    h=bs.map((b,i)=>{
+      const a=b.days[0], z=b.days[b.days.length-1], v=picks.get(a);
+      const hh=r2(b.days.reduce((s,d)=>s+hoursOf(picks.get(d)),0));
+      return `<div class="r"><span>年假（特休）　<b>${hh} 小時</b>`
+        + (bs.length>1?`　<code>同批 ${i+1}/${bs.length}</code>`:'')
+        + `</span><span class="t">${a} ${MODE[v.mode]?MODE[v.mode][2]:'09:00'} → ${z} ${MODE[v.mode]?MODE[v.mode][3]:'18:00'}</span></div>`;
+    }).join('');
+    note=`<div class="okbox">`
+      + `★ 每一列都是<b>一段連續工作日、單位相同</b> —— 跟現在的單長得一模一樣，`
+      + `所以 <code>leave_hours_on</code>、<code>attendance_report</code>、<code>leave_no_overlap</code> `
+      + `<b>一行都不用改</b>，也不會有哪一天被印成假別。<br>`
+      + `★ 多的只有一欄 <code>batch_id</code>：紀錄列上標「同批 N/M」、取消時一次收掉整批。<br>`
+      + `★★ ${bs.length} 列一定要在<b>同一支 RPC</b> 裡送完。拆成 ${bs.length} 次 PostgREST 呼叫的話，`
+      + `第一張成功、第二張撞到額度不夠 —— 他會拿到「請了一半」的假，而畫面上只跳一句錯誤。`
+      + `（跟 <code>DeferralPanel</code> 那次同一種坑）`
+      + `</div>`;
+  } else {
+    h=`<div class="r"><span><code>leave_requests</code> 1 列　年假（特休）　<b>${t.h} 小時</b></span>`
+     + `<span class="t">${ds[0]} → ${ds[ds.length-1]}</span></div>`
+     + ds.map(d=>{const v=picks.get(d);
+        return `<div class="r" style="padding-left:16px"><span>　└ <code>leave_days</code>　${d}（${WD[dow(d)]}）`
+          + `　${v.mode==='custom'?v.hours+' 小時':MODE[v.mode][0]}</span>`
+          + `<span class="t">${hoursOf(v)} 小時</span></div>`;}).join('');
+    note=`<div class="warnbox">`
+      + `★ 表達力最好，但要動的東西最多：新表 ＋ RLS ＋ policy`
+      + `（<b>新建表沒寫 policy＝查詢回成功、0 列</b>，那條坑踩過）、`
+      + `<code>leave_hours_on</code>、<code>attendance_report</code> 都要改讀子表。<br>`
+      + `★★ 最貴的是 <code>leave_no_overlap</code>：它現在是 <code>tstzrange</code> 的 EXCLUDE，`
+      + `要改成「逐日不得重複」。<b>那是目前唯一在擋「同一天請兩次假」的東西</b>，`
+      + `改壞了不會報錯，只會變成有人請了兩次假而沒有人發現。`
+      + `</div>`;
+  }
+  rows.innerHTML=h; document.getElementById('dbnote').innerHTML=note;
+}
+
+/* ═══ §4 主管 ═══ */
+function drawApprove(){
+  const ds=sorted(), t=totals(), segs=segments(), bs=batches();
+  document.getElementById('apTitle').textContent = ds.length?`年假（特休）　${t.days} 天 · ${t.h} 小時`:'—';
+  document.getElementById('apSub').textContent = ds.length
+    ? `${ds[0]} → ${ds[ds.length-1]}　・　${segs.length} 段　・　${ds.length} 個請假日　・　資料庫 ${bs.length} 列`
+    : '—';
+  const box=document.getElementById('apRows');
+  if(!ds.length){ box.innerHTML='<div class="empty">—</div>';
+    document.getElementById('apHint').innerHTML='&nbsp;'; return; }
+  box.innerHTML = ds.map(d=>{
+    const v=picks.get(d), isCut=cut.has(d);
+    return `<div class="dl" style="opacity:${isCut?.45:1}">`
+      + `<div class="dt"${isCut?' style="text-decoration:line-through"':''}>${md(d)}<em>（${WD[dow(d)]}）</em>`
+      + `　<span style="font-size:13px;color:#6b7280">${v.mode==='custom'?v.hours+' 小時':MODE[v.mode][0]}</span></div>`
+      + `<span style="font-variant-numeric:tabular-nums;font-size:14px;color:#6b7280">${hoursOf(v)} 小時</span>`
+      + `<button class="mini" data-c="${d}">${isCut?'放回來':'剔除這天'}</button></div>`;
+  }).join('');
+  box.querySelectorAll('.mini[data-c]').forEach(b=>b.onclick=()=>{
+    const d=b.dataset.c; cut.has(d)?cut.delete(d):cut.add(d); drawApprove();
+  });
+  const keep=ds.filter(d=>!cut.has(d));
+  const kh=r2(keep.reduce((s,d)=>s+hoursOf(picks.get(d)),0));
+  document.getElementById('apHint').innerHTML = cut.size
+    ? `剔除 <b>${cut.size}</b> 天之後是 <b>${r2(kh/DAILY)} 天 · ${kh} 小時</b>。`
+      + `按核可就以這個樣子通過 —— 被剔除的那天只駁回同批裡的那一張，申請人不用重送。`
+    : `核可之後會扣 <b>${kh}</b> 小時。`;
+  document.getElementById('apOk').textContent = cut.size?`核可（少 ${cut.size} 天）`:'核可';
+}
+
+/* ═══ ═══ */
+function render(){ drawCal(); drawDetail(); drawTot(); drawDb(); drawApprove(); }
+document.getElementById('pm').onclick=()=>{view.m--;if(view.m<1){view.m=12;view.y--;}drawCal();};
+document.getElementById('nm').onclick=()=>{view.m++;if(view.m>12){view.m=1;view.y++;}drawCal();};
+document.getElementById('submit').onclick=()=>{
+  const t=totals(), bs=batches();
+  alert('（稿子不會真的送出）\n\n年假（特休）　'+t.days+' 天 · '+t.h+' 小時\n\n'
+    + sorted().map(d=>{const v=picks.get(d);
+        return `${d}（${WD[dow(d)]}）　${v.mode==='custom'?v.hours+' 小時':MODE[v.mode][0]}`;}).join('\n')
+    + `\n\n【乙案】資料庫會寫 ${bs.length} 列，同一個 batch_id。`);
+};
+render();
+</script>
+</div></body></html>

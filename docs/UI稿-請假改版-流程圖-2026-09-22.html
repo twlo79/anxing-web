@@ -1,0 +1,364 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>請假改版：UI 流程圖</title>
+<style>
+:root{--bg:#F1F0EC;--line:#E0DDD5;--ink:#2E3840;--slate:#41689B;--slated:#345380;
+ --green:#3FAE7C;--greend:#217346;--greenl:#DFF2E8;--sand:#ECE8DF;--bluel:#DFEDFA}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+ font:15px/1.65 system-ui,"Noto Sans TC","PingFang TC",sans-serif;padding:20px 16px 90px}
+.wrap{max-width:1060px;margin:0 auto}
+h1{font-size:21px;margin:0 0 4px}
+.lead{font-size:13px;color:#6b7280;margin:0 0 6px}
+.sec{display:flex;align-items:center;gap:8px;margin:28px 0 10px}
+.sec b{font-size:11px;font-weight:700;letter-spacing:.08em;color:#6b7280;white-space:nowrap}
+.sec i.ln{flex:1;height:1px;background:var(--line);display:block}
+.card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 18px}
+.cap{font-size:13px;color:#6b7280;margin:0 0 14px}
+
+/* ── 泳道 ── */
+.lane{display:flex;gap:0;align-items:stretch;border-top:1px solid var(--line)}
+.lane:last-child{border-bottom:1px solid var(--line)}
+.who{flex:0 0 96px;display:flex;align-items:center;justify-content:center;
+ font-size:13px;font-weight:700;padding:14px 6px;text-align:center;line-height:1.35}
+.who.emp{background:var(--bluel);color:var(--slated)}
+.who.sys{background:var(--sand);color:#6b5b3f}
+.who.mgr{background:var(--greenl);color:var(--greend)}
+.who.ceo{background:#F3E8FF;color:#6b21a8}
+.steps{flex:1;min-width:0;padding:12px 0 12px 14px;display:flex;gap:10px;
+ align-items:stretch;overflow-x:auto}
+.step{flex:0 0 250px;border:1px solid var(--line);border-radius:12px;background:#fff;
+ padding:10px 12px;position:relative;display:flex;flex-direction:column}
+.step.ghost{border-style:dashed;background:#FAFAF9}
+.step .no{position:absolute;top:-8px;left:10px;background:var(--slate);color:#fff;
+ font-size:10px;font-weight:700;border-radius:999px;padding:1px 8px}
+.step.sysn .no{background:#6b5b3f}
+.step.mgrn .no{background:var(--greend)}
+.step.ceon .no{background:#6b21a8}
+.step h4{font-size:14px;margin:6px 0 5px;font-weight:600}
+.step .scr{font-size:11px;color:#9aa3ac;margin-bottom:6px}
+.step ul{margin:0;padding-left:15px;font-size:12px;color:#4b5563;line-height:1.75}
+.step li{margin:2px 0}
+.step .out{margin-top:auto;padding-top:8px;font-size:11px;color:var(--slate);font-weight:600}
+.step .out.bad{color:#b91c1c}
+.arw{flex:0 0 16px;display:flex;align-items:center;justify-content:center;
+ color:#c9cdd2;font-size:18px}
+
+/* ── 狀態機 ── */
+.sm{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.st{border:1px solid var(--line);border-radius:999px;padding:6px 14px;font-size:13px;background:#fff;white-space:nowrap}
+.st.wait{background:#FFFBEB;border-color:#FCD34D;color:#b45309}
+.st.ok{background:var(--greenl);border-color:var(--green);color:var(--greend);font-weight:600}
+.st.no{background:#FEF2F2;border-color:#FCA5A5;color:#b91c1c}
+.st.gray{background:#FAFAF9;color:#6b7280}
+.to{color:#c9cdd2;font-size:16px}
+.branch{margin-top:12px;padding-left:14px;border-left:2px solid var(--line)}
+.branch .r{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin:8px 0;font-size:13px}
+.branch .r .lbl{font-size:12px;color:#6b7280;min-width:88px}
+
+/* ── 送出那一刻 ── */
+.split{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+.split .box{flex:1 1 280px;min-width:265px;border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.split .box.l{background:var(--bluel);border-color:#BFD7EE}
+.split .mid{flex:0 0 auto;text-align:center;color:#9aa3ac;font-size:12px;line-height:1.5}
+.split .mid .big{font-size:24px;color:#c9cdd2}
+.box h5{font-size:12px;margin:0 0 8px;color:#6b7280;font-weight:700;letter-spacing:.06em}
+.dl{display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:5px 0;
+ border-bottom:1px dashed rgba(224,221,213,.9)}
+.dl:last-child{border-bottom:0}
+.dl .t{color:#6b7280;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:12px}
+code{font-size:12px;background:var(--sand);border-radius:4px;padding:1px 6px}
+/* ── 表 ── */
+.tw{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px;min-width:540px}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+thead th{font-size:11px;color:#6b7280;background:#FAFAF9;font-weight:600}
+td.y{color:var(--greend)}td.n{color:#b91c1c}
+.okbox{background:var(--greenl);border:1px solid var(--green);border-radius:11px;padding:11px 14px;
+ font-size:12px;line-height:1.85;color:#14532d;margin-top:12px}
+.warnbox{background:#FEF2F2;border:1px solid #FCA5A5;border-radius:11px;padding:11px 14px;
+ font-size:12px;line-height:1.85;color:#7f1d1d;margin-top:12px}
+.note{background:#fff;border:1px solid var(--line);border-radius:14px;padding:15px 17px;
+ font-size:13px;line-height:1.85;margin-top:16px}
+.note ul{margin:6px 0 0;padding-left:18px}.note li{margin:7px 0}
+.q{background:#FFFBEB;border:1px solid #FCD34D;border-radius:14px;padding:15px 17px;
+ font-size:13px;line-height:1.85;margin-top:14px}
+.q b{color:#92400E}
+.hintline{font-size:12px;color:#9aa3ac;margin-top:9px}
+</style></head><body><div class="wrap">
+
+<h1>請假改版 —— UI 流程圖</h1>
+<p class="lead">
+  先看流程再看畫面。<b>右邊的卡片可以左右捲。</b>
+  底下還有一份可以點的畫面稿（<code>UI稿-請假改版</code>），這一份只講「誰、在哪一頁、按了之後發生什麼」。
+</p>
+<p class="hintline">
+  ★ 做法用<b>乙案</b>畫（送出時自動拆成幾張、畫面收成一列）。甲／丙的差別在第 ③ 段。
+</p>
+
+<!-- ═══ 圖 1 ═══ -->
+<div class="sec"><b>圖 1　操作流程 —— 誰、在哪一頁、看到什麼</b><i class="ln"></i></div>
+<div class="card" style="padding:16px 18px 10px">
+
+  <div class="lane">
+    <div class="who emp">員工</div>
+    <div class="steps">
+      <div class="step"><span class="no">1</span>
+        <h4>選假別與日子</h4>
+        <div class="scr">出勤 → 申請 → 請假</div>
+        <ul>
+          <li>假別下拉（年假／事假／病假）</li>
+          <li><b>月曆點一下選、再點取消</b></li>
+          <li>週末與國定假日<b>點不下去</b>，格子上寫「例假日」「中秋節」</li>
+          <li>不連續的日子直接點，不用送兩次</li>
+        </ul>
+        <div class="out">→ 下面自動長出明細</div>
+      </div>
+      <div class="arw">›</div>
+      <div class="step"><span class="no">2</span>
+        <h4>對明細：每天請多少</h4>
+        <div class="scr">同一頁，月曆底下</div>
+        <ul>
+          <li>一天一列：<b>整天／上午半天／下午半天／指定時數</b></li>
+          <li>分段顯示「第 1 段 9/24～9/30 ・ 3 天」</li>
+          <li>× 把某一天拿掉</li>
+          <li>底下：<b>共 N 天 · M 小時</b>、連不連續、請完剩多少</li>
+        </ul>
+        <div class="out">→ 額度不夠時「送出」是灰的，旁邊寫還差幾小時</div>
+      </div>
+      <div class="arw">›</div>
+      <div class="step"><span class="no">3</span>
+        <h4>按「送出請假」</h4>
+        <div class="scr">同一頁</div>
+        <ul><li>只有一顆實心按鈕</li>
+            <li>按下去變灰、字改成「送出中⋯」</li></ul>
+        <div class="out">→ 交給系統</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="lane">
+    <div class="who sys">系統</div>
+    <div class="steps">
+      <div class="step sysn"><span class="no">4</span>
+        <h4>切段並寫進資料庫</h4>
+        <div class="scr">一支 RPC，一個交易</div>
+        <ul>
+          <li>把明細切成「<b>連續工作日 ＋ 同一種單位</b>」的段</li>
+          <li>每段寫一列 <code>leave_requests</code>，共用一個 <code>batch_id</code></li>
+          <li>先檢查額度 —— <b>不夠就整批退回，一列都不寫</b></li>
+        </ul>
+        <div class="out bad">★ 一定要同一支 RPC。拆成幾次呼叫的話會「請了一半」</div>
+      </div>
+      <div class="arw">›</div>
+      <div class="step sysn"><span class="no">5</span>
+        <h4>通知主管</h4>
+        <div class="scr">鈴鐺 ＋ 核可分頁的數字</div>
+        <ul><li>同批只發<b>一則</b>通知，不是三則</li></ul>
+        <div class="out">→ 主管那邊出現待辦</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="lane">
+    <div class="who mgr">主管</div>
+    <div class="steps">
+      <div class="step mgrn"><span class="no">6</span>
+        <h4>看那張單</h4>
+        <div class="scr">出勤 → 核可 → 請假</div>
+        <ul>
+          <li>同批<b>收成一列</b>：姓名、假別、共幾天幾小時</li>
+          <li>展開看明細：哪幾天、每天多少</li>
+          <li>上面一條日期軸：深藍＝請假、米色＝例假日、黃＝國定假日</li>
+        </ul>
+        <div class="out">→ 三個動作：核可／剔除某一天／駁回</div>
+      </div>
+      <div class="arw">›</div>
+      <div class="step mgrn"><span class="no">7</span>
+        <h4>核可 或 駁回</h4>
+        <div class="scr">同一列</div>
+        <ul>
+          <li><b>剔除某一天</b>＝ 只駁回同批裡的那一列，其他照過</li>
+          <li>駁回<b>一定要寫理由</b>（會顯示給申請人）</li>
+          <li>按鈕上直接寫「核可（少 1 天）」</li>
+        </ul>
+        <div class="out">→ 過了就往總經理</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="lane">
+    <div class="who ceo">總經理</div>
+    <div class="steps">
+      <div class="step ceon"><span class="no">8</span>
+        <h4>第二關，同一個畫面</h4>
+        <div class="scr">出勤 → 核可 → 請假</div>
+        <ul>
+          <li>看得到主管已經核過、以及主管剔掉了哪幾天</li>
+          <li>一樣可以再剔除或駁回</li>
+        </ul>
+        <div class="out">→ 兩關都過才生效</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="lane">
+    <div class="who sys">系統</div>
+    <div class="steps">
+      <div class="step sysn"><span class="no">9</span>
+        <h4>生效</h4>
+        <div class="scr">兩關都過之後</div>
+        <ul>
+          <li><code>leave_balances.used_hours</code> 加上時數</li>
+          <li>員工「我的假」那張卡的橫條變短</li>
+        </ul>
+      </div>
+      <div class="arw">›</div>
+      <div class="step sysn"><span class="no">10</span>
+        <h4>出現在這三個地方</h4>
+        <div class="scr">不用另外做事</div>
+        <ul>
+          <li><b>出勤日曆</b>：那幾天標假別</li>
+          <li><b>月結出勤表</b>：應到 − 請假</li>
+          <li><b>匯出的 Excel</b></li>
+        </ul>
+        <div class="out">★ 這三個都<b>不用改 code</b> —— 乙案每一列長得跟現在的單一樣</div>
+      </div>
+      <div class="arw">›</div>
+      <div class="step sysn"><span class="no">11</span>
+        <h4>通知員工</h4>
+        <div class="scr">鈴鐺</div>
+        <ul>
+          <li>全過：「你的年假 2.5 天已核可」</li>
+          <li>被剔除：「其中 <b>9/30</b> 沒過：<i>那天要交月報</i>」</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+</div>
+<p class="hintline">★ 員工<b>隨時可以取消</b>（只有還沒核完的才行）—— 取消是整批一起收，不是一張一張取消。</p>
+
+<!-- ═══ 圖 2 ═══ -->
+<div class="sec"><b>圖 2　一張單的狀態</b><i class="ln"></i></div>
+<div class="card">
+  <p class="cap">狀態是<b>每一列自己的</b>。同批三列平常一起走，只有「剔除某一天」會讓其中一列自己走掉。</p>
+  <div class="sm">
+    <span class="st wait">待主管核</span><span class="to">→</span>
+    <span class="st wait">待總經理核</span><span class="to">→</span>
+    <span class="st ok">已核可</span><span class="to">→</span>
+    <span class="st gray">扣額度 ・ 進日曆 ・ 進出勤表</span>
+  </div>
+  <div class="branch">
+    <div class="r"><span class="lbl">任一關駁回</span>
+      <span class="st wait">待核</span><span class="to">→</span><span class="st no">已駁回</span>
+      <span style="font-size:12px;color:#6b7280">整批一起退，理由必填，不扣額度</span></div>
+    <div class="r"><span class="lbl">剔除某一天</span>
+      <span class="st ok">同批其他列 已核可</span>
+      <span style="font-size:12px;color:#6b7280">＋</span>
+      <span class="st no">被剔那一列 已駁回</span>
+      <span style="font-size:12px;color:#6b7280">申請人<b>不用重送</b></span></div>
+    <div class="r"><span class="lbl">員工自己取消</span>
+      <span class="st wait">待核</span><span class="to">→</span><span class="st gray">已取消</span>
+      <span style="font-size:12px;color:#6b7280">整批一起；核完的不能取消</span></div>
+  </div>
+  <div class="okbox">
+    ★ 這四個狀態<b>就是現在的四個</b>（<code>pending / approved / rejected / cancelled</code>），
+    一個新狀態都沒有加。「剔除一天」在資料庫裡就是「同批裡那一列走 rejected」——
+    所以核可流程、通知、稽核全部沿用，不用新語意。
+  </div>
+</div>
+
+<!-- ═══ 圖 3 ═══ -->
+<div class="sec"><b>圖 3　按下送出的那一刻：畫面 1 張 → 資料庫 N 列</b><i class="ln"></i></div>
+<div class="card">
+  <p class="cap">
+    例子：<b>9/24 整天、9/29 整天、9/30 下午半天</b>（中間 9/25 中秋、9/26–27 例假日、9/28 教師節）。
+  </p>
+  <div class="split">
+    <div class="box l">
+      <h5>畫面上（員工填的）</h5>
+      <div class="dl"><span>9/24（四）</span><span class="t">整天　8 小時</span></div>
+      <div class="dl"><span>9/29（二）</span><span class="t">整天　8 小時</span></div>
+      <div class="dl"><span>9/30（三）</span><span class="t">下午半天　4 小時</span></div>
+      <div style="margin-top:9px;font-size:13px">共 <b>2.5</b> 天 · <b>20</b> 小時</div>
+    </div>
+    <div class="mid"><div class="big">→</div>切段<br>一個交易</div>
+    <div class="box">
+      <h5>資料庫裡（<code>leave_requests</code>，同一個 batch_id）</h5>
+      <div class="dl"><span>年假　<b>8 小時</b>　<code>同批 1/3</code></span>
+        <span class="t">9/24 09:00 → 18:00</span></div>
+      <div class="dl"><span>年假　<b>8 小時</b>　<code>同批 2/3</code></span>
+        <span class="t">9/29 09:00 → 18:00</span></div>
+      <div class="dl"><span>年假　<b>4 小時</b>　<code>同批 3/3</code></span>
+        <span class="t">9/30 14:00 → 18:00</span></div>
+      <div style="margin-top:9px;font-size:12px;color:#6b7280">
+        切段規則：<b>連續工作日 ＋ 同一種單位</b> 算一列。<br>
+        9/29 與 9/30 雖然連著，但一個整天一個半天，所以分兩列。
+      </div>
+    </div>
+  </div>
+
+  <div class="okbox">
+    <b>為什麼不是一列（甲）</b>：一列 9/24 09:00 → 9/30 18:00 會跨過中秋與教師節，
+    而 <code>attendance_report</code> 只問「這天在不在區間內」——
+    <b>中秋節會被印成「年假（特休）」</b>，出勤日曆、月結表、匯出的 Excel 三個地方都會這樣寫。<br>
+    順便，<code>leave_no_overlap</code> 會把那六天整段鎖住，中間插不進任何單。
+  </div>
+  <div class="warnbox">
+    <b>為什麼不是一列＋子表（丙）</b>：表達力最好，但要新增一張表（＋ RLS ＋ policy），
+    還要改 <code>leave_hours_on</code>、<code>attendance_report</code>，
+    以及把 <code>leave_no_overlap</code> 從 <code>tstzrange</code> 改成逐日 ——
+    <b>那是目前唯一在擋「同一天請兩次假」的東西</b>，改壞了不會報錯，
+    只會變成有人請了兩次假而沒有人發現。
+  </div>
+</div>
+
+<!-- ═══ 影響範圍 ═══ -->
+<div class="sec"><b>哪些畫面會變、哪些不會</b><i class="ln"></i></div>
+<div class="card">
+  <div class="tw"><table>
+    <thead><tr><th style="width:28%">畫面</th><th style="width:14%">會不會變</th><th>變什麼</th></tr></thead>
+    <tbody>
+      <tr><td>出勤 → 申請 → <b>請假</b></td><td class="n">整個換掉</td>
+        <td>兩個 datetime 換成 <b>月曆 ＋ 明細</b></td></tr>
+      <tr><td>申請 → <b>我的請假紀錄</b></td><td class="n">會變</td>
+        <td>同批收成一列，列上多一條日期軸</td></tr>
+      <tr><td>出勤 → <b>核可</b> → 請假</td><td class="n">會變</td>
+        <td>同批收成一列、可展開明細、多一顆「剔除這天」</td></tr>
+      <tr><td>申請 → <b>加班</b> / <b>補登打卡</b></td><td class="y">不變</td><td>一行都不動</td></tr>
+      <tr><td><b>「我的假」</b>三張額度卡</td><td class="y">不變</td><td>橫條照舊，只是數字會對了</td></tr>
+      <tr><td><b>出勤日曆</b></td><td class="y">不變</td>
+        <td>假別自動出現在對的那幾天（乙案不用改 code）</td></tr>
+      <tr><td><b>月結出勤表</b> / 匯出 Excel</td><td class="y">不變</td><td>同上</td></tr>
+      <tr><td><b>打卡</b>分頁</td><td class="y">不變</td><td>—</td></tr>
+    </tbody>
+  </table></div>
+</div>
+
+<div class="note">
+  <b>順便修掉的那個 bug</b>
+  <ul>
+    <li>現在的時數是 <code>結束 − 開始</code> 的牆上時鐘時數。
+      <b>9/24 09:00 → 9/30 18:00 會被算成 153 小時</b> ——
+      午休、晚上、週末、中秋、教師節全部算進特休。年假總共 56 小時，所以這張單會被擋下來說「不夠」。</li>
+    <li>單天之所以看起來正常（你截圖那筆 9/2 09:30→17:30 ＝ 8 小時），是因為<b>使用者自己手動避開了午休</b>。</li>
+    <li>改成「每天填多少就扣多少」之後，這個減法整個消失。</li>
+  </ul>
+</div>
+
+<div class="q">
+  <b>要你回的</b>
+  <ul style="margin:6px 0 0;padding-left:20px">
+    <li style="margin:6px 0"><b>流程對不對？</b>特別是 ⑦「剔除某一天 ＝ 只駁回那一列，申請人不用重送」——
+      也可以做成「剔除就整張退回，請他重送」，講一聲。</li>
+    <li style="margin:6px 0"><b>午休幾點到幾點？</b>
+      設定裡只存「上班 09:00、下班 18:00、每日 8 小時」，<b>午休沒有存</b>。
+      我暫用上午 09:00–13:00、下午 14:00–18:00。
+      要精確就得在「管理」頁加一個欄位 ——
+      <span style="color:#6b7280">不加也能跑，只有「指定時數」跨午休時會差一小時。</span></li>
+  </ul>
+  <div style="margin-top:8px">流程沒問題的話回一句 <b>「做」</b>，我才動檔案。</div>
+</div>
+
+</div></body></html>

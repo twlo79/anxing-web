@@ -831,7 +831,9 @@ export function AdvanceList({
                         onChange={() => toggleOne(r)}
                         title={
                           !canBatch(r)
-                            ? (r.category === '代墊' ? '這一列已經收回過了' : '批次收回只處理代墊')
+                            ? (r.category !== '代墊'
+                                ? '批次收回只處理代墊'
+                                : !r.paid_on ? '還沒出款' : '這一列已經收回完了')
                             : batchDisabled(r, pickedRows)
                               ? `已經選了${party}的，一次只能收同一個對象`
                               : ''

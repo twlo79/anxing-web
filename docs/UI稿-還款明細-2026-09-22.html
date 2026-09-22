@@ -1,0 +1,279 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>還款明細：哪一天還多少</title>
+<style>
+:root{--bg:#F1F0EC;--line:#E0DDD5;--ink:#2E3840;--slate:#41689B;--slated:#345380;
+ --green:#3FAE7C;--greend:#217346;--greenl:#DFF2E8;--sand:#ECE8DF;--bluel:#DFEDFA}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+ font:15px/1.65 system-ui,"Noto Sans TC","PingFang TC",sans-serif;padding:20px 16px 90px}
+.wrap{max-width:1060px;margin:0 auto}
+h1{font-size:21px;margin:0 0 4px}
+.lead{font-size:13px;color:#6b7280;margin:0 0 18px}
+.sec{display:flex;align-items:center;gap:8px;margin:26px 0 10px}
+.sec b{font-size:11px;font-weight:700;letter-spacing:.08em;color:#6b7280;white-space:nowrap}
+.sec i.ln{flex:1;height:1px;background:var(--line);display:block}
+.cols{display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start}
+.col{flex:1 1 330px;min-width:310px}
+.tag{font-size:11px;font-weight:700;letter-spacing:.08em;margin-bottom:7px}
+.tag.now{color:#b91c1c}.tag.new{color:var(--greend)}
+/* 抽屜 */
+.dw{background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden;
+ box-shadow:0 8px 26px rgba(46,56,64,.1)}
+.dh{display:flex;align-items:center;justify-content:space-between;
+ padding:11px 15px;border-bottom:1px solid var(--line)}
+.dh b{font-size:16px}.dh i{color:#9ca3af;font-style:normal;font-size:19px;line-height:1}
+.db{padding:12px 15px}
+.lb{font-size:11px;font-weight:700;letter-spacing:.08em;color:#6b7280;margin:0 0 4px}
+.lb+.lb,.sp{margin-top:15px}
+.L{display:flex;gap:12px;padding:5px 0;border-bottom:1px solid rgba(224,221,213,.45)}
+.L:last-of-type{border-bottom:0}
+.L span:first-child{width:62px;flex:0 0 62px;font-size:13px;color:#6b7280}
+.L span:last-child{flex:1;font-size:15px;min-width:0}
+.kb{border:1px solid var(--line);background:#FAFAF9;border-radius:12px;padding:11px;margin-top:9px}
+.kb3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center}
+.kb3 .k{font-size:11px;color:#6b7280}
+.kb3 .v{font-size:19px;font-weight:700;font-variant-numeric:tabular-nums}
+.red{color:#dc2626}.amber{color:#b45309}
+.oldbox{background:var(--bluel);border:1px solid #BFD7EE;border-radius:11px;padding:10px 12px;
+ font-size:12px;line-height:1.85;color:#2b4d70;margin-top:8px}
+.btnP{width:100%;height:44px;border:0;border-radius:9px;background:var(--slate);color:#fff;
+ font-size:14px;font-weight:600;margin-top:14px;font-family:inherit;cursor:pointer}
+/* 明細表 */
+table{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
+th,td{padding:6px 7px;border-bottom:1px solid rgba(224,221,213,.7);text-align:left;white-space:nowrap}
+thead th{font-size:11px;color:#6b7280;font-weight:600;background:#FAFAF9}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+tr.out td{color:#b45309}
+tr.in  td{color:var(--greend)}
+tbody tr:last-child td{border-bottom:0}
+tfoot td{border-top:1px solid var(--line);border-bottom:0;font-weight:700;padding-top:7px}
+.acc{font-size:11px;color:#9aa3ac}
+.cnt{font-size:11px;color:#9aa3ac;font-weight:400;margin-left:6px}
+.empty{font-size:13px;color:#9ca3af;padding:10px 2px}
+/* 對照 */
+.fix{background:#fff;border:1px solid var(--line);border-radius:14px;padding:15px 17px;
+ font-size:13px;line-height:1.85}
+.fix+.fix{margin-top:13px}
+.fix h3{font-size:15px;margin:0 0 6px}
+.fix ul{margin:6px 0 0;padding-left:18px}.fix li{margin:6px 0}
+.okbox{background:var(--greenl);border:1px solid var(--green);border-radius:11px;padding:10px 13px;
+ font-size:12px;line-height:1.85;color:#14532d;margin-top:10px}
+.q{background:#FFFBEB;border:1px solid #FCD34D;border-radius:14px;padding:15px 17px;
+ font-size:13px;line-height:1.85;margin-top:14px}
+.q b{color:#92400E}
+.chip{font-size:11px;border-radius:999px;padding:2px 9px;border:1px solid;white-space:nowrap}
+.chip.a{background:#FFFBEB;color:#b45309;border-color:#FCD34D}
+.chip.g{background:var(--greenl);color:var(--greend);border-color:var(--green)}
+.tbw{overflow-x:auto}
+.act{margin-top:12px}
+.btnG{width:100%;height:42px;border:1px solid var(--greend);color:var(--greend);background:#fff;
+ border-radius:9px;font-size:14px;font-weight:600;font-family:inherit;cursor:pointer}
+.btnG:hover{background:var(--greenl)}
+.actsub{font-size:11px;color:#9aa3ac;margin-top:5px;line-height:1.6}
+code{font-size:11px;background:var(--sand);border-radius:4px;padding:1px 5px}
+.ded{margin-top:8px}
+.ded summary{list-style:none;cursor:pointer;display:inline-flex;width:16px;height:16px;
+ border-radius:999px;background:var(--sand);font-size:10px;font-weight:700;color:#6b5b3f;
+ align-items:center;justify-content:center;user-select:none;vertical-align:1px}
+.ded div{margin-top:6px;font-size:12px;color:#6b7280}
+</style></head><body><div class="wrap">
+
+<h1>還款明細 —— 哪一天付多少、哪一天還多少</h1>
+<p class="lead">
+  同一份明細要出現在<b>兩個抽屜</b>：暫付頁的「退款」抽屜、其他收支帳的「檢視」抽屜。
+  資料是<b>現成的</b>（<code>advance_repayments</code> ＋ <code>advance_repayment_lines</code>，
+  <code>migration_286</code> 建的），<b>只是沒有任何一頁去讀它</b>。
+</p>
+
+<!-- ───────── 暫付抽屜 ───────── -->
+<div class="sec"><b>① 暫付頁 → 那一列的「退款」抽屜</b><i class="ln"></i></div>
+<div class="cols">
+  <div class="col">
+    <div class="tag now">現在</div>
+    <div class="dw"><div class="dh"><b>115/7-8月管理服務費</b><i>✕</i></div>
+      <div class="db">
+        <div class="lb">這筆暫付</div>
+        <div class="L"><span>出款日</span><span>2026-09-07</span></div>
+        <div class="L"><span>金額</span><span>7,350</span></div>
+        <div class="L"><span>類別</span><span>代墊</span></div>
+        <div class="L"><span>對象</span><span>愛皮</span></div>
+        <div class="L"><span>已還</span><span>6,000</span></div>
+        <div class="L"><span>剩餘</span><span>1,350</span></div>
+        <div class="sp" style="font-size:12px;color:#b91c1c;line-height:1.8">
+          ★ 就這樣。<b>那 7,350 是安幸從哪個帳戶出的、6,000 是哪一天還的、還進哪個帳戶 ——
+          一個字都沒有。</b>只看得到一個加總，而且<b>沒有任何一顆按鈕可以收剩下的 1,350</b>。
+        </div>
+        <button class="btnP">儲存</button>
+      </div></div>
+  </div>
+  <div class="col">
+    <div class="tag new">調整後</div>
+    <div class="dw"><div class="dh"><b>115/7-8月管理服務費</b><i>✕</i></div>
+      <div class="db">
+        <div class="lb">這筆暫付</div>
+        <div class="L"><span>出款日</span><span>2026-09-07</span></div>
+        <div class="L"><span>金額</span><span>7,350</span></div>
+        <div class="L"><span>類別</span><span>代墊</span></div>
+        <div class="L"><span>對象</span><span>愛皮</span></div>
+
+        <div class="kb"><div class="kb3">
+          <div><div class="k">金額</div><div class="v">7,350</div></div>
+          <div><div class="k">已還</div><div class="v" style="color:var(--greend)">6,000</div></div>
+          <div><div class="k">還欠</div><div class="v amber">1,350</div></div>
+        </div></div>
+
+        <div class="lb sp">這筆錢的來龍去脈<span class="cnt">2 筆</span></div>
+        <div class="tbw"><table>
+          <thead><tr><th>日期</th><th>發生什麼</th><th class="num">金額</th><th class="num">之後還欠</th></tr></thead>
+          <tbody>
+            <tr class="out"><td>2026-09-07</td>
+              <td>安幸出款<div class="acc">安幸｜台新　→　付給對方</div></td>
+              <td class="num">−7,350</td><td class="num">7,350</td></tr>
+            <tr class="in"><td>2026-09-15</td>
+              <td>愛皮還款<div class="acc">愛皮｜現金　→　安幸｜台新</div></td>
+              <td class="num">＋6,000</td><td class="num">1,350</td></tr>
+          </tbody>
+          <tfoot><tr><td colspan="3">還欠</td><td class="num amber">1,350</td></tr></tfoot>
+        </table></div>
+        <div style="margin-top:7px;font-size:11px;color:#9aa3ac">
+          「之後還欠」是一路減下來的 —— 直接讀得出「那一天之後還剩多少」。
+          帳戶印的是那一列存的值（出款是 <code>paid_account</code>，還款是那張還款單的兩個帳戶），
+          上面的名字是示意。
+        </div>
+
+        <div class="act">
+          <button class="btnG" onclick="alert('（稿子不會真的做）\n\n會做三件事：\n① 關掉這個抽屜\n② 把這一列勾起來\n③ 打開上面的「代墊還款」面板，金額自動帶 1,350')">
+            收回剩下的 1,350
+          </button>
+          <div class="actsub">會把這一列勾起來、打開上面的「代墊還款」面板，金額自動帶 <b>1,350</b>。</div>
+        </div>
+
+        <button class="btnP">儲存</button>
+      </div></div>
+  </div>
+</div>
+
+<!-- ───────── 其他收支帳抽屜 ───────── -->
+<div class="sec"><b>② 其他收支帳 → 那一列的「檢視」抽屜</b><i class="ln"></i></div>
+<div class="cols">
+  <div class="col">
+    <div class="tag now">現在（你剛截的那張）</div>
+    <div class="dw"><div class="dh"><b>115/7-8月管理服務費</b><i>✕</i></div>
+      <div class="db">
+        <div class="lb">這筆支出</div>
+        <div class="L"><span>日期</span><span>2026-09-07</span></div>
+        <div class="L"><span>項目</span><span>115/7-8月管理服務費</span></div>
+        <div class="L"><span>會計科目</span><span>辦公費</span></div>
+        <div class="L"><span>對象</span><span>—</span></div>
+        <div class="L"><span>備註</span><span>—</span></div>
+        <div class="kb"><div class="kb3">
+          <div><div class="k">應支</div><div class="v">7,350</div></div>
+          <div><div class="k">實支</div><div class="v red">6,000</div></div>
+          <div><div class="k">差距</div><div class="v amber">1,350</div></div>
+        </div></div>
+        <div class="lb sp">實支明細</div>
+        <div class="oldbox">
+          這筆是<b>安幸代墊</b>的 —— 實支跟著安幸那邊走。<br>
+          到「暫收付管理 → 暫付」把它勾起來按<b>收回</b>，這裡的實支就會自己變。
+        </div>
+        <div style="margin-top:8px;font-size:12px;color:#b91c1c;line-height:1.8">
+          ★ 這段話是對的，但它<b>只說了去哪裡改，沒說已經發生過什麼</b>。
+          那 6,000 哪一天付的？看不到。
+        </div>
+        <button class="btnP">編輯</button>
+      </div></div>
+  </div>
+  <div class="col">
+    <div class="tag new">調整後</div>
+    <div class="dw"><div class="dh"><b>115/7-8月管理服務費</b><i>✕</i></div>
+      <div class="db">
+        <div class="lb">這筆支出</div>
+        <div class="L"><span>日期</span><span>2026-09-07</span></div>
+        <div class="L"><span>項目</span><span>115/7-8月管理服務費</span></div>
+        <div class="L"><span>會計科目</span><span>辦公費</span></div>
+        <div class="L"><span>對象</span><span>—</span></div>
+        <div class="L"><span>備註</span><span>—</span></div>
+        <div class="kb"><div class="kb3">
+          <div><div class="k">應支</div><div class="v">7,350</div></div>
+          <div><div class="k">實支</div><div class="v red">6,000</div></div>
+          <div><div class="k">差距</div><div class="v amber">1,350</div></div>
+        </div></div>
+
+        <div class="lb sp">實支明細　<span class="chip a">安幸代墊</span><span class="cnt">1 筆</span></div>
+        <div class="tbw"><table>
+          <thead><tr><th>日期</th><th>怎麼付的</th><th class="num">金額</th><th class="num">之後還欠</th></tr></thead>
+          <tbody>
+            <tr class="out"><td>2026-09-07</td>
+              <td>安幸先付的<div class="acc">安幸｜台新　→　付給對方</div></td>
+              <td class="num">7,350</td><td class="num">7,350</td></tr>
+            <tr class="in"><td>2026-09-15</td>
+              <td>還給安幸<div class="acc">愛皮｜現金　→　安幸｜台新</div></td>
+              <td class="num">6,000</td><td class="num">1,350</td></tr>
+          </tbody>
+          <tfoot><tr><td colspan="3">還欠安幸</td><td class="num amber">1,350</td></tr></tfoot>
+        </table></div>
+
+        <div class="act">
+          <button class="btnG" onclick="alert('（稿子不會真的跳）\n\n會開到「暫收付管理 → 暫付」，\n而且那一列已經勾起來、面板已經打開、金額帶好 1,350。')">
+            到暫付頁收回這 1,350 →
+          </button>
+          <div class="actsub">跳過去的時候那一列<b>已經勾起來了</b>，不用自己在十列裡面找。</div>
+        </div>
+
+        <button class="btnP">編輯</button>
+      </div></div>
+  </div>
+</div>
+
+<!-- ───────── 說明 ───────── -->
+<div class="sec"><b>兩個抽屜的差別</b><i class="ln"></i></div>
+<div class="fix">
+  <h3>同一份資料，兩種講法</h3>
+  <ul>
+    <li><b>暫付頁是「安幸的立場」</b> —— 我付出去 7,350（負的），對方還我 6,000（正的），
+      <b>還欠 1,350</b>。所以金額有正負號。</li>
+    <li><b>其他收支帳是「愛皮那本帳的立場」</b> —— 這筆支出 7,350 是安幸先墊的，
+      愛皮已經還了 6,000，<b>還欠安幸 1,350</b>。金額不帶正負號，因為兩列都是「付這筆錢」的一部分。</li>
+    <li><b>兩邊的「之後還欠」是同一條數字</b>，一路減到最後一列就是剩餘款。</li>
+    <li><b>★ 出款那一列是「安幸出的」</b>（帳戶讀 <code>paid_account</code>，那一欄存的就是安幸的帳戶 ——
+      收回時的收款帳戶預設值就是它）。還款那一列才是<b>愛皮的帳戶 → 安幸的帳戶</b>。
+      <span style="color:#b91c1c">第一版稿把出款寫成「從（愛皮）現金付出去」，那是錯的。</span></li>
+    <li><b>★ 剩下的錢從抽屜裡就收得回來</b> —— 兩個抽屜各多一顆外框綠鈕，
+      按下去把那一列勾起來、打開「代墊還款」面板、金額帶好。
+      <b>不用自己回清單在十列裡面找那一列。</b></li>
+  </ul>
+  <div class="okbox">
+    ★ 這一版<b>不需要 migration</b>。表、RLS、<code>select</code> 權限
+    <code>migration_286</code> 都做好了 —— 缺的只有前端那兩支查詢。
+  </div>
+</div>
+
+<div class="fix">
+  <h3>順便修掉的那個（已經改好了，等你一起推）</h3>
+  <ul>
+    <li><b>「還一半不能繼續還」</b> —— <code>canBatch()</code> 寫死了「狀態是待收回」，
+      於是<b>部分收回的列勾選框是灰的</b>，剩下的 1,350 在畫面上永遠收不回來。</li>
+    <li>資料庫<b>從來沒有擋</b>：<code>repay_advances()</code> 擋的是「已經收滿」，
+      部分還款是放行的。<b>只有前端在擋。</b></li>
+    <li>順手修了第二個：勾起來的合計本來用<b>原金額</b>算 ——
+      那一列會被算成 7,350 而不是 1,350。</li>
+  </ul>
+</div>
+
+<div class="q">
+  <b>三件要你確認的</b>
+  <ul style="margin:6px 0 0;padding-left:20px">
+    <li style="margin:6px 0"><b>第一列「出款」要不要列進去？</b>
+      我列了 —— 沒有它的話「之後還欠」沒有起點，而且「哪一天付多少」你問的就是這一列。</li>
+    <li style="margin:6px 0"><b>押金／保證金／零用金要不要也有這一段？</b>
+      它們走的是舊路（自己填收回日與已還），<b>沒有還款明細可以讀</b>。
+      我現在讓那幾種不顯示這一段。要的話得讓它們也走還款單，那就是另一件事了。</li>
+    <li style="margin:6px 0"><b>「#1/1」那個標記要不要留？</b>
+      它是給「一次還款沖掉好幾筆」用的 —— 愛皮一次匯 20,000 沖八筆時很有用，
+      單筆的時候是噪音。<span style="color:#6b7280">我傾向只有那一次還款扣了兩列以上才顯示。</span></li>
+  </ul>
+  <div style="margin-top:8px">沒問題回一句 <b>「做」</b>。</div>
+</div>
+
+</div></body></html>

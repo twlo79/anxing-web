@@ -6,8 +6,9 @@ import {
   refundAccountWarning, MANUAL_CATEGORIES, type Advance,
   CATEGORIES, purposeFromSelect, purposeToSelect, purposeLabel,
   BATCH_CATEGORY, canBatch, lockedParty, batchDisabled, batchTotal, validateBatch,
-  batchSelectable,
+  batchSelectable, remainingOf,
 } from './advance.ts';
+import { owedTotal } from './advance-repay.ts';
 
 const A = (o: Partial<Advance> = {}): Advance => ({
   category: '押金', counterparty: '王大明', usage: '安幸辦公室租賃',
@@ -505,6 +506,36 @@ describe('canBatch —— 只有待收回的代墊進得了批次', () => {
     assert.equal(canBatch(L({ refunded_on: '2026-09-30', refunded_amount: 0 })), false);
   });
 
+  /*
+   * ══════════════════════════════════════════════════════════
+   * 【★★★ 2026-09-22：部分收回的列勾不動】
+   *
+   * 使用者回報「還一半不能繼續還」：愛皮的 115/7-8月管理服務費
+   * 7,350 還了 6,000 之後狀態變「部分收回」，而勾選框是灰的 ——
+   * 剩下的 1,350 在畫面上**永遠收不回來**。
+   *
+   * ★★ 資料庫從來沒有擋：`repay_advances()`（migration_286）第 ② 條
+   *   擋的是 `refunded_amount >= amount`，部分還款是放行的。
+   *   只有 `canBatch` 寫死了 `statusOf === 'paid'`。
+   * ══════════════════════════════════════════════════════════
+   */
+  test('★★★ 部分收回（沒結清、還了一部分）→ 可以，剩下的還收得回來', () => {
+    assert.equal(statusOf(L({ amount: 7350, refunded_amount: 6000 })), 'partial');
+    assert.equal(canBatch(L({ amount: 7350, refunded_amount: 6000 })), true);
+  });
+
+  test('★★ 還滿了但還沒按結清 → 不行，已經沒有東西可以收', () => {
+    /* 狀態還是 partial（refunded_on 空的），但欠款是 0 —— RPC 的 ② 會擋 */
+    const a = L({ amount: 7350, refunded_amount: 7350 });
+    assert.equal(statusOf(a), 'partial');
+    assert.equal(remainingOf(a), 0);
+    assert.equal(canBatch(a), false);
+  });
+
+  test('★ 部分收回的押金還是不行 —— 被扣的差額要選會計科目', () => {
+    assert.equal(canBatch(L({ category: '押金', amount: 7350, refunded_amount: 6000 })), false);
+  });
+
   test('BATCH_CATEGORY 一定是合法類別', () => {
     assert.ok((CATEGORIES as readonly string[]).includes(BATCH_CATEGORY));
   });
@@ -545,6 +576,20 @@ describe('batchTotal', () => {
     assert.equal(batchTotal([L({ amount: 0.1 }), L({ amount: 0.2 })]), 0.3);
   });
   test('沒勾是 0，不是 NaN', () => assert.equal(batchTotal([]), 0));
+
+  /*
+   * ★★★ 2026-09-22：算的是**剩餘款**不是金額。
+   *   部分收回的列進得了批次之後，用 `amount` 會把已經還過的那 6,000
+   *   再算一次 —— 按鈕旁邊會寫 7,350 而實際要收的是 1,350。
+   */
+  test('★★★ 部分收回的列只算剩餘款，不是原金額', () => {
+    assert.equal(batchTotal([L({ amount: 7350, refunded_amount: 6000 })]), 1350);
+  });
+
+  test('★★ 跟 owedTotal 是同一條算式', () => {
+    const rows = [L({ amount: 7350, refunded_amount: 6000 }), L({ amount: 261 })];
+    assert.equal(batchTotal(rows), owedTotal(rows as never));
+  });
 });
 
 describe('★★★ validateBatch —— 跟 recover_advances() 同一組規則', () => {

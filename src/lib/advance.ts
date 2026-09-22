@@ -485,9 +485,30 @@ export function statsOf(rows: Advance[]): AdvanceStats {
  */
 export const BATCH_CATEGORY = '代墊';
 
-/** 這一列能不能進批次:代墊，而且錢已經付出去、還沒收回。 */
+/**
+ * 這一列能不能進批次：代墊，而且**錢還在外面**（還沒結清、還欠著）。
+ *
+ * ★★★ 2026-09-22 修：原本寫死 `statusOf(a) === 'paid'`，於是
+ *   **「部分收回」的列勾不動** —— 7,350 還了 6,000 之後，剩下的 1,350
+ *   在畫面上永遠收不回來（使用者回報：「還一半不能繼續還」）。
+ *
+ * ★★ 資料庫那一層從來沒有擋：`repay_advances()`（migration_286）的
+ *   第 ② 條擋的是 `refunded_amount >= amount`，部分還款是放行的。
+ *   **只有前端在擋**，而它擋的理由是 2026-09-21 改 `partial` 語意時
+ *   漏改的一處 —— 跟 CLAUDE.md 那條「同一條規則在三個地方各寫一次」同一種。
+ *
+ * ★ 用 `isOutstanding()` ＋ `remainingOf()` 而不是自己再寫一次
+ *   `'paid' || 'partial'`：「錢還在外面」「還欠多少」這兩件事
+ *   各自只准有一個定義，統計卡讀的也是它們。
+ *
+ * ★★ `remainingOf(a) > 0` 那一條不能省 —— 還滿了但**還沒按結清**的列
+ *   （`refunded_amount >= amount` 而 `refunded_on` 是空的）狀態也是
+ *   `partial`，但它已經沒有東西可以收了。勾得動的話 `repay_advances()`
+ *   的第 ② 條會把整批擋下來，而使用者看到的是一句他看不懂的 exception。
+ *   **這三個條件跟那支 RPC 的 ② 是同一組。**
+ */
 export function canBatch(a: Advance): boolean {
-  return a.category === BATCH_CATEGORY && statusOf(a) === 'paid';
+  return a.category === BATCH_CATEGORY && isOutstanding(a) && remainingOf(a) > 0;
 }
 
 /**
@@ -507,9 +528,18 @@ export function batchDisabled(a: Advance, picked: Advance[]): boolean {
   return party != null && party !== (a.counterparty ?? '');
 }
 
-/** 勾起來這幾列合計多少。★ 收到分，浮點數累加會漂而那個數字會印在按鈕旁邊。 */
+/**
+ * 勾起來這幾列**還欠**多少合計。
+ *
+ * ★★★ 2026-09-22 從「金額合計」改成「剩餘款合計」。
+ *   部分收回的列進得了批次之後，`amount` 會把**已經還過的那部分再算一次**
+ *   —— 7,350 已還 6,000 的那一列該算 1,350，不是 7,350。
+ *   跟 `owedTotal()`（`advance-repay.ts`）同一條算式，有測試釘住兩邊一致。
+ *
+ * ★ 收到分：浮點數累加會漂，而那個數字會印在按鈕旁邊。
+ */
 export const batchTotal = (picked: Advance[]): number =>
-  Math.round(picked.reduce((n, a) => n + (Number(a.amount) || 0), 0) * 100) / 100;
+  Math.round(picked.reduce((n, a) => n + remainingOf(a), 0) * 100) / 100;
 
 /**
  * 按下「確認收回」之前的檢查。回第一個錯，沒問題回 null。
