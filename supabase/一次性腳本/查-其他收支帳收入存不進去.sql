@@ -61,20 +61,26 @@ where source = 'other_biz';
 
 -- ④ 已經存在的訂單裡，nights 與日期的關係有哪幾種合法形狀
 --    ★ 先問「這一欄有幾種合法的樣子」再決定怎麼改（2026-09-01 的坑）
-select
-  4                                                                  as 序,
-  case
-    when checkin is null or checkout is null then 'a. 沒有日期（訂金單）'
-    when nights is null                      then 'b. 有日期但 nights 是 null'
-    when nights = 0                          then 'c. nights = 0'
-    when nights = (checkout - checkin)       then 'd. nights = 日期相差'
-    else                                          'e. nights 跟日期對不上'
-  end                                                                as 形狀,
-  count(*)                                                           as 筆數,
-  min(checkin)::text || ' ~ ' || max(checkout)::text                 as 日期範圍
-from public.orders
-group by 1
-order by 1;
+--    ★★ `序` 是常數，所以分組要在子查詢裡做 —— 外層 `group by 1`
+--       指到的是那個常數，不是 `形狀`（2026-09-22 第一版就是這樣錯的）
+select 4 as 序, t.形狀, t.筆數, t.來源, t.日期範圍
+from (
+  select
+    case
+      when checkin is null or checkout is null then 'a. 沒有日期（訂金單）'
+      when nights is null                      then 'b. 有日期但 nights 是 null'
+      when nights = 0                          then 'c. nights = 0'
+      when nights = (checkout - checkin)       then 'd. nights = 日期相差'
+      else                                          'e. nights 跟日期對不上'
+    end                                                      as 形狀,
+    count(*)                                                 as 筆數,
+    string_agg(distinct source, '、' order by source)         as 來源,
+    coalesce(min(checkin)::text, '—') || ' ~ '
+      || coalesce(max(checkout)::text, '—')                  as 日期範圍
+  from public.orders
+  group by 1
+) t
+order by t.形狀;
 
 -- ⑤ 同一天的訂單存不存在（存在的話代表 ord_dates_chk 容得下 checkin = checkout）
 select
