@@ -29,6 +29,8 @@ export type Balance = {
 
 export type LeaveReq = {
   id: string; user_id: string; type_code: string;
+  /** 同一次送出的幾天共用（migration_291）。null ＝ 舊單 */
+  batch_id?: string | null;
   start_at: string; end_at: string; hours: number; reason: string | null;
   status: string; manager_at: string | null; admin_at: string | null;
   reject_reason: string | null; created_at: string;

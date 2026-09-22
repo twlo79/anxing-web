@@ -231,6 +231,8 @@ function HoursSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
   const [ws, setWs] = useState<{
     work_start: string; work_end: string; work_hours_per_day: number;
     punch_before_min: number; punch_after_min: number;
+    /** 午休（migration_291）。請假時數會扣掉這一段 */
+    lunch_start: string; lunch_end: string;
   } | null>(null);
 
   const load = useCallback(async () => {
@@ -282,10 +284,12 @@ function HoursSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
       {ws && (
         <div className="rounded-xl border border-mor-line bg-white/60 p-4">
           <div className="text-sm font-medium mb-3">全公司預設</div>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {([
               ['work_start', '上班時間', 'time'],
               ['work_end', '下班時間', 'time'],
+              ['lunch_start', '午休開始', 'time'],
+              ['lunch_end', '午休結束', 'time'],
               ['work_hours_per_day', '每日工時', 'number'],
               ['punch_before_min', '可提前打卡（分）', 'number'],
               ['punch_after_min', '可延後打卡（分）', 'number'],

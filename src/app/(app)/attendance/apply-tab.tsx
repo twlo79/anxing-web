@@ -10,6 +10,8 @@ import {
   type Balance, type FixReq, type LeaveReq, type LeaveType, type OtReq, type TabProps,
 } from './types';
 import { Tabs } from '@/components/Tabs';
+import LeaveForm from '@/components/LeaveForm';
+import { groupBatches } from '@/lib/leave-days';
 
 /**
  * 申請：請假 · 加班 · 補登。
@@ -148,7 +150,18 @@ export default function ApplyTab({ me, onMsg, prefill }: TabProps & {
         items={(Object.keys(SUB) as Sub[]).map((k) => ({ key: k, label: SUB[k] }))} />
 
       {sub === 'leave' && (
-        <LeaveForm types={types} busy={busy} setBusy={setBusy} onMsg={onMsg} onDone={load} />
+        /*
+         * ★★★ 2026-09-22 改版（migration_291）：月曆點日子、每天各自選整天／半天／時段。
+         *   舊表單是兩個 datetime，時數用「結束 − 開始」算 —— 9/24 → 9/30 會變成 153 小時，
+         *   多天請假從上線到現在一次都沒成功過。新表單在 `components/LeaveForm.tsx`。
+         */
+        <LeaveForm types={types} onMsg={onMsg} onDone={load}
+          remainOf={(code) => {
+            const t = types.find((x) => x.code === code);
+            if (!t?.has_quota) return null;
+            const b = bals.find((x) => x.type_code === code);
+            return b ? Math.max(0, Number(b.quota_hours ?? 0) - Number(b.used_hours ?? 0)) : 0;
+          }} />
       )}
       {sub === 'ot' && (
         <>
@@ -181,18 +194,31 @@ export default function ApplyTab({ me, onMsg, prefill }: TabProps & {
           我的{SUB[sub]}紀錄
         </div>
         <div className="divide-y divide-mor-line/60">
-          {sub === 'leave' && leaves.map((r) => {
+          {/*
+            ★★ 同批收成一列（migration_291）。資料庫裡是一天一列，
+              畫面上一次送出的算一張：標題寫共幾天幾小時，底下列出每一天。
+            ★ 取消是整批一起 —— 一次 update where batch_id，一個請求一個交易。
+          */}
+          {sub === 'leave' && groupBatches(leaves).map((g) => {
+            const r = g.rows[0];
             const v = leaveVote(r);
+            const one = g.rows.length === 1;
             return (
-              <Row key={r.id} tone={v.tone} state={v.text}
-                title={`${typeName(r.type_code)} ${r.hours} 小時`}
-                sub={`${fmtDT(r.start_at)} → ${fmtDT(r.end_at)}${r.reason ? `・${r.reason}` : ''}`}
-                onCancel={r.status === 'pending' ? async () => {
-                  const { data, error } = await supabase.from('leave_requests')
-                    .update({ status: 'cancelled' }).eq('id', r.id).select('id');
+              <Row key={g.key} tone={v.tone} state={v.text}
+                title={one
+                  ? `${typeName(r.type_code)} ${r.hours} 小時`
+                  : `${typeName(r.type_code)} ${g.days} 天・${g.hours} 小時`}
+                sub={one
+                  ? `${fmtDT(r.start_at)} → ${fmtDT(r.end_at)}${r.reason ? `・${r.reason}` : ''}`
+                  : g.rows.map((x) => `${fmtDT(x.start_at).slice(0, -6).trim()} ${x.hours}h`).join('、')
+                    + (r.reason ? `・${r.reason}` : '')}
+                onCancel={g.status === 'pending' ? async () => {
+                  const q = supabase.from('leave_requests').update({ status: 'cancelled' });
+                  const { data, error } = await (r.batch_id
+                    ? q.eq('batch_id', r.batch_id) : q.eq('id', r.id)).select('id');
                   if (error) return onMsg('取消失敗：' + error.message, true);
                   if (!data?.length) return onMsg('取消失敗 —— 這張單已經不是待審狀態了。', true);
-                  onMsg('已取消'); load();
+                  onMsg(one ? '已取消' : `已取消（${data.length} 天一起）`); load();
                 } : undefined} />
             );
           })}
@@ -247,80 +273,12 @@ function Row({ title, sub, state, tone, onCancel }: {
   );
 }
 
-/** 送出前把時數算出來給人看 —— 不然是按下去看到餘額少了才知道請了多久。 */
+/** 送出前把時數算出來給人看（加班用）—— 不然是按下去看到數字才知道多久。 */
 function HoursHint({ start, end }: { start: string; end: string }) {
   if (!start || !end) return null;
   const h = hoursBetween(toTaipeiIso(start), toTaipeiIso(end));
-  if (h <= 0) {
-    return <div className="text-xs text-red-600">結束時間要晚於開始時間。</div>;
-  }
+  if (h <= 0) return <div className="text-xs text-red-600">結束時間要晚於開始時間。</div>;
   return <div className="text-xs text-mor-slate">這樣是 <b>{h} 小時</b>。</div>;
-}
-
-// ─────────────────────────────────────────────────────
-
-function LeaveForm({ types, busy, setBusy, onMsg, onDone }: {
-  types: LeaveType[]; busy: boolean; setBusy: (b: boolean) => void;
-  onMsg: TabProps['onMsg']; onDone: () => void;
-}) {
-  const supabase = useMemo(() => createClient(), []);
-  const [type, setType] = useState('');
-  const [start, setStart] = useState('');
-  const [end, setEnd] = useState('');
-  const [reason, setReason] = useState('');
-
-  useEffect(() => { if (!type && types.length) setType(types[0].code); }, [types, type]);
-
-  async function submit() {
-    if (!type) return onMsg('請先選假別。', true);
-    if (!start || !end) return onMsg('請假的開始與結束時間都要填。', true);
-    if (hoursBetween(toTaipeiIso(start), toTaipeiIso(end)) <= 0) {
-      return onMsg('結束時間要晚於開始時間。', true);
-    }
-    setBusy(true);
-    const { data, error } = await supabase.rpc('request_leave', {
-      p_type: type, p_start: toTaipeiIso(start), p_end: toTaipeiIso(end),
-      p_reason: reason || null,
-    });
-    setBusy(false);
-    if (error) return onMsg('送出失敗：' + error.message, true);
-    const r = data as { ok: boolean; message: string };
-    // 額度不夠、時間重疊、沒有配額 —— 資料庫已經把話寫好了，原樣顯示
-    if (!r?.ok) return onMsg(r?.message ?? '送出失敗', true);
-    onMsg(r.message);
-    setStart(''); setEnd(''); setReason('');
-    onDone();
-  }
-
-  return (
-    <div className={`${CARD} p-4 space-y-3`}>
-      <div className="grid md:grid-cols-3 gap-3">
-        <label className="text-sm">
-          <span className="text-xs text-gray-500">假別</span>
-          <select value={type} onChange={(e) => setType(e.target.value)} className={INPUT}>
-            {types.map((t) => <option key={t.code} value={t.code}>{t.name}</option>)}
-          </select>
-        </label>
-        <label className="text-sm">
-          <span className="text-xs text-gray-500">從</span>
-          <input type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)}
-            className={INPUT} />
-        </label>
-        <label className="text-sm">
-          <span className="text-xs text-gray-500">到</span>
-          <input type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)}
-            className={INPUT} />
-        </label>
-      </div>
-      <HoursHint start={start} end={end} />
-      <input placeholder="事由（選填）" value={reason} onChange={(e) => setReason(e.target.value)}
-        className={INPUT} />
-      <div className="flex items-center gap-3">
-        <button onClick={submit} disabled={busy} className={BTN}>送出請假</button>
-        <span className="text-xs text-gray-400">送出後由主管與總經理兩位核可。</span>
-      </div>
-    </div>
-  );
 }
 
 function OtForm({ busy, setBusy, onMsg, onDone }: {

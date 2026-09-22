@@ -7,6 +7,7 @@ import {
   type FixReq, type LeaveReq, type LeaveType, type OtReq, type TabProps,
 } from './types';
 import { Tabs } from '@/components/Tabs';
+import { groupBatches } from '@/lib/leave-days';
 
 /**
  * 核可：請假 · 加班 · 補登。
@@ -89,23 +90,33 @@ export default function ApproveTab({ me, onMsg }: TabProps) {
 
   const typeName = (c: string) => types.find((t) => t.code === c)?.name ?? c;
 
-  /** 共用的寫入：一定檢查影響列數，RLS 擋掉時不會回錯誤。 */
-  async function write(table: string, id: string, patch: Record<string, unknown>, okText: string) {
+  /**
+   * 共用的寫入：一定檢查影響列數，RLS 擋掉時不會回錯誤。
+   *
+   * ★ `batchId` 有值就整批一起（migration_291）：一次 update where batch_id，
+   *   一個請求一個交易 —— 不會「核了三天裡的兩天」。
+   *   使用者 2026-09-22 決定：要剔除某一天就整批駁回、申請人重送。
+   */
+  async function write(
+    table: string, id: string, patch: Record<string, unknown>, okText: string,
+    batchId?: string | null,
+  ) {
     setBusy(id);
-    const { data, error } = await supabase.from(table).update(patch).eq('id', id).select('id');
+    const q = supabase.from(table).update(patch);
+    const { data, error } = await (batchId ? q.eq('batch_id', batchId) : q.eq('id', id)).select('id');
     setBusy('');
     if (error) return onMsg('失敗：' + error.message, true);
     if (!data?.length) return onMsg(noRowsMsg('這筆'), true);
-    onMsg(okText); load();
+    onMsg(data.length > 1 ? `${okText}（${data.length} 天一起）` : okText); load();
   }
 
-  function reject(table: string, id: string, field: string) {
+  function reject(table: string, id: string, field: string, batchId?: string | null) {
     const why = window.prompt('駁回理由（會顯示給申請人看）');
     if (why === null) return;               // 按取消
     if (!why.trim()) {
       return onMsg('駁回一定要寫理由。\n\n沒有理由的駁回會變成當面追問，而追問的答案不會留在系統裡。', true);
     }
-    write(table, id, { status: 'rejected', [field]: why.trim() }, '已駁回');
+    write(table, id, { status: 'rejected', [field]: why.trim() }, '已駁回', batchId);
   }
 
   const tabs: [Sub, string, number][] = [
@@ -141,20 +152,37 @@ export default function ApproveTab({ me, onMsg }: TabProps) {
       <div className={CARD}>
         <div className="divide-y divide-mor-line/60">
           {/* ── 請假：兩票 ─────────────────────────── */}
-          {sub === 'leave' && leaves.map((r) => {
+          {/*
+            ★★ 同批收成一張卡（migration_291）：資料庫一天一列，主管看到的是「一次送出」。
+              核可、駁回都是整批一起 —— 一次 update where batch_id。
+          */}
+          {sub === 'leave' && groupBatches(leaves).map((g) => {
+            const r = g.rows[0];
             const v = leaveVote(r);
+            const one = g.rows.length === 1;
             // 我這一票投過了沒有 —— 投過的不該再顯示按鈕，按下去只是重複寫同一個值
             const mine = isBoss ? r.admin_at : r.manager_at;
             return (
-              <div key={r.id} className="px-4 py-3">
+              <div key={g.key} className="px-4 py-3">
                 <div className="flex items-start gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium">
-                      {r.name}・{typeName(r.type_code)} {r.hours} 小時
+                      {r.name}・{typeName(r.type_code)} {one ? `${r.hours} 小時` : `${g.days} 天・${g.hours} 小時`}
                     </div>
-                    <div className="text-xs text-gray-500 mt-0.5">
-                      {fmtDT(r.start_at)} → {fmtDT(r.end_at)}{r.reason ? `・${r.reason}` : ''}
-                    </div>
+                    {one ? (
+                      <div className="text-xs text-gray-500 mt-0.5">
+                        {fmtDT(r.start_at)} → {fmtDT(r.end_at)}{r.reason ? `・${r.reason}` : ''}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-gray-500 mt-0.5">
+                        {g.rows.map((x) => (
+                          <div key={x.id} className="tabular-nums">
+                            {fmtDT(x.start_at)} → {fmtDT(x.end_at).split(' ')[1]}　{x.hours} 小時
+                          </div>
+                        ))}
+                        {r.reason && <div>・{r.reason}</div>}
+                      </div>
+                    )}
                   </div>
                   <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] ${TONE[v.tone]}`}>
                     {v.text}
@@ -170,14 +198,14 @@ export default function ApproveTab({ me, onMsg }: TabProps) {
                       onClick={() => write('leave_requests', r.id,
                         isBoss ? { admin_by: me.id, admin_at: new Date().toISOString() }
                                : { manager_by: me.id, manager_at: new Date().toISOString() },
-                        '已簽核')}
+                        '已簽核', r.batch_id)}
                       className={`${BTN2} border-mor-slate text-mor-slate`}>
-                      {isBoss ? '總經理核可' : '主管核可'}
+                      {isBoss ? '總經理核可' : '主管核可'}{!one && `（${g.days} 天）`}
                     </button>
                   )}
                   <button disabled={busy === r.id}
-                    onClick={() => reject('leave_requests', r.id, 'reject_reason')}
-                    className={`${BTN2} text-red-600 border-red-200`}>駁回</button>
+                    onClick={() => reject('leave_requests', r.id, 'reject_reason', r.batch_id)}
+                    className={`${BTN2} text-red-600 border-red-200`}>駁回{!one && '整批'}</button>
                 </div>}
               </div>
             );
