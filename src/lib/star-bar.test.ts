@@ -118,7 +118,7 @@ test('★★ 1 星的紫藍離卡片藍最近 —— 色帶要走得回來', () 
   const ds = STAR_BAR_DARK.map(dist);
   assert.ok(ds[4] === Math.min(...ds),
     `1 星應該離背景藍最近，實際各星距離：`
-    + STAR_BAR_DARK.map((c, i) => `${LABELS[i]} ${ds[i].toFixed(0)}°`).join('、'));
+    + STAR_BAR_DARK.map((_, i) => `${LABELS[i]} ${ds[i].toFixed(0)}°`).join('、'));
   assert.ok(ds[4] < 90, `1 星離背景 ${ds[4].toFixed(0)}°，太遠了不像同一家`);
 });
 

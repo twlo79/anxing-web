@@ -5,6 +5,8 @@ import {
 } from '@/lib/estate-manager';
 import Toast from '@/components/Toast';
 import { createClient } from '@/lib/supabase';
+import { todayStr } from '@/lib/period';
+import { fetchAll } from '@/lib/fetch-all';
 import {
   parseBeds, parsePoints, parsePrice, parseLabor,
   laborMode, canEditEstateLabor, canEditRoomLabor, laborLockMsg,
@@ -490,20 +492,20 @@ export default function AdminPage() {
     const [lk, od, pd] = await Promise.all([
       supabase.from('period_lock').select('*').order('ym', { ascending: false }),
       /*
-       * ★ 只撈判定要用的兩欄。`orders` 有兩千多列，
-       *   `select('*')` 會把整張表拉下來（README 9.1:預設最多回 1000 列）。
-       * ★★ 這裡只是給確認訊息「會鎖住幾張」用的近似值 ——
-       *   真正的守門在資料庫觸發器，不靠這個數字。
+       * ★ 只撈判定要用的兩欄。`orders` 有五千多列。
+       * ★★ 2026-09-22：原本是 `.limit(5000)` —— Supabase 預設最多回 1000 列，
+       *   `.limit(5000)` **突破不了它**，確認訊息「會鎖住幾張」會少報四千張。
+       *   改走 `fetchAll()` 分頁。真正的守門還是資料庫觸發器，這裡只是給人看的數字。
        */
-      supabase.from('orders').select('checkout, imported_via')
-        .not('checkout', 'is', null).neq('imported_via', 'contract').limit(5000),
+      fetchAll<{ checkout: string }>((f, t) => supabase.from('orders').select('checkout, imported_via')
+        .not('checkout', 'is', null).neq('imported_via', 'contract').range(f, t)),
       supabase.from('order_lock_pending').select('ym').eq('resolved', false),
     ]);
     if (lk.error) { setMsg('讀不到關帳紀錄：' + lk.error.message); return; }
     setLocks((lk.data ?? []) as LockRow[]);
 
     const c: Record<string, number> = {};
-    for (const o of (od.data ?? []) as { checkout: string }[]) {
+    for (const o of od.rows) {
       const y = ymOf(o.checkout); if (y) c[y] = (c[y] ?? 0) + 1;
     }
     setYmCount(c);
@@ -666,7 +668,7 @@ export default function AdminPage() {
   const staffName = (id: string) => staff.find((s) => s.id === id)?.name ?? '(已刪除)';
   /** 現在誰在管 —— 用今天回查,跟評價用的是同一支函式 */
   const currentMgr = (estateId: string) => {
-    const id = managerIdOn(tenures, estateId, new Date().toISOString().slice(0, 10));
+    const id = managerIdOn(tenures, estateId, todayStr());
     return id ? staffName(id) : null;
   };
 
@@ -2110,7 +2112,6 @@ export default function AdminPage() {
                                  here.map((p) => laborOf({ propertyId: p.id })));
           const estLock = laborLockMsg(mode, 'estate');
           const roomLock = laborLockMsg(mode, 'room');
-          const gaps = cleanGaps(here);
           return (
         <div className="rounded-xl glass overflow-hidden">
           <div className="overflow-x-auto">
@@ -2271,7 +2272,7 @@ export default function AdminPage() {
                 </tr>
               </thead>
               <tbody>
-                {ymOptions(new Date().toISOString().slice(0, 10)).map((ym) => {
+                {ymOptions(todayStr()).map((ym) => {
                   const row = locks.find((l) => l.ym === ym);
                   const on = !!row?.locked;
                   const pend = pendCount[ym] ?? 0;

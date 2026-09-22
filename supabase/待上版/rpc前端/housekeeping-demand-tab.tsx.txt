@@ -15,7 +15,7 @@ import {
   type DemandItemStatus,
 } from '@/lib/purchase-demand';
 import {
-  isTakeable, toRequestItems, linkBackPlan, canMarkDone, markDoneConfirm,
+  isTakeable, toRequestItems, canMarkDone, markDoneConfirm,
 } from '@/lib/demand-to-request';
 import {
   splitDraft, parseSplitLines, planSplit, splitBlockedReason,
@@ -243,56 +243,24 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
     setActing(true);
     try {
       /*
-       * ① 開一張草稿請款單。
-       *
-       * ★★★ `req_no` 是 `not null` 而且**沒有觸發器會填** ——
-       *   要先呼叫 `next_req_no()` 這支 RPC 拿號碼。
-       *   請款頁本來就是這樣做的（`purchases/page.tsx:1045`）——
-       *   不照抄的話 insert 會被 not-null 擋下來。
+       * ★★★ 2026-09-22（migration_294）：三步包成一支 RPC。
+       *   以前是 請款單 insert → 項目 insert → 逐筆回寫需求項目，第三步失敗就是
+       *   「請款單建了、需求項目還是未採購」→ 下次又被帶進另一張單，同一筆錢請兩次。
+       *   程式以前靠一句 flash「不要再帶一次」守門 —— 那是把守門交給使用者記得。
+       *   現在任一步失敗整批退回。RPC 是 security invoker，RLS 照舊。
+       * ★ 品名／備註（demandNote）還是在這裡算 —— 那條規則在 .ts 有測試，不搬進 SQL。
        */
-      const { data: no, error: ne } = await supabase.rpc('next_req_no');
-      if (ne || !no) return flash('拿不到請款單號：' + (ne?.message ?? '沒有回傳'));
-
-      const { data: pr, error: e1 } = await supabase.from('purchase_requests')
-        .insert({
-          req_no: no,
-          requester_id: profile?.id ?? null,
-          status: 'draft',
-          note: `從採購需求 ${d.demand_no ?? ''} 帶入`.trim(),
-        }).select('id, req_no').single();
-      if (e1 || !pr) return flash('建不出請款單：' + (e1?.message ?? '沒有回傳'));
-
-      // ② 帶項目進去。★ 金額是 null 不是 0（migration_218）
       const drafts = toRequestItems(pick as any);
-      const { data: items, error: e2 } = await supabase.from('purchase_request_items')
-        .insert(drafts.map((x) => ({
-          request_id: pr.id, item_name: x.item_name, amount: x.amount,
-          purpose_type: x.purpose_type, estate_id: x.estate_id,
-          note: x.note, sort: x.sort,
-        }))).select('id');
-      if (e2) return flash('項目帶不進去：' + e2.message);
-      if ((items?.length ?? 0) !== drafts.length) {
-        return flash(`要帶 ${drafts.length} 項，實際只進去 ${items?.length ?? 0} 項 —— 先不要送審，找管理員`);
-      }
-
-      // ③ 回寫需求項目:狀態 → 已進請款、記住是哪一列請款項目
-      const plan = linkBackPlan(drafts, (items ?? []).map((x: any) => x.id));
-      let linked = 0;
-      for (const p of plan) {
-        const { data, error } = await supabase.from('purchase_demand_items')
-          .update({ status: 'requested', request_item_id: p.requestItemId })
-          .eq('id', p.demandItemId).select('id');
-        if (error) { flash('回寫需求單失敗：' + error.message); break; }
-        linked += data?.length ?? 0;
-      }
-      /*
-       * ★★ 回寫少了要講。少了的那幾項會留在「未採購」，
-       *   下次又被帶進另一張請款單 —— 同一筆錢請兩次。
-       */
-      if (linked !== plan.length) {
-        flash(`請款單 ${pr.req_no ?? ''} 建好了，但只回寫了 ${linked}/${plan.length} 項 —— `
-            + '沒回寫的那幾項還是「未採購」，不要再帶一次');
-      }
+      const { data, error } = await supabase.rpc('demand_to_request', {
+        p_demand: d.id,
+        p_items: drafts.map((x) => ({
+          demand_item_id: x.fromDemandItemId, item_name: x.item_name,
+          purpose_type: x.purpose_type, estate_id: x.estate_id, note: x.note, sort: x.sort,
+        })),
+      });
+      if (error) return flash('建不出請款單：' + error.message);
+      const r = data as { ok: boolean; message: string };
+      if (!r?.ok) return flash(r?.message ?? '建不出請款單');
       setPicked(new Set());
       await load();
       // ★ 直接跳過去填金額 —— 不跳的話使用者得自己找那張單，而它是草稿、排在最後
@@ -673,6 +641,7 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
     () => (edit ? validateDemand(edit.items, edit.ship_to) : '還沒開始填'),
     [edit],
   );
+  const canSubmit = blockReason === null;
 
   /**
    * 按過送出了沒 —— 紅框只在他表達「我填完了」之後才出現。

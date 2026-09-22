@@ -44,12 +44,6 @@ export type BankFilter = {
   onlyNoted?: boolean;
 };
 
-const num = (v: number | string | undefined | null) => {
-  if (v === '' || v == null) return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-};
-
 /** 這一筆的金額 —— 支出或存入，其中一個是 0。 */
 export function amountOf(r: BankRow): number {
   return Math.max(Number(r.debit) || 0, Number(r.credit) || 0);

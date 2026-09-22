@@ -422,18 +422,15 @@ export default function PurchasesPage() {
    *
    * 改成等 useProfile 把身分載到（prof.profile 有值）才查。
    * 錯誤也不再吞掉 —— 空白跟失敗要分得出來。
-   *
-   * ★ 2026-09-22:原本把錯誤存進一個 `peopleErr` state，但沒有任何地方把它畫出來 ——
-   *   等於還是吞掉。改成跟主檔載入失敗同一條路（`flashErr`，不會自己消失）。
    */
+  const [peopleErr, setPeopleErr] = useState('');
   useEffect(() => {
     if (!prof.profile) return;          // 身分還沒到，先不查
     supabase.from('profiles').select('id, name, role')
       .then(({ data, error }) => {
-        if (error) flashErr('申請人名單載入失敗:' + error.message);
+        if (error) setPeopleErr(error.message);
         else setPeople(data ?? []);
       });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase, prof.profile]);
 
   const codeName = useMemo(() => Object.fromEntries(codes.map((c) => [c.code, c.name])), [codes]);
@@ -1172,38 +1169,6 @@ export default function PurchasesPage() {
       let reqId = edit.id;
       let newReqNo = '';
       const isCreate = !reqId;
-      if (!reqId) {
-        const { data: no, error: ne } = await supabase.rpc('next_req_no');
-        if (ne) { flash('取單號失敗:' + ne.message); return; }
-        const { data, error } = await supabase.from('purchase_requests')
-          .insert({ ...header, req_no: no, requester_id: me.id, status: 'draft' }).select('id, req_no').single();
-        if (error) { flash('建立失敗:' + error.message); return; }
-        reqId = data.id;
-        newReqNo = data.req_no;
-      } else {
-        /*
-         * ★★ 一定要看「改到幾列」，不能只看 error。
-         *
-         * RLS 擋下的 UPDATE **會回成功且影響 0 列**（CLAUDE.md 的第二條坑）。
-         * 只檢查 error 的話，畫面會說「已重新送審」而資料一個字都沒變 ——
-         * 2026-08-19 就發生過：會計改廠商收款帳號，畫面說成功，
-         * 資料庫裡還是舊帳號，而沒有任何線索指向權限。
-         *
-         * 更糟的是後面還有「刪項目 → 重寫項目」。母單沒改成 draft 的話，
-         * 刪除會被 pri_write 擋下（它只認 draft/rejected），
-         * 而插入若沒被擋就會多寫一份 —— 那時總金額會直接變兩倍。
-         * 所以這裡擋不住就必須**當場中止**，不能往下走。
-         */
-        const { data: upd, error } = await supabase.from('purchase_requests')
-          .update(header).eq('id', reqId).select('id');
-        if (error) { flash('儲存失敗:' + error.message); return; }
-        if (!upd || upd.length === 0) {
-          flash('存不進去：沒有任何一列被更新。'
-            + '通常是權限（這張單目前的狀態不允許你修改），請重新整理後再試，'
-            + '或請總管理員處理。');
-          return;
-        }
-      }
       // amount 一律存台幣,amount_original 存使用者輸入的原幣別金額。
       // 換算在這裡一次做完,資料庫不會有「一半換過一半沒換」的中間狀態。
       const payload = clean.map((i, idx) => ({
@@ -1245,24 +1210,22 @@ export default function PurchasesPage() {
         id: i.id ?? null,
       }));
 
+
       /*
-       * ★★ 存檔改成 update ＋ insert，**不再全刪重建**（2026-08-24）。
+       * ★★★ 2026-09-22（migration_296）：單頭 ＋ 項目（刪／改／增）包成一支 RPC。
+       *   以前是六步各自一個請求：中間任一步失敗就是「單頭改了、項目對不上」，
+       *   總額（觸發器加總項目）跟畫面上填的不一樣，而錯誤是一句 flash。
+       *   現在任一步失敗整批退回。RPC 是 security invoker：RLS、pri_write、
+       *   pr_guard_votes、sync_pr_total 全部照舊。
        *
-       * 原本是 `delete where request_id` 再 `insert` 整批，
-       * 所以 purchase_request_items.id **每存一次就換一批新的**。
-       *
-       * 一直沒出事，是因為唯一指向那些 id 的 `expenses.source_item_id`
-       * 只在「填出款日」之後才產生，而出款日一填就不能再編輯 ——
-       * **那是僥倖，不是設計**。
-       *
-       * 而逐項憑證（migration_172）把圖掛在 request_item_id 上，
-       * on delete cascade —— 全刪重建的話，每按一次存檔
-       * 剛傳的發票就全部消失，而且沒有任何錯誤訊息。
-       *
-       * 算哪些要刪／改／增在 lib/pr-items-save.ts（13 個測試）。
+       * ★ 「刪／改／增」的規則在資料庫照 planItemSave() 再算一次；這裡還是先算
+       *   一次，只為了在按下去**之前**問「刪掉的項目有憑證圖」那一句（只讀）。
+       * ★ 送審那一步不搬 —— 憑證圖要等新項目的 id 出來才傳得上去，上傳完才送審。
        */
-      const { data: exRows } = await supabase.from('purchase_request_items')
-        .select('id').eq('request_id', reqId);
+      // ★ 新建的沒有既有項目可比（reqId 還是空的），這段只給編輯用
+      const { data: exRows } = reqId
+        ? await supabase.from('purchase_request_items').select('id').eq('request_id', reqId)
+        : { data: [] as { id: string }[] };
       const plan = planItemSave(payload, (exRows ?? []).map((x: any) => String(x.id)));
 
       /*
@@ -1284,33 +1247,18 @@ export default function PurchasesPage() {
           if (!confirm(`你刪掉的項目底下有 ${n} 張憑證圖，會一起刪除。\n\n`
             + `憑證圖不會進回收桶 —— 刪掉就要重新拍一次。\n\n確定要存檔嗎？`)) return;
         }
-        const { error: de } = await supabase.from('purchase_request_items')
-          .delete().in('id', plan.deleteIds);
-        if (de) { flash('項目刪除失敗:' + de.message); return; }
       }
 
-      /*
-       * ★ update 用 upsert 是安全的 —— 這一批**每一列都有 id 而且欄位一致**。
-       *   PostgREST 批次 upsert 取欄位聯集（CLAUDE.md 的坑），
-       *   把有 id 的跟沒 id 的混在一起送才會出事。這裡沒有混。
-       */
-      if (plan.update.length) {
-        const { error: ue } = await supabase.from('purchase_request_items').upsert(plan.update);
-        if (ue) { flash('項目更新失敗:' + ue.message); return; }
-      }
-
-      /*
-       * 新項目。**要把新 id 拿回來** —— 填表時選的逐項憑證還留在瀏覽器裡，
-       * 沒有 id 就上傳不了（跟單頭那個 flush 同一套機制）。
-       * 用 sort 對應回畫面上的第幾列。
-       */
+      const { data: saved, error: se0 } = await supabase.rpc('save_purchase_request', {
+        p_id: reqId ?? null, p_header: header, p_items: payload,
+      });
+      if (se0) { flash((isCreate ? '建立失敗:' : '儲存失敗:') + se0.message); return; }
+      const sv = saved as { ok: boolean; message?: string; request_id: string; req_no: string; new_ids: Record<string, string> };
+      if (!sv?.ok) { flash(sv?.message ?? '儲存失敗'); return; }
+      reqId = sv.request_id;
+      if (isCreate) newReqNo = sv.req_no;
       const newIdBySort: Record<number, string> = {};
-      if (plan.insert.length) {
-        const { data: ins, error: ie } = await supabase.from('purchase_request_items')
-          .insert(plan.insert).select('id, sort');
-        if (ie) { flash('項目儲存失敗:' + ie.message); return; }
-        for (const row of ins ?? []) newIdBySort[Number((row as any).sort)] = String((row as any).id);
-      }
+      for (const [k, v] of Object.entries(sv.new_ids ?? {})) newIdBySort[Number(k)] = String(v);
 
       /*
        * 逐項憑證:新項目要等 id 出來才傳得上去。

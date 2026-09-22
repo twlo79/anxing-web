@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { ymOf, ymShow, ymMonth, monthsAgo, todayStr, fmtDate, fmtDateShort, fmtAt, fmtRange } from './period.ts';
+import { ymOf, ymShow, ymMonth, monthsAgo, todayStr, taipeiToday, fmtDate, fmtDateShort, fmtAt, fmtRange } from './period.ts';
 
 /**
  * 期間與日期格式的測試。
@@ -110,5 +110,20 @@ describe('顯示格式', () => {
       assert.equal(fmtDateShort(v), '—');
       assert.equal(fmtAt(v), '—');
     });
+  });
+});
+
+describe('taipeiToday —— 伺服器端的今天要看台北，不看機器時區', () => {
+  test('UTC 晚上 18:30 在台北已經是隔天', () => {
+    assert.equal(taipeiToday(new Date('2026-09-22T18:30:00Z')), '2026-09-23');
+  });
+  test('UTC 15:59 台北還是同一天（23:59）', () => {
+    assert.equal(taipeiToday(new Date('2026-09-22T15:59:00Z')), '2026-09-22');
+  });
+  test('UTC 16:00 台北跨日（00:00）', () => {
+    assert.equal(taipeiToday(new Date('2026-09-22T16:00:00Z')), '2026-09-23');
+  });
+  test('格式是 YYYY-MM-DD，不是 en-US 的 M/D/YYYY', () => {
+    assert.match(taipeiToday(new Date('2026-01-05T00:00:00Z')), /^\d{4}-\d{2}-\d{2}$/);
   });
 });

@@ -12,8 +12,8 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   isLent, lentTotal, lentSiblings, type Entry,
-  paidOf, dueOf, gapOf, isSettledExpense, bookTotals,
-  validatePayment, overpayWarning, PAY_METHODS,
+  paidOf, gapOf, isSettledExpense, bookTotals,
+  validatePayment, overpayWarning,
   drawerShape, delIncomeMsg,
   cumulativeTotals,
   periodRange, netCardLabel, showThisPeriod, sortByDate,
@@ -225,32 +225,32 @@ describe('★★ bookTotals —— 上面那張卡的支出是「實支」', () 
 describe('★★★ validatePayment', () => {
   const ok = { paid_on: '2026-09-20', amount: 1000 };
 
-  test('正常的回 null', () => assert.equal(validatePayment(EXP(), ok, 0), null));
+  test('正常的回 null', () => assert.equal(validatePayment(EXP(), ok), null));
 
   test('★★★ 代墊的不給在這裡記，而且要說得出去哪裡記', () => {
-    const err = validatePayment(EXP({ advanceId: 'a1' }), ok, 0);
+    const err = validatePayment(EXP({ advanceId: 'a1' }), ok);
     assert.ok(err?.includes('暫付'), err ?? '');
     assert.ok(err?.includes('收回'), err ?? '');
   });
 
-  test('沒填付款日', () => assert.equal(validatePayment(EXP(), { amount: 100 }, 0), '要填付款日'));
+  test('沒填付款日', () => assert.equal(validatePayment(EXP(), { amount: 100 }), '要填付款日'));
 
   test('金額要大於 0', () => {
-    assert.equal(validatePayment(EXP(), { ...ok, amount: 0 }, 0), '金額要大於 0');
-    assert.equal(validatePayment(EXP(), { ...ok, amount: -5 }, 0), '金額要大於 0');
+    assert.equal(validatePayment(EXP(), { ...ok, amount: 0 }), '金額要大於 0');
+    assert.equal(validatePayment(EXP(), { ...ok, amount: -5 }), '金額要大於 0');
   });
 
   test('★★ 只收整數 —— 存進去的跟看到的不可以是兩個數字', () => {
-    assert.ok(validatePayment(EXP(), { ...ok, amount: 1.5 }, 0)?.includes('整數'));
-    assert.equal(validatePayment(EXP(), { ...ok, amount: 1500 }, 0), null);
+    assert.ok(validatePayment(EXP(), { ...ok, amount: 1.5 })?.includes('整數'));
+    assert.equal(validatePayment(EXP(), { ...ok, amount: 1500 }), null);
   });
 
   test('★★ 付超過**不擋** —— 系統負責看見，人負責決定', () => {
-    assert.equal(validatePayment(EXP({ amount: 1000 }), { ...ok, amount: 9999 }, 0), null);
+    assert.equal(validatePayment(EXP({ amount: 1000 }), { ...ok, amount: 9999 }), null);
   });
 
   test('★ 一次只回一個錯', () => {
-    const err = validatePayment(EXP(), { amount: -1 }, 0);
+    const err = validatePayment(EXP(), { amount: -1 });
     assert.equal(err, '要填付款日');
     assert.ok(!err!.includes('\n'));
   });

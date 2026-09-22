@@ -1,8 +1,9 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AddButton, ExportButton, ActionBar } from '@/components/Actions';
+import { ExportButton } from '@/components/Actions';
 import { AuditButton, AuditBadges, AuditSummary } from '@/components/Audit';
 import { auditOrders, type AuditOrder } from '@/lib/audit-orders';
+import { todayStr } from '@/lib/period';
 import FilterToggle from '@/components/FilterToggle';
 import { createClient } from '@/lib/supabase';
 import { fetchAll } from '@/lib/fetch-all';
@@ -92,7 +93,6 @@ function monthsInRange(from: string, to: string) {
   while ((y < ty || (y === ty && m <= tm)) && guard < 600) { out.push([y, m]); m++; if (m > 12) { m = 1; y++; } guard++; }
   return out;
 }
-function csvEsc(v: unknown) { if (v == null) return ''; const s = String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
 
 export default function RevenuesPage() {
   const supabase = useMemo(() => createClient(), []);
@@ -269,7 +269,7 @@ export default function RevenuesPage() {
     }
     return auditOrders(uniq, {}, {
       roomAncestors,
-      today: new Date().toISOString().slice(0, 10),
+      today: todayStr(),
     });
   }, [audit, filtered, roomAncestors]);
 
@@ -563,7 +563,6 @@ export default function RevenuesPage() {
 
     for (const md of cols) {
       const ms = `${md.y}-${String(md.m).padStart(2, '0')}-01`;
-      const lastDay = new Date(Date.UTC(md.m === 12 ? md.y + 1 : md.y, md.m === 12 ? 0 : md.m, 0)).getUTCDate();
       const me = new Date(Date.UTC(md.m === 12 ? md.y + 1 : md.y, md.m === 12 ? 0 : md.m, 1)).toISOString().slice(0, 10);
       const { data: revs } = await supabase.from('reviews')
         .select('guest_name, checkout_date, overall_rating, properties(name)')
@@ -759,7 +758,6 @@ export default function RevenuesPage() {
     }
     return r.checkin && r.checkout ? `${r.checkin}~${r.checkout}` : '—';
   };
-  const recogRange = (r: Row) => (r.period_start && r.period_end ? `${r.period_start}~${minus1(r.period_end)}` : '—');
 
   return (
     <div>

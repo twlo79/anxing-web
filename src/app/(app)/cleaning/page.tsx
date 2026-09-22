@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { todayStr } from '@/lib/period';
 import * as XLSX from 'xlsx-js-style';
 import { createClient } from '@/lib/supabase';
 import RangeInput from '@/components/RangeInput';
@@ -46,12 +47,6 @@ const TYPE_LABEL: Record<string, string> = { housekeeper: '管家', roomservice:
  * ★ 抽成常數 —— 手機版與桌機版各有一份下拉，寫兩次就會有一天不一致。
  */
 const TYPE_FILTERS = ['housekeeper', 'roomservice', 'manager'] as const;
-
-function csvEsc(v: unknown) {
-  if (v == null) return '';
-  const s = String(v).replace(/\r\n/g, '\n');
-  return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-}
 
 export default function CleaningPage() {
   const supabase = useMemo(() => createClient(), []);
@@ -147,7 +142,7 @@ export default function CleaningPage() {
     ws['!cols'] = [{ wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 8 }, { wch: 40 }, { wch: 30 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, '清潔紀錄');
-    XLSX.writeFile(wb, `清潔紀錄_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSX.writeFile(wb, `清潔紀錄_${todayStr()}.xlsx`);
     setExporting(false);
   }
 

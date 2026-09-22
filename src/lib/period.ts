@@ -84,6 +84,16 @@ export function todayStr(today = new Date()): string {
 }
 
 /**
+ * 今天（台北時間）,'YYYY-MM-DD'。**伺服器端用這支**。
+ *
+ * `todayStr()` 是本地時區 —— 在使用者的瀏覽器上等於台北，
+ * 但 API route 跑在 Vercel（UTC），凌晨 0～8 點會回前一天。
+ */
+export function taipeiToday(now = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei' }).format(now);
+}
+
+/**
  * Date → 'YYYY-MM-DD'，用**本地時區**。
  *
  * 不用 toISOString().slice(0,10) —— 那個是 UTC。台灣 +8，

@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase';
+import { todayStr } from '@/lib/period';
 import { NOTIFY_LABEL, type NotifyKind } from '@/lib/notify-kinds';
 
 /**
@@ -99,7 +100,7 @@ export default function NewsTab() {
   const unread = rows.filter((r) => !r.read_at);
   const shown = onlyUnread ? unread : rows;
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayStr();
   const yesterday = new Date(Date.now() - 86400_000).toISOString().slice(0, 10);
 
   /** 依日期分組。同一天的擠在一起，中間一條日期橫線 */

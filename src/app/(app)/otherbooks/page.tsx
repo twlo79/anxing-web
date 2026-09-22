@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase';
+import { todayStr } from '@/lib/period';
 import AdvanceLedger from '@/components/AdvanceLedger';
 import { useProfile } from '@/lib/profile';
 import { fetchAll } from '@/lib/fetch-all';
@@ -16,7 +17,7 @@ import {
 } from '@/lib/book';
 import {
   totals, byMonth, byCode, unsettled, applyFilters, monthRange, prevMonth, pctChange,
-  isLent, lentTotal, lentSiblings,
+  isLent, lentSiblings,
   paidOf, dueOf, gapOf, bookTotals, cumulativeTotals, validatePayment, overpayWarning,
   periodRange, netCardLabel, showThisPeriod, sortByDate, type PeriodKind,
   PAY_METHODS, type Payment,
@@ -55,7 +56,8 @@ import {
  */
 
 const fmt = (n: number | null | undefined) => Math.round(Number(n) || 0).toLocaleString('en-US');
-const today = () => new Date().toISOString().slice(0, 10);
+// ★ 2026-09-22：改用 lib/period 的 todayStr（本地時區）。原本是 UTC，台灣凌晨 0～8 點會得到前一天。
+const today = todayStr;
 /** 七碼帶橫線（`2026-09`）—— 這一頁的月份跟 `<input type="month">` 同形狀，所以叫 ymDash 不叫 ym */
 const thisYmDash = () => new Date().toISOString().slice(0, 7);
 const CTRL = 'h-11 md:h-9 w-full bg-white rounded-lg border border-mor-line px-2 text-sm';
@@ -84,7 +86,7 @@ export default function OtherBooksPage() {
 
   const [book, setBook] = useState<Book>('aipi');
   const [tab, setTab] = useState<'ledger' | 'dash'>('ledger');
-  const [ym, setYm] = useState(thisYmDash());
+  const [ym] = useState(thisYmDash());
   /*
    * 期間（使用者 2026-09-22：「預設所有都顯示／可以選期間？」）。
    * ★ 預設 **all** —— 使用者明講「預設所有都顯示」。
@@ -272,55 +274,6 @@ export default function OtherBooksPage() {
   const expenseCodes = useMemo(() => codes.filter((c) => c.kind !== 'income'), [codes]);
   const nameOf = useCallback(
     (c: string | null) => (c ? codeName[c] ?? c : '未分類'), [codeName]);
-
-  /**
-   * 直接在列上改會計科目（2026-09-10 使用者:「這也要可以編輯」）。
-   *
-   * ============================================================
-   * 【★★★ 為什麼要能在這裡改】
-   *
-   * 從請款單產生的支出，科目常常是空的 —— 畫面上顯示「未分類」。
-   * 而在這之前**沒有任何一條路改得了它**:
-   * 這一頁的列是唯讀的，支出頁又看不到其他事業體的帳。
-   *
-   * 結果是三筆錢躺在「未分類」，而報表照科目分組 ——
-   * 它們哪一組都不屬於，看起來只是「比較少」。
-   *
-   * ============================================================
-   * 【★★ 為什麼是就地下拉，不是開一個編輯視窗】
-   *
-   * 要改的只有一格。開視窗要多兩次點擊（開、存），
-   * 而分類這件事通常是**一次改好幾筆** —— 開關視窗五次比改五格還累。
-   *
-   * ★ 只給下拉不給打字:科目是固定清單，自由打字會長出
-   *   「保險費」跟「保險 費」兩個科目，而報表分不開。
-   *
-   * ★★ 只有收入用 orders、支出用 expenses —— 兩張表，
-   *   所以要看 `kind` 決定 update 哪一張。寫死一張的話另一種
-   *   會**回成功且影響 0 列**（RLS 那條坑），畫面上像沒反應。
-   */
-  const [savingCode, setSavingCode] = useState<string | null>(null);
-
-  async function setCode(e: Entry, code: string) {
-    if (!canSee || savingCode) return;
-    const table = e.kind === 'income' ? 'orders' : 'expenses';
-    setSavingCode(`${e.kind}-${e.id}`);
-    /*
-     * ★★★ 一定要 `.select('id')` 數影響列數。
-     *   RLS 擋下來的 UPDATE **回成功且影響 0 列**（CLAUDE.md）——
-     *   不數的話畫面會樂觀更新成新科目，重新整理又跳回「未分類」，
-     *   而使用者的結論是「這個系統存不住東西」。
-     */
-    const { data, error } = await supabase.from(table)
-      .update({ account_code: code || null }).eq('id', e.id).select('id');
-    setSavingCode(null);
-    if (error) return setErr('改不動：' + error.message);
-    if (!data?.length) return setErr('沒有改到任何一列 —— 可能是權限');
-    setErr('');
-    // ★ 只換這一列，不整頁重載 —— 重載會把捲動位置與篩選重置掉
-    setRows((rs) => rs.map((r) =>
-      (r.kind === e.kind && r.id === e.id) ? { ...r, account_code: code || null } : r));
-  }
 
   /* ══════════════ 打開來編輯（2026-09-10 使用者:「可以打開編輯然後儲存」）══════════════
    *
@@ -1435,7 +1388,7 @@ function ViewDrawer({
 
   async function addPay() {
     setErr('');
-    const bad = validatePayment(e, draft, paid);
+    const bad = validatePayment(e, draft);
     if (bad) { setErr(bad); return; }
     const warn = overpayWarning(due, paid, Number(draft.amount));
     if (warn && !confirm(warn)) return;

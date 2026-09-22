@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase';
+import { todayStr } from '@/lib/period';
 import Receipts, { type ReceiptsHandle } from '@/components/Receipts';
 import {
   remainingDep, depPayStatus, checkDepPayment, reconcile,
@@ -67,7 +68,8 @@ type Dep = {
 const wordOf = (d: Dep) => ((d.kind ?? 'deposit') === 'earnest' ? '訂金' : '押金');
 
 const fmt = (n: number | null | undefined) => Math.round(Number(n) || 0).toLocaleString('en-US');
-const today = () => new Date().toISOString().slice(0, 10);
+// ★ 2026-09-22：改用 lib/period 的 todayStr（本地時區）。原本是 UTC，台灣凌晨 0～8 點會得到前一天。
+const today = todayStr;
 /** 手機上手指按得到的最小高度。桌機縮回一般大小，免得表單過胖。 */
 const CTRL = 'h-11 md:h-9 w-full bg-white rounded-lg border border-mor-line px-2 text-sm';
 

@@ -17,8 +17,6 @@ import {
  */
 
 const LIU = 'liu';          // 時薪
-const TING = 'ting';        // 間數
-const HOURLY = new Set([LIU]);
 
 describe('★★★ splitEvenly —— 攤分要湊得回總數', () => {
   test('★★★ 除不盡時加起來仍然等於原數', () => {

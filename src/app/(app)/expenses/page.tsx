@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AddButton, ExportButton } from '@/components/Actions';
 import { ActionRow, FilterCount, FieldSpacer, FilterSearch, FILTER_BTN_H } from '@/lib/filters';
+import { todayStr } from '@/lib/period';
 import { TAG_NON_CASH, TAG_NON_CASH_PG, isNonCash, withNonCash } from '@/lib/expense-tags';
 import Req from '@/components/Req';
 import MoneyInput from '@/components/MoneyInput';
@@ -81,7 +82,7 @@ const CURRENCIES = ['TWD', 'USD', 'JPY', 'CNY', 'EUR'];
  *   其他都正常，沒有人會馬上聯想到是兩份清單不同步。
  */
 const fmt = (n: number | null | undefined) => (n == null ? '' : Math.round(n).toLocaleString());
-const todayStr = () => new Date().toISOString().slice(0, 10);
+// ★ 2026-09-22：改用 lib/period 的 todayStr（本地時區）。原本是 UTC，台灣凌晨 0～8 點會得到前一天。
 
 /**
  * 「非營運」標籤。**只有標了才出現** —— 沒標的完全不佔位置。

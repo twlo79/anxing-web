@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import StatCard, { StatRow } from '@/components/StatCard';
 import { createClient } from '@/lib/supabase';
+import { todayStr } from '@/lib/period';
 import { fetchAll } from '@/lib/fetch-all';
 import Toast from '@/components/Toast';
 import UploadPanel from './upload-panel';
@@ -302,7 +303,7 @@ export default function AccountsPage() {
 
   /** 空白表單。★ 日期預設今天 —— 現金多半是當天記的,少打一次。 */
   const blankCash = (): CashDraft => ({
-    post_date: new Date().toISOString().slice(0, 10),
+    post_date: todayStr(),
     counterparty: '', dir: 'credit', amount: '', memo: '',
   });
 

@@ -1,11 +1,12 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase';
+import { todayStr } from '@/lib/period';
 // 每一筆加費各自的憑證（migration_158）—— 掛在那一列，不是掛在押金底下
 import Receipts, { type ReceiptsHandle } from '@/components/Receipts';
 import { ONEOFF_PRESETS, presetOf, feeLabel } from '@/lib/fee-types';
 import {
-  feesTotal, refundable, checkFee, defaultFeeDate, approvalDrift,
+  refundable, checkFee, defaultFeeDate, approvalDrift,
   type DepFee,
 } from '@/lib/deposit-fee';
 
@@ -60,7 +61,8 @@ type Dep = {
 };
 
 const fmt = (n: number | null | undefined) => Math.round(Number(n) || 0).toLocaleString('en-US');
-const today = () => new Date().toISOString().slice(0, 10);
+// ★ 2026-09-22：改用 lib/period 的 todayStr（本地時區）。原本是 UTC，台灣凌晨 0～8 點會得到前一天。
+const today = todayStr;
 const CTRL = 'h-11 md:h-9 w-full bg-white rounded-lg border border-mor-line px-2 text-sm disabled:bg-gray-50';
 
 type Row = DepFee & { id: string };
@@ -99,7 +101,6 @@ export default function DepositFees({
 
   useEffect(() => { load(); }, [load]);
 
-  const total = feesTotal(rows);
   const refund = refundable(dep, rows);
   const drift = approvalDrift(dep, rows);
 

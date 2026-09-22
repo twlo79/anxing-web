@@ -23,7 +23,7 @@ import {
 } from '@/lib/hk-hourly';
 import {
   cleaningIncome, laborIncome, hourlyExpense, sideTotal,
-  OFFICE_NAME, LABOR_BILL_TO_OFFICE, CODE_SALARY, CODE_LABOR_REV,
+  OFFICE_NAME, LABOR_BILL_TO_OFFICE, CODE_LABOR_REV,
   type HkEntry,
 } from '@/lib/hk-entries';
 import { pairCheck } from '@/lib/hk-pair-check';
@@ -728,7 +728,6 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
        *   觸發器從 `fee_type` 推（migration_229 才把兩個名目加進去）。
        *   寫進來會被覆寫，而寫一個馬上被蓋掉的值只會讓下一個人以為它有作用。
        */
-      let incMade = 0;
       if (gen.income.length > 0) {
         /*
          * ★★★ 只需要**物業**，不需要房源（2026-09-08 使用者指定的欄位配置）。
@@ -787,14 +786,12 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
             book: 'anxing',
             imported_via: 'manual',
           }));
-          const { data, error } = await supabase.from('orders')
+          const { error } = await supabase.from('orders')
             .upsert(orderRows, { onConflict: 'order_key', ignoreDuplicates: true })
             .select('id');
           if (error) {
             setGenErr('收入寫不進去：' + error.message
               + '（支出的部分不受影響，可以單獨重按）');
-          } else {
-            incMade = data?.length ?? 0;
           }
         }
       }

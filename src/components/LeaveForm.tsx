@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase';
 import Req from '@/components/Req';
 import { useOnce } from '@/lib/once';
 import {
-  DEFAULT_WS, MODE_LABEL, addDays, dow, holidayMap, isWorkday, leaveError, modeTimes, planDays,
+  DEFAULT_WS, MODE_LABEL, dow, holidayMap, isWorkday, leaveError, modeTimes, planDays,
   segments, toYmd, totals, workHours,
   type DayMode, type DayPick, type HolidayRow, type WorkSettings, type Ymd,
 } from '@/lib/leave-days';

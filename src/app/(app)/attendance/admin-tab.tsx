@@ -6,7 +6,7 @@ import { getPosition, type GeoFail } from '@/lib/punch';
 import { twToday } from '@/lib/attendance-ui';
 import { fmtLate } from '@/lib/attendance-hours';
 import {
-  BTN, BTN2, CARD, INPUT, noRowsMsg,
+  BTN2, CARD, INPUT, noRowsMsg,
   type Balance, type Estate, type LeaveType, type TabProps,
 } from './types';
 import RangeInput from '@/components/RangeInput';

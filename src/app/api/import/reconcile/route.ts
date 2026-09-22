@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
+import { taipeiToday } from '@/lib/period';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -95,7 +96,7 @@ export async function POST(req: Request) {
   // 呼叫端記的話,「跑完但沒回寫」跟「根本沒跑」分不出來 ——
   // 而這兩者的差別就是明天要不要再跑一次 30 次請求的全量對帳。
   const markReconciled = async () => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = taipeiToday();   // ★ 不用 toISOString():Vercel 是 UTC，8 點前跑會記成昨天，明天就再跑一次全量
     const { data: st } = await supabase.from('sync_state').select('value').eq('key', 'reviews').maybeSingle();
     await supabase.rpc('set_sync_state', {
       p_key: 'reviews',

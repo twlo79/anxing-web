@@ -3,7 +3,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { getPosition, punchUi, hhmm, type GeoFail } from '@/lib/punch';
 import { dayPhase, taipeiHour, workedText, type CardInk } from '@/lib/day-phase';
-import { fmtLate } from '@/lib/attendance-hours';
 import {
   twToday, dayStatus, monthSummary, monthRange, shiftMonth, type ReportRow,
 } from '@/lib/attendance-ui';

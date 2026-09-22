@@ -39,7 +39,7 @@ const CELL_TONE: Record<string, string> = {
  * 公告放在**上方**（使用者指定）：它是會變的、需要被讀到的；
  * 月曆是查詢用的，人會自己往下找。
  */
-export default function CalendarTab({ me, isAdmin, onMsg }: TabProps) {
+export default function CalendarTab({ me, isAdmin }: TabProps) {
   const supabase = useMemo(() => createClient(), []);
   const now = new Date();
   const [[y, m], setYm] = useState<[number, number]>([now.getFullYear(), now.getMonth() + 1]);

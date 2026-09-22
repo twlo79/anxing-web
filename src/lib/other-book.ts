@@ -444,7 +444,7 @@ export function sortByDate<T extends { date: string | null; id: string }>(
  *   資料庫擋住任何路徑，這一層負責講出**為什麼**。
  */
 export function validatePayment(
-  e: Entry, p: Partial<Payment>, alreadyPaid: number,
+  e: Entry, p: Partial<Payment>,
 ): string | null {
   /*
    * ★★★ 代墊的不在這裡記 —— 同一筆錢只有一個人寫。

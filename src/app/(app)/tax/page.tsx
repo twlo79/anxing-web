@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx-js-style';
 import { createClient } from '@/lib/supabase';
+import { todayStr } from '@/lib/period';
 import {
   taxPeriodOf, periodRange, periodLabel, prevPeriod, nextPeriod, periodOptions,
   sumTax, sumNet, sumTotal, invoiceCounts, activeInvoices,
@@ -13,7 +14,7 @@ import {
   type TaxInvoice, type TaxKind, type PeriodRow, type ParsedUpload,
 } from '@/lib/tax';
 import {
-  importable, importError, importSummary, toRows, pickedOf, splitTax,
+  importable, importError, importSummary, toRows, pickedOf,
   type ExpenseSrc, type InvoiceDraft,
 } from '@/lib/tax-from-expense';
 import { useOnce } from '@/lib/once';
@@ -92,7 +93,7 @@ export default function TaxPage() {
   const [msg, setMsg] = useState('');
   function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 3500); }
 
-  const thisPeriod = useMemo(() => taxPeriodOf(new Date().toISOString().slice(0, 10)), []);
+  const thisPeriod = useMemo(() => taxPeriodOf(todayStr()), []);
   const [period, setPeriod] = useState(thisPeriod);
   const [kind, setKind] = useState<TaxKind>('out');
 

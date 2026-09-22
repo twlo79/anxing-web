@@ -16,7 +16,7 @@ import {
 } from '@/lib/social-fb';
 import FbWall, { Collage, FbPhotoWarnings, photosOf } from './fb-wall';
 import {
-  MAX_IG_PHOTOS, addPhotos, movePhoto, removePhoto,
+  addPhotos, movePhoto, removePhoto,
   whyCannotAdd, addMessage, stepPhoto, clampIndex, RESET_INDEX,
 } from '@/lib/social-carousel';
 
@@ -561,7 +561,7 @@ export default function SocialPage() {
     const { data: sp, error: se } = await supabase.from('social_splits')
       .insert({ account_id: accId, span }).select().single();
     if (se) return flash('新增失敗：' + se.message);
-    const { data: ps, error: pe } = await supabase.from('social_posts').insert(
+    const { error: pe } = await supabase.from('social_posts').insert(
       Array.from({ length: span }, (_, k) => ({
         account_id: accId, sort: -span + k, caption: '',
         split_id: sp.id, split_index: k,

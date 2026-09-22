@@ -22,7 +22,7 @@ import { DEFAULT_BOOK } from '@/lib/book';
 import { ymOf, ymShow, ymMonth, monthsAgo, todayStr, fmtRange } from '@/lib/period';
 // Supabase 一次只回 1000 列且不報錯 —— 這一頁全部是加總,一定要撈完
 import { fetchAll } from '@/lib/fetch-all';
-import { FilterBar, FilterSelect, FilterDateRange, FilterClear } from '@/lib/filters';
+import { FilterBar, FilterSelect, FilterClear } from '@/lib/filters';
 import { srcLabel, rentOnly } from '@/lib/revenue-report';
 import {
   toWan, pickedLabel, noSrcFilter, toggleSrc, splitBySrc, cardRows,
@@ -130,7 +130,6 @@ type Property = {
   count_in_occupancy?: boolean | null;
 };
 type Code = { code: string; name: string };
-type Pending = { total_amount: number; planned_transfer_on: string | null };
 /**
  * 比較期的原始列。
  *
@@ -198,7 +197,6 @@ export default function DashboardPage() {
   const [estates, setEstates] = useState<Estate[]>([]);
   const [properties, setProperties] = useState<Property[]>([]);
   const [codes, setCodes] = useState<Code[]>([]);
-  const [pending, setPending] = useState<Pending[]>([]);
   /*
    * 住房率的佔用資料。**自己一條 useEffect**，不併進 `load()`。
    *
@@ -476,11 +474,6 @@ export default function DashboardPage() {
       // 同一段月份的話不重發，下面直接沿用環比的結果
       revSameSpan ? Promise.resolve(null) : cmpRev(yf, yt),
       cmpExp(yf, yt),
-      // 待付款是側欄的一張小卡，晚幾百毫秒沒有人會發現
-      fetchAll<Pending>((f, t) => supabase.from('purchase_requests')
-        .select('total_amount, planned_transfer_on')
-        .eq('book', DEFAULT_BOOK)
-        .eq('status', 'approved').is('purchased_on', null).range(f, t)),
     ]);
 
     const [
@@ -545,16 +538,16 @@ export default function DashboardPage() {
      */
     /*
      * ★★ 解構的順序要跟 `later` 那個陣列**一字不差**。
-     *   拿掉 cmpOrd 之後少了兩個位置 —— 忘了同步的話,
-     *   `pd`（待付款）會接到 `yExp`（去年支出），
+     *   少一個位置的話 `yExp`（去年支出）會接到別的東西，
      *   而型別如果剛好相容的話 tsc 也不會抱怨,畫面只是數字不對。
+     *   （2026-09-22 拿掉「待付款」那一項 —— 它算出來的 toPay 沒有任何卡片在用，
+     *   每次開首頁白白多查一次 purchase_requests。）
      */
-    const [pRev, pExp, yRevMaybe, yExp, pd] = await later;
+    const [pRev, pExp, yRevMaybe, yExp] = await later;
     if (myRun !== runRef.current) return;
-    const badLater = [pRev, pExp, yExp, pd].find((r) => r?.error);
+    const badLater = [pRev, pExp, yExp].find((r) => r?.error);
     if (badLater?.error) setTruncated(badLater.error);
 
-    setPending(pd.rows);
     setCmpRaw({
       prev: { rev: pRev.rows, exp: pExp.rows },
       // 同一段月份時沿用環比的認列 —— 上面已經確認過那兩段的 ym 完全相同
@@ -868,13 +861,6 @@ export default function DashboardPage() {
     () => fExps.filter((e) => e.starred).sort((a, b) => (a.spent_on < b.spent_on ? 1 : -1)),
     [fExps]);
   const starredTotal = useMemo(() => starred.reduce((s, e) => s + Number(e.amount || 0), 0), [starred]);
-  const net = totalRev - totalExp;
-  const margin = totalRev > 0 ? (net / totalRev) * 100 : 0;
-  // 應收未收：訂單已成立但錢還沒收到。這是現金流最直接的風險部位。
-  const unpaid = useMemo(
-    () => fOrds.filter((o) => !o.paid).reduce((s, o) => s + Number(o.amount || 0), 0), [fOrds]);
-  const unpaidCount = useMemo(() => fOrds.filter((o) => !o.paid).length, [fOrds]);
-  const toPay = useMemo(() => pending.reduce((s, r) => s + Number(r.total_amount || 0), 0), [pending]);
 
   /**
    * 認列缺漏警示。
@@ -903,17 +889,6 @@ export default function DashboardPage() {
     const exp = fExps.filter((e) => ymOf(e.spent_on) === m).reduce((s, e) => s + Number(e.amount || 0), 0);
     return { m, rev, exp, net: rev - exp };
   }), [months, fRevs, fExps]);
-
-  // 上期比較：把區間對半切，後半跟前半比。
-  // 「跟去年同期比」更準，但資料只有一年多，多數月份沒有去年可比。
-  const mom = useMemo(() => {
-    if (trend.length < 2) return null;
-    const half = Math.floor(trend.length / 2);
-    const prev = trend.slice(0, half).reduce((s, t) => s + t.rev, 0);
-    const cur = trend.slice(half).reduce((s, t) => s + t.rev, 0);
-    if (prev === 0) return null;
-    return ((cur - prev) / prev) * 100;
-  }, [trend]);
 
   const groupSum = <T,>(rows: T[], key: (r: T) => string, val: (r: T) => number) => {
     const m: Record<string, number> = {};

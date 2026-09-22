@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { todayStr } from '@/lib/period';
 import { createClient } from '@/lib/supabase';
 import { useOnce } from '@/lib/once';
 import { useProfile } from '@/lib/profile';
@@ -52,7 +53,6 @@ type Feed = {
   starred_at: string | null; tender_id: string | null;
 };
 
-const todayStr = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei' }).format(new Date());
 const daysAgo = (n: number) => {
   const d = new Date(); d.setDate(d.getDate() - n);
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei' }).format(d);

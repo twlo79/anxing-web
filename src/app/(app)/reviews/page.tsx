@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { todayStr } from '@/lib/period';
 import { managerIdOn, type Tenure } from '@/lib/estate-manager';
 import FilterToggle from '@/components/FilterToggle';
 import { createClient } from '@/lib/supabase';
@@ -119,12 +120,6 @@ function displayComment(r: Review) {
   if (isChinese(r.comment)) return r.comment;
   if (isChinese(r.comment_original)) return r.comment_original;
   return r.comment ?? r.comment_original ?? null;
-}
-
-function csvEsc(v: unknown) {
-  if (v === null || v === undefined) return '';
-  const s = String(v).replace(/\r\n/g, '\n');
-  return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
 
 export default function ReviewsPage() {
@@ -405,7 +400,7 @@ export default function ReviewsPage() {
     ];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, '評價');
-    XLSX.writeFile(wb, `評價匯出_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSX.writeFile(wb, `評價匯出_${todayStr()}.xlsx`);
     setExporting(false);
   }
 

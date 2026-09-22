@@ -75,7 +75,7 @@ export type TabItem<T extends string> = {
 };
 
 export function Tabs<T extends string>({
-  items, value, onChange, variant = 'segment', size = 'md', tone = 'paper', className = '',
+  items, value, onChange, variant = 'segment', size = 'md', className = '',
 }: {
   items: readonly TabItem<T>[];
   value: T;

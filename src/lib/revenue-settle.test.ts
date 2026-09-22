@@ -1,6 +1,6 @@
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { settleGrid, rocRange, SHORT_SOURCES, type SettleRow } from './revenue-settle.ts';
+import { settleGrid, rocRange, type SettleRow } from './revenue-settle.ts';
 import { FEE_TYPES } from './fee-types.ts';
 
 describe('rocRange —— 民國年的表頭', () => {

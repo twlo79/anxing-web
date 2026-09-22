@@ -43,7 +43,7 @@ import { useOnce } from '@/lib/once';
 import {
   statusOf, STATUS_LABEL, forfeitedOf, statsOf, validateAdvance, advanceMissing,
   defaultRefundAccount, refundAccountWarning, needsForfeitExpense,
-  CATEGORIES, MANUAL_CATEGORIES, type Advance, type AdvanceStatus,
+  MANUAL_CATEGORIES, type Advance, type AdvanceStatus,
   purposeFromSelect, purposeToSelect, purposeLabel, PURPOSE_OFFICE, OFFICE_LABEL,
   canBatch, batchDisabled, lockedParty, batchSelectable, remainingOf,
 } from '@/lib/advance';

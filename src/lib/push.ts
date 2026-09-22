@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import webpush from 'web-push';
 import { NOTIFY_DEFAULT, NOTIFY_KINDS, type NotifyKind } from './notify-kinds';
+import { taipeiToday } from './period';
 
 /**
  * Web Push 的共用送出層。
@@ -168,7 +169,7 @@ export async function notifyImport(
     const ids = await filterByPref(admin, (data ?? []).map((p) => p.id), kind);
     // tag 帶日期：同一天重複同步會取代前一則，不會疊成一排
     return await sendToUsers(admin, ids, {
-      title, body, url, kind, tag: `${kind}-${new Date().toISOString().slice(0, 10)}`,
+      title, body, url, kind, tag: `${kind}-${taipeiToday()}`,
     });
   } catch (e) {
     console.error('[push] notifyImport 失敗（匯入本身不受影響）:', (e as Error).message);

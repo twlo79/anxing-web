@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { createClient } from '@/lib/supabase';
+import { todayStr } from '@/lib/period';
 import { METHOD_LABEL } from '@/components/RefundFields';
 import {
   planMissing, settleMissing, needsAcct, type RefundDep,
@@ -58,9 +59,9 @@ export default function DepositRefundStep({
   const isPlan = mode === 'plan';
   const [date, setDate] = useState(
     isPlan
-      ? (dep.planned_refund_on ?? new Date().toISOString().slice(0, 10))
+      ? (dep.planned_refund_on ?? todayStr())
       // 確認退款預設帶排定的那天 —— 大部分情況就是照排定的匯出去
-      : (dep.planned_refund_on ?? new Date().toISOString().slice(0, 10)));
+      : (dep.planned_refund_on ?? todayStr()));
   const [acct, setAcct] = useState(dep.returned_account ?? '');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);

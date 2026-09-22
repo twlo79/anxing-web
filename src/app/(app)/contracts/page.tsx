@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { AddButton, ExportButton, ActionBar } from '@/components/Actions';
+import { AddButton, ExportButton } from '@/components/Actions';
 import Req from '@/components/Req';
 import { submitGate, gateCls } from '@/lib/required';
 import MoneyInput from '@/components/MoneyInput';
@@ -18,15 +18,15 @@ import { useOnce } from '@/lib/once';
 import { titleCaseName } from '@/lib/name-format';
 import { earnestOnlyMissing, monthlyRentToSave } from '@/lib/earnest';
 import { useOpenFromUrl } from '@/lib/open-from-url';
-import { FEE_TYPES, ONEOFF_PRESETS, presetOf, feeLabel, canInvoiceFee } from '@/lib/fee-types';
+import { ONEOFF_PRESETS, presetOf, feeLabel, canInvoiceFee } from '@/lib/fee-types';
 import ContractFees, { type Rc } from '@/components/ContractFees';
 import { feeMonthly, leasePeriods, periodOf } from '@/lib/lease';
 import { dueDateOf, payDayOf, dueDayText, fmtDue, periodRange, fmtPeriodRange, rentMonthCount, checkContractDates } from '@/lib/due-date';
 import { keyBase, onlyKeyOf } from '@/lib/ltKey';
 // 關帳：畫面上擋住的判斷跟資料庫那支守衛走**同一份規則**（migration_249）
 import { isLocked, lockedMsg, lockYmOf, ymLabel, type Ym } from '@/lib/period-lock';
-import { INV_NO_RE, invoiceMissing } from '@/lib/invoice';
-import { ymOf } from '@/lib/period';
+import { invoiceMissing } from '@/lib/invoice';
+import { ymOf, todayStr } from '@/lib/period';
 // 「這筆收入算誰的」—— 畫面與存檔共用同一份規則（migration_247）
 import { contractPurpose, purposeLockedByType } from '@/lib/purpose';
 // 一期的應收與收齊判斷都走這支 —— 畫面、確認視窗、收款三處共用同一份算式
@@ -188,10 +188,9 @@ export default function ContractsPage() {
   const [invOrders, setInvOrders] = useState<{ property_raw: string | null; amount: number; paid: boolean; checkin: string }[]>([]);
   // 改完租期後「掉在租期外但已收款」的提示。null = 沒有。
   const [stray, setStray] = useState<{ name: string; n: number; amt: number; months: string } | null>(null);
-  // 表單開啟次數。綁 edit.id 的話「新增 → 取消 → 再新增」不會重跑初始化,
-  // 第二張契約會帶著第一張的押金 —— 短租頁踩過同一個坑。
-  const [formSeq, setFormSeq] = useState(0);
-  const openEdit = (o: Contract | null) => { setEdit(o); if (o) setFormSeq((n) => n + 1); };
+  // 表單是 `{edit && …}` 條件渲染的，關掉就整個卸載，再開一定是乾淨的
+  // （ContractFees 掛上時會把 pendingFees 清成 []）。
+  const openEdit = (o: Contract | null) => setEdit(o);
 
   /* `/contracts?contract=<id>` 直接開那一筆。營收頁抽屜的「看契約」靠它 */
   useOpenFromUrl<Contract>('contract', async (id) => {
@@ -288,7 +287,7 @@ export default function ContractsPage() {
   }, [supabase, load]);
   function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 2500); }
 
-  const todayS = new Date().toISOString().slice(0, 10);
+  const todayS = todayStr();
   const statusOf = (c: any) => (!c.active ? 'disabled' : (c.end_date && c.end_date < todayS ? 'expired' : 'active'));
   const filtered = useMemo(() => {
     let out = estateFilter ? rows.filter((r: any) => r.estates?.name === estateFilter) : rows;
@@ -380,11 +379,6 @@ export default function ContractsPage() {
     const { error } = await supabase.from('contracts').update({ watch: !c.watch }).eq('id', c.id);
     if (error) return flash('更新失敗:' + error.message);
     setRows((rs) => rs.map((r) => r.id === c.id ? { ...r, watch: !c.watch } : r));
-  }
-  async function togglePaid(c: Contract) {
-    const { error } = await supabase.from('contracts').update({ paid: !c.paid }).eq('id', c.id);
-    if (error) return flash('更新失敗:' + error.message);
-    setRows((rs) => rs.map((r) => r.id === c.id ? { ...r, paid: !c.paid } : r));
   }
   /** 新增契約時 ContractFees 暫存的設定 —— 契約 insert 成功後才補寫 */
   const [pendingFees, setPendingFees] = useState<Rc[]>([]);
@@ -603,7 +597,7 @@ const nameOf = (c: Contract) =>
   async function endLease(c: Contract) {
     const name = nameOf(c);
     const d = prompt(`結束租約「${name}」\n\n請輸入租約結束日 (YYYY-MM-DD)`,
-      c.end_date || new Date().toISOString().slice(0, 10));
+      c.end_date || todayStr());
     if (d === null) return;
     const end = d.trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(end)) return flash('日期格式要像 2026-06-30');
@@ -611,11 +605,15 @@ const nameOf = (c: Contract) =>
     const rows = await ordersOf(c.id);
     if (!confirm(endLeaseConfirmText(name, end, endLeaseRemoved(rows, end)))) return;
 
-    const { error } = await supabase.from('contracts')
-      .update({ end_date: end, active: false }).eq('id', c.id);
+    const { data: upd, error } = await supabase.from('contracts')
+      .update({ end_date: end, active: false }).eq('id', c.id).select('id');
     if (error) return flash('結束失敗:' + error.message);
-    // 觸發器是非同步生效的,等一下再回頭查租期外已收款
-    await new Promise((r) => setTimeout(r, 500));
+    if (!upd?.length) return flash('結束失敗：沒有任何一列被更新（多半是權限或關帳）。');
+    /*
+     * ★ 2026-09-22 拿掉 `setTimeout(500)`。觸發器是在**同一個交易裡**跑完才回的 ——
+     *   `gen_contract_orders()` 是 contracts 上的 AFTER trigger，update 回來時
+     *   月租單已經長好了。那 500ms 等的是一個不存在的非同步。
+     */
     await warnStray({ ...c, end_date: end });
     flash('已結束租約'); load();
   }
@@ -684,11 +682,24 @@ const nameOf = (c: Contract) =>
     const yms: string[] = []; let cur = new Date(ed.getFullYear(), ed.getMonth() + 1, 1);
     const eb = keyBase(edit);
     for (let i = 0; i < N; i++) { yms.push(`${eb}${cur.getFullYear()}${String(cur.getMonth() + 1).padStart(2, '0')}`); cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1); }
-    const { error: e1 } = await supabase.from('contracts').update({ end_date: newEndStr }).eq('id', edit.id);
+    const { data: u1, error: e1 } = await supabase.from('contracts')
+      .update({ end_date: newEndStr }).eq('id', edit.id).select('id');
     if (e1) return flash('展延失敗:' + e1.message);
-    await new Promise((r) => setTimeout(r, 400));
+    if (!u1?.length) return flash('展延失敗：沒有任何一列被更新（多半是權限或關帳）。');
+    /*
+     * ★ 2026-09-22 拿掉 `setTimeout(400)` —— 觸發器在同一個交易裡跑完才回，沒有東西要等。
+     * ★★ 底下的 `orders.update` 原本**沒接回傳**：房號空的契約（公司登記）月租單是前端
+     *   `keyBase` 那條路長的，觸發器不會長 —— 這裡就是 update 0 列、畫面卻說「已展延 N 期」。
+     *   現在數列數，少了就講出來（CLAUDE.md：`.update()` 的回傳值沒接那條坑）。
+     */
     const src = TYPE_SRC[edit.type ?? 'longterm'] ?? 'longterm';
-    await supabase.from('orders').update({ amount: amt, source: src, imported_via: 'extend' }).in('order_key', yms);
+    const { data: u2, error: e2 } = await supabase.from('orders')
+      .update({ amount: amt, source: src, imported_via: 'extend' }).in('order_key', yms).select('id');
+    if (e2) return flash('租期改了，但月租單金額沒更新:' + e2.message);
+    if ((u2?.length ?? 0) !== N) {
+      flash(`租期改了，但只有 ${u2?.length ?? 0}/${N} 張月租單套到金額 —— `
+        + '多半是那幾個月的單還沒長出來，請重新整理後到收款分頁確認。');
+    }
     setEdit({ ...edit, end_date: newEndStr });
     setExt({ months: '', monthly: '', total: '' });
     flash(`已展延 ${N} 個月・新增 ${N} 期待收款(月租 $${amt})`);
@@ -1736,14 +1747,12 @@ const nameOf = (c: Contract) =>
 }
 
 
-const CAD_MONTHS: Record<string, number> = { monthly: 1, quarterly: 3, halfyear: 6, yearly: 12 };
 /*
  * ★★ `payScheduleText()` 在 2026-09-17 刪掉了 —— 它跟
  *   `lib/due-date.ts` 的 `dueDayText()` 講的是同一句話，
  *   而同一句話寫在兩個地方，遲早有一邊沒跟上（README 坑 A）。
  *   清單與表單現在都吃 lib 那一支。
  */
-function ymd(d: Date) { return d.toISOString().slice(0, 10); }
 const nextYm = (ym: string) => { let y = +ym.slice(0, 4), m = +ym.slice(4, 6); m++; if (m > 12) { m = 1; y++; } return `${y}${String(m).padStart(2, '0')}`; };
 const fmtYm = (ym: string) => `${+ym.slice(0, 4)}/${+ym.slice(4, 6)}`;
 // 待開發票清單回溯的月數(本月往前推幾個月)。調大會翻出更多歷史未開月份。
@@ -1775,7 +1784,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
     setTimeout(() => setDenied((d) => (d === key ? '' : d)), 6000);
   };
   const [existing, setExisting] = useState<Record<string, any>>({});
-  const [endDate, setEndDate] = useState<string | null>(c.end_date ?? null);
+  const [endDate] = useState<string | null>(c.end_date ?? null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
   const [feeRows, setFeeRows] = useState<any[]>([]);
@@ -1844,7 +1853,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
     id?: string; ym: string; date: string; no: string; note: string; label?: string;
     orderId?: string | null; amount?: number | null;
   } | null>(null);
-  const today = () => new Date().toISOString().slice(0, 10);
+  const today = () => todayStr();
   const STEP = ({ monthly: 1, quarterly: 3, halfyear: 6, yearly: 12 } as any)[c.cadence] || 1;
   /*
    * 「幾號繳」—— 應繳日的唯一依據。
@@ -2538,7 +2547,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                * 三個口徑現在都走同一支函式，不可能再各說各話。
                */
               const pt = periodTotal(os, pfees);
-              const netAmount = pt.net, feeTotal = pt.fixed + pt.oneoff, discTotal = pt.discount;
+              const netAmount = pt.net, discTotal = pt.discount;
               const allPaid = pt.allPaid;
               /*
                * 分筆收款的進度（2026-08-25）。
