@@ -9,7 +9,8 @@ import {
 import { METHOD_LABEL, METHOD_OPTS, needsAccount, normalizeMethod, methodText } from '@/lib/pay-method';
 import { shouldAutoSettle, autoSettleBlockedReason, lastPaidOn } from '@/lib/period-settle';
 import { softDelete } from '@/lib/trash';
-import { invYm, invoiceMissing } from '@/lib/invoice';
+import { invoiceMissing } from '@/lib/invoice';
+import { ymOf } from '@/lib/period';
 
 /**
  * 短租訂單的收款視窗。
@@ -261,7 +262,7 @@ export default function OrderPayments({
    */
   async function saveInv() {
     const no = invNo.trim().toUpperCase();
-    const ym = invYm(order.checkin ?? today());
+    const ym = ymOf(order.checkin ?? today());
     /* ★ 跟契約頁共用同一份檢查（含 `ym` 六碼那一條，對應 `invoices_ym_chk`） */
     const bad = invoiceMissing({ ym, invoice_no: no, invoice_date: invDate });
     if (bad) return flash(bad);

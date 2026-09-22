@@ -39,11 +39,13 @@ export const INV_NO_RE = /^[A-Z]{2}[0-9]{8}$/;
  */
 export const INV_YM_RE = /^[0-9]{6}$/;
 
-/** `2026-08-31` → `202608`。空的或格式不對回空字串（不要編一個出來）。 */
-export function invYm(dateStr: string | null | undefined): string {
-  const d = (dateStr ?? '').trim();
-  return /^\d{4}-\d{2}-\d{2}/.test(d) ? d.slice(0, 4) + d.slice(5, 7) : '';
-}
+/**
+ * `2026-08-31` → `202608`。
+ *
+ * ★ 就是 `period.ts` 的 `ymOf` —— 這裡不再有第二份實作（2026-09-22 收成一支）。
+ *   保留這個名字是因為「發票的月份」讀起來比「認列月份」直白，兩個呼叫端都用它。
+ */
+export { ymOf as invYm } from './period.ts';
 
 /** 一張要存的發票。欄位名跟 `invoices` 一致。 */
 export type InvoiceDraft = {

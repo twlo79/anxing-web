@@ -56,7 +56,8 @@ import {
 
 const fmt = (n: number | null | undefined) => Math.round(Number(n) || 0).toLocaleString('en-US');
 const today = () => new Date().toISOString().slice(0, 10);
-const thisYm = () => new Date().toISOString().slice(0, 7);
+/** 七碼帶橫線（`2026-09`）—— 這一頁的月份跟 `<input type="month">` 同形狀，所以叫 ymDash 不叫 ym */
+const thisYmDash = () => new Date().toISOString().slice(0, 7);
 const CTRL = 'h-11 md:h-9 w-full bg-white rounded-lg border border-mor-line px-2 text-sm';
 
 type Code = { code: string; name: string; kind?: string; book?: string };
@@ -83,7 +84,7 @@ export default function OtherBooksPage() {
 
   const [book, setBook] = useState<Book>('aipi');
   const [tab, setTab] = useState<'ledger' | 'dash'>('ledger');
-  const [ym, setYm] = useState(thisYm());
+  const [ym, setYm] = useState(thisYmDash());
   /*
    * 期間（使用者 2026-09-22：「預設所有都顯示／可以選期間？」）。
    * ★ 預設 **all** —— 使用者明講「預設所有都顯示」。
@@ -91,8 +92,8 @@ export default function OtherBooksPage() {
    *   真的長到會慢那天要改成資料庫端加總的 RPC，不是把範圍砍回去。
    */
   const [pk, setPk] = useState<PeriodKind>('all');
-  const [f1, setF1] = useState(thisYm());
-  const [f2, setF2] = useState(thisYm());
+  const [f1, setF1] = useState(thisYmDash());
+  const [f2, setF2] = useState(thisYmDash());
   /** 列表照日期排，預設新到舊 */
   const [desc, setDesc] = useState(true);
   const [rows, setRows] = useState<Entry[]>([]);
@@ -628,13 +629,13 @@ export default function OtherBooksPage() {
               <label className={`flex flex-col gap-1 ${pk === 'custom' ? '' : 'opacity-45'}`}>
                 <span className="text-uisub text-gray-500">起</span>
                 <input type="month" value={f1}
-                  onChange={(e) => { setF1(e.target.value || thisYm()); setPk('custom'); }}
+                  onChange={(e) => { setF1(e.target.value || thisYmDash()); setPk('custom'); }}
                   className="h-10 md:h-9 rounded-lg border border-mor-line bg-white px-2 text-sm" />
               </label>
               <label className={`flex flex-col gap-1 ${pk === 'custom' ? '' : 'opacity-45'}`}>
                 <span className="text-uisub text-gray-500">訖</span>
                 <input type="month" value={f2}
-                  onChange={(e) => { setF2(e.target.value || thisYm()); setPk('custom'); }}
+                  onChange={(e) => { setF2(e.target.value || thisYmDash()); setPk('custom'); }}
                   className="h-10 md:h-9 rounded-lg border border-mor-line bg-white px-2 text-sm" />
               </label>
               <FilterSelect label="收支" value={f.kind ?? ''}

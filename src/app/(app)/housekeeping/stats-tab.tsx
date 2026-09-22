@@ -3,6 +3,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import * as XLSX from 'xlsx-js-style';
 import { createClient } from '@/lib/supabase';
+import { ymOf } from '@/lib/period';
 import { cleanCounts, filterItems, buildLookup, matchProperty, type HkStaff, type HkProperty } from '@/lib/hkParse';
 import { payroll, byEstate, estateLog, dailyUnits, fmtUnits } from '@/lib/hk-payroll';
 import {
@@ -94,7 +95,6 @@ const GROUPS = ['kai', 'ab', 'zl', 'other'] as const;
 const WORK_TYPES = ['退房清潔', '入住清潔', '換房清潔', '細清', '公區清潔', '贈品補充', '點交', '拆備品', '清潔', '其他工時'];
 const LEAVE_OPTS = ['', '休', '特休', '請假', '颱風假', '報到'];
 
-const ymOf = (d: Date) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`;
 const daysIn = (period: string) => {
   const y = Number(period.slice(0, 4)), m = Number(period.slice(4, 6));
   return new Date(y, m, 0).getDate();

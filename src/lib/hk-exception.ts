@@ -32,6 +32,7 @@
  */
 
 import { NO_PROPERTY } from './hkParse.ts';
+import { ymOf } from './period.ts';
 
 /** 例外清單上的一列（`hk_event` 的子集）。 */
 export type ExEvent = {
@@ -210,7 +211,7 @@ export function inPeriod(date: string, period: string): boolean {
   // '2026-08-20' → '202608'。用 slice 不用 replace —— 日期一定是這個格式
   // （`<input type="date">` 給的 ISO），而 replace 只換第一個橫線,
   //  剛好也對，但那是碰巧對，不是寫對的
-  return date.slice(0, 4) + date.slice(5, 7) === period;
+  return ymOf(date) === period;
 }
 
 /**

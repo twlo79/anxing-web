@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import MoneyInput from '@/components/MoneyInput';
 import { createClient } from '@/lib/supabase';
+import { ymOf } from '@/lib/period';
 import { CONTRACT_FEE_PRESETS, feeLabel } from '@/lib/fee-types';
 import { leaseMonths, feeMonthly, leasePeriods, periodOf, ymShow } from '@/lib/lease';
 import { softDelete } from '@/lib/trash';
@@ -41,7 +42,6 @@ const fmt = (n: number | null | undefined) => Math.round(Number(n) || 0).toLocal
 export const toMonthInput = (ym: string | null) =>
   (ym && /^\d{6}$/.test(ym) ? `${ym.slice(0, 4)}-${ym.slice(4)}` : '');
 const fromMonthInput = (v: string) => (/^\d{4}-\d{2}$/.test(v) ? v.replace('-', '') : '');
-const ymOf = (d: string | null | undefined) => (d ? `${d.slice(0, 4)}${d.slice(5, 7)}` : '');
 
 
 export default function ContractFees({

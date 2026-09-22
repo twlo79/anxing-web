@@ -25,7 +25,8 @@ import { dueDateOf, payDayOf, dueDayText, fmtDue, periodRange, fmtPeriodRange, r
 import { keyBase, onlyKeyOf } from '@/lib/ltKey';
 // 關帳：畫面上擋住的判斷跟資料庫那支守衛走**同一份規則**（migration_249）
 import { isLocked, lockedMsg, lockYmOf, ymLabel, type Ym } from '@/lib/period-lock';
-import { INV_NO_RE, invYm, invoiceMissing } from '@/lib/invoice';
+import { INV_NO_RE, invoiceMissing } from '@/lib/invoice';
+import { ymOf } from '@/lib/period';
 // 「這筆收入算誰的」—— 畫面與存檔共用同一份規則（migration_247）
 import { contractPurpose, purposeLockedByType } from '@/lib/purpose';
 // 一期的應收與收齊判斷都走這支 —— 畫面、確認視窗、收款三處共用同一份算式
@@ -221,7 +222,7 @@ export default function ContractsPage() {
   // 待開發票的回溯窗口:本月 + 前 INVOICE_LOOKBACK 個月。
   // 不回溯全部歷史,否則功能剛上線時會把每個契約自起始月以來的所有月份都列成逾期。
   const lookFirst = (() => { const d = new Date(); const x = new Date(d.getFullYear(), d.getMonth() - INVOICE_LOOKBACK, 1); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-01`; })();
-  const lookYm = lookFirst.slice(0, 4) + lookFirst.slice(5, 7);
+  const lookYm = ymOf(lookFirst);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -321,7 +322,7 @@ export default function ContractsPage() {
       if (!room) continue;
       const c = rows.find((r) => r.room === room);
       const g = byRoom.get(room) ?? { room, label: (c?.display_name || room) as string, tenant: o.guest_name ?? c?.tenant_name ?? null, yms: [], amount: 0 };
-      g.yms.push(o.checkin.slice(0, 4) + o.checkin.slice(5, 7));
+      g.yms.push(ymOf(o.checkin));
       g.amount += Number(o.amount || 0);
       byRoom.set(room, g);
     }
@@ -357,7 +358,7 @@ export default function ContractsPage() {
     for (const c of need) {
       for (const o of invOrders) {
         if (!o.property_raw || o.property_raw !== c.room) continue;
-        const ym = o.checkin.slice(0, 4) + o.checkin.slice(5, 7);
+        const ym = ymOf(o.checkin);
         if (issued.has(`${c.id}|${ym}`)) continue;
         const canIssue = c.invoice_after_paid === false || !!o.paid;
         const past = ym < curYm || (ym === curYm && !!c.invoice_day && nowDay > c.invoice_day);
@@ -2129,7 +2130,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
      */
     if (v) {
       const pf = feeRows.filter((f: any) => f.checkin
-        && chunk.some((mm: any) => (f.checkin.slice(0, 4) + f.checkin.slice(5, 7)) === mm.ym));
+        && chunk.some((mm: any) => ymOf(f.checkin) === mm.ym));
       const t = periodTotal(chunk.map((mm) => existing[kb + mm.ym]).filter(Boolean), pf);
       // 只有一行（純房租、沒有任何加費）就不打擾 —— 那種情況畫面上一目了然
       // ★ 自動結清也不打擾:金額已經跟應收對上了,沒有東西要核對
@@ -2159,7 +2160,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
      */
     const feeIds = feeRows
       .filter((f: any) => f.checkin && Number(f.amount) !== 0
-        && chunk.some((mm: any) => (f.checkin.slice(0, 4) + f.checkin.slice(5, 7)) === mm.ym))
+        && chunk.some((mm: any) => ymOf(f.checkin) === mm.ym))
       .map((f: any) => f.id);
 
     // 先更新畫面,再寫資料庫 —— 按下去立刻有反應,不用等網路來回
@@ -2527,7 +2528,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                 而且永遠不會自己修正（2026-08 遇過整排顯示 2023 年）。
               */
               const due = fmtDue(dueDateOf(c.start_date, c.cadence, i, payDay));
-              const pfees = feeRows.filter((f: any) => chunk.some((mm: any) => invYm(f.checkin) === mm.ym));
+              const pfees = feeRows.filter((f: any) => chunk.some((mm: any) => ymOf(f.checkin) === mm.ym));
               /*
                * 這一期的應收 = 房租 ＋ 固定加費 ＋ 一次性費用 − 折讓，**一個數字**。
                *
@@ -3001,9 +3002,9 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                        *   按下儲存跳的是一句英文的 check constraint。
                        * ★★ 而同一個檔案往上四十行，`pfees` 的篩選用的是正確的六碼寫法：
                        *   同一條規則在同一個檔案裡寫兩次、兩個答案（CLAUDE.md 的老坑）。
-                       *   現在兩邊都走 `invYm()`。
+                       *   現在兩邊都走 `ymOf()`。
                        */
-                      const feeYm = invYm(f.checkin);
+                      const feeYm = ymOf(f.checkin);
                       return (
                         <div key={f.id}>
                           <div className={`flex items-center justify-between text-xs py-0.5 ${Number(f.amount) < 0 ? 'text-orange-600' : 'text-gray-600'}`}>
@@ -3188,7 +3189,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                * 而使用者看不出這兩塊有什麼不同，只會覺得數字有時候對有時候不對。
                */
               const efees = feeRows.filter((f: any) => f.checkin
-                && (f.checkin.slice(0, 4) + f.checkin.slice(5, 7)) === mm.ym);
+                && ymOf(f.checkin) === mm.ym);
               const ept = periodTotal(o ? [o] : [], efees);
               const amount = ept.net;
               const paid = ept.allPaid;

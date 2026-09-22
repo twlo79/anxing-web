@@ -131,9 +131,9 @@ export function pctChange(now: number, prev: number): number | null {
 export function byMonth(entries: Entry[], endYm: string, months = 12): { ym: string; income: number; expense: number }[] {
   const map: Record<string, { income: number; expense: number }> = {};
   for (const e of entries ?? []) {
-    const ym = (e.date ?? '').slice(0, 7);
-    if (!ym) continue;
-    const m = (map[ym] ??= { income: 0, expense: 0 });
+    const ymDash = (e.date ?? '').slice(0, 7);   // 七碼帶橫線 —— 這本帳的月份一律是這個形狀
+    if (!ymDash) continue;
+    const m = (map[ymDash] ??= { income: 0, expense: 0 });
     if (e.kind === 'income') m.income += round(e.amount);
     else m.expense += round(e.amount);
   }

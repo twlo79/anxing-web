@@ -105,8 +105,9 @@ export const yoySameAsPrev = (mode: PeriodMode) => mode === 'year';
 export function sameMonthRange(
   a: [string, string], b: [string, string],
 ): boolean {
-  const ym = (s: string) => s.slice(0, 7);
-  return ym(a[0]) === ym(b[0]) && ym(a[1]) === ym(b[1]);
+  /* ★ 七碼帶橫線（`2026-08`），所以叫 ymDash 不叫 ym —— `ym` 只准指六碼（CLAUDE.md 用語表） */
+  const ymDash = (s: string) => s.slice(0, 7);
+  return ymDash(a[0]) === ymDash(b[0]) && ymDash(a[1]) === ymDash(b[1]);
 }
 
 /**

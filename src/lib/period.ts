@@ -17,9 +17,43 @@
 /** 認列月份的儲存格式：六碼、無連字號。`revenue_recognitions.ym` 就長這樣。 */
 export type Ym = string;
 
-/** 'YYYY-MM-DD' → 'YYYYMM'。日期欄位（spent_on / checkin）換算成認列月份用。 */
-export function ymOf(dateStr: string): Ym {
-  return dateStr.slice(0, 4) + dateStr.slice(5, 7);
+/**
+ * 日期 → `YYYYMM`（六碼、沒有連字號）。**全站唯一的一份。**
+ *
+ * ============================================================
+ * 【★★★ 2026-09-22 收成一支】
+ *
+ * 之前這條規則有 **6 份 helper**（這裡、`period-lock.ts`、`invoice.ts`、
+ * `ContractFees.tsx`、`stats-tab.tsx`、`stats-tab-1.tsx`）加 **7 處手寫**
+ * 的 `slice(0,4) + slice(5,7)`。每一份今天都是對的，直到契約頁加費那一列
+ * 自己寫了一個 `.slice(0, 7)` —— 得到 `2026-08`，七碼帶橫線，
+ * `invoices_ym_chk` 直接擋下來，**加費的發票從上線到那天一次都沒存進去過**。
+ *
+ * ★ 有測試釘住「`src/` 裡不准再出現手寫的六碼轉換」（`period.guard.test.ts`）。
+ *
+ * ============================================================
+ * 【吃什麼】
+ *
+ *   'YYYY-MM-DD'            → 'YYYYMM'
+ *   'YYYY-MM-DDTHH:mm…'     → 'YYYYMM'（ISO 帶時間也吃，只看前面）
+ *   Date                    → 'YYYYMM'，用**本地時區**
+ *                              （`toISOString()` 是 UTC，台灣凌晨 0～8 點會變成前一天，
+ *                               8/1 凌晨算出來是 7 月）
+ *   null / undefined / ''   → ''
+ *   'YYYY-MM'（七碼）       → ''  ★ 故意的：那不是日期。要從七碼轉六碼的話
+ *                                 是另一件事（`rev-occ.ts` 的 `ymDash` 反過來）。
+ *
+ * ★★ 回 `''` 而不是丟錯：這支被用在篩選與分組的迴圈裡，
+ *   一筆壞資料丟錯會讓整頁白掉；回空字串的話那一筆只是分不到組。
+ *   但呼叫端**要接** —— `if (ym)`，不要把 '' 當成一個月份寫進去。
+ */
+export function ymOf(d: string | Date | null | undefined): Ym {
+  if (d instanceof Date) {
+    if (Number.isNaN(d.getTime())) return '';
+    return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`;
+  }
+  const s = String(d ?? '').trim();
+  return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 4) + s.slice(5, 7) : '';
 }
 
 /** 'YYYYMM' → 'YYYY-MM'。只給畫面顯示,不要拿去跟資料庫比對。 */

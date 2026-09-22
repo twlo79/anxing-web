@@ -26,11 +26,12 @@ export const CLOSE_DAY = 5;
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
-/** `2026-08-20` → `202608`。空的或格式不對回空字串 */
-export function ymOf(dateStr: string | null | undefined): Ym {
-  const d = (dateStr ?? '').trim();
-  return /^\d{4}-\d{2}-\d{2}/.test(d) ? d.slice(0, 4) + d.slice(5, 7) : '';
-}
+/*
+ * ★ `ymOf` 搬去 `period.ts` 了（2026-09-22 收成一支）。
+ *   這裡保留匯出，因為 `admin` 與 `shortterm` 兩頁是從這支拿的 —— 少改兩個 import。
+ */
+import { ymOf } from './period.ts';
+export { ymOf };
 
 /** `202608` → `2026-08`。給畫面用 */
 export function ymLabel(ym: Ym): string {
