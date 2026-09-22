@@ -16,6 +16,7 @@ import {
   validatePayment, overpayWarning, PAY_METHODS,
   drawerShape, delIncomeMsg,
   cumulativeTotals,
+  periodRange, netCardLabel, showThisPeriod, sortByDate,
 } from './other-book.ts';
 
 const ex = (id: string, amount: number, advanceId?: string | null): Entry => ({
@@ -378,4 +379,98 @@ test('★ 空的回 0，不是 NaN', () => {
 test('★ 支出比收入多的時候累積是負的', () => {
   const rows = [E('income', '2026-09-01', 100), E('expense', '2026-09-02', 500)];
   assert.equal(cumulativeTotals(rows, '2026-09-30', () => 500).net, -400);
+});
+
+
+/* ── 期間 ────────────────────────────────────────────
+   ★★★ 在守的是「7 月存的收入，9 月也看得到」。
+   本來是單月下拉，使用者連問兩輪「為何沒顯示」「有寫進去」——
+   資料一直都在，只是不在那個月（2026-09-22）。 */
+
+test('★★★ 全部:沒有下限，7 月那筆一定在範圍內', () => {
+  const r = periodRange('all', { ym: '2026-09' });
+  assert.equal(r.from, null);
+  assert.ok('2026-07-31' <= r.to, r.to);
+  /* 連很久以前的也要在裡面 */
+  assert.ok('2019-01-01' <= r.to);
+});
+
+test('★★★ 本月:7 月那筆不在 9 月的範圍裡（這正是使用者撞到的）', () => {
+  const r = periodRange('month', { ym: '2026-09' });
+  assert.equal(r.from, '2026-09-01');
+  assert.equal(r.to, '2026-09-30');
+  assert.ok(!('2026-07-31' >= r.from! && '2026-07-31' <= r.to));
+});
+
+test('★★ 今年:跨整年，7 月那筆在裡面', () => {
+  const r = periodRange('year', { ym: '2026-09' });
+  assert.deepEqual(r, { from: '2026-01-01', to: '2026-12-31' });
+  assert.ok('2026-07-31' >= r.from! && '2026-07-31' <= r.to);
+});
+
+test('★★ 自訂:訖要吃到那個月的最後一天，不是 1 號', () => {
+  /* 2 月的最後一天是 28（2026 不是閏年）—— 寫死 30 或 31 都會錯 */
+  assert.deepEqual(periodRange('custom', { ym: '2026-09', f1: '2026-01', f2: '2026-02' }),
+    { from: '2026-01-01', to: '2026-02-28' });
+  assert.equal(periodRange('custom', { ym: '2026-09', f1: '2026-04', f2: '2026-04' }).to, '2026-04-30');
+});
+
+test('★★ 起訖被顛倒過來也要給出合理的區間，不是一個永遠空的', () => {
+  const r = periodRange('custom', { ym: '2026-09', f1: '2026-08', f2: '2026-03' });
+  assert.deepEqual(r, { from: '2026-03-01', to: '2026-08-31' });
+});
+
+test('★ 期間不可以看今天是幾號 —— 同一份資料在不同日子要算出同一個答案', () => {
+  const a = periodRange('all', { ym: '2026-09' });
+  const b = periodRange('all', { ym: '2026-09' });
+  assert.deepEqual(a, b);
+  assert.equal(a.to, '9999-12-31');
+});
+
+/* ── 淨額卡的標題 ──────────────────────────────────── */
+
+test('★★★ 期間＝全部時不印「本期」—— 那時本期就等於累積', () => {
+  assert.equal(showThisPeriod('all'), false);
+  assert.equal(showThisPeriod('year'), true);
+  assert.equal(showThisPeriod('month'), true);
+  assert.equal(showThisPeriod('custom'), true);
+});
+
+test('★★ 標題要講得出「累積到哪裡」', () => {
+  assert.equal(netCardLabel('all', { ym: '2026-09' }), '淨額（全部）');
+  assert.equal(netCardLabel('year', { ym: '2026-09' }), '淨額（累積到 2026 年底）');
+  assert.equal(netCardLabel('month', { ym: '2026-09' }), '淨額（累積到 9 月底）');
+  /* 月份不要印成 09 —— 畫面上是「9 月底」 */
+  assert.ok(!netCardLabel('month', { ym: '2026-09' }).includes('09'));
+});
+
+/* ── 排序 ────────────────────────────────────────── */
+
+const D = (id: string, date: string | null) => ({ id, date });
+
+test('★★★ 預設新到舊', () => {
+  const r = sortByDate([D('a', '2026-07-31'), D('b', '2026-09-09'), D('c', '2026-09-07')]);
+  assert.deepEqual(r.map((x) => x.id), ['b', 'c', 'a']);
+});
+
+test('★★ 按一下換成舊到新', () => {
+  const r = sortByDate([D('a', '2026-07-31'), D('b', '2026-09-09'), D('c', '2026-09-07')], false);
+  assert.deepEqual(r.map((x) => x.id), ['a', 'c', 'b']);
+});
+
+test('★★ 同一天的順序要是確定的 —— 不然重排時畫面看起來像資料自己在動', () => {
+  const rows = [D('x', '2026-09-08'), D('a', '2026-09-08'), D('m', '2026-09-08')];
+  assert.deepEqual(sortByDate(rows).map((r) => r.id), sortByDate(rows).map((r) => r.id));
+  assert.deepEqual(sortByDate(rows).map((r) => r.id), ['x', 'm', 'a']);
+});
+
+test('★ 不可以就地改掉傳進來的陣列', () => {
+  const rows = [D('a', '2026-07-31'), D('b', '2026-09-09')];
+  sortByDate(rows);
+  assert.deepEqual(rows.map((r) => r.id), ['a', 'b']);
+});
+
+test('★ 沒有日期的排最後（新到舊時）', () => {
+  const r = sortByDate([D('n', null), D('b', '2026-09-09')]);
+  assert.deepEqual(r.map((x) => x.id), ['b', 'n']);
 });

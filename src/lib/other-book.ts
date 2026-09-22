@@ -366,6 +366,76 @@ export function cumulativeTotals(
   return { net, unpaid };
 }
 
+/* ══════════════════════════════════════════════════════════
+ * 期間（使用者 2026-09-22：「預設所有都顯示／可以選期間？」）
+ *
+ * ★★★ 本來是**單月下拉**。7 月存的那筆收入在 9 月看不到 ——
+ *   使用者連問兩輪「為何沒顯示」「有寫進去」，而資料一直都在，
+ *   只是不在那個月。一個把東西藏起來而不講的篩選，
+ *   跟「資料不見了」在畫面上長得一模一樣。
+ *
+ * ★★ 四種:全部／今年／本月／自訂起訖。預設**全部**。
+ * ★ 回的是**日期字串**（`YYYY-MM-DD`），直接餵給查詢與比較 ——
+ *   月份字串與日期字串混用是這個專案踩過的坑
+ *   （`'2026-08-20'.startsWith('202608')` 永遠是 false）。
+ * ══════════════════════════════════════════════════════════ */
+export type PeriodKind = 'all' | 'year' | 'month' | 'custom';
+
+/** `from` 是 null 代表沒有下限（從這本帳的第一筆開始） */
+export function periodRange(
+  kind: PeriodKind, o: { ym: string; f1?: string; f2?: string },
+): { from: string | null; to: string } {
+  const ym = o.ym;
+  if (kind === 'month') return monthRange(ym);
+  if (kind === 'year') {
+    const y = ym.slice(0, 4);
+    return { from: `${y}-01-01`, to: `${y}-12-31` };
+  }
+  if (kind === 'custom') {
+    const a = o.f1 || ym, b = o.f2 || ym;
+    /* ★ 起訖被顛倒過來也要給出合理的答案，不要回一個永遠是空的區間 */
+    const lo = a <= b ? a : b, hi = a <= b ? b : a;
+    return { from: `${lo}-01`, to: monthRange(hi).to };
+  }
+  /* all：沒有下限，上限給一個不會擋到任何真實日期的值。
+     ★ 不用 `new Date()` —— 那會讓同一份資料在不同日子算出不同答案。 */
+  return { from: null, to: '9999-12-31' };
+}
+
+/** 那張淨額卡的標題 */
+export function netCardLabel(kind: PeriodKind, o: { ym: string; f2?: string }): string {
+  if (kind === 'all') return '淨額（全部）';
+  if (kind === 'year') return `淨額（累積到 ${o.ym.slice(0, 4)} 年底）`;
+  if (kind === 'month') return `淨額（累積到 ${Number(o.ym.slice(5))} 月底）`;
+  return `淨額（累積到 ${o.f2 || o.ym} 底）`;
+}
+
+/**
+ * 淨額卡底下要不要印「本期 ±N」。
+ *
+ * ★ 期間＝全部的時候**不印** —— 那時本期就等於累積，
+ *   同一個數字寫兩次（README:重複的數字不要寫第二次）。
+ */
+export function showThisPeriod(kind: PeriodKind): boolean {
+  return kind !== 'all';
+}
+
+/**
+ * 照日期排。預設**新到舊**（使用者 2026-09-22）。
+ *
+ * ★ 日期一樣時用 id 當第二鍵 —— 不然同一天的幾筆每次重排
+ *   順序都可能不一樣，畫面上看起來像資料自己在動。
+ */
+export function sortByDate<T extends { date: string | null; id: string }>(
+  rows: readonly T[], desc = true,
+): T[] {
+  return rows.slice().sort((a, b) => {
+    const x = (a.date ?? ''), y = (b.date ?? '');
+    if (x !== y) return desc ? y.localeCompare(x) : x.localeCompare(y);
+    return desc ? b.id.localeCompare(a.id) : a.id.localeCompare(b.id);
+  });
+}
+
 /**
  * 記一筆實支之前的檢查。回第一個錯，沒問題回 null。
  *

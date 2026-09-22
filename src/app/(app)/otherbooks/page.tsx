@@ -17,6 +17,7 @@ import {
   totals, byMonth, byCode, unsettled, applyFilters, monthRange, prevMonth, pctChange,
   isLent, lentTotal, lentSiblings,
   paidOf, dueOf, gapOf, bookTotals, cumulativeTotals, validatePayment, overpayWarning,
+  periodRange, netCardLabel, showThisPeriod, sortByDate, type PeriodKind,
   PAY_METHODS, type Payment,
   drawerShape, delIncomeMsg,
   type Entry, type Filters,
@@ -82,6 +83,17 @@ export default function OtherBooksPage() {
   const [book, setBook] = useState<Book>('aipi');
   const [tab, setTab] = useState<'ledger' | 'dash'>('ledger');
   const [ym, setYm] = useState(thisYm());
+  /*
+   * 期間（使用者 2026-09-22：「預設所有都顯示／可以選期間？」）。
+   * ★ 預設 **all** —— 使用者明講「預設所有都顯示」。
+   *   代價是每次進來都全撈;愛皮洪鯊各幾十列，現在沒問題，
+   *   真的長到會慢那天要改成資料庫端加總的 RPC，不是把範圍砍回去。
+   */
+  const [pk, setPk] = useState<PeriodKind>('all');
+  const [f1, setF1] = useState(thisYm());
+  const [f2, setF2] = useState(thisYm());
+  /** 列表照日期排，預設新到舊 */
+  const [desc, setDesc] = useState(true);
   const [rows, setRows] = useState<Entry[]>([]);
   /** 實支明細，照 expense_id 分組（migration_277） */
   const [pays, setPays] = useState<Record<string, Payment[]>>({});
@@ -142,7 +154,7 @@ export default function OtherBooksPage() {
     if (!canSee) { setLoading(false); return; }
     setLoading(true);
     setErr('');
-    const { to } = monthRange(ym);
+    const { to } = periodRange(pk, { ym, f1, f2 });
 
     /*
      * ══════════ 應支與實支（migration_277）══════════
@@ -234,7 +246,7 @@ export default function OtherBooksPage() {
     } else setAdv({});
 
     setLoading(false);
-  }, [supabase, book, ym, canSee]);
+  }, [supabase, book, ym, pk, f1, f2, canSee]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -360,13 +372,20 @@ export default function OtherBooksPage() {
     load();
   }
 
-  /** 這個月的（列表與儀錶板都用它）。 */
+  /**
+   * 這個期間的（列表與儀錶板都用它）。
+   * ★ `from` 是 null 代表「全部」—— 沒有下限，不要拿 null 去比字串。
+   */
   const cur = useMemo(() => {
-    const { from, to } = monthRange(ym);
-    return rows.filter((e) => (e.date ?? '') >= from && (e.date ?? '') <= to);
-  }, [rows, ym]);
+    const { from, to } = periodRange(pk, { ym, f1, f2 });
+    return rows.filter((e) => {
+      const d = e.date ?? '';
+      return (from === null || d >= from) && d <= to;
+    });
+  }, [rows, ym, pk, f1, f2]);
 
-  const shown = useMemo(() => applyFilters(cur, f), [cur, f]);
+  /* ★ 排序放在篩選後面 —— 兩件事分開，改一邊不會動到另一邊 */
+  const shown = useMemo(() => sortByDate(applyFilters(cur, f), desc), [cur, f, desc]);
 
   /*
    * ══════════ 實支怎麼算（算式在 lib/other-book.ts，有測試）══════════
@@ -383,7 +402,8 @@ export default function OtherBooksPage() {
    *   跟著篩選跑的話，搜尋一個關鍵字就會得到一個不存在的餘額。
    */
   const cum = useMemo(
-    () => cumulativeTotals(rows, monthRange(ym).to, paidFor), [rows, ym, paidFor]);
+    () => cumulativeTotals(rows, periodRange(pk, { ym, f1, f2 }).to, paidFor),
+    [rows, ym, pk, f1, f2, paidFor]);
 
   /* ══════════════ 新增 ══════════════ */
 
@@ -507,84 +527,14 @@ export default function OtherBooksPage() {
           <Tabs size="sm" className="mb-3" value={tab} onChange={setTab}
             items={[{ key: 'ledger' as const, label: '收支帳' },
                     { key: 'dash' as const, label: '儀錶板' }]} />
-        {/* 月份 ＋ 三個新增入口 */}
-        {/*
-          手機上月份自己一行、三顆新增按鈕平分寬度。
-          用 flex-wrap 讓它們自然折行的話，會變成「兩顆一行、一顆掉下來」——
-          那個落單的按鈕看起來像壞掉。
-        */}
-        <div className="flex flex-wrap items-center gap-2 mb-2 md:mb-4">
-          <input type="month" value={ym} onChange={(e) => setYm(e.target.value || thisYm())}
-            className="h-10 md:h-9 rounded-lg border border-mor-line bg-white px-2 text-sm" />
-          <div className="mr-auto text-xs text-gray-400">
-            {loading ? '載入中…' : `共 ${shown.length} 筆`}
-          </div>
-          {tab === 'ledger' && (
-            <div className="w-full md:w-auto grid grid-cols-3 md:flex gap-2">
-              <button onClick={() => { setErr(''); setInc({ date: today(), party: '', code: '', item: '', amount: 0, account: '', paid: true, note: '' }); }}
-                className="h-11 md:h-9 rounded-lg bg-mor-slate text-white px-2 md:px-4 text-sm font-medium hover:bg-mor-slatedark">
-                ＋ 收入
-              </button>
-              {/*
-                請款要走審核（愛皮洪鯊只要總經理一票）—— 導到請款頁，
-                不在這裡做一套。兩套審核流程遲早會不一致。
-              */}
-              <a href="/purchases"
-                className="h-11 md:h-9 flex items-center justify-center rounded-lg border border-mor-line bg-white px-2 md:px-4 text-sm font-medium hover:bg-mor-sand/60">
-                ＋ 請款
-              </a>
-              <button onClick={() => { setErr(''); setExp({ date: today(), item: '', code: '', amount: 0, method: 'cash', account: '', voucher: '', note: '' }); }}
-                className="h-11 md:h-9 rounded-lg border border-mor-line bg-white px-2 md:px-4 text-sm font-medium hover:bg-mor-sand/60">
-                ＋ 支出
-              </button>
-            </div>
-          )}
-        </div>
-
-
         {tab === 'ledger' ? (
           <>
             {/*
-              ══════════════════════════════════════════════════════
-              篩選列（2026-08-29 改用全站共用元件 lib/filters.tsx）
-
-              ★ 原本三個欄位**沒有小標題** —— 靠選項自己說話
-                （「收入與支出」「全部科目」）。那在只有三欄時勉強可讀,
-                但跟全站其他頁不一致:別頁是「標題在上、選項寫『全部』」。
-
-              ★ 手機的兩欄網格拿掉了。globals.css 的 `.filter-bar` 會把
-                篩選列在手機轉成直向、每欄滿版 —— 那比兩欄各 110px 好讀。
-
-              ★★★ 關鍵字**有搜尋鈕**（2026-08-29 使用者指定）。
-
-                 本來刻意沒有:資料已經整批在前端了,邊打邊篩不花成本。
-                 但**只算了成本、沒算習慣** —— 使用者在其他頁養成
-                 「打完字按搜尋」,到這頁打完會停下來找那顆鈕,
-                 找不到就以為欄位壞了（其實已經篩好了）。
-
-              ★ 前端篩的頁「按了才生效」幾乎零延遲。一致性贏過那點即時性。
-              ══════════════════════════════════════════════════════
+              ★★★ 版面順序（2026-09-22 使用者指定）：
+                  **卡片 → 篩選 → 動作（共 N 筆 ＋ 三顆鈕）→ 列表**。
+                先看這段期間長什麼樣子，再決定要不要縮小範圍，
+                要動手了才看到新增鈕，最後才是明細。
             */}
-            <FilterBar active={!!(f.kind || f.code || f.kw)}>
-              <FilterSelect label="收支" value={f.kind ?? ''}
-                onChange={(v) => setF({ ...f, kind: v as Filters['kind'] })}
-                all="全部"
-                /*
-                  ★ 選項是「收入／支出」不是「只看收入／只看支出」
-                    （2026-08-29 使用者在帳戶頁指定,全站統一）。
-                    上面的「全部」沒有「只看」兩個字,三個選項要唸起來像同一組。
-                */
-                options={[{ value: 'income', label: '收入' }, { value: 'expense', label: '支出' }]} />
-              <FilterSelect label="科目" value={f.code ?? ''}
-                onChange={(v) => setF({ ...f, code: v })}
-                options={codes.map((c) => ({ value: c.code, label: c.name }))} />
-              <FilterSearch placeholder="項目／對象／備註"
-                value={kwDraft} onChange={setKwDraft}
-                onSubmit={() => setF({ ...f, kw: kwDraft })} />
-              <FilterClear active={!!(f.kind || f.code || f.kw)}
-                onClear={() => { setF({}); setKwDraft(''); }} />
-            </FilterBar>
-
             {/*
               小計。篩選之後也要更新 —— 不然篩了半天上面還是全月的數字。
 
@@ -619,11 +569,130 @@ export default function OtherBooksPage() {
                   沒寫的話切了月份也看不出它有沒有跟著動。
                 ★ 未付只在**有**的時候印（重複的數字不要寫第二次）。
               */}
-              <StatCard label={`淨額（累積到 ${Number(ym.slice(5))} 月底）`}
+              {/*
+                ★★ 期間＝全部時標題改成「淨額（全部）」，而且**不印「本期」**——
+                  那時本期就等於累積，同一個數字寫兩次。
+                  標題／要不要印都在 `netCardLabel` / `showThisPeriod`（有測試）。
+              */}
+              <StatCard label={netCardLabel(pk, { ym, f2 })}
                 value={<span className={cum.net < 0 ? 'text-red-600' : ''}>{fmt(cum.net)}</span>}
-                sub={`本月 ${sum.net >= 0 ? '+' : '−'}${fmt(Math.abs(sum.net))}`
-                  + (cum.unpaid ? `　・　未付 ${fmt(cum.unpaid)}` : '')} />
+                sub={[
+                  showThisPeriod(pk)
+                    ? `本期 ${sum.net >= 0 ? '+' : '−'}${fmt(Math.abs(sum.net))}` : '',
+                  cum.unpaid ? `未付 ${fmt(cum.unpaid)}` : '',
+                ].filter(Boolean).join('　・　') || undefined} />
             </StatRow>
+            {/*
+              ══════════════════════════════════════════════════════
+              篩選列（2026-08-29 改用全站共用元件 lib/filters.tsx）
+
+              ★ 原本三個欄位**沒有小標題** —— 靠選項自己說話
+                （「收入與支出」「全部科目」）。那在只有三欄時勉強可讀,
+                但跟全站其他頁不一致:別頁是「標題在上、選項寫『全部』」。
+
+              ★ 手機的兩欄網格拿掉了。globals.css 的 `.filter-bar` 會把
+                篩選列在手機轉成直向、每欄滿版 —— 那比兩欄各 110px 好讀。
+
+              ★★★ 關鍵字**有搜尋鈕**（2026-08-29 使用者指定）。
+
+                 本來刻意沒有:資料已經整批在前端了,邊打邊篩不花成本。
+                 但**只算了成本、沒算習慣** —— 使用者在其他頁養成
+                 「打完字按搜尋」,到這頁打完會停下來找那顆鈕,
+                 找不到就以為欄位壞了（其實已經篩好了）。
+
+              ★ 前端篩的頁「按了才生效」幾乎零延遲。一致性贏過那點即時性。
+              ══════════════════════════════════════════════════════
+            */}
+            <FilterBar active={!!(f.kind || f.code || f.kw) || pk !== 'all'}>
+              {/*
+                ══════════ 期間（2026-09-22 使用者指定）══════════
+                ★★★ 本來是頁面最上面的**單月下拉**。7 月存的收入在 9 月
+                  看不到 —— 使用者連問兩輪「為何沒顯示」，而資料一直都在。
+                  現在跟收支／科目／關鍵字放同一列:它本來就是篩選條件。
+                ★★ 按了快捷時起訖兩格**淡掉** —— 那時不是使用者在控制它們，
+                  留著亮的會讀成「期間是 2026-01～2026-12」，跟「全部」互相矛盾。
+              */}
+              <label className="flex flex-col gap-1">
+                <span className="text-uisub text-gray-500">期間</span>
+                <span className="inline-flex h-10 md:h-9 overflow-hidden rounded-lg
+                                 border border-mor-line bg-white">
+                  {([['all', '全部'], ['year', '今年'], ['month', '本月']] as const).map(([k, t]) => (
+                    <button key={k} type="button" onClick={() => setPk(k)}
+                      className={`px-3 text-sm first:border-0 border-l border-mor-line
+                        ${pk === k ? 'bg-mor-slate font-semibold text-white' : 'text-gray-500 hover:bg-mor-sand/50'}`}>
+                      {t}</button>
+                  ))}
+                </span>
+              </label>
+              <label className={`flex flex-col gap-1 ${pk === 'custom' ? '' : 'opacity-45'}`}>
+                <span className="text-uisub text-gray-500">起</span>
+                <input type="month" value={f1}
+                  onChange={(e) => { setF1(e.target.value || thisYm()); setPk('custom'); }}
+                  className="h-10 md:h-9 rounded-lg border border-mor-line bg-white px-2 text-sm" />
+              </label>
+              <label className={`flex flex-col gap-1 ${pk === 'custom' ? '' : 'opacity-45'}`}>
+                <span className="text-uisub text-gray-500">訖</span>
+                <input type="month" value={f2}
+                  onChange={(e) => { setF2(e.target.value || thisYm()); setPk('custom'); }}
+                  className="h-10 md:h-9 rounded-lg border border-mor-line bg-white px-2 text-sm" />
+              </label>
+              <FilterSelect label="收支" value={f.kind ?? ''}
+                onChange={(v) => setF({ ...f, kind: v as Filters['kind'] })}
+                all="全部"
+                /*
+                  ★ 選項是「收入／支出」不是「只看收入／只看支出」
+                    （2026-08-29 使用者在帳戶頁指定,全站統一）。
+                    上面的「全部」沒有「只看」兩個字,三個選項要唸起來像同一組。
+                */
+                options={[{ value: 'income', label: '收入' }, { value: 'expense', label: '支出' }]} />
+              <FilterSelect label="科目" value={f.code ?? ''}
+                onChange={(v) => setF({ ...f, code: v })}
+                options={codes.map((c) => ({ value: c.code, label: c.name }))} />
+              <FilterSearch placeholder="項目／對象／備註"
+                value={kwDraft} onChange={setKwDraft}
+                onSubmit={() => setF({ ...f, kw: kwDraft })} />
+              <FilterClear active={!!(f.kind || f.code || f.kw) || pk !== 'all'}
+                onClear={() => { setF({}); setKwDraft(''); setPk('all'); }} />
+            </FilterBar>
+
+            {/*
+              ══════════ 動作列（2026-09-22 改版）══════════
+              ★★★ 順序是**卡片 → 篩選 → 動作 → 列表**（使用者指定）——
+                先看這段期間長什麼樣子，再決定要不要縮小範圍，
+                要動手了才看到新增鈕，最後才是明細。
+                所以這一段在畫面上排在篩選列後面（見下方的 `order-*`）。
+              ★★ 月份選擇器**移進篩選列**了 —— 它本來就是篩選條件。
+              ★ 「共 N 筆」靠右貼著那三顆鈕:它講的是下面那張表有幾列，
+                左邊那一大片空白跟它無關。
+              手機上三顆新增按鈕平分寬度；用 flex-wrap 自然折的話會變成
+              「兩顆一行、一顆掉下來」，那個落單的按鈕看起來像壞掉。
+            */}
+            <div className="flex flex-wrap items-center gap-2 mb-2 md:mb-3">
+              <div className="ml-auto text-xs text-gray-400">
+                {loading ? '載入中…' : `共 ${shown.length} 筆`}
+              </div>
+              {tab === 'ledger' && (
+                <div className="w-full md:w-auto grid grid-cols-3 md:flex gap-2">
+                  <button onClick={() => { setErr(''); setInc({ date: today(), party: '', code: '', item: '', amount: 0, account: '', paid: true, note: '' }); }}
+                    className="h-11 md:h-9 rounded-lg bg-mor-slate text-white px-2 md:px-4 text-sm font-medium hover:bg-mor-slatedark">
+                    ＋ 收入
+                  </button>
+                  {/*
+                    請款要走審核（愛皮洪鯊只要總經理一票）—— 導到請款頁，
+                    不在這裡做一套。兩套審核流程遲早會不一致。
+                  */}
+                  <a href="/purchases"
+                    className="h-11 md:h-9 flex items-center justify-center rounded-lg border border-mor-line bg-white px-2 md:px-4 text-sm font-medium hover:bg-mor-sand/60">
+                    ＋ 請款
+                  </a>
+                  <button onClick={() => { setErr(''); setExp({ date: today(), item: '', code: '', amount: 0, method: 'cash', account: '', voucher: '', note: '' }); }}
+                    className="h-11 md:h-9 rounded-lg border border-mor-line bg-white px-2 md:px-4 text-sm font-medium hover:bg-mor-sand/60">
+                    ＋ 支出
+                  </button>
+                </div>
+              )}
+            </div>
+
 
             {loading ? (
               <div className="text-center text-gray-400 py-16">載入中…</div>
@@ -687,16 +756,31 @@ export default function OtherBooksPage() {
                 <table className="w-full text-sm">
                   <thead className="bg-mor-sand/40 text-xs text-gray-500">
                     <tr>
-                      <th className="px-3 py-2 text-left whitespace-nowrap">日期</th>
+                      {/*
+                        ★ 日期可以按著排（2026-09-22 使用者指定）。預設新到舊。
+                          兩種狀態的箭頭要長得不一樣，不然那顆箭頭沒有在報告任何事。
+                      */}
+                      <th className="px-3 py-2 text-left whitespace-nowrap">
+                        <button type="button" onClick={() => setDesc((v) => !v)}
+                          className="inline-flex items-center gap-1 font-semibold
+                                     text-gray-500 hover:text-mor-slate">
+                          日期<span className="inline-block w-3 text-center text-[10px]
+                                               text-mor-slate">{desc ? '▼' : '▲'}</span>
+                        </button>
+                      </th>
                       <th className="px-3 py-2 text-left">項目</th>
                       <th className="px-3 py-2 text-left whitespace-nowrap">會計科目</th>
                       {/*
                         ★ 「對象」收進抽屜（2026-09-18）—— 十列有十列是「—」，
                           那一欄的寬度讓給「檢視」。要看對象就打開抽屜。
-                        ★★ 金額改叫「實支」:應支只在跟實支不一樣時，
+                        ★★★ 金額拆成**收入／支出兩欄**（2026-09-22 使用者指定）。
+                          本來只有一欄叫「實支」，而收入也印在那一欄底下 ——
+                          欄名說它是支出，數字是收入。
+                        ★★ 支出那欄印的是**實支**，應支只在跟實支不一樣時
                           印在數字底下那一行（琥珀色）。
                       */}
-                      <th className="px-3 py-2 text-right whitespace-nowrap">實支</th>
+                      <th className="px-3 py-2 text-right whitespace-nowrap">收入</th>
+                      <th className="px-3 py-2 text-right whitespace-nowrap">支出</th>
                       <th className="px-3 py-2 text-center whitespace-nowrap w-16">檢視</th>
                     </tr>
                   </thead>
@@ -707,11 +791,12 @@ export default function OtherBooksPage() {
                         className="even:bg-mor-sand/20 hover:bg-mor-sand/60 cursor-pointer">
                         <td className="px-3 py-2 whitespace-nowrap text-gray-500">{e.date}</td>
                         <td className="px-3 py-2">
+                          {/*
+                            ★ 「收／支」那顆標籤拿掉了（2026-09-22 使用者指定）——
+                              金額在哪一欄就講完了，再放一顆籤是同一件事講兩次。
+                              **手機卡片那邊留著** —— 那裡沒有兩欄可以分。
+                          */}
                           <div className="flex items-center gap-1.5">
-                            <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${
-                              e.kind === 'income' ? 'bg-mor-greenlight text-mor-green' : 'bg-red-50 text-red-600'}`}>
-                              {e.kind === 'income' ? '收' : '支'}
-                            </span>
                             <span className="truncate">{e.name}</span>
                             <LendTag e={e} onOpen={setLend} />
                             {/* 還沒收的錢要標出來 —— 那是唯一會讓人今天做一件事的資訊 */}
@@ -744,10 +829,16 @@ export default function OtherBooksPage() {
                           ★ 不要負號（2026-09-17 使用者指定）—— 這一欄本來就是支出，
                             負號是把同一件事再講一次。
                         */}
+                        {/* 收入 */}
                         <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
-                          {e.kind === 'income' ? (
-                            <span>{fmt(e.amount)}</span>
-                          ) : (() => {
+                          {e.kind === 'income'
+                            ? <span className="font-semibold text-mor-greendark">{fmt(e.amount)}</span>
+                            /* ★ 空的那一格印「—」不要留白 —— 留白讀起來像還沒載完 */
+                            : <span className="text-gray-300">—</span>}
+                        </td>
+                        {/* 支出（實支） */}
+                        <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
+                          {e.kind === 'expense' ? (() => {
                             const due = dueOf(e); const paid = paidFor(e); const gap = gapOf(due, paid);
                             return (
                               <>
@@ -757,7 +848,7 @@ export default function OtherBooksPage() {
                                 )}
                               </>
                             );
-                          })()}
+                          })() : <span className="text-gray-300">—</span>}
                         </td>
                         <td className="px-3 py-2 text-center">
                           <button onClick={(ev) => { ev.stopPropagation(); setView({ ...e }); }}
