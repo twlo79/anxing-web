@@ -21,8 +21,8 @@ import {
  * 人會先點日子、選完才發現假別沒選。編號讓「還沒輪到你」看得出來。
  *
  * 【★★★ 兩種單位，兩條不同的路】
- *   · 以天請   月曆點日子，一天算一整天。**不用逐日開下拉選模式**
- *   · 以小時請 填「起算日 ＋ 幾點 ＋ 請多久」，結束時間系統自己算
+ *   · 請整天   月曆點日子，一天算一整天。**不用逐日開下拉選模式**
+ *   · 請小時   填「起算日 ＋ 幾點 ＋ 請多久」，結束時間系統自己算
  *     （`spreadHours()`：午休跳過、下班換隔天、假日整天跳過）
  *
  * 上一版每一天都要開一次下拉選「整天／上午／下午／指定時段」——
@@ -62,14 +62,14 @@ type Props = {
  *   是同一個層級的答案，擺在明細裡等於要人先選了日子才發現可以改。
  */
 type Unit = 'day' | 'half' | 'hour';
-const UNIT_LABEL: Record<Unit, string> = { day: '以天請（整天）', half: '以半天請', hour: '以小時請' };
+const UNIT_LABEL: Record<Unit, string> = { day: '請整天', half: '請半天', hour: '請小時' };
 const UNIT_HINT: Record<Unit, string> = {
   day: '整天不用填時間，點日子就好。',
   half: '點到的每一天都算半天。哪一半在右邊選，個別日子可以到下面明細改。',
   hour: '兩小時、跨天的零頭走這裡 —— 填起算點與時數，結束時間系統算。',
 };
 
-/** 以半天請時，點日子預設落在哪一半 */
+/** 「請半天」時，點日子預設落在哪一半 */
 const HALF_LABEL: Record<'am' | 'pm', string> = { am: '上午', pm: '下午' };
 
 const WD = ['日', '一', '二', '三', '四', '五', '六'];
@@ -109,7 +109,7 @@ export default function LeaveForm({ types, remainOf, usedOf, onMsg, onDone }: Pr
   const [err, setErr] = useState<string | null>(null);
   const today = toYmd(new Date());
   const [view, setView] = useState({ y: Number(today.slice(0, 4)), m: Number(today.slice(5, 7)) });
-  /* 以小時請的三格 */
+  /* 「請小時」的三格 */
   const [hDate, setHDate] = useState<Ymd>(today);
   const [hStart, setHStart] = useState('09:00');
   const [hLen, setHLen] = useState('');
@@ -172,7 +172,7 @@ export default function LeaveForm({ types, remainOf, usedOf, onMsg, onDone }: Pr
   }
   /*
    * ★★★ 換單位時，**已經點的日子跟著換**。
-   *   留著不換的話，畫面上寫「以半天請」而明細裡是一堆整天 ——
+   *   留著不換的話，畫面上寫「請半天」而明細裡是一堆整天 ——
    *   兩個地方對同一張單給出不同答案（README 那條坑）。
    * ★ 換完明細馬上看得到，不是安靜改掉。
    */
@@ -228,7 +228,7 @@ export default function LeaveForm({ types, remainOf, usedOf, onMsg, onDone }: Pr
     </div>
   );
 
-  /** 月曆。`readOnly` 時只是給人確認範圍（以小時請那邊用） */
+  /** 月曆。`readOnly` 時只是給人確認範圍（「請小時」那邊用） */
   function Calendar({ readOnly }: { readOnly?: boolean }) {
     return (
       <div className="grid grid-cols-7 gap-1.5 mt-2">
@@ -289,7 +289,7 @@ export default function LeaveForm({ types, remainOf, usedOf, onMsg, onDone }: Pr
             <select value={unit} onChange={(e) => switchUnit(e.target.value as Unit)} className={SEL}>
               {(['day', 'half', 'hour'] as Unit[]).map((u) => <option key={u} value={u}>{UNIT_LABEL[u]}</option>)}
             </select>
-            {/* ★ 只有「以半天請」要問哪一半 —— 其餘兩種不出現，不佔位置 */}
+            {/* ★ 只有「請半天」要問哪一半 —— 其餘兩種不出現，不佔位置 */}
             {unit === 'half' && (
               <select value={half} onChange={(e) => switchHalf(e.target.value as 'am' | 'pm')}
                 className="h-10 rounded-lg border border-mor-line bg-white px-3 text-sm">

@@ -10,7 +10,7 @@ import type { Role, TabProps } from './types';
 import { Tabs } from '@/components/Tabs';
 
 /**
- * 出勤：打卡 · 申請 · 核可 · 出勤日曆（含公告）· 管理
+ * 出勤：打卡 · 請假申請 · 核可 · 出勤日曆（含公告）· 管理
  *
  * 【為什麼全部擠在一頁，不是五個側欄項目】
  * 側欄已經 13 個項目。每多一項，真正每天要用的功能就被往下擠一格。
@@ -33,7 +33,13 @@ import { Tabs } from '@/components/Tabs';
  * 而沒有人看的公告等於沒發。
  */
 const TAB_LABEL = {
-  punch: '打卡', apply: '申請', approve: '核可',
+  /*
+   * ★★ 「請假申請」不是「申請」（2026-09-23 使用者指定）——
+   *   這一頁的三個小分頁是請假／加班／補登打卡，而九成的人來是為了請假，
+   *   叫「申請」看不出來是申請什麼。加班與補登仍在這一頁底下，這是刻意的取捨。
+   * ★ 「核可」維持原名 —— 那一頁同樣裝三種單，而主管要做的事就是「核」，不分種類。
+   */
+  punch: '打卡', apply: '請假申請', approve: '核可',
   calendar: '出勤日曆', admin: '管理',
 } as const;
 type TabKey = keyof typeof TAB_LABEL;
@@ -58,7 +64,7 @@ export default function AttendancePage() {
    *
    * 【為什麼要跨分頁帶值】
    * 看到「8/7 沒打下班卡」的當下就是他最想處理的時候。
-   * 讓他自己切到申請分頁、再切到補登、再從日曆選 8/7 —— 中間三步，
+   * 讓他自己切到請假申請分頁、再切到補登、再從日曆選 8/7 —— 中間三步，
    * 每一步都是一次放棄的機會，而放棄的成本是那天的工時永遠是錯的。
    */
   const [fix, setFix] = useState<{ date: string; kind: 'in' | 'out'; n: number } | null>(null);
@@ -151,7 +157,7 @@ export default function AttendancePage() {
 
       {cur === 'punch' && (
         <PunchTab {...props} onFix={(date, kind) => {
-          // n 遞增：同一天按第二次也要讓申請分頁重新帶值
+          // n 遞增：同一天按第二次也要讓請假申請分頁重新帶值
           setFix({ date, kind, n: (fix?.n ?? 0) + 1 });
           setTab('apply');
           setMsg(null);

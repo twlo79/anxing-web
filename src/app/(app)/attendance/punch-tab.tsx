@@ -71,7 +71,7 @@ function Clock({ now, ink }: { now: Date | null; ink: CardInk }) {
 }
 
 export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
-  /** 「補登」按鈕：跳到申請分頁並帶入那一天 */
+  /** 「補登」按鈕：跳到請假申請分頁並帶入那一天 */
   onFix?: (workDate: string, kind: 'in' | 'out') => void;
 }) {
   const supabase = useMemo(() => createClient(), []);
