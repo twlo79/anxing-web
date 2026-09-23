@@ -1,7 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
-import { remainText } from '@/lib/punch';
 import {
   toTaipeiIso, hoursBetween, leaveVote, otVote, checkFixDate, twToday, shiftMonth,
 } from '@/lib/attendance-ui';
@@ -99,38 +98,53 @@ export default function ApplyTab({ me, onMsg, prefill }: TabProps & {
           「52 小時」要自己除以 8 才知道是六天半，而且看不出來用掉多少。
           一條占比的橫條讓人一眼知道「今年的假還剩多少」——
           那是這張卡唯一要回答的問題。
+
+          ★★★ 2026-09-23（使用者指定）：**天數是主角，小時退成副標**。
+            人請假是用天想的，「56 小時（約 7 天）」把要看的那個數字放進括號裡。
+
+          ★★★ 沒有額度的假別**只報累積，不報剩餘**。
+            事假原本寫「不限」—— 讀起來像鼓勵，而且看不出自己今年請了多少。
+            病假原本掛一個 56 小時的額度，但那是設定值不是法規上限。
+            現在規則只有一條：**`has_quota` 決定看不看額度**，
+            而 `request_leave_batch()`（migration_291）擋的時候看的也是這一欄 ——
+            畫面講的跟資料庫擋的是同一件事，不會出現「沒說要擋卻擋住」。
+            要讓某個假別改成只報累積，到「管理 → 假別」把「有額度」關掉即可，不用改程式。
         */}
         <div className="grid sm:grid-cols-3 gap-2">
           {types.map((t) => {
             const b = bals.find((x) => x.type_code === t.code);
             const quota = Number(b?.quota_hours ?? 0);
             const used = Number(b?.used_hours ?? 0);
-            // 沒有額度上限的假別（事假）不顯示數字 —— 顯示 0 會讓人以為請不了
             const remain = !t.has_quota ? null : Math.max(0, quota - used);
             const noQuota = t.has_quota && !b;
             // 剩不到兩成轉橘：快用完是需要提前知道的事
             const ratio = quota > 0 ? Math.min(1, Math.max(0, remain! / quota)) : 0;
-            const c = noQuota ? C_OUT : ratio > 0.2 || !t.has_quota ? C_IN : C_OUT;
+            const c = ratio > 0.2 ? C_IN : C_OUT;
+            const d = (h: number) => (daily > 0 ? Math.round((h / daily) * 100) / 100 : 0);
             return (
               <div key={t.code} className="rounded-xl border border-mor-line px-3 py-2.5">
-                <div className="flex items-baseline gap-2">
-                  <span className="text-xs text-gray-500">{t.name}</span>
-                  <span className="flex-1" />
-                  {b && t.has_quota && (
-                    <span className="text-[11px] text-gray-400 tabular-nums">
-                      {quota} 中用了 {used}
-                    </span>
-                  )}
-                </div>
-                <div className="text-sm font-semibold mt-0.5"
-                  style={{ color: noQuota ? C_OUT : '#2E3840' }}>
-                  {noQuota ? '今年未設額度' : remainText(remain, daily)}
-                </div>
-                {t.has_quota && !noQuota && (
-                  <div className="mt-1.5 h-1.5 rounded-full bg-mor-line/70 overflow-hidden">
-                    <div className="h-full rounded-full transition-[width]"
-                      style={{ width: `${ratio * 100}%`, backgroundColor: c }} />
-                  </div>
+                <div className="text-xs text-gray-500">{t.name}</div>
+                {remain == null ? (
+                  /* 不看額度：今年累積請了多少 */
+                  <>
+                    <div className="text-xl font-bold leading-tight tabular-nums mt-0.5">
+                      今年已請 {used} 小時
+                    </div>
+                    <div className="text-xs text-gray-500 tabular-nums">約 {d(used)} 天 · 沒有額度上限</div>
+                  </>
+                ) : noQuota ? (
+                  <div className="text-sm font-semibold mt-0.5" style={{ color: C_OUT }}>今年未設額度</div>
+                ) : (
+                  <>
+                    <div className="text-xl font-bold leading-tight tabular-nums mt-0.5">剩 {d(remain)} 天</div>
+                    <div className="text-xs text-gray-500 tabular-nums">
+                      {remain} 小時 · 已用 {d(used)} 天
+                    </div>
+                    <div className="mt-1.5 h-1.5 rounded-full bg-mor-line/70 overflow-hidden">
+                      <div className="h-full rounded-full transition-[width]"
+                        style={{ width: `${ratio * 100}%`, backgroundColor: c }} />
+                    </div>
+                  </>
                 )}
               </div>
             );
@@ -161,7 +175,9 @@ export default function ApplyTab({ me, onMsg, prefill }: TabProps & {
             if (!t?.has_quota) return null;
             const b = bals.find((x) => x.type_code === code);
             return b ? Math.max(0, Number(b.quota_hours ?? 0) - Number(b.used_hours ?? 0)) : 0;
-          }} />
+          }}
+          /* 不看額度的假別在表單底下報「送出後今年累積幾小時」—— 跟上面那排卡同一個數字 */
+          usedOf={(code) => Number(bals.find((x) => x.type_code === code)?.used_hours ?? 0)} />
       )}
       {sub === 'ot' && (
         <>

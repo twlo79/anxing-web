@@ -74,6 +74,9 @@ export const holidayMap = (rows: readonly HolidayRow[] | null | undefined): Map<
 
 /* ── 時數 ────────────────────────────────────────────────── */
 const mins = (t: Hm): number => { const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
+/** `spreadHours()` 在分鐘與 `HH:mm` 之間來回，兩支都收在這裡 */
+const hhmm = mins;
+const toHm = (n: number): Hm => `${pad(Math.floor(n / 60))}:${pad(n % 60)}`;
 
 /**
  * 一段時間裡有幾個「工作小時」：夾在上下班之間、扣掉午休。
@@ -158,6 +161,67 @@ export function spreadWorkdays(start: Ymd, n: number, holidays: ReadonlyMap<Ymd,
   let d = start, guard = 0;
   while (out.length < n && guard++ < 400) { if (isWorkday(d, holidays)) out.push(d); d = addDays(d, 1); }
   return out;
+}
+
+/* ── 以小時請：起算點 ＋ 時數 → 明細 ─────────────────────── */
+/**
+ * 從「哪一天幾點」開始，往後鋪 `hours` 個**工作小時**，回一天一列的明細。
+ *
+ * ============================================================
+ * 【★★★ 為什麼不是「結束 = 開始 + 時數」】
+ *
+ * 那是牆上時鐘。09:00 + 4 小時 = 13:00，但 12:30～13:30 是午休 ——
+ * 實際上班只有 3.5 小時，少扣半小時，**而畫面上看起來完全正常**。
+ * 這裡逐段推進：碰到午休跳過、碰到下班換隔天、碰到假日整天跳過。
+ *
+ * ★★ 起算點落在非上班時間時**自動往後挪**（午休中→午休後、假日→下一個上班日、
+ *   下班後→隔天上班），挪到哪裡由回傳的第一列自己講。
+ *   呼叫端要把「從 X 起算」寫在畫面上 —— 安靜挪會讓人以為自己填錯。
+ *
+ * ★ 逐 30 分鐘推進。請假的粒度本來就不會比半小時細，
+ *   而用逐分鐘推的話一天要跑 480 圈，沒有必要。
+ *
+ * ★★★ 時數的算法還是 `workHours()`（跟 `leave_hours_between()` 同一條）——
+ *   這裡只負責「切到哪裡」，不自己算時數。送出時資料庫會再算一次比對。
+ */
+export function spreadHours(
+  startDate: Ymd, startTime: Hm, hours: number,
+  holidays: ReadonlyMap<Ymd, string>, ws: WorkSettings = DEFAULT_WS,
+): DayPlan[] {
+  const out: DayPlan[] = [];
+  if (!isYmd(startDate) || !(hours > 0)) return out;
+  const wStart = hhmm(ws.work_start), wEnd = hhmm(ws.work_end);
+  const lStart = hhmm(ws.lunch_start), lEnd = hhmm(ws.lunch_end);
+  let d = startDate;
+  let t = Math.max(hhmm(startTime || ws.work_start), wStart);
+  let left = hours;
+  // 上限：往後找一年還鋪不完就放棄（避免假日表壞掉時無窮迴圈）
+  for (let guard = 0; left > 0.001 && guard < 400; guard++) {
+    if (!isWorkday(d, holidays)) { d = addDays(d, 1); t = wStart; continue; }
+    if (t >= wEnd) { d = addDays(d, 1); t = wStart; continue; }
+    if (t >= lStart && t < lEnd) t = lEnd;      // 起算點卡在午休裡
+    /*
+     * 每次推 30 分鐘，用 `workHours()` 回頭算「到這裡累積幾小時」——
+     * 午休那段本來就回 0，所以不用特別跳過它（342 種起點×時數比對過，
+     * 加不加那條 continue 輸出完全一樣；那行只是多繞兩圈，拿掉）。
+     */
+    let e = t, used = 0;
+    while (used < left - 0.001 && e < wEnd) {
+      e += 30;
+      used = workHours(toHm(t), toHm(e), ws);
+    }
+    if (used > 0.001) {
+      out.push({ d, s: toHm(t), e: toHm(e), h: used, mode: 'custom' });
+      left = Math.round((left - used) * 100) / 100;
+    }
+    d = addDays(d, 1); t = wStart;
+  }
+  return out;
+}
+
+/** 起算點被往後挪了沒 —— 挪了的話回實際的第一天，沒挪回 null */
+export function movedStart(startDate: Ymd, plan: readonly DayPlan[]): Ymd | null {
+  return plan.length && plan[0].d !== startDate ? plan[0].d : null;
 }
 
 /* ── 送出前的擋 ──────────────────────────────────────────── */
