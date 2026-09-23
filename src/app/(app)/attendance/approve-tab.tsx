@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { isBoss as isBossRole } from '@/lib/roles';
 import { createClient } from '@/lib/supabase';
 import { leaveVote, otVote } from '@/lib/attendance-ui';
 import {
@@ -51,7 +52,7 @@ export default function ApproveTab({ me, onMsg }: TabProps) {
   const [ots, setOts] = useState<WithName<OtReq>[]>([]);
   const [fixes, setFixes] = useState<WithName<FixReq>[]>([]);
   const [busy, setBusy] = useState('');
-  const isBoss = me.role === 'super_admin';
+  const isBoss = isBossRole(me.role);
 
   const load = useCallback(async () => {
     // 已結束只看最近 60 天。全部撈的話會愈來愈慢，而超過兩個月的沒有人在追。

@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import { fmtInt as fmt } from '@/lib/fmt';
 import { createClient } from '@/lib/supabase';
 import { todayStr } from '@/lib/period';
 import { METHOD_LABEL } from '@/components/RefundFields';
@@ -33,7 +34,6 @@ import {
  * 只在排匯款問的話，排錯了就再也沒有機會改 —— 請款單踩過同一個坑。
  */
 
-const fmt = (n: number | null | undefined) => Math.round(Number(n) || 0).toLocaleString('en-US');
 
 export type StepMode = 'plan' | 'settle';
 

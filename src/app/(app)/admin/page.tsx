@@ -4,6 +4,8 @@ import {
   checkTenure, handoverPatch, tenureLabel, managerIdOn, type Tenure,
 } from '@/lib/estate-manager';
 import Toast from '@/components/Toast';
+import { isBoss, isAccountant } from '@/lib/roles';
+import { useFlash } from '@/lib/use-flash';
 import { writeError } from '@/lib/write-guard';
 import { createClient } from '@/lib/supabase';
 import { todayStr } from '@/lib/period';
@@ -339,7 +341,8 @@ export default function AdminPage() {
   const [payAccounts, setPayAccounts] = useState<PayAccount[]>([]);
   const [selEstate, setSelEstate] = useState<string>('');
   const [newPropName, setNewPropName] = useState('');
-  const [msg, setMsg] = useState('');
+  // ★ 全站唯一一份訊息邏輯（lib/use-flash）：錯誤紅色留到按掉，成功 2.5 秒自己走
+  const { msg, msgErr, flash, clearMsg } = useFlash(2500);
   const [tab, setTab] = useState<TabKey>('people');
   const [tenures, setTenures] = useState<MgrTenure[]>([]);
   /** 展開哪一個物業的任期 */
@@ -421,7 +424,6 @@ export default function AdminPage() {
     load();
   }, [role, loadingProfile, load]);
 
-  function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 2500); }
 
   /*
    * 這個物業的房源，**不排房的沉到最下面**（使用者 2026-09-15 選的 C 案）。
@@ -502,7 +504,7 @@ export default function AdminPage() {
         .not('checkout', 'is', null).neq('imported_via', 'contract').range(f, t)),
       supabase.from('order_lock_pending').select('ym').eq('resolved', false),
     ]);
-    if (lk.error) { setMsg('讀不到關帳紀錄：' + lk.error.message); return; }
+    if (lk.error) { flash('讀不到關帳紀錄：' + lk.error.message); return; }
     setLocks((lk.data ?? []) as LockRow[]);
 
     const c: Record<string, number> = {};
@@ -548,10 +550,10 @@ export default function AdminPage() {
       };
       const { data, error } = await supabase.from('period_lock')
         .upsert(patch, { onConflict: 'ym' }).select('ym');
-      if (error) { setMsg((lock ? '關帳失敗：' : '打開失敗：') + error.message); return; }
-      if (!data?.length) { setMsg('回成功但沒寫進去 —— 可能是權限'); return; }
+      if (error) { flash((lock ? '關帳失敗：' : '打開失敗：') + error.message); return; }
+      if (!data?.length) { flash('回成功但沒寫進去 —— 可能是權限'); return; }
       await loadLocks();
-      setMsg(lock ? `${ymLabel(ym)} 已關帳` : `${ymLabel(ym)} 已打開，改完記得關回去`);
+      flash(lock ? `${ymLabel(ym)} 已關帳` : `${ymLabel(ym)} 已打開，改完記得關回去`);
     } finally { setCloseBusy(false); }
   }
 
@@ -1200,10 +1202,10 @@ export default function AdminPage() {
   }
 
   if (role === null) return <div className="text-gray-400 py-20 text-center">載入中…</div>;
-  const isAdmin = role === 'super_admin';
+  const isAdmin = isBoss(role);
   const canSee: TabKey[] = isAdmin
     ? (Object.keys(TAB_LABEL) as TabKey[])
-    : role === 'accountant' ? ACCOUNTANT_TABS : [];
+    : isAccountant(role) ? ACCOUNTANT_TABS : [];
   if (!canSee.length) {
     return <div className="text-gray-400 py-20 text-center">此頁僅限總經理與會計</div>;
   }
@@ -1214,7 +1216,7 @@ export default function AdminPage() {
     <div className="max-w-4xl">
       <div className="flex items-center justify-between mb-4">
         <h1>權限管理</h1>
-        <Toast msg={msg} />
+        <Toast msg={msg} error={msgErr} onClose={clearMsg} />
       </div>
 
       <Tabs variant="browser" tone="page" className="mb-5" value={tab} onChange={setTab}

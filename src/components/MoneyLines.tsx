@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import { fmtInt as fmt } from '@/lib/fmt';
 import {
   blankLine, isTwd, lineTwd, totalTwd, TWD,
   CURRENCIES, isKnownCurrency, currencyLabel, type Line,
@@ -41,7 +42,6 @@ import Req from '@/components/Req';
  * 一列拆成兩行 —— 五個欄位擠在 375px 會全部變成 30px 寬的小格子。
  */
 
-const fmt = (n: number) => Math.round(n || 0).toLocaleString('en-US');
 const CTRL = 'h-11 md:h-8 bg-white rounded-lg border border-mor-line px-2 text-sm';
 
 /** 左邊標籤欄。呼叫端自己畫「訂金」「寵物押金」那幾列時要用同一個 */

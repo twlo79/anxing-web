@@ -3,6 +3,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AddButton, ExportButton } from '@/components/Actions';
 import Req from '@/components/Req';
 import MoneyInput from '@/components/MoneyInput';
+import { fmtInt as fmt } from '@/lib/fmt';
+import { isBoss, isManager as isManagerRole } from '@/lib/roles';
+import { useFlash } from '@/lib/use-flash';
 import { writeError } from '@/lib/write-guard';
 import { missingFields, missingMessage, submitGate, gateCls } from '@/lib/required';
 import { todayStr } from '@/lib/period';
@@ -149,7 +152,6 @@ const STATUS_LABEL: Record<Status, string> = {
   refund_pending: '退款審核中', refund_approved: '已核可待匯款',
 };
 
-const fmt = (n: number | null) => (n == null ? '0' : Math.round(n).toLocaleString());
 // ★ 2026-09-22：改用 lib/period 的 todayStr（本地時區）。原本是 UTC，台灣凌晨 0～8 點會得到前一天。
 
 const COLS: SortCols<Dep> = {
@@ -166,7 +168,8 @@ export default function DepositsPage() {
   const [estates, setEstates] = useState<Estate[]>([]);
   const [payAccounts, setPayAccounts] = useState<PayAccount[]>([]);
   const [loading, setLoading] = useState(true);
-  const [msg, setMsg] = useState('');
+  // ★ 全站唯一一份訊息邏輯（lib/use-flash）：錯誤紅色留到按掉，成功 3 秒自己走
+  const { msg, msgErr, flash, clearMsg } = useFlash(3000);
 
   // 篩選
   const [fromD, setFromD] = useState('');
@@ -280,7 +283,6 @@ export default function DepositsPage() {
   const [rejecting, setRejecting] = useState<Dep | null>(null);
   const [rejectReason, setRejectReason] = useState('');
 
-  function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 3000); }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -606,8 +608,8 @@ export default function DepositsPage() {
   }
 
   const role = me?.role ?? '';
-  const isManager = role === 'manager';
-  const isAdmin = role === 'super_admin';
+  const isManager = isManagerRole(role);
+  const isAdmin = isBoss(role);
   const canRequest = ['accountant', 'manager', 'super_admin'].includes(role);
   /*
    * 能不能改押金。**管家（與房務）只能看**（2026-08-17 使用者指定）。
@@ -1307,7 +1309,7 @@ export default function DepositsPage() {
 
   return (
     <div>
-      <Toast msg={msg} />
+      <Toast msg={msg} error={msgErr} onClose={clearMsg} />
 
       {/*
         聚焦提示。**一定要有** —— 沒有這一列的話,使用者看到的是一個

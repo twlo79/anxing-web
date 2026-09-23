@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ExportButton } from '@/components/Actions';
 import { AuditButton, AuditBadges, AuditSummary } from '@/components/Audit';
+import { fmtInt as fmt } from '@/lib/fmt';
 import { auditOrders, type AuditOrder } from '@/lib/audit-orders';
 import { todayStr } from '@/lib/period';
 import FilterToggle from '@/components/FilterToggle';
@@ -82,7 +83,6 @@ const SORT_COLS: SortCols<Row> = {
   month_amount: { type: 'number', get: (r) => r.month_amount },
 };
 
-const fmt = (n: number) => Math.round(n).toLocaleString();
 const minus1 = (d: string) => { const dt = new Date(d + 'T00:00:00Z'); dt.setUTCDate(dt.getUTCDate() - 1); return dt.toISOString().slice(0, 10); };
 function monthsInRange(from: string, to: string) {
   const [fy, fm] = (from || '').split('-').map(Number);

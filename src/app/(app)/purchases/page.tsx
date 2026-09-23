@@ -3,6 +3,8 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import StatCard from '@/components/StatCard';
 import { AddButton, ExportButton } from '@/components/Actions';
 import { Tabs } from '@/components/Tabs';
+import { fmtIntOrBlank as fmt } from '@/lib/fmt';
+import { isBoss, isManager as isManagerRole, isAccountant as isAccountantRole } from '@/lib/roles';
 import { writeError } from '@/lib/write-guard';
 import { submitBlockedBy, requestTotal } from '@/lib/demand-to-request';
 import { todayStr } from '@/lib/period';
@@ -191,7 +193,6 @@ const ST_COLOR: Record<string, string> = {
   draft: 'bg-gray-100 text-gray-600', pending: 'bg-amber-50 text-amber-700',
   approved: 'bg-mor-greenlight text-mor-green', rejected: 'bg-red-50 text-red-600',
 };
-const fmt = (n: number | null | undefined) => (n == null ? '' : Math.round(n).toLocaleString());
 // ★ 2026-09-22：改用 lib/period 的 todayStr（本地時區）。原本是 UTC，台灣凌晨 0～8 點會得到前一天。
 
 export default function PurchasesPage() {
@@ -471,9 +472,9 @@ export default function PurchasesPage() {
   const acctName = useMemo(() => Object.fromEntries(payAccounts.map((a) => [a.code, a.name])), [payAccounts]);
 
   const role = me?.role ?? '';
-  const isManager = role === 'manager';
-  const isAdmin = role === 'super_admin';
-  const isAccountant = role === 'accountant';
+  const isManager = isManagerRole(role);
+  const isAdmin = isBoss(role);
+  const isAccountant = isAccountantRole(role);
   const canSeeAll = isManager || isAdmin || isAccountant;
   // 排匯款與匯出:主管、總經理、會計都能操作。會計不能核可,但能安排與執行付款。
   const canSetDate = isManager || isAdmin || isAccountant;

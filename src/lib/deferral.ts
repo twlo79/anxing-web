@@ -1,3 +1,4 @@
+import { fmtInt as money } from './fmt.ts';
 /**
  * 支出的遞延認列。
  *
@@ -123,7 +124,6 @@ export function checkDeferral(gross: number, paidOn: string, lines: DeferralLine
   return { ok: true };
 }
 
-const money = (n: number) => Math.round(n).toLocaleString('en-US');
 
 /**
  * 母單那一列，金額底下的第二行。

@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import MoneyInput from '@/components/MoneyInput';
+import { fmtInt as fmt } from '@/lib/fmt';
 import { createClient } from '@/lib/supabase';
 import { ymOf } from '@/lib/period';
 import { CONTRACT_FEE_PRESETS, feeLabel } from '@/lib/fee-types';
@@ -37,7 +38,6 @@ export type Rc = {
   active: boolean; note: string | null;
 };
 
-const fmt = (n: number | null | undefined) => Math.round(Number(n) || 0).toLocaleString('en-US');
 /** 'YYYYMM' → '2026-07'。輸入框用 month 型別，值的格式是 YYYY-MM。 */
 export const toMonthInput = (ym: string | null) =>
   (ym && /^\d{6}$/.test(ym) ? `${ym.slice(0, 4)}-${ym.slice(4)}` : '');

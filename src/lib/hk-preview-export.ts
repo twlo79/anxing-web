@@ -1,4 +1,5 @@
 import type { PairResult } from './hk-pair-check.ts';
+import { fmtInt as money } from './fmt.ts';
 
 /**
  * 把「產生預覽」整批導成一段純文字 —— 貼給人看、或貼進對話裡請人檢查。
@@ -58,7 +59,6 @@ export type ExportInput = {
   unpriced: { date: string; label: string; units: number; reason: string }[];
 };
 
-const money = (n: number) => Math.round(Number(n) || 0).toLocaleString('en-US');
 const total = (rows: ExportLine[]) =>
   (rows ?? []).reduce((a, r) => a + (Number(r.amount) || 0), 0);
 

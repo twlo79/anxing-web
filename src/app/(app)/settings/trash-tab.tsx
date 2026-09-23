@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { isBoss as isBossRole } from '@/lib/roles';
 import { createClient } from '@/lib/supabase';
 import { useProfile } from '@/lib/profile';
 import { fetchAll } from '@/lib/fetch-all';
@@ -139,7 +140,7 @@ export default function TrashTab({ initialTable = '' }: { initialTable?: string 
   }, [byState, table, q, names]);
 
   const openCount = rows.filter((r) => !r.restored_at && !r.purged_at).length;
-  const isBoss = role === 'super_admin';
+  const isBoss = isBossRole(role);
 
   return (
     <div>

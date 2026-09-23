@@ -1,6 +1,7 @@
 'use client';
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { isManagerOrBoss } from '@/lib/roles';
 import { createClient } from '@/lib/supabase';
 import { Tabs } from '@/components/Tabs';
 import NewsTab from '../settings/news-tab';
@@ -127,7 +128,7 @@ function BoardInner() {
   if (!ready) return <div className="text-sm text-gray-400 py-20 text-center">載入中…</div>;
   if (!me) return <div className="text-sm text-gray-500">請重新登入。</div>;
 
-  const isAdmin = me.role === 'manager' || me.role === 'super_admin';
+  const isAdmin = isManagerOrBoss(me.role);
 
   return (
     <div>

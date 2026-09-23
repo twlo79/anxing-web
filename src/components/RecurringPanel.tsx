@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Req from '@/components/Req';
 import MoneyInput from '@/components/MoneyInput';
+import { fmtInt as fmt } from '@/lib/fmt';
 import { missingFields, missingMessage } from '@/lib/required';
 import { createClient } from '@/lib/supabase';
 import { fetchAll } from '@/lib/fetch-all';
@@ -42,7 +43,6 @@ type Ord = { id: string; order_key: string; checkin: string; amount: number; pai
 type Estate = { id: string; name: string };
 type Property = { id: string; name: string; estate_id: string | null };
 
-const fmt = (n: number | null | undefined) => (n == null ? '0' : Math.round(Number(n)).toLocaleString('en-US'));
 const thisYm = () => { const d = new Date(); return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`; };
 const thisYear = () => String(new Date().getFullYear());
 /** 'RC_<uuid>_202601' → '202601' */

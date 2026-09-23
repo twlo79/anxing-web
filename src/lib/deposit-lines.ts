@@ -1,3 +1,4 @@
+import { fmtInt as money } from './fmt.ts';
 /**
  * 押金的幣別明細。
  *
@@ -133,7 +134,6 @@ export function fxOf(d: Parameters<typeof depLines>[0]): DepLine[] {
   return depLines(d).filter((l) => !isTwdLine(l));
 }
 
-const money = (n: number) => Math.round(n).toLocaleString('en-US');
 
 /**
  * 一列的顯示文字：「NT$ 160,000」／「JPY 10,000」／「寵物押金 NT$ 30,000」。

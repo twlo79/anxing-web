@@ -1,3 +1,4 @@
+import { isFinance } from './roles.ts';
 /**
  * 從押金扣除的加費。
  *
@@ -221,6 +222,6 @@ export function orderLockReason(
 ): string | null {
   if (!dep?.returned_on) return null;
   // 會計與總管理員可以改 —— 打錯一個字不該只能請人下 SQL
-  if (role === 'accountant' || role === 'super_admin') return null;
+  if (isFinance(role)) return null;
   return `押金已於 ${dep.returned_on} 退還，此單已結清。要修改請洽會計或總管理員。`;
 }

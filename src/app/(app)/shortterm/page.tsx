@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AddButton, ExportButton } from '@/components/Actions';
 import { AuditButton, AuditBadges, AuditSummary } from '@/components/Audit';
 import ToggleInfo from '@/components/ToggleInfo';
+import { fmtIntOrBlank as fmt } from '@/lib/fmt';
 import { auditOrders, type AuditOrder } from '@/lib/audit-orders';
 import { todayStr } from '@/lib/period';
 import Req from '@/components/Req';
@@ -236,7 +237,6 @@ const SRC_COLOR: Record<string, string> = {
   // 其他事業體用中性的琥珀色 —— 跟安幸那幾種分得開，一眼看得出不是本業
   [OTHER_BIZ_SOURCE]: 'bg-amber-50 text-amber-700',
 };
-const fmt = (n: number | null) => (n == null ? '' : Math.round(n).toLocaleString());
 const PAGE = 50;
 
 // 表頭排序 key → orders 資料表欄位。本頁走伺服器端排序,只能排真實欄位。

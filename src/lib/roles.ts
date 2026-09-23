@@ -108,3 +108,28 @@ export function orderDeleteBlockedReason(
   }
   return null;
 }
+
+/* ══════════════════════════════════════════════════════════
+ * 「是哪一種權限」—— 全站唯一的一份（2026-09-23）
+ *
+ * 【為什麼】`role === 'super_admin'` 這種比對散在 8 頁 14 處，
+ *   每一處各寫一次字串。改權限規則（例如「會計也可以核可」）要改 14 個地方，
+ *   漏一個不會報錯 —— 只會有某一頁的按鈕跟別頁不一樣，沒有人知道哪邊才對。
+ *
+ * ★ 名字照 CLAUDE.md 用語表：權限（＝`profiles.role`）叫
+ *   總經理（super_admin）／主管（manager）／會計（accountant）／管家／房務。
+ *   不叫「admin」「boss」—— 那兩個字在畫面上從來沒出現過。
+ *
+ * ★ 角色還沒載入時（null／undefined／''）一律 false，跟 canEditOrders 同一個理由。
+ * ══════════════════════════════════════════════════════════ */
+
+/** 總經理 */
+export const isBoss = (role: string | null | undefined): boolean => role === 'super_admin';
+/** 主管 */
+export const isManager = (role: string | null | undefined): boolean => role === 'manager';
+/** 會計 */
+export const isAccountant = (role: string | null | undefined): boolean => role === 'accountant';
+/** 主管或總經理 —— 核可的兩票、出勤管理、佈告欄管理 */
+export const isManagerOrBoss = (role: string | null | undefined): boolean => isManager(role) || isBoss(role);
+/** 會計或總經理 —— 看得到錢（其他收支帳、押金加費） */
+export const isFinance = (role: string | null | undefined): boolean => isAccountant(role) || isBoss(role);

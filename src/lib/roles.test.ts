@@ -1,6 +1,9 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { canEditOrders, orderDeleteBlockedReason, ORDER_EDIT_ROLES, ORDER_DELETE_ROLES } from './roles.ts';
+import {
+  canEditOrders, orderDeleteBlockedReason, ORDER_EDIT_ROLES, ORDER_DELETE_ROLES,
+  isBoss, isManager, isAccountant, isManagerOrBoss, isFinance,
+} from './roles.ts';
 
 /**
  * 這裡判斷錯**不會報錯**，只會讓某個角色看到一顆按了沒用的按鈕
@@ -96,5 +99,40 @@ describe('orderDeleteBlockedReason', () => {
   test('★ 清單:四個角色,沒有多也沒有少', () => {
     assert.deepEqual([...ORDER_DELETE_ROLES].sort(),
       ['accountant', 'housekeeper', 'manager', 'super_admin']);
+  });
+});
+
+/* ══════════════════════════════════════════════════════════
+ * 「是哪一種權限」—— 這幾支取代了散在 8 頁的 role === '…'。
+ * 每一條都是「錯了不會報錯」：判斷歪了只是某一頁多一顆或少一顆按鈕。
+ * ══════════════════════════════════════════════════════════ */
+describe('權限判斷 —— 全站唯一一份', () => {
+  const ROLES = ['housekeeper', 'cleaner', 'manager', 'accountant', 'super_admin'] as const;
+
+  test('isBoss 只認總經理', () => {
+    assert.deepEqual(ROLES.filter(isBoss), ['super_admin']);
+  });
+  test('isManager 只認主管', () => {
+    assert.deepEqual(ROLES.filter(isManager), ['manager']);
+  });
+  test('isAccountant 只認會計', () => {
+    assert.deepEqual(ROLES.filter(isAccountant), ['accountant']);
+  });
+  test('isManagerOrBoss ＝ 核可兩票的人', () => {
+    assert.deepEqual(ROLES.filter(isManagerOrBoss), ['manager', 'super_admin']);
+  });
+  test('isFinance ＝ 看得到錢的人（會計、總經理），主管不算', () => {
+    assert.deepEqual(ROLES.filter(isFinance), ['accountant', 'super_admin']);
+    assert.equal(isFinance('manager'), false);
+  });
+  test('★ 角色還沒載入（null／undefined／空字串）一律 false —— 不要先畫按鈕再收回', () => {
+    for (const fn of [isBoss, isManager, isAccountant, isManagerOrBoss, isFinance]) {
+      assert.equal(fn(null), false); assert.equal(fn(undefined), false); assert.equal(fn(''), false);
+    }
+  });
+  test('★ 不做前綴或大小寫的寬鬆比對 —— "Super_Admin"、"super_admin2" 都不是總經理', () => {
+    assert.equal(isBoss('Super_Admin'), false);
+    assert.equal(isBoss('super_admin2'), false);
+    assert.equal(isBoss(' super_admin'), false);
   });
 });

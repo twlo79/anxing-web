@@ -1,3 +1,4 @@
+import { fmtInt as money } from './fmt.ts';
 /**
  * 契約生命週期：結束租約 vs 刪除契約。
  *
@@ -66,7 +67,6 @@ export function summarize(rows: OrderLite[]): Impact {
  */
 export const needsTypedConfirm = (im: Impact) => im.total.paidN > 0;
 
-const money = (n: number) => Math.round(n).toLocaleString('en-US');
 const ym = (d: string | null) => (d ? `${d.slice(0, 4)}-${d.slice(5, 7)}` : '—');
 
 /**

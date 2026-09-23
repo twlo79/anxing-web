@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { fmtInt as fmt } from '@/lib/fmt';
 import { createClient } from '@/lib/supabase';
 import Receipts, { type ReceiptsHandle } from '@/components/Receipts';
 import {
@@ -48,7 +49,6 @@ type Inv = { id: string; invoice_no: string; invoice_date: string; note: string 
 
 /** 發票號碼格式:2 碼英文 + 8 碼數字。跟契約頁同一條規則。 */
 
-const fmt = (n: number | null | undefined) => Math.round(Number(n) || 0).toLocaleString('en-US');
 // ★ 2026-09-22：改用 lib/period 的 todayStr（本地時區）。原本是 UTC，台灣凌晨 0～8 點會得到前一天。
 const today = todayStr;
 /** 手機上手指按得到的最小高度。桌機縮回一般大小,免得表單過胖。 */

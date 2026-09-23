@@ -34,6 +34,7 @@
  * 而那正是 CLAUDE.md 說的「以後每次都要多想一次」。
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { fmtInt as fmt } from '@/lib/fmt';
 import { createClient } from '@/lib/supabase';
 import StatCard, { StatRow, StatGroup, StatTotal } from '@/components/StatCard';
 import MoneyInput from '@/components/MoneyInput';
@@ -54,7 +55,6 @@ import { accountsForBook } from '@/lib/purchase-pay';
 import AdvanceLedger from '@/components/AdvanceLedger';
 import { todayStr } from '@/lib/period';
 
-const fmt = (n: number) => Math.round(Number(n) || 0).toLocaleString('en-US');
 
 /*
  * 狀態的顏色。★ 照站上既有的語意（記在 ToggleInfo）:

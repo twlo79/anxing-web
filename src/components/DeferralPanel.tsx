@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import MoneyInput from '@/components/MoneyInput';
+import { fmtInt as fmt } from '@/lib/fmt';
 import { createClient } from '@/lib/supabase';
 import {
   checkDeferral, linesTotal, parentAmount, childLines,
@@ -34,7 +35,6 @@ type Expense = {
   item_name: string | null;
 };
 
-const fmt = (n: number) => Math.round(Number(n) || 0).toLocaleString('en-US');
 const CTRL = 'h-11 md:h-9 bg-white rounded-lg border border-mor-line px-2 text-sm';
 
 export default function DeferralPanel({

@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useFlash } from '@/lib/use-flash';
 import { writeError } from '@/lib/write-guard';
 import { createClient } from '@/lib/supabase';
 import Toast from '@/components/Toast';
@@ -187,7 +188,8 @@ export default function SocialPage() {
   const [splits, setSplits] = useState<Split[]>([]);
   const [urls, setUrls] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
-  const [msg, setMsg] = useState('');
+  // ★ 全站唯一一份訊息邏輯（lib/use-flash）：錯誤紅色留到按掉，成功 3.5 秒自己走
+  const { msg, msgErr, flash, clearMsg } = useFlash(3500);
   const [sel, setSel] = useState<string | null>(null);
   /*
    * ★★★ 乾淨模式**預設開著**。
@@ -204,7 +206,6 @@ export default function SocialPage() {
   const [accDraft, setAccDraft] = useState<AccDraft | null>(null);
   const [drag, setDrag] = useState<string | null>(null);
 
-  const flash = (t: string) => { setMsg(t); setTimeout(() => setMsg(''), 3500); };
 
   /*
    * ★★ 「已存」。這一頁**沒有儲存鈕** —— 文案離開欄位就存、換圖選完就存、
@@ -1194,7 +1195,7 @@ export default function SocialPage() {
           }} />
       )}
 
-      <Toast msg={msg} />
+      <Toast msg={msg} error={msgErr} onClose={clearMsg} />
     </div>
   );
 }

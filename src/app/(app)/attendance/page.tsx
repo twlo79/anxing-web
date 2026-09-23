@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { isManagerOrBoss } from '@/lib/roles';
 import { createClient } from '@/lib/supabase';
 import PunchTab from './punch-tab';
 import ApplyTab from './apply-tab';
@@ -91,7 +92,7 @@ export default function AttendancePage() {
     })();
   }, [supabase]);
 
-  const isAdmin = me?.role === 'manager' || me?.role === 'super_admin';
+  const isAdmin = isManagerOrBoss(me?.role);
 
   // 待辦數量放在分頁上 —— 主管不該為了確認「沒事」而點進去
   useEffect(() => {

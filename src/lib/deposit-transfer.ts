@@ -1,3 +1,4 @@
+import { fmtInt as money } from './fmt.ts';
 /**
  * 押金移房：A 房收過的押金轉到 B 房的新訂單。
  *
@@ -80,7 +81,6 @@ export const TRANSFER_ROLES = ['accountant', 'super_admin'];
 export const roleCanTransfer = (role: string | null | undefined) =>
   TRANSFER_ROLES.includes(role ?? '');
 
-const money = (n: number | null | undefined) => Math.round(Number(n) || 0).toLocaleString('en-US');
 
 /** 這筆押金在畫面上叫什麼。房號優先，沒有就用姓名 —— 不要顯示空白。 */
 export function depName(d: Pick<TransferDep, 'room' | 'guest_name'>): string {

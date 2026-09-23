@@ -1,6 +1,9 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AddButton, ExportButton } from '@/components/Actions';
+import { fmtIntOrBlank as fmt } from '@/lib/fmt';
+import { isBoss } from '@/lib/roles';
+import { useFlash } from '@/lib/use-flash';
 import { ActionRow, FilterCount, FieldSpacer, FilterSearch, FILTER_BTN_H } from '@/lib/filters';
 import { todayStr } from '@/lib/period';
 import { TAG_NON_CASH, TAG_NON_CASH_PG, isNonCash, withNonCash } from '@/lib/expense-tags';
@@ -81,7 +84,6 @@ const CURRENCIES = ['TWD', 'USD', 'JPY', 'CNY', 'EUR'];
  *   `counter` 這個英文鍵印在畫面上，而且**只有那兩種會這樣**，
  *   其他都正常，沒有人會馬上聯想到是兩份清單不同步。
  */
-const fmt = (n: number | null | undefined) => (n == null ? '' : Math.round(n).toLocaleString());
 // ★ 2026-09-22：改用 lib/period 的 todayStr（本地時區）。原本是 UTC，台灣凌晨 0～8 點會得到前一天。
 
 /**
@@ -124,7 +126,8 @@ export default function ExpensesPage() {
   const [payAccounts, setPayAccounts] = useState<PayAccount[]>([]);
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState(true);
-  const [msg, setMsg] = useState('');
+  // ★ 全站唯一一份訊息邏輯（lib/use-flash）：錯誤紅色留到按掉，成功 2.5 秒自己走
+  const { msg, msgErr, flash, clearMsg } = useFlash(2500);
   const [edit, setEdit] = useState<Expense | null>(null);
   const [starF, setStarF] = useState(false);     // 只看重要支出
   const [nonOpF, setNonOpF] = useState(false);   // 只看非營運
@@ -151,7 +154,6 @@ export default function ExpensesPage() {
   const [kwIn, setKwIn] = useState('');
   const [sort, setSort] = useState<SortState>({ key: 'spent_on', dir: 'desc' });
 
-  function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 2500); }
 
   useEffect(() => {
     supabase.from('account_codes').select('code, name, sort, active, kind').order('sort').then(({ data }) => setCodes(data ?? []));
@@ -436,7 +438,7 @@ export default function ExpensesPage() {
    */
   const [detail, setDetail] = useState<Expense | null>(null);
 
-  const canDelete = (e: Expense) => !e.source_item_id || role === 'super_admin';
+  const canDelete = (e: Expense) => !e.source_item_id || isBoss(role);
 
   async function del(e: Expense) {
     const extra = e.source_item_id ? '\n\n這筆支出來自請款單。刪除後不會回寫請款單,若之後重填採購日也不會重新產生。' : '';
@@ -520,7 +522,7 @@ export default function ExpensesPage() {
 
   return (
     <div>
-      <Toast msg={msg} />
+      <Toast msg={msg} error={msgErr} onClose={clearMsg} />
       {/*
         ★★★ 「★ 重要支出」在標題列右上，跟訂單／營收的「👀 防呆」同一個位置
              （2026-08-29 使用者:「參考防呆 ⓘ 然後關注移到右上角」）。

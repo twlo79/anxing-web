@@ -1,5 +1,8 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { fmtInt as fmt } from '@/lib/fmt';
+import { isFinance } from '@/lib/roles';
+import { useFlash } from '@/lib/use-flash';
 import { createClient } from '@/lib/supabase';
 import { todayStr } from '@/lib/period';
 import AdvanceLedger from '@/components/AdvanceLedger';
@@ -55,7 +58,6 @@ import {
  * 會出現「已經付掉的錢還在等核可」這種卡住的單。
  */
 
-const fmt = (n: number | null | undefined) => Math.round(Number(n) || 0).toLocaleString('en-US');
 // ★ 2026-09-22：改用 lib/period 的 todayStr（本地時區）。原本是 UTC，台灣凌晨 0～8 點會得到前一天。
 const today = todayStr;
 /** 七碼帶橫線（`2026-09`）—— 這一頁的月份跟 `<input type="month">` 同形狀，所以叫 ymDash 不叫 ym */
@@ -82,7 +84,7 @@ export default function OtherBooksPage() {
    * ★ 不渲染而不是灰掉 —— 灰掉的分頁會讓人一直去點然後問
    *   「為什麼我不能用」。跟權限管理頁同樣的處理。
    */
-  const canSee = role === 'accountant' || role === 'super_admin';
+  const canSee = isFinance(role);
 
   const [book, setBook] = useState<Book>('aipi');
   const [tab, setTab] = useState<'ledger' | 'dash'>('ledger');
@@ -125,7 +127,8 @@ export default function OtherBooksPage() {
    */
   const bookAccounts = useMemo(() => accountsForBook(accounts, book), [accounts, book]);
   const [loading, setLoading] = useState(true);
-  const [msg, setMsg] = useState('');
+  // ★ 全站唯一一份訊息邏輯（lib/use-flash）：錯誤紅色留到按掉，成功 4 秒自己走
+  const { msg, msgErr, flash, clearMsg } = useFlash(4000);
   const [err, setErr] = useState('');
   const [f, setF] = useState<Filters>({});
   /*
@@ -137,7 +140,6 @@ export default function OtherBooksPage() {
   const [exp, setExp] = useState<ExpenseDraft | null>(null);
   const [busy, setBusy] = useState(false);
 
-  function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 4000); }
 
   /*
    * 撈**從第一筆到選定月份的月底**，不是只撈當月，也不再只撈近 13 個月。
@@ -433,7 +435,7 @@ export default function OtherBooksPage() {
 
   return (
     <div className="p-4 md:p-6">
-      <Toast msg={msg} />
+      <Toast msg={msg} error={msgErr} onClose={clearMsg} />
 
       <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3">
         <h1 className="text-xl md:text-2xl font-semibold">其他收支帳</h1>

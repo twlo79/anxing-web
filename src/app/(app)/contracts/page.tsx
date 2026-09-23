@@ -2,6 +2,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AddButton, ExportButton } from '@/components/Actions';
 import Req from '@/components/Req';
+import { fmtIntOrBlank as fmt } from '@/lib/fmt';
+import { useFlash } from '@/lib/use-flash';
 import { writeError } from '@/lib/write-guard';
 import { submitGate, gateCls } from '@/lib/required';
 import MoneyInput from '@/components/MoneyInput';
@@ -121,7 +123,6 @@ function feeSplit(label: string): { fee_type: string; item_name: string | null }
 }
 
 // FEE_TYPES 的定義搬到 @/lib/fee-types —— 契約加費、短租加費、一次性收入共用一份
-const fmt = (n: number | null) => (n == null ? '' : Math.round(n).toLocaleString());
 
 /*
  * ══════════ 契約表單的版面零件（2026-09-16）══════════
@@ -168,7 +169,8 @@ export default function ContractsPage() {
   const [payAccounts, setPayAccounts] = useState<{ code: string; name: string }[]>([]);
   const [rows, setRows] = useState<Contract[]>([]);
   const [loading, setLoading] = useState(true);
-  const [msg, setMsg] = useState('');
+  // ★ 全站唯一一份訊息邏輯（lib/use-flash）：錯誤紅色留到按掉，成功 2.5 秒自己走
+  const { msg, msgErr, flash, clearMsg } = useFlash(2500);
   const [estateFilter, setEstateFilter] = useState('');
   const [edit, setEdit] = useState<Contract | null>(null);
   const [collect, setCollect] = useState<Contract | null>(null);
@@ -298,7 +300,6 @@ export default function ContractsPage() {
     supabase.from('properties').select('id, name, estate_id').order('name').then(({ data }) => setProperties(data ?? []));
     load();
   }, [supabase, load]);
-  function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 2500); }
 
   const todayS = todayStr();
   const statusOf = (c: any) => (!c.active ? 'disabled' : (c.end_date && c.end_date < todayS ? 'expired' : 'active'));
@@ -831,7 +832,7 @@ const nameOf = (c: Contract) =>
             長得不一樣的話,使用者每換一頁就要重新找那行字在哪。
         */}
         <h1>契約訂單與收款 <span className="text-sm font-normal text-gray-400">長租契約・商務中心・辦公室登記</span></h1>
-        <Toast msg={msg} />
+        <Toast msg={msg} error={msgErr} onClose={clearMsg} />
       </div>
 
       {/*
