@@ -1,4 +1,5 @@
 'use client';
+import { periodSplit } from '@/lib/period-split';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AddButton, ExportButton } from '@/components/Actions';
 import Req from '@/components/Req';
@@ -1515,11 +1516,19 @@ const nameOf = (c: Contract) =>
                   <div className="flex flex-wrap items-center gap-2 mt-1">
                     <span className={ML_LABEL} />
                     <span className="text-[11px] text-gray-500">
-                      {CAD_LABEL[edit.cadence]} ＝ 月租金
-                      <b className="text-mor-ink tabular-nums mx-1">
-                        NT$ {fmt(Math.round((edit.amount_per_period || 0) / (STEP_OF[edit.cadence] || 1)))}
-                      </b>
-                      × {STEP_OF[edit.cadence]}
+                      {(() => {
+                        /* 餘數放每期最後一個月（lib/period-split，跟 migration_298 同一條規則）。
+                           整除時還是「× 12」；除不盡才寫成「× 11 ＋ 155,635」—— 應收要對回契約金額，不是換算。 */
+                        const step = STEP_OF[edit.cadence] || 1;
+                        const sp = periodSplit(edit.amount_per_period || 0, step);
+                        return (<>
+                          {CAD_LABEL[edit.cadence]} ＝ 月租金
+                          <b className="text-mor-ink tabular-nums mx-1">NT$ {fmt(sp.base)}</b>
+                          {sp.remainder === 0
+                            ? <>× {step}</>
+                            : <>× {step - 1} ＋ 最後一個月 <b className="text-mor-ink tabular-nums mx-1">NT$ {fmt(sp.last)}</b></>}
+                        </>);
+                      })()}
                     </span>
                   </div>
                 )}
