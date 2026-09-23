@@ -26,6 +26,7 @@ import { keyBase, onlyKeyOf } from '@/lib/ltKey';
 // 關帳：畫面上擋住的判斷跟資料庫那支守衛走**同一份規則**（migration_249）
 import { isLocked, lockedMsg, lockYmOf, ymLabel, type Ym } from '@/lib/period-lock';
 import { invoiceMissing } from '@/lib/invoice';
+import { extendEnd, extendYms, restoreEnd, isGuessedRestore } from '@/lib/contract-extend';
 import { ymOf, todayStr } from '@/lib/period';
 // 「這筆收入算誰的」—— 畫面與存檔共用同一份規則（migration_247）
 import { contractPurpose, purposeLockedByType } from '@/lib/purpose';
@@ -50,6 +51,17 @@ type Contract = {
   id: string; estate_id: string | null; room: string | null; tenant_name: string | null;
   phone: string | null; cadence: string; type: string | null; monthly_rent: number | null; amount_per_period: number | null; deposit: number | null;
   start_date: string | null; end_date: string | null; pay_day: number | null; first_payment_date: string | null;
+  /**
+   * 展延之前的租期迄（migration_297）。
+   *
+   * ★★★ 展延與刪除延展本來不是一對逆運算:展延算出來的永遠是**月底**，
+   *   而刪除是用「延展起始月的前一個月底」回推 —— 原本的迄日不是月底時就還原不回去
+   *   （2028-10-30 刪完變 2028-10-31，2026-12-01 刪完變 2026-12-31，差 30 天）。
+   *   迄日往後挪會讓 `gen_contract_orders()` 多長一張月租單，而畫面上一個字都沒有。
+   *
+   * ★ null ＝ 沒展延過，或那次展延早於 2026-09-23（那時還沒有這一欄）。
+   */
+  pre_extend_end_date?: string | null;
   /** 訂金（migration_174）。earnest_only = 這張契約還在訂金階段,不產生月租單 */
   earnest_amount?: number | null; earnest_only?: boolean | null;
   paid: boolean; account: string | null; note: string | null; active: boolean; watch?: boolean; display_name?: string | null;
@@ -515,8 +527,11 @@ export default function ContractsPage() {
     };
     let newId = edit.id as string | null;
     if (edit.id) {
-      const { error } = await supabase.from('contracts').update(payload).eq('id', edit.id);
+      // ★ 數影響列數（🔴3）—— RLS 擋下來時回成功且影響 0 列，畫面卻說存好了
+      const { data: us, error } = await supabase.from('contracts')
+        .update(payload).eq('id', edit.id).select('id');
       if (error) return flash('儲存失敗:' + error.message);
+      if (!us?.length) return flash('一列都沒存到 —— 多半是權限或關帳。請重新整理後確認。');
     } else {
       // 要拿回 id 才能把暫存的固定加費掛上去
       const { data, error } = await supabase.from('contracts').insert(payload).select('id').single();
@@ -660,12 +675,33 @@ const nameOf = (c: Contract) =>
     // 真正的動作是下面那行「把契約迄日往前挪」。這些單放進回收桶只會累積成雜訊,
     // 而且單獨復原一張也沒有意義（下次重算又會被清掉）。
     if (toDel.length) { const { error } = await supabase.from('orders').delete().in('id', toDel); if (error) return flash('刪除失敗:' + error.message); }
-    const y = +b.startYm.slice(0, 4), m = +b.startYm.slice(4, 6);
-    const pe = new Date(y, m - 1, 0);
-    const peStr = `${pe.getFullYear()}-${String(pe.getMonth() + 1).padStart(2, '0')}-${String(pe.getDate()).padStart(2, '0')}`;
-    await supabase.from('contracts').update({ end_date: peStr }).eq('id', edit.id);
-    setEdit((prev) => prev ? { ...prev, end_date: peStr } : prev);
-    flash(`已刪除延展(${fmtYm(b.startYm)} 起),對應收租一併移除`);
+    /*
+     * ★★★ 要還原成哪一天（migration_297）。
+     *
+     *   刪的是**最早那批** → 用留底的原始迄日，並把留底清掉（整個展延都沒了）。
+     *   刪的是後面那幾批   → 「前一個月底」是對的 ——
+     *                        每一次展延算出來的迄日都是月底，回推月底剛好對上。
+     *
+     * ★★ 留底是 null（09-23 之前展延的舊契約）→ 只能回推月底，
+     *   但要把這件事**講在畫面上**。安靜猜一個日期，使用者會以為那就是原本的。
+     */
+    const first = extBatches[0];
+    const isFirst = !first || first.startYm === b.startYm;
+    const prev = isFirst ? (edit.pre_extend_end_date ?? null) : null;
+    const peStr = restoreEnd(b.startYm, prev);
+    const guessed = isGuessedRestore(isFirst, prev);
+    const patch: { end_date: string; pre_extend_end_date?: null } = { end_date: peStr };
+    if (isFirst) patch.pre_extend_end_date = null;
+    // ★ 數影響列數 —— RLS 擋下來的 update 回成功且影響 0 列（CLAUDE.md 第一條坑）
+    const { data: uc, error: ec } = await supabase.from('contracts')
+      .update(patch).eq('id', edit.id).select('id');
+    if (ec) return flash('收租單刪掉了，但契約迄日沒改回來:' + ec.message);
+    if (!uc?.length) return flash('收租單刪掉了，但契約一列都沒更新 —— 多半是權限。請重新整理後確認迄日。');
+    setEdit((p2) => p2 ? { ...p2, end_date: peStr, ...(isFirst ? { pre_extend_end_date: null } : {}) } : p2);
+    flash(guessed
+      ? `已刪除延展(${fmtYm(b.startYm)} 起)。★ 這次展延早於 2026-09-23，沒有留底 ——`
+        + ` 迄日回推到 ${peStr}，請確認是不是原本那一天。`
+      : `已刪除延展(${fmtYm(b.startYm)} 起),迄日回到 ${peStr},對應收租一併移除`);
     loadExtBatches(); load();
   }
 
@@ -675,15 +711,18 @@ const nameOf = (c: Contract) =>
     if (!N || N < 1) return flash('請輸入追加月數');
     if (!amt || amt <= 0) return flash('請輸入月租金或總共租金');
     if (!edit.end_date) return flash('需先設定租期迄才能展延');
-    const ed = new Date(edit.end_date + 'T00:00:00');
-    const newEnd = new Date(ed.getFullYear(), ed.getMonth() + 1 + N, 0);
-    const fmtLocal = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    const newEndStr = fmtLocal(newEnd);
-    const yms: string[] = []; let cur = new Date(ed.getFullYear(), ed.getMonth() + 1, 1);
+    // ★ 日期算式在 lib/contract-extend.ts（有測試，含「展延→刪除要回得到原本那天」）
+    const newEndStr = extendEnd(edit.end_date, N);
     const eb = keyBase(edit);
-    for (let i = 0; i < N; i++) { yms.push(`${eb}${cur.getFullYear()}${String(cur.getMonth() + 1).padStart(2, '0')}`); cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1); }
+    const yms = extendYms(edit.end_date, N).map((ym) => `${eb}${ym}`);
+    /*
+     * ★★★ 第一次展延要把**當下的迄日**留底（migration_297）——
+     *   已經有值就不覆寫，留最早那個才是真正的原始值（可多次展延）。
+     *   沒有這一欄的話，刪除延展只能用月底回推，還原不回非月底的迄日。
+     */
+    const keepPrev = edit.pre_extend_end_date ?? edit.end_date;
     const { data: u1, error: e1 } = await supabase.from('contracts')
-      .update({ end_date: newEndStr }).eq('id', edit.id).select('id');
+      .update({ end_date: newEndStr, pre_extend_end_date: keepPrev }).eq('id', edit.id).select('id');
     if (e1) return flash('展延失敗:' + e1.message);
     if (!u1?.length) return flash('展延失敗：沒有任何一列被更新（多半是權限或關帳）。');
     /*
@@ -700,7 +739,7 @@ const nameOf = (c: Contract) =>
       flash(`租期改了，但只有 ${u2?.length ?? 0}/${N} 張月租單套到金額 —— `
         + '多半是那幾個月的單還沒長出來，請重新整理後到收款分頁確認。');
     }
-    setEdit({ ...edit, end_date: newEndStr });
+    setEdit({ ...edit, end_date: newEndStr, pre_extend_end_date: keepPrev });
     setExt({ months: '', monthly: '', total: '' });
     flash(`已展延 ${N} 個月・新增 ${N} 期待收款(月租 $${amt})`);
     loadExtBatches(); load();
