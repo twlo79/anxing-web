@@ -42,3 +42,26 @@ describe('periodSplit', () => {
     assert.deepEqual(periodSplit(Number.NaN, 12), { base: 0, last: 0, remainder: 0 });
   });
 });
+
+import { periodAmounts } from './period-split.ts';
+describe('periodAmounts', () => {
+  it('整期：前 11 個月 base、第 12 個月吸收餘數，加總 = 每期', () => {
+    const a = periodAmounts(1867576, 12, 12);
+    assert.equal(a.length, 12);
+    assert.deepEqual(a.slice(0, 11), Array(11).fill(155631));
+    assert.equal(a[11], 155635);
+    assert.equal(a.reduce((x, y) => x + y, 0), 1867576);
+  });
+  it('不足整期（季繳最後一期只有 2 個月）：全部 base，沒有餘數月', () => {
+    assert.deepEqual(periodAmounts(90000, 3, 2), [30000, 30000]);
+    assert.deepEqual(periodAmounts(100001, 3, 2), [33334, 33334]);
+  });
+  it('月繳：一個月就是每期', () => {
+    assert.deepEqual(periodAmounts(30000, 1, 1), [30000]);
+  });
+  it('壞輸入：months 0／負／NaN → 空陣列', () => {
+    assert.deepEqual(periodAmounts(1000, 12, 0), []);
+    assert.deepEqual(periodAmounts(1000, 12, -2), []);
+    assert.deepEqual(periodAmounts(1000, 12, Number.NaN), []);
+  });
+});

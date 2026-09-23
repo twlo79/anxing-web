@@ -14,3 +14,15 @@ export function periodSplit(per: number, step: number): { base: number; last: nu
   const last = p - base * (s - 1);
   return { base, last, remainder: last - base };
 }
+
+/**
+ * 一期裡每個月的金額（照上面同一條規則）。`months` 通常 = step；
+ * 租期最後一期不足整期時（季繳租 14 個月 → 最後一期 2 個月）就只有前幾個月，
+ * 都是 base —— 餘數那個月根本沒到。
+ */
+export function periodAmounts(per: number, step: number, months: number): number[] {
+  const s = Math.max(1, Math.floor(step) || 1);
+  const { base, last } = periodSplit(per, s);
+  const n = Math.max(0, Math.floor(months) || 0);
+  return Array.from({ length: n }, (_, i) => (i === s - 1 ? last : base));
+}

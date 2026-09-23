@@ -1,5 +1,5 @@
 'use client';
-import { periodSplit } from '@/lib/period-split';
+import { periodSplit, periodAmounts } from '@/lib/period-split';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AddButton, ExportButton } from '@/components/Actions';
 import Req from '@/components/Req';
@@ -2115,14 +2115,27 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
    * 畫面上沒有任何跡象。所以這裡把差額標出來,並給一個明確的重算動作。
    */
   function periodMismatch(chunk: any[]) {
+    /*
+     * ★★ 比的是「契約寫的每期金額」，不是月租 × 月數（2026-09-23）。
+     *   月租是 round(每期 ÷ 12) 存的，× 12 回不到每期（差 ±4）——
+     *   migration_298 之後月租單是從每期金額拆的（餘數放每期最後一個月），
+     *   再拿月租 × 12 來比，每一張除不盡的年繳契約都會被標成「與契約不符」。
+     *   拆法跟資料庫同一支規則：lib/period-split。
+     */
+    const step = STEP_OF[c.cadence] || 1;
     const rent = Math.round(Number(c.monthly_rent) || 0);
-    if (!rent) return null;
-    const os = ordersOf(chunk);
-    if (!os.length) return null;
-    const now = os.reduce((a: number, o: any) => a + Math.round(Number(o.amount) || 0), 0);
-    const expect = os.length * rent;
+    const per = Math.round(Number(c.amount_per_period) || 0) || rent * step;
+    if (!per) return null;
+    // 用 chunk 的位置對月份（第幾個月決定它是不是餘數月），單子不存在的位置跳過
+    const pairs = chunk.map((mm: any, i: number) => ({ o: existing[kb + mm.ym], i })).filter((x) => x.o);
+    if (!pairs.length) return null;
+    const amounts = periodAmounts(per, step, chunk.length);
+    const want = pairs.map(({ o, i }) => ({ key: kb + chunk[i].ym, amount: amounts[i] ?? 0, order: o }));
+    const now = pairs.reduce((a: number, { o }) => a + Math.round(Number(o.amount) || 0), 0);
+    const expect = want.reduce((a, w) => a + w.amount, 0);
     if (now === expect) return null;
-    return { now, expect, months: os.length, rent, paidCount: os.filter((o: any) => o.paid).length };
+    return { now, expect, months: pairs.length, rent, per, want,
+      paidCount: pairs.filter(({ o }) => o.paid).length };
   }
 
   /**
@@ -2138,7 +2151,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
     const diff = m.expect - m.now;
     if (!confirm(
       `重算這一期的應收\n\n`
-      + `契約現值　${m.months} 個月 × $${fmt(m.rent)} = $${fmt(m.expect)}\n`
+      + `契約現值　$${fmt(m.expect)}（${m.months} 個月）\n`
       + `目前記的　$${fmt(m.now)}\n`
       + `差額　　　${diff > 0 ? '+' : ''}$${fmt(diff)}\n\n`
       + (m.paidCount
@@ -2147,13 +2160,13 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
       + `這幾個月的已認列營收會跟著重算,營收報表的數字會變。`
     )) return;
     setBusy(chunk[0].ym);
-    const keys = keysOf(chunk);
-    patchLocal(keys, { amount: m.rent, paid: false });
-    const { error } = await supabase.from('orders')
-      .update({ amount: m.rent, paid: false })   // paid_at 不動
-      .in('order_key', keys);
+    // 每個月各自的金額（餘數月跟其他月不一樣），所以一張一張改，不能整批寫同一個數
+    for (const w of m.want) patchLocal([w.key], { amount: w.amount, paid: false });
+    const rs = await Promise.all(m.want.map((w) =>
+      supabase.from('orders').update({ amount: w.amount, paid: false }).eq('order_key', w.key).select('id')));   // paid_at 不動
     setBusy('');
-    if (error) { alert('重算失敗:' + error.message); loadExisting(false); }
+    const bad = rs.map((r, i) => writeError(r, `重算 ${m.want[i].key}`)).find(Boolean);
+    if (bad) { alert('重算失敗:' + bad); loadExisting(false); }
   }
 
   /**
@@ -2778,7 +2791,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                         if (!m) return null;
                         return (
                           <div className="mt-1 rounded-lg bg-amber-50 text-amber-800 px-2 py-1 text-[11px] leading-relaxed">
-                            與契約不符：契約現值 {m.months} × ${fmt(m.rent)} = <b>${fmt(m.expect)}</b>，這一期記的是 ${fmt(m.now)}
+                            與契約不符：契約現值 <b>${fmt(m.expect)}</b>（{m.months} 個月），這一期記的是 ${fmt(m.now)}
                             {m.paidCount > 0 && <span className="text-amber-700/70">（{m.paidCount} 個月已收款，所以沒有自動更新）</span>}
                             {/* ★ 重算會改金額，跟收款同一類 —— 關帳就不給按 */}
                             <button onClick={() => rebuildPeriod(chunk)} disabled={!!busy || frozen}
