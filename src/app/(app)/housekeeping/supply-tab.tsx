@@ -366,7 +366,9 @@ export default function SupplyTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                 填**實際盤到多少**，差異系統自己算。沒盤的留空 —— 留空不等於 0。
               </div>
             </div>
-            <div className="max-h-96 overflow-y-auto">
+            {/* ★ overflow-auto 不是 overflow-y-auto：這張表五欄，手機 390px 排不下，
+                只鎖直向的話右邊兩欄（廠商、效期）會被裁掉而沒有捲軸（2026-09-23 掃到）*/}
+            <div className="max-h-96 overflow-auto">
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-gray-50 text-gray-500 text-left">
                   <tr>

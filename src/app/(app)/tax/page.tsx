@@ -630,7 +630,8 @@ export default function TaxPage() {
             </div>
           </div>
 
-          <div className="max-h-80 overflow-y-auto">
+          {/* ★ overflow-auto：七欄，窄視窗要能橫向捲（2026-09-23）*/}
+          <div className="max-h-80 overflow-auto">
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-gray-50 text-gray-500 text-left">
                 <tr>
