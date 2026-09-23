@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AddButton, ExportButton } from '@/components/Actions';
 import Req from '@/components/Req';
 import MoneyInput from '@/components/MoneyInput';
+import { writeError } from '@/lib/write-guard';
 import { missingFields, missingMessage, submitGate, gateCls } from '@/lib/required';
 import { todayStr } from '@/lib/period';
 import Toast from '@/components/Toast';
@@ -908,18 +909,19 @@ export default function DepositsPage() {
     if (isManager) { patch.manager_approved_by = me.id; patch.manager_approved_at = new Date().toISOString(); }
     else if (isAdmin) { patch.admin_approved_by = me.id; patch.admin_approved_at = new Date().toISOString(); }
     else return flash('你的角色不能核可');
-    const { error } = await supabase.from('deposits').update(patch).eq('id', d.id);
-    if (error) return flash('核可失敗:' + error.message);
+    // ★ 數列數（🔴3）：0 列的話「已核可」是假的 —— 押金退款是錢的決策，不能靠 load() 事後才發現
+    const r = await supabase.from('deposits').update(patch).eq('id', d.id).select('id');
+    const bad = writeError(r, '核可'); if (bad) return flash(bad);
     setDetail(null); flash('已核可'); load();
   }
 
   async function doReject() {
     if (!rejecting || !me) return;
     if (!rejectReason.trim()) return flash('請填駁回原因');
-    const { error } = await supabase.from('deposits').update({
+    const r = await supabase.from('deposits').update({
       refund_status: 'rejected', rejected_by: me.id, reject_reason: rejectReason.trim(),
-    }).eq('id', rejecting.id);
-    if (error) return flash('駁回失敗:' + error.message);
+    }).eq('id', rejecting.id).select('id');
+    const bad = writeError(r, '駁回'); if (bad) return flash(bad);
     setRejecting(null); setRejectReason(''); flash('已駁回'); load();
   }
 

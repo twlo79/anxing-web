@@ -3,6 +3,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import StatCard from '@/components/StatCard';
 import { AddButton, ExportButton } from '@/components/Actions';
 import { Tabs } from '@/components/Tabs';
+import { writeError } from '@/lib/write-guard';
 import { submitBlockedBy, requestTotal } from '@/lib/demand-to-request';
 import { todayStr } from '@/lib/period';
 import { submitGate, gateCls } from '@/lib/required';
@@ -1320,10 +1321,11 @@ export default function PurchasesPage() {
   async function doReject() {
     if (!rejecting || !me) return;
     if (!rejectReason.trim()) return flashErr('請填駁回原因');
-    const { error } = await supabase.from('purchase_requests')
+    // ★ 數列數（🔴3）：駁回是決策，0 列的話「已駁回」是假的
+    const r = await supabase.from('purchase_requests')
       .update({ status: 'rejected', rejected_by: me.id, reject_reason: rejectReason.trim() })
-      .eq('id', rejecting.id);
-    if (error) return flash('駁回失敗:' + error.message);
+      .eq('id', rejecting.id).select('id');
+    const bad = writeError(r, '駁回'); if (bad) return flash(bad);
     setRejecting(null); setRejectReason(''); flash('已駁回'); load();
   }
 
@@ -1339,18 +1341,18 @@ export default function PurchasesPage() {
     if (isManager) { patch.manager_approved_by = me.id; patch.manager_approved_at = new Date().toISOString(); }
     else if (isAdmin) { patch.admin_approved_by = me.id; patch.admin_approved_at = new Date().toISOString(); }
     else return flashErr('你的角色不能核可');
-    const { error } = await supabase.from('deposits').update(patch).eq('id', d.id);
-    if (error) return flash('核可失敗:' + error.message);
+    const r = await supabase.from('deposits').update(patch).eq('id', d.id).select('id');
+    const bad = writeError(r, '核可'); if (bad) return flash(bad);
     flash('已核可押金退款'); load();
   }
 
   async function depDoReject() {
     if (!depRejecting || !me) return;
     if (!depReason.trim()) return flashErr('請填駁回原因');
-    const { error } = await supabase.from('deposits')
+    const r = await supabase.from('deposits')
       .update({ refund_status: 'rejected', rejected_by: me.id, reject_reason: depReason.trim() })
-      .eq('id', depRejecting.id);
-    if (error) return flash('駁回失敗:' + error.message);
+      .eq('id', depRejecting.id).select('id');
+    const bad = writeError(r, '駁回'); if (bad) return flash(bad);
     setDepRejecting(null); setDepReason(''); flash('已駁回'); load();
   }
 

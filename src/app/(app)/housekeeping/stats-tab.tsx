@@ -2,6 +2,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import * as XLSX from 'xlsx-js-style';
+import { writeError } from '@/lib/write-guard';
 import { createClient } from '@/lib/supabase';
 import { ymOf } from '@/lib/period';
 import { cleanCounts, filterItems, buildLookup, matchProperty, type HkStaff, type HkProperty } from '@/lib/hkParse';
@@ -1355,8 +1356,8 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
     };
     setItems((xs) => xs.map((x) => (x.id === editItem.id ? { ...x, ...patch } : x)));
     setEditItem(null);
-    const { error } = await supabase.from('hk_work_item').update(patch).eq('id', editItem.id);
-    if (error) { flash('儲存失敗:' + error.message); loadPeriod(); }
+    const r = await supabase.from('hk_work_item').update(patch).eq('id', editItem.id).select('id');
+    const bad = writeError(r, '儲存'); if (bad) { flash(bad); loadPeriod(); }   // ★ 0 列也要收回樂觀更新
   }
 
   async function delItem(it: Wi) {
@@ -1418,8 +1419,8 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
   /** 幾床是房源主檔的屬性,不是月份的。改了會影響所有月份的重算。 */
   async function setBeds(code: string, beds: number | null) {
     setProps((ps) => ps.map((p) => (p.code === code ? { ...p, beds } : p)));
-    const { error } = await supabase.from('hk_property').update({ beds }).eq('code', code);
-    if (error) { flash('儲存失敗:' + error.message); loadMaster(); }
+    const r = await supabase.from('hk_property').update({ beds }).eq('code', code).select('code');
+    const bad = writeError(r, '儲存'); if (bad) { flash(bad); loadMaster(); }   // ★ 0 列也要收回樂觀更新
   }
 
   async function setMp(code: string, patch: Partial<MP>) {

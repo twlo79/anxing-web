@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AddButton, ExportButton } from '@/components/Actions';
 import Req from '@/components/Req';
+import { writeError } from '@/lib/write-guard';
 import { submitGate, gateCls } from '@/lib/required';
 import MoneyInput from '@/components/MoneyInput';
 // ★ 金額列的欄寬跟訂單表單共用同一組常數（2026-09-16）——
@@ -388,9 +389,10 @@ export default function ContractsPage() {
   }, [rows, invoices, invOrders, curYm]);
 
   async function togglePin(c: Contract) {
-    const { error } = await supabase.from('contracts').update({ watch: !c.watch }).eq('id', c.id);
-    if (error) return flash('更新失敗:' + error.message);
-    setRows((rs) => rs.map((r) => r.id === c.id ? { ...r, watch: !c.watch } : r));
+    // ★ 數列數（🔴3）：RLS 擋下來回成功且 0 列，下面那行會把畫面改成假的
+    const r = await supabase.from('contracts').update({ watch: !c.watch }).eq('id', c.id).select('id');
+    const bad = writeError(r, '更新'); if (bad) return flash(bad);
+    setRows((rs) => rs.map((x) => x.id === c.id ? { ...x, watch: !c.watch } : x));
   }
   /** 新增契約時 ContractFees 暫存的設定 —— 契約 insert 成功後才補寫 */
   const [pendingFees, setPendingFees] = useState<Rc[]>([]);

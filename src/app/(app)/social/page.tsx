@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { writeError } from '@/lib/write-guard';
 import { createClient } from '@/lib/supabase';
 import Toast from '@/components/Toast';
 import { useOnce } from '@/lib/once';
@@ -1184,9 +1185,9 @@ export default function SocialPage() {
              *   跟「我要把它全部丟掉」是兩件事。
              */
             if (!confirm('停用這個模擬頁？\n\n它會從上面的分頁籤消失，但貼文與照片都留著。')) return;
-            const { error } = await supabase.from('social_accounts')
-              .update({ active: false }).eq('id', accDraft.id);
-            if (error) return flash('停用失敗：' + error.message);
+            const r = await supabase.from('social_accounts')
+              .update({ active: false }).eq('id', accDraft.id).select('id');
+            const bad = writeError(r, '停用'); if (bad) return flash(bad);
             setAccDraft(null);
             setAccId('');
             load();

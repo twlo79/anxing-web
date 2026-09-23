@@ -4,6 +4,7 @@ import {
   checkTenure, handoverPatch, tenureLabel, managerIdOn, type Tenure,
 } from '@/lib/estate-manager';
 import Toast from '@/components/Toast';
+import { writeError } from '@/lib/write-guard';
 import { createClient } from '@/lib/supabase';
 import { todayStr } from '@/lib/period';
 import { fetchAll } from '@/lib/fetch-all';
@@ -686,9 +687,14 @@ export default function AdminPage() {
     if (err) return flash(err);
 
     if (patch) {
-      const { error } = await supabase.from('estate_managers')
-        .update({ end_date: patch.end_date }).eq('id', patch.id);
-      if (error) return flash('無法儲存,前一段任期收尾失敗:' + error.message);
+      /*
+       * ★★ 數列數（🔴3）。這一步 0 列而不擋的話，下面會照樣 insert 新任期 ——
+       *   前一段沒收尾、新的一段又開始，**兩段任期重疊**，而 checkTenure()
+       *   在上面已經驗過了，之後沒有任何地方會再叫。
+       */
+      const r = await supabase.from('estate_managers')
+        .update({ end_date: patch.end_date }).eq('id', patch.id).select('id');
+      const bad = writeError(r, '前一段任期收尾'); if (bad) return flash('無法儲存,' + bad);
     }
     const { error } = await supabase.from('estate_managers')
       .insert({ estate_id: estateId, staff_id: draft.staff_id, start_date: draft.start_date });

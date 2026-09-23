@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import StatCard, { StatRow } from '@/components/StatCard';
+import { writeError } from '@/lib/write-guard';
 import { createClient } from '@/lib/supabase';
 import { todayStr } from '@/lib/period';
 import { fetchAll } from '@/lib/fetch-all';
@@ -454,8 +455,15 @@ export default function AccountsPage() {
         .eq('account_id', cur.id).range(from, to),
     );
     const after = recalcBalances(fresh, Number(cur.opening_balance) || 0);
+    /*
+     * ★★ 數列數（🔴3）。這裡原本連 error 都沒接 —— 餘額算出來卻沒寫進去，
+     *   畫面上每一列還是舊的餘額，而沒有任何東西會叫（「推導值存成欄位」那條坑的下游）。
+     *   一筆失敗就停下來講，不要繼續寫後面的：半套餘額比全套舊的更難對。
+     */
     for (const d of changedBalances(fresh, after)) {
-      await supabase.from('bank_transactions').update({ balance: d.balance }).eq('id', d.id);
+      const r = await supabase.from('bank_transactions').update({ balance: d.balance }).eq('id', d.id).select('id');
+      const bad = writeError(r, '餘額回寫');
+      if (bad) { setCashBusy(false); await loadTxns(cur.id); setMsg(bad + '（餘額只寫到一半，已重新載入）'); setErr(true); return; }
     }
 
     setCashBusy(false);
