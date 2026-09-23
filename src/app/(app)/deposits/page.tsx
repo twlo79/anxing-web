@@ -15,7 +15,7 @@ import { manualDepositError, manualDepositMissingAll } from '@/lib/manual-deposi
 import { totalBuckets } from '@/lib/deposit-summary';
 import StatCard, { StatRow, StatTotal, StatGroup } from '@/components/StatCard';
 import { useAdvance, AdvanceStats, AdvanceList } from './advance-tab';
-import { exitBlockedReason, forfeitOrder, earnestStatus, convertPlan, type EarnestDep } from '@/lib/earnest';
+import { exitBlockedReason, earnestStatus, convertPlan, type EarnestDep } from '@/lib/earnest';
 import { useProfile } from '@/lib/profile';
 // 收款只有會計與總管理員（2026-09-02）—— 規則寫在 lib，三頁共用同一支
 import { canCollect, collectDeniedMsg } from '@/lib/collect-perm';
@@ -693,35 +693,18 @@ export default function DepositsPage() {
     )) return;
 
     setSaving(true);
-    const { data: { user } } = await supabase.auth.getUser();
-
-    // ① 先產生收入
-    const payload = forfeitOrder(
-      { id: d.id, amount: d.amount, estate_id: d.estate_id,
-        property_id: d.property_id, room: d.room, guest_name: d.guest_name },
-      on,
-    );
-    const { data: ord, error: oe } = await supabase.from('orders')
-      .insert({
-        ...payload,
-        nights: 0,
-        order_key: `FEIT_${d.id.slice(0, 8)}_${Date.now()}`,
-        imported_via: 'manual',
-      })
-      .select('id').single();
-    if (oe || !ord) { setSaving(false); return flash('沒收失敗:' + (oe?.message ?? '')); }
-
-    // ② 再回寫訂金
-    const { data, error } = await supabase.from('deposits')
-      .update({ forfeited_on: on, forfeit_order_id: (ord as any).id, forfeited_by: user?.id ?? null })
-      .eq('id', d.id).select('id');
+    /*
+     * ★★★ 2026-09-22（migration_292）：兩步包成一支 RPC。
+     *   以前是先 `orders.insert` 再 `deposits.update` —— 第二步失敗就留一筆孤兒收入，
+     *   下次再按就是第二筆。現在任一步失敗整批退回，什麼都不留。
+     *   RPC 是 security invoker：RLS 照舊，誰按得了沒有變。
+     */
+    const { data, error } = await supabase.rpc('forfeit_earnest', { p_dep: d.id, p_on: on });
     setSaving(false);
-
-    if (error) return flash('收入建好了，但訂金狀態沒更新:' + error.message);
-    if (!data || data.length === 0) {
-      return flash('收入建好了，但訂金一列都沒更新 —— 通常是權限。請重新整理後檢查。');
-    }
-    flash(`已沒收，並產生一筆 NT$ ${fmt(d.amount)} 的「取消入住」收入`);
+    if (error) return flash('沒收失敗:' + error.message);
+    const r = data as { ok: boolean; message: string };
+    if (!r?.ok) return flash(r?.message ?? '沒收失敗');
+    flash(r.message);
     setDetail(null); load();
   }
 
@@ -790,56 +773,18 @@ export default function DepositsPage() {
     )) return;
 
     setSaving(true);
-    const { data: { user } } = await supabase.auth.getUser();
-
     /*
-     * ① 押金那邊記一筆收款。
-     *
-     *   ★ `method = 'earnest_in'`（訂金轉入），**不是 `internal`**。
-     *     `internal` 的標籤是「押金移轉」——那是 A 房搬到 B 房。
-     *     訂金轉入是同一張契約內的事，混用的話對帳時會去找另一間房，
-     *     而那間房根本不存在。
-     *
-     *   兩者共同點是「錢沒有實際進出」，報表要靠它們把轉入
-     *   排除在「本月收款」之外。
+     * ★★★ 2026-09-22（migration_292）：四步包成一支 RPC。
+     *   以前是收款 insert → 押金 update ×2 → 訂金 update，後三步連回傳都沒接 ——
+     *   任一步失敗就是「押金收了一筆、訂金還是訂金」。現在整批一起成功或一起退回。
+     *   上面的 confirm 用的 plan 只是給人看；金額與尚欠以 RPC 算的為準。
      */
-    const { error: pe } = await supabase.from('deposit_payments').insert({
-      deposit_id: target.id, paid_on: on, amount: plan.transfer,
-      method: 'earnest_in', note: `訂金轉入（${depName(d)}）`, created_by: user?.id ?? null,
-    });
-    if (pe) { setSaving(false); return flash('轉押失敗:' + pe.message); }
-
-    /*
-     * ② 押金那一列補 received_on。
-     *
-     *   ★ 卡片的分類看的是 `received_on`（`bucketOf`），不是 received_amount。
-     *     不補的話這筆押金會留在「未收款」那一格 —— 而它已經收了一部分。
-     *   ★ 已經有值就不覆蓋:那是真的第一次收款的日期。
-     */
-    if (!target.received_on) {
-      await supabase.from('deposits')
-        .update({ received_on: on }).eq('id', target.id);
-    }
-    await supabase.from('deposits')
-      .update({ converted_from_earnest_id: d.id }).eq('id', target.id);
-
-    // ③ 訂金那一列結案
-    const { data, error } = await supabase.from('deposits')
-      .update({
-        converted_to_deposit_id: target.id,
-        converted_by: user?.id ?? null,
-        converted_at: new Date().toISOString(),
-      })
-      .eq('id', d.id).select('id');
+    const { data, error } = await supabase.rpc('convert_earnest', { p_dep: d.id, p_on: on });
     setSaving(false);
-
-    if (error) return flash('押金那邊記好了，但訂金狀態沒更新:' + error.message);
-    if (!data || data.length === 0) {
-      return flash('押金那邊記好了，但訂金一列都沒更新 —— 通常是權限。請重新整理後檢查。');
-    }
-    flash(plan.settled
-      ? `已轉押金，押金收齊了`
-      : `已轉押金，押金尚欠 NT$ ${fmt(plan.remaining)}`);
+    if (error) return flash('轉押失敗:' + error.message);
+    const r = data as { ok: boolean; message: string };
+    if (!r?.ok) return flash(r?.message ?? '轉押失敗');
+    flash(r.message);
     setDetail(null); load();
   }
 

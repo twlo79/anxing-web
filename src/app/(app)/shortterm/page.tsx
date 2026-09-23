@@ -1277,17 +1277,25 @@ export default function ShortTermPage() {
       const prev = (move.origNote ?? '').trim();
       patch.note = prev.includes(line) ? prev : (prev ? `${prev}\n${line}` : line);
     }
-    const { error: e1 } = await supabase.from('orders').update(patch).eq('id', grp);
-    if (e1) return flash('移房失敗:' + e1.message);
-    // 硬刪除,不進回收桶 —— 移房是「把舊分段拆掉重組」,下面馬上重建。
-    // 中途的分段沒有單獨存在的意義,復原一段反而會讓住宿期間重疊。
-    await supabase.from('orders').delete().eq('move_group', grp).neq('id', grp);
-    for (let i = 1; i < segs.length; i++) {
-      const s = segs[i];
-      const { error } = await supabase.from('orders').insert({ order_key: `MOVE_${String(grp).slice(0, 8)}_${i}_${Date.now()}`, source: move.source, estate_id: s.estateId, property_id: s.propertyId, property_raw: s.room, guest_name: move.guest, checkin: s.from, checkout: s.to, nights: s.nights, amount: s.amount, deposit: 0, account: move.account, note: `移房 ${chainText}`, move_chain: chainText, move_group: grp, imported_via: 'manual' });
-      if (error) return flash('建立分段失敗:' + error.message);
-    }
-    flash(isMulti ? `已移房,拆成 ${segs.length} 段` : '已更新'); setMove(null); load();
+    /*
+     * ★★★ 2026-09-22（migration_295）：三步包成一支 RPC。
+     *   以前是 主段 update → 其他分段 delete（硬刪，連錯誤都沒接）→ 逐段 insert。
+     *   第三步任一段失敗就是「舊分段已經刪了、新的只建一半」，那幾晚的營收憑空消失。
+     *   現在任一步失敗（含關帳守衛、認列觸發器 raise）整批退回，舊分段還在。
+     *   移房鏈與備註追加的規則還是在這裡算（上面那段），RPC 只負責寫。
+     */
+    const { data, error } = await supabase.rpc('move_order', {
+      p_grp: grp,
+      p_segs: segs.map((sg) => ({
+        estate_id: sg.estateId, property_id: sg.propertyId, room: sg.room,
+        from: sg.from, to: sg.to, nights: sg.nights, amount: sg.amount,
+      })),
+      p_patch: moved ? { move_chain: patch.move_chain, note: patch.note } : {},
+    });
+    if (error) return flash('移房失敗:' + error.message);
+    const r = data as { ok: boolean; message: string };
+    if (!r?.ok) return flash(r?.message ?? '移房失敗');
+    flash(r.message); setMove(null); load();
   }
   const addStay = () => move && setMove({ ...move, stays: [...move.stays, { room: '', estateId: move.stays[move.stays.length - 1]?.estateId ?? null, propertyId: null, from: '' }] });
   const updStay = (i: number, patch: Partial<Stay>) => move && setMove({ ...move, stays: move.stays.map((s, idx) => idx === i ? { ...s, ...patch } : s) });

@@ -152,43 +152,25 @@ export default function SupplyTab({ onMsg }: { onMsg: (t: string, err?: boolean)
     setBusy(true);
     try {
       /*
-       * ★★★ 先寫盤點紀錄、再寫調整流水。順序反過來的話，
-       *   中間斷掉會變成「庫存動了但查不到為什麼」——
-       *   而那正是盤點要留下的東西。
-       *
-       * ★ 一個品項一個月只能盤一次（資料庫的 supply_count_uniq），
-       *   重盤走 upsert 覆蓋。
+       * ★★★ 2026-09-22（migration_293）：兩步包成一支 RPC。
+       *   以前是先 `supply_count.upsert` 再 `supply_txn.insert` —— 第二步失敗就是
+       *   「盤點存了、調整沒進」，餘量從此對不上而畫面只有一句錯誤。
+       *   現在任一步失敗整批退回。RPC 是 security invoker，RLS 照舊。
+       * ★ diff 由資料庫再算一次比對，對不上就擋 —— 兩份規則不會安靜地長歪。
        */
-      const { data: cs, error: e1 } = await supabase.from('supply_count')
-        .upsert(plan.map((p) => ({ ...p.count, counted_by: profile?.id ?? null })),
-          { onConflict: 'item_id,ym' })
-        .select('id, item_id');
-      if (e1) { onMsg('盤點存不進去：' + e1.message, true); return; }
-      if ((cs?.length ?? 0) !== plan.length) {
-        onMsg(`要存 ${plan.length} 筆，實際只進去 ${cs?.length ?? 0} 筆 —— 先不要再按`, true);
-        return;
-      }
-
-      const idByItem = Object.fromEntries(
-        ((cs ?? []) as { id: string; item_id: string }[]).map((c) => [c.item_id, c.id]));
-      const adjs = plan.filter((p) => p.adjust).map((p) => ({
-        ...p.adjust!,
-        happened_on: today(),
-        note: `${nowYm().slice(0, 4)}-${nowYm().slice(4)} 盤點調整`,
-        count_id: idByItem[p.count.item_id] ?? null,
-        created_by: profile?.id ?? null,
-      }));
-      if (adjs.length) {
-        const { data: td, error: e2 } = await supabase.from('supply_txn').insert(adjs).select('id');
-        if (e2) { onMsg('盤點存好了，但調整流水寫不進去：' + e2.message, true); return; }
-        if ((td?.length ?? 0) !== adjs.length) {
-          onMsg(`盤點存好了，但只寫了 ${td?.length ?? 0}/${adjs.length} 筆調整 —— 餘量還沒對齊`, true);
-          return;
-        }
-      }
+      const { data, error } = await supabase.rpc('save_supply_count', {
+        p_ym: nowYm(), p_on: today(),
+        p_rows: plan.map((p) => ({
+          item_id: p.count.item_id, system_qty: p.count.system_qty,
+          counted_qty: p.count.counted_qty, diff: p.count.diff, reason: p.count.reason,
+        })),
+      });
+      if (error) { onMsg('盤點存不進去：' + error.message, true); return; }
+      const r = data as { ok: boolean; message: string };
+      if (!r?.ok) { onMsg(r?.message ?? '盤點存不進去', true); return; }
       setCounting(false);
       await load();
-      onMsg(`盤點完成，產生 ${adjs.length} 筆調整`);
+      onMsg(r.message);
     } finally { setBusy(false); }
   }
 
