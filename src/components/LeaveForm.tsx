@@ -359,11 +359,13 @@ export default function LeaveForm({ types, remainOf, usedOf, onMsg, onDone }: Pr
             </>
           )}
         </Step>
-      </div>
 
-      {/* ── 明細 ── */}
-      <div className="rounded-xl glass p-4">
-        <div className="text-sm font-medium mb-1">這張單的明細</div>
+        {/*
+         * ★★★ 第 4 步跟前三步**同一張卡**（使用者 2026-09-23 指定）。
+         *   原本明細是另外一張卡 —— 那讀起來像「表單填完了，下面是另一件事」，
+         *   而它其實是同一張單的最後一步：核對 ＋ 填事由 ＋ 送出。
+         */}
+        <Step no={4} title="確認" hint="核對明細，填請假事由">
         {!plan.length ? (
           <div className="text-xs text-gray-400 py-4 text-center">
             {byCalendar ? '還沒有任何一天 —— 上面點月曆選日子。' : '還沒填 —— 上面填起算日與時數。'}
@@ -426,8 +428,12 @@ export default function LeaveForm({ types, remainOf, usedOf, onMsg, onDone }: Pr
           </div>
         </div>
 
-        <input placeholder="事由（選填）" value={reason} onChange={(e) => setReason(e.target.value)}
-          className="mt-3 rounded-lg border border-mor-line px-3 py-2 text-sm w-full" />
+        {/* ★ 沒有紅星就是非必填，不用再寫一次「非必填」（anxing-ui 二-10） */}
+        <label className="block mt-3">
+          <span className="text-xs text-gray-500">請假事由</span>
+          <input placeholder="例如：家裡有事、回診" value={reason} onChange={(e) => setReason(e.target.value)}
+            className="mt-1 rounded-lg border border-mor-line px-3 py-2 text-sm w-full" />
+        </label>
 
         {/* ★ 錯誤留在這裡：固定高度，出現或消失不推版面 */}
         <div className="min-h-[20px] mt-2">
@@ -442,6 +448,7 @@ export default function LeaveForm({ types, remainOf, usedOf, onMsg, onDone }: Pr
           </button>
           <span className="text-xs text-gray-400">一張單，主管與總經理各核一次。</span>
         </div>
+        </Step>
       </div>
     </div>
   );
