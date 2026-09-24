@@ -1,5 +1,6 @@
 'use client';
 import { periodSplit, periodAmounts } from '@/lib/period-split';
+import { type RentLine, RENT_LINE_SUGGEST, normalizeLines, linesSum, linesProblem, linesTitle } from '@/lib/rent-lines';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AddButton, ExportButton } from '@/components/Actions';
 import Req from '@/components/Req';
@@ -82,6 +83,8 @@ type Contract = {
   /** 外幣押金 [{cur,amt}]。台幣仍在 deposit —— 格式與 orders.fx_deposit 一致（migration_87）。 */
   fx_deposit?: { cur: string; amt: number }[] | null;
   concessions?: Concession[] | null;
+  /** 每期租金明細 [{label, amount}]，未稅、備查用（migration_299）。有的話加總＝每期租金 */
+  rent_lines?: RentLine[] | null;
   /**
    * 這張契約的收入算誰的（migration_247）。`'estate'` ／ `'office'` ／ `'other_biz'`。
    *
@@ -150,6 +153,8 @@ const CUR_CHIP = `${ML_CUR} h-11 md:h-8 rounded-lg bg-mor-bluelight text-mor-sla
                   text-xs font-medium flex items-center justify-center`;
 /** 金額框。★ 跟訂單表單同一組高度與圓角 —— 兩份表單學一次就好 */
 const MONEY_IN = 'h-11 md:h-8 rounded-lg border border-mor-line px-2 text-sm flex-1 min-w-[6rem] text-right bg-white';
+/** 金額框裡左邊那個灰字「未稅」（每期租金與租金明細用；框要 `relative`、input 要 `pl-11`） */
+const UNTAXED_TAG = 'pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[11px] text-gray-400';
 /** 一般欄位的框。原本每一處各寫一次,改一個就漏一個 */
 const FIELD_IN = 'rounded-lg border border-gray-300 px-2 py-1.5';
 
@@ -174,6 +179,8 @@ export default function ContractsPage() {
   const { msg, msgErr, flash, clearMsg } = useFlash(2500);
   const [estateFilter, setEstateFilter] = useState('');
   const [edit, setEdit] = useState<Contract | null>(null);
+  /** 每期租金明細展開／收起。開表單時：有明細就展開，沒有就收著 */
+  const [linesOpen, setLinesOpen] = useState(false);
   const [collect, setCollect] = useState<Contract | null>(null);
   const [detail, setDetail] = useState<Contract | null>(null);
   const [kw, setKw] = useState('');
@@ -206,7 +213,11 @@ export default function ContractsPage() {
   const [stray, setStray] = useState<{ name: string; n: number; amt: number; months: string } | null>(null);
   // 表單是 `{edit && …}` 條件渲染的，關掉就整個卸載，再開一定是乾淨的
   // （ContractFees 掛上時會把 pendingFees 清成 []）。
-  const openEdit = (o: Contract | null) => setEdit(o);
+  const openEdit = (o: Contract | null) => {
+    setEdit(o);
+    // 有明細就展開給人看，沒有就收著（一行「＋ 拆明細」）
+    setLinesOpen(normalizeLines(o?.rent_lines).length > 0);
+  };
 
   /* `/contracts?contract=<id>` 直接開那一筆。營收頁抽屜的「看契約」靠它 */
   useOpenFromUrl<Contract>('contract', async (id) => {
@@ -449,6 +460,12 @@ export default function ContractsPage() {
     });
     if (miss.length) return flash(`無法儲存,還沒填：${miss.join('、')}`);
     /*
+     * ★★ 租金明細加總要等於每期租金（lib/rent-lines，資料庫 ct_rent_lines_chk 同一條）。
+     *   畫面上合計旁邊已經是紅的了，這裡再擋一次是保險；訊息用同一句。
+     */
+    const lp = linesProblem(normalizeLines(edit.rent_lines), edit.amount_per_period);
+    if (lp) { setLinesOpen(true); return flash(`無法儲存：${lp}`); }
+    /*
      * 日期先自己檢查，不要丟給資料庫擋。
      *
      * end_date 是 NOT NULL，所以打了不存在的日期（4/31）時，
@@ -515,6 +532,8 @@ export default function ContractsPage() {
       invoice_note: edit.invoice_note || null,
       // 只留有填金額的，空白列不寫進去
       concessions: (((edit.concessions as any[]) ?? []).filter((cn: any) => Number(cn?.amount) > 0)),
+      // 每期租金明細（migration_299）。明確寫值，不讓它變 undefined（理由同 purpose_type）
+      rent_lines: normalizeLines(edit.rent_lines),
       /*
        * ★★★ 一定要**明確寫值**，不能讓它變成 undefined（migration_247）。
        *
@@ -803,6 +822,10 @@ const nameOf = (c: Contract) =>
   }) : [];
   /** 這一格要不要畫紅框 */
   const err = (f: string) => tried && missing.includes(f);
+  /** 每期租金明細（乾淨的陣列）與它現在的問題（null ＝ 沒問題） */
+  const rentLines: RentLine[] = edit ? normalizeLines(edit.rent_lines) : [];
+  const rlProblem = edit ? linesProblem(rentLines, edit.amount_per_period) : null;
+  const setLines = (ls: RentLine[]) => setEdit((e) => (e ? { ...e, rent_lines: ls } : e));
   /**
    * 送出鈕的樣子。★★★ 灰掉但**按得下去** —— 真的 disabled 的話
    * `tried` 打不開、紅框永遠不出現（見 lib/required.ts 的 submitGate）。
@@ -819,7 +842,7 @@ const nameOf = (c: Contract) =>
 
   function blank(): Contract {
     return { id: '', estate_id: estates.find((e) => e.name === '正隆')?.id ?? null, room: '', tenant_name: '', phone: '', cadence: 'monthly', type: 'longterm', monthly_rent: 0, amount_per_period: 0, deposit: 0, start_date: '', end_date: '', pay_day: null, first_payment_date: '', paid: false, account: null, note: '', active: true, watch: false, display_name: '', earnest_only: false, earnest_amount: 0,
-      invoice_required: false, invoice_day: null, invoice_after_paid: true, invoice_title: '', invoice_tax_id: '', invoice_note: '', tax_free: false, concessions: [],
+      invoice_required: false, invoice_day: null, invoice_after_paid: true, invoice_title: '', invoice_tax_id: '', invoice_note: '', tax_free: false, concessions: [], rent_lines: [],
       // 預設算物業的。改類別成辦公室／公司登記時，contractPurpose() 會自動變 office
       purpose_type: 'estate' };
   }
@@ -1216,6 +1239,13 @@ const nameOf = (c: Contract) =>
                     <span className="block text-[11px] text-gray-400">約定紀錄,實際折讓看收租視窗</span>
                   </span>
                 )) : null}
+                {normalizeLines(c.rent_lines).length > 0 ? row('租金明細', (
+                  <span className="space-y-0.5 block">
+                    {normalizeLines(c.rent_lines).map((l, i) => (
+                      <span key={i} className="block tabular-nums">{l.label}・${fmt(l.amount)}<span className="text-[11px] text-gray-400 ml-1">未稅</span></span>
+                    ))}
+                  </span>
+                )) : null}
                 {row('備註', c.note ? <span className="whitespace-pre-wrap">{c.note}</span> : '—')}
               </div>
 
@@ -1499,11 +1529,60 @@ const nameOf = (c: Contract) =>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className={`${ML_LABEL} flex items-center`}>每期租金{!edit.earnest_only && <Req />}</span>
                   <span className={CUR_CHIP}>TWD</span>
-                  <MoneyInput value={edit.amount_per_period ?? 0} invalid={err('每期租金')}
-                    onChange={(n) => setEdit({ ...edit, amount_per_period: n })}
-                    className={MONEY_IN} />
+                  {/* 「未稅」畫在框裡左邊（2026-09-24 使用者指定）；明細每一列的金額框也一樣 */}
+                  <span className="relative flex-1 min-w-[6rem] flex">
+                    <span className={UNTAXED_TAG}>未稅</span>
+                    <MoneyInput value={edit.amount_per_period ?? 0} invalid={err('每期租金') || !!rlProblem}
+                      onChange={(n) => setEdit({ ...edit, amount_per_period: n })}
+                      className={`${MONEY_IN} w-full pl-11`} />
+                  </span>
                   <span className="w-6 shrink-0" />
                 </div>
+                {/*
+                  ══ 每期租金明細（migration_299，2026-09-24）══
+                  房租多少、設備租賃多少 —— 都是未稅，只是備查。
+                  月租單、應收、收租、認列全部照舊看上面那一格；唯一的規矩是加總要等於它。
+                  ★ 合計對不上：合計那行紅、上面的框紅、存不了。訊息在合計旁邊，不在頁面最上方。
+                  ★ 提示用 absolute，不推歪下面的欄位（CLAUDE.md 畫面規則 3）。
+                */}
+                <div className="flex flex-wrap items-center gap-2 mt-1">
+                  <span className={ML_LABEL} />
+                  <button type="button"
+                    onClick={() => { if (!rentLines.length) { setLines([{ label: '', amount: 0 }]); setLinesOpen(true); } else setLinesOpen((v) => !v); }}
+                    className="text-[12px] text-mor-slate hover:text-mor-slatedark">
+                    {linesTitle(rentLines.length)}{rentLines.length ? (linesOpen ? ' ▾' : ' ▸') : ''}
+                  </button>
+                </div>
+                {linesOpen && (
+                  <div className="ml-[calc(4.5rem+0.5rem)] mt-1 border-l-2 border-mor-line pl-2.5 space-y-1.5">
+                    {rentLines.map((l, i) => (
+                      <div key={i} className="flex items-center gap-2">
+                        <input list="rent-line-names" value={l.label} placeholder="項目（房租、設備租賃…）"
+                          onChange={(e) => setLines(rentLines.map((x, k) => (k === i ? { ...x, label: e.target.value } : x)))}
+                          className="h-11 md:h-8 rounded-lg border border-mor-line px-2 text-sm flex-1 min-w-[8rem] bg-white" />
+                        <span className="relative w-36 shrink-0 flex">
+                          <span className={UNTAXED_TAG}>未稅</span>
+                          <MoneyInput value={l.amount} onChange={(n) => setLines(rentLines.map((x, k) => (k === i ? { ...x, amount: n } : x)))}
+                            className={`${MONEY_IN} w-full pl-11 min-w-0`} />
+                        </span>
+                        <button type="button" onClick={() => setLines(rentLines.filter((_, k) => k !== i))}
+                          className="w-6 shrink-0 text-gray-400 hover:text-red-500 text-sm" title="拿掉這一列">✕</button>
+                      </div>
+                    ))}
+                    <datalist id="rent-line-names">{RENT_LINE_SUGGEST.map((n) => <option key={n} value={n} />)}</datalist>
+                    <div className="flex items-center justify-between gap-2">
+                      <button type="button" onClick={() => setLines([...rentLines, { label: '', amount: 0 }])}
+                        className="text-[12px] text-mor-slate hover:text-mor-slatedark">＋ 加一項</button>
+                      {rentLines.length > 0 && (
+                        <span className="relative text-[12px] text-gray-500 pr-1">
+                          明細合計 <b className={`tabular-nums ${rlProblem ? 'text-red-600' : 'text-mor-ink'}`}>{fmt(linesSum(rentLines))}</b>
+                          {!rlProblem && <span className="text-mor-greendark ml-1">＝ 每期租金 ✓</span>}
+                          {rlProblem && <span className="absolute top-full right-0 whitespace-nowrap text-[11px] text-red-600">{rlProblem}</span>}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
                 {/*
                   ★★ 換算**只在非月繳時出現**。月繳的時候每期租金＝月租金，
                     那一行等於把同一個數字再寫一次 ——
@@ -1902,7 +1981,11 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
    */
   const [invDraft, setInvDraft] = useState<{
     id?: string; ym: string; date: string; no: string; note: string; label?: string;
-    orderId?: string | null; amount?: number | null;
+    orderId?: string | null;
+    /** 使用者填的發票金額；沒動過就是 undefined → 存檔用應開金額 */
+    amount?: number | null;
+    /** 加費列的應開金額（那筆加費本身）；月租那條路不用，看 existing */
+    amount0?: number | null;
   } | null>(null);
   const today = () => todayStr();
   const STEP = ({ monthly: 1, quarterly: 3, halfyear: 6, yearly: 12 } as any)[c.cadence] || 1;
@@ -1975,6 +2058,9 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
   // 「載入中」再重建,捲軸位置得以保留。首次載入才需要 spinner。
   /** 這張契約的月租單鍵基底。房號空的走 LTC_{契約id}_ —— 見 lib/ltKey。 */
   const kb = keyBase(c);
+  /** 登錄發票視窗：應開金額（加費列＝那筆加費，月租＝那一期第一張單的應收）與填的金額差多少 */
+  const invDue = invDraft ? Math.round(Number((invDraft.orderId ? invDraft.amount0 : existing[kb + invDraft.ym]?.amount) || 0)) : 0;
+  const invAmtDiff = invDraft ? Math.round(Number(invDraft.amount ?? invDue)) - invDue : 0;
 
   const loadExisting = useCallback(async (showSpinner = true) => {
     if (showSpinner) setLoading(true);
@@ -2371,7 +2457,8 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
     const payload = {
       contract_id: c.id, order_id: invDraft.orderId ?? o?.id ?? null,
       room: c.room, ym: invDraft.ym,
-      amount: (invDraft.orderId ? Number(invDraft.amount || 0) : Number(o?.amount || 0)) || null,
+      // 發票金額：填了用填的，沒動過就帶應開金額（2026-09-24 起可以填）
+      amount: Math.round(Number(invDraft.amount ?? invDue)) || null,
       invoice_no: no, invoice_date: invDraft.date,
       title: c.invoice_title || c.tenant_name || null,
       tax_id: c.invoice_tax_id || null,
@@ -2453,13 +2540,16 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
             <span className="text-gray-500 shrink-0">發票</span>
             <span className="flex items-center gap-2 min-w-0">
               <span className="rounded bg-mor-greenlight text-mor-greendark px-1.5 py-0.5 font-medium">{inv.invoice_no}</span>
+              {/* 發票金額（2026-09-24 起可以填）；舊紀錄沒存的那格顯示 — */}
+              <span className="tabular-nums text-gray-600 whitespace-nowrap">{inv.amount == null ? <span className="text-gray-300">—</span> : `$${fmt(inv.amount)}`}</span>
               <span className="text-gray-400 whitespace-nowrap">{inv.invoice_date}</span>
               {/*
                 ★★★ 號碼與日期**照常顯示**（2026-09-15 使用者指定）——
                   關帳鎖住的是「能不能改」，而發票號碼是既成事實，藏起來沒好處。
                   只有「改」這顆灰掉。
               */}
-              <button onClick={() => setInvDraft({ id: inv.id, ym: inv.ym, date: inv.invoice_date, no: inv.invoice_no, note: inv.note ?? '', label })}
+              <button onClick={() => setInvDraft({ id: inv.id, ym: inv.ym, date: inv.invoice_date, no: inv.invoice_no, note: inv.note ?? '', label,
+                  amount: inv.amount == null ? undefined : Number(inv.amount) })}
                 disabled={frozen} title={frozen ? '這一期已關帳，發票改不動' : ''}
                 className="text-mor-slate shrink-0 hover:text-mor-slatedark disabled:text-gray-300 disabled:cursor-not-allowed">改</button>
             </span>
@@ -3096,7 +3186,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                                       onClick={() => setInvDraft({
                                         ym: feeYm, date: today(), no: '', note: c.invoice_note ?? '',
                                         label: `${feeName} $${fmt(Math.abs(Number(f.amount) || 0))}`,
-                                        orderId: f.id, amount: Number(f.amount) || 0,
+                                        orderId: f.id, amount0: Number(f.amount) || 0,
                                       })}
                                       disabled={frozen} title={frozen ? (lockMsg ?? '') : ''}
                                       className="rounded-lg bg-mor-slate text-white px-2 py-0.5 font-medium hover:bg-mor-slatedark disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed">
@@ -3123,13 +3213,15 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                               <span className="text-gray-400 shrink-0">發票</span>
                               <span className="flex items-center gap-2 min-w-0">
                                 <span className="rounded bg-mor-greenlight text-mor-greendark px-1.5 py-0.5 font-medium">{inv.invoice_no}</span>
+                                <span className="tabular-nums text-gray-600 whitespace-nowrap">{inv.amount == null ? <span className="text-gray-300">—</span> : `$${fmt(inv.amount)}`}</span>
                                 <span className="text-gray-400 whitespace-nowrap">{inv.invoice_date}</span>
                                 <button
                                   onClick={() => setInvDraft({
                                     id: inv.id, ym: inv.ym, date: inv.invoice_date, no: inv.invoice_no,
                                     note: inv.note ?? '',
                                     label: `${feeName} $${fmt(Math.abs(Number(f.amount) || 0))}`,
-                                    orderId: f.id, amount: Number(f.amount) || 0,
+                                    orderId: f.id, amount0: Number(f.amount) || 0,
+                                    amount: inv.amount == null ? undefined : Number(inv.amount),
                                   })}
                                   disabled={frozen} title={frozen ? '這一期已關帳，發票改不動' : ''}
                                   className="text-mor-slate shrink-0 hover:text-mor-slatedark disabled:text-gray-300 disabled:cursor-not-allowed">改</button>
@@ -3142,7 +3234,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                                 onClick={() => setInvDraft({
                                   ym: feeYm, date: today(), no: '', note: c.invoice_note ?? '',
                                   label: `${feeName} $${fmt(Math.abs(Number(f.amount) || 0))}`,
-                                  orderId: f.id, amount: Number(f.amount) || 0,
+                                  orderId: f.id, amount0: Number(f.amount) || 0,
                                 })}
                                 disabled={frozen} title={frozen ? (lockMsg ?? '') : ''}
                                 className="text-xs text-mor-slate hover:text-mor-slatedark disabled:text-gray-300 disabled:cursor-not-allowed">+ 再開一張</button>
@@ -3524,12 +3616,24 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                 <div className="text-gray-600">抬頭 <span className="font-medium text-gray-800">{c.invoice_title || c.tenant_name || '—'}</span></div>
                 <div className="text-gray-600">統編 <span className="font-medium text-gray-800">{c.invoice_tax_id || '—'}</span></div>
                 {/* ★ 加費列開的發票金額要抓那筆加費，不是那個月的月租單 */}
-                <div className="text-gray-600">金額 <span className="font-medium text-gray-800">${fmt(Number((invDraft.orderId ? invDraft.amount : existing[kb + invDraft.ym]?.amount) || 0))}</span> <span className="text-gray-400">(參考,實際以平台開立為準)</span></div>
+                <div className="text-gray-600">應開金額 <span className="font-medium text-gray-800">${fmt(invDue)}</span> <span className="text-gray-400">({invDraft.orderId ? '這筆加費' : '這一期的應收'})</span></div>
               </div>
               <label className="flex flex-col gap-1 text-xs text-gray-500">開票日期
                 <input type="date" value={invDraft.date} onChange={(e) => setInvDraft({ ...invDraft, date: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm" /></label>
               <label className="flex flex-col gap-1 text-xs text-gray-500">發票號碼(2 碼英文 + 8 碼數字)
                 <input value={invDraft.no} onChange={(e) => setInvDraft({ ...invDraft, no: e.target.value.toUpperCase() })} placeholder="AB12345678" maxLength={10} className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm font-mono tracking-wide" /></label>
+              {/*
+                發票金額（2026-09-24）：預設帶應開金額，實際開的不一樣就改。
+                跟應開不同時提醒不擋 —— 少開、分開開都是真的會發生的事。
+                提示用 absolute，不推下面的備註欄。
+              */}
+              <label className="flex flex-col gap-1 text-xs text-gray-500 relative pb-4">發票金額
+                <MoneyInput value={invDraft.amount ?? invDue} onChange={(n) => setInvDraft({ ...invDraft, amount: n })}
+                  className="h-9 rounded-lg border border-gray-300 px-2 text-sm text-right bg-white" />
+                <span className={`absolute top-full -mt-4 left-0 text-[11px] ${invAmtDiff ? 'text-amber-700' : 'text-gray-400'}`}>
+                  {invAmtDiff ? `跟應開金額差 ${invAmtDiff > 0 ? '+' : ''}${fmt(invAmtDiff)}（可以存，只是提醒）` : '預設＝應開金額；實際開的不一樣就改這裡'}
+                </span>
+              </label>
               <label className="flex flex-col gap-1 text-xs text-gray-500">備註
                 <input value={invDraft.note} onChange={(e) => setInvDraft({ ...invDraft, note: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm" /></label>
             </div>
