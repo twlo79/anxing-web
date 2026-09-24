@@ -83,7 +83,7 @@ type Contract = {
   /** 外幣押金 [{cur,amt}]。台幣仍在 deposit —— 格式與 orders.fx_deposit 一致（migration_87）。 */
   fx_deposit?: { cur: string; amt: number }[] | null;
   concessions?: Concession[] | null;
-  /** 每期租金明細 [{label, amount}]，未稅、備查用（migration_299）。有的話加總＝每期租金 */
+  /** 每期租金明細 [{label, amount}]，含稅、備查用（migration_299）。有的話加總＝每期租金 */
   rent_lines?: RentLine[] | null;
   /**
    * 這張契約的收入算誰的（migration_247）。`'estate'` ／ `'office'` ／ `'other_biz'`。
@@ -153,7 +153,7 @@ const CUR_CHIP = `${ML_CUR} h-11 md:h-8 rounded-lg bg-mor-bluelight text-mor-sla
                   text-xs font-medium flex items-center justify-center`;
 /** 金額框。★ 跟訂單表單同一組高度與圓角 —— 兩份表單學一次就好 */
 const MONEY_IN = 'h-11 md:h-8 rounded-lg border border-mor-line px-2 text-sm flex-1 min-w-[6rem] text-right bg-white';
-/** 金額框裡左邊那個灰字「未稅」（每期租金與租金明細用；框要 `relative`、input 要 `pl-11`） */
+/** 金額框裡左邊那個灰字「含稅」（2026-09-24 使用者從「未稅」改成「含稅」）（每期租金與租金明細用；框要 `relative`、input 要 `pl-11`） */
 const UNTAXED_TAG = 'pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[11px] text-gray-400';
 /** 一般欄位的框。原本每一處各寫一次,改一個就漏一個 */
 const FIELD_IN = 'rounded-lg border border-gray-300 px-2 py-1.5';
@@ -826,6 +826,8 @@ const nameOf = (c: Contract) =>
   const rentLines: RentLine[] = edit ? normalizeLines(edit.rent_lines) : [];
   const rlProblem = edit ? linesProblem(rentLines, edit.amount_per_period) : null;
   const setLines = (ls: RentLine[]) => setEdit((e) => (e ? { ...e, rent_lines: ls } : e));
+  /** 金額框裡的稅別字：勾了「價格未稅」就寫未稅，不然含稅（2026-09-24）—— 跟契約自己的旗標一致，不寫死 */
+  const taxTag = edit?.tax_free ? '未稅' : '含稅';
   /**
    * 送出鈕的樣子。★★★ 灰掉但**按得下去** —— 真的 disabled 的話
    * `tried` 打不開、紅框永遠不出現（見 lib/required.ts 的 submitGate）。
@@ -1242,7 +1244,7 @@ const nameOf = (c: Contract) =>
                 {normalizeLines(c.rent_lines).length > 0 ? row('租金明細', (
                   <span className="space-y-0.5 block">
                     {normalizeLines(c.rent_lines).map((l, i) => (
-                      <span key={i} className="block tabular-nums">{l.label}・${fmt(l.amount)}<span className="text-[11px] text-gray-400 ml-1">未稅</span></span>
+                      <span key={i} className="block tabular-nums">{l.label}・${fmt(l.amount)}<span className="text-[11px] text-gray-400 ml-1">{c.tax_free ? '未稅' : '含稅'}</span></span>
                     ))}
                   </span>
                 )) : null}
@@ -1529,9 +1531,9 @@ const nameOf = (c: Contract) =>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className={`${ML_LABEL} flex items-center`}>每期租金{!edit.earnest_only && <Req />}</span>
                   <span className={CUR_CHIP}>TWD</span>
-                  {/* 「未稅」畫在框裡左邊（2026-09-24 使用者指定）；明細每一列的金額框也一樣 */}
+                  {/* 稅別字畫在框裡左邊（2026-09-24 使用者指定）；明細每一列的金額框也一樣 */}
                   <span className="relative flex-1 min-w-[6rem] flex">
-                    <span className={UNTAXED_TAG}>未稅</span>
+                    <span className={UNTAXED_TAG}>{taxTag}</span>
                     <MoneyInput value={edit.amount_per_period ?? 0} invalid={err('每期租金') || !!rlProblem}
                       onChange={(n) => setEdit({ ...edit, amount_per_period: n })}
                       className={`${MONEY_IN} w-full pl-11`} />
@@ -1540,7 +1542,7 @@ const nameOf = (c: Contract) =>
                 </div>
                 {/*
                   ══ 每期租金明細（migration_299，2026-09-24）══
-                  房租多少、設備租賃多少 —— 都是未稅，只是備查。
+                  房租多少、設備租賃多少 —— 都是含稅，只是備查。
                   月租單、應收、收租、認列全部照舊看上面那一格；唯一的規矩是加總要等於它。
                   ★ 合計對不上：合計那行紅、上面的框紅、存不了。訊息在合計旁邊，不在頁面最上方。
                   ★ 提示用 absolute，不推歪下面的欄位（CLAUDE.md 畫面規則 3）。
@@ -1561,7 +1563,7 @@ const nameOf = (c: Contract) =>
                           onChange={(e) => setLines(rentLines.map((x, k) => (k === i ? { ...x, label: e.target.value } : x)))}
                           className="h-11 md:h-8 rounded-lg border border-mor-line px-2 text-sm flex-1 min-w-[8rem] bg-white" />
                         <span className="relative w-36 shrink-0 flex">
-                          <span className={UNTAXED_TAG}>未稅</span>
+                          <span className={UNTAXED_TAG}>{taxTag}</span>
                           <MoneyInput value={l.amount} onChange={(n) => setLines(rentLines.map((x, k) => (k === i ? { ...x, amount: n } : x)))}
                             className={`${MONEY_IN} w-full pl-11 min-w-0`} />
                         </span>
