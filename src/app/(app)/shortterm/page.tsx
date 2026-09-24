@@ -52,6 +52,7 @@ import { payStatus, remaining, isExempt, STATUS_LABEL, STATUS_CLASS, STATUS_FILT
 import { softDelete } from '@/lib/trash';
 import { feeFilterOptions, feeFilterPredicate, feeFilterOnSearch, feeSourceConflict, ONEOFF_SOURCES, FEE_F_ALL, FEE_F_RENT } from '@/lib/order-filter';
 import TrashLink from '@/components/TrashLink';
+import Fold from '@/components/Fold';
 import { checkDates, checkPrice, checkRequired, isEarnestStage, lookbackFrom, type PastOrder } from '@/lib/order-check';
 import MoneyInput from '@/components/MoneyInput';
 import RangeInput from '@/components/RangeInput';
@@ -381,6 +382,8 @@ export default function ShortTermPage() {
    * 非台幣仍然回到 fx_revenue / fx_deposit。轉換由 toLines / fromLines 負責。
    */
   const [revLines, setRevLines] = useState<Line[]>([]);
+  /** 加費合計，只給「應收」小計用 */
+  const feesTotal = fees.reduce((a, f) => a + (Number(f.amount) || 0), 0);
   const [depLines, setDepLines] = useState<Line[]>([]);
   /*
    * 寵物押金（migration_194）。
@@ -2034,7 +2037,12 @@ export default function ShortTermPage() {
                 🔒 {lockReason}
               </div>
             )}
-            <div className="px-6 py-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+            <div key={edit.id || 'new'} className="px-6 py-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+              {/* 三塊（2026-09-24 使用者指定，跟契約表單同一套）：基本資料 → 錢 → 其他功能 */}
+              <div className="col-span-2 flex items-center gap-2.5">
+                <span className="text-[11px] font-bold tracking-wide text-gray-500 shrink-0">基本資料</span>
+                <i className="flex-1 h-px bg-mor-line" />
+              </div>
               <label className="flex flex-col gap-1"><span className="flex items-center">來源<Req /></span>
                 <select value={edit.source} onChange={(e) => {
                   const src = e.target.value;
@@ -2347,39 +2355,13 @@ export default function ShortTermPage() {
               </div>
 
               <div className="col-span-2 rounded-xl border border-mor-line bg-[#FAFAF9] p-3">
-                {edit.source !== 'oneoff' && (
-                  <MoneyLines bare mode="revenue" label="訂單金額" required
-                    lines={revLines} onChange={setRevLines} invalid={err('金額')} />
-                )}
-
-                {/*
-                  價格提醒。**不擋存檔** —— 談得比較低是真實會發生的事，
-                  擋下來的話他只能放棄輸入，系統就變成阻礙。
-                  門檻訂在 5 成，基本上只抓「少打一個 0」那種數量級的錯。
-                */}
-                {priceWarn && (
-                  <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50
-                                  px-3 py-2.5 text-xs text-amber-800 flex gap-2">
-                    <span className="shrink-0">⚠</span>
-                    <div className="leading-relaxed">{priceWarn.message}</div>
-                  </div>
-                )}
-
-                {/*
-                  ★ 虛線不是實線 —— 訂單金額與訂押金還在同一個「錢」的框裡，
-                    實線會看起來像兩個不同的區塊。
-                */}
-                {edit.source !== 'oneoff' && !hideFields.deposit && (
-                  <div className="border-t border-dashed border-mor-line -mx-3 my-3" />
-                )}
-
                 {/*
                   訂金那一列（migration_256／257）。勾了才出現 ——
                   九成的單沒有訂金，欄位一直擺著遲早有人把押金填進去，
                   而填錯的那一筆會在押金管理頁變成一筆「要退給誰」的錢。
                 */}
                 {edit.source !== 'oneoff' && !hideFields.deposit && earnest != null && (
-                  <div className="flex flex-wrap items-center gap-2 mb-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span className={`${ML_LABEL} flex items-center`}>訂金</span>
                     <span className={`${ML_CUR} h-11 md:h-8 rounded-lg bg-mor-bluelight text-mor-slate
                                      text-xs font-medium flex items-center justify-center`}>TWD</span>
@@ -2462,6 +2444,32 @@ export default function ShortTermPage() {
                   </div>
                 )}
 
+                {/*
+                  ★ 虛線不是實線 —— 訂單金額與訂押金還在同一個「錢」的框裡，
+                    實線會看起來像兩個不同的區塊。
+                */}
+                {edit.source !== 'oneoff' && !hideFields.deposit && (
+                  <div className="border-t border-dashed border-mor-line -mx-3 my-3" />
+                )}
+
+                {edit.source !== 'oneoff' && (
+                  <MoneyLines bare mode="revenue" label="訂單金額" required
+                    lines={revLines} onChange={setRevLines} invalid={err('金額')} />
+                )}
+
+                {/*
+                  價格提醒。**不擋存檔** —— 談得比較低是真實會發生的事，
+                  擋下來的話他只能放棄輸入，系統就變成阻礙。
+                  門檻訂在 5 成，基本上只抓「少打一個 0」那種數量級的錯。
+                */}
+                {priceWarn && (
+                  <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50
+                                  px-3 py-2.5 text-xs text-amber-800 flex gap-2">
+                    <span className="shrink-0">⚠</span>
+                    <div className="leading-relaxed">{priceWarn.message}</div>
+                  </div>
+                )}
+
                 {/* 收款方式屬於「這筆錢怎麼進來的」，本來就該在錢這一區 */}
                 <div className="flex flex-wrap items-center gap-2 mt-3">
                   <span className={`${ML_LABEL} flex items-center`}>收款方式</span>
@@ -2476,68 +2484,14 @@ export default function ShortTermPage() {
                   </select>
                 </div>
 
-                {/*
-                  ★★ 一句話講完，而且**只講一次**。
-                    改版前這件事講了兩遍:一個獨立提示框一次、押金框的 hint 再一次。
-                    訂金跟押金併在一起之後，講一次就夠。
-                */}
-                {edit.source !== 'oneoff' && !hideFields.deposit && (
-                  <div className="mt-3 pt-2 border-t border-mor-line text-[11px] text-gray-500 leading-relaxed">
-                    {hasDeposit(edit.source)
-                      ? <>訂金與押金<b>原幣退還不換匯</b>；填了金額就會出現在
-                        <a href="/deposits" target="_blank" rel="noreferrer"
-                          className="text-mor-slate hover:text-mor-slatedark mx-1">押金管理 →</a>
-                        ，收退日期與帳戶在那裡維護。</>
-                      : <>這是平台代收的訂單 —— 押金由平台收，不經過我們的帳戶，所以這裡鎖住。</>}
-                  </div>
-                )}
-              </div>
-              {/*
-                發票。設計比照契約:勾了才會在收款視窗出現號碼欄位。
-                抬頭留空時用客戶名稱 —— 大部分情況兩者相同,不該強迫再打一次。
-              */}
-              {/* ★ 2026-09-16「其他」分段。跟「錢」一樣用標題＋細線,不再多一個框 */}
-              <div className="col-span-2 flex items-center gap-2.5 mt-1">
-                <span className="text-[11px] font-bold tracking-wide text-gray-500 shrink-0">其他</span>
-                <i className="flex-1 h-px bg-mor-line" />
-              </div>
-              <div className="col-span-2">
-                <label className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={!!edit.invoice_required}
-                    onChange={(e) => setEdit({ ...edit, invoice_required: e.target.checked })} />
-                  需開立發票
-                </label>
-                {edit.invoice_required && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
-                    <label className="flex flex-col gap-1">
-                      <span className="text-[11px] text-gray-400">發票抬頭<span className="ml-1">（留空用客戶名稱）</span></span>
-                      <input value={edit.invoice_title ?? ''} placeholder={edit.guest_name ?? ''}
-                        onChange={(e) => setEdit({ ...edit, invoice_title: e.target.value })}
-                        className="h-11 md:h-8 rounded-lg border border-gray-300 px-2 text-sm" />
-                    </label>
-                    <label className="flex flex-col gap-1">
-                      <span className="text-[11px] text-gray-400">統一編號</span>
-                      <input value={edit.invoice_tax_id ?? ''} inputMode="numeric" maxLength={8}
-                        onChange={(e) => setEdit({ ...edit, invoice_tax_id: e.target.value.replace(/\D/g, '') })}
-                        className="h-11 md:h-8 rounded-lg border border-gray-300 px-2 text-sm" />
-                    </label>
-                  </div>
-                )}
-                <div className="text-[11px] text-gray-400 mt-2">
-                  {edit.invoice_required
-                    ? '發票號碼在「收款」視窗填寫,收到錢的同時記下來。'
-                    : '勾選後,收款視窗會出現發票號碼欄位。'}
-                </div>
-              </div>
-
-              <label className="flex flex-col gap-1 col-span-2">備註<input value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+                {edit.source !== 'oneoff' && <div className="border-t border-dashed border-mor-line -mx-3 my-3" />}
               {edit.source !== 'oneoff' && (
-                <div className="col-span-2 border-t border-mor-line pt-3 mt-1">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="font-medium">加費({ONEOFF_LABEL})</span>
-                    <button type="button" onClick={addFee} className="text-xs text-mor-blue underline hover:text-mor-slate">+ 新增加費</button>
+                <div>
+                  {/* 加費搬進「錢」（2026-09-24 使用者指定）：它是錢，不該排在「其他」後面。＋ 新增靠左放在清單底下 */}
+                  <div className="flex items-baseline justify-between gap-2 mb-2 text-xs text-gray-500">
+                    <span className="font-semibold">加費<span className="ml-1.5 font-normal text-gray-400">清潔費／修繕費等，認列在該日期當月，計入「{ONEOFF_LABEL}」</span></span>
+                    {fees.length > 0 && <span>合計 <b className="text-mor-ink">${fmt(feesTotal)}</b></span>}
                   </div>
-                  {fees.length === 0 && <p className="text-xs text-gray-400">尚無加費。清潔費/修繕費等收入,認列在該日期當月,並以「其他收入」計入營收報表。</p>}
                   <div className="flex flex-col gap-2">
                     {fees.map((f, i) => (
                       <div key={i} className="flex flex-wrap items-center gap-2 bg-mor-sand/30 rounded-lg px-2 py-2">
@@ -2632,8 +2586,79 @@ export default function ShortTermPage() {
                       </div>
                     ))}
                   </div>
+                  <button type="button" onClick={addFee} className="text-xs text-mor-slate hover:text-mor-slatedark mt-2">＋ 新增加費</button>
                 </div>
               )}
+                {edit.source !== 'oneoff' && <div className="border-t border-dashed border-mor-line -mx-3 my-3" />}
+                {/* 應收小計（2026-09-24 使用者指定）：訂單金額（台幣）＋ 加費。算給人看的，不存 */}
+                {edit.source !== 'oneoff' && (
+                  <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
+                    <span className="text-gray-600">應收
+                      <span className="text-[11px] text-gray-400 ml-1.5">＝ 訂單金額 {fmt(totalTwd(revLines))}{fees.length ? ` ＋ 加費 ${fmt(feesTotal)}` : ''}</span></span>
+                    <b className="text-base tabular-nums">${fmt(totalTwd(revLines) + feesTotal)}</b>
+                  </div>
+                )}
+                {/*
+                  ★★ 一句話講完，而且**只講一次**。
+                    改版前這件事講了兩遍:一個獨立提示框一次、押金框的 hint 再一次。
+                    訂金跟押金併在一起之後，講一次就夠。
+                */}
+                {edit.source !== 'oneoff' && !hideFields.deposit && (
+                  <div className="mt-3 pt-2 border-t border-mor-line text-[11px] text-gray-500 leading-relaxed">
+                    {hasDeposit(edit.source)
+                      ? <>訂金與押金<b>原幣退還不換匯</b>；填了金額就會出現在
+                        <a href="/deposits" target="_blank" rel="noreferrer"
+                          className="text-mor-slate hover:text-mor-slatedark mx-1">押金管理 →</a>
+                        ，收退日期與帳戶在那裡維護。</>
+                      : <>這是平台代收的訂單 —— 押金由平台收，不經過我們的帳戶，所以這裡鎖住。</>}
+                  </div>
+                )}
+              </div>
+              {/*
+                發票。設計比照契約:勾了才會在收款視窗出現號碼欄位。
+                抬頭留空時用客戶名稱 —— 大部分情況兩者相同,不該強迫再打一次。
+              */}
+              {/* ★ 2026-09-16「其他」分段。跟「錢」一樣用標題＋細線,不再多一個框 */}
+              <div className="col-span-2 flex items-center gap-2.5 mt-1">
+                <span className="text-[11px] font-bold tracking-wide text-gray-500 shrink-0">其他功能</span>
+                <i className="flex-1 h-px bg-mor-line" />
+              </div>
+              {/* 兩個摺疊（2026-09-24 使用者指定）：收起時右邊留一句現況。有備註的展開、沒有的收著 */}
+              <Fold title="發票" defaultOpen={!!edit.invoice_required}
+                summary={edit.invoice_required ? `需開立${edit.invoice_title ? `・${edit.invoice_title}` : ''}${edit.invoice_tax_id ? `・${edit.invoice_tax_id}` : ''}` : '不需要'}>
+              <div className="col-span-2">
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={!!edit.invoice_required}
+                    onChange={(e) => setEdit({ ...edit, invoice_required: e.target.checked })} />
+                  需開立發票
+                </label>
+                {edit.invoice_required && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[11px] text-gray-400">發票抬頭<span className="ml-1">（留空用客戶名稱）</span></span>
+                      <input value={edit.invoice_title ?? ''} placeholder={edit.guest_name ?? ''}
+                        onChange={(e) => setEdit({ ...edit, invoice_title: e.target.value })}
+                        className="h-11 md:h-8 rounded-lg border border-gray-300 px-2 text-sm" />
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[11px] text-gray-400">統一編號</span>
+                      <input value={edit.invoice_tax_id ?? ''} inputMode="numeric" maxLength={8}
+                        onChange={(e) => setEdit({ ...edit, invoice_tax_id: e.target.value.replace(/\D/g, '') })}
+                        className="h-11 md:h-8 rounded-lg border border-gray-300 px-2 text-sm" />
+                    </label>
+                  </div>
+                )}
+                <div className="text-[11px] text-gray-400 mt-2">
+                  {edit.invoice_required
+                    ? '發票號碼在「收款」視窗填寫,收到錢的同時記下來。'
+                    : '勾選後,收款視窗會出現發票號碼欄位。'}
+                </div>
+              </div>
+
+              </Fold>
+              <Fold title="備註" defaultOpen={!!edit.note} summary={edit.note || '沒有'}>
+              <label className="flex flex-col gap-1 col-span-2"><input value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
+              </Fold>
             </div>
             <div className="sticky bottom-0 bg-white border-t border-mor-line px-6 py-3 flex justify-end gap-2">
               <button onClick={() => setEdit(null)} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>

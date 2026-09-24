@@ -45,7 +45,7 @@ const fromMonthInput = (v: string) => (/^\d{4}-\d{2}$/.test(v) ? v.replace('-', 
 
 
 export default function ContractFees({
-  contract, canEdit, onChanged, onPending,
+  contract, canEdit, onChanged, onPending, onTotal,
 }: {
   /** id 為空字串 = 新增契約中，還沒有 contract_id 可以掛 */
   contract: { id: string; start_date: string | null; end_date: string | null; cadence: string };
@@ -59,11 +59,17 @@ export default function ContractFees({
    * 而那正是這個元件搬到編輯視窗要解決的問題。
    */
   onPending?: (rows: Rc[]) => void;
+  /** 每期固定加費合計（生效中的）變動時回報 —— 母層拿去算「每期應收」小計（2026-09-24） */
+  onTotal?: (perPeriod: number) => void;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const isNew = !contract.id;
   const [rows, setRows] = useState<Rc[]>([]);
-  const [counts, setCounts] = useState<Record<string, { n: number; paid: number; paidAmt: number }>>({});
+  const [counts, setCounts] = useState<Record<string, { n: number; paid: number; paidAmt: number; unpaidAmt: number;
+    /** 每一期：ym、金額、收了沒（給「明細」摺疊列出來） */
+    items: { ym: string; amount: number; paid: boolean }[] }>>({});
+  /** 哪幾筆設定的「明細」是展開的 */
+  const [openIds, setOpenIds] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [draft, setDraft] = useState<Rc | null>(null);
@@ -82,14 +88,16 @@ export default function ContractFees({
       const { data: od } = await supabase.from('orders')
         .select('order_key, amount, paid')
         .eq('imported_via', 'contract_fee').eq('contract_id', contract.id);
-      const m: Record<string, { n: number; paid: number; paidAmt: number }> = {};
+      const m: Record<string, { n: number; paid: number; paidAmt: number; unpaidAmt: number; items: { ym: string; amount: number; paid: boolean }[] }> = {};
       for (const o of (od ?? []) as { order_key: string; amount: number; paid: boolean }[]) {
         // 'CRC_' + uuid(36) + '_' + YYYYMM
         const rid = o.order_key.slice(4, 40);
-        const s = (m[rid] ??= { n: 0, paid: 0, paidAmt: 0 });
+        const s = (m[rid] ??= { n: 0, paid: 0, paidAmt: 0, unpaidAmt: 0, items: [] });
         s.n += 1;
-        if (o.paid) { s.paid += 1; s.paidAmt += Number(o.amount) || 0; }
+        if (o.paid) { s.paid += 1; s.paidAmt += Number(o.amount) || 0; } else s.unpaidAmt += Number(o.amount) || 0;
+        s.items.push({ ym: o.order_key.slice(41), amount: Number(o.amount) || 0, paid: !!o.paid });
       }
+      for (const k of Object.keys(m)) m[k].items.sort((a, b) => a.ym.localeCompare(b.ym));
       setCounts(m);
     } else setCounts({});
   }, [supabase, contract.id, isNew]);
@@ -230,6 +238,7 @@ export default function ContractFees({
       (p) => p.fee_type === r.fee_type && (p.item_name ?? null) === (r.item_name || null));
 
   const live = feeMonthly(rows);
+  useEffect(() => { onTotal?.(live); /* eslint-disable-next-line */ }, [live]);
   /*
    * 期別跟著契約的繳別 —— 年繳約一年一期，不是十二個月。
    * 「管理費 3,000」就是這一期加 3,000；要收 36,000 就填 36,000。
@@ -279,10 +288,29 @@ export default function ContractFees({
                 </div>
               )}
             </div>
-            <div className="text-[11px] text-gray-400 mt-0.5">
-              {toMonthInput(r.start_ym)} 起
-              {s ? `・已產生 ${s.n} 期${s.paid ? `，其中 ${s.paid} 期已收款 $${fmt(s.paidAmt)}` : ''}` : ''}
+            {/*
+              「明細（N 期，M 期已收）▸」（2026-09-24 使用者指定）——
+              取代原本那句「已產生 N 期」。點開一格一格列每一期收了沒；那些期別就是月租單，資料本來就有。
+            */}
+            <div className="text-[11px] text-gray-400 mt-0.5 flex flex-wrap items-center gap-x-2">
+              <span>{toMonthInput(r.start_ym)} 起</span>
+              {s && s.n > 0 && (
+                <button type="button" onClick={() => setOpenIds((o) => ({ ...o, [r.id]: !o[r.id] }))}
+                  className="text-mor-slate hover:text-mor-slatedark">
+                  明細（{s.n} 期{s.paid ? `，${s.paid} 期已收` : ''}）{openIds[r.id] ? '▾' : '▸'}
+                </button>
+              )}
             </div>
+            {s && openIds[r.id] && (
+              <div className="mt-1.5 rounded-lg border border-mor-line bg-white px-2.5 py-1.5 text-[11px] text-gray-600">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-0.5 tabular-nums">
+                  {s.items.map((it) => (
+                    <span key={it.ym}>{toMonthInput(it.ym)} <b className={it.paid ? 'text-mor-greendark' : 'text-gray-400 font-normal'}>{it.paid ? '已收' : '未收'}</b> {fmt(it.amount)}</span>
+                  ))}
+                </div>
+                <div className="mt-1 text-gray-400">共 {s.n} 期・已收 ${fmt(s.paidAmt)}・未收 ${fmt(s.unpaidAmt)}</div>
+              </div>
+            )}
           </div>
         );
       })}
@@ -357,8 +385,8 @@ export default function ContractFees({
 
       {canEdit && !draft && !!periods.length && (
         <button type="button" onClick={() => setDraft(blank())}
-          className="w-full h-10 rounded-lg border border-dashed border-mor-line text-xs text-mor-blue hover:bg-mor-sand/30">
-          + 新增固定加費
+          className="text-xs text-mor-slate hover:text-mor-slatedark">
+          ＋ 新增固定加費
         </button>
       )}
 

@@ -51,6 +51,7 @@ import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable'
 import * as XLSX from 'xlsx-js-style';
 import { softDelete } from '@/lib/trash';
 import TrashLink from '@/components/TrashLink';
+import Fold from '@/components/Fold';
 
 type Contract = {
   id: string; estate_id: string | null; room: string | null; tenant_name: string | null;
@@ -181,6 +182,8 @@ export default function ContractsPage() {
   const [edit, setEdit] = useState<Contract | null>(null);
   /** 每期租金明細展開／收起。開表單時：有明細就展開，沒有就收著 */
   const [linesOpen, setLinesOpen] = useState(false);
+  /** 固定加費每期合計（ContractFees 回報），只給「每期應收」小計用 */
+  const [feeTotal, setFeeTotal] = useState(0);
   const [collect, setCollect] = useState<Contract | null>(null);
   const [detail, setDetail] = useState<Contract | null>(null);
   const [kw, setKw] = useState('');
@@ -1298,7 +1301,8 @@ const nameOf = (c: Contract) =>
               {edit.id ? '編輯契約' : '新增契約'}
               <button onClick={() => setEdit(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
             </div>
-            <div className="px-6 py-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+            <div key={edit.id || 'new'} className="px-6 py-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+              <FormSection title="基本資料" />
               <label className="flex flex-col gap-1"><span className="flex items-center">物業<Req /></span>
                 <select value={edit.estate_id ?? ''} onChange={(e) => setEdit({ ...edit, estate_id: e.target.value || null, room: '' })} className={`rounded-lg border px-2 py-1.5 ${err('物業') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}><option value="">—</option>{estates.map((es) => <option key={es.id} value={es.id}>{es.name}</option>)}</select></label>
               <label className="flex flex-col gap-1"><span className="flex items-center">房源<Req /></span>
@@ -1395,7 +1399,8 @@ const nameOf = (c: Contract) =>
                   （2026-09-16 使用者:「改成 已收訂金 / 訂單 契約 都要改」）。
                   括號裡那句話搬進 ⓘ。
               */}
-              <FormSection title="租期">
+              {/* 「租期」原本是一段標題（2026-09-24 併進基本資料）；已收訂金的勾留在這一列 */}
+              <div className="col-span-2 flex items-center gap-2.5 mt-1">
                 {/*
                   ★★ 訂金（migration_174，2026-08-24 使用者指定）。
 
@@ -1443,7 +1448,7 @@ const nameOf = (c: Contract) =>
                     這張契約<b>還不會產生月租單</b> —— 補完資料、取消這個勾之後才會。
                   </div>
                 </details>
-              </FormSection>
+              </div>
 
               <label className="flex flex-col gap-1"><span className="flex items-center">租期起{!edit.earnest_only && <Req />}{edit.earnest_only && <span className="text-xs text-gray-400 ml-1">選填</span>}</span>
                 <input type="date" value={edit.start_date ?? ''} onChange={(e) => setEdit({ ...edit, start_date: e.target.value })} className={`rounded-lg border px-2 py-1.5 ${err('租期起') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} /></label>
@@ -1528,6 +1533,34 @@ const nameOf = (c: Contract) =>
               */}
               <FormSection title="錢" />
               <div className="col-span-2 rounded-xl border border-mor-line bg-[#FAFAF9] p-3">
+                {/* 訂金。勾了「已收訂金」才出現 —— 沒勾的契約收的是押金不是訂金，
+                    欄位一直擺著遲早有人把押金填進去。 */}
+                {edit.earnest_only && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={`${ML_LABEL} flex items-center`}>訂金<Req /></span>
+                    <span className={CUR_CHIP}>TWD</span>
+                    <MoneyInput value={edit.earnest_amount ?? 0}
+                      invalid={tried && !((edit.earnest_amount ?? 0) > 0)}
+                      onChange={(n) => setEdit({ ...edit, earnest_amount: n })}
+                      className={MONEY_IN} />
+                    <span className="w-6 shrink-0" />
+                  </div>
+                )}
+
+                {/*
+                  契約押金只收台幣 —— 長租不會有外幣押金,多一個幣別清單只是讓最常用的
+                  路徑多兩個看不懂的控制項。短租那邊才需要（外籍旅客）。
+                */}
+                <div className={`flex flex-wrap items-center gap-2 ${edit.earnest_only ? 'mt-2' : ''}`}>
+                  <span className={`${ML_LABEL} flex items-center`}>押金</span>
+                  <span className={CUR_CHIP}>TWD</span>
+                  <MoneyInput value={edit.deposit ?? 0}
+                    onChange={(n) => setEdit({ ...edit, deposit: n })}
+                    className={MONEY_IN} />
+                  <span className="w-6 shrink-0" />
+                </div>
+
+                <div className="border-t border-dashed border-mor-line -mx-3 my-3" />
                 <div className="flex flex-wrap items-center gap-2">
                   <span className={`${ML_LABEL} flex items-center`}>每期租金{!edit.earnest_only && <Req />}</span>
                   <span className={CUR_CHIP}>TWD</span>
@@ -1614,39 +1647,6 @@ const nameOf = (c: Contract) =>
                   </div>
                 )}
 
-                {/*
-                  ★ 虛線不是實線 —— 租金與訂押金還在同一個「錢」的框裡，
-                    實線會看起來像兩個不同的區塊。（跟訂單表單一致）
-                */}
-                <div className="border-t border-dashed border-mor-line -mx-3 my-3" />
-
-                {/* 訂金。勾了「已收訂金」才出現 —— 沒勾的契約收的是押金不是訂金，
-                    欄位一直擺著遲早有人把押金填進去。 */}
-                {edit.earnest_only && (
-                  <div className="flex flex-wrap items-center gap-2 mb-2">
-                    <span className={`${ML_LABEL} flex items-center`}>訂金<Req /></span>
-                    <span className={CUR_CHIP}>TWD</span>
-                    <MoneyInput value={edit.earnest_amount ?? 0}
-                      invalid={tried && !((edit.earnest_amount ?? 0) > 0)}
-                      onChange={(n) => setEdit({ ...edit, earnest_amount: n })}
-                      className={MONEY_IN} />
-                    <span className="w-6 shrink-0" />
-                  </div>
-                )}
-
-                {/*
-                  契約押金只收台幣 —— 長租不會有外幣押金,多一個幣別清單只是讓最常用的
-                  路徑多兩個看不懂的控制項。短租那邊才需要（外籍旅客）。
-                */}
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className={`${ML_LABEL} flex items-center`}>押金</span>
-                  <span className={CUR_CHIP}>TWD</span>
-                  <MoneyInput value={edit.deposit ?? 0}
-                    onChange={(n) => setEdit({ ...edit, deposit: n })}
-                    className={MONEY_IN} />
-                  <span className="w-6 shrink-0" />
-                </div>
-
                 <div className="flex flex-wrap items-center gap-2 mt-2">
                   <span className={`${ML_LABEL} flex items-center`}>收款帳號</span>
                   <select value={edit.account ?? ''} onChange={(e) => setEdit({ ...edit, account: e.target.value || null })}
@@ -1657,6 +1657,38 @@ const nameOf = (c: Contract) =>
                   <span className="w-6 shrink-0" />
                 </div>
 
+                <div className="border-t border-dashed border-mor-line -mx-3 my-3" />
+              {/*
+                固定加費就放在租金旁邊 —— 「月租 165,000、管理費 3,000」
+                是同一件事的兩個數字。原本要先存契約、再開收租視窗、
+                再展開一個摺疊面板才填得到，於是很多契約的加費根本沒建起來。
+              */}
+              <div>
+                <ContractFees
+                  contract={{ id: edit.id ?? '', start_date: edit.start_date ?? null, end_date: edit.end_date ?? null, cadence: edit.cadence }}
+                  canEdit
+                  onChanged={load}
+                  onPending={setPendingFees}
+                  onTotal={setFeeTotal} />
+                {/*
+                  這一句必須留著。加費是直接寫資料庫的（它會連帶重算各期費用單），
+                  下面的「取消」救不回來 —— 不講的話使用者會以為按取消就全部沒事。
+                  新增契約時才是暫存的,所以只在編輯模式顯示。
+                */}
+                {edit.id && (
+                  <div className="text-[11px] text-gray-400 mt-1.5">
+                    固定加費按下「加入／暫停／刪除」就立即生效，不受下方「取消」影響。
+                  </div>
+                )}
+              </div>
+
+                <div className="border-t border-dashed border-mor-line -mx-3 my-3" />
+                {/* 每期應收小計（2026-09-24 使用者指定）：算給人看的，不存。折讓與一次性費用不算 —— 那些在收租視窗才發生 */}
+                <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
+                  <span className="text-gray-600">每期應收
+                    <span className="text-[11px] text-gray-400 ml-1.5">＝ 租金 {fmt(edit.amount_per_period ?? 0)} ＋ 固定加費 {fmt(feeTotal)}</span></span>
+                  <b className="text-base tabular-nums">${fmt((edit.amount_per_period ?? 0) + feeTotal)}</b>
+                </div>
                 {/*
                   ★ 一句話講完訂金與押金的去向，取代原本兩個「收退狀態 →」連結。
                     新契約還沒有 id，連過去只會看到空清單 —— 所以連結只在編輯時出現。
@@ -1677,7 +1709,7 @@ const nameOf = (c: Contract) =>
                   它跟收款帳號沒有關係 —— 它是「這張契約還算不算數」，
                   那是整份的狀態，不是某個欄位的附屬。
               */}
-              <FormSection title="其他" />
+              <FormSection title="其他功能" />
               <div className="col-span-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={edit.active} onChange={(e) => setEdit({ ...edit, active: e.target.checked })} />
@@ -1697,75 +1729,17 @@ const nameOf = (c: Contract) =>
                 釘選到收租關注清單
               </label>
               {/*
-                ★ 原本的標籤是「顯示名稱(釘選清單顯示,可填人名或自訂;留空則用房源)」——
-                  24 個字，比欄位本身還長。
-
-                ★★ 「留空則用房源」寫在 placeholder 裡最好 —— 它本來就是在描述
-                  「你什麼都不填會發生什麼」，而 placeholder 正是那句話該待的地方。
-                  ★ placeholder 保留房號本身（edit.room）:寫死「留空就用房源」的話，
-                    使用者看不到那個房號實際長什麼樣。
+                ══════════ 其他功能的四個摺疊（2026-09-24 使用者指定）══════════
+                發票、折讓約定、展延租期、顯示名稱與備註 —— 多數契約用不到，收起來。
+                ★ 收起時右邊那句現況照樣顯示，不用點開也看得到狀態；
+                  「價格未稅」是重要狀態，橘字不藏。
+                ★ 預設：有內容的展開、沒內容的收著。用原生 <details>，key 綁 edit.id 讓換一張契約時重算預設。
               */}
-              <label className="flex flex-col gap-1 col-span-2">顯示名稱
-                <input value={edit.display_name ?? ''} onChange={(e) => setEdit({ ...edit, display_name: e.target.value })}
-                  placeholder={edit.room ? `留空就用 ${edit.room}` : '留空就用房源'} className={FIELD_IN} />
-                <span className="text-[11px] text-gray-400">釘選清單上顯示的名字，可填人名或自訂</span></label>
-              <label className="flex flex-col gap-1 col-span-2">備註<input value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })} className={FIELD_IN} /></label>
-
-              {/*
-                固定加費就放在租金旁邊 —— 「月租 165,000、管理費 3,000」
-                是同一件事的兩個數字。原本要先存契約、再開收租視窗、
-                再展開一個摺疊面板才填得到，於是很多契約的加費根本沒建起來。
-              */}
-              <div className="col-span-2 border-t border-mor-line pt-3 mt-1">
-                <ContractFees
-                  contract={{ id: edit.id ?? '', start_date: edit.start_date ?? null, end_date: edit.end_date ?? null, cadence: edit.cadence }}
-                  canEdit
-                  onChanged={load}
-                  onPending={setPendingFees} />
-                {/*
-                  這一句必須留著。加費是直接寫資料庫的（它會連帶重算各期費用單），
-                  下面的「取消」救不回來 —— 不講的話使用者會以為按取消就全部沒事。
-                  新增契約時才是暫存的,所以只在編輯模式顯示。
-                */}
-                {edit.id && (
-                  <div className="text-[11px] text-gray-400 mt-1.5">
-                    固定加費按下「加入／暫停／刪除」就立即生效，不受下方「取消」影響。
-                  </div>
-                )}
-              </div>
-
-              {/*
-                折讓約定:純文字備查,記錄雙方談好的條件,可以有多筆。
-                這裡不影響任何金額 —— 實際發生的折讓要到收租視窗按「− 折讓」,
-                那才會產生負數的一次性收入並減少該月營收。
-              */}
-              <div className="col-span-2 border-t border-mor-line pt-3 mt-1">
-                <div className="text-xs font-semibold text-gray-500 mb-1.5">折讓約定（僅記錄,不影響金額）</div>
-                <div className="space-y-1.5">
-                  {((edit.concessions as any[]) ?? []).map((cn: any, idx: number) => (
-                    <div key={idx} className="flex flex-wrap items-center gap-1.5">
-                      <input type="date" value={cn.date ?? ''}
-                        onChange={(e) => { const a = [...((edit.concessions as any[]) ?? [])]; a[idx] = { ...a[idx], date: e.target.value }; setEdit({ ...edit, concessions: a } as any); }}
-                        className="rounded border border-gray-300 px-1.5 py-1 text-xs" />
-                      <MoneyInput value={Number(cn.amount) || 0} placeholder="金額"
-                        onChange={(n) => { const a = [...((edit.concessions as any[]) ?? [])]; a[idx] = { ...a[idx], amount: n }; setEdit({ ...edit, concessions: a } as any); }}
-                        className="w-24 rounded border border-gray-300 px-1.5 py-1 text-xs text-right" />
-                      <input placeholder="說明" value={cn.note ?? ''}
-                        onChange={(e) => { const a = [...((edit.concessions as any[]) ?? [])]; a[idx] = { ...a[idx], note: e.target.value }; setEdit({ ...edit, concessions: a } as any); }}
-                        className="flex-1 min-w-32 rounded border border-gray-300 px-1.5 py-1 text-xs" />
-                      <button type="button" onClick={() => setEdit({ ...edit, concessions: ((edit.concessions as any[]) ?? []).filter((_, j) => j !== idx) } as any)}
-                        className="text-xs text-red-400 underline px-1">刪</button>
-                    </div>
-                  ))}
-                </div>
-                <button type="button"
-                  onClick={() => setEdit({ ...edit, concessions: [...(((edit.concessions as any[]) ?? [])), { date: '', amount: 0, note: '' }] } as any)}
-                  className="text-xs text-mor-blue underline mt-1.5">+ 增加折讓約定</button>
-                <p className="text-[11px] text-gray-400 mt-1">
-                  這裡只是備查。實際折讓請在「收租」視窗對該期按「− 折讓」,那才會扣減營收。
-                </p>
-              </div>
-
+              <Fold title="發票" defaultOpen={!!edit.tax_free || !!edit.invoice_required}
+                warn={!!edit.tax_free}
+                summary={edit.tax_free ? '價格未稅・不開發票'
+                  : edit.invoice_required ? `需開立${edit.invoice_day ? `・每月 ${edit.invoice_day} 號` : ''}${edit.invoice_after_paid !== false ? '・收費後開' : ''}`
+                  : '不需要'}>
               {/*
                 價格未稅（2026-09-02 使用者指定）。
 
@@ -1776,7 +1750,7 @@ const nameOf = (c: Contract) =>
                   一定有人勾了以為有效（資料庫的 check 約束也擋，
                   前端只是讓人不會誤按）。
               */}
-              <div className="col-span-2 border-t border-mor-line pt-3 mt-1">
+              <div className="col-span-2">
                 <label className="flex items-start gap-2 rounded-lg bg-mor-bluelight/60 px-3 py-2 cursor-pointer">
                   <input type="checkbox" className="mt-0.5" checked={!!edit.tax_free}
                     onChange={(e) => setEdit({
@@ -1796,7 +1770,7 @@ const nameOf = (c: Contract) =>
                 </label>
               </div>
 
-              <div className={`col-span-2 pt-3 ${edit.tax_free ? 'opacity-40' : ''}`}>
+              <div className={`col-span-2 ${edit.tax_free ? 'opacity-40' : ''}`}>
                 <label className={`flex items-center gap-2 text-xs font-semibold text-gray-500 ${
                   edit.tax_free ? '' : 'cursor-pointer'}`}
                   title={edit.tax_free ? '價格未稅的契約不開發票' : '勾選後會出現在主畫面的「待開發票」提醒清單'}>
@@ -1829,8 +1803,46 @@ const nameOf = (c: Contract) =>
                 )}
               </div>
 
+              </Fold>
+              <Fold title="折讓約定" defaultOpen={(((edit.concessions as any[]) ?? []).length) > 0}
+                summary={((edit.concessions as any[]) ?? []).length ? `${((edit.concessions as any[]) ?? []).length} 筆` : '沒有'}>
+              {/*
+                折讓約定:純文字備查,記錄雙方談好的條件,可以有多筆。
+                這裡不影響任何金額 —— 實際發生的折讓要到收租視窗按「− 折讓」,
+                那才會產生負數的一次性收入並減少該月營收。
+              */}
+              <div className="col-span-2">
+                <div className="text-xs font-semibold text-gray-500 mb-1.5">折讓約定（僅記錄,不影響金額）</div>
+                <div className="space-y-1.5">
+                  {((edit.concessions as any[]) ?? []).map((cn: any, idx: number) => (
+                    <div key={idx} className="flex flex-wrap items-center gap-1.5">
+                      <input type="date" value={cn.date ?? ''}
+                        onChange={(e) => { const a = [...((edit.concessions as any[]) ?? [])]; a[idx] = { ...a[idx], date: e.target.value }; setEdit({ ...edit, concessions: a } as any); }}
+                        className="rounded border border-gray-300 px-1.5 py-1 text-xs" />
+                      <MoneyInput value={Number(cn.amount) || 0} placeholder="金額"
+                        onChange={(n) => { const a = [...((edit.concessions as any[]) ?? [])]; a[idx] = { ...a[idx], amount: n }; setEdit({ ...edit, concessions: a } as any); }}
+                        className="w-24 rounded border border-gray-300 px-1.5 py-1 text-xs text-right" />
+                      <input placeholder="說明" value={cn.note ?? ''}
+                        onChange={(e) => { const a = [...((edit.concessions as any[]) ?? [])]; a[idx] = { ...a[idx], note: e.target.value }; setEdit({ ...edit, concessions: a } as any); }}
+                        className="flex-1 min-w-32 rounded border border-gray-300 px-1.5 py-1 text-xs" />
+                      <button type="button" onClick={() => setEdit({ ...edit, concessions: ((edit.concessions as any[]) ?? []).filter((_, j) => j !== idx) } as any)}
+                        className="text-xs text-red-400 underline px-1">刪</button>
+                    </div>
+                  ))}
+                </div>
+                <button type="button"
+                  onClick={() => setEdit({ ...edit, concessions: [...(((edit.concessions as any[]) ?? [])), { date: '', amount: 0, note: '' }] } as any)}
+                  className="text-xs text-mor-blue underline mt-1.5">+ 增加折讓約定</button>
+                <p className="text-[11px] text-gray-400 mt-1">
+                  這裡只是備查。實際折讓請在「收租」視窗對該期按「− 折讓」,那才會扣減營收。
+                </p>
+              </div>
+
+              </Fold>
               {edit.id && (
-                <div className="col-span-2 border-t border-mor-line pt-3 mt-1">
+                <Fold title="展延租期" defaultOpen={false} summary={`迄 ${edit.end_date || '—'}`}>
+              {edit.id && (
+                <div className="col-span-2">
                   <div className="text-xs font-semibold text-gray-500 mb-1.5">展延租期(在現有租期之後追加 N 個月;追加後會多出對應 N 期待收款,可多次展延,持續認列營收直到停用)</div>
                   <div className="filter-bar flex flex-wrap items-end gap-3">
                     <label className="flex flex-col gap-0.5 text-xs text-gray-500">追加月數
@@ -1862,6 +1874,26 @@ const nameOf = (c: Contract) =>
                   )}
                 </div>
               )}
+                </Fold>
+              )}
+              <Fold title="顯示名稱與備註" defaultOpen={!!(edit.display_name || edit.note)}
+                summary={edit.display_name || edit.note || (edit.room ? `留空就用 ${edit.room}` : '')}>
+              {/*
+                ★ 原本的標籤是「顯示名稱(釘選清單顯示,可填人名或自訂;留空則用房源)」——
+                  24 個字，比欄位本身還長。
+
+                ★★ 「留空則用房源」寫在 placeholder 裡最好 —— 它本來就是在描述
+                  「你什麼都不填會發生什麼」，而 placeholder 正是那句話該待的地方。
+                  ★ placeholder 保留房號本身（edit.room）:寫死「留空就用房源」的話，
+                    使用者看不到那個房號實際長什麼樣。
+              */}
+              <label className="flex flex-col gap-1 col-span-2">顯示名稱
+                <input value={edit.display_name ?? ''} onChange={(e) => setEdit({ ...edit, display_name: e.target.value })}
+                  placeholder={edit.room ? `留空就用 ${edit.room}` : '留空就用房源'} className={FIELD_IN} />
+                <span className="text-[11px] text-gray-400">釘選清單上顯示的名字，可填人名或自訂</span></label>
+              <label className="flex flex-col gap-1 col-span-2">備註<input value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })} className={FIELD_IN} /></label>
+
+              </Fold>
             </div>
             <div className="sticky bottom-0 bg-white border-t border-mor-line px-6 py-3 flex justify-end gap-2">
               <button onClick={() => setEdit(null)} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>

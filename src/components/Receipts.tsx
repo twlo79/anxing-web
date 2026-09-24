@@ -37,6 +37,7 @@ type Att = {
 const BUCKET = 'receipts';
 const MAX_EDGE = 1600;       // 長邊上限。手機直出 4000px 的照片對看發票沒有幫助，只是變慢
 const JPEG_QUALITY = 0.82;
+const MAX_BYTES = 10 * 1024 * 1024;   // 跟 storage.buckets.file_size_limit 一樣（migration_51）
 
 /**
  * 手機拍的照片動輒 4~8MB，直接上傳又慢又佔空間。
@@ -268,6 +269,16 @@ const Receipts = forwardRef<ReceiptsHandle, {
   /** 傳一個檔案並登記。回傳錯誤訊息，成功為 null。 */
   const putOne = useCallback(async (file: File, pid: string, userId: string): Promise<string | null> => {
     const body = await shrink(file);
+    /*
+     * bucket 上限 10 MB（migration_51）。圖片壓過幾乎碰不到；會撞到的是掃描機直出的 PDF。
+     * 在這裡先擋，講清楚怎麼縮 —— 讓 storage 回一句英文的話使用者只知道「失敗」（2026-09-24）。
+     */
+    if (body.size > MAX_BYTES) {
+      return `「${file.name}」有 ${fmtSize(body.size)}，超過 10 MB 上限。`
+        + (body.type === 'application/pdf'
+          ? ' PDF 太大的話：① 直接傳照片（系統會自動縮）② 用手機掃描 App 存 PDF ③ 到 iLovePDF／PDF24 壓縮，100～150 DPI 灰階看發票就夠。'
+          : '');
+    }
     const ext = body.type === 'image/jpeg' ? 'jpg'
       : (file.name.split('.').pop() || 'bin').toLowerCase().slice(0, 5);
     const path = `${kind}/${pid}/${crypto.randomUUID()}.${ext}`;
