@@ -201,6 +201,21 @@ commit 訊息一行，中文，動詞開頭或「主題：內容」。
   ★ 順便驗得到冪等（跑第二次輸出一樣）、權限（用真的角色 select）、守衛（沒有痕跡時一列都不記）。
   ★★ 本地過**不等於**線上過（`auth.uid()` 是假的、資料是空的）——它抓的是語法與自身邏輯，而那正是前幾次踩到的那些。
 * **邏輯寫在 `.ts` 不是 `.tsx`** —— 測試執行環境不處理 JSX，寫在 `.tsx` 裡的判斷式測不到。
+* ★★★ **`create table` / `create view` 之後一定接三件事**（2026-10-30 起 Supabase 不再自動把新表開給 Data API —— 漏了 grant 的話前端拿到 `permission denied`，而 RLS、policy 都寫對了也沒用）：
+
+```sql
+alter table public.新表 enable row level security;
+create policy 新表_read  on public.新表 for select using (...);
+create policy 新表_write on public.新表 for all    using (...) with check (...);
+-- ↓ 新的：沒有這兩行，10-30 之後這張表前端讀不到
+grant select, insert, update, delete on public.新表 to authenticated, service_role;
+-- 有 serial / identity 欄位才要：
+grant usage, select on all sequences in schema public to authenticated, service_role;
+```
+
+  `anon` **不給** —— 這個系統沒有未登入就能看的資料。view 也要 grant（只給 select）。
+  自檢多一列：`has_table_privilege('authenticated', 'public.新表', 'select')`。
+  留底查詢：`supabase/一次性腳本/查-Data-API權限-哪些表沒給authenticated.sql`。
 * 改完跑：
 
 ```bash
