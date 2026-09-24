@@ -3456,6 +3456,20 @@ export default function PurchasesPage() {
                         無憑證
                       </label>
                     </div>
+                    {/*
+                      ★ 共同憑證的圖就放在號碼底下（2026-09-24 使用者指定：「移上去，和憑證號碼一起」）。
+                        原本在表單最底下、備註後面 —— 使用者勾了共同憑證、填了號碼，
+                        往下找不到上傳的地方，問「下面不是可以上傳憑證？」。
+                      ★★ 沒勾共同憑證時**灰掉不隱藏**（migration_172）：藏起來的話從共同切成逐項之後
+                        那些圖就從畫面上消失了，使用者會以為被刪掉、再傳一次，storage 裡就有兩份。
+                    */}
+                    <div className={`mt-3 pt-3 border-t border-dashed border-mor-line ${edit.shared_voucher ? '' : 'opacity-50'}`}>
+                      <Receipts ref={receiptsRef} kind="pr" parentId={edit.id || null}
+                        canEdit={!readOnly && !!edit.shared_voucher}
+                        label={edit.shared_voucher
+                          ? '共同憑證圖片（整張單共用）'
+                          : '共同憑證圖片（未使用 —— 改用每一項自己的圖片）'} />
+                    </div>
                   </div>
                   {/*
                     匯款手續費。
@@ -3630,27 +3644,6 @@ export default function PurchasesPage() {
                   <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">備註</span>
                     <textarea disabled={readOnly} value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })}
                       className="bg-white rounded-lg border border-mor-line px-2 py-2 h-24 md:h-16 disabled:bg-gray-50" /></label>
-                  {/*
-                      ★ 勾了共同憑證就把標題改成「共同憑證圖片」（2026-08-22）。
-                        一律叫「憑證圖片」的話,填單的人不知道這個上傳區
-                        就是上面那個「共同憑證」要用的圖 ——
-                        然後他會去找一個不存在的「共同憑證上傳」按鈕。
-                  */}
-                  {/*
-                      ★★ 反過來也要關:沒勾共同憑證時，這一區灰掉（migration_172）。
-                         使用者的話是「開共用憑證後關掉，反之一樣」。
-
-                         ★ 一樣是**灰掉不隱藏**。藏起來的話，從共同切成逐項之後
-                           那些圖就從畫面上消失了 —— 使用者會以為被刪掉，
-                           然後再傳一次，storage 裡就有兩份一樣的發票。
-                  */}
-                  <div className={edit.shared_voucher ? '' : 'opacity-50'}>
-                    <Receipts ref={receiptsRef} kind="pr" parentId={edit.id || null}
-                      canEdit={!readOnly && !!edit.shared_voucher}
-                      label={edit.shared_voucher
-                        ? '共同憑證圖片（整張單共用）'
-                        : '共同憑證圖片（未使用 —— 改用每一項自己的圖片）'} />
-                  </div>
                 </div>
               </div>
               {/*
