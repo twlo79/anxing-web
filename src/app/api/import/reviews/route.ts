@@ -180,6 +180,13 @@ export async function POST(req: Request) {
 
   const unmatched: Record<string, number> = {};
   const guessedByOrder: string[] = [];
+  /*
+   * 沒帶詳情（cats／listingId 都沒有）的評價（2026-09-29）。
+   * 排程如果跳過「步驤二之二」，畫面上細節評分就是六個「—」、房源靠反查 ——
+   * 而回報裡不會有任何一句話。這裡數出來、丟進同步差異，讓它在儀表板上叫。
+   * 只算**這次新增**的：既有評價本來就不重打詳情。
+   */
+  const noDetail: string[] = [];
   const records = parsed.map(({ m, ci, co, rid }) => {
     // 三層解析:listing_id → 訂單反查 → 保留既有值。
     // 最後一層是關鍵 —— 解析不出來時絕不能寫 null,那會把先前正確的對應洗掉。
@@ -194,6 +201,7 @@ export async function POST(req: Request) {
     const tags = cleanTags(m.tags);
     if (tags) dc.tags = tags;
     const c = m.cats || {};
+    if (!m.cats && !m.listingId && !prevProp.has(rid)) noDetail.push(rid);
     return {
       airbnb_review_id: rid,
       property_id: propertyId,
@@ -292,6 +300,13 @@ export async function POST(req: Request) {
       reason: '這個 listing 在系統裡沒有對照，評價找不到房源。'
         + '沒有房源就沒有物業，管家評分會把它算進「未指派」。到「房源管理」補上對照',
     })),
+    ...(noDetail.length ? [{
+      code: 'no-detail', field: '沒抓詳情',
+      to: `${noDetail.length} 則新評價沒有細節評分與 listing_id`,
+      severity: 'mid',
+      reason: '同步跳過了「步驟二之二：抓每則評價的詳情」。畫面上細節評分會是六個「—」，房源只能靠訂單反查。'
+        + '補法：在 Airbnb 評價頁 Console 跑 scripts/backfill-review-details.js（有斷點，只補沒做過的）',
+    }] : []),
     // 有 listing_id 但三層都解析不出來的,列名稱 —— 那通常是共用標題
     ...unresolved.map((name) => ({
       code: name, field: '房源名稱查不到',
@@ -318,6 +333,6 @@ export async function POST(req: Request) {
 
   return NextResponse.json({
     upserted, inserted, updated: upserted - inserted,
-    unmatched, unresolved, resolvedByOrder: guessedByOrder.length, needTranslation,
+    unmatched, unresolved, resolvedByOrder: guessedByOrder.length, noDetail: noDetail.length, needTranslation,
   }, { headers: CORS });
 }
