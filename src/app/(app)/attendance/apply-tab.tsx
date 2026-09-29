@@ -133,7 +133,25 @@ export default function ApplyTab({ me, onMsg, prefill, isAdmin, pending = 0 }: T
       {stage === 'apply' && sub === 'leave' && (<>
       {/* ── 我還剩多少假 ───────────────────────────── */}
       <div className={`${CARD} p-4`}>
-        <div className="text-sm font-medium mb-2.5">{year} 年我的假</div>
+        {/*
+          剩餘假合計（2026-09-29 使用者指定：「剩餘假 ＝ 補休 ＋ 特休 ＋ 公司多給的」）——
+          把所有**有額度**的假別剩餘加起來，一個數字。沒額度的（病假、事假）不算，它們沒有「剩」。
+        */}
+        {(() => {
+          const withQuota = types.filter((t) => t.has_quota);
+          const left = withQuota.reduce((n, t) => {
+            const b = bals.find((x) => x.type_code === t.code);
+            return n + (b ? Math.max(0, Number(b.quota_hours ?? 0) - Number(b.used_hours ?? 0)) : 0);
+          }, 0);
+          const d = daily > 0 ? Math.round((left / daily) * 100) / 100 : 0;
+          return (
+            <div className="flex items-baseline justify-between gap-2 mb-2.5 flex-wrap">
+              <span className="text-sm font-medium">{year} 年我的假</span>
+              <span className="text-sm text-gray-600">剩餘假合計 <b className="text-lg text-mor-ink tabular-nums">{d}</b> 天
+                <span className="text-xs text-gray-400 ml-1 tabular-nums">（{left} 小時 ＝ {withQuota.map((t) => t.name).join(' ＋ ')}）</span></span>
+            </div>
+          );
+        })()}
         {/*
           【剩餘假用進度條，不只給數字】
           「52 小時」要自己除以 8 才知道是六天半，而且看不出來用掉多少。

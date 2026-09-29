@@ -389,15 +389,22 @@ function QuotaSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
   /** 特休級距（leave_seniority，勞基法 38 條，migration_300）與公司每日工時 */
   const [tiers, setTiers] = useState<Tier[]>(tiersFrom(null));
   const [dayHours, setDayHours] = useState(8);
+  /** 補休的建議：今年已核可的加班時數（user_id → 小時），migration_301 */
+  const [otHours, setOtHours] = useState<Record<string, number>>({});
 
   const load = useCallback(async () => {
-    const [{ data: p }, { data: t }, { data: b }, { data: sen }, { data: ws }] = await Promise.all([
+    const [{ data: p }, { data: t }, { data: b }, { data: sen }, { data: ws }, { data: ot }] = await Promise.all([
       supabase.from('profiles').select('id, name, role, active, work_start, work_end, work_hours_per_day, hired_on').order('name'),
       supabase.from('leave_types').select('code, name, has_quota, sort').eq('active', true).order('sort'),
       supabase.from('leave_balances').select('*').eq('year', year),
       supabase.from('leave_seniority').select('threshold_months, days'),
       supabase.from('work_settings').select('work_hours_per_day').eq('id', 1).maybeSingle(),
+      supabase.from('overtime_requests').select('user_id, hours').eq('status', 'approved')
+        .gte('work_date', `${year}-01-01`).lte('work_date', `${year}-12-31`),
     ]);
+    const acc: Record<string, number> = {};
+    for (const r of (ot ?? []) as { user_id: string; hours: number }[]) acc[r.user_id] = (acc[r.user_id] ?? 0) + Number(r.hours || 0);
+    setOtHours(acc);
     setPpl((p ?? []) as Person[]);
     setTypes((t ?? []) as LeaveType[]);
     setBals((b ?? []) as Balance[]);
@@ -463,7 +470,7 @@ function QuotaSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
         <span className="text-sm">年度</span>
         <input type="number" value={year} onChange={(e) => setYear(Number(e.target.value))}
           className="w-24 rounded border border-mor-line px-2 py-1 text-sm tabular-nums" />
-        <span className="text-[11px] text-gray-400">年假（特休）照勞基法，年資算到 {year}/12/31；公司加碼填在「公司特休」</span>
+        <span className="text-[11px] text-gray-400">年假（特休）照勞基法，年資算到 {year}/12/31；公司加碼填「公司特休」；補休的建議＝今年已核可的加班時數</span>
         <button type="button" onClick={applyAll} className={`${BTN2} ml-auto text-xs`}>套用全部建議</button>
       </div>
 
@@ -478,6 +485,7 @@ function QuotaSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
                 {quotaTypes.map((t) => (
                   <th key={t.code} className="px-4 py-2.5">{t.name}（小時）</th>
                 ))}
+                <th className="px-4 py-2.5 text-right">剩餘合計</th>
               </tr>
             </thead>
             <tbody>
@@ -486,7 +494,8 @@ function QuotaSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
                   <td className="px-4 py-2 font-medium whitespace-nowrap">{p.name}</td>
                   {/* 到職日直接在這裡填（跟「上下班時間」那頁是同一個欄位，2026-09-29）—— 填了法定特休才算得出來 */}
                   <td className="px-4 py-2">
-                    <input type="date" defaultValue={p.hired_on ?? ''}
+                    {/* ★ key 綁值：uncontrolled 的 defaultValue 只在第一次算數，資料重載後框裡會留舊值（2026-09-29 踩過：Cindy 框空著、底下卻寫剩 56） */}
+                    <input key={`h-${p.id}-${p.hired_on ?? ''}`} type="date" defaultValue={p.hired_on ?? ''}
                       onBlur={(e) => { const v = e.target.value; if (v !== (p.hired_on ?? '')) setHired(p, v); }}
                       className="rounded border border-mor-line px-2 py-1 text-sm" />
                   </td>
@@ -497,7 +506,7 @@ function QuotaSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
                     return (
                       <td key={t.code} className="px-4 py-2">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <input type="number" step="0.5" placeholder="未設定"
+                          <input key={`q-${p.id}-${t.code}-${b?.quota_hours ?? ''}`} type="number" step="0.5" placeholder="未設定"
                             defaultValue={b?.quota_hours ?? ''}
                             onBlur={(e) => {
                               if (e.target.value === '') return;
@@ -505,6 +514,20 @@ function QuotaSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
                               if (v !== Number(b?.quota_hours ?? NaN)) setQuota(p.id, t.code, v);
                             }}
                             className="w-24 rounded border border-mor-line px-2 py-1 text-sm tabular-nums" />
+                          {/* 補休的建議：今年已核可的加班時數（一小時換一小時）。只是建議，套用才寫 */}
+                          {t.code === 'comp' && (() => {
+                            const h = Math.round((otHours[p.id] ?? 0) * 100) / 100;
+                            if (!h) return <span className="text-[11px] text-gray-400">今年沒有已核可的加班</span>;
+                            if (cur === h) return <span className="text-[11px] text-mor-greendark">✓ 已核可加班 {h} 小時</span>;
+                            return (
+                              <span className="text-[11px] text-gray-600 flex items-center gap-1.5 flex-wrap">
+                                今年已核可加班 <b className="text-mor-ink tabular-nums">{h} 小時</b>
+                                <button type="button" onClick={() => setQuota(p.id, 'comp', h)}
+                                  className="rounded bg-mor-slate text-white px-2 py-0.5 text-[11px] hover:bg-mor-slatedark">套用</button>
+                                {cur != null && <span className="text-amber-700">現在 {cur}，差 {h - cur > 0 ? '+' : ''}{Math.round((h - cur) * 100) / 100}</span>}
+                              </span>
+                            );
+                          })()}
                           {/* 法定特休的建議：跟現值一樣就打勾；不一樣給「套用」＋差多少；沒到職日就叫人先填 */}
                           {t.code === 'annual' && (
                             !p.hired_on ? <span className="text-[11px] text-amber-600">先填到職日才算得出來</span>
@@ -529,6 +552,20 @@ function QuotaSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
                       </td>
                     );
                   })}
+                  {/* 剩餘合計 ＝ 所有有額度假別的剩餘相加（年假 ＋ 公司特休 ＋ 補休），2026-09-29 */}
+                  {(() => {
+                    const hpd = Number(p.work_hours_per_day ?? dayHours) || dayHours;
+                    const left = quotaTypes.reduce((n, t) => {
+                      const b = bals.find((x) => x.user_id === p.id && x.type_code === t.code);
+                      return n + (b ? Math.max(0, Number(b.quota_hours) - Number(b.used_hours)) : 0);
+                    }, 0);
+                    return (
+                      <td className="px-4 py-2 text-right tabular-nums whitespace-nowrap">
+                        <b>{Math.round((left / hpd) * 100) / 100}</b> 天
+                        <div className="text-[11px] text-gray-400">{left} 小時</div>
+                      </td>
+                    );
+                  })()}
                 </tr>
               ))}
             </tbody>
