@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase';
 import { getPosition, type GeoFail } from '@/lib/punch';
 import { twToday } from '@/lib/attendance-ui';
 import { fmtLate } from '@/lib/attendance-hours';
+import { annualLeaveDays, tierLabel, leaveHours, tiersFrom, type Tier } from '@/lib/annual-leave';
 import {
   BTN2, CARD, INPUT, noRowsMsg,
   type Balance, type Estate, type LeaveType, type TabProps,
@@ -385,22 +386,66 @@ function QuotaSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
   const [ppl, setPpl] = useState<Person[]>([]);
   const [types, setTypes] = useState<LeaveType[]>([]);
   const [bals, setBals] = useState<Balance[]>([]);
+  /** 特休級距（leave_seniority，勞基法 38 條，migration_300）與公司每日工時 */
+  const [tiers, setTiers] = useState<Tier[]>(tiersFrom(null));
+  const [dayHours, setDayHours] = useState(8);
 
   const load = useCallback(async () => {
-    const [{ data: p }, { data: t }, { data: b }] = await Promise.all([
+    const [{ data: p }, { data: t }, { data: b }, { data: sen }, { data: ws }] = await Promise.all([
       supabase.from('profiles').select('id, name, role, active, work_start, work_end, work_hours_per_day, hired_on').order('name'),
       supabase.from('leave_types').select('code, name, has_quota, sort').eq('active', true).order('sort'),
       supabase.from('leave_balances').select('*').eq('year', year),
+      supabase.from('leave_seniority').select('threshold_months, days'),
+      supabase.from('work_settings').select('work_hours_per_day').eq('id', 1).maybeSingle(),
     ]);
     setPpl((p ?? []) as Person[]);
     setTypes((t ?? []) as LeaveType[]);
     setBals((b ?? []) as Balance[]);
+    setTiers(tiersFrom(sen as { threshold_months: number; days: number }[] | null));
+    setDayHours(Number((ws as { work_hours_per_day?: number } | null)?.work_hours_per_day ?? 8) || 8);
   }, [supabase, year]);
   useEffect(() => { load(); }, [load]);
 
   const quotaTypes = types.filter((t) => t.has_quota);
+  /*
+   * 法定特休的建議（2026-09-29 使用者指定：「用勞基法算特休」）。
+   * 年資算到**當年 12/31**（過審的稿子這樣寫）。每人的工時用個人設定，沒有就用公司的。
+   * ★ 只是建議，按「套用」才寫進 leave_balances —— 系統負責看見，人負責決定。
+   */
+  const asOf = `${year}-12-31`;
+  const suggest = (p: Person) => {
+    const d = annualLeaveDays(p.hired_on, asOf, tiers);
+    if (d == null) return null;
+    const hpd = Number(p.work_hours_per_day ?? dayHours) || dayHours;
+    return { days: d, hours: leaveHours(d, hpd), label: tierLabel(p.hired_on, asOf) };
+  };
+  const quotaOf = (userId: string, code: string) => {
+    const b = bals.find((x) => x.user_id === userId && x.type_code === code);
+    return b ? Number(b.quota_hours) : null;
+  };
+  /** 到職日改了就存（走 set_work_time，其餘欄位原樣帶回去 —— 那支函式四個值要整組送） */
+  async function setHired(p: Person, v: string) {
+    const { data, error } = await supabase.rpc('set_work_time', {
+      p_user: p.id, p_start: p.work_start || null, p_end: p.work_end || null,
+      p_hours: p.work_hours_per_day ?? null, p_hired: v || null,
+    });
+    if (error) return onMsg('存不進去：' + error.message, true);
+    const r = data as { ok: boolean; message: string };
+    if (!r?.ok) return onMsg(r?.message ?? noRowsMsg('到職日'), true);
+    load();
+  }
+  /** 一鍵把每個人的法定特休套成建議值（跟建議一樣的跳過） */
+  async function applyAll() {
+    const todo = ppl.filter((p) => p.active).map((p) => ({ p, s: suggest(p) }))
+      .filter((x): x is { p: Person; s: { days: number; hours: number; label: string } } => !!x.s && x.s.days > 0 && quotaOf(x.p.id, 'annual') !== x.s.hours);
+    if (!todo.length) return onMsg('每個人的年假都跟建議一樣了，沒有要改的。');
+    if (!confirm(`把 ${todo.length} 個人的年假（特休）改成法定建議值？\n\n${todo.map((x) => `${x.p.name}：${quotaOf(x.p.id, 'annual') ?? '未設定'} → ${x.s.hours} 小時（${x.s.days} 天，${x.s.label}）`).join('\n')}`)) return;
+    for (const x of todo) await setQuota(x.p.id, 'annual', x.s.hours, true);
+    onMsg(`已套用 ${todo.length} 人的年假額度`);
+    load();
+  }
 
-  async function setQuota(userId: string, code: string, hours: number) {
+  async function setQuota(userId: string, code: string, hours: number, quiet = false) {
     const existing = bals.find((b) => b.user_id === userId && b.type_code === code);
     const q = existing
       ? supabase.from('leave_balances').update({ quota_hours: hours }).eq('id', existing.id)
@@ -409,24 +454,27 @@ function QuotaSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
     const { data, error } = await q.select('id');
     if (error) return onMsg('存不進去：' + error.message, true);
     if (!data?.length) return onMsg(noRowsMsg('額度'), true);
-    load();
+    if (!quiet) load();
   }
 
   return (
     <section className="space-y-3">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <span className="text-sm">年度</span>
         <input type="number" value={year} onChange={(e) => setYear(Number(e.target.value))}
           className="w-24 rounded border border-mor-line px-2 py-1 text-sm tabular-nums" />
+        <span className="text-[11px] text-gray-400">年假（特休）照勞基法，年資算到 {year}/12/31；公司加碼填在「公司特休」</span>
+        <button type="button" onClick={applyAll} className={`${BTN2} ml-auto text-xs`}>套用全部建議</button>
       </div>
 
       {/* ★ 這裡不再包 CARD —— AdminTab 已經是一張卡了，再包一層就是卡中卡 */}
       <div className="overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[560px] text-sm">
+          <table className="w-full min-w-[760px] text-sm">
             <thead>
               <tr className="text-left text-xs text-gray-500 border-b border-mor-line">
                 <th className="px-4 py-2.5">姓名</th>
+                <th className="px-4 py-2.5">到職日</th>
                 {quotaTypes.map((t) => (
                   <th key={t.code} className="px-4 py-2.5">{t.name}（小時）</th>
                 ))}
@@ -435,22 +483,44 @@ function QuotaSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
             <tbody>
               {ppl.filter((p) => p.active).map((p) => (
                 <tr key={p.id} className="border-b border-mor-line/60 last:border-0">
-                  <td className="px-4 py-2 font-medium whitespace-nowrap">
-                    {p.name}
-                    {!p.hired_on && <span className="ml-2 text-[11px] text-amber-600">未填到職日</span>}
+                  <td className="px-4 py-2 font-medium whitespace-nowrap">{p.name}</td>
+                  {/* 到職日直接在這裡填（跟「上下班時間」那頁是同一個欄位，2026-09-29）—— 填了法定特休才算得出來 */}
+                  <td className="px-4 py-2">
+                    <input type="date" defaultValue={p.hired_on ?? ''}
+                      onBlur={(e) => { const v = e.target.value; if (v !== (p.hired_on ?? '')) setHired(p, v); }}
+                      className="rounded border border-mor-line px-2 py-1 text-sm" />
                   </td>
                   {quotaTypes.map((t) => {
                     const b = bals.find((x) => x.user_id === p.id && x.type_code === t.code);
+                    const sg = t.code === 'annual' ? suggest(p) : null;
+                    const cur = b ? Number(b.quota_hours) : null;
                     return (
                       <td key={t.code} className="px-4 py-2">
-                        <input type="number" step="0.5" placeholder="未設定"
-                          defaultValue={b?.quota_hours ?? ''}
-                          onBlur={(e) => {
-                            if (e.target.value === '') return;
-                            const v = Number(e.target.value);
-                            if (v !== Number(b?.quota_hours ?? NaN)) setQuota(p.id, t.code, v);
-                          }}
-                          className="w-24 rounded border border-mor-line px-2 py-1 text-sm tabular-nums" />
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <input type="number" step="0.5" placeholder="未設定"
+                            defaultValue={b?.quota_hours ?? ''}
+                            onBlur={(e) => {
+                              if (e.target.value === '') return;
+                              const v = Number(e.target.value);
+                              if (v !== Number(b?.quota_hours ?? NaN)) setQuota(p.id, t.code, v);
+                            }}
+                            className="w-24 rounded border border-mor-line px-2 py-1 text-sm tabular-nums" />
+                          {/* 法定特休的建議：跟現值一樣就打勾；不一樣給「套用」＋差多少；沒到職日就叫人先填 */}
+                          {t.code === 'annual' && (
+                            !p.hired_on ? <span className="text-[11px] text-amber-600">先填到職日才算得出來</span>
+                            : !sg ? <span className="text-[11px] text-amber-600">到職日有誤</span>
+                            : sg.days === 0 ? <span className="text-[11px] text-gray-400">{sg.label}，今年沒有法定特休</span>
+                            : cur === sg.hours ? <span className="text-[11px] text-mor-greendark">✓ 法定 {sg.days} 天（{sg.label}）</span>
+                            : (
+                              <span className="text-[11px] text-gray-600 flex items-center gap-1.5 flex-wrap">
+                                建議 <b className="text-mor-ink tabular-nums">{sg.days} 天 ＝ {sg.hours} 小時</b>（{sg.label}）
+                                <button type="button" onClick={() => setQuota(p.id, 'annual', sg.hours)}
+                                  className="rounded bg-mor-slate text-white px-2 py-0.5 text-[11px] hover:bg-mor-slatedark">套用</button>
+                                {cur != null && <span className="text-amber-700">現在 {cur}，差 {sg.hours - cur > 0 ? '+' : ''}{sg.hours - cur}</span>}
+                              </span>
+                            )
+                          )}
+                        </div>
                         {b && (
                           <div className="text-[11px] text-gray-400 mt-0.5">
                             已用 {b.used_hours}・剩 {Math.max(0, Number(b.quota_hours) - Number(b.used_hours))}
