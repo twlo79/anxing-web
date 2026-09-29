@@ -4,7 +4,6 @@ import { isManagerOrBoss } from '@/lib/roles';
 import { createClient } from '@/lib/supabase';
 import PunchTab from './punch-tab';
 import ApplyTab from './apply-tab';
-import ApproveTab from './approve-tab';
 import CalendarTab from './calendar-tab';
 import AdminTab from './admin-tab';
 import type { Role, TabProps } from './types';
@@ -35,12 +34,11 @@ import { Tabs } from '@/components/Tabs';
  */
 const TAB_LABEL = {
   /*
-   * ★★ 「請假申請」不是「申請」（2026-09-23 使用者指定）——
-   *   這一頁的三個小分頁是請假／加班／補登打卡，而九成的人來是為了請假，
-   *   叫「申請」看不出來是申請什麼。加班與補登仍在這一頁底下，這是刻意的取捨。
-   * ★ 「核可」維持原名 —— 那一頁同樣裝三種單，而主管要做的事就是「核」，不分種類。
+   * ★★ 「申請」（2026-09-29 使用者指定）：「請假申請」＋「核可」合成一頁，
+   *   裡面三個階段 1 申請 → 2 審核 → 3 狀態，種類藥丸在最上面共用。
+   *   「核可」分頁不見了，`approve-tab.tsx` 還在 —— 它是「2 審核」那一格。
    */
-  punch: '打卡', apply: '請假申請', approve: '核可',
+  punch: '打卡', apply: '申請',
   calendar: '出勤日曆', admin: '管理',
 } as const;
 type TabKey = keyof typeof TAB_LABEL;
@@ -142,7 +140,7 @@ export default function AttendancePage() {
         items={canSee.map((k) => ({
           key: k,
           label: TAB_LABEL[k],
-          badge: k === 'approve' ? pending : undefined,
+          badge: k === 'apply' && isAdmin ? pending : undefined,
         }))} />
 
       {msg && (
@@ -164,8 +162,7 @@ export default function AttendancePage() {
           setMsg(null);
         }} />
       )}
-      {cur === 'apply' && <ApplyTab {...props} prefill={fix} />}
-      {cur === 'approve' && isAdmin && <ApproveTab {...props} />}
+      {cur === 'apply' && <ApplyTab {...props} prefill={fix} pending={pending} />}
       {cur === 'calendar' && <CalendarTab {...props} />}
       {cur === 'admin' && isAdmin && <AdminTab {...props} />}
     </div>

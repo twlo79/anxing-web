@@ -9,6 +9,7 @@ import {
   type Balance, type FixReq, type LeaveReq, type LeaveType, type OtReq, type TabProps,
 } from './types';
 import { Tabs } from '@/components/Tabs';
+import ApproveTab from './approve-tab';
 import LeaveForm from '@/components/LeaveForm';
 import { groupBatches } from '@/lib/leave-days';
 
@@ -27,15 +28,32 @@ import { groupBatches } from '@/lib/leave-days';
 type Sub = 'leave' | 'ot' | 'fix';
 const SUB: Record<Sub, string> = { leave: '請假', ot: '加班', fix: '補登打卡' };
 
-export default function ApplyTab({ me, onMsg, prefill }: TabProps & {
+type Stage = 'apply' | 'review' | 'status';
+const STAGE: Record<Stage, [string, string]> = {
+  apply: ['1 申請', '填單送出'], review: ['2 審核', '主管處理'], status: ['3 狀態', '過了沒'],
+};
+
+export default function ApplyTab({ me, onMsg, prefill, isAdmin, pending = 0 }: TabProps & {
   /** 從打卡分頁「補登」按鈕帶過來的那一天 */
   prefill?: { date: string; kind: 'in' | 'out'; n: number } | null;
+  /** 待處理張數（主管才有），標在「2 審核」上 */
+  pending?: number;
 }) {
+  /*
+   * 三個階段（2026-09-29 使用者指定，「請假申請」＋「核可」合成一頁）：
+   *   1 申請  → 表單（跟以前一樣）
+   *   2 審核  → 以前的「核可」分頁整個搬進來（主管才有）
+   *   3 狀態  → 以前塞在表單底下的「我的紀錄」
+   * 種類（請假／加班／補登打卡）的藥丸放最上面一次，三個階段共用 ——
+   * 以前兩個分頁各有一排，主管要在分頁之間跳。
+   */
+  const [stage, setStage] = useState<Stage>('apply');
+  const stages: Stage[] = isAdmin ? ['apply', 'review', 'status'] : ['apply', 'status'];
   const supabase = useMemo(() => createClient(), []);
   const [sub, setSub] = useState<Sub>('leave');
 
   // 帶著日期進來的話直接切到補登。n 會變，所以同一天按第二次也會重新觸發。
-  useEffect(() => { if (prefill) setSub('fix'); }, [prefill?.n]); // eslint-disable-line
+  useEffect(() => { if (prefill) { setSub('fix'); setStage('apply'); } }, [prefill?.n]); // eslint-disable-line
   const [types, setTypes] = useState<LeaveType[]>([]);
   const [bals, setBals] = useState<Balance[]>([]);
   const [daily, setDaily] = useState(8);
@@ -90,6 +108,29 @@ export default function ApplyTab({ me, onMsg, prefill }: TabProps & {
 
   return (
     <div className="space-y-4">
+      {/* ── 種類（三個階段共用）＋ 階段 ───────────────── */}
+      {/* ★ size="sm" —— 這是「分頁裡的分頁」,跟上一層一樣大的話看不出誰包誰 */}
+      <Tabs size="sm" value={sub} onChange={setSub}
+        items={(Object.keys(SUB) as Sub[]).map((k) => ({ key: k, label: SUB[k] }))} />
+      <div className="flex rounded-xl border border-mor-line bg-white overflow-hidden">
+        {stages.map((k) => (
+          <button key={k} type="button" onClick={() => setStage(k)}
+            className={`flex-1 px-2 py-2 text-sm border-r border-mor-line last:border-r-0 ${
+              stage === k ? 'bg-mor-bluelight text-mor-slate font-semibold' : 'text-gray-500 hover:bg-mor-sand/40'}`}>
+            <span className="inline-flex items-center gap-1.5">
+              {STAGE[k][0]}
+              {k === 'review' && pending > 0 && (
+                <span className="rounded-full bg-red-500 text-white text-[10px] px-1.5 leading-4">{pending}</span>
+              )}
+            </span>
+            <span className="block text-[11px] font-normal text-gray-400">{STAGE[k][1]}</span>
+          </button>
+        ))}
+      </div>
+
+      {stage === 'review' && isAdmin && <ApproveTab me={me} onMsg={onMsg} isAdmin={isAdmin} kind={sub} />}
+
+      {stage === 'apply' && sub === 'leave' && (<>
       {/* ── 我還剩多少假 ───────────────────────────── */}
       <div className={`${CARD} p-4`}>
         <div className="text-sm font-medium mb-2.5">{year} 年我的假</div>
@@ -158,12 +199,9 @@ export default function ApplyTab({ me, onMsg, prefill }: TabProps & {
         )}
       </div>
 
-      {/* ── 小分頁 ─────────────────────────────────── */}
-      {/* ★ size="sm" —— 這是「分頁裡的分頁」,跟上一層一樣大的話看不出誰包誰 */}
-      <Tabs size="sm" value={sub} onChange={setSub}
-        items={(Object.keys(SUB) as Sub[]).map((k) => ({ key: k, label: SUB[k] }))} />
+      </>)}
 
-      {sub === 'leave' && (
+      {stage === 'apply' && sub === 'leave' && (
         /*
          * ★★★ 2026-09-22 改版（migration_291）：月曆點日子、每天各自選整天／半天／時段。
          *   舊表單是兩個 datetime，時數用「結束 − 開始」算 —— 9/24 → 9/30 會變成 153 小時，
@@ -179,7 +217,7 @@ export default function ApplyTab({ me, onMsg, prefill }: TabProps & {
           /* 不看額度的假別在表單底下報「送出後今年累積幾小時」—— 跟上面那排卡同一個數字 */
           usedOf={(code) => Number(bals.find((x) => x.type_code === code)?.used_hours ?? 0)} />
       )}
-      {sub === 'ot' && (
+      {stage === 'apply' && sub === 'ot' && (
         <>
           {/* 加班時數要看得到累積 —— 不然「這個月加了多少」只能自己一張一張加 */}
           <div className={`${CARD} px-4 py-3 flex flex-wrap gap-6 text-sm`}>
@@ -200,11 +238,12 @@ export default function ApplyTab({ me, onMsg, prefill }: TabProps & {
           <OtForm busy={busy} setBusy={setBusy} onMsg={onMsg} onDone={load} />
         </>
       )}
-      {sub === 'fix' && (
+      {stage === 'apply' && sub === 'fix' && (
         <FixForm busy={busy} setBusy={setBusy} onMsg={onMsg} onDone={load} prefill={prefill} />
       )}
 
-      {/* ── 我送過的 ───────────────────────────────── */}
+      {/* ── 3 狀態：我送過的 ───────────────────────── */}
+      {stage === 'status' && (
       <div className={CARD}>
         <div className="px-4 py-2.5 border-b border-mor-line bg-white/45 text-sm font-medium">
           我的{SUB[sub]}紀錄
@@ -268,6 +307,7 @@ export default function ApplyTab({ me, onMsg, prefill }: TabProps & {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }

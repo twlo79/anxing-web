@@ -35,9 +35,16 @@ type Sub = 'leave' | 'ot' | 'fix';
  */
 type WithName<T> = T & { name?: string };
 
-export default function ApproveTab({ me, onMsg }: TabProps) {
+export default function ApproveTab({ me, onMsg, kind }: TabProps & {
+  /**
+   * 種類由母層決定（2026-09-29：核可併進「申請」分頁，種類藥丸在最上面共用）。
+   * 有給就不畫自己那排小分頁；沒給（單獨使用）行為跟以前一樣。
+   */
+  kind?: Sub;
+}) {
   const supabase = useMemo(() => createClient(), []);
-  const [sub, setSub] = useState<Sub>('leave');
+  const [subOwn, setSub] = useState<Sub>('leave');
+  const sub: Sub = kind ?? subOwn;
   /**
    * 簽核中 / 已結束。
    *
@@ -137,7 +144,9 @@ export default function ApproveTab({ me, onMsg }: TabProps) {
           </button>
         ))}
         <span className="text-xs text-gray-300">|</span>
-        <span className="text-xs text-gray-400">{done ? '最近 60 天' : '等你處理的'}</span>
+        <span className="text-xs text-gray-400">
+          {done ? '最近 60 天' : `等你處理的${kind != null ? `・${tabs.find(([k]) => k === sub)?.[2] ?? 0} 張` : ''}`}
+        </span>
       </div>
 
       {/*
@@ -145,10 +154,12 @@ export default function ApproveTab({ me, onMsg }: TabProps) {
         ★ 數字直接標在分頁上（徽章）—— 沒有數字就不用點進去。
           看「已處理」時不標,那些數字對「還要不要做事」沒有意義。
       */}
-      <Tabs size="sm" value={sub} onChange={setSub}
-        items={tabs.map(([k, label, n]) => ({
-          key: k, label, badge: done ? undefined : n,
-        }))} />
+      {kind == null && (
+        <Tabs size="sm" value={sub} onChange={setSub}
+          items={tabs.map(([k, label, n]) => ({
+            key: k, label, badge: done ? undefined : n,
+          }))} />
+      )}
 
       <div className={CARD}>
         <div className="divide-y divide-mor-line/60">
