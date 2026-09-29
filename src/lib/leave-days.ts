@@ -219,6 +219,23 @@ export function spreadHours(
   return out;
 }
 
+/**
+ * 「小時」模式只在**當天**鋪（2026-09-29 改版：先選日、再選每一天的方式）。
+ * 從 startTime 起算 hours 小時，午休跳過、到下班為止；塞不下的回 `over`（小時），
+ * 畫面提醒「多的 N 小時要另外選隔天」—— 不自動溢到隔天，那會跟月曆選的日子打架。
+ * 起算點在上班前 → 從上班起算；在午休裡 → 從午休結束起算；在下班後 → 一小時都鋪不到。
+ */
+export function hoursWithinDay(startTime: Hm, hours: number, ws: WorkSettings = DEFAULT_WS): { s: Hm; e: Hm; h: number; over: number } {
+  const wStart = hhmm(ws.work_start), wEnd = hhmm(ws.work_end);
+  const lStart = hhmm(ws.lunch_start), lEnd = hhmm(ws.lunch_end);
+  let t = Math.max(hhmm(startTime || ws.work_start), wStart);
+  if (t >= lStart && t < lEnd) t = lEnd;
+  if (!(hours > 0) || t >= wEnd) return { s: toHm(Math.min(t, wEnd)), e: toHm(Math.min(t, wEnd)), h: 0, over: Math.max(0, hours || 0) };
+  let e = t, used = 0;
+  while (used < hours - 0.001 && e < wEnd) { e += 30; used = workHours(toHm(t), toHm(e), ws); }
+  return { s: toHm(t), e: toHm(e), h: used, over: Math.round(Math.max(0, hours - used) * 100) / 100 };
+}
+
 /** 起算點被往後挪了沒 —— 挪了的話回實際的第一天，沒挪回 null */
 export function movedStart(startDate: Ymd, plan: readonly DayPlan[]): Ymd | null {
   return plan.length && plan[0].d !== startDate ? plan[0].d : null;

@@ -1,5 +1,6 @@
-import { test, describe } from 'node:test';
+import { test, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { hoursWithinDay } from './leave-days.ts';
 import {
   isWorkday, holidayMap, workHours, modeTimes, planDays, totals, segments, spreadWorkdays,
   leaveError, groupBatches, addDays, dow, DEFAULT_WS, spreadHours, movedStart, type DayPick,
@@ -210,5 +211,33 @@ describe('spreadHours —— 起算點 ＋ 時數 → 明細', () => {
       assert.equal(tot(p), hrs, `請 ${hrs} 小時`);
       for (const x of p) assert.equal(x.h, workHours(x.s, x.e, DEFAULT_WS), `${x.d} ${x.s}~${x.e}`);
     }
+  });
+});
+
+describe('hoursWithinDay（先選日再選方式：小時只在當天鋪）', () => {
+  it('09:00 起 3 小時 → 09:00～12:00，沒有溢出', () => {
+    assert.deepEqual(hoursWithinDay('09:00', 3), { s: '09:00', e: '12:00', h: 3, over: 0 });
+  });
+  it('跨午休：11:00 起 3 小時 → 11:00～15:00（12:30～13:30 不算）', () => {
+    const r = hoursWithinDay('11:00', 3);
+    assert.equal(r.s, '11:00'); assert.equal(r.e, '15:00'); assert.equal(r.h, 3); assert.equal(r.over, 0);
+  });
+  it('超過下班：16:00 起 4 小時 → 到 18:00 只有 2，over 2', () => {
+    assert.deepEqual(hoursWithinDay('16:00', 4), { s: '16:00', e: '18:00', h: 2, over: 2 });
+  });
+  it('起算在上班前 → 從 09:00 起；在午休裡 → 從 13:30 起', () => {
+    assert.equal(hoursWithinDay('07:00', 1).s, '09:00');
+    assert.equal(hoursWithinDay('13:00', 1).s, '13:30');
+  });
+  it('下班後起算 → 一小時都鋪不到，全部 over', () => {
+    const r = hoursWithinDay('18:30', 2);
+    assert.equal(r.h, 0); assert.equal(r.over, 2);
+  });
+  it('0 或負的時數 → h 0、over 0', () => {
+    assert.equal(hoursWithinDay('09:00', 0).h, 0);
+    assert.equal(hoursWithinDay('09:00', -1).over, 0);
+  });
+  it('半小時：09:00 起 0.5 → 09:30', () => {
+    assert.deepEqual(hoursWithinDay('09:00', 0.5), { s: '09:00', e: '09:30', h: 0.5, over: 0 });
   });
 });
