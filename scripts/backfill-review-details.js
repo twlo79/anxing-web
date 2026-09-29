@@ -173,7 +173,13 @@
     for (let a = 0; a < 2 && !d; a++) {
       try { d = await detail(r.id); } catch { await sleep(500); }
     }
-    if (!d) failedDetail.push(r.id);
+    /*
+     * 詳情抓不到就**不送、也不記成已完成**（2026-09-29 改）。
+     * 以前是「送半套、記已完成」—— 網路閃斷那幾則從此永遠是六個「—」，
+     * 重貼腳本也跳過它們（Denys 8/19 那則就是這樣漏的）。
+     * 現在留在待處理，下次重貼會再試。
+     */
+    if (!d) { failedDetail.push(r.id); continue; }
     buf.push({ ...r, ...extra(d) });
     if (buf.length >= POST_CHUNK) await flush();
     await sleep(GAP);
@@ -184,7 +190,7 @@
   log('──────── 完成 ────────');
   log(`送出 ${sent} 筆：新增 ${inserted}、更新 ${updated}`);
   log(`靠訂單反查補房源 ${byOrder} 筆（應該接近 0；偏高代表 listingId 沒對上）`);
-  if (failedDetail.length) console.warn('[backfill] 詳情抓不到（細節評分會是空的）：', failedDetail);
+  if (failedDetail.length) console.warn(`[backfill] 詳情抓不到 ${failedDetail.length} 筆，沒送、也沒記成已完成 —— 網路穩了再貼一次腳本會補：`, failedDetail);
   if (Object.keys(unmatchedAll).length) console.warn('[backfill] listing_id 對不到房源：', unmatchedAll);
   if (unresolvedAll.size) console.warn('[backfill] 房源名稱查不到：', [...unresolvedAll]);
   log('進度已存 localStorage。要重頭跑：localStorage.removeItem("anxing_backfill")');
