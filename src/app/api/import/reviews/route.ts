@@ -4,6 +4,7 @@ import { notifyImport } from '@/lib/push';
 import { reviewLine, importBody, importTitle } from '@/lib/notify-text';
 // Supabase 一次只回 1000 列且不報錯 —— 「哪些已存在」查不全會覆蓋既有翻譯
 import { fetchIn } from '@/lib/fetch-all';
+import { buildStayIndex, matchStay, type OrderStay } from '@/lib/review-match';
 // 日文漢字跟中文共用同一個 unicode 區間 —— 判斷「是不是中文」只有一個地方寫
 import { isChinese, needsTranslation } from '@/lib/lang';
 
@@ -126,33 +127,36 @@ export async function POST(req: Request) {
    *
    * 一樣只採計唯一解:同名房客在同一天退房於不同單位就跳過,不猜。
    */
-  const orderProp: Record<string, string> = {};
+  /*
+   * ★ 2026-09-29 改成三關（lib/review-match）：退房日相同 → 入住日相同 → 退房日差一天。
+   *   Airbnb 評價寫 9/24～9/29、訂單 9/24～9/28（提前退房），只比退房日就落進「未對應」。
+   *   每一關都只採計唯一解，不猜。
+   *   訂單用「入住日或退房日在評價日期 ±1 天內」撈，不再只撈退房日。
+   */
+  let stayIdx = buildStayIndex([]);
   {
-    const checkouts = Array.from(new Set(parsed.map((p) => p.co).filter(Boolean))) as string[];
-    const seen: Record<string, Set<string>> = {};
-    {
-      /*
-       * 這裡比對的是 checkout 日期,**一天可能有幾十筆訂單** ——
-       * 200 個日期輕易就回超過 1000 列而被截掉。
-       * 截掉的後果是那幾則評價對不到房源,落進「未對應」——
-       * 看起來像爬蟲沒給 listingId（既有的已知問題），
-       * 實際上是資料撈不全，兩者症狀一模一樣、非常難分辨。
-       */
-      const { rows: data } = await fetchIn<{ guest_name: string | null; checkout: string; property_id: string }>(
-        checkouts,
-        (chunk, f, t) => supabase.from('orders')
-          .select('guest_name, checkout, property_id')
-          .in('checkout', chunk).not('property_id', 'is', null).range(f, t),
-        200);
-      for (const o of data ?? []) {
-        if (!o.guest_name) continue;
-        const k = `${o.guest_name}|${o.checkout}`;
-        (seen[k] ||= new Set()).add(String(o.property_id));
-      }
+    const days = new Set<string>();
+    for (const p of parsed) for (const d of [p.ci, p.co]) if (d) {
+      const t = new Date(d + 'T00:00:00Z');
+      for (const k of [-1, 0, 1]) { const x = new Date(t); x.setUTCDate(x.getUTCDate() + k); days.add(x.toISOString().slice(0, 10)); }
     }
-    for (const k of Object.keys(seen)) {
-      if (seen[k].size === 1) orderProp[k] = Array.from(seen[k])[0];
-    }
+    const list = Array.from(days);
+    /*
+     * 這裡比對的是日期,**一天可能有幾十筆訂單** ——
+     * 200 個日期輕易就回超過 1000 列而被截掉。
+     * 截掉的後果是那幾則評價對不到房源,落進「未對應」——
+     * 看起來像爬蟲沒給 listingId（既有的已知問題），
+     * 實際上是資料撈不全，兩者症狀一模一樣、非常難分辨。
+     */
+    const [a, b] = await Promise.all([
+      fetchIn<OrderStay>(list, (chunk, f, t) => supabase.from('orders')
+        .select('guest_name, checkin, checkout, property_id')
+        .in('checkout', chunk).not('property_id', 'is', null).range(f, t), 200),
+      fetchIn<OrderStay>(list, (chunk, f, t) => supabase.from('orders')
+        .select('guest_name, checkin, checkout, property_id')
+        .in('checkin', chunk).not('property_id', 'is', null).range(f, t), 200),
+    ]);
+    stayIdx = buildStayIndex([...(a.rows ?? []), ...(b.rows ?? [])]);
   }
 
   // 既有評價的 property_id:用來避免「這次解析不出房源」時把原本正確的值蓋成 null
@@ -180,7 +184,7 @@ export async function POST(req: Request) {
     // 三層解析:listing_id → 訂單反查 → 保留既有值。
     // 最後一層是關鍵 —— 解析不出來時絕不能寫 null,那會把先前正確的對應洗掉。
     const byListing = m.listingId ? propByListing[m.listingId] ?? null : null;
-    const byOrder = (!byListing && co && m.guest) ? orderProp[`${m.guest}|${co}`] ?? null : null;
+    const byOrder = (!byListing && m.guest) ? matchStay(stayIdx, m.guest, ci, co).propertyId : null;
     if (byOrder) guessedByOrder.push(rid);
     const propertyId = byListing ?? byOrder ?? (prevProp.get(rid) ?? null);
     if (m.listingId && !propByListing[m.listingId]) unmatched[m.listingId] = (unmatched[m.listingId] || 0) + 1;
