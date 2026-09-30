@@ -49,7 +49,7 @@ export default function ContactsTab({ role, meId, onMsg }: {
       supabase.from('board_contacts').select('*'),
       supabase.from('profiles').select('id, name'),
     ]);
-    if (error) onMsg('讀不到電話簿：' + error.message, true);
+    if (error) onMsg('讀不到通訊：' + error.message, true);
     setList((data ?? []) as Contact[]);
     setNames(new Map((pf ?? []).map((p) => [p.id as string, p.name as string])));
     setLoading(false);
@@ -76,7 +76,7 @@ export default function ContactsTab({ role, meId, onMsg }: {
   const del = async (d: ContactDraft) => {
     if (!d.id) return;
     if (!confirm(`刪掉「${d.name}」？\n\n會移到回收桶，可以復原。`)) return;
-    const r = await softDelete(supabase, 'board_contacts', d.id, '電話簿');
+    const r = await softDelete(supabase, 'board_contacts', d.id, '通訊');
     if (!r.ok) return onMsg(r.message, true);
     onMsg(r.message);
     setDraft(null);
@@ -152,6 +152,16 @@ export default function ContactsTab({ role, meId, onMsg }: {
                     <span className="block mt-0.5 text-uisub text-gray-500 whitespace-pre-wrap leading-relaxed">{c.note}</span>
                   )}
                 </span>
+                {/*
+                  ★ 手機一鍵撥（2026-09-30 使用者：「手機上有一個打電話按鈕，直接按就撥」）。
+                    只在手機出現（md:hidden）—— 電腦撥不出去，電話本身還是連結。
+                    電話欄不是號碼（「LINE 找她」）就不畫。stopPropagation：按 📞 不會打開編輯頁。
+                */}
+                {tel && (
+                  <a href={tel} onClick={(e) => e.stopPropagation()} title={`撥打 ${c.phone}`} aria-label={`撥打 ${c.phone}`}
+                    className="md:hidden shrink-0 self-center w-11 h-11 rounded-full border-[1.5px] border-mor-slate
+                               text-mor-slate flex items-center justify-center text-lg active:bg-mor-bluelight">📞</a>
+                )}
                 {canWrite && (
                   <button type="button" title="編輯" onClick={(e) => { e.stopPropagation(); edit(c); }}
                     className="shrink-0 self-center w-9 h-9 -mr-2 rounded-lg text-gray-300 hover:text-mor-slate hover:bg-mor-sand/60 text-xl leading-none">›</button>
@@ -206,22 +216,22 @@ function ContactForm({ draft, who, onChange, onBack, onSave, onDel }: {
         <label className="flex flex-col gap-1 md:col-span-2">
           <span className="text-uisub text-gray-500 flex items-center">姓名／公司名<Star /></span>
           <input value={draft.name} onChange={(e) => onChange({ ...draft, name: e.target.value })}
-            placeholder="正隆股份有限公司　或　陳小姐" className={inCls} />
+            placeholder="輸入姓名或公司名" className={inCls} />
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-uisub text-gray-500">電話</span>
           <input value={draft.phone} onChange={(e) => onChange({ ...draft, phone: e.target.value })}
-            placeholder="02-2345-6789 #12　或　0912-345-678" inputMode="tel" autoComplete="off" className={inCls} />
+            placeholder="輸入電話" inputMode="tel" autoComplete="off" className={inCls} />
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-uisub text-gray-500">email</span>
           <input value={draft.email} onChange={(e) => onChange({ ...draft, email: e.target.value })}
-            placeholder="acc@zhenglong.com.tw" inputMode="email" autoComplete="off" spellCheck={false} className={inCls} />
+            placeholder="輸入 email" inputMode="email" autoComplete="off" spellCheck={false} className={inCls} />
         </label>
         <label className="flex flex-col gap-1 md:col-span-2">
-          <span className="text-uisub text-gray-500">備註（他是誰、找他做什麼）</span>
+          <span className="text-uisub text-gray-500">備註</span>
           <textarea value={draft.note} onChange={(e) => onChange({ ...draft, note: e.target.value })}
-            placeholder="A 棟房東。租金匯款窗口是陳小姐（分機 12）。"
+            placeholder="輸入備註"
             className="rounded-lg border border-mor-line px-3 py-2 text-ui min-h-[80px] resize-y" />
         </label>
 

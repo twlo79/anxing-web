@@ -471,7 +471,12 @@ migration_234 用「停用」把重複的「安幸辦公室」藏起來。
 ### ★ G. 憑對話紀錄判斷狀態
 
 - 「這支 migration 跑了沒」→ 查 `schema_migrations`
-- 「這批 code 推了沒」→ 跑 `git status --short` 與 `git log --oneline -5`
+- 「這批 code 推了沒」→ **請 David** 跑 `git status --short` 與 `git log --oneline -5` 貼回來，或看 Vercel
+
+★★★ **我不在他的資料夾裡跑任何 git 指令**（2026-09-30）：那個掛載點不准刪檔，
+git 結束時要清掉的 `.git/index.lock` 留在原地，他的 `deploy.ps1` 就卡在「加入變更」
+連二十次 `index.lock: File exists` —— 兩輪改動都卡在本機，畫面上看起來像我沒改東西。
+留下的 lock 只有他能刪：`Remove-Item .git\index.lock`。
 
 2026-09-10 我說「這批你還沒推」，而使用者早就推了（commit `3138974`）。
 **兩次都是同一個病：說之前沒有去看。**

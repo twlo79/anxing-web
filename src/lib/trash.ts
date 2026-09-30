@@ -33,7 +33,7 @@ export const TABLE_LABEL: Record<string, string> = {
   cleaning_records: '清潔記錄',
   announcement_reads: '公告已讀',
   staff_properties: '管家負責房源',
-  board_contacts: '電話簿',
+  board_contacts: '通訊',
 };
 
 /**

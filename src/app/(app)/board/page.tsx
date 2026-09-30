@@ -83,10 +83,14 @@ const TABS = [
    * ★★ `key` **一個字都不能改** —— 它是網址上的 `?tab=`，
    *   推播的深連結走它（見底下那一段註解）。
    */
-  { key: 'forms', label: '檔案下載', icon: '📄' },
-  /* ★ 電話簿（2026-09-30，migration_303）：全公司可讀、會計・主管・總經理可寫。帳密還是最後一格 */
-  { key: 'contacts', label: '電話簿', icon: '📒' },
+  /*
+   * ★ 2026-09-30 使用者：順序改成 通知 → 活動 → 通訊 → 帳密 → 檔案；
+   *   「電話簿」改叫「通訊」、「檔案下載」改叫「檔案」（五格都兩個字）。
+   * ★★ key 一個都沒改 —— 它是網址上的 `?tab=`。
+   */
+  { key: 'contacts', label: '通訊', icon: '📒' },
   { key: 'secrets', label: '帳密', icon: '🔑' },
+  { key: 'forms', label: '檔案', icon: '📄' },
 ] as const;
 type TabKey = (typeof TABS)[number]['key'];
 

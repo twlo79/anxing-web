@@ -413,7 +413,7 @@ export default function FormsTab({ role, meId, onMsg }: {
                                  hover:text-mor-slatedark">
                       <span className="inline-block w-3 shrink-0 text-center leading-none">
                         {open[f.id] ? '▾' : '▸'}</span>
-                      使用說明
+                      使用步驟
                     </button>
                   </span>
                 )}
@@ -597,7 +597,7 @@ function FormDialog({ draft, onChange, onClose, onSave, onDelete }: {
               檔案名稱<span className="text-red-500 ml-0.5">*</span>
             </span>
             <input value={draft.title} onChange={(e) => onChange({ ...draft, title: e.target.value })}
-              placeholder="請假單"
+              placeholder="輸入檔案名稱"
               className="h-11 md:h-10 rounded-lg border border-mor-line px-3 text-ui" /></label>
 
           <label className="flex flex-col gap-1">
@@ -607,10 +607,16 @@ function FormDialog({ draft, onChange, onClose, onSave, onDelete }: {
               {FORM_CATS.map((c) => <option key={c} value={c}>{c}</option>)}
             </select></label>
 
+          {/*
+            ★ 2026-09-30 使用者：「兩個說明把他差異化」→ 選 A：改名「簡介」「使用步驟」，
+              標籤旁邊一個色塊寫它出現在哪（藍＝名稱底下一行、米＝點 ▸ 才展開）。
+              欄位還是 note／usage_note，只換畫面上的名字。
+          */}
           <label className="flex flex-col gap-1">
-            <span className="text-uisub text-gray-500">說明（什麼時候要用、填完交給誰）</span>
+            <span className="text-uisub text-gray-500 flex items-center gap-1.5">簡介
+              <span className="rounded px-1.5 text-[11px] font-medium leading-[18px] bg-mor-bluelight text-mor-slatedark">名稱底下一行</span></span>
             <input value={draft.note} onChange={(e) => onChange({ ...draft, note: e.target.value })}
-              placeholder="填完交給芊，人事單月底前送出"
+              placeholder="輸入一句話簡介"
               className="h-11 md:h-10 rounded-lg border border-mor-line px-3 text-ui" /></label>
 
           {/*
@@ -621,17 +627,13 @@ function FormDialog({ draft, onChange, onClose, onSave, onDelete }: {
             ★★ 用 textarea 不是 input —— 換行要留得住。
           */}
           <label className="flex flex-col gap-1">
-            <span className="text-uisub text-gray-500">使用說明（怎麼填、填完交給誰）</span>
+            <span className="text-uisub text-gray-500 flex items-center gap-1.5">使用步驟
+              <span className="rounded px-1.5 text-[11px] font-medium leading-[18px] bg-mor-sand text-[#6b5b3f]">點 ▸ 才展開</span></span>
             <textarea value={draft.usage_note} rows={5}
               onChange={(e) => onChange({ ...draft, usage_note: e.target.value })}
-              placeholder={'沒有發票或收據的支出才用這一份。\n① 填寫金額、用途、日期\n② 找主管簽名\n③ 掃描後連同支出一起送會計'}
+              placeholder="輸入怎麼填、填完交給誰"
               className="rounded-lg border border-mor-line px-3 py-2 text-ui leading-relaxed" />
-            <span className="text-xs text-gray-400">留空就不會出現那顆「使用說明 ▸」。</span>
           </label>
-
-          <div className="text-xs text-gray-400 leading-relaxed">
-            全公司都下載得到（含房務）。只有總經理、會計、主管可以上傳與換檔案。
-          </div>
 
           {/*
             ══════════════════════════════════════════════════
