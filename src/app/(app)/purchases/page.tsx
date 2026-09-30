@@ -1,5 +1,6 @@
 'use client';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { looksLikeError } from '@/lib/flash-kind';
 import StatCard from '@/components/StatCard';
 import { AddButton, ExportButton } from '@/components/Actions';
 import { Tabs } from '@/components/Tabs';
@@ -392,7 +393,16 @@ export default function PurchasesPage() {
    * 擋阻訊息不該自動消失：使用者可能正在看別的地方，回頭時訊息已經不見了，
    * 剩下的只有「按了沒反應」。
    */
-  function flash(t: string) { setMsg({ t }); setTimeout(() => setMsg(null), 3000); }
+  /*
+   * ★★★ 2026-09-30：flash() 也要認得出錯誤（`looksLikeError`，全站同一套規則）。
+   *   存檔時資料庫丟回來的錯（`建立失敗:…`、`儲存失敗:…`、`憑證…`）走的都是 flash() 不是 flashErr() ——
+   *   於是它們是**綠色、3 秒消失、畫在編輯視窗後面**。使用者看到的是「按了存不了，什麼都沒說」。
+   *   看起來像錯誤的一律轉 flashErr：紅色、留到按掉、抽屜裡按鈕正上方也有一份。
+   */
+  function flash(t: string) {
+    if (looksLikeError(t)) { setMsg({ t, err: true }); return; }
+    setMsg({ t }); setTimeout(() => setMsg((m) => (m && !m.err ? null : m)), 3000);
+  }
   function flashErr(t: string) { setMsg({ t, err: true }); }
 
   useEffect(() => {
@@ -960,8 +970,27 @@ export default function PurchasesPage() {
   const submitGate2 = submitGate(
     editUnpriced > 0 ? [`${editUnpriced} 項的金額`] : [], saving);
 
+  /*
+   * ★★★ 2026-09-30：存檔的每一條失敗路都要說話。
+   *   使用者回報「無法存進去」，而資料庫用同一張單模擬存一次是 ✅、當天也一張都沒進去 ——
+   *   代表那一下**在送到資料庫之前**就停了，而且停得一聲不吭。兩個可能：
+   *   ① `me` 還沒載入 → 原本是 `return`，什麼都不說
+   *   ② 中間哪一步丟例外（async 裡沒接）→ 按鈕沒反應、畫面也沒字
+   *   兩條都改成紅字留在編輯視窗裡，console 也留一份原始錯誤。
+   */
   async function save(submit: boolean) {
-    if (!edit || !me) return;
+    try { await saveInner(submit); }
+    catch (e) {
+      console.error('[請款單] 存檔例外', e);
+      setSaving(false);
+      flashErr('存檔時程式出錯，沒有存進去：' + (e instanceof Error ? e.message : String(e))
+        + '\n請把這一行拍給工程師。');
+    }
+  }
+
+  async function saveInner(submit: boolean) {
+    if (!edit) return;
+    if (!me) return flashErr('還在載入你的帳號，沒有存進去 —— 等一兩秒再按一次；一直這樣的話請重新整理。');
     const clean = items.filter((i) => i.item_name.trim() || i.amount_original != null);
     if (!clean.length) return flashErr('至少要有一個請款項目');
     for (const i of clean) {
