@@ -199,7 +199,17 @@ export default function DepositsPage() {
    *   所以每一處用到 kindF 的地方都要先確認「不是暫付」——
    *   混在一起的話，切到暫付會拿暫收的資料去比對，而結果是空清單，不是錯誤。
    */
-  const [kindF, setKindF] = useState<'all' | 'deposit' | 'earnest' | 'advance'>('all');
+  /*
+   * ★★★ 2026-09-30 改成三個分頁（使用者：「全部／暫收／暫付」，UI 照 B、篩選照 A）：
+   *   tab    全部（暫收＋暫付一起看）／暫收（訂金＋押金）／暫付
+   *   kindF  暫收分頁裡的藥丸：'' ＝ 訂金＋押金、'earnest'、'deposit'。點一下開、再點一下清除。
+   *          兩排卡片永遠都在（B）；選了藥丸另一排淡掉、清單只列那一種（A 的藥丸）。
+   * 'advance' 不再是 kindF 的一個值 —— 它從來就不是同一張表的 kind（見上面那段）。
+   */
+  const [tab, setTab] = useState<'all' | 'in' | 'advance'>('all');
+  const [kindF, setKindF] = useState<'all' | 'deposit' | 'earnest'>('all');
+  /** 清單實際套的種類：只有「暫收」分頁看藥丸；「全部」分頁一律訂金＋押金 */
+  const kindEff: 'all' | 'deposit' | 'earnest' = tab === 'in' ? kindF : 'all';
   /*
    * 暫付的資料。★ 卡片與清單**共用同一份** ——
    *   兩邊各抓一次的話數字會有一瞬間對不上，
@@ -208,7 +218,7 @@ export default function DepositsPage() {
    * ★★ 只有在暫付分頁時才真的去查（`enabled`）——
    *   使用者九成的時間待在暫收那三頁，不該每次進來都多一次查詢。
    */
-  const adv = useAdvance(kindF === 'advance');
+  const adv = useAdvance(tab !== 'in');
   /*
    * 目前這個頁籤在講哪一種錢。**只用在句子裡**，表頭不用。
    *
@@ -226,7 +236,7 @@ export default function DepositsPage() {
    * ★ 句子裡還是要用具體的詞:「這一類目前沒有**訂金**紀錄」
    *   比「沒有暫收紀錄」精確 —— 那句話是在描述你現在的篩選。
    */
-  const kindWord = kindF === 'earnest' ? '訂金' : kindF === 'deposit' ? '押金' : kindF === 'advance' ? '暫付' : '暫收';
+  const kindWord = kindEff === 'earnest' ? '訂金' : kindEff === 'deposit' ? '押金' : '暫收';
   /**
    * 從訂單／契約跳過來時只顯示那一筆的押金。
    *
@@ -457,14 +467,13 @@ export default function DepositsPage() {
     // 訂金 / 押金。★ 篩在這一層而不是 base —— base 要留給卡片當總覽，
     // 篩在 base 的話切到訂金時押金那一列的數字會全部歸零
     // ★ 暫付是另一張表，這裡的列一筆都不該通過（畫面上也不會渲染這份清單）
-    if (kindF === 'advance') return false;
-    if (kindF !== 'all' && (r.kind ?? 'deposit') !== kindF) return false;
+    if (kindEff !== 'all' && (r.kind ?? 'deposit') !== kindEff) return false;
     if (statusF === 'all') return true;
     if (statusF === 'orphan') return r.orphaned;
     if (statusF === 'refund_pending') return refundStage(r) === 'pending';
     if (statusF === 'refund_approved') return refundStage(r) === 'approved';
     return bucketOf(r) === statusF;
-  }), [base, statusF, kindF]);
+  }), [base, statusF, kindEff]);
 
   const sorted = useMemo(() => sortRows(filtered, sort, COLS), [filtered, sort]);
 
@@ -1390,8 +1399,24 @@ export default function DepositsPage() {
             （2026-09-01 使用者:「tab 位置被移動」）。
             使用者靠位置記憶找東西，換一個分頁就換一個位置等於每次重新找。
       */}
-      {kindF === 'advance' && <AdvanceStats a={adv} />}
-      {kindF !== 'advance' && (<>
+      {tab === 'advance' && <AdvanceStats a={adv} />}
+      {/*
+        ★ 「全部」分頁：兩個總計並排，**不加總** —— 收進來與付出去的錢加起來沒有意義。
+          卡片不畫（那是各自分頁的事），下面直接是兩段清單。
+      */}
+      {tab === 'all' && (
+        <div className="grid sm:grid-cols-2 gap-x-6 mb-2">
+          <StatTotal
+            label="暫收款總計"
+            value={`NT$ ${fmt(allStats.held.cur['TWD'] ?? 0)}`}
+            sub={`${allStats.held.n} 筆・錢在我們手上${owedLine(allStats.held.owed) ? `・${owedLine(allStats.held.owed)}` : ''}`} />
+          <StatTotal
+            label="暫付款總計"
+            value={`NT$ ${fmt(adv.st.paid.amt)}`}
+            sub={`${adv.st.paid.n} 筆・錢在別人手上`} />
+        </div>
+      )}
+      {tab === 'in' && (<>
       <StatTotal
         label="暫收款總計"
         value={`NT$ ${fmt(allStats.held.cur['TWD'] ?? 0)}`}
@@ -1404,7 +1429,24 @@ export default function DepositsPage() {
           */
           owedLine(allStats.held.owed) ? `・${owedLine(allStats.held.owed)}` : ''}`} />
 
-      <div className="mb-3">
+      {/*
+        ★ 藥丸（A 的做法，2026-09-30）：點一下只看那一種、再點一下清除；一顆都沒亮＝訂金＋押金。
+          兩排卡片都留著（B）—— 被篩掉的那一排**淡掉不消失**，它還是事實。
+          跟房源狀態那頁同一種藥丸（anxing-ui 四-1）。
+      */}
+      <div className="flex items-center gap-2 mb-2 flex-wrap">
+        <span className="text-xs text-gray-500">看哪一種</span>
+        {([['earnest', '訂金', 'bg-[#D99A2B] border-[#D99A2B]'], ['deposit', '押金', 'bg-mor-slate border-mor-slate']] as const).map(([k, l, on]) => (
+          <button key={k} type="button" onClick={() => setKindF(kindF === k ? 'all' : k)}
+            className={`rounded-full px-3 py-0.5 text-xs border transition-colors ${
+              kindF === k ? `${on} text-white` : 'bg-white border-mor-line text-gray-600 hover:bg-mor-sand/60'}`}>
+            {l}
+          </button>
+        ))}
+        <span className="text-[11px] text-gray-400">{kindF === 'all' ? '沒點＝訂金＋押金' : '再點一下清除'}</span>
+      </div>
+
+      <div className={`mb-3 transition-opacity ${kindF === 'deposit' ? 'opacity-40' : ''}`}>
           <StatGroup label="訂金" tone="amber" />
           {/*
               ★ 三格，不是五格（2026-08-24 使用者:「這三個可以放一起嗎？」）。
@@ -1451,6 +1493,7 @@ export default function DepositsPage() {
         ★ 這一列是**押金**（migration_174 之後）。點下去會一併把
           訂金/押金切到「押金」—— 不然按了「已收款」卻看到訂金混在裡面。
       */}
+      <div className={`transition-opacity ${kindF === 'earnest' ? 'opacity-40' : ''}`}>
       <StatGroup label="押金" tone="slate" />
       {/*
         ★ 跟訂金那一列**用同一個元件、同一種尺寸**（2026-08-25）。
@@ -1484,6 +1527,7 @@ export default function DepositsPage() {
           );
         })}
       </StatRow>
+      </div>
 
       {/*
         退款流程指標。
@@ -1549,7 +1593,7 @@ export default function DepositsPage() {
           押金那個數字還在，頁籤才是總覽而不是當前清單的重複。
       */}
       </>)}
-      <Tabs variant="browser" tone="page" className="mb-3" value={kindF} onChange={setKindF}
+      <Tabs variant="browser" tone="page" className="mb-3" value={tab} onChange={setTab}
         items={([
           /*
             ★ 「全部暫收」而不是「全部」（2026-09-01 使用者指定）。
@@ -1557,9 +1601,9 @@ export default function DepositsPage() {
               而它其實**不含暫付**（收進來與付出去的錢加總沒有意義）。
               名字寫清楚範圍，比在旁邊補一句說明有效。
           */
-          { k: 'all' as const,     label: '全部暫收' },
-          { k: 'earnest' as const, label: '訂金' },
-          { k: 'deposit' as const, label: '押金' },
+          /* 2026-09-30：全部（暫收＋暫付一起看）／暫收（訂金＋押金，藥丸再分）／暫付 */
+          { k: 'all' as const,     label: '全部' },
+          { k: 'in' as const,      label: '暫收' },
           /*
             ★ 暫付（migration_196）。**「全部」不含它** ——
               收進來與付出去的錢放同一個清單、共用一個金額欄，加總就沒有意義了。
@@ -1568,9 +1612,7 @@ export default function DepositsPage() {
         ]).map((t) => ({
           key: t.k,
           label: t.label,
-          badge: t.k === 'all' ? base.length
-            : t.k === 'advance' ? adv.rows.length
-            : base.filter((r) => (r.kind ?? 'deposit') === t.k).length,
+          badge: t.k === 'advance' ? adv.rows.length : t.k === 'in' ? base.length : undefined,
         }))} />
 
       {/*
@@ -1579,10 +1621,11 @@ export default function DepositsPage() {
           兩組並排的話要多一條分隔線與一套配色去區分，
           而使用者 2026-09-01 選的是換掉:「點暫付 後卡片換成 暫付的狀態」。
       */}
-      {kindF === 'advance' && <AdvanceList a={adv} estates={estates} />}
+      {tab === 'advance' && <AdvanceList a={adv} estates={estates} />}
 
-      {/* ★ 暫收的篩選與清單。暫付有自己的一套（AdvanceList）。 */}
-      {kindF !== 'advance' && (<>
+      {/* ★ 暫收的篩選與清單。暫付有自己的一套（AdvanceList）。「全部」分頁兩段都畫，暫付在下面 */}
+      {tab === 'all' && <StatGroup label="暫收（訂金＋押金）" tone="slate" />}
+      {tab !== 'advance' && (<>
       {/* 篩選 */}
       <FilterToggle />
       <div className="filter-bar collapsible-filters rounded-xl glass p-4 mb-4 flex flex-wrap items-end gap-3">
@@ -1762,6 +1805,14 @@ export default function DepositsPage() {
         </table>
       </div>
       </>)}
+
+      {/* 「全部」分頁：暫付那一段接在暫收清單後面（它有自己的卡片與清單，AdvanceList 只給清單） */}
+      {tab === 'all' && (
+        <div className="mt-6">
+          <StatGroup label="暫付" tone="slate" />
+          <AdvanceList a={adv} estates={estates} />
+        </div>
+      )}
 
       {/* 詳細抽屜 */}
       {detail && (() => {
