@@ -911,7 +911,17 @@ export default function PurchasesPage() {
     return { item_name: '', amount: null, amount_original: null, account_code: null, purpose_type: 'estate', estate_id: null, property_id: null, note: null, sort: 0, voucher_no: null, no_voucher: false };
   }
 
+  /*
+   * ★ 新單的 UUID（migration_304，2026-09-30 David：「為何不要有 UUID 像舊單一樣」）。
+   *   開新單時先產生一個，存檔時帶著它 —— 資料庫找不到這個 id 就用它新建，找得到就更新。
+   *   同一張新單按兩次儲存，第二次是更新，不會建出兩張。
+   * ★★ 不放進 edit.id：畫面上很多地方用「edit.id 是空的」判斷「這是還沒存過的新單」
+   *   （憑證圖要等存過才直接上傳、標題、刪除鈕⋯），塞進去那些判斷全部會以為它已經存在。
+   */
+  const newIdRef = useRef<string | null>(null);
+
   function openNew() {
+    newIdRef.current = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : null;
     setEdit({
       id: '', req_no: '', requester_id: me?.id ?? '', status: 'draft', total_amount: 0,
       payment_method: 'cash', payee_bank_code: null, payee_account: null, payee_company: null, payee_tax_id: null,
@@ -1284,7 +1294,14 @@ export default function PurchasesPage() {
       }
 
       const { data: saved, error: se0 } = await supabase.rpc('save_purchase_request', {
-        p_id: reqId ?? null, p_header: header, p_items: payload,
+        /*
+         * ★★★ `||` 不是 `??`（2026-09-30 修）。新單的 edit.id 是空字串 ''（openNew 那樣開的），
+         *   `'' ?? null` 還是 '' → 資料庫把 '' 轉 uuid → `invalid input syntax for type uuid: ""`。
+         * ★ 新單帶的是 openNew() 產生的 UUID（newIdRef，migration_304）；拿不到的瀏覽器才送 null、由資料庫發。
+         *   從 09-23 包成 RPC（migration_296）起，「＋ 填寫請款」開的新單**一張都存不進去**；
+         *   編輯舊單有 id 所以正常，採購需求轉請款走另一支 RPC 也正常 —— 所以沒被發現。
+         */
+        p_id: reqId || newIdRef.current || null, p_header: header, p_items: payload,
       });
       if (se0) { flash((isCreate ? '建立失敗:' : '儲存失敗:') + se0.message); return; }
       const sv = saved as { ok: boolean; message?: string; request_id: string; req_no: string; new_ids: Record<string, string> };
