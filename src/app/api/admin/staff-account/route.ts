@@ -55,6 +55,10 @@ export async function POST(req: Request) {
     const { ban } = body;
     const { error } = await admin.auth.admin.updateUserById(st.auth_uid, { ban_duration: ban ? '876000h' : 'none' });
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+    // ★ profiles.active 也要跟著改 —— 出勤那幾頁（假別額度、公告已讀…）看的是這一欄，不是 staff.active。
+    //   只封帳號不改這欄，離職的人會一直留在假別額度表上（2026-09-29 踩過：兩個「月」）。
+    const { error: pe } = await admin.from('profiles').update({ active: !ban }).eq('id', st.auth_uid);
+    if (pe) return NextResponse.json({ error: '帳號已封鎖，但 profiles 沒更新：' + pe.message }, { status: 400 });
     return NextResponse.json({ ok: true });
   }
 

@@ -65,6 +65,8 @@ export default function ApplyTab({ me, onMsg, prefill, isAdmin, pending = 0 }: T
   const year = new Date().getFullYear();
 
   const load = useCallback(async () => {
+    // ★ 先讓資料庫把今年的「應有」寫好再讀（migration_302）—— 跨年那天才有新一年的列
+    await supabase.rpc('ensure_leave_quotas', { p_year: year });
     const [{ data: lt }, { data: lb }, { data: cfg }, { data: lr }, { data: ot }, { data: fx }] =
       await Promise.all([
         supabase.from('leave_types').select('code, name, has_quota, sort').eq('active', true).order('sort'),
@@ -192,12 +194,13 @@ export default function ApplyTab({ me, onMsg, prefill, isAdmin, pending = 0 }: T
                     <div className="text-xs text-gray-500 tabular-nums">約 {d(used)} 天 · 沒有額度上限</div>
                   </>
                 ) : noQuota ? (
-                  <div className="text-sm font-semibold mt-0.5" style={{ color: C_OUT }}>今年未設額度</div>
+                  <div className="text-sm font-semibold mt-0.5" style={{ color: C_OUT }}>{t.code === 'annual' ? '還沒填到職日' : '今年未設額度'}</div>
                 ) : (
                   <>
                     <div className="text-xl font-bold leading-tight tabular-nums mt-0.5">剩 {d(remain)} 天</div>
+                    {/* 應有 − 已請 ＝ 剩（2026-09-29）：跟管理頁 ③ 請假狀況同一個算式 */}
                     <div className="text-xs text-gray-500 tabular-nums">
-                      {remain} 小時 · 已用 {d(used)} 天
+                      應有 {d(quota)} − 已請 {d(used)} 天 · {remain} 小時
                     </div>
                     <div className="mt-1.5 h-1.5 rounded-full bg-mor-line/70 overflow-hidden">
                       <div className="h-full rounded-full transition-[width]"
@@ -212,7 +215,7 @@ export default function ApplyTab({ me, onMsg, prefill, isAdmin, pending = 0 }: T
         </div>
         {types.some((t) => t.has_quota && !bals.find((b) => b.type_code === t.code)) && (
           <div className="text-xs text-amber-700 mt-2">
-            有假別今年還沒有額度，請主管到「管理 → 假別額度」設定。
+            有假別今年還沒有額度 —— 年假要先填到職日，請主管到「管理 → 假別額度」填。
           </div>
         )}
       </div>

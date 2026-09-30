@@ -8,6 +8,7 @@ import NewsTab from '../settings/news-tab';
 import NoticeTab from '../attendance/notice-tab';
 import type { Role } from '../attendance/types';
 import SecretsTab from './secrets-tab';
+import ContactsTab from './contacts-tab';
 import EventsTab from './events-tab';
 import FormsTab from './forms-tab';
 
@@ -83,6 +84,8 @@ const TABS = [
    *   推播的深連結走它（見底下那一段註解）。
    */
   { key: 'forms', label: '檔案下載', icon: '📄' },
+  /* ★ 電話簿（2026-09-30，migration_303）：全公司可讀、會計・主管・總經理可寫。帳密還是最後一格 */
+  { key: 'contacts', label: '電話簿', icon: '📒' },
   { key: 'secrets', label: '帳密', icon: '🔑' },
 ] as const;
 type TabKey = (typeof TABS)[number]['key'];
@@ -162,6 +165,7 @@ function BoardInner() {
       )}
       {tab === 'events' && <EventsTab meId={me.id} isAdmin={isAdmin} onMsg={onMsg} />}
       {tab === 'forms' && <FormsTab role={me.role} meId={me.id} onMsg={onMsg} />}
+      {tab === 'contacts' && <ContactsTab role={me.role} meId={me.id} onMsg={onMsg} />}
       {tab === 'secrets' && <SecretsTab role={me.role} meId={me.id} onMsg={onMsg} />}
     </div>
   );

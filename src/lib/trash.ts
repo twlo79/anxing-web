@@ -33,6 +33,7 @@ export const TABLE_LABEL: Record<string, string> = {
   cleaning_records: '清潔記錄',
   announcement_reads: '公告已讀',
   staff_properties: '管家負責房源',
+  board_contacts: '電話簿',
 };
 
 /**
@@ -52,6 +53,7 @@ export const DELETABLE_TABLES = [
   'attachments',
   'estates', 'properties', 'payment_accounts', 'payee_presets',
   'hk_work_item',
+  'board_contacts',
 ];
 
 export type TypeOption = { value: string; label: string; count: number };
