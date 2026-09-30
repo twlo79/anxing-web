@@ -1,4 +1,5 @@
 'use client';
+import { looksLikeError } from '@/lib/flash-kind';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AddButton, ExportButton } from '@/components/Actions';
 import { AuditButton, AuditBadges, AuditSummary } from '@/components/Audit';
@@ -758,7 +759,7 @@ export default function ShortTermPage() {
    */
   const [msgErr, setMsgErr] = useState(false);
   function flash(t: string) {
-    const bad = /失敗|錯誤|不能|無法/.test(t);
+    const bad = looksLikeError(t);   // 全站同一套判斷（2026-09-30 體檢：原本只認四個詞）
     setMsg(t); setMsgErr(bad);
     setTimeout(() => setMsg(''), bad ? 15000 : 2500);
   }

@@ -8,6 +8,9 @@ import {
   FILE_ACCEPT, fileKind, fmtSize, fileTooBig, FILE_BADGE, KIND_EXTS,
 } from '@/lib/board';
 import { deleteMatches, whyDeleteBlocked, DELETE_READY } from '@/lib/confirm-delete';
+import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
+import { useJustSaved } from '@/lib/use-just-saved';
+import { SavedBadge } from '@/components/SavedToast';
 
 /*
  * ══════════════════════════════════════════════════════════
@@ -134,6 +137,7 @@ export default function FormsTab({ role, meId, onMsg }: {
    *   而症狀是「我點的是 A，展開的是 B」。
    */
   const [open, setOpen] = useState<Record<string, true>>({});
+  const { markSaved, isJust } = useJustSaved(list);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -238,6 +242,8 @@ export default function FormsTab({ role, meId, onMsg }: {
       const rm = await supabase.storage.from(BUCKET).remove([oldPath]);
       if (rm.error) console.warn('[board] 舊檔沒刪掉：', rm.error.message);
     }
+    savedToast(savedText(d.id ? '已儲存' : '已新增', title));
+    markSaved(data[0].id);
     setDraft(null);
     load();
   };
@@ -257,6 +263,7 @@ export default function FormsTab({ role, meId, onMsg }: {
       const rm = await supabase.storage.from(BUCKET).remove([f.file_path]);
       if (rm.error) console.warn('[board] 檔案沒刪掉：', rm.error.message);
     }
+    savedToast(savedText('已刪除', f.title));
     setDraft(null);
     load();
   };
@@ -299,7 +306,7 @@ export default function FormsTab({ role, meId, onMsg }: {
             const k = fileKind(f.file_name ?? '');
             const has = formHasFile(f);
             return (
-              <div key={f.id} className="border-t border-mor-line/60 first:border-t-0">
+              <div key={f.id} {...justRow(isJust(f.id))} className={`border-t border-mor-line/60 first:border-t-0 ${isJust(f.id) ? SAVED_HL : ''}`}>
               {/*
                 ══════════════════════════════════════════════
                 一列的骨架（2026-09-18 使用者過審的最終版）——
@@ -342,6 +349,7 @@ export default function FormsTab({ role, meId, onMsg }: {
                                    bg-mor-bluelight text-mor-slatedark">
                     {formIcon(cat)} {cat}
                   </span>
+                  {isJust(f.id) && <SavedBadge />}
                   <span className="text-ui font-semibold truncate">{f.title}</span>
                 </span>
 

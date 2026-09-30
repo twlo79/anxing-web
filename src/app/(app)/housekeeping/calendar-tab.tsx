@@ -9,6 +9,9 @@ import {
 } from '@/lib/hk-task';
 import ImportPanel from './import-panel';
 import TaskForm, { emptyDraft, draftOf, type TaskDraft } from './task-form';
+import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
+import { useJustSaved } from '@/lib/use-just-saved';
+import { SavedBadge } from '@/components/SavedToast';
 
 /**
  * 房務行事曆：每天哪些房源要清、誰負責。
@@ -136,6 +139,12 @@ export default function CalendarTab({
   }, [supabase, from, to, onMsg]);
 
   useEffect(() => { load(); }, [load]);
+  const { markSaved, isJust } = useJustSaved(tasks);
+  /** 綠字裡那一筆叫什麼（跟格子上顯示的同一個名字） */
+  const nameOf = (id: string) => {
+    const t = tasks.find((x) => x.id === id);
+    return t ? displayTitle(t) : '';
+  };
 
   const perDay = useMemo(() => byDate(tasks), [tasks]);
   /** 自動長出來的 id。表單要靠它決定給不給刪 */
@@ -155,6 +164,9 @@ export default function CalendarTab({
     // RLS 擋掉的 update 會回成功而且影響 0 列 —— 不檢查的話畫面說成功、
     // 資料一個字都沒變，而那比報錯更難查
     if (!data?.length) return onMsg('指派沒有存進去 —— 你的帳號沒有排班的權限。', true);
+    savedToast(staffId
+      ? savedText('已指派', `${nameOf(id)}・${staff.find((s) => s.id === staffId)?.name ?? ''}`)
+      : savedText('已收回指派', nameOf(id)));
     load();
   }
 
@@ -170,6 +182,7 @@ export default function CalendarTab({
       .update({ accepted: true }).eq('id', id).select('id');
     if (error) return onMsg('接受失敗：' + error.message, true);
     if (!data?.length) return onMsg('沒有存進去 —— 你的帳號沒有排班的權限。', true);
+    savedToast(savedText('已接受', nameOf(id)));
     load();
   }
 
@@ -178,6 +191,7 @@ export default function CalendarTab({
       .update({ done_at: done ? new Date().toISOString() : null }).eq('id', id).select('id');
     if (error) return onMsg('更新失敗：' + error.message, true);
     if (!data?.length) return onMsg('沒有存進去 —— 你的帳號沒有排班的權限。', true);
+    savedToast(savedText(done ? '已完成' : '已改回未完成', nameOf(id)));
     load();
   }
 
@@ -189,6 +203,8 @@ export default function CalendarTab({
    */
   async function saveForm() {
     if (!form) return;
+    // ★ 日期框被清空的話是 ''，date 欄收到 '' 會丟 `invalid input syntax for type date`（2026-09-30 體檢）
+    if (!form.work_date) return onMsg('要選日期才存得進去。', true);
     setSaving(true);
     try {
       const row = {
@@ -220,7 +236,13 @@ export default function CalendarTab({
       if (!data?.length) return onMsg('沒有存進去 —— 你的帳號沒有排班的權限。', true);
 
       setForm(null);
-      onMsg(form.id ? '已儲存' : '已新增');
+      // 標在那一天的清單上 —— 表單裡改了日期的話，跟著跳到新的那一天，不然看不到標黃
+      setSel(form.work_date);
+      markSaved(data[0].id);
+      savedToast(savedText(form.id ? '已儲存' : '已新增', displayTitle({
+        work_type: form.work_type, title: form.title, guest: null,
+        room: props.find((p) => p.id === form.property_id)?.name ?? null,
+      })));
       load();
     } finally { setSaving(false); }
   }
@@ -235,7 +257,7 @@ export default function CalendarTab({
     const { data, error } = await supabase.from('hk_task').delete().eq('id', t.id).select('id');
     if (error) return onMsg('刪除失敗：' + error.message, true);
     if (!data?.length) return onMsg('沒有刪掉 —— 你的帳號沒有排班的權限。', true);
-    onMsg('已刪除'); load();
+    savedToast(savedText('已刪除', displayTitle(t))); load();
   }
 
   return (
@@ -450,7 +472,7 @@ export default function CalendarTab({
                 同一組裡面再照原本的規則（未指派最前）。
               */}
               {[...sortTasks(selList)].sort((a, b) => startKeyOf(a) - startKeyOf(b)).map((t) => (
-                <div key={t.id}
+                <div key={t.id} {...justRow(isJust(t.id))}
                   onClick={(e) => {
                     /*
                       點整列開編輯表單。按鈕上的點擊要擋掉 ——
@@ -462,7 +484,8 @@ export default function CalendarTab({
                   }}
                   className={`flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2
                     ${canEdit ? 'cursor-pointer hover:bg-white' : ''}
-                    ${isPending(t) ? 'border-dashed border-mor-slate/40 bg-white'
+                    ${isJust(t.id) ? `border-mor-line/60 ${SAVED_HL}`
+                      : isPending(t) ? 'border-dashed border-mor-slate/40 bg-white'
                       : t.done_at ? 'border-mor-line/60 bg-mor-greenlight/40'
                       : 'border-mor-line/60 bg-white/50'}`}>
                   {/*
@@ -482,6 +505,7 @@ export default function CalendarTab({
                       ✓
                     </button>
                   )}
+                  {isJust(t.id) && <SavedBadge />}
                   <span className="rounded px-2 py-0.5 text-xs font-medium"
                     style={t.staff_id
                       ? { backgroundColor: toneOfType(t.work_type).bg, color: toneOfType(t.work_type).fg }

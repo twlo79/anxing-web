@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { fmtInt as fmt } from '@/lib/fmt';
 import { createClient } from '@/lib/supabase';
 import { todayStr } from '@/lib/period';
+import { savedText } from '@/lib/saved-feedback';
 import { METHOD_LABEL } from '@/components/RefundFields';
 import {
   planMissing, settleMissing, needsAcct, type RefundDep,
@@ -97,7 +98,8 @@ export default function DepositRefundStep({
     if (!data || data.length === 0) {
       return setErr('沒有任何一列被更新，通常是權限或這筆的狀態已經變了。請關掉重新整理後再試一次。');
     }
-    onDone(isPlan ? '已排定匯款' : '已完成退款');
+    // 綠字由呼叫的那一頁丟給 savedToast（lib/saved-feedback.ts）；這裡只組好帶名字的那一句
+    onDone(savedText(isPlan ? '已排定匯款' : '已完成退款', `${dep.room ?? ''} ${dep.guest_name ?? ''}`));
   }
 
   const name = [dep.room, dep.guest_name].filter(Boolean).join('・') || '押金';

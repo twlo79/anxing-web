@@ -10,6 +10,7 @@ import {
   BTN, BTN2, C_IN, C_OUT, noRowsMsg,
   type Balance, type LeaveReq, type LeaveType, type OtReq, type TabProps,
 } from './types';
+import { savedToast, savedText } from '@/lib/saved-feedback';
 
 /* ══════════════════════════════════════════════════════
  * 管理 → 假別額度（2026-09-29 改版，migration_302）
@@ -101,6 +102,7 @@ export default function QuotaSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
     if (error) return onMsg('存不進去：' + error.message, true);
     const r = data as { ok: boolean; message: string };
     if (!r?.ok) return onMsg(r?.message ?? noRowsMsg('到職日'), true);
+    savedToast(savedText('已儲存', `${p.name} 到職日`));
     load();
   }
   /** 公司多給：全公司一個數，存進 work_settings；觸發器會把每個人的年假重算 */
@@ -109,7 +111,7 @@ export default function QuotaSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
       .update({ annual_extra_days: v }).eq('id', 1).select('id');
     if (error) return onMsg('存不進去：' + error.message, true);
     if (!data?.length) return onMsg(noRowsMsg('公司多給'), true);
-    onMsg(`公司多給改成 ${v} 天，每個人的年假已重算`);
+    savedToast(`公司多給改成 ${v} 天，每個人的年假已重算`);
     load();
   }
 
@@ -163,7 +165,9 @@ export default function QuotaSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
     // RPC 回的 i 是「送出去那批」的序號 → 對回預覽的列
     const mapped = r.rows.map((x) => ({ ...x, i: ok[x.i - 1]?.i ?? x.i }));
     setResult({ ...r, rows: mapped });
-    onMsg(`已匯入 ${r.inserted} 筆${r.skipped ? `、跳過 ${r.skipped} 筆（那天已有單）` : ''}${r.errors ? `、${r.errors} 筆失敗` : ''}`, r.errors > 0);
+    const importText = `已匯入 ${r.inserted} 筆${r.skipped ? `、跳過 ${r.skipped} 筆（那天已有單）` : ''}${r.errors ? `、${r.errors} 筆失敗` : ''}`;
+    // ★ 有失敗的照舊走紅字（要人去看底下哪幾列）；全部成功才給綠字
+    if (r.errors > 0) onMsg(importText, true); else savedToast(importText);
     load();
   }
   async function deleteImported(id: string, kind: string, label: string) {
@@ -172,6 +176,7 @@ export default function QuotaSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
     if (error) return onMsg('刪不掉：' + error.message, true);
     const r = data as { ok: boolean; message?: string };
     if (!r?.ok) return onMsg(r?.message ?? '刪不掉', true);
+    savedToast(savedText('已刪除', label));
     load();
   }
 

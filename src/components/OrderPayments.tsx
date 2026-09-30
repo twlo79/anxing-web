@@ -1,4 +1,5 @@
 'use client';
+import { looksLikeError } from '@/lib/flash-kind';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fmtInt as fmt } from '@/lib/fmt';
 import { createClient } from '@/lib/supabase';
@@ -12,6 +13,9 @@ import { shouldAutoSettle, autoSettleBlockedReason, lastPaidOn } from '@/lib/per
 import { softDelete } from '@/lib/trash';
 import { invoiceMissing } from '@/lib/invoice';
 import { ymOf, todayStr } from '@/lib/period';
+import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
+import { useJustSaved } from '@/lib/use-just-saved';
+import { SavedBadge } from '@/components/SavedToast';
 
 /**
  * 短租訂單的收款視窗。
@@ -97,6 +101,7 @@ export default function OrderPayments({
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
+  const { markSaved, isJust } = useJustSaved(rows);
   // 合計以資料庫回來的為準,不用前端的 rows 加總 —— 兩邊算法不一致時要看得出來
   const [paidAmount, setPaidAmount] = useState(Number(order.paid_amount) || 0);
   /** 展開中的那一筆(看/加照片)。一次只開一筆,免得手機上捲不完。 */
@@ -142,7 +147,12 @@ export default function OrderPayments({
   const rest = remaining(cur);
   const status = payStatus(cur);
 
-  function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 4000); }
+  function flash(t: string) {
+    // ★ 錯誤不自己消失（`looksLikeError`，全站同一套；2026-09-30 體檢）——
+    //   RPC 或資料庫丟回來的錯只顯示幾秒的話，使用者看到的是「按了沒反應」。
+    setMsg(t);
+    if (!looksLikeError(t)) setTimeout(() => setMsg((m) => (m === t ? '' : m)), 4000);
+  }
 
   const load = useCallback(async () => {
     const [{ data: ps }, { data: od }] = await Promise.all([
@@ -213,6 +223,8 @@ export default function OrderPayments({
     const upErr = await receiptsRef.current?.flush(data.id);
     setBusy(false);
     if (upErr) flash('收款已存,但照片上傳失敗:' + upErr);
+    markSaved(data.id);
+    savedToast(savedText('已新增收款', `${order.guest_name ?? ''} $${fmt(Math.round(amt))}`));
 
     setDraftNote('');
     // 手續費的欄位也要清 —— 不清的話下一筆會帶著上一筆的金額
@@ -247,7 +259,7 @@ export default function OrderPayments({
     const res = await softDelete(supabase, 'order_payments', r.id);
     setBusy(false);
     if (!res.ok) return flash(res.message);
-    flash(res.message);
+    savedToast(savedText('已刪除收款', `${r.paid_on} $${fmt(r.amount)}`));
     if (openId === r.id) setOpenId(null);
     await load();
     onChanged();
@@ -287,7 +299,7 @@ export default function OrderPayments({
         ? '這張訂單已經有一張已開立的發票,請重新整理確認。'
         : '儲存失敗:' + error.message);
     }
-    flash('已記錄發票');
+    savedToast(savedText('已記錄發票', no));
     await load();
   }
 
@@ -299,7 +311,7 @@ export default function OrderPayments({
     setBusy(false);
     if (!res.ok) return flash(res.message);
     setInv(null); setInvNo('');
-    flash('已移到回收桶');
+    savedToast(savedText('已刪除發票紀錄', inv.invoice_no));
     await load();
   }
 
@@ -422,11 +434,12 @@ export default function OrderPayments({
                   <div className="border border-mor-line rounded-lg divide-y divide-mor-line/60">
                     {rows.map((r) => (
                       <div key={r.id}>
-                        <div className="flex items-center gap-2 px-3 py-2.5 text-sm cursor-pointer hover:bg-mor-sand/30"
+                        <div {...justRow(isJust(r.id))}
+                          className={`flex items-center gap-2 px-3 py-2.5 text-sm cursor-pointer ${isJust(r.id) ? SAVED_HL : 'hover:bg-mor-sand/30'}`}
                           onClick={() => setOpenId(openId === r.id ? null : r.id)}>
                           <span className="text-gray-300 text-xs w-3 shrink-0">{openId === r.id ? '▾' : '▸'}</span>
                           <div className="min-w-0 flex-1">
-                            <div className="font-medium">${fmt(r.amount)}</div>
+                            <div className="font-medium">{isJust(r.id) && <SavedBadge />}${fmt(r.amount)}</div>
                             <div className="text-[11px] text-gray-500 truncate">
                               {r.paid_on}・{methodText(r.method, r.account, acctName)}
                               {r.note ? `・${r.note}` : ''}

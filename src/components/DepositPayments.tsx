@@ -1,4 +1,5 @@
 'use client';
+import { looksLikeError } from '@/lib/flash-kind';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fmtInt as fmt } from '@/lib/fmt';
 import { createClient } from '@/lib/supabase';
@@ -10,6 +11,9 @@ import {
 } from '@/lib/deposit-payment';
 import { METHOD_LABEL, METHOD_OPTS, needsAccount, normalizeMethod, methodText } from '@/lib/pay-method';
 import { softDelete } from '@/lib/trash';
+import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
+import { useJustSaved } from '@/lib/use-just-saved';
+import { SavedBadge } from '@/components/SavedToast';
 
 /**
  * 押金的收款視窗。
@@ -100,6 +104,8 @@ export default function DepositPayments({
   const [draftAcct, setDraftAcct] = useState('');
   const [draftNote, setDraftNote] = useState('');
   const receiptsRef = useRef<ReceiptsHandle>(null);
+  // 存檔成功：那一筆標黃「剛剛儲存」（lib/saved-feedback.ts 的 ③）
+  const { markSaved, isJust } = useJustSaved(rows);
 
   const due = Math.round(Number(dep.amount) || 0);
   const cur = { amount: dep.amount, received_amount: received, returned_on: returnedOn };
@@ -108,7 +114,12 @@ export default function DepositPayments({
   const acctName = useMemo(
     () => Object.fromEntries(accounts.map((a) => [a.code, a.name])), [accounts]);
 
-  function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 4000); }
+  function flash(t: string) {
+    // ★ 錯誤不自己消失（`looksLikeError`，全站同一套；2026-09-30 體檢）——
+    //   RPC 或資料庫丟回來的錯只顯示幾秒的話，使用者看到的是「按了沒反應」。
+    setMsg(t);
+    if (!looksLikeError(t)) setTimeout(() => setMsg((m) => (m === t ? '' : m)), 4000);
+  }
 
   const load = useCallback(async () => {
     const [{ data: ps }, { data: dd }] = await Promise.all([
@@ -154,6 +165,8 @@ export default function DepositPayments({
     setBusy(false);
     if (upErr) flash('收款已存，但照片上傳失敗：' + upErr);
 
+    savedToast(savedText('已新增收款', `${name}・$${fmt(amt)}`));
+    markSaved(data.id);
     setDraftAmt(''); setDraftNote('');
     await load();
     onChanged();
@@ -169,7 +182,7 @@ export default function DepositPayments({
     const res = await softDelete(supabase, 'deposit_payments', r.id);
     setBusy(false);
     if (!res.ok) return flash(res.message);
-    flash(res.message);
+    savedToast(savedText(res.message, `${r.paid_on}　$${fmt(r.amount)}`));
     if (openId === r.id) setOpenId(null);
     await load();
     onChanged();
@@ -274,16 +287,16 @@ export default function DepositPayments({
             ) : (
               <div className="border border-mor-line rounded-lg divide-y divide-mor-line/60">
                 {rows.map((r) => (
-                  <div key={r.id}>
+                  <div key={r.id} {...justRow(isJust(r.id))} className={isJust(r.id) ? SAVED_HL : ''}>
                     {/*
                       點整列展開看照片 —— 不另外彈視窗。
                       這個視窗本身已經是彈窗，再疊一層在手機上會捲不完。
                     */}
-                    <div className="flex items-center gap-2 px-3 py-2.5 text-sm cursor-pointer hover:bg-mor-sand/30"
+                    <div className={`flex items-center gap-2 px-3 py-2.5 text-sm cursor-pointer ${isJust(r.id) ? '' : 'hover:bg-mor-sand/30'}`}
                       onClick={() => setOpenId(openId === r.id ? null : r.id)}>
                       <span className="text-gray-300 text-xs w-3 shrink-0">{openId === r.id ? '▾' : '▸'}</span>
                       <div className="min-w-0 flex-1">
-                        <div className="font-medium tabular-nums">${fmt(r.amount)}</div>
+                        <div className="font-medium tabular-nums">{isJust(r.id) && <SavedBadge />}${fmt(r.amount)}</div>
                         <div className="text-[11px] text-gray-500 truncate">
                           {r.paid_on}・{methodText(r.method, r.account, acctName)}
                           {r.note ? `・${r.note}` : ''}

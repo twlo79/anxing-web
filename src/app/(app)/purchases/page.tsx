@@ -1,6 +1,9 @@
 'use client';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { looksLikeError } from '@/lib/flash-kind';
+import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
+import { useJustSaved } from '@/lib/use-just-saved';
+import { SavedBadge } from '@/components/SavedToast';
 import StatCard from '@/components/StatCard';
 import { AddButton, ExportButton } from '@/components/Actions';
 import { Tabs } from '@/components/Tabs';
@@ -211,6 +214,8 @@ export default function PurchasesPage() {
   const [people, setPeople] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<{ t: string; err?: boolean } | null>(null);
+  // 存檔成功：那一列標黃「剛剛儲存」（lib/saved-feedback.ts 的 ③）
+  const { markSaved, isJust } = useJustSaved(rows);
   const [saving, setSaving] = useState(false);
 
   const [edit, setEdit] = useState<Req | null>(null);
@@ -1342,13 +1347,15 @@ export default function PurchasesPage() {
           setEdit(null); load(); return;
         }
         const head = wasSubmitted ? '已重新送審' : '已送出';
-        flash(editTotal < FREE_THRESHOLD ? `${head}・未達 $${fmt(FREE_THRESHOLD)},自動核可` : `${head},等待主管與總經理核可`);
-        setEdit(null); load();
+        savedToast(savedText(head, newReqNo || edit.req_no)
+          + (editTotal < FREE_THRESHOLD ? `・未達 $${fmt(FREE_THRESHOLD)},自動核可` : ',等待主管與總經理核可'));
+        setEdit(null); markSaved(reqId); load();
       } else {
-        flash(wasSubmitted ? '已存為草稿・原本的核可已清空,記得再送出審核' : '已儲存草稿');
-        // 新建的草稿存完留在原地,讓人可以接著補憑證或直接送審
-        if (isCreate) setEdit({ ...edit, id: reqId, req_no: newReqNo, status: 'draft' });
-        else setEdit(null);
+        savedToast(wasSubmitted
+          ? savedText('已存為草稿', newReqNo || edit.req_no) + '・原本的核可已清空,記得再送出審核'
+          : savedText('已儲存草稿', newReqNo || edit.req_no));
+        // 新建的草稿存完也關掉（2026-09-30 全站統一）—— 留在原地的話綠字被視窗蓋住，看起來像沒存
+        setEdit(null); markSaved(reqId);
         load();
       }
     } finally { setSaving(false); }
@@ -1362,7 +1369,7 @@ export default function PurchasesPage() {
     else return flashErr('你的角色不能核可');
     const { error } = await supabase.from('purchase_requests').update(patch).eq('id', r.id);
     if (error) return flash('核可失敗:' + error.message);
-    flash('已核可'); load();
+    savedToast(savedText('已核可', r.req_no)); markSaved(r.id); load();
   }
 
   async function doReject() {
@@ -1373,7 +1380,8 @@ export default function PurchasesPage() {
       .update({ status: 'rejected', rejected_by: me.id, reject_reason: rejectReason.trim() })
       .eq('id', rejecting.id).select('id');
     const bad = writeError(r, '駁回'); if (bad) return flash(bad);
-    setRejecting(null); setRejectReason(''); flash('已駁回'); load();
+    savedToast(savedText('已駁回', rejecting.req_no)); markSaved(rejecting.id);
+    setRejecting(null); setRejectReason(''); load();
   }
 
   /*
@@ -1390,7 +1398,7 @@ export default function PurchasesPage() {
     else return flashErr('你的角色不能核可');
     const r = await supabase.from('deposits').update(patch).eq('id', d.id).select('id');
     const bad = writeError(r, '核可'); if (bad) return flash(bad);
-    flash('已核可押金退款'); load();
+    savedToast(savedText('已核可押金退款', `${d.room ?? ''} ${d.guest_name ?? ''}`)); markSaved(d.id); load();
   }
 
   async function depDoReject() {
@@ -1400,7 +1408,8 @@ export default function PurchasesPage() {
       .update({ refund_status: 'rejected', rejected_by: me.id, reject_reason: depReason.trim() })
       .eq('id', depRejecting.id).select('id');
     const bad = writeError(r, '駁回'); if (bad) return flash(bad);
-    setDepRejecting(null); setDepReason(''); flash('已駁回'); load();
+    savedToast(savedText('已駁回', `${depRejecting.room ?? ''} ${depRejecting.guest_name ?? ''}`)); markSaved(depRejecting.id);
+    setDepRejecting(null); setDepReason(''); load();
   }
 
   /**
@@ -1442,7 +1451,7 @@ export default function PurchasesPage() {
     setSaving(false);
     if (error) return flash('儲存失敗:' + error.message);
     openDep(null);
-    flash(hadVotes ? '已更新並重新送審' : '已更新'); load();
+    savedToast(savedText(hadVotes ? '已更新並重新送審' : '已更新', `${d.room ?? ''} ${d.guest_name ?? ''}`)); markSaved(d.id); load();
   }
 
   /**
@@ -1472,7 +1481,7 @@ export default function PurchasesPage() {
     if (!data || data.length === 0) {
       return flash('沒有任何一列被更新，通常是權限或這筆的狀態已經變了。請重新整理後再試。');
     }
-    openDep(null); flash('已撤銷退款申請'); load();
+    openDep(null); savedToast(savedText('已撤銷退款申請', `${d.room ?? ''} ${d.guest_name ?? ''}`)); markSaved(d.id); load();
   }
 
   /**
@@ -1543,7 +1552,7 @@ export default function PurchasesPage() {
         + '請關掉重新整理後再試一次。');
     }
     setDating(null);
-    flash('已確認出款,費用已連動到支出');
+    savedToast(savedText('已確認出款', dating.req_no) + ',費用已連動到支出'); markSaved(dating.id);
     load();
   }
 
@@ -1576,7 +1585,8 @@ export default function PurchasesPage() {
       .update(patch).eq('id', planning.id).select('id');
     if (error) return flash('儲存失敗:' + error.message);
     if (!data?.length) return flashErr('沒有改到任何一列 —— 可能是權限，或這張單的狀態變了');
-    setPlanning(null); flash('已排定'); load();
+    savedToast(savedText('已排定', planning.req_no)); markSaved(planning.id);
+    setPlanning(null); load();
   }
 
   // 撤銷 = 移到回收桶（連同底下的請款項目）。已產生支出的單一律擋下 ——
@@ -1588,7 +1598,7 @@ export default function PurchasesPage() {
     if (!confirm(`確定撤銷請款單 ${r.req_no}?\n\n會移到回收桶,可以復原。`)) return;
     const res = await softDelete(supabase, 'purchase_requests', r.id, '撤銷請款單');
     if (!res.ok) return flash(res.message.replace('刪除', '撤銷'));
-    flash('已撤銷,可到刪除紀錄復原'); load();
+    savedToast(savedText('已撤銷', r.req_no) + ',可到刪除紀錄復原'); load();
   }
 
   function exportXlsx() {
@@ -1943,9 +1953,10 @@ export default function PurchasesPage() {
                     <span className="text-xs text-gray-400">{glist.length} 筆・{ghint}</span>
                   </div>
               {glist.map((p) => (
-                <div key={p.kind + p.id}
+                <div key={p.kind + p.id} {...justRow(isJust(p.id))}
                   className={`rounded-xl border p-3 ${
-                    p.mine ? 'border-amber-300 bg-white'
+                    isJust(p.id) ? `border-mor-line ${SAVED_HL}`
+                      : p.mine ? 'border-amber-300 bg-white'
                       : p.paid ? 'border-mor-line bg-gray-50/70' : 'border-mor-line bg-white'}`}>
                   {/* 兩種單都點得開抽屜,各自走各自的 —— 使用者不該記得哪一種才能點 */}
                   <div onClick={() => (p.kind === 'pr' ? setDetail(p.pr!) : openDep(p.dep!))}>
@@ -1956,6 +1967,7 @@ export default function PurchasesPage() {
                             p.kind === 'pr' ? 'bg-mor-bluelight text-mor-slate' : 'bg-purple-50 text-purple-700'}`}>
                             {p.kind === 'pr' ? '請款' : '押金'}
                           </span>
+                          {isJust(p.id) && <SavedBadge />}
                           <span className="font-medium truncate">{p.who}</span>
                         </div>
                         <div className="text-sm text-gray-600 mt-1 line-clamp-2">{p.what}</div>
@@ -2027,12 +2039,14 @@ export default function PurchasesPage() {
                         </td>
                       </tr>
                   {glist.map((p) => (
-                    <tr key={p.kind + p.id}
+                    <tr key={p.kind + p.id} {...justRow(isJust(p.id))}
                       className={`border-b border-mor-line/60 last:border-0 ${
-                        p.mine ? 'bg-amber-50/40' : p.paid ? 'bg-gray-50/70 text-gray-500' : ''
-                      } cursor-pointer hover:bg-mor-sand/30`}
+                        isJust(p.id) ? SAVED_HL
+                          : `${p.mine ? 'bg-amber-50/40' : p.paid ? 'bg-gray-50/70 text-gray-500' : ''} hover:bg-mor-sand/30`
+                      } cursor-pointer`}
                       onClick={() => (p.kind === 'pr' ? setDetail(p.pr!) : openDep(p.dep!))}>
                       <td className="px-3 py-2.5 whitespace-nowrap">
+                        {isJust(p.id) && <SavedBadge />}
                         <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
                           p.kind === 'pr' ? 'bg-mor-bluelight text-mor-slate' : 'bg-purple-50 text-purple-700'}`}>
                           {p.kind === 'pr' ? '請款' : '押金'}
@@ -2309,11 +2323,12 @@ export default function PurchasesPage() {
           const { canVoteMgr, canVoteAdm } = perms(r);
           return (
             // 卡片本體可點開抽屜,底下只留核可與分享,其餘操作都在抽屜內
-            <div key={r.id} className="rounded-xl glass p-3">
+            <div key={r.id} {...justRow(isJust(r.id))} className={`rounded-xl p-3 ${isJust(r.id) ? SAVED_HL : 'glass'}`}>
               <div onClick={() => setDetail(r)}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5 min-w-0">
+                      {isJust(r.id) && <SavedBadge />}
                       {bookChip(r.book)}
                       <span className="font-medium truncate">{personName[r.requester_id] ?? '—'}</span>
                     </div>
@@ -2395,9 +2410,9 @@ export default function PurchasesPage() {
               return (
                 // 整列可點開抽屜。列上只留「核可」與「分享」——
                 // 核可是最高頻的動作,分享是要拉主管進來的動作,其餘都在抽屜裡。
-                <tr key={r.id} onClick={() => setDetail(r)}
-                  className="border-b border-mor-line/60 hover:bg-mor-bluelight/30 align-top cursor-pointer">
-                  <td className="px-3 py-2 whitespace-nowrap text-gray-600">{r.created_at ? r.created_at.slice(0, 10) : '—'}</td>
+                <tr key={r.id} onClick={() => setDetail(r)} {...justRow(isJust(r.id))}
+                  className={`border-b border-mor-line/60 align-top cursor-pointer ${isJust(r.id) ? SAVED_HL : 'hover:bg-mor-bluelight/30'}`}>
+                  <td className="px-3 py-2 whitespace-nowrap text-gray-600">{isJust(r.id) && <SavedBadge />}{r.created_at ? r.created_at.slice(0, 10) : '—'}</td>
                   <td className="px-3 py-2 whitespace-nowrap">{personName[r.requester_id] ?? '—'}</td>
                   <td className="px-3 py-2 text-gray-600 max-w-64">
                     <div className="flex items-center gap-1.5 min-w-0">
@@ -2733,7 +2748,7 @@ export default function PurchasesPage() {
           dep={depStep.dep}
           accounts={payAccounts.map((a) => ({ code: a.code, name: a.name }))}
           onClose={() => setDepStep(null)}
-          onDone={(msg) => { setDepStep(null); openDep(null); flash(msg); load(); }} />
+          onDone={(msg) => { markSaved(depStep.dep.id); setDepStep(null); openDep(null); savedToast(msg); load(); }} />
       )}
 
       {/* 押金駁回 */}

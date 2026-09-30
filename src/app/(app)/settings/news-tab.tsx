@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { createClient } from '@/lib/supabase';
 import { todayStr } from '@/lib/period';
 import { NOTIFY_LABEL, type NotifyKind } from '@/lib/notify-kinds';
+import { savedToast, savedText } from '@/lib/saved-feedback';
 
 /**
  * 新訊息 —— 推播通知的存底，留一週。
@@ -115,14 +116,16 @@ export default function NewsTab() {
     return out;
   }, [shown, today, yesterday]);
 
-  async function markRead(ids: number[]) {
+  async function markRead(ids: number[], announce = false) {
     if (!ids.length) return;
     // 畫面先動。標已讀失敗的後果是「它還是未讀」——
     // 不需要為此擋住整個畫面，下次載入就會回到真相
     setRows((rs) => rs.map((r) => (ids.includes(r.id) ? { ...r, read_at: new Date().toISOString() } : r)));
     const { error } = await supabase.from('notifications')
       .update({ read_at: new Date().toISOString() }).in('id', ids);
-    if (error) { setMsg('標記失敗：' + error.message); load(); }
+    if (error) { setMsg('標記失敗：' + error.message); load(); return; }
+    // 只有「全部標為已讀」那顆按鈕報綠字；點一列跳頁時標已讀是順手的，不吵
+    if (announce) savedToast(savedText('已標為已讀', `${ids.length} 則`));
   }
 
   return (
@@ -148,7 +151,7 @@ export default function NewsTab() {
           靠右對齊在這裡沒有換到任何東西:它不是主要動作，
           也不需要跟下面的清單對齊。
         */}
-        <button onClick={() => markRead(unread.map((r) => r.id))}
+        <button onClick={() => markRead(unread.map((r) => r.id), true)}
           disabled={!unread.length}
           className="ml-1 rounded-lg border border-mor-line px-3 py-1.5 text-xs hover:bg-mor-sand/60 disabled:opacity-40">
           全部標為已讀

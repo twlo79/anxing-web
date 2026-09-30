@@ -6,6 +6,9 @@ import MoneyInput from '@/components/MoneyInput';
 import { fmtInt as fmt } from '@/lib/fmt';
 import { isBoss, isManager as isManagerRole } from '@/lib/roles';
 import { useFlash } from '@/lib/use-flash';
+import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
+import { useJustSaved } from '@/lib/use-just-saved';
+import { SavedBadge } from '@/components/SavedToast';
 import { writeError } from '@/lib/write-guard';
 import { missingFields, missingMessage, submitGate, gateCls } from '@/lib/required';
 import { todayStr } from '@/lib/period';
@@ -170,6 +173,9 @@ export default function DepositsPage() {
   const [loading, setLoading] = useState(true);
   // ★ 全站唯一一份訊息邏輯（lib/use-flash）：錯誤紅色留到按掉，成功 3 秒自己走
   const { msg, msgErr, flash, clearMsg } = useFlash(3000);
+  // 存檔成功：綠字帶「房源 姓名」、那一列標黃（lib/saved-feedback.ts）
+  const { markSaved, isJust } = useJustSaved(rows);
+  const savedName = (d: { room?: string | null; guest_name?: string | null }) => `${d.room ?? ''} ${d.guest_name ?? ''}`;
 
   // 篩選
   const [fromD, setFromD] = useState('');
@@ -707,7 +713,7 @@ export default function DepositsPage() {
     if (error) return flash('沒收失敗:' + error.message);
     const r = data as { ok: boolean; message: string };
     if (!r?.ok) return flash(r?.message ?? '沒收失敗');
-    flash(r.message);
+    savedToast(r.message || savedText('已沒收', savedName(d))); markSaved(d.id);
     setDetail(null); load();
   }
 
@@ -787,7 +793,7 @@ export default function DepositsPage() {
     if (error) return flash('轉押失敗:' + error.message);
     const r = data as { ok: boolean; message: string };
     if (!r?.ok) return flash(r?.message ?? '轉押失敗');
-    flash(r.message);
+    savedToast(r.message || savedText('已轉押金', savedName(d))); markSaved(d.id);
     setDetail(null); load();
   }
 
@@ -809,7 +815,7 @@ export default function DepositsPage() {
     if (!data || data.length === 0) {
       return flash('沒有任何一列被更新，通常是權限或這筆的狀態已經變了。請重新整理後再試。');
     }
-    setDetail(null); setEdit(null); flash('已撤銷退款申請'); load();
+    setDetail(null); setEdit(null); savedToast(savedText('已撤銷退款申請', savedName(d))); markSaved(d.id); load();
   }
 
   /**
@@ -901,7 +907,8 @@ export default function DepositsPage() {
     }).eq('id', edit.id);
     setSaving(false);
     if (error) return flash('送審失敗:' + error.message);
-    setEdit(null); setTriedRefund(false); flash(wasSubmitted ? '已更新並重新送審' : '已送出退款審核'); load();
+    savedToast(savedText(wasSubmitted ? '已更新並重新送審' : '已送出退款審核', savedName(edit))); markSaved(edit.id);
+    setEdit(null); setTriedRefund(false); load();
   }
 
   /** 投票。兩票到齊由觸發器翻成 approved,前端不自己算狀態。 */
@@ -914,7 +921,7 @@ export default function DepositsPage() {
     // ★ 數列數（🔴3）：0 列的話「已核可」是假的 —— 押金退款是錢的決策，不能靠 load() 事後才發現
     const r = await supabase.from('deposits').update(patch).eq('id', d.id).select('id');
     const bad = writeError(r, '核可'); if (bad) return flash(bad);
-    setDetail(null); flash('已核可'); load();
+    setDetail(null); savedToast(savedText('已核可', savedName(d))); markSaved(d.id); load();
   }
 
   async function doReject() {
@@ -924,7 +931,8 @@ export default function DepositsPage() {
       refund_status: 'rejected', rejected_by: me.id, reject_reason: rejectReason.trim(),
     }).eq('id', rejecting.id).select('id');
     const bad = writeError(r, '駁回'); if (bad) return flash(bad);
-    setRejecting(null); setRejectReason(''); flash('已駁回'); load();
+    savedToast(savedText('已駁回', savedName(rejecting))); markSaved(rejecting.id);
+    setRejecting(null); setRejectReason(''); load();
   }
 
 
@@ -974,7 +982,7 @@ export default function DepositsPage() {
     const r = (data ?? [])[0] as { ok: boolean; item: string; detail: string } | undefined;
     if (!r?.ok) return flash(`${r?.item ?? '移轉失敗'}${r?.detail ? '：' + r.detail : ''}`);
     setMoving(null); setMoveKw(''); setDetail(null);
-    flash(`${r.item}・${r.detail}`);
+    savedToast(`${r.item}・${r.detail}`); markSaved(moving.dep.id);
     load();
   }
 
@@ -998,7 +1006,7 @@ export default function DepositsPage() {
     if (error) return flash('撤銷失敗：' + error.message);
     const r = (data ?? [])[0] as { ok: boolean; item: string; detail: string } | undefined;
     if (!r?.ok) return flash(`${r?.item ?? '撤銷失敗'}${r?.detail ? '：' + r.detail : ''}`);
-    setDetail(null); flash(`${r.item}・${r.detail}`); load();
+    setDetail(null); savedToast(`${r.item}・${r.detail}`); markSaved(d.id); load();
   }
 
   /**
@@ -1059,19 +1067,22 @@ export default function DepositsPage() {
        */
       if (!edit.id) payload.kind = edit.kind === 'earnest' ? 'earnest' : 'deposit';
     }
-    const { error } = edit.id
-      ? await supabase.from('deposits').update(payload).eq('id', edit.id)
-      : await supabase.from('deposits').insert(payload);
+    // 新增的要拿回 id 才標得到那一列（.select('id')）
+    const { data: savedRows, error } = edit.id
+      ? await supabase.from('deposits').update(payload).eq('id', edit.id).select('id')
+      : await supabase.from('deposits').insert(payload).select('id');
     setSaving(false);
     if (error) return flash('儲存失敗:' + error.message);
-    setEdit(null); setTriedRefund(false); setTriedManual(false); flash('已儲存'); load();
+    savedToast(savedText(edit.id ? '已儲存' : '已新增', savedName(edit)));
+    markSaved(edit.id || (savedRows as { id: string }[] | null)?.[0]?.id);
+    setEdit(null); setTriedRefund(false); setTriedManual(false); load();
   }
 
   async function del(d: Dep) {
     // ★ 訂金與押金都走這裡 —— 訊息要講對是哪一種,不然刪訂金卻看到「押金」會以為按錯了
     if (!confirm(`刪除這筆${wordOf(d)}紀錄（${d.room ?? ''} ${d.guest_name ?? ''}）?\n\n會移到回收桶,可以復原。`)) return;
     const r = await softDelete(supabase, 'deposits', d.id);
-    flash(r.message);
+    if (r.ok) savedToast(savedText(r.message, savedName(d))); else flash(r.message);
     if (r.ok) { setEdit(null); setTriedRefund(false); setDetail(null); load(); }
   }
 
@@ -1645,11 +1656,11 @@ export default function DepositsPage() {
         {loading ? <div className="text-center text-gray-400 py-10">載入中…</div>
         : sorted.length === 0 ? <div className="text-center text-gray-400 py-10 px-6 text-sm">{emptyHint}</div>
         : sorted.map((r) => (
-          <div key={r.id} onClick={() => setDetail(r)}
-            className="rounded-xl glass p-4 active:bg-white/45">
+          <div key={r.id} onClick={() => setDetail(r)} {...justRow(isJust(r.id))}
+            className={`rounded-xl p-4 ${isJust(r.id) ? SAVED_HL : 'glass active:bg-white/45'}`}>
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <div className="font-medium truncate">{r.room ?? '—'}</div>
+                <div className="font-medium truncate">{isJust(r.id) && <SavedBadge />}{r.room ?? '—'}</div>
                 <div className="text-xs text-gray-500 truncate">{r.guest_name ?? '—'}</div>
               </div>
               <div className="text-right shrink-0">
@@ -1691,8 +1702,9 @@ export default function DepositsPage() {
             {loading ? <tr><td colSpan={10} className="px-4 py-10 text-center text-gray-400">載入中…</td></tr>
             : sorted.length === 0 ? <tr><td colSpan={10} className="px-4 py-10 text-center text-gray-400 text-sm">{emptyHint}</td></tr>
             : sorted.map((r) => (
-              <tr key={r.id} className="border-b border-mor-line/60 last:border-0 hover:bg-mor-sand/30">
-                <td className="px-3 py-2 whitespace-nowrap text-gray-500">{r.estate_id ? estateName[r.estate_id] ?? '—' : '—'}</td>
+              <tr key={r.id} {...justRow(isJust(r.id))}
+                className={`border-b border-mor-line/60 last:border-0 ${isJust(r.id) ? SAVED_HL : 'hover:bg-mor-sand/30'}`}>
+                <td className="px-3 py-2 whitespace-nowrap text-gray-500">{isJust(r.id) && <SavedBadge />}{r.estate_id ? estateName[r.estate_id] ?? '—' : '—'}</td>
                 <td className="px-3 py-2 whitespace-nowrap font-medium">
                   {/* 種類徽章移到「暫收款」那一欄底下了 —— 兩邊都標會重複 */}
                   {r.room ?? '—'}
@@ -2086,7 +2098,7 @@ export default function DepositsPage() {
           dep={depStep.dep}
           accounts={payAccounts.map((a) => ({ code: a.code, name: a.name }))}
           onClose={() => setDepStep(null)}
-          onDone={(msg) => { setDepStep(null); setDetail(null); flash(msg); load(); }} />
+          onDone={(msg) => { markSaved(depStep.dep.id); setDepStep(null); setDetail(null); savedToast(msg); load(); }} />
       )}
 
       {/* 收押金：一筆一列（migration_147） */}

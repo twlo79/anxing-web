@@ -3,6 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fmtInt as fmt } from '@/lib/fmt';
 import { createClient } from '@/lib/supabase';
 import { todayStr } from '@/lib/period';
+import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
+import { useJustSaved } from '@/lib/use-just-saved';
+import { SavedBadge } from '@/components/SavedToast';
 // 每一筆加費各自的憑證（migration_158）—— 掛在那一列，不是掛在押金底下
 import Receipts, { type ReceiptsHandle } from '@/components/Receipts';
 import { ONEOFF_PRESETS, presetOf, feeLabel } from '@/lib/fee-types';
@@ -82,6 +85,8 @@ export default function DepositFees({
   const [draft, setDraft] = useState<(DepFee & { label: string }) | null>(null);
   /** 新增時照片先暫存在這裡 —— 那時候還沒有 id 可以掛。 */
   const receiptsRef = useRef<ReceiptsHandle>(null);
+  // 存檔成功：那一筆標黃「剛剛儲存」（lib/saved-feedback.ts 的 ③）
+  const { markSaved, isJust } = useJustSaved(rows);
 
   const locked = !!dep.returned_on;
 
@@ -165,6 +170,8 @@ export default function DepositFees({
       const upErr = await receiptsRef.current?.flush(res.data[0].id);
       if (upErr) setErr('加費已存，但照片上傳失敗：' + upErr);
     }
+    savedToast(savedText(draft.id ? '已儲存' : '已新增', draft.label));
+    markSaved(res.data[0].id);
     setDraft(null);
     await load();
   }
@@ -179,6 +186,7 @@ export default function DepositFees({
     const { error } = await supabase.from('orders').delete().eq('id', r.id);
     setBusy(false);
     if (error) return setErr('刪不掉：' + error.message);
+    savedToast(savedText('已刪除', feeLabel(r.fee_type ?? null, r.item_name ?? null)));
     await load();
   }
 
@@ -200,9 +208,10 @@ export default function DepositFees({
       {!dep.id && <div className="text-[11px] text-gray-400">先存檔，才能加費。</div>}
 
       {rows.map((r) => (
-        <div key={r.id} className="rounded-lg border border-mor-line px-3 py-2 text-sm mb-1.5">
+        <div key={r.id} {...justRow(isJust(r.id))}
+          className={`rounded-lg border border-mor-line px-3 py-2 text-sm mb-1.5 ${isJust(r.id) ? SAVED_HL : ''}`}>
           <div className="flex items-center justify-between gap-2">
-            <span className="font-medium">{feeLabel(r.fee_type ?? null, r.item_name ?? null)}</span>
+            <span className="font-medium">{isJust(r.id) && <SavedBadge />}{feeLabel(r.fee_type ?? null, r.item_name ?? null)}</span>
             <span className="flex items-center gap-3 shrink-0">
               <span className="tabular-nums text-red-600">−{fmt(r.amount)}</span>
               {canEdit && !locked && (

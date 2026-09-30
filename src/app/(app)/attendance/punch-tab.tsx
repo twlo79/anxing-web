@@ -7,6 +7,7 @@ import {
   twToday, dayStatus, monthSummary, monthRange, shiftMonth, type ReportRow,
 } from '@/lib/attendance-ui';
 import { CARD, C_IN, C_NEUTRAL, C_WARN, type Estate, type TabProps } from './types';
+import { savedToast } from '@/lib/saved-feedback';
 
 type Today = {
   in_at: string | null; out_at: string | null;
@@ -140,7 +141,7 @@ export default function PunchTab({ me, isAdmin, onMsg, onFix }: TabProps & {
       });
       if (error) return onMsg('打卡失敗：' + error.message, true);
       const r = data as { ok: boolean; message: string };
-      if (r?.ok) { onMsg(r.message); load(); } else { onMsg(r?.message ?? '打卡失敗', true); }
+      if (r?.ok) { savedToast(r.message); load(); } else { onMsg(r?.message ?? '打卡失敗', true); }
     } catch (e) {
       // getPosition 拋的是已經寫好中文的 GeoFail
       onMsg((e as GeoFail)?.message ?? '打卡失敗，請再試一次。', true);

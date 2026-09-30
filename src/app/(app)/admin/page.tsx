@@ -6,6 +6,7 @@ import {
 import Toast from '@/components/Toast';
 import { isBoss, isAccountant } from '@/lib/roles';
 import { useFlash } from '@/lib/use-flash';
+import { savedToast } from '@/lib/saved-feedback';   // 成功綠字全站同一份（2026-09-30）
 import { writeError } from '@/lib/write-guard';
 import { createClient } from '@/lib/supabase';
 import { todayStr } from '@/lib/period';
@@ -580,7 +581,7 @@ export default function AdminPage() {
     if (error) return flash('套用失敗:' + error.message);
     if (!res?.ok) return flash('套用失敗:' + (res?.message ?? '未知原因'));
     // 金額被一起改掉的話要講出來 —— 靜靜改掉營收數字是這個專案最貴的一種錯
-    flash(alsoAmount && res.amount
+    savedToast(alsoAmount && res.amount
       ? `已套用，金額一併改成 $${Math.round(res.amount).toLocaleString('en-US')}`
       : '已套用');
     loadSync();
@@ -593,7 +594,7 @@ export default function AdminPage() {
     const res = data as { ok?: boolean; message?: string } | null;
     if (error) return flash('忽略失敗:' + error.message);
     if (!res?.ok) return flash('忽略失敗:' + (res?.message ?? '未知原因'));
-    flash('已忽略,之後數字再變會重新出現'); loadSync();
+    savedToast('已忽略,之後數字再變會重新出現'); loadSync();
   }, [supabase, loadSync]);
 
   /*
@@ -702,7 +703,7 @@ export default function AdminPage() {
       .insert({ estate_id: estateId, staff_id: draft.staff_id, start_date: draft.start_date });
     if (error) return flash('無法儲存:' + error.message);
     setTenDraft({ staff_id: '', start_date: '' });
-    flash('已登記接手'); load();
+    savedToast('已登記接手'); load();
   }
 
   async function endTenure(t: MgrTenure) {
@@ -712,7 +713,7 @@ export default function AdminPage() {
     const { error } = await supabase.from('estate_managers')
       .update({ end_date: d }).eq('id', t.id);
     if (error) return flash('無法儲存:' + error.message);
-    flash('已結束任期'); load();
+    savedToast('已結束任期'); load();
   }
 
   async function delTenure(t: MgrTenure) {
@@ -720,7 +721,7 @@ export default function AdminPage() {
       + `這段期間的評價會變成「未指派」。`)) return;
     const { error } = await supabase.from('estate_managers').delete().eq('id', t.id);
     if (error) return flash('刪除失敗:' + error.message);
-    flash('已刪除'); load();
+    savedToast('已刪除'); load();
   }
 
   // ---- 人員 ----
@@ -788,7 +789,7 @@ export default function AdminPage() {
         .update({ auth_uid: pf.id }).eq('id', a.staff.id).select('id');
       if (error) return flash('接不上去:' + error.message);
       if (!data?.length) return flash('接不上去 —— 影響 0 列，可能是權限不足');
-      flash(`已接到「${a.staff.name}」身上`); load();
+      savedToast(`已接到「${a.staff.name}」身上`); load();
       return;
     }
 
@@ -804,7 +805,7 @@ export default function AdminPage() {
     }).select('id');
     if (error) return flash('補不進去:' + error.message);
     if (!data?.length) return flash('補不進去 —— 影響 0 列，可能是權限不足');
-    flash('已補進名冊'); load();
+    savedToast('已補進名冊'); load();
   }
 
   const [newStaffName, setNewStaffName] = useState('');
@@ -816,7 +817,7 @@ export default function AdminPage() {
     const { error } = await supabase.from('staff')
       .insert({ name, staff_type: newStaffType, role: ROLE_OF[newStaffType], active: true, sort: 50 });
     if (error) return flash('新增失敗:' + error.message);
-    setNewStaffName(''); flash('已新增 ' + name); load();
+    setNewStaffName(''); savedToast('已新增 ' + name); load();
   }
   /**
    * 勾／取消「小編」（migration_259）。
@@ -847,19 +848,19 @@ export default function AdminPage() {
     if (error) return flash('更新失敗:' + error.message);
     // 有登入帳號的人還要同步 profiles.role,否則權限不會真的生效
     if (s.auth_uid) { await callAcct({ action: 'role', staffId: s.id, role }); return; }
-    flash('已更新'); load();
+    savedToast('已更新'); load();
   }
   async function updateStaff(id: string, patch: Partial<Staff>) {
     const { error } = await supabase.from('staff').update(patch).eq('id', id);
     if (error) return flash('更新失敗:' + error.message);
-    flash('已更新'); load();
+    savedToast('已更新'); load();
   }
   async function callAcct(payload: Record<string, unknown>): Promise<boolean> {
     const { data: { session } } = await supabase.auth.getSession();
     const r = await fetch('/api/admin/staff-account', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (session?.access_token || '') }, body: JSON.stringify(payload) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) { flash('失敗:' + (j.error || r.status)); return false; }
-    flash('已更新'); load(); return true;
+    savedToast('已更新'); load(); return true;
   }
   async function toggleActive(s: Staff) {
     const { error } = await supabase.from('staff').update({ active: !s.active }).eq('id', s.id);
@@ -909,12 +910,12 @@ export default function AdminPage() {
     if (!name) return;
     const { error } = await supabase.from('estates').insert({ name, sort: 50 });
     if (error) return flash('新增失敗:' + error.message);
-    setNewEstateName(''); flash('已新增 ' + name); load();
+    setNewEstateName(''); savedToast('已新增 ' + name); load();
   }
   async function updateEstate(id: string, patch: Partial<Estate>) {
     const { error } = await supabase.from('estates').update(patch).eq('id', id);
     if (error) return flash('更新失敗:' + error.message);
-    flash('已更新'); load();
+    savedToast('已更新'); load();
   }
   async function deleteEstate(id: string, name: string) {
     if (!confirm(`確定刪除物業「${name}」?此物業下的房源會失去物業歸屬(評價/清潔紀錄仍保留)。\n\n會移到回收桶,可以復原。`)) return;
@@ -962,7 +963,7 @@ export default function AdminPage() {
     if (error) return flash(error.code === '23505'
       ? `帳號 ${account} 已經建過了（可能是停用中的那筆,把它啟用即可）` : '新增失敗:' + error.message);
     setNp({ label: '', bank_code: '', account: '', company: '', tax_id: '' });
-    flash('已新增'); loadPayees();
+    savedToast('已新增'); loadPayees();
   }
   async function updPayee(id: string, patch: Partial<Payee>) {
     const { error } = await supabase.from('payee_presets')
@@ -989,12 +990,12 @@ export default function AdminPage() {
     });
     if (error) return flash('新增失敗:' + error.message);
     setNewAcctCode(''); setNewAcctName('');
-    flash(`已新增 ${code}（${BOOK_LABEL[toBook(newAcctBook)]}）`); load();
+    savedToast(`已新增 ${code}（${BOOK_LABEL[toBook(newAcctBook)]}）`); load();
   }
   async function updatePayAccount(id: string, patch: Partial<PayAccount>) {
     const { error } = await supabase.from('payment_accounts').update(patch).eq('id', id);
     if (error) return flash('更新失敗:' + error.message);
-    flash('已更新'); load();
+    savedToast('已更新'); load();
   }
   async function deletePayAccount(a: PayAccount) {
     if (!confirm(`確定刪除帳號「${a.code}」?已經記在訂單或支出上的資料不會跟著改,那些紀錄會找不到對應帳號。建議改用「停用」。\n\n會移到回收桶,可以復原。`)) return;
@@ -1008,7 +1009,7 @@ export default function AdminPage() {
     if (!name || !selEstate) return;
     const { error } = await supabase.from('properties').insert({ name, estate_id: selEstate });
     if (error) return flash('新增失敗:' + error.message);
-    setNewPropName(''); flash('已新增 ' + name); load();
+    setNewPropName(''); savedToast('已新增 ' + name); load();
   }
   /**
    * 這一列的人事費目前是多少。回 null = 沒設。
@@ -1057,7 +1058,7 @@ export default function AdminPage() {
         .delete().eq('id', cur.id).select('id');
       if (error) return flash('刪除失敗:' + error.message);
       if (!data?.length) return flash('沒有任何一列被刪除 —— 通常是權限');
-      flash('已清空人事費'); return load();
+      savedToast('已清空人事費'); return load();
     }
 
     if (cur) {
@@ -1065,7 +1066,7 @@ export default function AdminPage() {
         .update({ monthly_amount: r.value }).eq('id', cur.id).select('id');
       if (error) return flash('更新失敗:' + error.message);
       if (!data?.length) return flash('沒有任何一列被更新 —— 通常是權限');
-      flash('已更新'); return load();
+      savedToast('已更新'); return load();
     }
 
     const { data, error } = await supabase.from('hk_labor_cost')
@@ -1077,7 +1078,7 @@ export default function AdminPage() {
       }).select('id');
     if (error) return flash('新增失敗:' + error.message);
     if (!data?.length) return flash('沒有新增任何一列 —— 通常是權限');
-    flash('已新增'); return load();
+    savedToast('已新增'); return load();
   }
 
   /**
@@ -1103,7 +1104,7 @@ export default function AdminPage() {
   async function updateProperty(id: string, patch: Partial<Property>) {
     const { error } = await supabase.from('properties').update(patch).eq('id', id);
     if (error) return flash('更新失敗:' + error.message);
-    flash('已更新'); load();
+    savedToast('已更新'); load();
   }
   /**
    * 整個物業的房源一起排／一起不排（migration_255）。
@@ -1123,7 +1124,7 @@ export default function AdminPage() {
     const { error } = await supabase.from('properties')
       .update({ show_in_room_calendar: on }).in('id', rows.map((p) => p.id));
     if (error) return flash('更新失敗:' + error.message);
-    flash(`已更新 ${rows.length} 間`); load();
+    savedToast(`已更新 ${rows.length} 間`); load();
   }
   /**
    * 把 listing_id 從原本的房源搬過來。
@@ -1137,7 +1138,7 @@ export default function AdminPage() {
     });
     if (error) return flash('搬移失敗:' + error.message);
     const r = (data as { item: string; detail: string }[] | null)?.[0];
-    flash(r ? `${r.item}　${r.detail}` : '已搬移');
+    savedToast(r ? `${r.item}　${r.detail}` : '已搬移');
     load();
   }
 
@@ -1150,7 +1151,7 @@ export default function AdminPage() {
   async function takeListing(id: string, propId: string, propName: string) {
     const { error } = await supabase.from('properties')
       .update({ airbnb_listing_id: id }).eq('id', propId);
-    if (!error) { flash('已更新'); load(); return; }
+    if (!error) { savedToast('已更新'); load(); return; }
 
     // 23505 = unique_violation。這個 listing_id 已經掛在別的房源上,
     // 而那一列可能在回收桶裡,畫面上根本看不到
@@ -1180,7 +1181,7 @@ export default function AdminPage() {
     const { error } = await supabase.from('property_listings')
       .upsert({ listing_id: id, property_id: propId }, { onConflict: 'listing_id' });
     if (error) return flash('加不上去:' + error.message);
-    flash('已加上'); load();
+    savedToast('已加上'); load();
   }
 
   async function removeListing(id: string, propName: string) {
@@ -1192,7 +1193,7 @@ export default function AdminPage() {
       + '之後這個編號抓回來的訂單會對不到房源,整筆不會進系統。')) return;
     const { error } = await supabase.from('property_listings').delete().eq('listing_id', id);
     if (error) return flash('刪除失敗:' + error.message);
-    flash('已拿掉'); load();
+    savedToast('已拿掉'); load();
   }
 
   async function deleteProperty(id: string, name: string) {

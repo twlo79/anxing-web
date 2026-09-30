@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
 import { ProfileProvider, useProfile, clearProfileCache } from '@/lib/profile';
+import SavedToast from '@/components/SavedToast';
 import {
   visibleNav, currentNav, groupNav, groupOpen, toggleGroup, parseCollapsed,
 } from '@/lib/nav';
@@ -302,7 +303,8 @@ const NAV: { href: string; label: string; icon: string; roles: string[]; group?:
  * 而那個錯誤不會報錯，只會讓側邊欄永遠顯示不出職稱。
  */
 export default function AppLayout({ children }: { children: React.ReactNode }) {
-  return <ProfileProvider><AppShell>{children}</AppShell></ProfileProvider>;
+  // ★ SavedToast：全站唯一一份「已儲存」綠字，z-[60] 蓋在所有視窗之上（lib/saved-feedback.ts，2026-09-30）
+  return <ProfileProvider><AppShell>{children}</AppShell><SavedToast /></ProfileProvider>;
 }
 
 function AppShell({ children }: { children: React.ReactNode }) {

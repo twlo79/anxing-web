@@ -8,6 +8,9 @@ import {
   contactProblem, contactBody, BLANK_CONTACT,
   type Contact, type ContactDraft,
 } from '@/lib/board-contacts';
+import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
+import { useJustSaved } from '@/lib/use-just-saved';
+import { SavedBadge } from '@/components/SavedToast';
 
 /*
  * ══════════════════════════════════════════════════════════
@@ -42,6 +45,7 @@ export default function ContactsTab({ role, meId, onMsg }: {
   const [q, setQ] = useState('');
   /** 正在編輯的那一筆（沒有 id ＝ 新增）。null ＝ 停在清單 */
   const [draft, setDraft] = useState<ContactDraft | null>(null);
+  const { markSaved, isJust } = useJustSaved(list);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -68,7 +72,8 @@ export default function ContactsTab({ role, meId, onMsg }: {
     if (!data?.length) {
       return onMsg('沒有存進去 —— 你的帳號沒有這個權限。\n如果你認為應該有，請總經理確認角色設定。', true);
     }
-    onMsg(d.id ? '已儲存' : '已新增');
+    savedToast(savedText(d.id ? '已儲存' : '已新增', d.name));
+    markSaved(data[0].id);
     setDraft(null);
     load();
   };
@@ -78,7 +83,7 @@ export default function ContactsTab({ role, meId, onMsg }: {
     if (!confirm(`刪掉「${d.name}」？\n\n會移到回收桶，可以復原。`)) return;
     const r = await softDelete(supabase, 'board_contacts', d.id, '通訊');
     if (!r.ok) return onMsg(r.message, true);
-    onMsg(r.message);
+    savedToast(savedText('已刪除', d.name));
     setDraft(null);
     load();
   };
@@ -132,7 +137,7 @@ export default function ContactsTab({ role, meId, onMsg }: {
                   {c.name.trim().charAt(0)}
                 </span>
                 <span className="flex-1 min-w-0">
-                  <span className="block text-ui font-semibold leading-snug">{c.name}</span>
+                  <span className="block text-ui font-semibold leading-snug">{isJust(c.id) && <SavedBadge />}{c.name}</span>
                   {(c.phone || c.email) && (
                     <span className="flex flex-wrap gap-x-4 gap-y-0.5 mt-0.5 text-ui tabular-nums">
                       {c.phone && (
@@ -173,11 +178,11 @@ export default function ContactsTab({ role, meId, onMsg }: {
              *   能寫的人整列可點（跟 › 同一個動作）；看的人的列只是一列字。
              */
             return (
-              <div key={c.id} role={canWrite ? 'button' : undefined} tabIndex={canWrite ? 0 : undefined}
+              <div key={c.id} {...justRow(isJust(c.id))} role={canWrite ? 'button' : undefined} tabIndex={canWrite ? 0 : undefined}
                 onClick={canWrite ? () => edit(c) : undefined}
                 onKeyDown={canWrite ? (e) => { if (e.key === 'Enter') edit(c); } : undefined}
                 className={`flex items-start gap-3 px-4 py-3 border-t border-mor-line/60 first:border-t-0 ${
-                  canWrite ? 'cursor-pointer hover:bg-mor-sand/50' : ''}`}>
+                  isJust(c.id) ? SAVED_HL + ' ' : ''}${canWrite ? 'cursor-pointer hover:bg-mor-sand/50' : ''}`}>
                 {inner}
               </div>
             );

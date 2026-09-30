@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
+import { savedToast } from '@/lib/saved-feedback';
 import { usePush } from '../use-push';
 // 刻意從 notify-kinds 而不是 lib/push 匯入 —— 後者頂層 import 了 web-push（Node 專用），
 // client component 碰到它會把整包拉進瀏覽器的 bundle，而且 tsc 不會報錯
@@ -81,14 +82,12 @@ export default function NotifyTab() {
   const { state, ensureSubscribed, unsubscribe, sendTest, recheck } = usePush();
   const [prefs, setPrefs] = useState<Prefs | null>(null);
   const [busy, setBusy] = useState<NotifyKind | null>(null);
-  const [msg, setMsg] = useState('');
   const [warn, setWarn] = useState('');
   const [devBusy, setDevBusy] = useState('');
   const [testMsg, setTestMsg] = useState('');
   /** 存檔失敗要留在畫面上。flash 三秒就沒了,而使用者的眼睛在開關上不在頂端 */
   const [saveErr, setSaveErr] = useState('');
 
-  function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 3000); }
 
   const load = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -172,7 +171,7 @@ export default function NotifyTab() {
     // 而且推播服務端每次都要為它做一次白工。
     if (!NOTIFY_KINDS.some((k) => next[k]) && state === 'on') await unsubscribe();
 
-    flash(`${NOTIFY_LABEL[kind]}已${on ? '開啟' : '關閉'}`);
+    savedToast(`${NOTIFY_LABEL[kind]}已${on ? '開啟' : '關閉'}`);
   }
 
   /** 在這台啟用。跟偏好完全無關 —— 不動 prefs，所以按了不影響其他裝置 */
@@ -180,7 +179,7 @@ export default function NotifyTab() {
     setDevBusy('enable'); setTestMsg('');
     const r = await ensureSubscribed();
     setWarn(r.ok ? '' : r.message);
-    if (r.ok) flash('這台裝置已啟用');
+    if (r.ok) savedToast('這台裝置已啟用');
     setDevBusy('');
   }
 
@@ -210,12 +209,6 @@ export default function NotifyTab() {
         但<b className="text-gray-500">每台裝置要各自啟用一次</b> ——
         手機開好了，電腦還是要在這台按一次。
       </p>
-
-      {msg && (
-        <div className="rounded-lg bg-mor-greenlight border border-mor-green/20 px-3 py-2 text-xs text-mor-green mb-2">
-          {msg}
-        </div>
-      )}
 
       {/*
         ── 這台裝置 ──────────────────────────────────

@@ -7,6 +7,9 @@ import {
   SECRET_CATS, splitSecretTitle, joinSecretTitle,
   secretIcon, sortSecrets, matchSecret, secretHasWarn, secretHref,
 } from '@/lib/board';
+import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
+import { useJustSaved } from '@/lib/use-just-saved';
+import { SavedBadge } from '@/components/SavedToast';
 
 /*
  * ══════════════════════════════════════════════════════════
@@ -108,6 +111,7 @@ export default function SecretsTab({ role, meId, onMsg }: {
   const [openId, setOpenId] = useState<string | null>(null);
   /** 這一筆的密碼翻開了沒。★ 換一筆就忘記 —— 不進 localStorage */
   const [shown, setShown] = useState(false);
+  const { markSaved, isJust } = useJustSaved(list);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -164,7 +168,12 @@ export default function SecretsTab({ role, meId, onMsg }: {
     if (!data?.length) {
       return onMsg('沒有存進去 —— 你的帳號沒有這個權限。\n如果你認為應該有，請總經理確認角色設定。', true);
     }
+    /* ★★★ 綠字只放名稱 —— 帳號、密碼絕對不進 toast */
+    savedToast(savedText(d.id ? '已儲存' : '已新增', d.name.trim() || body.title));
+    markSaved(data[0].id);
     setDraft(null);
+    setOpenId(null);
+    setShown(false);
     load();
   };
 
@@ -174,6 +183,7 @@ export default function SecretsTab({ role, meId, onMsg }: {
       .delete().eq('id', s.id).select('id');
     if (error) return onMsg('刪不掉：' + error.message, true);
     if (!data?.length) return onMsg('沒有刪掉 —— 你的帳號沒有這個權限。', true);
+    savedToast(savedText('已刪除', splitSecretTitle(s.title).name || s.title));
     setOpenId(null);
     load();
   };
@@ -268,15 +278,15 @@ export default function SecretsTab({ role, meId, onMsg }: {
           {rows.map((s) => {
             const { cat, name } = splitSecretTitle(s.title);
             return (
-              <button key={s.id} onClick={() => { setOpenId(s.id); setShown(false); }}
-                className="w-full flex items-center gap-3 px-4 py-3 text-left
-                           border-t border-mor-line/60 first:border-t-0 hover:bg-mor-sand/50">
+              <button key={s.id} {...justRow(isJust(s.id))} onClick={() => { setOpenId(s.id); setShown(false); }}
+                className={`w-full flex items-center gap-3 px-4 py-3 text-left
+                           border-t border-mor-line/60 first:border-t-0 hover:bg-mor-sand/50 ${isJust(s.id) ? SAVED_HL : ''}`}>
                 <span className="w-8 h-8 shrink-0 rounded-lg bg-mor-sand
                                  flex items-center justify-center text-[15px]">
                   {secretIcon(cat)}
                 </span>
                 <span className="flex-1 min-w-0">
-                  <span className="block text-ui font-medium truncate">{name || s.title}</span>
+                  <span className="block text-ui font-medium truncate">{isJust(s.id) && <SavedBadge />}{name || s.title}</span>
                   {/*
                     ★ 副標放**帳號**不放密碼。沒有帳號的（統編、電話那種）
                       退而顯示備註的第一行 —— 空著的話那一列看起來像壞掉。

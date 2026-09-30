@@ -7,6 +7,9 @@ import {
   FilterBar, FilterSearch, FilterClear, FilterCount, ActionRow,
 } from '@/lib/filters';
 import { Tabs } from '@/components/Tabs';
+import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
+import { useJustSaved } from '@/lib/use-just-saved';
+import { SavedBadge } from '@/components/SavedToast';
 
 /**
  * 客戶管理。
@@ -67,8 +70,8 @@ export default function CustomersPage() {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const today = twToday();
+  const { markSaved, isJust } = useJustSaved(rows);
 
-  function ok(t: string) { setMsg({ t }); setTimeout(() => setMsg(null), 3000); }
   function fail(t: string) { setMsg({ t, err: true }); }
 
   const load = useCallback(async () => {
@@ -98,7 +101,7 @@ export default function CustomersPage() {
     setSyncing(false);
     if (error) { if (loud) fail('同步失敗：' + error.message); return; }
     const r = data as { inserted: number; updated: number; stale: number };
-    if (loud) ok(`已更新：新增 ${r?.inserted ?? 0} 位、更新 ${r?.updated ?? 0} 位`);
+    if (loud) savedToast(`已更新：新增 ${r?.inserted ?? 0} 位、更新 ${r?.updated ?? 0} 位`);
     if ((r?.inserted ?? 0) > 0 || loud) load();
   }, [supabase, load]);
 
@@ -114,7 +117,9 @@ export default function CustomersPage() {
     // RLS 擋掉的 UPDATE 不會回錯誤，只會影響 0 列
     if (!data?.length) return fail('沒有存進去 —— 你的帳號沒有編輯權限，請聯絡總經理。');
     setRows((rs) => rs.map((r) => (r.id === c.id ? { ...r, ...patch } : r)));
-    ok('已儲存');
+    setOpen(null);
+    markSaved(c.id);
+    savedToast(savedText('已儲存', c.name));
   }
 
   // 分頁：有客戶的物業才出現。空分頁只會讓人點進去看到「沒有資料」。
@@ -230,7 +235,7 @@ export default function CustomersPage() {
             {shown.map((c) => (
               <RowPair key={c.id} c={c} today={today}
                 open={open === c.id} onToggle={() => setOpen(open === c.id ? null : c.id)}
-                onSave={(p) => save(c, p)} />
+                onSave={(p) => save(c, p)} just={isJust(c.id)} />
             ))}
             {!shown.length && (
               <tr><td colSpan={6} className="px-4 py-10 text-center text-sm text-gray-400">
@@ -244,11 +249,11 @@ export default function CustomersPage() {
       {/* ── 手機：卡片 ───────────────────────────── */}
       <div className="md:hidden space-y-2">
         {shown.map((c) => (
-          <div key={c.id} className={CARD}>
+          <div key={c.id} {...justRow(isJust(c.id))} className={`${CARD} ${isJust(c.id) ? SAVED_HL : ''}`}>
             <button onClick={() => setOpen(open === c.id ? null : c.id)}
               className="w-full px-4 py-3 text-left">
               <div className="flex items-center gap-2">
-                <span className="font-medium text-sm flex-1 min-w-0 truncate">{c.name}</span>
+                <span className="font-medium text-sm flex-1 min-w-0 truncate">{isJust(c.id) && <SavedBadge />}{c.name}</span>
                 {c.stale && <span className="text-[10px] text-amber-600 shrink-0">來源已不存在</span>}
                 <span className="text-xs text-gray-400 shrink-0">{c.property_label ?? '—'}</span>
               </div>
@@ -278,19 +283,20 @@ function stayText(c: Customer): string {
 }
 
 /** 表格列 ＋ 展開的編輯區（同一個 key 下的兩個 <tr>） */
-function RowPair({ c, today, open, onToggle, onSave }: {
+function RowPair({ c, today, open, onToggle, onSave, just = false }: {
   c: Customer; today: string; open: boolean;
-  onToggle: () => void; onSave: (p: Partial<Customer>) => void;
+  onToggle: () => void; onSave: (p: Partial<Customer>) => void; just?: boolean;
 }) {
   const staying = !!c.stay_to && c.stay_to >= today;
   return (
     <>
-      <tr onClick={onToggle}
-        className={`border-b border-mor-line/60 cursor-pointer hover:bg-white/45 ${
-          open ? 'bg-white/45' : ''}`}>
+      <tr onClick={onToggle} {...justRow(just)}
+        className={`border-b border-mor-line/60 cursor-pointer ${just ? SAVED_HL : 'hover:bg-white/45'} ${
+          open && !just ? 'bg-white/45' : ''}`}>
         <td className="px-4 py-2.5">
           <div className="flex items-center gap-1.5">
             {/* 在住的標一個綠點 —— 一整頁歷史客戶裡要一眼認出現在還在的 */}
+            {just && <SavedBadge />}
             {staying && <span className="w-1.5 h-1.5 rounded-full bg-mor-green shrink-0" />}
             <span className="font-medium">{c.name}</span>
             {c.stale && (

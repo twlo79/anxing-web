@@ -9,6 +9,7 @@ import {
   BTN2, CARD, INPUT, noRowsMsg,
   type Estate, type TabProps,
 } from './types';
+import { savedToast, savedText } from '@/lib/saved-feedback';
 import QuotaSection from './quota-section';
 import RangeInput from '@/components/RangeInput';
 import { EXPORT_TONE } from '@/components/Actions';
@@ -135,6 +136,7 @@ function GpsSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
     // RLS 擋掉的 UPDATE 不會回錯誤，只會影響 0 列 ——
     // 不檢查的話畫面會顯示「已更新」，而其實什麼都沒存進去。
     if (!data?.length) return onMsg(noRowsMsg('打卡位置'), true);
+    savedToast(savedText('已儲存', e.name));
     load();
   }
 
@@ -149,10 +151,14 @@ function GpsSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
       // 精度講出來 —— 誤差 2000 公尺的定位（基地台）設出來的位置沒有意義，
       // 而使用者只有看到數字才會知道要走到窗邊重按一次。
       const acc = Math.round(pos.accuracy);
-      onMsg(acc > 100
-        ? `「${e.name}」已設為你目前的位置，但這次定位的精度只有約 ${acc} 公尺 ——`
-          + `站到戶外或窗邊再按一次會準很多。`
-        : `「${e.name}」的打卡位置已設為你目前的位置（精度約 ${acc} 公尺）`);
+      // ★ 存成功一律綠字；精度太差的那句提醒要停留，照舊走頁面上的訊息
+      if (acc > 100) {
+        savedToast(savedText('已設定打卡位置', e.name));
+        onMsg(`「${e.name}」已設為你目前的位置，但這次定位的精度只有約 ${acc} 公尺 ——`
+          + `站到戶外或窗邊再按一次會準很多。`);
+      } else {
+        savedToast(`「${e.name}」的打卡位置已設為你目前的位置（精度約 ${acc} 公尺）`);
+      }
       load();
     } catch (err) {
       onMsg((err as GeoFail)?.message ?? '拿不到位置', true);
@@ -269,6 +275,7 @@ function HoursSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
     if (error) return onMsg('存不進去：' + error.message, true);
     const r = data as { ok: boolean; message: string };
     if (!r?.ok) return onMsg(r?.message ?? noRowsMsg('人員設定'), true);
+    savedToast(savedText('已儲存', p.name));
     load();
   }
   async function updW(patch: Record<string, unknown>) {
@@ -276,7 +283,7 @@ function HoursSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
       .update(patch).eq('id', 1).select('id');
     if (error) return onMsg('存不進去：' + error.message, true);
     if (!data?.length) return onMsg(noRowsMsg('公司預設'), true);
-    onMsg('已更新公司預設'); load();
+    savedToast('已更新公司預設'); load();
   }
 
   return (

@@ -1,4 +1,5 @@
 'use client';
+import { looksLikeError } from '@/lib/flash-kind';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx-js-style';
 import { createClient } from '@/lib/supabase';
@@ -22,6 +23,9 @@ import StatCard from '@/components/StatCard';
 import { Tabs, TabShell } from '@/components/Tabs';
 import { EXPORT_TONE } from '@/components/Actions';
 import Req, { reqCls } from '@/components/Req';
+import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
+import { useJustSaved } from '@/lib/use-just-saved';
+import { SavedBadge } from '@/components/SavedToast';
 
 /**
  * 稅務管理 —— 營業稅的進項、銷項與每期結算。
@@ -91,13 +95,19 @@ const fmt = (n: number) => (Number(n) || 0).toLocaleString('en-US');
 export default function TaxPage() {
   const supabase = useMemo(() => createClient(), []);
   const [msg, setMsg] = useState('');
-  function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 3500); }
+  function flash(t: string) {
+    // ★ 錯誤不自己消失（`looksLikeError`，全站同一套；2026-09-30 體檢）——
+    //   RPC 或資料庫丟回來的錯只顯示幾秒的話，使用者看到的是「按了沒反應」。
+    setMsg(t);
+    if (!looksLikeError(t)) setTimeout(() => setMsg((m) => (m === t ? '' : m)), 3500);
+  }
 
   const thisPeriod = useMemo(() => taxPeriodOf(todayStr()), []);
   const [period, setPeriod] = useState(thisPeriod);
   const [kind, setKind] = useState<TaxKind>('out');
 
   const [rows, setRows] = useState<TaxInvoice[]>([]);
+  const { markSaved, isJust } = useJustSaved(rows);
   const [periodsAll, setPeriodsAll] = useState<PeriodRow[]>([]);
   const [estates, setEstates] = useState<EstateRow[]>([]);
   const [props, setProps] = useState<PropRow[]>([]);
@@ -210,7 +220,7 @@ export default function TaxPage() {
     if (error) { flash('期初留抵存不進去：' + error.message); return; }
     if (!data?.length) { flash('回成功但沒存到 —— 可能是權限'); return; }
     await load();
-    flash(`期初留抵存好了：$${fmt(v)}`);
+    savedToast(`期初留抵存好了：$${fmt(v)}`);
   }
 
   /* ══════════ 上傳 ══════════ */
@@ -264,7 +274,7 @@ export default function TaxPage() {
       if (!data?.length) return flash('匯入回成功但一列都沒寫進去 —— 可能是權限，請找管理員');
       setPreview(null);
       await load();
-      flash(`已匯入 ${data.length} 張（作廢 ${preview.voidedCount} 張${keepVoided ? '也存了，但不算進申報數' : '沒存'}）`);
+      savedToast(`已匯入 ${data.length} 張（作廢 ${preview.voidedCount} 張${keepVoided ? '也存了，但不算進申報數' : '沒存'}）`);
     } finally { setBusy(false); }
   }
   const [doImport] = useOnce(importInner);
@@ -393,7 +403,7 @@ export default function TaxPage() {
       }
       setPick(null);
       await load();
-      flash(`已帶入 ${data!.length} 筆進項發票`);
+      savedToast(`已帶入 ${data!.length} 筆進項發票`);
     } finally { setBusy(false); }
   }
   const [doImportExpense] = useOnce(importExpenseInner);
@@ -450,7 +460,8 @@ export default function TaxPage() {
       await load();
       // 存完留在抽屜裡看結果，不要直接關掉 —— 使用者常常要接著改下一欄
       setDetail(data[0] as TaxInvoice); setDraft(null); setEditing(false); setTried(false);
-      flash('存好了');
+      markSaved((data[0] as TaxInvoice).id);
+      savedToast(savedText(draft.id ? '已儲存' : '已新增', (data[0] as TaxInvoice).invoice_no));
     } finally { setBusy(false); }
   }
   const [doSave] = useOnce(saveInner);
@@ -466,7 +477,7 @@ export default function TaxPage() {
     if (error) return flash('刪不掉：' + error.message);
     if (!data?.length) return flash('回成功但沒刪掉 —— 可能是權限');
     closeDrawer();
-    await load(); flash('刪掉了');
+    await load(); savedToast(savedText('已刪除', r.invoice_no));
   }
 
   /* ══════════ 結算 ══════════ */
@@ -506,7 +517,7 @@ export default function TaxPage() {
           status: 'open', carry_in: s.carryOut,
         }, { onConflict: 'company_tax_id,period' });
         if (e2) flash('本期結算好了，但下一期的上期留抵沒寫進去：' + e2.message);
-        else flash(`已結算。${s.payable > 0 ? `應繳 $${fmt(s.payable)}` : `留抵 $${fmt(s.carryOut)} 結轉下一期`}`);
+        else savedToast(`已結算。${s.payable > 0 ? `應繳 $${fmt(s.payable)}` : `留抵 $${fmt(s.carryOut)} 結轉下一期`}`);
       }
       await load();
     } finally { setBusy(false); }
@@ -524,7 +535,7 @@ export default function TaxPage() {
       .eq('company_tax_id', COMPANY.taxId).eq('period', period).select('id');
     if (error) return flash('取消失敗：' + error.message);
     if (!data?.length) return flash('回成功但沒改到 —— 可能是權限');
-    await load(); flash('已取消結算。後面幾期記得重新結算一次');
+    await load(); savedToast('已取消結算。後面幾期記得重新結算一次');
   }
 
   /* ══════════ 匯出 ══════════ */
@@ -834,10 +845,10 @@ export default function TaxPage() {
                     ★★★ 作廢的整列標紅、金額加刪除線、不算進合計。
                       列**留著** —— 刪了就對不回財政部的檔，發票號碼是連號的。
                   */
-                  <tr key={r.id} onClick={() => openView(r)}
-                    className={`border-t border-mor-line/60 cursor-pointer hover:bg-mor-bluelight/30
-                                ${r.voided ? 'bg-red-50/60 text-red-700' : ''}`}>
-                    <td className="px-2 py-1.5">{r.category ?? '—'}</td>
+                  <tr key={r.id} onClick={() => openView(r)} {...justRow(isJust(r.id))}
+                    className={`border-t border-mor-line/60 cursor-pointer ${isJust(r.id) ? SAVED_HL : 'hover:bg-mor-bluelight/30'}
+                                ${r.voided ? (isJust(r.id) ? 'text-red-700' : 'bg-red-50/60 text-red-700') : ''}`}>
+                    <td className="px-2 py-1.5">{isJust(r.id) && <SavedBadge />}{r.category ?? '—'}</td>
                     <td className="px-2 py-1.5">{r.tax_code ?? '—'}</td>
                     <td className="px-2 py-1.5 whitespace-nowrap">{r.invoice_date?.slice(5)}</td>
                     <td className={`px-2 py-1.5 whitespace-nowrap ${r.voided ? 'line-through' : ''}`}>{r.invoice_no}</td>

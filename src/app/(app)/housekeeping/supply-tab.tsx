@@ -5,6 +5,9 @@ import { todayStr } from '@/lib/period';
 import Req from '@/components/Req';
 import { newItemError, needsInitTxn } from '@/lib/supply-item';
 import { useProfile } from '@/lib/profile';
+import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
+import { useJustSaved } from '@/lib/use-just-saved';
+import { SavedBadge } from '@/components/SavedToast';
 import {
   KIND_LABEL, KIND_BUTTON, txnRow, txnError, previewAfter, negativeWarn,
   isLow, expiringSoon, countDiff, countPlan, countConfirm,
@@ -99,6 +102,7 @@ export default function SupplyTab({ onMsg }: { onMsg: (t: string, err?: boolean)
     })));
   }, [supabase, estate, onMsg]);
   useEffect(() => { void load(); }, [load]);
+  const { markSaved, isJust } = useJustSaved(rows);
 
   /* ══════════ 取用 / 補貨 ══════════ */
   const [move, setMove] = useState<
@@ -127,7 +131,8 @@ export default function SupplyTab({ onMsg }: { onMsg: (t: string, err?: boolean)
       if (!data?.length) { onMsg('回成功但沒寫進去 —— 可能是權限', true); return; }
       setMove(null);
       await load();
-      onMsg(`${move.row.name} ${KIND_LABEL[move.kind]} ${move.qty}`);
+      markSaved(move.row.id);
+      savedToast(savedText('已儲存', `${move.row.name} ${KIND_LABEL[move.kind]} ${move.qty}`));
     } finally { setBusy(false); }
   }
 
@@ -170,7 +175,7 @@ export default function SupplyTab({ onMsg }: { onMsg: (t: string, err?: boolean)
       if (!r?.ok) { onMsg(r?.message ?? '盤點存不進去', true); return; }
       setCounting(false);
       await load();
-      onMsg(r.message);
+      savedToast(r.message);
     } finally { setBusy(false); }
   }
 
@@ -222,7 +227,8 @@ export default function SupplyTab({ onMsg }: { onMsg: (t: string, err?: boolean)
       }
       setAdd(null);
       await load();
-      onMsg(`已新增「${add.name.trim()}」`);
+      markSaved(data!.id);
+      savedToast(savedText('已新增', add.name.trim()));
     } finally { setBusy(false); }
   }
 
@@ -272,8 +278,9 @@ export default function SupplyTab({ onMsg }: { onMsg: (t: string, err?: boolean)
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.id} className="border-t border-mor-line/60">
-                  <td className="px-3 py-2">{r.name}</td>
+                <tr key={r.id} {...justRow(isJust(r.id))}
+                  className={`border-t border-mor-line/60 ${isJust(r.id) ? SAVED_HL : ''}`}>
+                  <td className="px-3 py-2">{isJust(r.id) && <SavedBadge />}{r.name}</td>
                   <td className="px-3 py-2 text-gray-500 text-xs">{r.spec ?? '—'}</td>
                   <td className="px-3 py-2 text-right text-gray-600">{r.bal.init_qty}</td>
                   <td className="px-3 py-2 text-right text-mor-green">+{r.bal.in_qty}</td>

@@ -4,6 +4,7 @@ import { useFlash } from '@/lib/use-flash';
 import { writeError } from '@/lib/write-guard';
 import { createClient } from '@/lib/supabase';
 import Toast from '@/components/Toast';
+import { savedToast, savedText } from '@/lib/saved-feedback';
 import { useOnce } from '@/lib/once';
 import {
   PIN_MAX, COLS, CELL_W, CELL_H, CAPTION_CUT, SPANS,
@@ -405,7 +406,7 @@ export default function SocialPage() {
    *   PostgREST 的批次 upsert 取欄位聯集，沒帶到的欄位會被填成預設值
    *   （README 那條坑）。而這裡只想改 sort。
    */
-  const persistOrder = useCallback(async (next: Row[]) => {
+  const persistOrder = useCallback(async (next: Row[], okText?: string) => {
     /*
      * ★★ 比對的是**傳進來的那幾個 post 物件**身上的 sort，不是讀 state ——
      *   剛新增的那一筆還沒進 state，讀 state 的話它會被跳過，
@@ -421,10 +422,11 @@ export default function SocialPage() {
         jobs.push(supabase.from('social_posts').update({ sort: want }).eq('id', p.id) as any);
       }
     }));
-    if (!jobs.length) return;
+    if (!jobs.length) { if (okText) savedToast(okText); return; }
     const res = await Promise.all(jobs);
     const e = res.find((r: any) => r?.error);
     if (e?.error) flash('排序沒存起來：' + e.error.message);
+    else if (okText) savedToast(okText);
     load();
   }, [supabase, load]);
 
@@ -436,7 +438,7 @@ export default function SocialPage() {
     if (i < 0 || j < 0) return;
     const [m] = a.splice(i, 1);
     a.splice(j, 0, m);
-    persistOrder(a);
+    persistOrder(a, '已儲存排序');
   };
   const nudge = (id: string, dir: -1 | 1) => {
     const a = [...rows];
@@ -444,7 +446,7 @@ export default function SocialPage() {
     const j = i + dir;
     if (i < 0 || j < 0 || j >= a.length) return;
     [a[i], a[j]] = [a[j], a[i]];
-    persistOrder(a);
+    persistOrder(a, '已儲存排序');
   };
 
   /**
@@ -503,6 +505,7 @@ export default function SocialPage() {
     const res = await Promise.all(jobs);
     const e = res.find((x: any) => x?.error);
     if (e?.error) return flash('釘選沒存起來：' + e.error.message);
+    savedToast(r.pin > 0 ? '已取消釘選' : '已釘選');
     load();
   };
 
@@ -525,6 +528,7 @@ export default function SocialPage() {
     if (!data?.length) return flash('沒有存到 —— 你的權限改不動這一頁，畫面沒有變。');
     setPosts((xs) => xs.map((x) => (x.id === p.id ? { ...x, ...fields } : x)));
     markSaved();
+    savedToast(savedText('已儲存', fields.caption ?? p.caption));
   };
 
   /** 上傳一個檔案，回傳 storage 路徑 */
@@ -554,7 +558,7 @@ export default function SocialPage() {
     const next: Row[] = [{ id: data.id, span: 1, pin: 0, status: 'draft',
       kind: 'post', posts: [data as Post] }, ...rows];
     setSel(data.id);
-    persistOrder(next);
+    persistOrder(next, '已新增一則貼文');
   };
 
   const addSplit = async (span: number) => {
@@ -575,6 +579,7 @@ export default function SocialPage() {
     }
     setSel(sp.id);
     await load();
+    savedToast(`已新增跨 ${span} 格的切圖`);
   };
 
   const del = async (r: Row) => {
@@ -586,6 +591,7 @@ export default function SocialPage() {
       : await supabase.from('social_posts').delete().eq('id', r.id);
     if (error) return flash('刪不掉：' + error.message);
     setSel(null);
+    savedToast(r.kind === 'split' ? `已刪除跨 ${r.span} 格的切圖` : '已刪除一則貼文');
     load();
   };
 
@@ -608,7 +614,7 @@ export default function SocialPage() {
     }));
     const next = [...rows];
     next.splice(i, 0, ...blanks);
-    persistOrder(next);
+    persistOrder(next, `已補 ${push} 格空白`);
   };
 
   /* ── 切片下載 ─────────────────────────────────────── */
@@ -1126,6 +1132,7 @@ export default function SocialPage() {
                     if (error) return flash('存不起來：' + error.message);
                     if (!data?.length) return flash('沒有存到 —— 你的權限改不動這一頁。');
                     markSaved();
+                    savedToast('已儲存：切圖原圖');
                   } else if (post) {
                     await patch(post, { image_path: path });
                   }
@@ -1176,6 +1183,7 @@ export default function SocialPage() {
             /* ★ 新建的帳號在哪個平台，就切到那個平台 —— 不然建完會看不到它 */
             if (!d.id) setPlat(d.platform);
             setAccDraft(null);
+            savedToast(savedText(d.id ? '已儲存' : '已新增', body.name));
             load();
           }}
           onDeactivate={async () => {
@@ -1189,6 +1197,7 @@ export default function SocialPage() {
             const r = await supabase.from('social_accounts')
               .update({ active: false }).eq('id', accDraft.id).select('id');
             const bad = writeError(r, '停用'); if (bad) return flash(bad);
+            savedToast(savedText('已停用', accDraft.name));
             setAccDraft(null);
             setAccId('');
             load();

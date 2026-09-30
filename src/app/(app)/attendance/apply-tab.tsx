@@ -12,6 +12,9 @@ import { Tabs } from '@/components/Tabs';
 import ApproveTab from './approve-tab';
 import LeaveForm from '@/components/LeaveForm';
 import { groupBatches } from '@/lib/leave-days';
+import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
+import { useJustSaved } from '@/lib/use-just-saved';
+import { SavedBadge } from '@/components/SavedToast';
 
 /**
  * 申請：請假 · 加班 · 補登。
@@ -61,6 +64,12 @@ export default function ApplyTab({ me, onMsg, prefill, isAdmin, pending = 0 }: T
   const [ots, setOts] = useState<OtReq[]>([]);
   const [fixes, setFixes] = useState<FixReq[]>([]);
   const [busy, setBusy] = useState(false);
+  /*
+   * 剛送出／剛取消的那一筆，在「3 狀態」標黃。請假標的是整批（batch_id ＝ groupBatches 的 key）。
+   * ★ watch 帶 stage/sub —— 送出時人還在「1 申請」，切到「3 狀態」那一刻才捲得到那一列。
+   */
+  const justWatch = useMemo(() => [leaves, ots, fixes, stage, sub], [leaves, ots, fixes, stage, sub]);
+  const { markSaved, isJust } = useJustSaved(justWatch);
 
   const year = new Date().getFullYear();
 
@@ -89,6 +98,7 @@ export default function ApplyTab({ me, onMsg, prefill, isAdmin, pending = 0 }: T
   }, [supabase, me.id, year]);
 
   useEffect(() => { load(); }, [load]);
+  const doneWith = useCallback((id?: string) => { markSaved(id); load(); }, [markSaved, load]);
 
   const typeName = (code: string) => types.find((t) => t.code === code)?.name ?? code;
 
@@ -228,7 +238,7 @@ export default function ApplyTab({ me, onMsg, prefill, isAdmin, pending = 0 }: T
          *   舊表單是兩個 datetime，時數用「結束 − 開始」算 —— 9/24 → 9/30 會變成 153 小時，
          *   多天請假從上線到現在一次都沒成功過。新表單在 `components/LeaveForm.tsx`。
          */
-        <LeaveForm types={types} onMsg={onMsg} onDone={load}
+        <LeaveForm types={types} onMsg={onMsg} onDone={doneWith}
           remainOf={(code) => {
             const t = types.find((x) => x.code === code);
             if (!t?.has_quota) return null;
@@ -256,11 +266,11 @@ export default function ApplyTab({ me, onMsg, prefill, isAdmin, pending = 0 }: T
               </div>
             ))}
           </div>
-          <OtForm busy={busy} setBusy={setBusy} onMsg={onMsg} onDone={load} />
+          <OtForm busy={busy} setBusy={setBusy} onMsg={onMsg} onDone={doneWith} />
         </>
       )}
       {stage === 'apply' && sub === 'fix' && (
-        <FixForm busy={busy} setBusy={setBusy} onMsg={onMsg} onDone={load} prefill={prefill} />
+        <FixForm busy={busy} setBusy={setBusy} onMsg={onMsg} onDone={doneWith} prefill={prefill} />
       )}
 
       {/* ── 3 狀態：我送過的 ───────────────────────── */}
@@ -280,7 +290,7 @@ export default function ApplyTab({ me, onMsg, prefill, isAdmin, pending = 0 }: T
             const v = leaveVote(r);
             const one = g.rows.length === 1;
             return (
-              <Row key={g.key} tone={v.tone} state={v.text}
+              <Row key={g.key} just={isJust(g.key)} tone={v.tone} state={v.text}
                 title={one
                   ? `${typeName(r.type_code)} ${r.hours} 小時`
                   : `${typeName(r.type_code)} ${g.days} 天・${g.hours} 小時`}
@@ -294,14 +304,15 @@ export default function ApplyTab({ me, onMsg, prefill, isAdmin, pending = 0 }: T
                     ? q.eq('batch_id', r.batch_id) : q.eq('id', r.id)).select('id');
                   if (error) return onMsg('取消失敗：' + error.message, true);
                   if (!data?.length) return onMsg('取消失敗 —— 這張單已經不是待審狀態了。', true);
-                  onMsg(one ? '已取消' : `已取消（${data.length} 天一起）`); load();
+                  savedToast(savedText('已取消', typeName(r.type_code)) + (one ? '' : `（${data.length} 天一起）`));
+                  markSaved(g.key); load();
                 } : undefined} />
             );
           })}
           {sub === 'ot' && ots.map((r) => {
             const v = otVote(r);
             return (
-              <Row key={r.id} tone={v.tone} state={v.text}
+              <Row key={r.id} just={isJust(r.id)} tone={v.tone} state={v.text}
                 title={`加班 ${r.hours} 小時`}
                 sub={`${fmtDT(r.start_at)} → ${fmtDT(r.end_at)}・${r.reason}`}
                 onCancel={r.status === 'pending' ? async () => {
@@ -309,12 +320,13 @@ export default function ApplyTab({ me, onMsg, prefill, isAdmin, pending = 0 }: T
                     .update({ status: 'cancelled' }).eq('id', r.id).select('id');
                   if (error) return onMsg('取消失敗：' + error.message, true);
                   if (!data?.length) return onMsg('取消失敗 —— 這張單已經不是待審狀態了。', true);
-                  onMsg('已取消'); load();
+                  savedToast(savedText('已取消', `加班 ${r.hours} 小時`));
+                  markSaved(r.id); load();
                 } : undefined} />
             );
           })}
           {sub === 'fix' && fixes.map((r) => (
-            <Row key={r.id}
+            <Row key={r.id} just={isJust(r.id)}
               tone={r.status === 'approved' ? 'ok' : r.status === 'rejected' ? 'no' : 'wait'}
               state={r.status === 'approved' ? '已補上'
                 : r.status === 'rejected' ? (r.review_note ? `已駁回：${r.review_note}` : '已駁回')
@@ -333,13 +345,13 @@ export default function ApplyTab({ me, onMsg, prefill, isAdmin, pending = 0 }: T
   );
 }
 
-function Row({ title, sub, state, tone, onCancel }: {
-  title: string; sub: string; state: string; tone: string; onCancel?: () => void;
+function Row({ title, sub, state, tone, onCancel, just = false }: {
+  title: string; sub: string; state: string; tone: string; onCancel?: () => void; just?: boolean;
 }) {
   return (
-    <div className="px-4 py-3 flex items-start gap-3">
+    <div {...justRow(just)} className={`px-4 py-3 flex items-start gap-3 ${just ? SAVED_HL : ''}`}>
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium">{title}</div>
+        <div className="text-sm font-medium">{just && <SavedBadge />}{title}</div>
         <div className="text-xs text-gray-500 mt-0.5 break-words">{sub}</div>
       </div>
       <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] ${TONE[tone]}`}>
@@ -359,7 +371,7 @@ function HoursHint({ start, end }: { start: string; end: string }) {
 }
 
 function OtForm({ busy, setBusy, onMsg, onDone }: {
-  busy: boolean; setBusy: (b: boolean) => void; onMsg: TabProps['onMsg']; onDone: () => void;
+  busy: boolean; setBusy: (b: boolean) => void; onMsg: TabProps['onMsg']; onDone: (id?: string) => void;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [start, setStart] = useState('');
@@ -381,11 +393,11 @@ function OtForm({ busy, setBusy, onMsg, onDone }: {
     });
     setBusy(false);
     if (error) return onMsg('送出失敗：' + error.message, true);
-    const r = data as { ok: boolean; message: string };
+    const r = data as { ok: boolean; message: string; id?: string };
     if (!r?.ok) return onMsg(r?.message ?? '送出失敗', true);
-    onMsg(r.message);
+    savedToast(r.message);
     setStart(''); setEnd(''); setReason('');
-    onDone();
+    onDone(r.id);
   }
 
   return (
@@ -414,7 +426,7 @@ function OtForm({ busy, setBusy, onMsg, onDone }: {
 }
 
 function FixForm({ busy, setBusy, onMsg, onDone, prefill }: {
-  busy: boolean; setBusy: (b: boolean) => void; onMsg: TabProps['onMsg']; onDone: () => void;
+  busy: boolean; setBusy: (b: boolean) => void; onMsg: TabProps['onMsg']; onDone: (id?: string) => void;
   prefill?: { date: string; kind: 'in' | 'out'; n: number } | null;
 }) {
   const supabase = useMemo(() => createClient(), []);
@@ -443,9 +455,9 @@ function FixForm({ busy, setBusy, onMsg, onDone, prefill }: {
     setBusy(false);
     if (error) return onMsg('送出失敗：' + error.message, true);
     if (!data?.length) return onMsg('送出失敗 —— 沒有寫入權限，請聯絡總經理。', true);
-    onMsg(`已送出 ${date} 補${kind === 'in' ? '上班' : '下班'} ${time}，等主管核可。`);
+    savedToast(`已送出 ${date} 補${kind === 'in' ? '上班' : '下班'} ${time}，等主管核可。`);
     setDate(''); setTime(''); setReason('');
-    onDone();
+    onDone(data[0].id);
   }
 
   return (

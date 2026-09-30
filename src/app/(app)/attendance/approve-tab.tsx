@@ -9,6 +9,9 @@ import {
 } from './types';
 import { Tabs } from '@/components/Tabs';
 import { groupBatches } from '@/lib/leave-days';
+import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
+import { useJustSaved } from '@/lib/use-just-saved';
+import { SavedBadge } from '@/components/SavedToast';
 
 /**
  * 核可：請假 · 加班 · 補登。
@@ -58,6 +61,9 @@ export default function ApproveTab({ me, onMsg, kind }: TabProps & {
   const [leaves, setLeaves] = useState<WithName<LeaveReq>[]>([]);
   const [ots, setOts] = useState<WithName<OtReq>[]>([]);
   const [fixes, setFixes] = useState<WithName<FixReq>[]>([]);
+  const justWatch = useMemo(() => [leaves, ots, fixes], [leaves, ots, fixes]);
+  /** 剛簽過的那一張標黃（請假標整批：key ＝ batch_id 或 id，跟 groupBatches 同一個） */
+  const { markSaved, isJust } = useJustSaved(justWatch);
   const [busy, setBusy] = useState('');
   const isBoss = isBossRole(me.role);
 
@@ -108,6 +114,10 @@ export default function ApproveTab({ me, onMsg, kind }: TabProps & {
   async function write(
     table: string, id: string, patch: Record<string, unknown>, okText: string,
     batchId?: string | null,
+    /** 綠字裡那一張的名字（誰・什麼） */
+    name?: string,
+    /** 綠字最後補一句（例：「，出勤紀錄同步更新」） */
+    tail = '',
   ) {
     setBusy(id);
     const q = supabase.from(table).update(patch);
@@ -115,16 +125,17 @@ export default function ApproveTab({ me, onMsg, kind }: TabProps & {
     setBusy('');
     if (error) return onMsg('失敗：' + error.message, true);
     if (!data?.length) return onMsg(noRowsMsg('這筆'), true);
-    onMsg(data.length > 1 ? `${okText}（${data.length} 天一起）` : okText); load();
+    savedToast(savedText(okText, name) + (data.length > 1 ? `（${data.length} 天一起）` : '') + tail);
+    markSaved(batchId || id); load();
   }
 
-  function reject(table: string, id: string, field: string, batchId?: string | null) {
+  function reject(table: string, id: string, field: string, batchId?: string | null, name?: string) {
     const why = window.prompt('駁回理由（會顯示給申請人看）');
     if (why === null) return;               // 按取消
     if (!why.trim()) {
       return onMsg('駁回一定要寫理由。\n\n沒有理由的駁回會變成當面追問，而追問的答案不會留在系統裡。', true);
     }
-    write(table, id, { status: 'rejected', [field]: why.trim() }, '已駁回', batchId);
+    write(table, id, { status: 'rejected', [field]: why.trim() }, '已駁回', batchId, name);
   }
 
   const tabs: [Sub, string, number][] = [
@@ -174,12 +185,13 @@ export default function ApproveTab({ me, onMsg, kind }: TabProps & {
             const one = g.rows.length === 1;
             // 我這一票投過了沒有 —— 投過的不該再顯示按鈕，按下去只是重複寫同一個值
             const mine = isBoss ? r.admin_at : r.manager_at;
+            const label = `${r.name} ${typeName(r.type_code)}`;
             return (
-              <div key={g.key} className="px-4 py-3">
+              <div key={g.key} {...justRow(isJust(g.key))} className={`px-4 py-3 ${isJust(g.key) ? SAVED_HL : ''}`}>
                 <div className="flex items-start gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium">
-                      {r.name}・{typeName(r.type_code)} {one ? `${r.hours} 小時` : `${g.days} 天・${g.hours} 小時`}
+                      {isJust(g.key) && <SavedBadge />}{r.name}・{typeName(r.type_code)} {one ? `${r.hours} 小時` : `${g.days} 天・${g.hours} 小時`}
                     </div>
                     {one ? (
                       <div className="text-xs text-gray-500 mt-0.5">
@@ -210,13 +222,13 @@ export default function ApproveTab({ me, onMsg, kind }: TabProps & {
                       onClick={() => write('leave_requests', r.id,
                         isBoss ? { admin_by: me.id, admin_at: new Date().toISOString() }
                                : { manager_by: me.id, manager_at: new Date().toISOString() },
-                        '已簽核', r.batch_id)}
+                        '已簽核', r.batch_id, label)}
                       className={`${BTN2} border-mor-slate text-mor-slate`}>
                       {isBoss ? '總經理核可' : '主管核可'}{!one && `（${g.days} 天）`}
                     </button>
                   )}
                   <button disabled={busy === r.id}
-                    onClick={() => reject('leave_requests', r.id, 'reject_reason', r.batch_id)}
+                    onClick={() => reject('leave_requests', r.id, 'reject_reason', r.batch_id, label)}
                     className={`${BTN2} text-red-600 border-red-200`}>駁回{!one && '整批'}</button>
                 </div>}
               </div>
@@ -227,11 +239,11 @@ export default function ApproveTab({ me, onMsg, kind }: TabProps & {
           {sub === 'ot' && ots.map((r) => {
             const v = otVote(r);
             return (
-              <div key={r.id} className="px-4 py-3">
+              <div key={r.id} {...justRow(isJust(r.id))} className={`px-4 py-3 ${isJust(r.id) ? SAVED_HL : ''}`}>
                 <div className="flex items-start gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium">
-                      {r.name}・加班 {r.hours} 小時
+                      {isJust(r.id) && <SavedBadge />}{r.name}・加班 {r.hours} 小時
                     </div>
                     <div className="text-xs text-gray-500 mt-0.5">
                       {fmtDT(r.start_at)} → {fmtDT(r.end_at)}・{r.reason}
@@ -245,10 +257,10 @@ export default function ApproveTab({ me, onMsg, kind }: TabProps & {
                   <button disabled={busy === r.id}
                     onClick={() => write('overtime_requests', r.id,
                       { status: 'approved', manager_by: me.id, manager_at: new Date().toISOString() },
-                      '已核可')}
+                      '已核可', null, `${r.name} 加班 ${r.hours} 小時`)}
                     className={`${BTN2} border-mor-slate text-mor-slate`}>核可</button>
                   <button disabled={busy === r.id}
-                    onClick={() => reject('overtime_requests', r.id, 'reject_reason')}
+                    onClick={() => reject('overtime_requests', r.id, 'reject_reason', null, `${r.name} 加班 ${r.hours} 小時`)}
                     className={`${BTN2} text-red-600 border-red-200`}>駁回</button>
                 </div>}
               </div>
@@ -257,9 +269,9 @@ export default function ApproveTab({ me, onMsg, kind }: TabProps & {
 
           {/* ── 補登 ───────────────────────────────── */}
           {sub === 'fix' && fixes.map((r) => (
-            <div key={r.id} className="px-4 py-3">
+            <div key={r.id} {...justRow(isJust(r.id))} className={`px-4 py-3 ${isJust(r.id) ? SAVED_HL : ''}`}>
               <div className="text-sm font-medium">
-                {r.name}・{r.work_date} 補{r.kind === 'in' ? '上班' : '下班'}{' '}
+                {isJust(r.id) && <SavedBadge />}{r.name}・{r.work_date} 補{r.kind === 'in' ? '上班' : '下班'}{' '}
                 {r.fix_time.slice(0, 5)}
               </div>
               <div className="text-xs text-gray-500 mt-0.5">{r.reason}</div>
@@ -267,10 +279,10 @@ export default function ApproveTab({ me, onMsg, kind }: TabProps & {
                 <button disabled={busy === r.id}
                   onClick={() => write('attendance_fixes', r.id,
                     { status: 'approved', reviewed_by: me.id, reviewed_at: new Date().toISOString() },
-                    '已補上，出勤紀錄同步更新')}
+                    '已補上', null, `${r.name} ${r.work_date} 補${r.kind === 'in' ? '上班' : '下班'}`, '，出勤紀錄同步更新')}
                   className={`${BTN2} border-mor-slate text-mor-slate`}>核可並寫入</button>
                 <button disabled={busy === r.id}
-                  onClick={() => reject('attendance_fixes', r.id, 'review_note')}
+                  onClick={() => reject('attendance_fixes', r.id, 'review_note', null, `${r.name} ${r.work_date} 補${r.kind === 'in' ? '上班' : '下班'}`)}
                   className={`${BTN2} text-red-600 border-red-200`}>駁回</button>
               </div>}
             </div>

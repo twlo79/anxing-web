@@ -1,8 +1,12 @@
 'use client';
+import { looksLikeError } from '@/lib/flash-kind';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase';
 import { guessLink, rankNames } from '@/lib/hk-link';
+import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
+import { useJustSaved } from '@/lib/use-just-saved';
+import { SavedBadge } from '@/components/SavedToast';
 
 /**
  * 房務設定中心。
@@ -81,7 +85,12 @@ export default function HkSettingsPage() {
   const [kw, setKw] = useState('');
   const [showInactive, setShowInactive] = useState(false);
 
-  function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 3000); }
+  function flash(t: string) {
+    // ★ 錯誤不自己消失（`looksLikeError`，全站同一套；2026-09-30 體檢）——
+    //   RPC 或資料庫丟回來的錯只顯示幾秒的話，使用者看到的是「按了沒反應」。
+    setMsg(t);
+    if (!looksLikeError(t)) setTimeout(() => setMsg((m) => (m === t ? '' : m)), 3000);
+  }
 
   const load = useCallback(async () => {
     const [s, p, w, st, au, ep, es] = await Promise.all([
@@ -102,6 +111,16 @@ export default function HkSettingsPage() {
     setErpStaff((es.data ?? []) as ErpStaff[]);
   }, [supabase]);
   useEffect(() => { load(); }, [load]);
+  const { markSaved, isJust } = useJustSaved([staff, props]);
+
+  /** 綠字裡那一列叫什麼。改的正是名字／代碼的話用新值 */
+  function rowName(table: string, keyVal: string, p: { [k: string]: any }): string {
+    if (table === 'hk_staff') return p.name ?? staff.find((s) => s.id === keyVal)?.name ?? '';
+    if (table === 'hk_property') return p.code ?? props.find((x) => x.id === keyVal)?.code ?? '';
+    if (table === 'hk_work_type') return wtypes.find((w) => w.code === keyVal)?.name ?? keyVal;
+    if (table === 'hk_setting') return settings.find((s) => s.key === keyVal)?.description || keyVal;
+    return '';
+  }
 
   /** 樂觀更新:畫面先動,失敗才回滾。設定頁的每個欄位都是即時存檔,沒有儲存按鈕。 */
   async function patch<T extends { [k: string]: any }>(
@@ -113,7 +132,8 @@ export default function HkSettingsPage() {
     // 對上這裡的泛型 Partial<T> 推不出來。這幾張表沒有產生型別定義,
     // 型別安全本來就落在呼叫端。
     const { error } = await supabase.from(table).update(p as any).eq(keyCol, keyVal);
-    if (error) { flash('儲存失敗:' + error.message); load(); }
+    if (error) { flash('儲存失敗:' + error.message); load(); return; }
+    savedToast(savedText('已儲存', rowName(table, keyVal, p)));
   }
 
   /*
@@ -153,25 +173,27 @@ export default function HkSettingsPage() {
     const name = prompt('顯示名（例:小美）'); if (!name) return;
     const code = prompt('系統代號（例:MEI）', name); if (!code) return;
     const src = prompt('排班表上的顯示名（要跟排班系統上一模一樣）', name); if (!src) return;
-    const { error } = await supabase.from('hk_staff').insert({
+    const { data, error } = await supabase.from('hk_staff').insert({
       source_names: [src], code, name,
       count_mode: 'rooms', count_cleans: true,
       color: 'E7E6E6', color_text: '3F3F3F', color_bar: 'A6A6A6',
       sort: (staff.at(-1)?.sort ?? 0) + 1,
-    });
+    }).select('id').single();
     if (error) return flash('新增失敗:' + error.message);
-    flash('已新增,記得設定顏色與計法'); load();
+    markSaved(data?.id);
+    savedToast(`${savedText('已新增', name)}，記得設定顏色與計法`); load();
   }
 
   async function addProp() {
     const code = prompt('房源代碼（例:20B1）'); if (!code) return;
     const beds = prompt('幾床（公區填 0）', '1');
-    const { error } = await supabase.from('hk_property').insert({
+    const { data, error } = await supabase.from('hk_property').insert({
       code, beds: beds === '' || beds == null ? null : Number(beds),
       linen_group: 'other', sort: 500,
-    });
+    }).select('id').single();
     if (error) return flash('新增失敗:' + error.message);
-    flash('已新增,記得指定布巾表'); load();
+    markSaved(data?.id);
+    savedToast(`${savedText('已新增', code)}，記得指定布巾表`); load();
   }
 
   return (
@@ -218,8 +240,9 @@ export default function HkSettingsPage() {
                   const bg = `#${s.color ?? 'EEEEEE'}`, fg = `#${s.color_text ?? '333333'}`;
                   const ratio = contrast(bg, fg);
                   return (
-                    <tr key={s.id} className={`border-b border-mor-line/40 last:border-0 ${s.active ? '' : 'opacity-40'}`}>
-                      <td className={td}><input value={s.name} onChange={(e) => patch('hk_staff', 'id', s.id, { name: e.target.value }, setStaff)} className={`${inp} w-24`} /></td>
+                    <tr key={s.id} {...justRow(isJust(s.id))}
+                      className={`border-b border-mor-line/40 last:border-0 ${s.active ? '' : 'opacity-40'} ${isJust(s.id) ? SAVED_HL : ''}`}>
+                      <td className={td}>{isJust(s.id) && <SavedBadge />}<input value={s.name} onChange={(e) => patch('hk_staff', 'id', s.id, { name: e.target.value }, setStaff)} className={`${inp} w-24`} /></td>
                       <td className={td}><input value={s.code} onChange={(e) => patch('hk_staff', 'id', s.id, { code: e.target.value }, setStaff)} className={`${inp} w-20`} /></td>
                       <td className={td}>
                         <select value={s.staff_id ?? ''}
@@ -342,8 +365,9 @@ export default function HkSettingsPage() {
               </tr></thead>
               <tbody>
                 {filteredProps.map((p) => (
-                  <tr key={p.id} className={`border-b border-mor-line/40 last:border-0 ${p.active ? '' : 'opacity-40'}`}>
-                    <td className={td}><input value={p.code} onChange={(e) => patch('hk_property', 'id', p.id, { code: e.target.value }, setProps)} className={`${inp} w-24`} /></td>
+                  <tr key={p.id} {...justRow(isJust(p.id))}
+                    className={`border-b border-mor-line/40 last:border-0 ${p.active ? '' : 'opacity-40'} ${isJust(p.id) ? SAVED_HL : ''}`}>
+                    <td className={td}>{isJust(p.id) && <SavedBadge />}<input value={p.code} onChange={(e) => patch('hk_property', 'id', p.id, { code: e.target.value }, setProps)} className={`${inp} w-24`} /></td>
                     <td className={td}>
                       <select value={p.property_id ?? ''}
                         onChange={(e) => patch('hk_property', 'id', p.id, { property_id: e.target.value || null }, setProps)}

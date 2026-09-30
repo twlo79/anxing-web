@@ -1,4 +1,5 @@
 'use client';
+import { looksLikeError } from '@/lib/flash-kind';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { useOnce } from '@/lib/once';
@@ -11,6 +12,9 @@ import {
   linkify, urlHref, urlLabel, eventShareText, lineShareUrl, shareVia, type ShareVia,
   canUpload, filesByPerson,
 } from '@/lib/board';
+import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
+import { useJustSaved } from '@/lib/use-just-saved';
+import { SavedBadge } from '@/components/SavedToast';
 
 /*
  * ══════════════════════════════════════════════════════════
@@ -102,6 +106,7 @@ export default function EventsTab({ meId, isAdmin, onMsg }: {
   const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [view, setView] = useState<Fl | null>(null);
+  const { markSaved, isJust } = useJustSaved(events);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -165,6 +170,8 @@ export default function EventsTab({ meId, isAdmin, onMsg }: {
           ? '沒有存進去 —— 只有排這一場的人跟主管改得動。'
           : '沒有建起來 —— 你的帳號沒有這個權限。', true);
     }
+    savedToast(savedText(d.id ? '已儲存' : '已新增', body.title));
+    markSaved(data[0].id);
     setDraft(null);
     load();
   };
@@ -178,6 +185,7 @@ export default function EventsTab({ meId, isAdmin, onMsg }: {
       .delete().eq('id', e.id).select('id');
     if (error) return onMsg('刪不掉：' + error.message, true);
     if (!data?.length) return onMsg('沒有刪掉 —— 只有排這一場的人跟主管刪得掉。', true);
+    savedToast(savedText('已刪除', e.title));
     load();
   };
 
@@ -195,11 +203,13 @@ export default function EventsTab({ meId, isAdmin, onMsg }: {
     if (error) return onMsg('改不動：' + error.message, true);
     if (!data?.length) return onMsg('沒有改到 —— 只有排這一場的人跟主管動得了這個開關。', true);
     setEvents((xs) => xs.map((x) => (x.id === ev.id ? { ...x, uploads_open: want } : x)));
+    savedToast(savedText(want ? '已開放上傳' : '已關閉上傳', ev.title));
   };
 
   /** 上傳（可以一次選好幾份） */
   const upload = async (ev: Ev, picked: FileList, authorId: string) => {
     const list = Array.from(picked);
+    let ok = 0, okName = '';
     for (const f of list) {
       const tooBig = fileTooBig(f.size);
       if (tooBig.bad) { onMsg(`${f.name}：${tooBig.why}`, true); continue; }
@@ -231,6 +241,11 @@ export default function EventsTab({ meId, isAdmin, onMsg }: {
         onMsg(`${f.name} 沒有掛上去：${error?.message ?? '你的帳號沒有這個權限。'}`, true);
         continue;
       }
+      ok++; okName = f.name;
+    }
+    if (ok) {
+      savedToast(savedText('已上傳', ok === 1 ? okName : `${ok} 份檔案`));
+      markSaved(ev.id);
     }
     load();
   };
@@ -243,6 +258,7 @@ export default function EventsTab({ meId, isAdmin, onMsg }: {
     if (!data?.length) return onMsg('沒有刪掉 —— 只有傳的人跟主管刪得掉。', true);
     /* ★ 資料庫那一列刪掉了才收 storage —— 反過來的話列還在但檔沒了 */
     await supabase.storage.from(BUCKET).remove([f.path]);
+    savedToast(savedText('已刪除', f.name));
     load();
   };
 
@@ -276,7 +292,7 @@ export default function EventsTab({ meId, isAdmin, onMsg }: {
 
       <div className="grid gap-2">
         {rows.map((e) => (
-          <EventRow key={e.id} ev={e} files={filesOf(e.id)} names={names} meId={meId}
+          <EventRow key={e.id} ev={e} just={isJust(e.id)} files={filesOf(e.id)} names={names} meId={meId}
             isAdmin={isAdmin} people={people}
             onEdit={() => setDraft({
               id: e.id, kind: parseEventKind(e.kind), title: e.title,
@@ -324,9 +340,9 @@ function timeOf(iso: string): string {
 
 /* ══════════════════════════════════════════════════════════ */
 
-function EventRow({ ev, files, names, meId, isAdmin, people,
+function EventRow({ ev, just, files, names, meId, isAdmin, people,
   onEdit, onToggle, onUpload, onDelFile, onView }: {
-  ev: Ev; files: Fl[]; names: Map<string, string>; meId: string; isAdmin: boolean;
+  ev: Ev; just: boolean; files: Fl[]; names: Map<string, string>; meId: string; isAdmin: boolean;
   people: { id: string; name: string }[];
   onEdit: () => void;
   onToggle: () => void;
@@ -346,7 +362,7 @@ function EventRow({ ev, files, names, meId, isAdmin, people,
   const who = (id: string | null) => names.get(id ?? '') ?? '—';
 
   return (
-    <div className={`rounded-xl border bg-white px-4 py-3 ${
+    <div {...justRow(just)} className={`rounded-xl border ${just ? SAVED_HL : 'bg-white'} px-4 py-3 ${
       past ? 'border-mor-line opacity-60'
            : `border-mor-line border-l-[3px] ${
                kind === 'meeting' ? 'border-l-mor-slate' : 'border-l-[#C9A227]'}`}`}>
@@ -363,7 +379,7 @@ function EventRow({ ev, files, names, meId, isAdmin, people,
         </span>
       </div>
 
-      <div className="mt-1 text-sm">{ev.title}</div>
+      <div className="mt-1 text-sm">{just && <SavedBadge />}{ev.title}</div>
 
       {/*
         ★★ 誰排的。使用者問「是大家都可以看／編輯嗎」—— 會問就代表畫面上看不出來。
@@ -548,7 +564,12 @@ function ShareButton({ ev }: { ev: Ev }) {
     }));
   }, []);
 
-  function flash(t: string) { setDone(t); setTimeout(() => setDone(''), 4000); }
+  function flash(t: string) {
+    // ★ 錯誤不自己消失（`looksLikeError`，全站同一套；2026-09-30 體檢）——
+    //   RPC 或資料庫丟回來的錯只顯示幾秒的話，使用者看到的是「按了沒反應」。
+    setDone(t);
+    if (!looksLikeError(t)) setTimeout(() => setDone((m) => (m === t ? '' : m)), 4000);
+  }
 
   async function go() {
     const text = eventShareText(ev);

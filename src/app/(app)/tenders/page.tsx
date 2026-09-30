@@ -6,6 +6,9 @@ import { useOnce } from '@/lib/once';
 import { useProfile } from '@/lib/profile';
 import { fetchAll } from '@/lib/fetch-all';
 import Toast from '@/components/Toast';
+import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
+import { useJustSaved } from '@/lib/use-just-saved';
+import { SavedBadge } from '@/components/SavedToast';
 import { AddButton } from '@/components/Actions';
 import { Tabs } from '@/components/Tabs';
 import Req from '@/components/Req';
@@ -139,6 +142,7 @@ export default function TendersPage() {
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { loadFeed(); }, [loadFeed]);
+  const { markSaved, isJust } = useJustSaved([rows, feed]);
 
   /* ══════════════ 存檔 ══════════════ */
   /*
@@ -201,7 +205,8 @@ export default function TendersPage() {
     if (fe) { setEdit(null); load(); return say('標案已儲存，但附件' + fe, true); }
 
     setEdit(null);
-    say('已儲存');
+    markSaved(id);
+    savedToast(savedText(edit.id ? '已儲存' : '已新增', patch.name));
     load();
   }
 
@@ -231,7 +236,7 @@ export default function TendersPage() {
     if (error) return say('刪除失敗：' + error.message, true);
     if (!data?.length) return say('沒有刪掉任何一列，通常是權限或這筆已經不在了。', true);
     setDetail(null);
-    say('已刪除');
+    savedToast(savedText('已刪除', t.name));
     load(); loadFeed();   // ★ 追蹤器那筆的 tender_id 會被 FK 設成 null,星星要跟著變回空心
   }
 
@@ -259,7 +264,8 @@ export default function TendersPage() {
       say('紀錄已建立，但追蹤器那一筆沒有標記成功 —— 重新整理後如果還是空心星，請再按一次。', true);
     } else {
       const todo = afterImportTodo(draft);
-      say(todo.length
+      markSaved(f.id);
+      savedToast(todo.length
         ? `已建檔。★ 還要補：${todo.join('、')} —— 爬蟲給不出這兩個欄位。`
         : '已建檔。');
     }
@@ -388,10 +394,10 @@ export default function TendersPage() {
                 {filtered.map((r) => {
                   const h = dueHint(r.due_on, today, r.status);
                   return (
-                    <button key={r.id} onClick={() => setDetail(r)}
-                      className="w-full text-left rounded-xl border border-mor-line bg-white p-3">
+                    <button key={r.id} onClick={() => setDetail(r)} {...justRow(isJust(r.id))}
+                      className={`w-full text-left rounded-xl border border-mor-line p-3 ${isJust(r.id) ? SAVED_HL : 'bg-white'}`}>
                       <div className="flex items-start gap-2">
-                        <span className="flex-1 text-sm font-medium leading-snug">{r.name}</span>
+                        <span className="flex-1 text-sm font-medium leading-snug">{isJust(r.id) && <SavedBadge />}{r.name}</span>
                         <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${STATUS_CLS[r.status]}`}>
                           {STATUS_LABEL[r.status]}
                         </span>
@@ -423,13 +429,14 @@ export default function TendersPage() {
                     {filtered.map((r) => {
                       const h = dueHint(r.due_on, today, r.status);
                       return (
-                        <tr key={r.id} className="border-b border-mor-line/60 last:border-0 hover:bg-white/45">
+                        <tr key={r.id} {...justRow(isJust(r.id))}
+                          className={`border-b border-mor-line/60 last:border-0 ${isJust(r.id) ? SAVED_HL : 'hover:bg-white/45'}`}>
                           {/* ★ 只到「日」。時分秒對「這筆什麼時候建的」沒有幫助,還會把欄位撐寬 */}
                           <td className="px-3 py-2.5 whitespace-nowrap text-gray-500">
                             {(r.created_at ?? '').slice(0, 10)}
                           </td>
                           <td className="px-3 py-2.5">
-                            <div className="font-medium">{r.name}</div>
+                            <div className="font-medium">{isJust(r.id) && <SavedBadge />}{r.name}</div>
                             {r.note && <div className="text-xs text-gray-400 truncate max-w-[22rem]">{r.note}</div>}
                           </td>
                           <td className="px-3 py-2.5 text-gray-600">{r.source || '—'}</td>
@@ -497,9 +504,10 @@ export default function TendersPage() {
           ) : (
             <div className="space-y-2">
               {feedShown.map((f) => (
-                <div key={f.id}
+                <div key={f.id} {...justRow(isJust(f.id))}
                   className={`rounded-xl border p-3 flex items-start gap-3 ${
-                    f.tender_id ? 'border-mor-line bg-white/60' : 'border-mor-line bg-white'}`}>
+                    isJust(f.id) ? `border-mor-line ${SAVED_HL}`
+                    : f.tender_id ? 'border-mor-line bg-white/60' : 'border-mor-line bg-white'}`}>
                   {/*
                     ★★ 已建檔的**留著並標記**，不是讓它消失。
                       消失的話使用者會以為爬蟲漏了那一筆。
@@ -511,7 +519,7 @@ export default function TendersPage() {
                     {f.tender_id ? '★' : '☆'}
                   </button>
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium leading-snug">{f.title}</div>
+                    <div className="text-sm font-medium leading-snug">{isJust(f.id) && <SavedBadge />}{f.title}</div>
                     <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
                       <span className="rounded bg-mor-bluelight text-mor-slate px-1.5 py-0.5">{f.source}</span>
                       {f.agency && <span>{f.agency}</span>}

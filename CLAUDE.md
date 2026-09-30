@@ -200,6 +200,16 @@ commit 訊息一行，中文，動詞開頭或「主題：內容」。
 
 ---
 
+## ★★★ 存檔成功三件事（David 指定，2026-09-30）
+
+任何「使用者按下去、成功寫進資料庫」的動作，全站一律：
+
+1. **視窗關掉**，回到清單（新建也關 —— 請款單以前新單存完留在原地，綠字被視窗蓋住，看起來像沒存）
+2. **`savedToast(savedText('已儲存', 那一筆的名字或單號))`**（`lib/saved-feedback.ts`）—— 全站唯一一份綠字，掛在 `(app)/layout.tsx` 的 `<SavedToast />`，z-[60] 蓋在所有視窗之上，2.5 秒自己走。**不要再用各頁自己的 flash 報成功**；失敗照舊（紅字、留到按掉）
+3. **那一列標黃「剛剛儲存」45 秒**：`const { markSaved, isJust } = useJustSaved(rows)`（`lib/use-just-saved.ts`）→ 成功後 `markSaved(id)` → 列上 `{...justRow(isJust(id))}` ＋ `SAVED_HL` ＋ `<SavedBadge />`。只在記憶體裡，重新整理就沒了
+
+設定類（表格裡直接改、沒有視窗）只做 2。刪除只做 2。範本：`shortterm/page.tsx`。
+
 ## 這個專案的規矩
 
 * **不能執行 `deploy.ps1`**（sandbox 的 `next build` 會在 SWC 原生檔掛掉）。也**不用 raw git 幫 David 先 commit** —— 推是他的動作。

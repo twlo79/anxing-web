@@ -20,6 +20,9 @@ import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable'
 import FilterToggle from '@/components/FilterToggle';
 import { Tabs, TabShell } from '@/components/Tabs';
 import Receipts, { type ReceiptsHandle } from '@/components/Receipts';
+import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
+import { useJustSaved } from '@/lib/use-just-saved';
+import { SavedBadge } from '@/components/SavedToast';
 
 /**
  * 帳戶明細 —— 三個銀行帳戶的流水鏡像。
@@ -211,6 +214,7 @@ export default function AccountsPage() {
    */
   const [cashBal, setCashBal] = useState<Record<string, number | undefined>>({});
   const [txns, setTxns] = useState<Txn[]>([]);
+  const { markSaved, isJust } = useJustSaved(txns);
   const [tab, setTab] = useState<string>('');
   const [f, setF] = useState<BankFilter>({ from: '', to: '', dir: '', q: '' });
   /*
@@ -259,7 +263,8 @@ export default function AccountsPage() {
     setTxns((prev) => prev.map((t) => (t.id === memoEdit.id
       ? { ...t, memo: memoEdit.text.trim() || null } : t)));
     setMemoEdit(null);
-    setMsg('摘要已更新'); setErr(false);
+    markSaved(memoEdit.id);
+    savedToast(savedText('已更新摘要', memoEdit.text.trim()));
   }
   // 流水 ／ 匯入紀錄。匯入紀錄是「哪一批可以撤銷」的地方
   const [view, setView] = useState<'txn' | 'stmt'>('txn');
@@ -429,8 +434,15 @@ export default function AccountsPage() {
     setCashForm(null);
     await loadTxns(cur.id);
     await loadAccounts();
-    setMsg((cashForm.id ? '已更新' : `已新增，同時重算了 ${diffs.length} 筆餘額`) + attMsg);
-    setErr(!!attMsg);
+    markSaved(savedId);
+    if (attMsg) {
+      setMsg((cashForm.id ? '已更新' : `已新增，同時重算了 ${diffs.length} 筆餘額`) + attMsg);
+      setErr(true);
+    } else {
+      const name = `${cashForm.post_date} ${cashForm.memo || cashForm.counterparty}`;
+      savedToast(cashForm.id ? savedText('已更新', name)
+        : `${savedText('已新增', name)}，同時重算了 ${diffs.length} 筆餘額`);
+    }
   }
 
   /**
@@ -470,7 +482,7 @@ export default function AccountsPage() {
     if (cashForm?.id === t.id) setCashForm(null);
     await loadTxns(cur.id);
     await loadAccounts();
-    setMsg('已刪除，餘額已重算'); setErr(false);
+    savedToast(`${savedText('已刪除', label)}，餘額已重算`);
   }
 
   /** 把既有的一列讀進表單。★ 金額轉回字串 —— input 的 value 只吃字串。 */
@@ -1213,7 +1225,7 @@ export default function AccountsPage() {
           <StatementsPanel
             accountId={tab}
             onChanged={async (text) => {
-              setMsg(text); setErr(false);
+              savedToast(text);
               // 撤銷會影響卡片上的餘額（那份可能是最新的一份）
               await loadAccounts();
               await loadTxns(tab);
@@ -1239,10 +1251,12 @@ export default function AccountsPage() {
               沒有符合條件的交易。
             </div>
           ) : shown.map((t) => (
-            <div key={`m-${t.id}`} className="rounded-xl border border-mor-line bg-white px-3 py-2.5">
+            <div key={`m-${t.id}`} {...justRow(isJust(t.id))}
+              className={`rounded-xl border border-mor-line ${isJust(t.id) ? SAVED_HL : 'bg-white'} px-3 py-2.5`}>
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="text-xs text-gray-500 tabular-nums">
+                    {isJust(t.id) && <SavedBadge />}
                     {ymd(t.txn_date ?? t.post_date)}
                     {t.txn_date && t.txn_date !== t.post_date && (
                       <span className="text-gray-400">・入帳 {ymd(t.post_date)}</span>
@@ -1430,10 +1444,11 @@ export default function AccountsPage() {
                   很容易跳到隔壁列，而跳錯一列在對帳時就是對到別筆交易。
                   隔列淡底可以把視線釘在同一條水平線上。
                 */
-                <tr key={t.id} className="border-t border-mor-line even:bg-mor-sand/20 hover:bg-mor-sand/60">
+                <tr key={t.id} {...justRow(isJust(t.id))}
+                  className={`border-t border-mor-line ${isJust(t.id) ? SAVED_HL : 'even:bg-mor-sand/20 hover:bg-mor-sand/60'}`}>
                   <td className="whitespace-nowrap px-3 py-1.5 tabular-nums">
                     {/* 交易日為主 —— 對帳時人看的是那一天 */}
-                    <div>{ymd(t.txn_date ?? t.post_date)}</div>
+                    <div>{isJust(t.id) && <SavedBadge />}{ymd(t.txn_date ?? t.post_date)}</div>
                     {/*
                       帳務日不同時才印第二行。相同的話那一行沒有多講任何事,
                       而九成以上的交易兩者相同 —— 每列都印會讓表格多一倍高度
@@ -1668,7 +1683,7 @@ export default function AccountsPage() {
         <UploadPanel
           onClose={() => setShowUpload(false)}
           onDone={async (text) => {
-            setMsg(text); setErr(false);
+            savedToast(text);
             await loadAccounts();
             if (tab) await loadTxns(tab);
           }}

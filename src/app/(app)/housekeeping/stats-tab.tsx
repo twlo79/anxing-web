@@ -1,4 +1,5 @@
 'use client';
+import { looksLikeError } from '@/lib/flash-kind';
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import * as XLSX from 'xlsx-js-style';
@@ -37,6 +38,9 @@ import {
   type Reparse, type ExEvent,
 } from '@/lib/hk-exception';
 import { softDelete, restoreTrash } from '@/lib/trash';
+import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
+import { useJustSaved } from '@/lib/use-just-saved';
+import { SavedBadge } from '@/components/SavedToast';
 import { EXPORT_TONE } from '@/components/Actions';
 import StatHero from '@/components/StatHero';
 
@@ -137,6 +141,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
   const [props, setProps] = useState<HkProperty[]>([]);
   const [events, setEvents] = useState<Ev[]>([]);
   const [items, setItems] = useState<Wi[]>([]);
+  const { markSaved, isJust } = useJustSaved(items);
   const [days, setDays] = useState<Day[]>([]);
   const [mps, setMps] = useState<MP[]>([]);
   const [wtypes, setWtypes] = useState<WType[]>([]);
@@ -163,7 +168,12 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
   const [editItem, setEditItem] = useState<
     { id: string; staffId: string; code: string; type: string; units: string; amt: string } | null>(null);
 
-  function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 4000); }
+  function flash(t: string) {
+    // ★ 錯誤不自己消失（`looksLikeError`，全站同一套；2026-09-30 體檢）——
+    //   RPC 或資料庫丟回來的錯只顯示幾秒的話，使用者看到的是「按了沒反應」。
+    setMsg(t);
+    if (!looksLikeError(t)) setTimeout(() => setMsg((m) => (m === t ? '' : m)), 4000);
+  }
 
   const loadMaster = useCallback(async () => {
     const [s, p, w, st] = await Promise.all([
@@ -451,7 +461,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
 
       await loadSplits();
       setSplitOpen(null);
-      flash(`已拆成 ${lines.length} 間，合計 $${splitTotal(
+      savedToast(`已拆成 ${lines.length} 間，合計 $${splitTotal(
         lines.map((l) => ({ amount: Number(l.amount) || 0 }))).toLocaleString('en-US')}`);
     } finally { setSplitBusy(false); }
   }
@@ -478,7 +488,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
        * ★★ 已經產生的支出**不會**跟著刪 —— 錢付了就是付了。
        *   不講的話使用者會以為取消拆帳等於把那幾筆帳撤掉。
        */
-      flash('已取消拆帳。★ 已經產生過的那幾筆支出還在帳上，要撤請到支出頁');
+      savedToast('已取消拆帳。★ 已經產生過的那幾筆支出還在帳上，要撤請到支出頁');
     } finally { setSplitBusy(false); }
   }
   useEffect(() => {
@@ -837,7 +847,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
         setGenErr((made === 0 ? '沒有新增任何一筆。\n' : `已產生 ${made} 筆。\n`) + missMsg);
         return;
       }
-      flash(made === 0
+      savedToast(made === 0
         ? '這個月的支出都已經產生過了，沒有新增任何一筆'
         : `已產生 ${made} 筆支出（共 $${costTotal([...fixClean.ok, ...fixLabor.ok]).toLocaleString('en-US')}）`);
       setGenOpen(false);
@@ -1325,7 +1335,9 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
     // ★ RLS 擋下的 insert 會回成功而且 0 列（CLAUDE.md 的坑）
     if (!data || data.length === 0) { flash('沒有寫入任何資料 —— 可能是權限不足'); return false; }
     setItems((xs) => [...xs, ...(data as Wi[])]);
-    if (skipped > 0) flash(`已加入 ${ok.length} 筆，另外 ${skipped} 位當天休假已跳過`);
+    markSaved((data as Wi[])[0]?.id);
+    if (skipped > 0) savedToast(`已加入 ${ok.length} 筆，另外 ${skipped} 位當天休假已跳過`);
+    else savedToast(savedText('已新增', `${date.slice(5)} ${code || type}`));
     return true;
   }
 
@@ -1357,7 +1369,9 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
     setItems((xs) => xs.map((x) => (x.id === editItem.id ? { ...x, ...patch } : x)));
     setEditItem(null);
     const r = await supabase.from('hk_work_item').update(patch).eq('id', editItem.id).select('id');
-    const bad = writeError(r, '儲存'); if (bad) { flash(bad); loadPeriod(); }   // ★ 0 列也要收回樂觀更新
+    const bad = writeError(r, '儲存'); if (bad) { flash(bad); loadPeriod(); return; }   // ★ 0 列也要收回樂觀更新
+    markSaved(editItem.id);
+    savedToast(savedText('已儲存', editItem.code || editItem.type));
   }
 
   async function delItem(it: Wi) {
@@ -1542,9 +1556,8 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
      * ★ 兩個數字都要講。「事件 5 筆」與「排班表 4 格」不一樣是正常的
      *   （有些格子本來就填過房源），但差很多就值得看一眼。
      */
-    flash(ok === reparse.length
-      ? `已重新對上 ${ok} 筆，排班表補了 ${cells} 格房源`
-      : `只更新了 ${ok} / ${reparse.length} 筆 —— 其餘可能是權限不足`);
+    if (ok === reparse.length) savedToast(`已重新對上 ${ok} 筆，排班表補了 ${cells} 格房源`);
+    else flash(`只更新了 ${ok} / ${reparse.length} 筆 —— 其餘可能是權限不足`);
   }
 
   /**
@@ -2610,9 +2623,9 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                           }
 
                           return (
-                            <span key={it.id}
+                            <span key={it.id} {...justRow(isJust(it.id))}
                               onClick={() => setEditItem({ id: it.id, staffId: it.staff_id, code: it.property_code ?? '', type: it.work_type, units: it.units_override == null ? '' : String(it.units_override), amt: it.amount_override == null ? '' : String(it.amount_override) })}
-                              className="group inline-flex items-center rounded text-xs pl-1.5 pr-0.5 py-0.5 border-l-4 cursor-pointer hover:brightness-95"
+                              className={`group inline-flex items-center rounded text-xs pl-1.5 pr-0.5 py-0.5 border-l-4 cursor-pointer hover:brightness-95 ${isJust(it.id) ? SAVED_HL : ''}`}
                               style={{
                                 backgroundColor: s?.color ? `#${s.color}` : '#f3f4f6',
                                 color: s?.color_text ? `#${s.color_text}` : undefined,
@@ -2622,6 +2635,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
                                 outlineOffset: manual ? '-1px' : undefined,
                               }}
                               title={`${s?.name ?? ''}・${it.work_type}${manual ? '・手動新增' : it.source === 'timetree_edited' ? '・已編輯' : ''}　點擊可編輯`}>
+                              {isJust(it.id) && <SavedBadge />}
                               <span className="opacity-60 mr-0.5">{s?.name}</span>
                               {it.work_type === '贈品補充' ? `${it.property_code ?? ''}-贈` : (it.property_code ?? it.work_type)}
                               {it.source === 'timetree_edited' && <span className="ml-0.5 opacity-50" title="同步後被改過">✎</span>}

@@ -28,6 +28,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { useOnce } from '@/lib/once';
+import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
+import { useJustSaved } from '@/lib/use-just-saved';
+import { SavedBadge } from '@/components/SavedToast';
 import { fmtSize, fileTooBig } from '@/lib/board';
 import {
   REPORT_KINDS, parseKind, periodText, options401, defaultStartFor,
@@ -112,6 +115,7 @@ export default function ReportsPage() {
   }, [supabase, onMsg]);
 
   useEffect(() => { load(); }, [load]);
+  const { markSaved, isJust } = useJustSaved(rows);
 
   /* ══════════════ 下載 ══════════════ */
 
@@ -233,7 +237,8 @@ export default function ReportsPage() {
       if (rm.error) console.warn('[reports] 舊檔沒刪掉：', rm.error.message);
     }
     setDraft(null);
-    onMsg('已儲存');
+    markSaved(data[0].id);
+    savedToast(savedText(targetId ? '已儲存' : '已新增', d.title.trim()));
     load();
   };
 
@@ -256,6 +261,7 @@ export default function ReportsPage() {
       if (rm.error) console.warn('[reports] 檔案沒刪掉：', rm.error.message);
     }
     setDraft(null);
+    savedToast(savedText('已刪除', reportTitle(r)));
     load();
   };
 
@@ -357,14 +363,15 @@ export default function ReportsPage() {
                 ★ 沒有備註的那幾列**一格都不會變高** —— 那一格不存在，
                   grid 的第二排高度就是 0。
               */
-              <div key={r.id}
-                className="grid items-center gap-y-0.5 gap-x-3 md:gap-x-5 px-4 py-2.5
-                           border-t border-mor-line/60 first:border-t-0 hover:bg-[#FAFAF9]
+              <div key={r.id} {...justRow(isJust(r.id))}
+                className={`grid items-center gap-y-0.5 gap-x-3 md:gap-x-5 px-4 py-2.5
+                           border-t border-mor-line/60 first:border-t-0
+                           ${isJust(r.id) ? SAVED_HL : 'hover:bg-[#FAFAF9]'}
                            transition-colors
                            [grid-template-columns:2.25rem_minmax(0,1fr)_auto]
                            [grid-template-areas:'ico_mid_mid'_'ico_per_per'_'ico_note_note'_'ico_file_file'_'._dl_acts']
                            md:[grid-template-columns:2.25rem_minmax(0,1fr)_17rem_16rem_auto_auto]
-                           md:[grid-template-areas:'ico_mid_per_file_dl_acts'_'ico_note_note_note_dl_acts']">
+                           md:[grid-template-areas:'ico_mid_per_file_dl_acts'_'ico_note_note_note_dl_acts']`}>
                 <span className={`w-9 h-9 rounded-lg flex items-center justify-center self-start mt-0.5
                                   text-[11px] font-bold text-white [grid-area:ico] ${BADGE_CLASS[fkd]}`}>
                   {FILE_BADGE[fkd]}
@@ -377,6 +384,7 @@ export default function ReportsPage() {
                     （font-semibold）—— 底下那幾行一律灰的（2026-09-18 排字體）。
                 */}
                 <span className="min-w-0 flex items-center gap-1.5 [grid-area:mid]">
+                  {isJust(r.id) && <SavedBadge />}
                   <span className={`shrink-0 rounded px-1.5 py-0.5 text-xs font-medium
                                     ${KIND_CLASS[k] ?? ''}`}>{k}</span>
                   <span className="text-ui font-semibold truncate">{reportTitle(r)}</span>

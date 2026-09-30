@@ -1,4 +1,5 @@
 'use client';
+import { looksLikeError } from '@/lib/flash-kind';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import MoneyInput from '@/components/MoneyInput';
 import { fmtInt as fmt } from '@/lib/fmt';
@@ -7,6 +8,9 @@ import { ymOf } from '@/lib/period';
 import { CONTRACT_FEE_PRESETS, feeLabel } from '@/lib/fee-types';
 import { leaseMonths, feeMonthly, leasePeriods, periodOf, ymShow } from '@/lib/lease';
 import { softDelete } from '@/lib/trash';
+import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
+import { useJustSaved } from '@/lib/use-just-saved';
+import { SavedBadge } from '@/components/SavedToast';
 
 // 讓既有的 import 路徑不用改：這兩個是純函式，定義在 lib/lease（那裡測得到）
 export { leaseMonths, feeMonthly };
@@ -73,8 +77,15 @@ export default function ContractFees({
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [draft, setDraft] = useState<Rc | null>(null);
+  // 存檔成功：那一筆標黃「剛剛儲存」（lib/saved-feedback.ts 的 ③）
+  const { markSaved, isJust } = useJustSaved(rows);
 
-  function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 4000); }
+  function flash(t: string) {
+    // ★ 錯誤不自己消失（`looksLikeError`，全站同一套；2026-09-30 體檢）——
+    //   RPC 或資料庫丟回來的錯只顯示幾秒的話，使用者看到的是「按了沒反應」。
+    setMsg(t);
+    if (!looksLikeError(t)) setTimeout(() => setMsg((m) => (m === t ? '' : m)), 4000);
+  }
 
   const load = useCallback(async () => {
     if (isNew) return;                       // 新增中沒有東西可以撈
@@ -141,13 +152,15 @@ export default function ContractFees({
       amount: Math.round(Number(draft.amount)), start_ym: draft.start_ym,
       end_ym: draft.end_ym || null, active: draft.active, note: draft.note || null,
     };
-    const { error } = draft.id
-      ? await supabase.from('contract_recurring_charges').update(payload).eq('id', draft.id)
-      : await supabase.from('contract_recurring_charges').insert(payload);
+    // 新增的要拿回 id 才標得到那一筆（.select('id')）
+    const { data: savedRows, error } = draft.id
+      ? await supabase.from('contract_recurring_charges').update(payload).eq('id', draft.id).select('id')
+      : await supabase.from('contract_recurring_charges').insert(payload).select('id');
     setBusy(false);
     if (error) return flash('儲存失敗:' + error.message);
+    savedToast(savedText(draft.id ? '已儲存' : '已新增', feeLabel(draft.fee_type, draft.item_name)) + ',各期已更新');
+    markSaved(draft.id || savedRows?.[0]?.id);
     setDraft(null);
-    flash('已儲存,各期已更新');
     await load();
     onChanged?.();
   }
@@ -176,7 +189,10 @@ export default function ContractFees({
       .update({ active: !r.active }).eq('id', r.id);
     setBusy(false);
     if (error) return flash('失敗:' + error.message);
-    flash(r.active ? '已暫停，未收款的期別已移除' : '已恢復，各期重新產生');
+    savedToast(r.active
+      ? savedText('已暫停', feeLabel(r.fee_type, r.item_name)) + '，未收款的期別已移除'
+      : savedText('已恢復', feeLabel(r.fee_type, r.item_name)) + '，各期重新產生');
+    markSaved(r.id);
     await load();
     onChanged?.();
   }
@@ -206,7 +222,8 @@ export default function ContractFees({
       .update({ end_ym: ym }).eq('id', r.id);
     setBusy(false);
     if (error) return flash('失敗:' + error.message);
-    flash(`已設定收到 ${toMonthInput(ym)} 為止`);
+    savedToast(savedText(`已設定收到 ${toMonthInput(ym)} 為止`, feeLabel(r.fee_type, r.item_name)));
+    markSaved(r.id);
     await load();
     onChanged?.();
   }
@@ -228,7 +245,7 @@ export default function ContractFees({
     const res = await softDelete(supabase, 'contract_recurring_charges', r.id, '契約固定加費設定刪除');
     setBusy(false);
     if (!res.ok) return flash(res.message);
-    flash(res.message);
+    savedToast(savedText(res.message, feeLabel(r.fee_type, r.item_name)));
     await load();
     onChanged?.();
   }
@@ -266,11 +283,13 @@ export default function ContractFees({
         const ended = !!r.end_ym;
         const off = !r.active;
         return (
-          <div key={r.id}
+          <div key={r.id} {...justRow(isJust(r.id))}
             className={`rounded-lg border px-3 py-2 text-sm ${
-              off ? 'border-mor-line bg-gray-50 opacity-70' : ended ? 'border-mor-line bg-gray-50' : 'border-mor-line'}`}>
+              isJust(r.id) ? `border-mor-line ${SAVED_HL}`
+              : off ? 'border-mor-line bg-gray-50 opacity-70' : ended ? 'border-mor-line bg-gray-50' : 'border-mor-line'}`}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="min-w-0">
+                {isJust(r.id) && <SavedBadge />}
                 <span className="font-medium">{feeLabel(r.fee_type, r.item_name)}</span>
                 <span className="ml-2">${fmt(r.amount)}<span className="text-xs text-gray-400"> / 期</span></span>
                 {off && <span className="ml-2 text-xs rounded bg-amber-100 text-amber-700 px-1.5 py-0.5">暫停中</span>}

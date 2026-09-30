@@ -6,6 +6,9 @@ import { AddButton, ExportButton } from '@/components/Actions';
 import Req from '@/components/Req';
 import { fmtIntOrBlank as fmt } from '@/lib/fmt';
 import { useFlash } from '@/lib/use-flash';
+import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
+import { useJustSaved } from '@/lib/use-just-saved';
+import { SavedBadge } from '@/components/SavedToast';
 import { writeError } from '@/lib/write-guard';
 import { submitGate, gateCls } from '@/lib/required';
 import MoneyInput from '@/components/MoneyInput';
@@ -178,6 +181,8 @@ export default function ContractsPage() {
   const [loading, setLoading] = useState(true);
   // ★ 全站唯一一份訊息邏輯（lib/use-flash）：錯誤紅色留到按掉，成功 2.5 秒自己走
   const { msg, msgErr, flash, clearMsg } = useFlash(2500);
+  // ★ 存成功：全站同一套（綠字 ＋ 那一列標黃 45 秒，lib/saved-feedback.ts，2026-09-30）
+  const { markSaved, isJust } = useJustSaved(rows);
   const [estateFilter, setEstateFilter] = useState('');
   const [edit, setEdit] = useState<Contract | null>(null);
   /** 每期租金明細展開／收起。開表單時：有明細就展開，沒有就收著 */
@@ -584,7 +589,8 @@ export default function ContractsPage() {
       }
     }
     setPendingFees([]);
-    flash('已儲存'); setEdit(null); setTried(false); load();
+    savedToast(savedText(edit.id ? '已儲存' : '已新增', `${edit.room || edit.display_name || ''} ${edit.tenant_name || ''}`));
+    markSaved(edit.id || newId); setEdit(null); setTried(false); load();
     // 改租期會讓月租單重產。等觸發器跑完再檢查有沒有「租期外但已收款」的殘留。
     if (edit.id) { setTimeout(() => { warnStray({ ...(edit as Contract) }); }, 500); }
   }
@@ -622,7 +628,7 @@ const nameOf = (c: Contract) =>
     }
     const r = await softDelete(supabase, 'contracts', c.id);
     if (!r.ok) return flash(r.message);
-    flash(im.total.n ? `已移到回收桶（契約與 ${im.total.n} 筆訂單）` : r.message); load();
+    savedToast(im.total.n ? `已移到回收桶（契約與 ${im.total.n} 筆訂單）` : r.message); load();
   }
 
   /**
@@ -656,7 +662,7 @@ const nameOf = (c: Contract) =>
      *   月租單已經長好了。那 500ms 等的是一個不存在的非同步。
      */
     await warnStray({ ...c, end_date: end });
-    flash('已結束租約'); load();
+    savedToast(savedText('已結束租約', `${c.room ?? ''} ${c.tenant_name ?? ''}`)); markSaved(c.id); load();
   }
 
   /**
@@ -767,7 +773,7 @@ const nameOf = (c: Contract) =>
     }
     setEdit({ ...edit, end_date: newEndStr, pre_extend_end_date: keepPrev });
     setExt({ months: '', monthly: '', total: '' });
-    flash(`已展延 ${N} 個月・新增 ${N} 期待收款(月租 $${amt})`);
+    savedToast(`已展延 ${N} 個月・新增 ${N} 期待收款(月租 $${amt})`);
     loadExtBatches(); load();
   }
   // 匯出 Excel:輸出「目前篩選 + 排序後」的結果,與畫面所見一致。
@@ -1095,12 +1101,13 @@ const nameOf = (c: Contract) =>
           const lt = curLT[c.id];
           const st = statusOf(c);
           return (
-            <div key={`m-${c.id}`} onClick={() => setDetail(c)}
-              className={`rounded-xl glass px-3 py-2.5 cursor-pointer active:bg-mor-sand/40
+            <div key={`m-${c.id}`} onClick={() => setDetail(c)} {...justRow(isJust(c.id))}
+              className={`rounded-xl px-3 py-2.5 cursor-pointer ${isJust(c.id) ? SAVED_HL : 'glass active:bg-mor-sand/40'}
                           ${c.active ? '' : 'opacity-50'}`}>
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5 flex-wrap">
+                    {isJust(c.id) && <SavedBadge />}
                     <span className="font-medium truncate">{c.room || c.tenant_name || '（未命名）'}</span>
                     <span className="text-[11px] text-gray-400">{c.estates?.name}</span>
                     {st === 'expired' && <span className="rounded px-1.5 py-0.5 text-[10px] bg-amber-50 text-amber-600">已到期</span>}
@@ -1150,9 +1157,9 @@ const nameOf = (c: Contract) =>
             : filtered.map((c: any) => (
               // 整列可點開詳細抽屜。押金與刪除移進抽屜 ——
               // 刪除契約會連帶影響已產生的月租單,不該在列表上一鍵可及。
-              <tr key={c.id} onClick={() => setDetail(c)}
-                className={`border-b border-mor-line/60 hover:bg-mor-bluelight/30 cursor-pointer ${c.active ? '' : 'opacity-50'}`}>
-                <td className="px-3 py-2 font-medium whitespace-nowrap">{c.room}<span className="ml-1 text-xs text-gray-400">{c.estates?.name}</span>{statusOf(c) === 'expired' && <span className="ml-1 rounded px-1.5 py-0.5 text-[10px] bg-amber-50 text-amber-600">已到期</span>}{statusOf(c) === 'disabled' && <span className="ml-1 rounded px-1.5 py-0.5 text-[10px] bg-gray-100 text-gray-500">已停用</span>}</td>
+              <tr key={c.id} onClick={() => setDetail(c)} {...justRow(isJust(c.id))}
+                className={`border-b border-mor-line/60 cursor-pointer ${isJust(c.id) ? SAVED_HL : 'hover:bg-mor-bluelight/30'} ${c.active ? '' : 'opacity-50'}`}>
+                <td className="px-3 py-2 font-medium whitespace-nowrap">{isJust(c.id) && <SavedBadge />}{c.room}<span className="ml-1 text-xs text-gray-400">{c.estates?.name}</span>{statusOf(c) === 'expired' && <span className="ml-1 rounded px-1.5 py-0.5 text-[10px] bg-amber-50 text-amber-600">已到期</span>}{statusOf(c) === 'disabled' && <span className="ml-1 rounded px-1.5 py-0.5 text-[10px] bg-gray-100 text-gray-500">已停用</span>}</td>
                 <td className="px-3 py-2 whitespace-nowrap">{c.tenant_name}</td>
                 <td className="px-3 py-2 text-right">{(() => { const step = STEP_OF[c.cadence] || 1; const per = c.amount_per_period || (c.monthly_rent || 0) * step; const mo = Math.round(per / step); return (<><div className="font-medium">${fmt(per)}</div><div className="text-xs text-gray-400">{CAD_LABEL[c.cadence] ?? c.cadence}・月 ${fmt(mo)}</div></>); })()}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-500">{c.start_date ?? '—'} ~ {c.end_date ?? '—'}</td>

@@ -1,8 +1,10 @@
 'use client';
+import { looksLikeError } from '@/lib/flash-kind';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import MoneyInput from '@/components/MoneyInput';
 import { fmtInt as fmt } from '@/lib/fmt';
 import { createClient } from '@/lib/supabase';
+import { savedToast, savedText } from '@/lib/saved-feedback';
 import {
   checkDeferral, linesTotal, parentAmount, childLines,
   deferralLabel, type DeferralLine,
@@ -55,7 +57,12 @@ export default function DeferralPanel({
   const gross = Math.round(Number(expense.deferred ? expense.gross_amount : expense.amount) || 0);
   const paidOn = expense.spent_on;
 
-  function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 5000); }
+  function flash(t: string) {
+    // ★ 錯誤不自己消失（`looksLikeError`，全站同一套；2026-09-30 體檢）——
+    //   RPC 或資料庫丟回來的錯只顯示幾秒的話，使用者看到的是「按了沒反應」。
+    setMsg(t);
+    if (!looksLikeError(t)) setTimeout(() => setMsg((m) => (m === t ? '' : m)), 5000);
+  }
 
   const load = useCallback(async () => {
     if (!expense.deferred) {
@@ -147,7 +154,7 @@ export default function DeferralPanel({
     });
     setBusy(false);
     if (error) return flash('儲存失敗:' + error.message);
-    flash('已設定遞延認列');
+    savedToast(savedText('已設定遞延認列', expense.item_name));
     onChanged();
   }
 
@@ -168,7 +175,7 @@ export default function DeferralPanel({
     setBusy(false);
     if (error) return flash('取消失敗:' + error.message);
     setOn(false);
-    flash('已取消遞延認列');
+    savedToast(savedText('已取消遞延認列', expense.item_name));
     onChanged();
   }
 

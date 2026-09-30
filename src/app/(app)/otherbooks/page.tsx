@@ -10,6 +10,9 @@ import { useProfile } from '@/lib/profile';
 import { fetchAll } from '@/lib/fetch-all';
 import { accountsForBook } from '@/lib/purchase-pay';
 import { softDelete } from '@/lib/trash';
+import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
+import { useJustSaved } from '@/lib/use-just-saved';
+import { SavedBadge } from '@/components/SavedToast';
 import Req from '@/components/Req';
 import MoneyInput from '@/components/MoneyInput';
 import Toast from '@/components/Toast';
@@ -101,6 +104,7 @@ export default function OtherBooksPage() {
   /** 列表照日期排，預設新到舊 */
   const [desc, setDesc] = useState(true);
   const [rows, setRows] = useState<Entry[]>([]);
+  const { markSaved, isJust } = useJustSaved(rows);
   /** 實支明細，照 expense_id 分組（migration_277） */
   const [pays, setPays] = useState<Record<string, Payment[]>>({});
   /** 代墊那幾筆:那一列暫付收回了多少。**null ＝ 還沒收回** */
@@ -128,7 +132,7 @@ export default function OtherBooksPage() {
   const bookAccounts = useMemo(() => accountsForBook(accounts, book), [accounts, book]);
   const [loading, setLoading] = useState(true);
   // ★ 全站唯一一份訊息邏輯（lib/use-flash）：錯誤紅色留到按掉，成功 4 秒自己走
-  const { msg, msgErr, flash, clearMsg } = useFlash(4000);
+  const { msg, msgErr, clearMsg } = useFlash(4000);   // 成功訊息改走 savedToast，flash 這頁不再用（2026-09-30）
   const [err, setErr] = useState('');
   const [f, setF] = useState<Filters>({});
   /*
@@ -326,6 +330,8 @@ export default function OtherBooksPage() {
     if (error) return setErr('儲存失敗：' + error.message);
     if (!data?.length) return setErr('沒有改到任何一列 —— 可能是權限，或這一列已經被別人改過');
     setRow(null);
+    markSaved(row.id);
+    savedToast(savedText('已儲存', row.name.trim()));
     load();
   }
 
@@ -392,7 +398,10 @@ export default function OtherBooksPage() {
     setBusy(false);
     if (error) return setErr('存不進去：' + error.message);
     if (!data?.length) return setErr('沒有任何一列被寫入，通常是權限問題。請重新整理後再試。');
-    setInc(null); flash('已新增收入'); load();
+    setInc(null);
+    markSaved((data[0] as { id: string }).id);
+    savedToast(savedText('已新增收入', inc.item.trim() || inc.party.trim()));
+    load();
   }
 
   async function saveExpense() {
@@ -419,7 +428,10 @@ export default function OtherBooksPage() {
     setBusy(false);
     if (error) return setErr('存不進去：' + error.message);
     if (!data?.length) return setErr('沒有任何一列被寫入，通常是權限問題。請重新整理後再試。');
-    setExp(null); flash('已新增支出'); load();
+    setExp(null);
+    markSaved((data[0] as { id: string }).id);
+    savedToast(savedText('已新增支出', exp.item.trim()));
+    load();
   }
 
   if (!canSee) {
@@ -671,9 +683,9 @@ export default function OtherBooksPage() {
               */}
               <div className="md:hidden space-y-2">
                 {shown.map((e) => (
-                  <div key={`m-${e.kind}-${e.id}`}
+                  <div key={`m-${e.kind}-${e.id}`} {...justRow(isJust(e.id))}
                     onClick={() => canSee && setView({ ...e })}
-                    className="rounded-xl border border-mor-line bg-white px-3 py-2.5">
+                    className={`rounded-xl border border-mor-line ${isJust(e.id) ? SAVED_HL : 'bg-white'} px-3 py-2.5`}>
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
@@ -681,6 +693,7 @@ export default function OtherBooksPage() {
                             e.kind === 'income' ? 'bg-mor-greenlight text-mor-green' : 'bg-red-50 text-red-600'}`}>
                             {e.kind === 'income' ? '收' : '支'}
                           </span>
+                          {isJust(e.id) && <SavedBadge />}
                           <span className="font-medium truncate">{e.name}</span>
                           <LendTag e={e} onOpen={setLend} />
                           {e.kind === 'income' && !e.settled && (
@@ -743,9 +756,9 @@ export default function OtherBooksPage() {
                   </thead>
                   <tbody className="divide-y divide-mor-line/40">
                     {shown.map((e) => (
-                      <tr key={`${e.kind}-${e.id}`}
+                      <tr key={`${e.kind}-${e.id}`} {...justRow(isJust(e.id))}
                         onClick={() => canSee && setView({ ...e })}
-                        className="even:bg-mor-sand/20 hover:bg-mor-sand/60 cursor-pointer">
+                        className={`${isJust(e.id) ? SAVED_HL : 'even:bg-mor-sand/20 hover:bg-mor-sand/60'} cursor-pointer`}>
                         <td className="px-3 py-2 whitespace-nowrap text-gray-500">{e.date}</td>
                         <td className="px-3 py-2">
                           {/*
@@ -754,6 +767,7 @@ export default function OtherBooksPage() {
                               **手機卡片那邊留著** —— 那裡沒有兩欄可以分。
                           */}
                           <div className="flex items-center gap-1.5">
+                            {isJust(e.id) && <SavedBadge />}
                             <span className="truncate">{e.name}</span>
                             <LendTag e={e} onOpen={setLend} />
                             {/* 還沒收的錢要標出來 —— 那是唯一會讓人今天做一件事的資訊 */}
@@ -1384,8 +1398,8 @@ function ViewDrawer({
     setDelBusy(true);
     const r = await softDelete(supabase, 'orders', e.id);
     setDelBusy(false);
-    onMsg(r.message);
-    if (r.ok) { onClose(); onReload(); }
+    if (r.ok) { savedToast(savedText('已刪除', e.name)); onClose(); onReload(); }
+    else onMsg(r.message);
   }
 
   async function addPay() {
@@ -1410,6 +1424,7 @@ function ViewDrawer({
      *   不檢查長度的話，沒有權限的人會看到「記好了」而什麼都沒有。
      */
     if (!data?.length) { setErr('沒有記進去 —— 你的帳號沒有這個權限。'); return; }
+    savedToast(savedText('已記實支', `${e.name} $${fmt(Number(draft.amount))}`));
     setDraft({}); setAdding(false);
     onReload();
   }
@@ -1420,6 +1435,7 @@ function ViewDrawer({
       .delete().eq('id', p.id!).select('id');
     if (error) return onMsg('刪不掉：' + error.message);
     if (!data?.length) return onMsg('沒有刪掉 —— 你的帳號沒有這個權限。');
+    savedToast(savedText('已刪除實支', `${p.paid_on} $${fmt(p.amount)}`));
     onReload();
   }
 

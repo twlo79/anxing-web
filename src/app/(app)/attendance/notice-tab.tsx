@@ -5,6 +5,9 @@ import { createClient } from '@/lib/supabase';
 import { useOnce } from '@/lib/once';
 import { BTN, BTN2, CARD, INPUT, noRowsMsg, type Announcement, type TabProps } from './types';
 import { noticeContentChanged } from '@/lib/notice';
+import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
+import { useJustSaved } from '@/lib/use-just-saved';
+import { SavedBadge } from '@/components/SavedToast';
 
 /**
  * 公告。
@@ -28,6 +31,7 @@ export default function NoticeTab({ me, isAdmin, onMsg }: TabProps) {
   /** 編輯前的原文。用來判斷內容是不是真的變了 —— 沒有這份就只能每次都問。 */
   const [orig, setOrig] = useState<{ title: string; body: string } | null>(null);
   const [renotify, setRenotify] = useState(false);
+  const { markSaved, isJust } = useJustSaved(list);
 
   const load = useCallback(async () => {
     const [{ data: an }, { data: rd }, { data: pf }] = await Promise.all([
@@ -131,7 +135,11 @@ export default function NoticeTab({ me, isAdmin, onMsg }: TabProps) {
       else if (!res?.ok) extra = '（但重新通知失敗：' + (res?.message ?? '未知原因') + '）';
       else extra = '，' + res.message;
     }
-    onMsg((editing.id ? '已更新' : '已發布') + extra, extra.startsWith('（但'));
+    // ★ 存檔本身成功了 → 綠字；重新通知失敗的那半句照舊走紅字
+    const notifyFailed = extra.startsWith('（但');
+    savedToast(savedText(editing.id ? '已儲存' : '已發布', patch.title) + (notifyFailed ? '' : extra));
+    if (notifyFailed) onMsg((editing.id ? '已更新' : '已發布') + extra, true);
+    markSaved(data[0].id);
     setEditing(null); setOrig(null); load();
   }
 
@@ -208,7 +216,7 @@ export default function NoticeTab({ me, isAdmin, onMsg }: TabProps) {
             const isOpen = open === a.id;
             const isNew = !readIds.has(a.id);
             return (
-              <div key={a.id} className={!a.active ? 'opacity-50' : ''}>
+              <div key={a.id} {...justRow(isJust(a.id))} className={`${!a.active ? 'opacity-50' : ''} ${isJust(a.id) ? SAVED_HL : ''}`}>
                 <button onClick={() => openOne(a)}
                   className="w-full px-4 py-3 text-left hover:bg-white/45">
                   <div className="flex items-center gap-2">
@@ -216,7 +224,7 @@ export default function NoticeTab({ me, isAdmin, onMsg }: TabProps) {
                     {/* 未讀用圓點，不用「NEW」字樣 —— 中文介面裡英文標籤很跳 */}
                     {isNew && <span className="w-2 h-2 rounded-full bg-mor-slate shrink-0" />}
                     <span className={`text-sm flex-1 min-w-0 truncate ${isNew ? 'font-semibold' : ''}`}>
-                      {a.title}
+                      {isJust(a.id) && <SavedBadge />}{a.title}
                     </span>
                     {!a.active && <span className="text-[11px] text-gray-400 shrink-0">已下架</span>}
                     <span className="text-[11px] text-gray-400 shrink-0 tabular-nums">

@@ -54,6 +54,9 @@ import {
 import { accountsForBook } from '@/lib/purchase-pay';
 import AdvanceLedger from '@/components/AdvanceLedger';
 import { todayStr } from '@/lib/period';
+import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
+import { useJustSaved } from '@/lib/use-just-saved';
+import { SavedBadge } from '@/components/SavedToast';
 
 
 /*
@@ -304,6 +307,8 @@ export function AdvanceList({
 
   const estateName = useMemo(
     () => Object.fromEntries(estates.map((e) => [e.id, e.name])), [estates]);
+  // 存檔成功：那一列標黃「剛剛儲存」（lib/saved-feedback.ts 的 ③）
+  const { markSaved, isJust } = useJustSaved(rows);
 
   /* ══════════════════════════════════════════════════════════
    * 批次收回（2026-09-18・migration_274）
@@ -475,7 +480,9 @@ export function AdvanceList({
 
     const n = plan.lines.filter((l) => l.cut > 0).length;
     setPicked({}); setBPay(''); setBOpen(false);
-    setMsg(`${rParty} 退款 ${fmt(Number(bPay))}・扣了 ${n} 筆・其中 ${plan.cleared} 筆退完`);
+    savedToast(`${rParty} 退款 ${fmt(Number(bPay))}・扣了 ${n} 筆・其中 ${plan.cleared} 筆退完`);
+    // 標黃只標得了一列 —— 只退一筆（抽屜裡「收回剩下的」那條路）才標
+    if (scope.length === 1) markSaved(scope[0].id);
     await load();
   }
   const [recover, recovering] = useOnce(recoverInner);
@@ -540,8 +547,9 @@ export function AdvanceList({
       setMsg('沒有寫入任何資料 —— 可能是權限不足（暫付限會計以上）');
       return;
     }
+    savedToast(savedText(edit.id ? '已儲存' : '已新增', `${payload.counterparty}・${payload.usage}`));
+    markSaved(data[0].id);
     setEdit(null);
-    setMsg('已儲存');
     await load();
   }
   const [save, saveBusy] = useOnce(saveInner);
@@ -574,6 +582,7 @@ export function AdvanceList({
       .delete().eq('id', r.id).select('id');
     if (error) { setMsg('刪不掉：' + error.message); return; }
     if (!data || data.length === 0) { setMsg('沒有刪掉任何資料 —— 可能是權限不足'); return; }
+    savedToast(savedText('已刪除', `${r.counterparty}・${r.usage}`));
     await load();
   }
 
@@ -818,8 +827,8 @@ export function AdvanceList({
               const s = statusOf(r);
               const lost = forfeitedOf(r);
               return (
-                <tr key={r.id} className={`border-b border-mor-line/40 last:border-0 ${
-                  picked[r.id] ? 'bg-mor-bluelight/50' : ''}`}>
+                <tr key={r.id} {...justRow(isJust(r.id))} className={`border-b border-mor-line/40 last:border-0 ${
+                  isJust(r.id) ? SAVED_HL : picked[r.id] ? 'bg-mor-bluelight/50' : ''}`}>
                   {selectable.length > 0 && (
                     <td className="px-3 py-2.5 text-center">
                       {/*
@@ -842,7 +851,7 @@ export function AdvanceList({
                         className="align-middle disabled:opacity-30" />
                     </td>
                   )}
-                  <td className="px-3 py-2.5 text-gray-500 whitespace-nowrap">{r.paid_on ?? '—'}</td>
+                  <td className="px-3 py-2.5 text-gray-500 whitespace-nowrap">{isJust(r.id) && <SavedBadge />}{r.paid_on ?? '—'}</td>
                   {/* ★ 物業不再擠在項目後面當灰字 —— 它有自己的「用途」欄了 */}
                   <td className="px-3 py-2.5">{r.usage}</td>
                   <td className="px-3 py-2.5 text-right tabular-nums">

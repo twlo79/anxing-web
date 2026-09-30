@@ -1,4 +1,5 @@
 'use client';
+import { looksLikeError } from '@/lib/flash-kind';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Req from '@/components/Req';
 import MoneyInput from '@/components/MoneyInput';
@@ -10,6 +11,9 @@ import { DEFAULT_BOOK } from '@/lib/book';
 import { FEE_TYPES } from '@/lib/fee-types';
 import { ymShow } from '@/lib/period';
 import { softDelete } from '@/lib/trash';
+import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
+import { useJustSaved } from '@/lib/use-just-saved';
+import { SavedBadge } from '@/components/SavedToast';
 
 /**
  * 定期收費面板。**嵌在短租訂單頁裡,不佔側邊選單一格。**
@@ -60,8 +64,14 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
   const [expand, setExpand] = useState<string | null>(null);
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState('');
+  const { markSaved, isJust } = useJustSaved(rows);
 
-  function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 4000); }
+  function flash(t: string) {
+    // ★ 錯誤不自己消失（`looksLikeError`，全站同一套；2026-09-30 體檢）——
+    //   RPC 或資料庫丟回來的錯只顯示幾秒的話，使用者看到的是「按了沒反應」。
+    setMsg(t);
+    if (!looksLikeError(t)) setTimeout(() => setMsg((m) => (m === t ? '' : m)), 4000);
+  }
 
   const load = useCallback(async () => {
     const [rc, es, pr] = await Promise.all([
@@ -162,12 +172,15 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
       fee_type: edit.fee_type, item_name: edit.item_name.trim(), amount: edit.amount || 0,
       start_ym: edit.start_ym, end_ym: edit.end_ym || null, active: edit.active, note: edit.note || null,
     };
-    const { error } = edit.id
-      ? await supabase.from('recurring_charges').update(payload).eq('id', edit.id)
-      : await supabase.from('recurring_charges').insert(payload);
+    const { data, error } = edit.id
+      ? await supabase.from('recurring_charges').update(payload).eq('id', edit.id).select('id')
+      : await supabase.from('recurring_charges').insert(payload).select('id');
     setBusy('');
     if (error) return flash('儲存失敗:' + error.message);
-    setEdit(null); setTried(false); flash('已儲存,月份已產生'); load();
+    setEdit(null); setTried(false);
+    markSaved(edit.id || (data as { id: string }[] | null)?.[0]?.id);
+    savedToast(`${savedText(edit.id ? '已儲存' : '已新增', payload.item_name)}，月份已產生`);
+    load();
   }
 
   async function del(r: Rc) {
@@ -178,7 +191,7 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
       + `會移到回收桶,可以復原。`
     )) return;
     const res = await softDelete(supabase, 'recurring_charges', r.id);
-    flash(res.message); if (res.ok) load();
+    if (res.ok) { savedToast(savedText('已刪除', r.item_name)); load(); } else flash(res.message);
   }
 
   /** 補產到本月。冪等 —— 重複按只會補缺的月份,已填的金額不會被蓋掉。 */
@@ -187,7 +200,7 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
     const { data, error } = await supabase.rpc('rebuild_recurring_orders');
     setBusy('');
     if (error) return flash('產生失敗:' + error.message);
-    flash(`已補到本月（涵蓋 ${data ?? 0} 個月份）`); load();
+    savedToast(`已補到本月（涵蓋 ${data ?? 0} 個月份）`); load();
   }
 
   async function setAmount(o: Ord, v: number) {
@@ -256,9 +269,10 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
                       const os = orders[r.id] ?? [];
                       return (
                         <div key={r.id} className={!r.active ? 'opacity-50' : ''}>
-                          <div onClick={() => setExpand(isOpen ? null : r.id)}
-                            className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 py-2 text-sm cursor-pointer hover:bg-mor-sand/30 border-b border-mor-line/30">
+                          <div onClick={() => setExpand(isOpen ? null : r.id)} {...justRow(isJust(r.id))}
+                            className={`flex flex-wrap items-center gap-x-3 gap-y-1 px-1 py-2 text-sm cursor-pointer ${isJust(r.id) ? SAVED_HL : 'hover:bg-mor-sand/30'} border-b border-mor-line/30`}>
                             <span className="text-gray-400 text-xs">{isOpen ? '▾' : '▸'}</span>
+                            {isJust(r.id) && <SavedBadge />}
                             <span className="rounded px-1.5 py-0.5 text-[11px] bg-mor-bluelight text-mor-slate">{r.fee_type}</span>
                             <span className="font-medium">{r.item_name}</span>
                             <span className="text-xs text-gray-400">

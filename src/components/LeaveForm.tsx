@@ -7,6 +7,7 @@ import {
   planDays, segments, toYmd, totals, workHours,
   type DayPick, type DayPlan, type Hm, type HolidayRow, type WorkSettings, type Ymd,
 } from '@/lib/leave-days';
+import { savedToast } from '@/lib/saved-feedback';
 
 /**
  * 請假表單（2026-09-29 改版三版）：先選日期，再決定每一天怎麼請。
@@ -39,8 +40,10 @@ type Props = {
   remainOf: (code: string) => number | null;
   /** code → 今年已請幾小時（沒額度的假別用這個報累積） */
   usedOf: (code: string) => number;
-  onMsg: (text: string, err?: boolean) => void;
-  onDone: () => void;
+  /** ★ 成功訊息改走全站綠字（savedToast）、錯誤留在表單裡 —— 這支目前沒有用到 */
+  onMsg?: (text: string, err?: boolean) => void;
+  /** 送出成功。帶這一批的 batch_id —— 「3 狀態」那一頁拿它標黃 */
+  onDone: (batchId?: string) => void;
 };
 
 /**
@@ -76,7 +79,7 @@ function Step({ no, title, hint, children }: {
 /** 下拉：兩步用同一個樣子，寬度一致 */
 const SEL = 'h-10 w-full max-w-[260px] rounded-lg border border-mor-line bg-white px-3 text-sm';
 
-export default function LeaveForm({ types, remainOf, usedOf, onMsg, onDone }: Props) {
+export default function LeaveForm({ types, remainOf, usedOf, onDone }: Props) {
   const supabase = useMemo(() => createClient(), []);
   const [type, setType] = useState('');
   const [ws, setWs] = useState<WorkSettings>(DEFAULT_WS);
@@ -160,11 +163,11 @@ export default function LeaveForm({ types, remainOf, usedOf, onMsg, onDone }: Pr
       p_reason: reason || null,
     });
     if (error) { setErr('送出失敗：' + error.message); return; }
-    const r = data as { ok: boolean; message: string };
+    const r = data as { ok: boolean; message: string; batch_id?: string };
     if (!r?.ok) { setErr(r?.message ?? '送出失敗'); return; }
-    onMsg(r.message);
+    savedToast(r.message);
     setRows(new Map()); setReason('');
-    onDone();
+    onDone(r.batch_id);
   });
 
   /* ── 月曆格子 ── */

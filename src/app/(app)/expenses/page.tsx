@@ -25,6 +25,9 @@ import { softDelete } from '@/lib/trash';
 import { voucherBrief, isMultiVoucher } from '@/lib/voucher';
 import { DEFAULT_BOOK } from '@/lib/book';
 import TrashLink from '@/components/TrashLink';
+import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
+import { useJustSaved } from '@/lib/use-just-saved';
+import { SavedBadge } from '@/components/SavedToast';
 
 type Expense = {
   id: string; spent_on: string; item_name: string; amount: number;
@@ -129,6 +132,7 @@ export default function ExpensesPage() {
   // ★ 全站唯一一份訊息邏輯（lib/use-flash）：錯誤紅色留到按掉，成功 2.5 秒自己走
   const { msg, msgErr, flash, clearMsg } = useFlash(2500);
   const [edit, setEdit] = useState<Expense | null>(null);
+  const { markSaved, isJust } = useJustSaved(rows);
   const [starF, setStarF] = useState(false);     // 只看重要支出
   const [nonOpF, setNonOpF] = useState(false);   // 只看非營運
   /*
@@ -306,6 +310,7 @@ export default function ExpensesPage() {
     setRows((rs) => rs.map((x) => (x.id === r.id ? { ...x, starred: next } : x)));
     const { error } = await supabase.from('expenses').update({ starred: next }).eq('id', r.id);
     if (error) { flash('失敗:' + error.message); load(); return; }
+    savedToast(savedText(next ? '已關注' : '已取消關注', r.item_name));
     if (group) load();   // 母子連動由觸發器做,要重載才看得到整組
   }
 
@@ -424,7 +429,10 @@ export default function ExpensesPage() {
     const fe = await receiptsRef.current?.flush(data.id);
     setSaving(false);
     if (fe) return flash('憑證' + fe);
-    setEdit(null); setTried(false); flash('已儲存'); load();
+    setEdit(null); setTried(false);
+    markSaved(data.id);
+    savedToast(savedText(edit.id ? '已儲存' : '已新增', payload.item_name));
+    load();
   }
 
   // 來自請款單的支出只有 super_admin 能刪(RLS 也擋一次)。
@@ -444,7 +452,7 @@ export default function ExpensesPage() {
     const extra = e.source_item_id ? '\n\n這筆支出來自請款單。刪除後不會回寫請款單,若之後重填採購日也不會重新產生。' : '';
     if (!confirm(`確定刪除「${e.item_name}」($${fmt(e.amount)})?${extra}\n\n會移到回收桶,可以復原。`)) return;
     const r = await softDelete(supabase, 'expenses', e.id);
-    flash(r.message); if (r.ok) load();
+    if (r.ok) { savedToast(savedText('已刪除', e.item_name)); load(); } else flash(r.message);
   }
 
   function exportXlsx() {
@@ -741,11 +749,12 @@ export default function ExpensesPage() {
         ) : !sorted.length ? (
           <div className="rounded-xl glass px-6 py-10 text-center text-gray-400">無支出紀錄</div>
         ) : sorted.map((r) => (
-          <div key={`m-${r.id}`} onClick={() => setDetail(r)}
-            className="rounded-xl glass px-3 py-2.5 cursor-pointer active:bg-mor-sand/40">
+          <div key={`m-${r.id}`} onClick={() => setDetail(r)} {...justRow(isJust(r.id))}
+            className={`rounded-xl glass px-3 py-2.5 cursor-pointer ${isJust(r.id) ? SAVED_HL : 'active:bg-mor-sand/40'}`}>
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <div className="font-medium">
+                  {isJust(r.id) && <SavedBadge />}
                   <span className="truncate align-middle">{r.item_name}</span>
                   {r.non_operating && <NonOpTag />}
                   {isNonCash(r.tags) && <HkTag />}
@@ -807,8 +816,8 @@ export default function ExpensesPage() {
                 視窗上會被橫向捲出去，於是整張表變成看得到、點不到。
                 押金頁與請款單頁本來就是整列可點,這裡跟上。
               */
-              <tr key={r.id} onClick={() => setDetail(r)}
-                className="border-b border-mor-line/60 hover:bg-mor-bluelight/30 cursor-pointer">
+              <tr key={r.id} onClick={() => setDetail(r)} {...justRow(isJust(r.id))}
+                className={`border-b border-mor-line/60 ${isJust(r.id) ? SAVED_HL : 'hover:bg-mor-bluelight/30'} cursor-pointer`}>
                 <td className="px-3 py-2 whitespace-nowrap">{r.spent_on}</td>
                 <td className="px-3 py-2">
                   {/*
@@ -821,6 +830,7 @@ export default function ExpensesPage() {
                     ★ 標籤的樣子跟旁邊的「請款」一致 —— 同一欄裡三種標記
                       長成三個樣子的話，看的人得先學會分辨它們。
                   */}
+                  {isJust(r.id) && <SavedBadge />}
                   {r.item_name}
                   {r.non_operating && <NonOpTag />}
                   {isNonCash(r.tags) && <HkTag />}
@@ -897,7 +907,7 @@ export default function ExpensesPage() {
                 <td className="px-3 py-2 text-gray-500 max-w-56 truncate" title={r.note ?? ''}>{r.note ?? '—'}</td>
                 {/* 釘住的那一格要有自己的底色 —— 透明的話捲過去時
                     底下的內容會透出來，字疊在字上 */}
-                <td className="sticky right-0 z-10 bg-white px-3 py-2 text-right whitespace-nowrap space-x-2">
+                <td className={`sticky right-0 z-10 ${isJust(r.id) ? 'bg-amber-50' : 'bg-white'} px-3 py-2 text-right whitespace-nowrap space-x-2`}>
                   {/*
                     ══════════ 操作欄只留「星」與「檢視」 ══════════
                     （2026-08-19 使用者指定）
@@ -1255,7 +1265,7 @@ export default function ExpensesPage() {
                 子單掛不上去。母單金額不可改也是在這裡強制的（見 DeferralPanel）。
               */}
               {edit.id && (
-                <DeferralPanel expense={edit} canEdit onChanged={() => { setEdit(null); setTried(false); load(); }} />
+                <DeferralPanel expense={edit} canEdit onChanged={() => { markSaved(edit.id); setEdit(null); setTried(false); load(); }} />
               )}
               <Receipts ref={receiptsRef} kind="exp" parentId={edit.id || null} label="憑證圖片"
                 inheritFromRequestId={edit.request_id ?? null}

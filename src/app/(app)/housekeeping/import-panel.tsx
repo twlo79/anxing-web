@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
+import { savedToast } from '@/lib/saved-feedback';
 import {
   parseRows, splitAssignees, staffLookup, type HkStaff, type HkProperty,
 } from '@/lib/hkParse';
@@ -179,7 +180,7 @@ export default function ImportPanel({
       } else {
         const hit = (rep as { item: string; n: number }[] | null)
           ?.find((r) => r.item.includes('套上指派'))?.n ?? 0;
-        onMsg(`匯入 ${parsed.length} 筆，其中 ${hit} 筆已指派到行事曆上`);
+        savedToast(`匯入 ${parsed.length} 筆，其中 ${hit} 筆已指派到行事曆上`);
       }
       setRaw('');
       onClose();

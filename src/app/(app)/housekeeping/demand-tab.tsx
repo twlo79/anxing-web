@@ -1,4 +1,5 @@
 'use client';
+import { looksLikeError } from '@/lib/flash-kind';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import {
@@ -25,6 +26,9 @@ import {
   itemDeleteBlocked, demandDeleteBlocked, itemDeleteConfirm, demandDeleteConfirm,
 } from '@/lib/demand-delete';
 import { softDelete } from '@/lib/trash';
+import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
+import { useJustSaved } from '@/lib/use-just-saved';
+import { SavedBadge } from '@/components/SavedToast';
 import { useRouter } from 'next/navigation';
 
 /**
@@ -154,6 +158,7 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
   const [estates, setEstates] = useState<{ id: string; name: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState<Set<string>>(new Set());
+  const { markSaved, isJust } = useJustSaved(rows);
   const [edit, setEdit] = useState<
     { note: string; ship_to: string; ship_floor: string; items: Item[] } | null>(null);
   const [saving, setSaving] = useState(false);
@@ -171,7 +176,12 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
    */
   const router = useRouter();
   const [msg, setMsg] = useState('');
-  function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 4000); }
+  function flash(t: string) {
+    // ★ 錯誤不自己消失（`looksLikeError`，全站同一套；2026-09-30 體檢）——
+    //   RPC 或資料庫丟回來的錯只顯示幾秒的話，使用者看到的是「按了沒反應」。
+    setMsg(t);
+    if (!looksLikeError(t)) setTimeout(() => setMsg((m) => (m === t ? '' : m)), 4000);
+  }
   /** 勾選的需求項目 id。★ 跨單勾選沒有意義 —— 一張請款單對一張需求單 */
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [acting, setActing] = useState(false);
@@ -263,6 +273,7 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
       if (!r?.ok) return flash(r?.message ?? '建不出請款單');
       setPicked(new Set());
       await load();
+      savedToast(r.message || savedText('已建請款單', d.demand_no));
       // ★ 直接跳過去填金額 —— 不跳的話使用者得自己找那張單，而它是草稿、排在最後
       router.push('/purchases');
     } finally { setActing(false); }
@@ -290,7 +301,8 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
       }
       setPicked(new Set());
       await load();
-      flash(`已標記 ${ids.length} 項為已採購`);
+      markSaved(d.id);
+      savedToast(`已標記 ${ids.length} 項為已採購`);
     } finally { setActing(false); }
   }
 
@@ -329,7 +341,8 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
       if (error) return flash('改不動：' + error.message);
       if (!data?.length) return flash('沒有改到任何一列 —— 可能是權限');
       await load();
-      flash(`「${i.item_name}」改成${ITEM_STATUS_LABEL[to]}`);
+      markSaved(i.id);
+      savedToast(`「${i.item_name}」改成${ITEM_STATUS_LABEL[to]}`);
     } finally { setActing(false); }
   }
 
@@ -359,6 +372,7 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
       if (error) return flash('改不動：' + error.message);
       if (!data?.length) return flash('沒有改到任何一列 —— 可能是權限');
       await load();
+      savedToast(savedText('已儲存', i.item_name));
     } finally { setActing(false); }
   }
 
@@ -441,7 +455,8 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
         }
       }
       setSplit(null);
-      flash(add.length > 0 ? `已拆成 ${add.length + 1} 項` : '品名已更新');
+      markSaved(split.item.id);
+      savedToast(add.length > 0 ? `已拆成 ${add.length + 1} 項` : savedText('品名已更新', keep));
       await load();
     } finally { setActing(false); }
   }
@@ -461,8 +476,8 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
     setActing(true);
     try {
       const r = await softDelete(supabase, 'purchase_demand_items', i.id);
-      flash(r.message);
-      if (r.ok) await load();
+      if (r.ok) { savedToast(savedText(r.message, i.item_name)); await load(); }
+      else flash(r.message);
     } finally { setActing(false); }
   }
 
@@ -484,7 +499,8 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
     setActing(true);
     try {
       const r = await softDelete(supabase, 'purchase_demands', d.id);
-      flash(r.message);
+      if (r.ok) savedToast(savedText(r.message, d.demand_no));
+      else flash(r.message);
       if (r.ok) {
         setOpen((x) => { const n = new Set(x); n.delete(d.id); return n; });
         await load();
@@ -594,7 +610,7 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
     const { data: d, error } = await supabase.from('purchase_demands')
       .insert({ requester_id: profile.id, note: edit.note.trim() || null,
                 ship_to: edit.ship_to, ship_floor: edit.ship_floor.trim() || null })
-      .select('id').single();
+      .select('id, demand_no').single();
     if (error || !d) { setSaving(false); return onMsg('建立失敗：' + (error?.message ?? ''), true); }
 
     /*
@@ -615,7 +631,8 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
       return onMsg('項目儲存失敗：' + e2.message, true);
     }
     setEdit(null); setTried(false);
-    onMsg('採購需求已送出');
+    markSaved(d.id);
+    savedToast(savedText('採購需求已送出', d.demand_no));
     load();
   }
 
@@ -702,7 +719,8 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
             const p = demandProgress(d.items, d.status === 'cancelled');
             const isOpen = open.has(d.id);
             return (
-              <div key={d.id} className="rounded-xl glass overflow-hidden">
+              <div key={d.id} {...justRow(isJust(d.id))}
+                className={`rounded-xl glass overflow-hidden ${isJust(d.id) ? SAVED_HL : ''}`}>
                 {/*
                   整列可點開。摘要那一行已經回答了「買了沒、還缺什麼」——
                   展開只是為了看每一項的細節，不是必要動作。
@@ -711,7 +729,7 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                   const n = new Set(s); n.has(d.id) ? n.delete(d.id) : n.add(d.id); return n;
                 })}
                   className="w-full flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-left hover:bg-mor-sand/30">
-                  <span className="font-medium text-sm">{d.demand_no ?? '（未編號）'}</span>
+                  <span className="font-medium text-sm">{isJust(d.id) && <SavedBadge />}{d.demand_no ?? '（未編號）'}</span>
                   {/*
                     ★★★ 「誰提的」**每個人都要看得到**（2026-09-09）。
                       原本只給會計以上看 —— 但放寬讀取之後，
@@ -781,7 +799,8 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                       </div>
                     )}
                     {d.items.map((i) => (
-                      <div key={i.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-sm">
+                      <div key={i.id} {...justRow(isJust(i.id))}
+                        className={`flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-sm ${isJust(i.id) ? SAVED_HL : ''}`}>
                         {/*
                           ★★ 已經被領走的不給勾 —— 再帶一次會變成兩張請款單
                             請同一筆錢，而總額只是「比較大」，沒有地方會叫。
@@ -795,7 +814,7 @@ export default function DemandTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                             )
                             : <span className="w-[13px]" aria-hidden />
                         )}
-                        <span className="font-medium">{i.item_name}</span>
+                        <span className="font-medium">{isJust(i.id) && <SavedBadge />}{i.item_name}</span>
                         <span className="text-xs rounded bg-mor-sand px-1.5 py-0.5">
                           {i.purpose_type === 'office' ? '安幸辦公室' : estateName[i.estate_id] ?? '—'}
                         </span>
