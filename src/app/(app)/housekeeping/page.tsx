@@ -7,6 +7,7 @@ import StatsTab from './stats-tab';
 import DemandTab from './demand-tab';
 import SupplyTab from './supply-tab';
 import AlertsTab from './alerts-tab';
+import CleaningTab from './cleaning-tab';
 // 誰看得到「未來提醒」寫在 lib —— 這裡跟分頁清單兩處各寫一次就會不一致
 import { canSeeAlerts } from '@/lib/hk-alerts';
 
@@ -78,7 +79,7 @@ import { canSeeAlerts } from '@/lib/hk-alerts';
  *   未來提醒是**每週看一次**的東西。
  */
 const TAB_LABEL = {
-  calendar: '行事曆', stats: '排班統計', demand: '採購需求', supply: '備品管理',
+  calendar: '行事曆', cleaning: '清潔記錄', stats: '排班統計', demand: '採購需求', supply: '備品管理',
   alerts: '未來提醒',
 } as const;
 type TabKey = keyof typeof TAB_LABEL;
@@ -132,8 +133,11 @@ export default function HousekeepingPage() {
    * 不是靠這裡少給一個分頁。
    */
   const seeAlerts = canSeeAlerts(role);
+  // 清潔記錄（2026-09-30 從 /cleaning 搬進來）：跟原本側邊選單同一份名單 —— 會計不在裡面
+  const seeCleaning = ['cleaner', 'housekeeper', 'manager', 'super_admin'].includes(role ?? '');
   const tabs: TabKey[] = [
     'calendar',
+    ...(seeCleaning ? (['cleaning'] as TabKey[]) : []),
     ...(canEdit ? (['stats'] as TabKey[]) : []),
     'demand', 'supply',
     ...(seeAlerts ? (['alerts'] as TabKey[]) : []),
@@ -164,7 +168,7 @@ export default function HousekeepingPage() {
      * 桌機維持有 padding —— 那裡不缺寬度，貼邊反而難看。
      */
     <div className="-mx-4 px-0 py-4 md:mx-0 md:p-6">
-      <h1 className="text-xl md:text-2xl font-semibold mb-3 px-4 md:px-0">房務管理</h1>
+      <h1 className="mb-3 px-4 md:px-0">房務管理</h1>
 
       {/* 只有一個分頁時整條不畫 —— 一個孤零零的分頁看起來像壞掉 */}
       {tabs.length > 1 && (
@@ -191,6 +195,8 @@ export default function HousekeepingPage() {
       {/* ★ 每一個分頁都再檢查一次權限 —— 網址可以直接打 `?tab=alerts` */}
       {tab === 'alerts' && seeAlerts
         ? <AlertsTab />
+        : tab === 'cleaning' && seeCleaning
+        ? <CleaningTab />
         : tab === 'supply'
         ? <SupplyTab onMsg={(t, err) => setMsg({ t, err })} />
         : tab === 'demand'

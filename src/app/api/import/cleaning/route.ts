@@ -107,7 +107,7 @@ export async function POST(req: Request) {
       [r.record_date, r.property_raw || r.estate_name || '(未對應房源)', r.staff_name]
         .filter(Boolean).join('・'));
     await notifyImport('cleaning', importTitle(inserted, '筆', '清潔記錄'),
-      importBody(lines), '/cleaning');
+      importBody(lines), '/housekeeping?tab=cleaning');
   }
 
   return NextResponse.json({ inserted, updated: records.length - inserted, total: records.length, unmatchedProp }, { headers: CORS });

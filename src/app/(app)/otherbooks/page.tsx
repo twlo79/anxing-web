@@ -437,7 +437,7 @@ export default function OtherBooksPage() {
   if (!canSee) {
     return (
       <div className="p-6">
-        <h1 className="text-xl md:text-2xl font-semibold mb-3">其他收支帳</h1>
+        <h1 className="mb-3">其他收支帳</h1>
         <div className="rounded-xl border border-mor-line bg-white px-6 py-16 text-center text-gray-400">
           這一頁只有會計與總經理看得到。
         </div>
@@ -450,7 +450,7 @@ export default function OtherBooksPage() {
       <Toast msg={msg} error={msgErr} onClose={clearMsg} />
 
       <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3">
-        <h1 className="text-xl md:text-2xl font-semibold">其他收支帳</h1>
+        <h1>其他收支帳</h1>
         <span className="text-xs text-gray-400">
           {BOOK_LABEL[book]}・{BOOK_BIZ[book]}
         </span>

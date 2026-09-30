@@ -76,7 +76,7 @@ const ROLE_LABEL: Record<string, string> = {
 /**
  * 【房務 `cleaner`】（2026-08-16 使用者指定）
  *
- * 選單只留四項:出勤、房務管理、清潔記錄、設定。
+ * 選單只留三項:出勤、房務管理、設定（清潔記錄 2026-09-30 起是房務管理裡的分頁）。
  *
  * 【這是收窄選單，不是權限隔離】（使用者選的做法）
  *
@@ -147,7 +147,7 @@ const NAV: { href: string; label: string; icon: string; roles: string[]; group?:
    * 寫入仍然只有主管以上。
    */
   { href: '/housekeeping', label: '房務管理', icon: '🛎️', group: '每日工作', roles: ['cleaner', 'housekeeper', 'accountant', 'manager', 'super_admin'] },
-  { href: '/cleaning', label: '清潔記錄', icon: '🧹', group: '每日工作', roles: ['cleaner', 'housekeeper', 'manager', 'super_admin'] },
+  // 清潔記錄（/cleaning）2026-09-30 搬進房務管理當分頁（?tab=cleaning）；舊網址會轉址
   /*
    * 房源狀態（2026-09-15 使用者指定）—— 一條一個房源的日曆，看得出空房。
    *
