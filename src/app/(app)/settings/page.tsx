@@ -2,6 +2,7 @@
 import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import NotifyTab from './notify-tab';
+import InvoiceTab from './invoice-tab';
 import TrashTab from './trash-tab';
 import { Tabs } from '@/components/Tabs';
 
@@ -45,6 +46,7 @@ import { Tabs } from '@/components/Tabs';
 
 const TABS = [
   { key: 'notify', label: '通知設定', icon: '🔔' },
+  { key: 'invoice', label: '發票', icon: '🧾' },
   { key: 'trash', label: '紀錄', icon: '🗑️' },
 ] as const;
 type TabKey = (typeof TABS)[number]['key'];
@@ -85,7 +87,7 @@ function SettingsInner() {
           label: <><span className="mr-1.5">{t.icon}</span>{t.label}</>,
         }))} />
 
-      {tab === 'notify' ? <NotifyTab /> : <TrashTab initialTable={initialTable} />}
+      {tab === 'notify' ? <NotifyTab /> : tab === 'invoice' ? <InvoiceTab /> : <TrashTab initialTable={initialTable} />}
     </div>
   );
 }
