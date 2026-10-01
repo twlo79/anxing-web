@@ -11,6 +11,7 @@ import {
   fmtSize, fileTooBig, type EventKind,
   linkify, urlHref, urlLabel, eventShareText, lineShareUrl, shareVia, type ShareVia,
   canUpload, filesByPerson, saveBlob,
+  uploadForLabel, splitUploadPeople, UPLOAD_BACK_LABEL, type UploadPerson,
 } from '@/lib/board';
 import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
 import { useJustSaved } from '@/lib/use-just-saved';
@@ -101,8 +102,8 @@ export default function EventsTab({ meId, isAdmin, onMsg }: {
   const [events, setEvents] = useState<Ev[]>([]);
   const [files, setFiles] = useState<Fl[]>([]);
   const [names, setNames] = useState<Map<string, string>>(new Map());
-  /** 「傳給誰」下拉用的在職名單 */
-  const [people, setPeople] = useState<{ id: string; name: string }[]>([]);
+  /** 「代誰傳」下拉用的在職名單（帶權限 —— 房務排到後面） */
+  const [people, setPeople] = useState<UploadPerson[]>([]);
   const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [view, setView] = useState<Fl | null>(null);
@@ -113,7 +114,7 @@ export default function EventsTab({ meId, isAdmin, onMsg }: {
     const [{ data: ev, error }, { data: fl }, { data: pf }] = await Promise.all([
       supabase.from('board_events').select('*'),
       supabase.from('board_files').select('*').order('created_at'),
-      supabase.from('profiles').select('id, name, active').order('name'),
+      supabase.from('profiles').select('id, name, active, role').order('name'),
     ]);
     /*
      * ★★ RLS 擋下來的查詢回的是「成功、0 列」不是錯誤（README 坑 C）——
@@ -126,7 +127,7 @@ export default function EventsTab({ meId, isAdmin, onMsg }: {
     setNames(new Map((pf ?? []).map((p) => [p.id as string, p.name as string])));
     setPeople((pf ?? [])
       .filter((p) => (p as { active?: boolean }).active !== false)
-      .map((p) => ({ id: p.id as string, name: (p.name as string) ?? '—' })));
+      .map((p) => ({ id: p.id as string, name: (p.name as string) ?? '—', role: (p as { role?: string | null }).role ?? null })));
     setLoading(false);
   }, [supabase, onMsg]);
 
@@ -352,8 +353,10 @@ function EventRow({ ev, just, files, names, meId, isAdmin, people,
   onView: (f: Fl) => void;
 }) {
   const pick = useRef<HTMLInputElement>(null);
-  /** 「傳給誰」。預設自己 —— 九成的情況零個額外動作 */
+  /** 「代誰傳」。預設自己 —— 九成的情況零個額外動作 */
   const [forWho, setForWho] = useState(meId);
+  /** 前段是會開會的人、後段是房務（還是選得到，只是排後面）—— 規則在 lib */
+  const who2 = useMemo(() => splitUploadPeople(people, meId), [people, meId]);
   const kind = parseEventKind(ev.kind);
   const past = isPast(ev.starts_at);
   const mine = ev.created_by === meId;
@@ -486,10 +489,21 @@ function EventRow({ ev, just, files, names, meId, isAdmin, people,
                 title="代別人傳的話改這裡"
                 className="rounded-lg border border-mor-line px-2 py-1.5 text-[11.5px]
                            bg-white text-gray-600 max-w-[8.5rem]">
-                <option value={meId}>傳給　我自己</option>
-                {people.filter((p) => p.id !== meId).map((p) => (
-                  <option key={p.id} value={p.id}>傳給　{p.name}</option>
+                {/*
+                  ★ 「代 ○ 傳」不是「傳給 ○」—— 選到的人是檔案的署名，不是收件人
+                    （2026-10-01 使用者）。房務一段排最後、灰字：平常不開會，但偶爾要代她們傳。
+                */}
+                <option value={meId}>我自己</option>
+                {who2.front.map((p) => (
+                  <option key={p.id} value={p.id}>{uploadForLabel(p.name)}</option>
                 ))}
+                {who2.back.length > 0 && (
+                  <optgroup label={UPLOAD_BACK_LABEL}>
+                    {who2.back.map((p) => (
+                      <option key={p.id} value={p.id} className="text-gray-400">{uploadForLabel(p.name)}</option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
               <input ref={pick} type="file" accept={FILE_ACCEPT} hidden multiple
                 onChange={(e) => {

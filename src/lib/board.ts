@@ -837,3 +837,35 @@ export function saveBlob(blob: Blob, name: string): void {
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
+
+/* ── 活動上傳：「代誰傳」下拉的名單（2026-10-01 使用者:「有的人不用來開會，如何減少」）─────── */
+
+export type UploadPerson = { id: string; name: string; role?: string | null };
+
+/** 下拉上「代 ○ 傳」的字。選到的人是檔案的署名，不是收件人 —— 所以不叫「傳給」 */
+export function uploadForLabel(name: string): string {
+  return `代 ${name} 傳`;
+}
+
+/** 平常不開會的那一段的標題 */
+export const UPLOAD_BACK_LABEL = '房務（平常不開會）';
+
+/**
+ * 把在職名單分成兩段：前面是會開會的人，後面是權限為「房務」的人。
+ *
+ * ★ 看的是 `profiles.role`（權限管理頁那一欄），不是名字也不是我猜 ——
+ *   2026-10-01 稿上我把花放到後面，實際她是管家。規則只認那一欄。
+ * ★ 後面那段還是選得到（偶爾要代房務傳），只是排後面、灰字。
+ * ★ 自己不在名單裡 —— 「我自己」是獨立的第一個選項。
+ * ★ 段內順序照傳進來的（頁面是照資料庫 name 排的）—— 這裡不重排，
+ *   不然英文名與中文名的先後會跟畫面上其他地方不一樣。
+ */
+export function splitUploadPeople(
+  people: readonly UploadPerson[], meId: string,
+): { front: UploadPerson[]; back: UploadPerson[] } {
+  const others = people.filter((p) => p.id !== meId);
+  return {
+    front: others.filter((p) => p.role !== 'cleaner'),
+    back: others.filter((p) => p.role === 'cleaner'),
+  };
+}

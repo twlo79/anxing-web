@@ -6,6 +6,7 @@ import {
   eventOrder, nextEvent, isPast, daysUntil, untilLabel, fmtEventWhen,
   FILE_ACCEPT, fileKind, KIND_BADGE, canPreview, whyNoPreview, KIND_EXTS, FILE_BADGE,
   fmtSize, FILE_MAX_MB, fileTooBig, downloadName, fileExt,
+  uploadForLabel, splitUploadPeople,
 } from './board.ts';
 
 /* ── 誰看得到帳密 ─────────────────────────────────────────── */
@@ -780,4 +781,30 @@ test('fileExt', () => {
   assert.equal(fileExt('a.b.DOCX'), '.docx');
   assert.equal(fileExt('沒副檔名'), '');
   assert.equal(fileExt(null), '');
+});
+
+/* ── 「代誰傳」下拉（2026-10-01 使用者:「文字應該是代_傳」「有的人不用來開會」）─────── */
+const PEOPLE = [
+  { id: 'me', name: 'David', role: 'super_admin' },
+  { id: 'una', name: 'Una', role: 'cleaner' },
+  { id: 'hua', name: '花', role: 'housekeeper' },
+  { id: 'ayu', name: 'Ayu', role: 'cleaner' },
+  { id: 'cin', name: 'Cindy', role: 'accountant' },
+];
+test('uploadForLabel：是「代 ○ 傳」不是「傳給」', () => {
+  assert.equal(uploadForLabel('Ayu'), '代 Ayu 傳');
+});
+test('splitUploadPeople：房務排到後面，其他人在前面，自己不在裡面；段內順序照原本的', () => {
+  const r = splitUploadPeople(PEOPLE, 'me');
+  assert.deepEqual(r.front.map((p) => p.name), ['花', 'Cindy']);
+  assert.deepEqual(r.back.map((p) => p.name), ['Una', 'Ayu']);
+});
+/* ★ 看的是權限那一欄 —— 花是管家就在前面，跟名字無關 */
+test('★ splitUploadPeople：只認 role，沒有 role 的當一般人', () => {
+  const r = splitUploadPeople([{ id: 'x', name: '誰' }, { id: 'c', name: 'C', role: 'cleaner' }], 'me');
+  assert.deepEqual(r.front.map((p) => p.name), ['誰']);
+  assert.deepEqual(r.back.map((p) => p.name), ['C']);
+});
+test('splitUploadPeople：沒有房務時後段是空的（畫面上那一段整個不出現）', () => {
+  assert.deepEqual(splitUploadPeople([{ id: 'a', name: 'A', role: 'manager' }], 'me').back, []);
 });
