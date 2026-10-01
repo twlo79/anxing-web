@@ -15,6 +15,7 @@ import {
 } from '@/lib/board';
 import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
 import { useJustSaved } from '@/lib/use-just-saved';
+import { isStaleChunkError, STALE_CHUNK_MSG } from '@/lib/stale-chunk';
 import { SavedBadge } from '@/components/SavedToast';
 
 /*
@@ -802,8 +803,12 @@ function FileViewer({ file, onClose, onMsg }: {
   const supabase = useMemo(() => createClient(), []);
   const k = fileKind(file.name);
   const [url, setUrl] = useState<string | null>(null);
-  const [html, setHtml] = useState<string | null>(null);
+  /** Word：抓回來的檔案本體；交給 docx-preview 畫進 docxBox */
+  const [docx, setDocx] = useState<ArrayBuffer | null>(null);
+  const docxBox = useRef<HTMLDivElement>(null);
   const [err, setErr] = useState('');
+  /** 錯是「頁面舊版」那一種 → 多給一顆重新整理 */
+  const [stale, setStale] = useState(false);
 
   useEffect(() => {
     let dead = false;
@@ -821,26 +826,59 @@ function FileViewer({ file, onClose, onMsg }: {
        */
       if (k === 'pdf' || k === 'image') { setUrl(data.signedUrl); return; }
 
-      /* ── Word ── */
+      /* ── Word：先把檔抓回來，畫的事交給下面那個 effect（容器要先在畫面上） ── */
       try {
         const res = await fetch(data.signedUrl);
         const buf = await res.arrayBuffer();
-        /*
-         * ★ `import('mammoth')` 會解析到它的 browser build（package.json 的
-         *   `browser` 欄位）。要先 `npm i mammoth`，沒裝的話 build 會失敗。
-         */
-        const mammoth: any = await import('mammoth');
-        const out = await (mammoth.default ?? mammoth)
-          .convertToHtml({ arrayBuffer: buf });
         if (dead) return;
-        setHtml(out?.value || '<p>（這份 Word 裡沒有文字）</p>');
+        setDocx(buf);
       } catch (e: any) {
         if (dead) return;
-        setErr('這份 Word 打不開：' + (e?.message ?? e) + '\n請下載，或另存成 PDF 再傳一次。');
+        setErr('拿不到這份檔案：' + (e?.message ?? e));
       }
     })();
     return () => { dead = true; };
   }, [supabase, file.path, k]);
+
+  /*
+   * Word 畫版面（2026-10-01 使用者:「版型會跑」→ 換 docx-preview）。
+   *
+   * ★ docx-preview 照 Word 的版面畫：頁面寬、表格欄寬、字型、粗體、頁首頁尾、分頁。
+   *   mammoth 只保留內容（p/table/strong），表格一律撐滿、欄寬全丟。
+   * ★ 它畫的是 DOM 元素，不跑 docx 裡的任何腳本或巨集；圖片用 base64 內嵌。
+   * ★ 兩個都**動態載入** —— 只有點開 Word 才需要。
+   * ★ docx-preview 失敗（不是舊版那種）就退回 mammoth：至少看得到內容。
+   */
+  useEffect(() => {
+    if (!docx || !docxBox.current) return;
+    let dead = false;
+    const box = docxBox.current;
+    (async () => {
+      try {
+        const dp: any = await import('docx-preview');
+        box.innerHTML = '';
+        await dp.renderAsync(docx, box, undefined, {
+          inWrapper: true, ignoreWidth: false, ignoreHeight: false, ignoreFonts: false,
+          breakPages: true, renderHeaders: true, renderFooters: true, useBase64URL: true,
+        });
+      } catch (e: any) {
+        if (dead) return;
+        // ★ 剛部署完、頁面還是舊版 → 抓不到那一塊程式。不是檔案壞（lib/stale-chunk）
+        if (isStaleChunkError(e)) { setStale(true); setErr(STALE_CHUNK_MSG); return; }
+        try {
+          const mammoth: any = await import('mammoth');
+          const out = await (mammoth.default ?? mammoth).convertToHtml({ arrayBuffer: docx });
+          if (dead) return;
+          box.innerHTML = `<div class="p-6 text-[14px] leading-relaxed docx-preview">${out?.value || '<p>（這份 Word 裡沒有文字）</p>'}</div>`;
+        } catch (e2: any) {
+          if (dead) return;
+          if (isStaleChunkError(e2)) { setStale(true); setErr(STALE_CHUNK_MSG); return; }
+          setErr('這份 Word 打不開：' + (e2?.message ?? e2) + '\n請下載，或另存成 PDF 再傳一次。');
+        }
+      }
+    })();
+    return () => { dead = true; };
+  }, [docx]);
 
   const download = async () => {
     // ★ blob ＋ <a download>：中文檔名走 HTTP 標頭會變 %E5%AE%89…（2026-10-01，lib/board.ts downloadName）
@@ -870,14 +908,21 @@ function FileViewer({ file, onClose, onMsg }: {
         {k === 'word' && (
           <div className="px-4 py-2 bg-amber-50 border-b border-amber-200
                           text-[11.5px] text-amber-900 leading-relaxed">
-            這是<b>解出來的內容</b>，<b>排版跟原檔不一樣</b> ——
-            頁首頁尾、頁碼、文字方塊、分欄、字型都不會出現。要看原樣請按右上角「下載原檔」。
+            盡量照原檔排版，但<b>不是 Word 本體</b> —— 文字方塊、SmartArt、特殊字型可能不一樣。要看原樣請按右上角「下載原檔」。
           </div>
         )}
 
         <div className="flex-1 min-h-0 overflow-auto bg-[#F6F5F2]">
           {err && (
-            <div className="p-6 text-sm text-red-600 whitespace-pre-line leading-relaxed">{err}</div>
+            <div className="p-6 text-sm text-red-600 whitespace-pre-line leading-relaxed">
+              {err}
+              {stale && (
+                <div className="mt-3">
+                  <button onClick={() => location.reload()}
+                    className="rounded-lg bg-mor-slate text-white px-3 py-1.5 text-sm font-medium hover:bg-mor-slatedark">重新整理</button>
+                </div>
+              )}
+            </div>
           )}
           {!err && k === 'pdf' && (
             url
@@ -900,18 +945,11 @@ function FileViewer({ file, onClose, onMsg }: {
               : <div className="p-6 text-sm text-gray-400">載入中…</div>
           )}
           {!err && k === 'word' && (
-            html
-              ? (
-                /*
-                 * ★ mammoth 的輸出是**它自己產的 HTML**（來源是使用者傳的 docx）。
-                 *   它不會把 docx 裡的巨集或腳本帶出來 —— 轉出來的只有
-                 *   p / h1-6 / strong / em / ul / ol / table / img 這些標籤。
-                 */
-                <div className="p-6 bg-white m-4 rounded-xl shadow-sm docx-preview
-                                text-[14px] leading-relaxed"
-                  dangerouslySetInnerHTML={{ __html: html }} />
-              )
-              : <div className="p-6 text-sm text-gray-400">解檔中…</div>
+            <>
+              {!docx && <div className="p-6 text-sm text-gray-400">解檔中…</div>}
+              {/* docx-preview 把頁面畫進這個容器（它自己會包一張一張白色的「頁」） */}
+              <div ref={docxBox} className="docx-wrap p-4" />
+            </>
           )}
         </div>
       </div>

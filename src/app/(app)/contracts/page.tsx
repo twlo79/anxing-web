@@ -2743,10 +2743,14 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                     <span className="truncate">不開{sl.skipNote ? `（${sl.skipNote}）` : ''}</span>
                     <button onClick={() => unskipInvoiceMonth(sl.skipId!, sl.ym)} className="text-mor-slate hover:text-mor-slatedark shrink-0">復原</button>
                   </>
-                ) : st === 'before' ? (
-                  <span className="text-gray-400">起算月之前</span>
                 ) : (
                   <>
+                    {/*
+                      ★ 起算月只管「首頁待開清單列不列、算不算逾期」，**不擋開發票**。
+                        2026-10-01 第一版把起算月之前的列印成灰字「起算月之前」沒給鈕 ——
+                        使用者：「這裡為何不能開 8 月的發票」。想補開舊月份的，本來就該開得了。
+                    */}
+                    {st === 'before' && <span className="text-gray-400 text-[11px]">起算月之前，不列待開</span>}
                     <button onClick={() => openDraft(sl)}
                       disabled={frozen} title={frozen ? '這一期已關帳，開不了發票' : ''}
                       className="rounded-lg bg-mor-slate text-white px-2.5 py-1 font-medium hover:bg-mor-slatedark disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed">開發票</button>
