@@ -28,7 +28,7 @@ import { earnestOnlyMissing, monthlyRentToSave } from '@/lib/earnest';
 import { useOpenFromUrl } from '@/lib/open-from-url';
 import { ONEOFF_PRESETS, presetOf, feeLabel, canInvoiceFee } from '@/lib/fee-types';
 import ContractFees, { type Rc } from '@/components/ContractFees';
-import { feeMonthly, leasePeriods, periodOf } from '@/lib/lease';
+import { feeMonthly, cadenceStep, ymShow } from '@/lib/lease';
 import { dueDateOf, payDayOf, dueDayText, fmtDue, periodRange, fmtPeriodRange, rentMonthCount, checkContractDates } from '@/lib/due-date';
 import { keyBase, onlyKeyOf } from '@/lib/ltKey';
 // 關帳：畫面上擋住的判斷跟資料庫那支守衛走**同一份規則**（migration_249）
@@ -1690,11 +1690,14 @@ const nameOf = (c: Contract) =>
               </div>
 
                 <div className="border-t border-dashed border-mor-line -mx-3 my-3" />
-                {/* 每期應收小計（2026-09-24 使用者指定）：算給人看的，不存。折讓與一次性費用不算 —— 那些在收租視窗才發生 */}
+                {/*
+                  每期應收小計（2026-09-24 使用者指定）：算給人看的，不存。折讓與一次性費用不算 —— 那些在收租視窗才發生。
+                  ★ 固定加費是每月的（migration_306），一期有幾個月就乘幾（年繳 × 12）；月繳 × 1 不印。
+                */}
                 <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
                   <span className="text-gray-600">每期應收
-                    <span className="text-[11px] text-gray-400 ml-1.5">＝ 租金 {fmt(edit.amount_per_period ?? 0)} ＋ 固定加費 {fmt(feeTotal)}</span></span>
-                  <b className="text-base tabular-nums">${fmt((edit.amount_per_period ?? 0) + feeTotal)}</b>
+                    <span className="text-[11px] text-gray-400 ml-1.5">＝ 租金 {fmt(edit.amount_per_period ?? 0)} ＋ 固定加費 {fmt(feeTotal)}{cadenceStep(edit.cadence) > 1 ? ` × ${cadenceStep(edit.cadence)}` : ''}</span></span>
+                  <b className="text-base tabular-nums">${fmt((edit.amount_per_period ?? 0) + feeTotal * cadenceStep(edit.cadence))}</b>
                 </div>
                 {/*
                   ★ 一句話講完訂金與押金的去向，取代原本兩個「收退狀態 →」連結。
@@ -1961,8 +1964,8 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
   const [feeRows, setFeeRows] = useState<any[]>([]);
   /** 這張契約的固定加費設定。收租視窗只讀,要改請到編輯契約。 */
   const [rcRows, setRcRows] = useState<Rc[]>([]);
-  const rcPeriods = useMemo(
-    () => leasePeriods(c.start_date, c.end_date, c.cadence), [c.start_date, c.end_date, c.cadence]);
+  /** 一期幾個月 —— 固定加費是每月的，每期應收明細要乘上它（年繳 12、月繳 1） */
+  const rcStep = cadenceStep(c.cadence);
   /*
    * 一次性加費的暫存。`label` 是使用者選的那一項（電費／飲用水／…）,
    * 送出時拆成 fee_type ＋ item_name 兩欄（migration_145）。
@@ -2683,9 +2686,9 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
               <span className="text-xs text-gray-400">到「編輯契約」修改</span>
             </div>
             {/*
-              加費與租金都是「一期一筆」（migration_106）。
-              「管理費 3,000」就是這一期加 3,000 —— 年繳約要收 36,000
-              就直接填 36,000，系統不會替你乘上月數。
+              租金是一期一筆；固定加費是**每月**一張（migration_306，2026-10-01 使用者:「固定加費一期是一個月」）。
+              所以非月繳的每一列印「管理費（月）× 12　$95,436」—— 這一期實際會收到的數字，
+              不是每月單價。月繳約 × 1 不印，長得跟以前一樣。
             */}
             <div className="space-y-1 text-sm">
               <div className="flex items-baseline justify-between">
@@ -2697,21 +2700,22 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                   className={`flex items-baseline justify-between ${r.active ? '' : 'text-gray-400 line-through decoration-gray-300'}`}>
                   <span>
                     {feeLabel(r.fee_type, r.item_name)}
+                    {rcStep > 1 && <span className="text-gray-500">（月）× {rcStep}</span>}
                     {!r.active && <span className="ml-1.5 no-underline text-[11px] text-amber-600">暫停中</span>}
                     {r.end_ym && r.active && (
                       <span className="ml-1.5 text-[11px] text-gray-400">
-                        收到{periodOf(rcPeriods, r.end_ym)?.label ?? r.end_ym}為止
+                        收到 {ymShow(r.end_ym)} 為止
                       </span>
                     )}
                   </span>
-                  <span className="tabular-nums">${fmt(r.amount)}</span>
+                  <span className="tabular-nums">${fmt(Number(r.amount) * rcStep)}</span>
                 </div>
               ))}
               {!rcRows.length && <div className="text-xs text-gray-400">沒有固定加費</div>}
               <div className="flex items-baseline justify-between border-t border-mor-line pt-1.5 mt-1.5 font-semibold">
                 <span>合計</span>
                 <span className="tabular-nums">
-                  ${fmt(Number(c.amount_per_period || 0) + feeMonthly(rcRows))}
+                  ${fmt(Number(c.amount_per_period || 0) + feeMonthly(rcRows) * rcStep)}
                 </span>
               </div>
             </div>
@@ -3110,7 +3114,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                                   <td className="py-0.5 text-gray-600">
                                     {l.label}
                                     {l.kind === 'fixed' && (
-                                      <span className="ml-1.5 text-[10px] text-gray-400">每期固定</span>
+                                      <span className="ml-1.5 text-[10px] text-gray-400">每月固定</span>
                                     )}
                                   </td>
                                   <td className={`py-0.5 w-24 text-right tabular-nums ${
@@ -3413,7 +3417,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                                 {l.paid ? '✓' : '·'}
                               </span>
                               <span className="text-gray-600">{l.label}</span>
-                              {l.kind === 'fixed' && <span className="text-[10px] text-gray-400">每期固定</span>}
+                              {l.kind === 'fixed' && <span className="text-[10px] text-gray-400">每月固定</span>}
                               <span className={`ml-auto tabular-nums ${
                                 l.negative ? 'text-orange-600' : 'text-gray-700'}`}>
                                 {l.negative ? '−' : ''}${fmt(l.amount)}
@@ -3604,7 +3608,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts }: {
                     <tr key={li} className="border-b border-mor-line/40 last:border-0">
                       <td className="py-1.5 pr-2 text-gray-600">
                         {l.label}
-                        {l.kind === 'fixed' && <span className="ml-1 text-[10px] text-gray-400">每期固定</span>}
+                        {l.kind === 'fixed' && <span className="ml-1 text-[10px] text-gray-400">每月固定</span>}
                       </td>
                       {/* tabular-nums + text-right：金額的個位數一定切齊 */}
                       <td className={`py-1.5 text-right tabular-nums whitespace-nowrap ${

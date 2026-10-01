@@ -63,7 +63,7 @@ export default function ContractFees({
    * 而那正是這個元件搬到編輯視窗要解決的問題。
    */
   onPending?: (rows: Rc[]) => void;
-  /** 每期固定加費合計（生效中的）變動時回報 —— 母層拿去算「每期應收」小計（2026-09-24） */
+  /** 每月固定加費合計（生效中的）變動時回報 —— 母層乘上一期的月數算「每期應收」小計（2026-09-24；306 之後是每月） */
   onTotal?: (perPeriod: number) => void;
 }) {
   const supabase = useMemo(() => createClient(), []);
@@ -126,7 +126,7 @@ export default function ContractFees({
       // 預設租期第一個月 —— 大部分情況就是整段租期都要收。
       // 取 leaseMonths 的第一項而不是 start_date 的月份:兩者理應相同,
       // 但取同一個來源就不可能出現「預設值不在選項裡」。
-      start_ym: leasePeriods(contract.start_date, contract.end_date, contract.cadence)[0]?.ym
+      start_ym: leasePeriods(contract.start_date, contract.end_date, 'monthly')[0]?.ym
         || ymOf(contract.start_date) || ymOf(new Date().toISOString()),
       end_ym: null, active: true, note: null,
     };
@@ -135,8 +135,8 @@ export default function ContractFees({
   async function save() {
     if (!draft) return;
     if (!(Number(draft.amount) > 0)) return flash('請填金額');
-    if (!/^\d{6}$/.test(draft.start_ym)) return flash('請選開始期別');
-    if (draft.end_ym && draft.end_ym < draft.start_ym) return flash('結束期別不能早於開始期別');
+    if (!/^\d{6}$/.test(draft.start_ym)) return flash('請選開始月份');
+    if (draft.end_ym && draft.end_ym < draft.start_ym) return flash('結束月份不能早於開始月份');
 
     // 新增契約中：只存在畫面上，等契約 insert 完再一起寫
     if (isNew) {
@@ -158,7 +158,7 @@ export default function ContractFees({
       : await supabase.from('contract_recurring_charges').insert(payload).select('id');
     setBusy(false);
     if (error) return flash('儲存失敗:' + error.message);
-    savedToast(savedText(draft.id ? '已儲存' : '已新增', feeLabel(draft.fee_type, draft.item_name)) + ',各期已更新');
+    savedToast(savedText(draft.id ? '已儲存' : '已新增', feeLabel(draft.fee_type, draft.item_name)) + ',各月已更新');
     markSaved(draft.id || savedRows?.[0]?.id);
     setDraft(null);
     await load();
@@ -180,8 +180,8 @@ export default function ContractFees({
     const unpaid = Math.max(0, (s?.n ?? 0) - (s?.paid ?? 0));
     if (r.active && !confirm(
       `暫停「${feeLabel(r.fee_type, r.item_name)}」?\n\n`
-      + `尚未收款的 ${unpaid} 期會被移除（營收認列跟著消失）。\n`
-      + (s?.paid ? `已收款的 ${s.paid} 期一律保留 —— 錢收了就是收了。\n` : '')
+      + `尚未收款的 ${unpaid} 個月會被移除（營收認列跟著消失）。\n`
+      + (s?.paid ? `已收款的 ${s.paid} 個月一律保留 —— 錢收了就是收了。\n` : '')
       + `\n隨時可以按「恢復」把它加回來。`
     )) return;
     setBusy(true);
@@ -190,8 +190,8 @@ export default function ContractFees({
     setBusy(false);
     if (error) return flash('失敗:' + error.message);
     savedToast(r.active
-      ? savedText('已暫停', feeLabel(r.fee_type, r.item_name)) + '，未收款的期別已移除'
-      : savedText('已恢復', feeLabel(r.fee_type, r.item_name)) + '，各期重新產生');
+      ? savedText('已暫停', feeLabel(r.fee_type, r.item_name)) + '，未收款的月份已移除'
+      : savedText('已恢復', feeLabel(r.fee_type, r.item_name)) + '，各月重新產生');
     markSaved(r.id);
     await load();
     onChanged?.();
@@ -204,7 +204,7 @@ export default function ContractFees({
   async function stopAt(r: Rc) {
     const def = toMonthInput(r.end_ym) || new Date().toISOString().slice(0, 7);
     const v = prompt(
-      `「${feeLabel(r.fee_type, r.item_name)}」收到哪一期為止?\n\n`
+      `「${feeLabel(r.fee_type, r.item_name)}」收到哪一個月為止?\n\n`
       + `格式 YYYY-MM。填 2026-07 表示收到 2026 年 7 月，8 月起不再產生。\n\n`
       + `之後尚未收款的會自動刪除（營收認列跟著消失），\n`
       + `已經收款的一律保留 —— 錢收了就是收了。`,
@@ -212,7 +212,7 @@ export default function ContractFees({
     if (v === null) return;
     const ym = fromMonthInput(v.trim());
     if (!ym) return flash('格式要像 2026-07');
-    if (ym < r.start_ym) return flash('結束期別不能早於開始期別');
+    if (ym < r.start_ym) return flash('結束月份不能早於開始月份');
     if (isNew) {
       setRows((rs) => rs.map((x) => (x.id === r.id ? { ...x, end_ym: ym } : x)));
       return;
@@ -234,11 +234,11 @@ export default function ContractFees({
     if (!confirm(
       `刪除設定「${feeLabel(r.fee_type, r.item_name)}」?\n\n`
       + (s?.paid
-        ? `⚠ 底下有 ${s.paid} 期已收款（$${fmt(s.paidAmt)}），那些會留著。\n`
-          + `尚未收款的 ${s.n - s.paid} 期會被刪除。\n\n`
+        ? `⚠ 底下有 ${s.paid} 個月已收款（$${fmt(s.paidAmt)}），那些會留著。\n`
+          + `尚未收款的 ${s.n - s.paid} 個月會被刪除。\n\n`
           + `若只是要停止收費，請改按「暫停」或「停止收費」——\n`
           + `刪掉設定之後就看不出這筆費用曾經存在過。\n`
-        : `尚未收款的 ${s?.n ?? 0} 期會一併刪除。\n`)
+        : `尚未收款的 ${s?.n ?? 0} 個月會一併刪除。\n`)
       + `\n會移到回收桶,可以復原。`
     )) return;
     setBusy(true);
@@ -257,22 +257,22 @@ export default function ContractFees({
   const live = feeMonthly(rows);
   useEffect(() => { onTotal?.(live); /* eslint-disable-next-line */ }, [live]);
   /*
-   * 期別跟著契約的繳別 —— 年繳約一年一期，不是十二個月。
-   * 「管理費 3,000」就是這一期加 3,000；要收 36,000 就填 36,000。
-   * （migration_106 之前是每月一張,年繳契約因此多收了 11 個月。）
+   * ★ 固定加費一個月一張，不看主約的繳別（2026-10-01 使用者:「固定加費一期是一個月，不要讀到主約的期別」，
+   *   migration_306）。所以這裡的「期」永遠是月 —— 年繳約的下拉也要列得出 11 月、12 月。
+   *   （106 曾經讓它跟著繳別走：年繳約一年一張；那一版同一張契約會出現 13 張與 2 張兩種節奏。）
    */
   const periods = useMemo(
-    () => leasePeriods(contract.start_date, contract.end_date, contract.cadence),
-    [contract.start_date, contract.end_date, contract.cadence]);
+    () => leasePeriods(contract.start_date, contract.end_date, 'monthly'),
+    [contract.start_date, contract.end_date]);
 
   return (
     <div className="space-y-2">
       <div className="flex items-baseline justify-between gap-2">
         <div className="text-xs font-semibold text-gray-500">
-          固定加費<span className="ml-1.5 font-normal text-gray-400">每一期自動加入</span>
+          固定加費<span className="ml-1.5 font-normal text-gray-400">每個月自動加入</span>
         </div>
         <div className="text-xs text-gray-500">
-          {rows.length === 0 ? '尚未設定' : <>每期 <b className="text-mor-ink">${fmt(live)}</b></>}
+          {rows.length === 0 ? '尚未設定' : <>每月 <b className="text-mor-ink">${fmt(live)}</b></>}
         </div>
       </div>
 
@@ -291,7 +291,7 @@ export default function ContractFees({
               <div className="min-w-0">
                 {isJust(r.id) && <SavedBadge />}
                 <span className="font-medium">{feeLabel(r.fee_type, r.item_name)}</span>
-                <span className="ml-2">${fmt(r.amount)}<span className="text-xs text-gray-400"> / 期</span></span>
+                <span className="ml-2">${fmt(r.amount)}<span className="text-xs text-gray-400"> / 月</span></span>
                 {off && <span className="ml-2 text-xs rounded bg-amber-100 text-amber-700 px-1.5 py-0.5">暫停中</span>}
                 {ended && <span className="ml-2 text-xs rounded bg-gray-200 text-gray-600 px-1.5 py-0.5">收到 {toMonthInput(r.end_ym)} 為止</span>}
               </div>
@@ -309,14 +309,14 @@ export default function ContractFees({
             </div>
             {/*
               「明細（N 期，M 期已收）▸」（2026-09-24 使用者指定）——
-              取代原本那句「已產生 N 期」。點開一格一格列每一期收了沒；那些期別就是月租單，資料本來就有。
+              取代原本那句「已產生 N 期」。點開一格一格列每一個月收了沒；那些月份就是費用單，資料本來就有。
             */}
             <div className="text-[11px] text-gray-400 mt-0.5 flex flex-wrap items-center gap-x-2">
               <span>{toMonthInput(r.start_ym)} 起</span>
               {s && s.n > 0 && (
                 <button type="button" onClick={() => setOpenIds((o) => ({ ...o, [r.id]: !o[r.id] }))}
                   className="text-mor-slate hover:text-mor-slatedark">
-                  明細（{s.n} 期{s.paid ? `，${s.paid} 期已收` : ''}）{openIds[r.id] ? '▾' : '▸'}
+                  明細（{s.n} 個月{s.paid ? `，${s.paid} 個月已收` : ''}）{openIds[r.id] ? '▾' : '▸'}
                 </button>
               )}
             </div>
@@ -327,7 +327,7 @@ export default function ContractFees({
                     <span key={it.ym}>{toMonthInput(it.ym)} <b className={it.paid ? 'text-mor-greendark' : 'text-gray-400 font-normal'}>{it.paid ? '已收' : '未收'}</b> {fmt(it.amount)}</span>
                   ))}
                 </div>
-                <div className="mt-1 text-gray-400">共 {s.n} 期・已收 ${fmt(s.paidAmt)}・未收 ${fmt(s.unpaidAmt)}</div>
+                <div className="mt-1 text-gray-400">共 {s.n} 個月・已收 ${fmt(s.paidAmt)}・未收 ${fmt(s.unpaidAmt)}</div>
               </div>
             )}
           </div>
@@ -350,26 +350,26 @@ export default function ContractFees({
               </select>
             </label>
             <label className="flex flex-col gap-1">
-              <span className="text-[11px] text-gray-500">每期金額</span>
+              <span className="text-[11px] text-gray-500">每月金額</span>
               <MoneyInput value={draft.amount || 0} placeholder="0"
                 onChange={(n) => setDraft({ ...draft, amount: n })}
                 className="h-11 md:h-8 rounded-lg border border-mor-line px-2 text-sm text-right bg-white" />
             </label>
             <label className="flex flex-col gap-1">
-              <span className="text-[11px] text-gray-500">開始期別</span>
+              <span className="text-[11px] text-gray-500">開始月份</span>
               <select value={periodOf(periods, draft.start_ym)?.ym ?? draft.start_ym}
                 onChange={(e) => setDraft({ ...draft, start_ym: e.target.value })}
                 className="h-11 md:h-8 rounded-lg border border-mor-line px-2 text-sm bg-white">
                 {/* 舊資料的期別可能落在租期外(租期後來改過) —— 留一個選項,
-                    否則一打開編輯就被下拉改成第一期,而且不會有提示 */}
+                    否則一打開編輯就被下拉改成第一個月,而且不會有提示 */}
                 {!periodOf(periods, draft.start_ym) && (
                   <option value={draft.start_ym}>{ymShow(draft.start_ym)}（不在租期內）</option>
                 )}
-                {periods.map((p) => <option key={p.ym} value={p.ym}>{p.label}</option>)}
+                {periods.map((p) => <option key={p.ym} value={p.ym}>{ymShow(p.ym)}</option>)}
               </select>
             </label>
             <label className="flex flex-col gap-1">
-              <span className="text-[11px] text-gray-500">結束期別<span className="text-gray-400">（不選＝到租期結束）</span></span>
+              <span className="text-[11px] text-gray-500">結束月份<span className="text-gray-400">（不選＝到租期結束）</span></span>
               <select value={draft.end_ym ? (periodOf(periods, draft.end_ym)?.ym ?? draft.end_ym) : ''}
                 onChange={(e) => setDraft({ ...draft, end_ym: e.target.value || null })}
                 className="h-11 md:h-8 rounded-lg border border-mor-line px-2 text-sm bg-white">
@@ -377,10 +377,10 @@ export default function ContractFees({
                 {draft.end_ym && !periodOf(periods, draft.end_ym) && (
                   <option value={draft.end_ym}>{ymShow(draft.end_ym)}（不在租期內）</option>
                 )}
-                {/* 只列開始期別之後的期 —— 選得到更早的期就等於留了一個
+                {/* 只列開始月份之後的月 —— 選得到更早的月就等於留了一個
                     必定被擋下來的選項,而擋下來的訊息使用者要按了才看得到 */}
                 {periods.filter((p) => !draft.start_ym || p.ym >= draft.start_ym)
-                  .map((p) => <option key={p.ym} value={p.ym}>{p.label}</option>)}
+                  .map((p) => <option key={p.ym} value={p.ym}>{ymShow(p.ym)}</option>)}
               </select>
             </label>
           </div>
@@ -398,7 +398,7 @@ export default function ContractFees({
       {/* 沒有租期就算不出期別。先講,不然按了新增只會看到一個空的下拉。 */}
       {canEdit && !draft && !periods.length && (
         <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-          先填「租期起」與「租期迄」，才能設定固定加費的期別。
+          先填「租期起」與「租期迄」，才能設定固定加費的月份。
         </div>
       )}
 
