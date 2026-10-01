@@ -5,7 +5,7 @@ import {
   EVENT_KINDS, KIND_LABEL, isEventKind, parseEventKind, kindLabel,
   eventOrder, nextEvent, isPast, daysUntil, untilLabel, fmtEventWhen,
   FILE_ACCEPT, fileKind, KIND_BADGE, canPreview, whyNoPreview, KIND_EXTS, FILE_BADGE,
-  fmtSize, FILE_MAX_MB, fileTooBig,
+  fmtSize, FILE_MAX_MB, fileTooBig, downloadName, fileExt,
 } from './board.ts';
 
 /* ── 誰看得到帳密 ─────────────────────────────────────────── */
@@ -761,4 +761,23 @@ test('matchForm：沒中的還是回 false', () => {
 test('★ matchForm：沒有使用說明的那幾筆不會爆', () => {
   assert.equal(matchForm({ id: '2', title: '客戶收據' }, '收據'), true);
   assert.equal(matchForm({ id: '2', title: '客戶收據' }, '簽名'), false);
+});
+
+/* ── 下載檔名（2026-10-01 使用者:「檔案下載是亂碼，請按照看到的檔名」）─────── */
+test('downloadName：標題 ＋ 原檔副檔名', () => {
+  assert.equal(downloadName('支出證明單', '%E5%AE%89.docx'), '支出證明單.docx');
+  assert.equal(downloadName('客戶收據 - 無收發章', 'x.PDF'), '客戶收據 - 無收發章.pdf');
+});
+test('downloadName：標題自己帶副檔名就不重複；標題空的退回原檔名', () => {
+  assert.equal(downloadName('正隆中英契約.docx', 'a.docx'), '正隆中英契約.docx');
+  assert.equal(downloadName('', 'orig.pdf'), 'orig.pdf');
+  assert.equal(downloadName('  ', null), '檔案');
+});
+test('downloadName：檔名不能有的字元換成 _', () => {
+  assert.equal(downloadName('收據 2026/09: A|B', 'x.pdf'), '收據 2026_09_ A_B.pdf');
+});
+test('fileExt', () => {
+  assert.equal(fileExt('a.b.DOCX'), '.docx');
+  assert.equal(fileExt('沒副檔名'), '');
+  assert.equal(fileExt(null), '');
 });

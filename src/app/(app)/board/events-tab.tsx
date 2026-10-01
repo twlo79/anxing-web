@@ -10,7 +10,7 @@ import {
   FILE_ACCEPT, fileKind, KIND_BADGE, canPreview, whyNoPreview, KIND_EXTS,
   fmtSize, fileTooBig, type EventKind,
   linkify, urlHref, urlLabel, eventShareText, lineShareUrl, shareVia, type ShareVia,
-  canUpload, filesByPerson,
+  canUpload, filesByPerson, saveBlob,
 } from '@/lib/board';
 import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
 import { useJustSaved } from '@/lib/use-just-saved';
@@ -829,10 +829,10 @@ function FileViewer({ file, onClose, onMsg }: {
   }, [supabase, file.path, k]);
 
   const download = async () => {
-    const { data, error } = await supabase.storage.from(BUCKET)
-      .createSignedUrl(file.path, 60, { download: file.name });
-    if (error || !data?.signedUrl) return onMsg('下載不了：' + (error?.message ?? ''), true);
-    window.open(data.signedUrl, '_blank');
+    // ★ blob ＋ <a download>：中文檔名走 HTTP 標頭會變 %E5%AE%89…（2026-10-01，lib/board.ts downloadName）
+    const { data, error } = await supabase.storage.from(BUCKET).download(file.path);
+    if (error || !data) return onMsg('下載不了：' + (error?.message ?? ''), true);
+    saveBlob(data, file.name || '附件');
   };
 
   return (

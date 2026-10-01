@@ -5,7 +5,7 @@ import { useOnce } from '@/lib/once';
 import {
   FORM_CATS, canEditForms, parseFormCat, formIcon,
   sortForms, matchForm, formHasFile,
-  FILE_ACCEPT, fileKind, fmtSize, fileTooBig, FILE_BADGE, KIND_EXTS,
+  FILE_ACCEPT, fileKind, fmtSize, fileTooBig, FILE_BADGE, KIND_EXTS, downloadName, saveBlob,
 } from '@/lib/board';
 import { deleteMatches, whyDeleteBlocked, DELETE_READY } from '@/lib/confirm-delete';
 import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
@@ -166,13 +166,16 @@ export default function FormsTab({ role, meId, onMsg }: {
       return onMsg('這一份還沒有檔案 —— 請會計或主管上傳。', true);
     }
     setBusyId(f.id);
-    const { data, error } = await supabase.storage.from(BUCKET)
-      .createSignedUrl(f.file_path as string, 60, { download: f.file_name ?? undefined });
+    /*
+     * ★★★ 抓成 blob 再存，檔名用畫面上的標題（2026-10-01 使用者:「檔案下載是亂碼」）。
+     *   原本走 createSignedUrl({ download })，中文檔名在 HTTP 標頭裡變成 %E5%AE%89… —— 見 lib/board.ts downloadName()。
+     */
+    const { data, error } = await supabase.storage.from(BUCKET).download(f.file_path as string);
     setBusyId(null);
-    if (error || !data?.signedUrl) {
-      return onMsg('下載不了：' + (error?.message ?? '拿不到檔案網址'), true);
+    if (error || !data) {
+      return onMsg('下載不了：' + (error?.message ?? '拿不到檔案'), true);
     }
-    window.open(data.signedUrl, '_blank', 'noopener');
+    saveBlob(data, downloadName(f.title, f.file_name));
   };
 
   const save = async (d: Draft) => {

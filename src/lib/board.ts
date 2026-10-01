@@ -802,3 +802,38 @@ export function matchForm(r: FormRow | null | undefined, kw: string | null | und
  */
 export const formHasFile = (r: FormRow | null | undefined) =>
   !!(r?.file_path ?? '').trim();
+
+/* ══════════════════════════════════════════════════════════
+ * 下載下來的檔名（2026-10-01 使用者:「檔案下載是亂碼，請按照看到的檔名設計下載檔案之檔名」）
+ *
+ * ★★★ 兩件事一起修才有用:
+ *   ① 檔名 ＝ 畫面上的標題 ＋ 原檔副檔名（跟會計報表同一條規則）
+ *   ② 下載要走 blob ＋ `<a download>`，**不能**走 `createSignedUrl(..., { download })`:
+ *      那條路把檔名塞進 HTTP 的 content-disposition，中文在那裡會變成
+ *      `%E5%AE%89%E5%B9%B8…` 這種 URL 編碼（使用者截圖就是這樣）。
+ *      `<a download="支出證明單.docx">` 是純文字，中文不會壞。
+ * ══════════════════════════════════════════════════════════ */
+const FILENAME_BAD = /[\\/:*?"<>|\u0000-\u001f]/g;
+
+/** 原檔的副檔名（含點、小寫）。沒有就空字串 */
+export function fileExt(name: string | null | undefined): string {
+  const m = String(name ?? '').match(/\.[A-Za-z0-9]{1,8}$/);
+  return m ? m[0].toLowerCase() : '';
+}
+
+/** 下載檔名 ＝ 標題 ＋ 原檔副檔名；標題空的退回原檔名 */
+export function downloadName(title: string | null | undefined, fileName: string | null | undefined, fallback = '檔案'): string {
+  const ext = fileExt(fileName);
+  const safe = String(title ?? '').replace(FILENAME_BAD, '_').replace(/\s+/g, ' ').trim();
+  if (!safe) return fileName || fallback;
+  return safe.toLowerCase().endsWith(ext) ? safe : safe + ext;
+}
+
+/** 把 blob 存成檔案。★ 立刻 revoke 會讓某些瀏覽器抓不到，等一下再放 */
+export function saveBlob(blob: Blob, name: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
