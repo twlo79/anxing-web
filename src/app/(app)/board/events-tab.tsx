@@ -10,7 +10,7 @@ import {
   FILE_ACCEPT, fileKind, KIND_BADGE, canPreview, whyNoPreview, KIND_EXTS,
   fmtSize, fileTooBig, type EventKind,
   linkify, urlHref, urlLabel, eventShareText, lineShareUrl, shareVia, type ShareVia,
-  canUpload, filesByPerson, saveBlob,
+  canUpload, filesByPerson, saveBlob, docxFitZoom,
   uploadForLabel, splitUploadPeople, UPLOAD_BACK_LABEL, type UploadPerson,
 } from '@/lib/board';
 import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
@@ -797,6 +797,35 @@ function EventForm({ draft, onChange, onClose, onSave, canDelete, files, names, 
  * ★★ mammoth 是**動態載入**的。它只有點開 Word 檔的時候才需要，
  *   放進主包的話每個人載這一頁都要多背它一份。
  */
+/**
+ * docx-preview 畫完之後修兩件事（2026-10-02 使用者:「解讀器跑版」「格式是橫的」）。
+ *
+ * ① 浮動圖片（Word 裡設成「文字在前／緊密」的截圖）：docx-preview 把它畫成寬高 0、帶 left/top 位移的框，
+ *   而它算位移用的是 Word 的欄寬 —— 跟畫出來的表格對不上，圖就跑出格子、蓋在別欄的字上。
+ *   改回跟著文字走（放在它那一段裡），並且不超出格子寬。
+ * ② 橫式頁面：照頁寬等比縮到視窗放得下（docxFitZoom），不切掉左右。
+ */
+function fixDocxLayout(box: HTMLElement) {
+  box.querySelectorAll<HTMLElement>('div').forEach((d) => {
+    const s = d.style;
+    if (d.querySelector('img') && (s.width === '0px' || s.left || s.top || (s.float && s.float !== 'none'))) {
+      s.position = 'static'; s.width = 'auto'; s.height = 'auto';
+      s.left = ''; s.top = ''; s.float = 'none'; s.display = 'block';
+    }
+  });
+  box.querySelectorAll<HTMLImageElement>('img').forEach((i) => { i.style.maxWidth = '100%'; i.style.height = 'auto'; });
+  fitDocx(box);
+}
+function fitDocx(box: HTMLElement) {
+  const wrap = (box.querySelector('.docx-wrapper') as HTMLElement | null) ?? box;
+  // ★ 寬度用「最寬那一頁＋左右 padding」—— 置中溢出時 scrollWidth 會少算左邊被切掉的那截
+  const cs = getComputedStyle(wrap);
+  const pad = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+  const pageW = Math.max(0, ...Array.from(box.querySelectorAll<HTMLElement>('section')).map((x) => x.offsetWidth));
+  const z = docxFitZoom(pageW, pad, box.clientWidth);
+  (wrap.style as CSSStyleDeclaration & { zoom: string }).zoom = z === 1 ? '' : String(z);
+}
+
 function FileViewer({ file, onClose, onMsg }: {
   file: Fl; onClose: () => void; onMsg: (t: string, err?: boolean) => void;
 }) {
@@ -861,6 +890,8 @@ function FileViewer({ file, onClose, onMsg }: {
           inWrapper: true, ignoreWidth: false, ignoreHeight: false, ignoreFonts: false,
           breakPages: true, renderHeaders: true, renderFooters: true, useBase64URL: true,
         });
+        if (dead) return;
+        fixDocxLayout(box);
       } catch (e: any) {
         if (dead) return;
         // ★ 剛部署完、頁面還是舊版 → 抓不到那一塊程式。不是檔案壞（lib/stale-chunk）
@@ -877,7 +908,10 @@ function FileViewer({ file, onClose, onMsg }: {
         }
       }
     })();
-    return () => { dead = true; };
+    // 視窗大小變了就重算縮放（手機轉向、拉寬視窗）
+    const onResize = () => fitDocx(box);
+    window.addEventListener('resize', onResize);
+    return () => { dead = true; window.removeEventListener('resize', onResize); };
   }, [docx]);
 
   const download = async () => {
@@ -948,7 +982,7 @@ function FileViewer({ file, onClose, onMsg }: {
             <>
               {!docx && <div className="p-6 text-sm text-gray-400">解檔中…</div>}
               {/* docx-preview 把頁面畫進這個容器（它自己會包一張一張白色的「頁」） */}
-              <div ref={docxBox} className="docx-wrap p-4" />
+              <div ref={docxBox} className="docx-wrap" />
             </>
           )}
         </div>

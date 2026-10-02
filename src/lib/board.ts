@@ -869,3 +869,19 @@ export function splitUploadPeople(
     back: others.filter((p) => p.role === 'cleaner'),
   };
 }
+
+/* ── Word 預覽：整頁縮到放得下（2026-10-02 使用者:「格式是橫的 → 壓縮到看得到所有內容」）─────── */
+
+/**
+ * docx-preview 照 Word 的頁寬畫：橫式 A4 是 29.7cm ≈ 1123px，放進 900px 的視窗會被切掉左右兩邊。
+ * 回傳要套在整份文件上的縮放比例（1＝不縮）。最小 0.3 —— 再小就看不到字了，寧可讓它捲動。
+ *
+ * @param pageW 最寬那一頁的寬度（px）
+ * @param pad   外框左右 padding 加起來（px）—— docx-preview 的 wrapper 左右各 30px
+ * @param avail 視窗裡能用的寬度（px）
+ */
+export function docxFitZoom(pageW: number, pad: number, avail: number): number {
+  const need = pageW + pad;
+  if (!(pageW > 0) || !(avail > 0) || need <= avail) return 1;
+  return Math.max(0.3, avail / need);
+}

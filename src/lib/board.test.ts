@@ -6,7 +6,7 @@ import {
   eventOrder, nextEvent, isPast, daysUntil, untilLabel, fmtEventWhen,
   FILE_ACCEPT, fileKind, KIND_BADGE, canPreview, whyNoPreview, KIND_EXTS, FILE_BADGE,
   fmtSize, FILE_MAX_MB, fileTooBig, downloadName, fileExt,
-  uploadForLabel, splitUploadPeople,
+  uploadForLabel, splitUploadPeople, docxFitZoom,
 } from './board.ts';
 
 /* ── 誰看得到帳密 ─────────────────────────────────────────── */
@@ -807,4 +807,16 @@ test('★ splitUploadPeople：只認 role，沒有 role 的當一般人', () => 
 });
 test('splitUploadPeople：沒有房務時後段是空的（畫面上那一段整個不出現）', () => {
   assert.deepEqual(splitUploadPeople([{ id: 'a', name: 'A', role: 'manager' }], 'me').back, []);
+});
+
+/* ── Word 預覽縮放（2026-10-02 橫式文件被切掉）──────────────── */
+test('docxFitZoom：直式 A4 放得下不縮；橫式 A4 放進 900px 縮到剛好', () => {
+  assert.equal(docxFitZoom(794, 60, 900), 1);
+  const z = docxFitZoom(1123, 60, 900);
+  assert.ok(Math.abs(z * (1123 + 60) - 900) < 0.001);
+});
+test('docxFitZoom：量不到寬度不縮；太窄最多縮到 0.3', () => {
+  assert.equal(docxFitZoom(0, 60, 900), 1);
+  assert.equal(docxFitZoom(1123, 60, 0), 1);
+  assert.equal(docxFitZoom(5000, 60, 300), 0.3);
 });
