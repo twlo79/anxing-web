@@ -249,3 +249,24 @@ export function monthlyRentToSave(
   if (!(amt > 0) || !(step > 0)) return null;
   return Math.round(amt / step);
 }
+
+/**
+ * 訂金掛在哪裡 —— 轉押金要找「同一個地方」的押金那一列。
+ *
+ * ★ 2026-10-02（migration_309）以前只認契約。雪雪那兩筆 09-15 從契約轉掛到私下訂單，
+ *   之後按「轉押金」就跳「沒有掛在契約上」—— 而訂單那邊明明可以有押金。
+ * ★ 兩個都有的話以契約為準（跟 convert_earnest 同一個順序）。
+ */
+export function earnestHost(d: { contract_id?: string | null; order_id?: string | null }):
+  { kind: 'contract' | 'order'; id: string } | null {
+  if (d.contract_id) return { kind: 'contract', id: d.contract_id };
+  if (d.order_id) return { kind: 'order', id: d.order_id };
+  return null;
+}
+
+/** 找不到押金那一列時要講的話 —— 跟 convert_earnest 回的字一樣 */
+export function noDepositMsg(kind: 'contract' | 'order'): string {
+  return kind === 'contract'
+    ? '這張契約還沒有押金 —— 請先回契約把押金金額填上，再回來轉。'
+    : '這張訂單還沒有押金 —— 請先到短租訂單把押金金額填上，再回來轉。';
+}

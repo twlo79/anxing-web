@@ -22,7 +22,7 @@ import { manualDepositError, manualDepositMissingAll } from '@/lib/manual-deposi
 import { totalBuckets } from '@/lib/deposit-summary';
 import StatCard, { StatRow, StatTotal, StatGroup } from '@/components/StatCard';
 import { useAdvance, AdvanceStats, AdvanceList } from './advance-tab';
-import { exitBlockedReason, earnestStatus, convertPlan, type EarnestDep } from '@/lib/earnest';
+import { exitBlockedReason, earnestStatus, convertPlan, type EarnestDep, earnestHost, noDepositMsg } from '@/lib/earnest';
 import { useProfile } from '@/lib/profile';
 // 收款只有會計與總管理員（2026-09-02）—— 規則寫在 lib，三頁共用同一支
 import { canCollect, collectDeniedMsg } from '@/lib/collect-perm';
@@ -753,20 +753,27 @@ export default function DepositsPage() {
   async function convertEarnest(d: Dep) {
     const blocked = exitBlockedReason(d as EarnestDep, 'convert');
     if (blocked) return flash(blocked);
-    if (!d.contract_id) return flash('這筆訂金沒有掛在契約上，無法轉押金。');
+    /*
+     * ★ 2026-10-02（migration_309）：掛在訂單上的訂金也能轉。
+     *   以前只認契約 —— 雪雪那兩筆 09-15 從契約轉掛到私下訂單之後就轉不了了。
+     *   訂單的押金一張單只有一列（台幣，含寵物押金），所以訂單那邊不比幣別。
+     */
+    const host = earnestHost(d);
+    if (!host) return flash('這筆訂金沒有掛在契約或訂單上，無法轉押金。');
 
-    // 找同一張契約的押金那一列
-    const { data: deps, error: qe } = await supabase.from('deposits')
+    // 找同一張契約／訂單的押金那一列
+    let q = supabase.from('deposits')
       .select('id, amount, received_amount, received_on, currency')
-      .eq('contract_id', d.contract_id).eq('kind', 'deposit')
-      .eq('currency', d.currency).limit(1);
+      .eq('kind', 'deposit');
+    q = host.kind === 'contract'
+      ? q.eq('contract_id', host.id).eq('currency', d.currency)
+      : q.eq('order_id', host.id);
+    const { data: deps, error: qe } = await q.limit(1);
     if (qe) return flash('查押金失敗:' + qe.message);
 
     const target = (deps ?? [])[0] as
       { id: string; amount: number; received_amount: number | null; received_on: string | null } | undefined;
-    if (!target) {
-      return flash('這張契約還沒有押金 —— 請先回契約把押金金額填上，再回來轉。');
-    }
+    if (!target) return flash(noDepositMsg(host.kind));
 
     const plan = convertPlan(d.amount, target.amount, Number(target.received_amount) || 0);
     const on = todayStr();

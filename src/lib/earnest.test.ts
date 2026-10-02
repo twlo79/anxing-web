@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  exitTaken, earnestStatus, exitBlockedReason, convertPlan,
+  exitTaken, earnestStatus, exitBlockedReason, convertPlan, earnestHost, noDepositMsg,
   forfeitOrder, earnestOnlyMissing, monthlyRentToSave,
 } from './earnest.ts';
 
@@ -212,5 +212,24 @@ describe('monthlyRentToSave', () => {
 
   test('step 是 0 或負數 —— 回 null，不要除以零', () => {
     assert.equal(monthlyRentToSave(30000, 0), null);
+  });
+});
+
+describe('earnestHost（轉押金找哪一邊的押金）', () => {
+  test('掛契約 → 契約', () => {
+    assert.deepEqual(earnestHost({ contract_id: 'c1', order_id: null }), { kind: 'contract', id: 'c1' });
+  });
+  test('掛訂單 → 訂單（雪雪那兩筆）', () => {
+    assert.deepEqual(earnestHost({ contract_id: null, order_id: 'o1' }), { kind: 'order', id: 'o1' });
+  });
+  test('兩個都有 → 契約優先（跟 RPC 同順序）', () => {
+    assert.equal(earnestHost({ contract_id: 'c1', order_id: 'o1' })?.kind, 'contract');
+  });
+  test('都沒有 → null', () => {
+    assert.equal(earnestHost({ contract_id: null, order_id: null }), null);
+  });
+  test('找不到押金的訊息分得出契約與訂單', () => {
+    assert.match(noDepositMsg('order'), /訂單/);
+    assert.match(noDepositMsg('contract'), /契約/);
   });
 });
