@@ -452,8 +452,8 @@ export default function DepositsPage() {
        */
       <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-medium ${
         earnest ? 'bg-amber-100 text-amber-800' : 'bg-mor-bluelight text-mor-slate'}`}>
-        {/* ★ 2026-10-02 David 指定：訂金轉過來的押金標「訂金轉押金」 */}
-        {earnest ? '訂金' : r.converted_from_earnest_id ? '訂金轉押金' : '押金'}
+        {/* 訂金轉過來的押金，「訂金轉押金」寫在狀態欄（statusChip），這裡不重複 */}
+        {earnest ? '訂金' : '押金'}
       </span>
     );
   };
@@ -1336,6 +1336,10 @@ export default function DepositsPage() {
         */}
         {b.showFrom && move}
         {b.pay === 'transferred' && move}
+        {/* ★ 2026-10-02 David 指定：訂金轉過來的押金，狀態多一個「訂金轉押金」（顏色跟訂金那邊的「已結案」同一組紫） */}
+        {r.kind !== 'earnest' && r.converted_from_earnest_id && (
+          <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-violet-50 text-violet-700">訂金轉押金</span>
+        )}
       </span>
     );
   };
