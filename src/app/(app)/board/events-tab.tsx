@@ -798,14 +798,38 @@ function EventForm({ draft, onChange, onClose, onSave, canDelete, files, names, 
  *   放進主包的話每個人載這一頁都要多背它一份。
  */
 /**
- * docx-preview 畫完之後修兩件事（2026-10-02 使用者:「解讀器跑版」「格式是橫的」）。
+ * docx-preview 畫完之後修三件事（2026-10-02 使用者:「解讀器跑版」「格式是橫的」）。
+ * 每一件都在本地 Chromium 用自製的 docx 重現過、量過修完的位置（圖片框要落在自己的格子裡）。
  *
- * ① 浮動圖片（Word 裡設成「文字在前／緊密」的截圖）：docx-preview 把它畫成寬高 0、帶 left/top 位移的框，
- *   而它算位移用的是 Word 的欄寬 —— 跟畫出來的表格對不上，圖就跑出格子、蓋在別欄的字上。
- *   改回跟著文字走（放在它那一段裡），並且不超出格子寬。
- * ② 橫式頁面：照頁寬等比縮到視窗放得下（docxFitZoom），不切掉左右。
+ * ① 在 Word 裡**裁切過**的截圖：docx-preview 用 clip-path ＋ transform: scale 畫，
+ *   scale 是對整張圖放大 —— 圖就長大、往左上推出格子，蓋到隔壁欄和上下列。
+ *   改成「外框＝Word 裡看到的大小、overflow 藏起來，圖片放大後往左上位移」。
+ * ② 浮動圖片（文字在前／緊密）：docx-preview 畫成寬高 0、帶 left/top 位移的框，
+ *   位移照 Word 的欄寬算，跟畫出來的表格對不上。改回跟著文字走。
+ * ③ 一般圖片不超出格子寬；最後整頁等比縮到視窗放得下（橫式 A4 比視窗寬）。
  */
 function fixDocxLayout(box: HTMLElement) {
+  box.querySelectorAll<HTMLImageElement>('img').forEach((img) => {
+    const m = /rect\(\s*([\d.]+)%\s+([\d.]+)%\s+([\d.]+)%\s+([\d.]+)%\s*\)/.exec(img.style.clipPath || '');
+    if (!m) return;
+    // docx-preview 寫的是 rect(上% (1-右)% (1-下)% 左%)
+    const t = +m[1] / 100, r = 1 - +m[2] / 100, b = 1 - +m[3] / 100, l = +m[4] / 100;
+    const W = parseFloat(img.style.width), H = parseFloat(img.style.height);
+    const fx = 1 - l - r, fy = 1 - t - b;
+    if (!(W > 0) || !(H > 0) || !(fx > 0) || !(fy > 0)) return;
+    const frame = document.createElement('span');
+    frame.dataset.docxCrop = '1';
+    Object.assign(frame.style, {
+      display: 'inline-block', position: 'relative', overflow: 'hidden', verticalAlign: 'top',
+      width: img.style.width, maxWidth: '100%', aspectRatio: `${W} / ${H}`,
+    });
+    img.replaceWith(frame);
+    frame.appendChild(img);
+    Object.assign(img.style, {
+      position: 'absolute', transform: 'none', clipPath: 'none', maxWidth: 'none',
+      width: `${100 / fx}%`, height: `${100 / fy}%`, left: `${(-l / fx) * 100}%`, top: `${(-t / fy) * 100}%`,
+    });
+  });
   box.querySelectorAll<HTMLElement>('div').forEach((d) => {
     const s = d.style;
     if (d.querySelector('img') && (s.width === '0px' || s.left || s.top || (s.float && s.float !== 'none'))) {
@@ -813,7 +837,10 @@ function fixDocxLayout(box: HTMLElement) {
       s.left = ''; s.top = ''; s.float = 'none'; s.display = 'block';
     }
   });
-  box.querySelectorAll<HTMLImageElement>('img').forEach((i) => { i.style.maxWidth = '100%'; i.style.height = 'auto'; });
+  box.querySelectorAll<HTMLImageElement>('img').forEach((i) => {
+    if (i.parentElement?.dataset.docxCrop) return;   // 裁切過的由外框管
+    i.style.maxWidth = '100%'; i.style.height = 'auto';
+  });
   fitDocx(box);
 }
 function fitDocx(box: HTMLElement) {
