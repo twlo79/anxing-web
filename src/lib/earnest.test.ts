@@ -13,7 +13,7 @@ describe('earnestStatus', () => {
     assert.equal(earnestStatus(E({ received_on: '2026-08-01' })), '已收訂金');
     assert.equal(earnestStatus(E({ received_on: '2026-08-01', returned_on: '2026-08-10' })), '已退訂金');
     assert.equal(earnestStatus(E({ received_on: '2026-08-01', forfeited_on: '2026-08-10' })), '已沒收');
-    assert.equal(earnestStatus(E({ received_on: '2026-08-01', converted_to_deposit_id: 'd1' })), '已退｜轉押');
+    assert.equal(earnestStatus(E({ received_on: '2026-08-01', converted_to_deposit_id: 'd1' })), '已結案');
   });
 
   test('★★ 先看出路再看收款 —— 反過來的話「已收」會蓋掉「已沒收」', () => {

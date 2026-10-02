@@ -50,7 +50,7 @@ export function exitTaken(d: EarnestDep): ExitTaken {
 }
 
 export type EarnestStatus =
-  | '未付訂金' | '已收訂金' | '退款審核中' | '已退訂金' | '已沒收' | '已退｜轉押';
+  | '未付訂金' | '已收訂金' | '退款審核中' | '已退訂金' | '已沒收' | '已結案';
 
 /**
  * 訂金現在是什麼狀態。
@@ -62,7 +62,7 @@ export type EarnestStatus =
 export function earnestStatus(d: EarnestDep): EarnestStatus {
   const exit = exitTaken(d);
   if (exit === 'forfeit') return '已沒收';
-  if (exit === 'convert') return '已退｜轉押';
+  if (exit === 'convert') return '已結案';
   if (exit === 'refund') return '已退訂金';
   if (!d.received_on) return '未付訂金';
   // 已收，但退款流程跑到一半

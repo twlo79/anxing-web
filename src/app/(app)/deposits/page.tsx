@@ -83,6 +83,8 @@ type Dep = {
   /** 沒收產生的那筆收入。★ 冪等靠它 —— 有值就不再產生第二筆 */
   forfeit_order_id?: string | null;
   converted_to_deposit_id?: string | null;
+  /** 押金這一列是訂金轉過來的（convert_earnest 寫的） */
+  converted_from_earnest_id?: string | null;
   order_id: string | null; contract_id: string | null;
   estate_id: string | null; property_id: string | null;
   room: string | null; guest_name: string | null;
@@ -450,7 +452,8 @@ export default function DepositsPage() {
        */
       <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-medium ${
         earnest ? 'bg-amber-100 text-amber-800' : 'bg-mor-bluelight text-mor-slate'}`}>
-        {earnest ? '訂金' : '押金'}
+        {/* ★ 2026-10-02 David 指定：訂金轉過來的押金標「訂金轉押金」 */}
+        {earnest ? '訂金' : r.converted_from_earnest_id ? '訂金轉押金' : '押金'}
       </span>
     );
   };
@@ -803,7 +806,7 @@ export default function DepositsPage() {
       + (plan.excess > 0
         ? `\n⚠ 訂金比押金多 NT$ ${fmt(plan.excess)}\n　 多的部分不會自動退，要另外處理。\n`
         : '')
-      + `\n訂金那一列會變成「已退｜轉押」。錢沒有離開公司，不算退款也不算收款。`
+      + `\n訂金那一列會變成「已結案」，押金那一列標「訂金轉押金」。錢沒有離開公司，不算退款也不算收款。`
     )) return;
 
     setSaving(true);
@@ -1247,8 +1250,9 @@ export default function DepositsPage() {
       if (es === '已沒收') {
         return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-red-50 text-red-700">已沒收</span>;
       }
-      if (es === '已退｜轉押') {
-        return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-violet-50 text-violet-700">已退｜轉押</span>;
+      if (es === '已結案') {
+        // ★ 2026-10-02 David 指定：轉押金之後訂金寫「已結案」（押金那一列標「訂金轉押金」）
+        return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-violet-50 text-violet-700">已結案</span>;
       }
       if (es === '已退訂金') {
         return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-gray-100 text-gray-500">已退訂金</span>;
