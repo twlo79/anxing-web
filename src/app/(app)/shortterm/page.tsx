@@ -1,4 +1,5 @@
 'use client';
+import { airbnbSplit, airbnbSplitLine, type SnapSplit } from '@/lib/airbnb-split';
 import { looksLikeError } from '@/lib/flash-kind';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AddButton, ExportButton } from '@/components/Actions';
@@ -270,6 +271,36 @@ export default function ShortTermPage() {
   const [estates, setEstates] = useState<Estate[]>([]);
   const [detail, setDetail] = useState<Order | null>(null);
   const [rows, setRows] = useState<Order[]>([]);
+  /*
+   * Airbnb 單的實收／搭檔（2026-10-02）。讀爬蟲快照，不在訂單上另存一份（lib/airbnb-split）。
+   * 只撈這一頁看得到的那幾張 —— 一頁最多 50 張，一次查完。
+   */
+  const [splits, setSplits] = useState<Record<string, SnapSplit>>({});
+  useEffect(() => {
+    const codes = Array.from(new Set(rows.filter((r) => r.source === 'airbnb' && r.order_key).map((r) => r.order_key)));
+    if (!codes.length) { setSplits({}); return; }
+    let dead = false;
+    supabase.from('airbnb_snapshots').select('code, earnings, cohost').in('code', codes).then(({ data }) => {
+      if (dead) return;
+      const m: Record<string, SnapSplit> = {};
+      for (const x of (data ?? []) as { code: string; earnings: number | null; cohost: number | null }[]) m[x.code] = x;
+      setSplits(m);
+    });
+    return () => { dead = true; };
+  }, [rows, supabase]);
+  /** 金額底下那一行：只有 Airbnb 單有。沒有明細＝灰字；對不上＝琥珀色 */
+  const splitSub = (o: Order) => {
+    if (o.source !== 'airbnb') return null;
+    const sp = airbnbSplit(o.amount, splits[o.order_key]);
+    const off = sp.kind === 'split' && sp.diff !== 0;
+    return (
+      <div className={`text-[11px] font-normal tabular-nums whitespace-nowrap ${
+        sp.kind === 'none' ? 'text-gray-300' : off ? 'text-amber-600' : 'text-gray-400'}`}
+        title={off ? `訂單金額跟 Airbnb 的實收＋搭檔差 ${fmt(sp.kind === 'split' ? sp.diff : 0)}` : undefined}>
+        {airbnbSplitLine(sp, (x) => fmt(x))}
+      </div>
+    );
+  };
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -1685,6 +1716,7 @@ export default function ShortTermPage() {
                 </div>
                 <div className="shrink-0 text-right">
                   <div className="font-bold tabular-nums">{fmt(o.amount)}</div>
+                  {splitSub(o)}
                   {/*
                     ★★ 狀態標籤本身就是「收款」的入口（2026-09-05）。
                       桌機的操作欄有「收款」那顆，手機沒有 —— 於是手機上
@@ -1780,7 +1812,7 @@ export default function ShortTermPage() {
                   )}
                 </td>
                 <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-500">{dateRange(o)}</td>
-                <td className="px-3 py-2 text-right font-medium">${fmt(o.amount)}</td>
+                <td className="px-3 py-2 text-right font-medium">${fmt(o.amount)}{splitSub(o)}</td>
                 <td className="px-3 py-2 whitespace-nowrap">
                   {(() => {
                     const st = payStatus(o);
@@ -1856,6 +1888,18 @@ export default function ShortTermPage() {
                     <span className="ml-2 rounded bg-[#F6EFD5] text-[#8a6d1f] px-1.5 py-0.5 text-[11px]">訂金階段</span>
                   )}</span>)}
                 {row('金額', <span className="font-medium">${fmt(d.amount)}</span>)}
+                {/* Airbnb 單：拆成實收／搭檔（爬蟲快照）。對不上只標出來，不改金額 */}
+                {d.source === 'airbnb' && (() => {
+                  const sp = airbnbSplit(d.amount, splits[d.order_key]);
+                  if (sp.kind === 'none') return row('Airbnb 明細', <span className="text-xs text-gray-400">沒有明細（爬蟲上線前匯入的舊單）</span>);
+                  return row('Airbnb 明細', (
+                    <div className={`text-xs tabular-nums ${sp.diff ? 'rounded bg-amber-50 px-2 py-1 text-amber-800' : 'text-gray-600'}`}>
+                      <div className="flex justify-between"><span>實收（You earn）</span><span>{sp.earn.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+                      <div className="flex justify-between"><span>搭檔（Co-host payout）</span><span>{sp.cohost === null ? '沒抓到' : sp.cohost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+                      {sp.diff !== 0 && <div className="mt-0.5">訂單金額跟實收＋搭檔差 {fmt(sp.diff)}，到「同步建議」看要不要改</div>}
+                    </div>
+                  ));
+                })()}
                 {row('收款', (() => {
                   const st = payStatus(d);
                   const rest = remaining(d);

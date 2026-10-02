@@ -10,7 +10,7 @@ import {
   FILE_ACCEPT, fileKind, KIND_BADGE, canPreview, whyNoPreview, KIND_EXTS,
   fmtSize, fileTooBig, type EventKind,
   linkify, urlHref, urlLabel, eventShareText, lineShareUrl, shareVia, type ShareVia,
-  canUpload, filesByPerson, saveBlob, docxFitZoom,
+  canUpload, filesByPerson, saveBlob, docxFitZoom, docxTableLayout, docxGutterPt, type DocxTableLayout,
   uploadForLabel, splitUploadPeople, UPLOAD_BACK_LABEL, type UploadPerson,
 } from '@/lib/board';
 import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
@@ -808,7 +808,39 @@ function EventForm({ draft, onChange, onClose, onSave, canDelete, files, names, 
  *   位移照 Word 的欄寬算，跟畫出來的表格對不上。改回跟著文字走。
  * ③ 一般圖片不超出格子寬；最後整頁等比縮到視窗放得下（橫式 A4 比視窗寬）。
  */
+/**
+ * 表格擺放與裝訂邊（2026-10-02 芊芊的月初會議：5、6 兩張表左右錯開）。
+ *   · 裝訂邊加回左邊界 —— Word 的「置中」是在扣掉裝訂邊之後的版心裡置中
+ *   · 本文最外層的表格照順序套 Word 的縮排／置中；浮動表格（docx-preview 畫成 float:left）一律取消浮動
+ * 在本地 Chromium 用原檔量過：兩張表左緣差 2px，跟 Word 裡差 1.8pt 一致（改之前差 6～10px）。
+ */
+function applyDocxTables(box: HTMLElement, layouts: DocxTableLayout[], gutterPt: number) {
+  if (gutterPt > 0) {
+    box.querySelectorAll<HTMLElement>('section').forEach((sec) => {
+      sec.style.paddingLeft = `calc(${getComputedStyle(sec).paddingLeft} + ${gutterPt}pt)`;
+    });
+  }
+  const tables = Array.from(box.querySelectorAll<HTMLElement>('section article table'))
+    .filter((t) => !t.parentElement?.closest('table'));
+  tables.forEach((t, i) => {
+    const L = layouts[i];
+    if (!L) return;
+    t.style.float = 'none';
+    if (L.align === 'center') { t.style.marginLeft = 'auto'; t.style.marginRight = 'auto'; }
+    else if (L.align === 'right') { t.style.marginLeft = 'auto'; t.style.marginRight = '0'; }
+    else { t.style.marginLeft = L.indPt ? `${L.indPt}pt` : ''; t.style.marginRight = ''; }
+  });
+}
+
 function fixDocxLayout(box: HTMLElement) {
+  /*
+   * ⓪ 文字的白色底色 → 透明。Word 裡常見（從網頁貼上的字會帶白底），白紙上看不出來；
+   *   但 Windows 的微軟正黑體行高比較高，白底會蓋到表格框線 —— 框線看起來一段一段斷掉。
+   */
+  box.querySelectorAll<HTMLElement>('span').forEach((sp) => {
+    const bg = (sp.style.backgroundColor || '').trim();
+    if (/^(white|#fff(fff)?|rgb\(255,\s*255,\s*255\))$/i.test(bg)) sp.style.backgroundColor = 'transparent';
+  });
   box.querySelectorAll<HTMLImageElement>('img').forEach((img) => {
     const m = /rect\(\s*([\d.]+)%\s+([\d.]+)%\s+([\d.]+)%\s+([\d.]+)%\s*\)/.exec(img.style.clipPath || '');
     if (!m) return;
@@ -912,12 +944,19 @@ function FileViewer({ file, onClose, onMsg }: {
     (async () => {
       try {
         const dp: any = await import('docx-preview');
+        // 表格縮排／置中與裝訂邊 docx-preview 不管 —— 自己從 document.xml 讀出來，畫完再套（applyDocxTables）
+        let xml = '';
+        try {
+          const JSZip: any = (await import('jszip')).default;
+          xml = await (await JSZip.loadAsync(docx)).file('word/document.xml')?.async('string') ?? '';
+        } catch { /* 讀不到就不套，照 docx-preview 原樣 */ }
         box.innerHTML = '';
         await dp.renderAsync(docx, box, undefined, {
           inWrapper: true, ignoreWidth: false, ignoreHeight: false, ignoreFonts: false,
           breakPages: true, renderHeaders: true, renderFooters: true, useBase64URL: true,
         });
         if (dead) return;
+        applyDocxTables(box, docxTableLayout(xml), docxGutterPt(xml));
         fixDocxLayout(box);
       } catch (e: any) {
         if (dead) return;

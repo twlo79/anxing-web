@@ -885,3 +885,56 @@ export function docxFitZoom(pageW: number, pad: number, avail: number): number {
   if (!(pageW > 0) || !(avail > 0) || need <= avail) return 1;
   return Math.max(0.3, avail / need);
 }
+
+/**
+ * Word 本文裡每一張（最外層）表格該怎麼擺 —— docx-preview 不管這些，照抄 Word 的設定補回去。
+ * （2026-10-02 芊芊的月初會議：「5. 上次會議重點」「6. 本次會議重點」兩張表左右錯開）
+ *
+ *   tblInd           表格往右縮（可以是負的：伸出左邊界）
+ *   tblpPr           浮動表格。tblpXSpec=center／right 或 tblpX 位移；docx-preview 畫成 float:left
+ *   jc               表格置中／靠右
+ *
+ * 只看 `word/document.xml` 的本文、只算最外層 —— 表格裡的表格跟著外層走。
+ * 順序跟 docx-preview 畫出來的本文表格一樣，畫完照順序一張一張套。
+ */
+export type DocxTableLayout = { align: 'left' | 'center' | 'right'; indPt: number };
+
+export function docxTableLayout(xml: string): DocxTableLayout[] {
+  const out: DocxTableLayout[] = [];
+  const re = /<w:tbl>|<\/w:tbl>/g;
+  let depth = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml))) {
+    if (m[0] === '</w:tbl>') { depth = Math.max(0, depth - 1); continue; }
+    depth += 1;
+    if (depth !== 1) continue;
+    // ★ 只在這張表自己的開頭找（到 tblGrid／第一列為止）—— 不然 tblPr 寫成 <w:tblPr/> 時會抓到下一張表的
+    const rest = xml.slice(m.index);
+    const head = rest.slice(0, rest.search(/<w:tblGrid|<w:tr[\s>]/) >>> 0 || rest.length);
+    const pr = /<w:tblPr>([\s\S]*?)<\/w:tblPr>/.exec(head)?.[1] ?? '';
+    const attr = (tag: string, a: string) =>
+      new RegExp(`<w:${tag}\\b[^>]*\\bw:${a}="([^"]*)"`).exec(pr)?.[1];
+    const twip = (v: string | undefined) => (v && /^-?\d+$/.test(v) ? Number(v) / 20 : 0);
+    let align: DocxTableLayout['align'] = 'left';
+    let indPt = twip(attr('tblInd', 'w'));
+    const xSpec = attr('tblpPr', 'tblpXSpec');
+    if (xSpec === 'center' || xSpec === 'right') align = xSpec;
+    else if (attr('tblpPr', 'tblpX') !== undefined) indPt = twip(attr('tblpPr', 'tblpX'));
+    else {
+      const jc = attr('jc', 'val');
+      if (jc === 'center') align = 'center';
+      else if (jc === 'right' || jc === 'end') align = 'right';
+    }
+    out.push({ align, indPt });
+  }
+  return out;
+}
+
+/**
+ * 裝訂邊（`w:gutter`）。Word 把它加在左邊界上；docx-preview 不管它 ——
+ * 少了這一截，「置中」的表格算出來會往右偏、跟靠左縮排的表格對不齊。取本文最後一個 sectPr。
+ */
+export function docxGutterPt(xml: string): number {
+  const all = [...xml.matchAll(/<w:pgMar\b[^>]*\bw:gutter="(\d+)"/g)];
+  return all.length ? Number(all[all.length - 1][1]) / 20 : 0;
+}

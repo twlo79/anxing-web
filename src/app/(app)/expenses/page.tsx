@@ -65,7 +65,7 @@ type Expense = {
   tags?: string[] | null;
 };
 /** kind：expense=只用於支出 / income=只用於收入 / both=兩邊都用（migration_90） */
-type AccountCode = { code: string; name: string; sort: number; active: boolean; kind?: string };
+type AccountCode = { code: string; name: string; sort: number; active: boolean; kind?: string; book?: string };
 type Estate = { id: string; name: string; sort: number; active: boolean };
 /** ★ `book` 是 migration_284 加的 —— 決定這個帳號出現在哪一頁的下拉裡 */
 type PayAccount = { code: string; name: string; method: string; book?: string | null };
@@ -160,7 +160,7 @@ export default function ExpensesPage() {
 
 
   useEffect(() => {
-    supabase.from('account_codes').select('code, name, sort, active, kind').order('sort').then(({ data }) => setCodes(data ?? []));
+    supabase.from('account_codes').select('code, name, sort, active, kind, book').order('sort').then(({ data }) => setCodes(data ?? []));
     supabase.from('estates').select('id, name, sort, active').order('sort').then(({ data }) => setEstates(data ?? []));
     supabase.from('payment_accounts').select('code, name, method, book')
       .eq('for_payment', true).eq('active', true).order('sort')
@@ -180,7 +180,10 @@ export default function ExpensesPage() {
   const expenseCodes = useMemo(
     // active=false 的科目也要濾掉 —— migration_91 把「水電瓦斯」停用改成水費/電費/瓦斯費，
     // 不濾的話停用的科目會繼續出現在選單裡，等於沒停用。
-    () => codes.filter((c) => c.kind !== 'income' && c.active !== false), [codes]);
+    // ★ 只列安幸的科目（2026-10-02 使用者:「安幸的會計科目多了愛皮跟洪鯊的」）——
+    //   這一頁只有安幸的支出（下面 .eq('book', DEFAULT_BOOK)），愛皮／洪鯊的科目選了也存不進去
+    //   （trg_expenses_book_code 會擋）。顯示名稱 codeName 照舊讀全部，舊資料萬一掛了別的科目還認得出來。
+    () => codes.filter((c) => c.kind !== 'income' && c.active !== false && (c.book ?? DEFAULT_BOOK) === DEFAULT_BOOK), [codes]);
   /** id → 支出。子單要靠它找到母單（顯示母單日期、點了跳過去）。 */
   const byId = useMemo(() => Object.fromEntries(rows.map((r) => [r.id, r])), [rows]);
   const estateName = useMemo(() => Object.fromEntries(estates.map((e) => [e.id, e.name])), [estates]);

@@ -4,7 +4,7 @@ import {
   decide, summarize, toIssues, revenueOf, isCancelled,
   dedupe, isSettled, snapshotChanges, amountAdvice,
   snapshotRowOf, incomingOf, findMissing, forgetStaleChange,
-  missVerdict, toMark,
+  missVerdict, toMark, AUTO_INSERT_FROM,
   type Incoming, type Existing, type PropRef, type Snapshot,
 } from './airbnb-sync.ts';
 
@@ -905,4 +905,20 @@ test('★ 金額與日期的變化仍然會出建議', () => {
     inc({ earnings: 26000, end: '2026-07-08', nights: 7 }),
     ex(), PROP_A15);
   assert.ok(diffs.length > 0, '延長日期與加價要看得到建議');
+});
+
+/* ── 全量回補前加的護欄（2026-10-02）：舊單不自動新增，不然會跟 AB_ 舊匯入重複 ── */
+test('★ 入住早於 AUTO_INSERT_FROM 的新確認碼 → 不新增（skip）', () => {
+  const { decision } = decide(inc({ start: '2025-12-01', end: '2025-12-05' }), null, PROP_A15);
+  assert.equal(decision.kind, 'skip');
+  assert.match((decision as { reason: string }).reason, /爬蟲上線前的舊單/);
+});
+test('AUTO_INSERT_FROM 當天與之後照常新增', () => {
+  assert.equal(decide(inc({ start: AUTO_INSERT_FROM }), null, PROP_A15).decision.kind, 'insert');
+  assert.equal(decide(inc({ start: '2026-10-02' }), null, PROP_A15).decision.kind, 'insert');
+});
+test('舊單已經在 ERP 裡（確認碼對得到）→ 照舊比對，不受護欄影響', () => {
+  const { decision } = decide(inc({ start: '2025-12-01', end: '2025-12-05' }), ex({ checkin: '2025-12-01', checkout: '2025-12-05' }), PROP_A15);
+  assert.notEqual(decision.kind, 'insert');
+  assert.doesNotMatch((decision as { reason?: string }).reason ?? '', /爬蟲上線前的舊單/);
 });

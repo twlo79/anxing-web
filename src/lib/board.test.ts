@@ -6,7 +6,7 @@ import {
   eventOrder, nextEvent, isPast, daysUntil, untilLabel, fmtEventWhen,
   FILE_ACCEPT, fileKind, KIND_BADGE, canPreview, whyNoPreview, KIND_EXTS, FILE_BADGE,
   fmtSize, FILE_MAX_MB, fileTooBig, downloadName, fileExt,
-  uploadForLabel, splitUploadPeople, docxFitZoom,
+  uploadForLabel, splitUploadPeople, docxFitZoom, docxTableLayout, docxGutterPt,
 } from './board.ts';
 
 /* ── 誰看得到帳密 ─────────────────────────────────────────── */
@@ -819,4 +819,32 @@ test('docxFitZoom：量不到寬度不縮；太窄最多縮到 0.3', () => {
   assert.equal(docxFitZoom(0, 60, 900), 1);
   assert.equal(docxFitZoom(1123, 60, 0), 1);
   assert.equal(docxFitZoom(5000, 60, 300), 0.3);
+});
+
+/* ── Word 表格擺放（2026-10-02 兩張表左右錯開）──────────────── */
+test('docxTableLayout：縮排、浮動置中、jc 置中，順序照本文', () => {
+  const xml = '<w:body>'
+    + '<w:tbl><w:tblPr><w:tblW w:w="100"/><w:tblInd w:w="-431" w:type="dxa"/></w:tblPr><w:tr/></w:tbl>'
+    + '<w:tbl><w:tblPr><w:tblpPr w:horzAnchor="margin" w:tblpXSpec="center" w:tblpY="100"/></w:tblPr></w:tbl>'
+    + '<w:tbl><w:tblPr><w:tblInd w:w="562" w:type="dxa"/></w:tblPr></w:tbl>'
+    + '<w:tbl><w:tblPr><w:jc w:val="center"/></w:tblPr></w:tbl>'
+    + '</w:body>';
+  assert.deepEqual(docxTableLayout(xml), [
+    { align: 'left', indPt: -21.55 }, { align: 'center', indPt: 0 },
+    { align: 'left', indPt: 28.1 }, { align: 'center', indPt: 0 },
+  ]);
+});
+test('★ docxTableLayout：表格裡的表格不算（跟著外層走）', () => {
+  const xml = '<w:tbl><w:tblPr><w:tblInd w:w="200"/></w:tblPr><w:tc><w:tbl><w:tblPr><w:jc w:val="center"/></w:tblPr></w:tbl></w:tc></w:tbl>'
+    + '<w:tbl><w:tblPr/></w:tbl>';
+  assert.deepEqual(docxTableLayout(xml), [{ align: 'left', indPt: 10 }, { align: 'left', indPt: 0 }]);
+});
+test('★ docxTableLayout：tblPr 是空的那張，不會抓到下一張表的設定', () => {
+  const xml = '<w:tbl><w:tblPr/><w:tblGrid/><w:tr/></w:tbl><w:tbl><w:tblPr><w:jc w:val="center"/></w:tblPr><w:tblGrid/></w:tbl>';
+  assert.deepEqual(docxTableLayout(xml), [{ align: 'left', indPt: 0 }, { align: 'center', indPt: 0 }]);
+});
+test('docxGutterPt：取最後一個 pgMar 的裝訂邊，沒有就 0', () => {
+  assert.equal(docxGutterPt('<w:pgMar w:left="851" w:gutter="340"/>'), 17);
+  assert.equal(docxGutterPt('<w:pgMar w:gutter="0"/><w:pgMar w:gutter="200"/>'), 10);
+  assert.equal(docxGutterPt('<w:pgMar w:left="851"/>'), 0);
 });
