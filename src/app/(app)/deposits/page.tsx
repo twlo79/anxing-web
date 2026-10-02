@@ -22,7 +22,7 @@ import { manualDepositError, manualDepositMissingAll } from '@/lib/manual-deposi
 import { totalBuckets } from '@/lib/deposit-summary';
 import StatCard, { StatRow, StatTotal, StatGroup } from '@/components/StatCard';
 import { useAdvance, AdvanceStats, AdvanceList } from './advance-tab';
-import { exitBlockedReason, earnestStatus, convertPlan, type EarnestDep, earnestHost, noDepositMsg } from '@/lib/earnest';
+import { exitBlockedReason, earnestStatus, convertPlan, type EarnestDep, earnestHost, noDepositMsg, canAutoFillDeposit } from '@/lib/earnest';
 import { useProfile } from '@/lib/profile';
 // 收款只有會計與總管理員（2026-09-02）—— 規則寫在 lib，三頁共用同一支
 import { canCollect, collectDeniedMsg } from '@/lib/collect-perm';
@@ -773,14 +773,23 @@ export default function DepositsPage() {
 
     const target = (deps ?? [])[0] as
       { id: string; amount: number; received_amount: number | null; received_on: string | null } | undefined;
-    if (!target) return flash(noDepositMsg(host.kind));
+    /*
+     * ★ 2026-10-02（migration_310）：訂單還沒填押金 → 押金直接設成訂金金額，整筆轉過去。
+     *   David：「沒自動填入押金金額」。只有訂單、而且是台幣才這樣做 ——
+     *   契約的押金牽動整張契約的同步，那邊照舊請人先回契約填。
+     */
+    const autoFill = !target && canAutoFillDeposit(host.kind, d.currency);
+    if (!target && !autoFill) return flash(noDepositMsg(host.kind));
 
-    const plan = convertPlan(d.amount, target.amount, Number(target.received_amount) || 0);
+    const plan = target
+      ? convertPlan(d.amount, target.amount, Number(target.received_amount) || 0)
+      : convertPlan(d.amount, d.amount, 0);
     const on = todayStr();
 
     if (!confirm(
       `把訂金轉成押金？\n\n`
       + `${depName(d)}\n`
+      + (autoFill ? `這張訂單還沒填押金 —— 押金會直接設成訂金的金額。\n之後要改押金，回短租訂單改。\n\n` : '')
       + `訂金 NT$ ${fmt(plan.transfer)} → 押金 NT$ ${fmt(plan.depositAmount)}\n\n`
       /*
        * ★ 這裡**不能用 `**粗體**`** —— `confirm()` 是純文字，

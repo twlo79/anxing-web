@@ -270,3 +270,15 @@ export function noDepositMsg(kind: 'contract' | 'order'): string {
     ? '這張契約還沒有押金 —— 請先回契約把押金金額填上，再回來轉。'
     : '這張訂單還沒有押金 —— 請先到短租訂單把押金金額填上，再回來轉。';
 }
+
+/**
+ * 轉押金時，押金那一列還不存在 → 可不可以直接把押金設成訂金金額。
+ *
+ * ★ 2026-10-02（migration_310）David：「沒自動填入押金金額」。
+ * · 只有訂單：orders.deposit 改了只會同步押金那一列。契約的 deposit 一改，
+ *   月租單、押金明細那幾支同步都會跟著動 —— 那邊照舊請人先回契約填。
+ * · 只有台幣：orders.deposit 是台幣欄位，外幣押金在 fx_deposit，不能混著寫。
+ */
+export function canAutoFillDeposit(kind: 'contract' | 'order', currency: string | null | undefined): boolean {
+  return kind === 'order' && (currency ?? 'TWD').toUpperCase() === 'TWD';
+}

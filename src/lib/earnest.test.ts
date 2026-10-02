@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  exitTaken, earnestStatus, exitBlockedReason, convertPlan, earnestHost, noDepositMsg,
+  exitTaken, earnestStatus, exitBlockedReason, convertPlan, earnestHost, noDepositMsg, canAutoFillDeposit,
   forfeitOrder, earnestOnlyMissing, monthlyRentToSave,
 } from './earnest.ts';
 
@@ -231,5 +231,18 @@ describe('earnestHost（轉押金找哪一邊的押金）', () => {
   test('找不到押金的訊息分得出契約與訂單', () => {
     assert.match(noDepositMsg('order'), /訂單/);
     assert.match(noDepositMsg('contract'), /契約/);
+  });
+});
+
+describe('canAutoFillDeposit（押金還沒填，轉押時直接設成訂金金額）', () => {
+  test('訂單＋台幣 → 可以（雪雪那兩筆）', () => {
+    assert.equal(canAutoFillDeposit('order', 'TWD'), true);
+    assert.equal(canAutoFillDeposit('order', null), true);
+  });
+  test('訂單＋外幣 → 不行（orders.deposit 是台幣欄位）', () => {
+    assert.equal(canAutoFillDeposit('order', 'USD'), false);
+  });
+  test('契約 → 不行（契約押金一改會牽動整張契約的同步）', () => {
+    assert.equal(canAutoFillDeposit('contract', 'TWD'), false);
   });
 });
