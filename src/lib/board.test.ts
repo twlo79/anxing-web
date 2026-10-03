@@ -6,8 +6,7 @@ import {
   eventOrder, nextEvent, isPast, daysUntil, untilLabel, fmtEventWhen,
   FILE_ACCEPT, fileKind, KIND_BADGE, canPreview, whyNoPreview, KIND_EXTS, FILE_BADGE,
   fmtSize, FILE_MAX_MB, fileTooBig, downloadName, fileExt,
-  uploadForLabel, splitUploadPeople, docxFitZoom, docxTableLayout, docxGutterPt,
-} from './board.ts';
+  uploadForLabel, splitUploadPeople, docxFitZoom, docxTableLayout, docxGutterPt, boardEventRecipients } from './board.ts';
 
 /* ── 誰看得到帳密 ─────────────────────────────────────────── */
 
@@ -847,4 +846,17 @@ test('docxGutterPt：取最後一個 pgMar 的裝訂邊，沒有就 0', () => {
   assert.equal(docxGutterPt('<w:pgMar w:left="851" w:gutter="340"/>'), 17);
   assert.equal(docxGutterPt('<w:pgMar w:gutter="0"/><w:pgMar w:gutter="200"/>'), 10);
   assert.equal(docxGutterPt('<w:pgMar w:left="851"/>'), 0);
+});
+
+test('boardEventRecipients：排的人存一則不推，其他人存＋推', () => {
+  assert.deepEqual(boardEventRecipients(['d', 'a', 'b'], 'd'), { push: ['a', 'b'], storeOnly: ['d'] });
+});
+test('boardEventRecipients：排的人把活動通知關掉了 → 他那一則也不存', () => {
+  assert.deepEqual(boardEventRecipients(['a'], 'd'), { push: ['a'], storeOnly: [] });
+});
+test('boardEventRecipients：不知道是誰排的 → 全部推', () => {
+  assert.deepEqual(boardEventRecipients(['a', 'b'], null), { push: ['a', 'b'], storeOnly: [] });
+});
+test('boardEventRecipients：重複的 id 只算一次', () => {
+  assert.deepEqual(boardEventRecipients(['a', 'a'], null).push, ['a']);
 });

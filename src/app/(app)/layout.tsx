@@ -302,6 +302,9 @@ const NAV: { href: string; label: string; icon: string; roles: string[]; group?:
  * 同一個元件裡自己提供又自己讀，拿到的是預設值（loading: true），
  * 而那個錯誤不會報錯，只會讓側邊欄永遠顯示不出職稱。
  */
+/** 未讀數字掛在哪一項（2026-10-03 從通知設定搬到佈告欄） */
+const UNREAD_HREF = '/board';
+
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   // ★ SavedToast：全站唯一一份「已儲存」綠字，z-[60] 蓋在所有視窗之上（lib/saved-feedback.ts，2026-09-30）
   return <ProfileProvider><AppShell>{children}</AppShell><SavedToast /></ProfileProvider>;
@@ -639,7 +642,8 @@ function AppShell({ children }: { children: React.ReactNode }) {
               <span className="text-[19px] leading-none"
                 style={{ filter: on ? 'none' : 'saturate(0.55)' }}>{n.icon}</span>
               {/* 收起來只有 56px —— 塞不下數字,而「有沒有」本來就比「幾則」重要 */}
-              {n.href === '/settings' && unread > 0 && (
+              {/* ★ 2026-10-03 David：未讀數字放佈告欄（通知在佈告欄的「通知」分頁看），不放通知設定 */}
+              {n.href === UNREAD_HREF && unread > 0 && (
                 <span aria-label={`${unread} 則未讀`}
                   className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500" />
               )}
@@ -679,7 +683,8 @@ function AppShell({ children }: { children: React.ReactNode }) {
               {n.icon}
             </span>
             {n.label}
-            {n.href === '/settings' && unread > 0 && (
+            {/* ★ 2026-10-03 David：未讀數字放佈告欄（通知在佈告欄的「通知」分頁看），不放通知設定 */}
+              {n.href === UNREAD_HREF && unread > 0 && (
               <span className="ml-auto rounded-full bg-red-500 text-white text-[13px] font-semibold
                                min-w-[18px] h-[18px] px-1 flex items-center justify-center tabular-nums">
                 {unread > 99 ? '99+' : unread}

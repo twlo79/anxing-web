@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { adminClient, filterByPref, initWebPush, pushConfigured, sendToUsers } from '@/lib/push';
-import { kindLabel, fmtEventWhen } from '@/lib/board';
+import { kindLabel, fmtEventWhen, boardEventRecipients } from '@/lib/board';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';   // web-push 需要 Node 環境,不能跑在 edge
@@ -65,16 +65,17 @@ export async function POST(req: Request) {
 
   const { data: people } = await admin
     .from('profiles').select('id').eq('active', true);
-  const userIds = (people ?? [])
-    .map((p) => p.id as string)
-    .filter((id) => id !== rec.created_by);
-
-  if (userIds.length === 0)
+  const everyone = (people ?? []).map((p) => p.id as string);
+  /*
+   * ★ 2026-10-03 David：「活動的沒有存入並通知」。
+   *   以前排的人自己完全被排除 —— 而排活動的幾乎都是他，所以他的「通知」裡一則活動都沒有。
+   *   現在：排的人也**存一則**（通知分頁看得到、未讀數會算），只是不叮他的手機。
+   */
+  const { push: userIds, storeOnly } = boardEventRecipients(
+    await filterByPref(admin, everyone, 'board'), rec.created_by ?? null);
+  if (userIds.length === 0 && storeOnly.length === 0)
     return NextResponse.json({ ok: true, skipped: 'no recipients' });
-
-  const wanted = await filterByPref(admin, userIds, 'board');
-  if (wanted.length === 0)
-    return NextResponse.json({ ok: true, skipped: 'all opted out' });
+  const wanted = userIds;
 
   /*
    * ★★ 標題寫「新的活動：團聚」，內文寫時間與名稱。
@@ -93,5 +94,15 @@ export async function POST(req: Request) {
     /* ★ tag 帶 id —— 同一場活動重複推的話會蓋掉舊的那則,不會疊兩條 */
     tag: 'board-ev-' + rec.id,
   });
-  return NextResponse.json({ ok: true, ...r });
+  // 排的人自己：只存底、不推播（跟上面同一句標題與內文）
+  if (storeOnly.length) {
+    const { error } = await admin.from('notifications').insert(storeOnly.map((id) => ({
+      user_id: id, kind: 'board',
+      title: `新的活動：${kindLabel(rec.kind)}`,
+      body: `${when}・${rec.title ?? ''}`.replace(/・$/, ''),
+      url: '/board?tab=events',
+    })));
+    if (error) console.error('[push] 排的人那一則沒存進去:', error.message);
+  }
+  return NextResponse.json({ ok: true, ...r, storedForCreator: storeOnly.length });
 }

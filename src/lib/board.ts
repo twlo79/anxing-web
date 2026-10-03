@@ -938,3 +938,20 @@ export function docxGutterPt(xml: string): number {
   const all = [...xml.matchAll(/<w:pgMar\b[^>]*\bw:gutter="(\d+)"/g)];
   return all.length ? Number(all[all.length - 1][1]) / 20 : 0;
 }
+
+/**
+ * 新活動的通知要給誰（/api/push/board-event）。
+ *
+ * ★ 2026-10-03 David：「活動的沒有存入並通知」—— 以前排的人自己整個被排除，
+ *   而排活動的幾乎都是他，所以他的通知分頁裡一則活動都沒有。
+ *   現在排的人**存一則但不推播**（他剛按下建立，不用再叮他手機），其他人存＋推。
+ * @param wanted 已經過「活動通知有沒有開」那一關的人
+ */
+export function boardEventRecipients(wanted: string[], createdBy: string | null):
+  { push: string[]; storeOnly: string[] } {
+  const uniq = Array.from(new Set(wanted));
+  return {
+    push: uniq.filter((id) => id !== createdBy),
+    storeOnly: createdBy && uniq.includes(createdBy) ? [createdBy] : [],
+  };
+}
