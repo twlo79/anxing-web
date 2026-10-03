@@ -1866,7 +1866,7 @@ function AccountForm({ draft, url, coverUrl, onChange, onClose, onSave,
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/30" onClick={onClose} />
       <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm max-h-[85vh] overflow-y-auto">
-        <div className="sticky top-0 bg-white px-5 py-3.5 border-b border-mor-line font-bold
+        <div className="sticky top-0 z-10 bg-white px-5 py-3.5 border-b border-mor-line font-bold
                         flex items-center justify-between">
           {editing ? '編輯模擬頁' : `新增 ${PLATFORM_LABEL[draft.platform]} 模擬頁`}
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>

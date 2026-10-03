@@ -1632,7 +1632,8 @@ export default function ShortTermPage() {
         {/* ★ 2026-10-03 David：「按鈕排在動作列」—— 共 N 筆的左邊。只給會計／主管／總經理（支出的權限） */}
         {canPricingFee(role) && (
           <button onClick={() => setPricingOpen(true)}
-            className="h-10 rounded-lg border border-mor-line bg-white px-3.5 text-uisub text-gray-700 hover:bg-mor-sand/60">
+            /* ★ 2026-10-03 David：「按鈕左移」—— 靠動作列最左邊，跟新增／下載分開 */
+            className="mr-auto h-10 rounded-lg border border-mor-line bg-white px-3.5 text-uisub text-gray-700 hover:bg-mor-sand/60">
             調價支出
           </button>
         )}
@@ -1881,7 +1882,7 @@ export default function ShortTermPage() {
             <div className="absolute inset-0 bg-black/30" />
             <div onClick={(e) => e.stopPropagation()}
               className="absolute right-0 top-0 h-full w-full max-w-lg bg-white shadow-xl overflow-y-auto">
-              <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 flex items-start justify-between"
+              <div className="sticky top-0 z-10 bg-white border-b border-mor-line px-6 py-4 flex items-start justify-between"
                 style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
                 <div className="min-w-0">
                   <div className="font-bold truncate">{d.guest_name ?? '—'}</div>
@@ -2078,7 +2079,7 @@ export default function ShortTermPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/30" />
           <div onClick={(e) => e.stopPropagation()} className="relative bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[85vh] overflow-y-auto">
-            <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 font-bold flex items-center justify-between">{edit.id ? '編輯訂單' : '新增訂單(私下/一次性)'}<button onClick={() => setEdit(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button></div>
+            <div className="sticky top-0 z-10 bg-white border-b border-mor-line px-6 py-4 font-bold flex items-center justify-between">{edit.id ? '編輯訂單' : '新增訂單(私下/一次性)'}<button onClick={() => setEdit(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button></div>
             {/*
               押金退了就鎖住（migration_157）。
 
@@ -2736,7 +2737,7 @@ export default function ShortTermPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/30" />
           <div onClick={(e) => e.stopPropagation()} className="relative bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[85vh] overflow-y-auto">
-            <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 font-bold flex items-center justify-between">移房 · {move.guest ?? ''}<button onClick={() => setMove(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button></div>
+            <div className="sticky top-0 z-10 bg-white border-b border-mor-line px-6 py-4 font-bold flex items-center justify-between">移房 · {move.guest ?? ''}<button onClick={() => setMove(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button></div>
             <div className="px-6 py-4 flex flex-col gap-3 text-sm">
               <div className="text-xs text-gray-500">整筆:{move.checkin}~{move.checkout} · 共 {move.totalNights} 晚 · 總營收 ${fmt(move.totalAmount)}(按晚數比例分攤各段)</div>
               {move.stays.map((s, i) => {

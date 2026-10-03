@@ -644,7 +644,7 @@ export default function TaxPage() {
           {/* ★ overflow-auto：七欄，窄視窗要能橫向捲（2026-09-23）*/}
           <div className="max-h-80 overflow-auto">
             <table className="w-full text-xs">
-              <thead className="sticky top-0 bg-gray-50 text-gray-500 text-left">
+              <thead className="sticky top-0 z-10 bg-gray-50 text-gray-500 text-left">
                 <tr>
                   <th className="px-2 py-1.5 w-8"></th>
                   <th className="px-2 py-1.5 w-20">日期</th>

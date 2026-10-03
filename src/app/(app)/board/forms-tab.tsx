@@ -541,7 +541,7 @@ function FormDialog({ draft, onChange, onClose, onSave, onDelete }: {
       <div className="absolute inset-0 bg-black/30" onClick={onClose} />
       <div className="relative bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl shadow-xl
                       max-h-[92vh] sm:max-h-[85vh] overflow-y-auto">
-        <div className="sticky top-0 bg-white px-5 py-3.5 border-b border-mor-line font-bold text-ui
+        <div className="sticky top-0 z-10 bg-white px-5 py-3.5 border-b border-mor-line font-bold text-ui
                         flex items-center justify-between">
           {draft.id ? '編輯檔案' : '檔案上傳'}
           <button onClick={onClose}

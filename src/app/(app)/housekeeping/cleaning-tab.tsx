@@ -452,7 +452,7 @@ export default function CleaningTab() {
         <div className="fixed inset-0 z-50" onClick={() => setDetail(null)}>
           <div className="absolute inset-0 bg-black/30" />
           <div onClick={(e) => e.stopPropagation()} className="absolute right-0 top-0 h-full w-full max-w-lg bg-white shadow-xl overflow-y-auto">
-            <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 flex items-center justify-between">
+            <div className="sticky top-0 z-10 bg-white border-b border-mor-line px-6 py-4 flex items-center justify-between">
               <div>
                 <div className="font-bold">{detail.estate_name} ・ {detail.property_raw}</div>
                 <div className="text-xs text-gray-500 mt-0.5">{detail.record_date}・{detail.staff_name}({TYPE_LABEL[detail.staff_type || 'other']})</div>

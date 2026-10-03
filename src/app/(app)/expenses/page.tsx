@@ -1055,7 +1055,7 @@ export default function ExpensesPage() {
       {edit && (
         <div className="fixed inset-0 bg-black/30 flex items-start justify-center overflow-auto py-10 z-50">
           <div className="bg-white rounded-xl w-[560px] max-w-[94vw] shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 font-bold flex items-center justify-between">
+            <div className="sticky top-0 z-10 bg-white border-b border-mor-line px-6 py-4 font-bold flex items-center justify-between">
               {edit.id ? '編輯支出' : '填寫支出'}
               <button onClick={() => setEdit(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
             </div>

@@ -1452,7 +1452,7 @@ function ViewDrawer({
       {/* ★ 從右邊開出來。手機上是整頁 */}
       <div onClick={(ev) => ev.stopPropagation()}
         className="relative bg-white w-full sm:max-w-md h-full overflow-y-auto shadow-xl">
-        <div className="sticky top-0 bg-white px-4 py-3 border-b border-mor-line
+        <div className="sticky top-0 z-10 bg-white px-4 py-3 border-b border-mor-line
                         flex items-center justify-between">
           <span className="font-bold text-ui truncate">{e.name}</span>
           <button onClick={onClose}

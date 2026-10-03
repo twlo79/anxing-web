@@ -1251,7 +1251,7 @@ const nameOf = (c: Contract) =>
             <div className="absolute inset-0 bg-black/30" />
             <div onClick={(e) => e.stopPropagation()}
               className="absolute right-0 top-0 h-full w-full max-w-lg bg-white shadow-xl overflow-y-auto">
-              <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 flex items-start justify-between"
+              <div className="sticky top-0 z-10 bg-white border-b border-mor-line px-6 py-4 flex items-start justify-between"
                 style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
                 <div className="min-w-0">
                   <div className="font-bold truncate">{c.room} <span className="text-sm font-normal text-gray-500">{c.estates?.name}</span></div>
@@ -1348,7 +1348,7 @@ const nameOf = (c: Contract) =>
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/30" />
           <div onClick={(e) => e.stopPropagation()} className="relative bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[85vh] overflow-y-auto">
-            <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 font-bold flex items-center justify-between">
+            <div className="sticky top-0 z-10 bg-white border-b border-mor-line px-6 py-4 font-bold flex items-center justify-between">
               {edit.id ? '編輯契約' : '新增契約'}
               <button onClick={() => setEdit(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
             </div>
@@ -2798,7 +2798,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
     <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
       <div className="absolute inset-0 bg-black/30" />
       <div onClick={(e) => e.stopPropagation()} className="relative bg-white rounded-2xl shadow-xl w-full max-w-xl max-h-[85vh] overflow-y-auto">
-        <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 flex items-center justify-between">
+        <div className="sticky top-0 z-10 bg-white border-b border-mor-line px-6 py-4 flex items-center justify-between">
           <div>
             <div className="font-bold">收款 — {c.room} {c.tenant_name}</div>
             <div className="text-xs text-gray-500 mt-0.5">{TYPE_LABEL[c.type ?? 'longterm']}・{CAD_LABEL[c.cadence]}・每期 ${fmt(c.amount_per_period)}(月 ${fmt(c.monthly_rent)}){dueDayText(c.start_date, c.cadence, c.pay_day).text ? `・應繳 ${dueDayText(c.start_date, c.cadence, c.pay_day).text}` : ''}・租期 {c.start_date} ~ {c.end_date}・應收按月自動認列</div>

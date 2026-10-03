@@ -1852,7 +1852,7 @@ export default function DepositsPage() {
             <div className="absolute inset-0 bg-black/30" />
             <div onClick={(e) => e.stopPropagation()}
               className="absolute right-0 top-0 h-full w-full max-w-lg bg-white shadow-xl overflow-y-auto">
-              <div className="sticky top-0 bg-white border-b border-mor-line px-6 py-4 flex items-start justify-between"
+              <div className="sticky top-0 z-10 bg-white border-b border-mor-line px-6 py-4 flex items-start justify-between"
                 style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
                 <div className="min-w-0">
                   <div className="font-bold">{d.room ?? '—'}・{d.guest_name ?? '—'}</div>

@@ -377,7 +377,7 @@ export default function SupplyTab({ onMsg }: { onMsg: (t: string, err?: boolean)
                 只鎖直向的話右邊兩欄（廠商、效期）會被裁掉而沒有捲軸（2026-09-23 掃到）*/}
             <div className="max-h-96 overflow-auto">
               <table className="w-full text-xs">
-                <thead className="sticky top-0 bg-gray-50 text-gray-500 text-left">
+                <thead className="sticky top-0 z-10 bg-gray-50 text-gray-500 text-left">
                   <tr>
                     <th className="px-3 py-2">物資名稱</th>
                     <th className="px-3 py-2 text-right w-20">系統餘量</th>

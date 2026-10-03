@@ -159,17 +159,16 @@ export default function PricingFeeModal({ onClose }: { onClose: () => void }) {
           <button onClick={onClose} disabled={busy} className={`${view === 'history' ? 'ml-auto' : 'ml-3'} text-gray-400 hover:text-gray-600 text-xl leading-none`}>✕</button>
         </div>
 
-        <div className="px-5 py-3 overflow-y-auto flex-1 text-sm">
-          {loading && <div className="py-10 text-center text-gray-400">載入中…</div>}
-
-          {!loading && view !== 'history' && (
+        {/*
+          ★ 2026-10-03 David：「表頭跑掉」—— 步驟與月份放在**不捲動**的這一段，
+            底下只有表格在捲；表頭貼在捲動區頂端（捲動區上方不能有 padding，不然列會從表頭上面露出來）。
+        */}
+        {!loading && view !== 'history' && (
+          <div className="px-5 pt-3 text-sm">
             <div className="text-[11.5px] text-gray-400 mb-2 flex gap-3">
               {step(1, '勾選', view === 'pick')}<span>→</span>{step(2, '預覽', view === 'preview')}<span>→</span>{step(3, '產生', false)}
             </div>
-          )}
-
-          {!loading && view === 'pick' && (
-            <>
+            {view === 'pick' && (
               <div className="flex flex-wrap items-center gap-1.5 mb-2">
                 <span className="text-xs text-gray-400 mr-1">入住月</span>
                 {['all', ...quick].map((y) => (
@@ -188,8 +187,17 @@ export default function PricingFeeModal({ onClose }: { onClose: () => void }) {
                 )}
                 <span className="ml-auto text-[11px] text-gray-400 hidden md:inline">點月份 ＝ 只列那個月，並把還沒產生的全勾起來</span>
               </div>
+            )}
+          </div>
+        )}
+
+        <div className="px-5 pb-3 overflow-y-auto flex-1 text-sm">
+          {loading && <div className="py-10 text-center text-gray-400">載入中…</div>}
+
+          {!loading && view === 'pick' && (
+            <>
               <table className="w-full text-xs">
-                <thead className="sticky top-0 bg-white">
+                <thead className="sticky top-0 z-10 bg-white shadow-[0_1px_0_#E0DDD5]">
                   <tr className="text-gray-500 border-b border-mor-line">
                     <th className="w-7 py-1.5 text-left">
                       <input type="checkbox" checked={allOn} disabled={!openable.length}
@@ -223,7 +231,7 @@ export default function PricingFeeModal({ onClose }: { onClose: () => void }) {
 
           {!loading && view === 'preview' && pv && (
             <>
-              <div className="mb-2">按「產生支出」之後會寫進支出明細的就是這幾筆 —— 現在還沒寫</div>
+              <div className="mb-2 pt-1">按「產生支出」之後會寫進支出明細的就是這幾筆 —— 現在還沒寫</div>
               <table className="w-full text-xs">
                 <thead><tr className="text-gray-500 border-b border-mor-line">
                   <th className="text-left font-medium py-1.5">日期</th><th className="text-left font-medium">項目</th>
@@ -255,7 +263,7 @@ export default function PricingFeeModal({ onClose }: { onClose: () => void }) {
           )}
 
           {!loading && view === 'history' && (
-            <table className="w-full text-xs">
+            <table className="w-full text-xs mt-3">
               <thead><tr className="text-gray-500 border-b border-mor-line">
                 <th className="text-left font-medium py-1.5">產生時間</th><th className="text-left font-medium">誰</th>
                 <th className="text-right font-medium">張數</th><th className="text-right font-medium">合計</th>

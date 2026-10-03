@@ -635,7 +635,7 @@ function UploadModal({ ev, people, meId, initial, onClose, onSubmit }: {
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/30" onClick={onClose} />
       <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[85vh] overflow-y-auto">
-        <div className="sticky top-0 bg-white px-5 py-3.5 border-b border-mor-line font-bold flex items-center gap-2">
+        <div className="sticky top-0 z-10 bg-white px-5 py-3.5 border-b border-mor-line font-bold flex items-center gap-2">
           上傳會議資料
           <span className="text-xs font-normal text-gray-400 truncate">{ev.title}</span>
           <button onClick={onClose} className="ml-auto text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
@@ -854,7 +854,7 @@ function EventForm({ draft, onChange, onClose, onSave, canDelete, files, names, 
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/30" onClick={onClose} />
       <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm max-h-[85vh] overflow-y-auto">
-        <div className="sticky top-0 bg-white px-5 py-3.5 border-b border-mor-line font-bold
+        <div className="sticky top-0 z-10 bg-white px-5 py-3.5 border-b border-mor-line font-bold
                         flex items-center justify-between">
           {draft.id ? '編輯活動' : '排一場活動'}
           <button onClick={onClose}
