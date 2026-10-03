@@ -1461,7 +1461,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
 
     for (const g of GROUPS) {
       // 跟畫面同一條規則:本月沒排到、也沒手動填拿床單的不匯出
-      const list = props.filter((p) => p.linen_group === g
+      const list = props.filter((p) => p.linen_group === g && p.count_linen !== false /* 公區等「不算布巾」的不列（2026-10-03 David） */
         && (countOf(p.code) > 0 || linenOf(p.code) > 0));
       if (!list.length) continue;
       sheet.push([GROUP_LABEL[g], '次數', '床數', '更換床數', '拿床單', '小計']);
@@ -2821,7 +2821,7 @@ export default function StatsTab({ onGoCalendar }: { onGoCalendar: () => void })
              *
              * 拿床單有填的也留著:那是人手動輸入的，不該因為系統沒排班就藏掉。
              */
-            const list = props.filter((p) => p.linen_group === g
+            const list = props.filter((p) => p.linen_group === g && p.count_linen !== false /* 公區等「不算布巾」的不列（2026-10-03 David） */
               && (countOf(p.code) > 0 || linenOf(p.code) > 0));
             if (!list.length) return null;
             const sub = list.reduce((a, p) => a + countOf(p.code) * (p.beds ?? 0) + linenOf(p.code), 0);
