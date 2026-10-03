@@ -7,7 +7,7 @@ import { FilterBar, Field, FilterSelect, FilterSearch, FilterClear, FilterCount 
 import {
   isWeekend, weekdayOf, sortRooms, matchRoom, rowOf, exitsSoon,
   overlapRanges, dropContractOrders, monthRange, rangeDays, eachDay,
-  staysInRange, lastNightOf, daysBetween, addDays, MAX_RANGE_DAYS,
+  staysInRange, lastNightOf, daysBetween, addDays, MAX_RANGE_DAYS, checkedOut,
   type Stay, type Room, type Cell, type Range, type Exit,
 } from '@/lib/room-calendar';
 /*
@@ -61,6 +61,13 @@ const TONE: Record<Stay['tone'], { bar: string; chip: string; label: string }> =
   earnest:  { bar: 'bg-[#C9A227]',  chip: 'bg-[#C9A227]',  label: '訂金／未確認' },
 };
 const TONES = Object.keys(TONE) as Stay['tone'][];
+
+/**
+ * 已退房（2026-10-03 David：「多一種顏色，已退房變灰色」）。
+ * ★ 不是一種「客」，是一種**狀態** —— 所以不進 TONE、不當篩選藥丸，
+ *   只蓋掉色條的顏色；點開卡片仍寫原本是短租／私下／長租。
+ */
+const DONE_BAR = 'bg-gray-400';
 
 /** 重疊清單裡標「這一筆是哪裡來的」—— 沒有這兩個字就不知道去哪一頁修 */
 const KIND: Record<Stay['kind'], string> = { contract: '契約', order: '訂單' };
@@ -724,6 +731,10 @@ export default function RoomStatusPage() {
               {TONE[k].label}
             </Pill>
           ))}
+          {/* 圖例而已，不是篩選 —— 所以不做成藥丸（點了不會有反應的東西不要長得像按鈕） */}
+          <span className="inline-flex items-center gap-1.5 px-1 text-uisub text-gray-500 whitespace-nowrap">
+            <i className={`w-3 h-3 rounded-sm shrink-0 ${DONE_BAR}`} />已退房
+          </span>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {/*
@@ -781,16 +792,6 @@ export default function RoomStatusPage() {
                 那兩個是**儀表**不是警報，而且退租與退房是兩件不同的工作
                 （一個要找新房客、一個要排清潔），合成一個數字等於把資訊丟掉。
             */}
-            <label className="flex items-center gap-1.5">
-              <span className="text-uisub text-gray-500 whitespace-nowrap">提醒範圍</span>
-              <select value={win} onChange={(e) => pickWin(Number(e.target.value) as AlertWindow)}
-                className="h-9 rounded-full border border-mor-line bg-white px-3 text-uisub
-                           text-gray-700 hover:bg-mor-sand/60">
-                {ALERT_WINDOWS.map((w) => (
-                  <option key={w} value={w}>{winLabel(w)}</option>
-                ))}
-              </select>
-            </label>
             {dupRooms.length > 0 && (
               <ToggleInfo tone="amber" on={showDup} onToggle={() => setShowDup((v) => !v)}
                 label={<>⚠ 重疊 <b className="tabular-nums">{dupRooms.length}</b></>}
@@ -823,6 +824,17 @@ export default function RoomStatusPage() {
               <b>短租訂單</b>在 {winLabel(win)}內退房的（跟退租共用同一排膠囊）。
               月租單不算 —— 那是契約每個月長出來的帳，不是真的有人要走。
             </ToggleInfo>
+            {/* ★ 2026-10-03 David：「往後移」—— 提醒範圍放最後，管的是前面那兩顆的天數 */}
+            <label className="flex items-center gap-1.5">
+              <span className="text-uisub text-gray-500 whitespace-nowrap">提醒範圍</span>
+              <select value={win} onChange={(e) => pickWin(Number(e.target.value) as AlertWindow)}
+                className="h-9 rounded-full border border-mor-line bg-white px-3 text-uisub
+                           text-gray-700 hover:bg-mor-sand/60">
+                {ALERT_WINDOWS.map((w) => (
+                  <option key={w} value={w}>{winLabel(w)}</option>
+                ))}
+              </select>
+            </label>
           </span>
         </div>
       </div>
@@ -987,7 +999,7 @@ export default function RoomStatusPage() {
                         className={`absolute inset-y-1 inset-x-0.5 rounded-md px-1.5
                           flex items-center text-[11px] font-semibold text-white
                           whitespace-nowrap overflow-hidden transition-opacity
-                          ${hit ? '' : TONE[c.stay.tone].bar}
+                          ${hit ? '' : checkedOut(c.stay, today) ? DONE_BAR : TONE[c.stay.tone].bar}
                           ${dimmed ? 'opacity-20' : 'hover:brightness-110'}`}>
                         <span className="truncate">{c.stay.guest ?? ''}</span>
                         {hit && (
@@ -1023,7 +1035,7 @@ export default function RoomStatusPage() {
       </p>
 
       {/* ③ 點開的卡片 —— 見上面 `openCard()` */}
-      {picked && <StayCard p={picked} onClose={() => setPicked(null)} />}
+      {picked && <StayCard p={picked} today={today} onClose={() => setPicked(null)} />}
     </div>
   );
 }
@@ -1042,8 +1054,9 @@ export default function RoomStatusPage() {
  *   這一頁最常被誤會的就是這件事（「9/18 退房那格為什麼是空的」）。
  *   把最後一晚直接寫出來，那一格為什麼空著就不用再問了。
  */
-function StayCard({ p, onClose }: { p: Picked; onClose: () => void }) {
+function StayCard({ p, today, onClose }: { p: Picked; today: string; onClose: () => void }) {
   const s = p.stay;
+  const done = checkedOut(s, today);
   const last = lastNightOf(s);
   const nights = s.start && last ? daysBetween(s.start, last) + 1 : 0;
   const href = s.kind === 'contract' ? `/contracts?contract=${s.srcId}` : `/shortterm?order=${s.srcId}`;
@@ -1057,11 +1070,11 @@ function StayCard({ p, onClose }: { p: Picked; onClose: () => void }) {
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 font-bold text-sm">
-              <i className={`w-2.5 h-2.5 rounded-sm shrink-0 ${TONE[s.tone].bar}`} />
+              <i className={`w-2.5 h-2.5 rounded-sm shrink-0 ${done ? DONE_BAR : TONE[s.tone].bar}`} />
               <span className="truncate">{s.guest || '（沒有名字）'}</span>
             </div>
             <div className="text-[11px] text-gray-400 mt-0.5">
-              {p.room}{p.estate ? `・${p.estate}` : ''}　{TONE[s.tone].label}
+              {p.room}{p.estate ? `・${p.estate}` : ''}　{TONE[s.tone].label}{done ? '・已退房' : ''}
             </div>
           </div>
           <button onClick={onClose} aria-label="關閉"

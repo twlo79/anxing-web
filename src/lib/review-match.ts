@@ -13,6 +13,20 @@ export type OrderStay = { guest_name: string | null; checkin: string | null; che
 
 const norm = (s: string | null | undefined) => (s ?? '').trim().toLowerCase();
 
+/**
+ * 一個名字可以拿來比對的幾種寫法：全名、第一段（名）。
+ *
+ * ★ 2026-10-03：訂單補了 Airbnb 全名（「Kevin Chen」）之後，評價那邊還是只有名（「Kevin」）——
+ *   兩邊全名比對永遠不相等，於是新評價全部落進「未對應」。
+ *   兩邊都拆出「第一段」再比；同名撞到兩間的話照樣不猜（matchStay 裡的 look()）。
+ */
+export function nameKeys(s: string | null | undefined): string[] {
+  const full = norm(s).replace(/\s+/g, ' ');
+  if (!full) return [];
+  const first = full.split(' ')[0];
+  return first && first !== full ? [full, first] : [full];
+}
+
 function shiftDay(d: string, n: number): string {
   const t = new Date(d + 'T00:00:00Z'); t.setUTCDate(t.getUTCDate() + n);
   return t.toISOString().slice(0, 10);
@@ -24,35 +38,43 @@ export function buildStayIndex(orders: OrderStay[]) {
   const byIn: Record<string, Set<string>> = {};
   for (const o of orders) {
     if (!o.guest_name || !o.property_id) continue;
-    const g = norm(o.guest_name);
-    if (o.checkout) (byOut[`${g}|${o.checkout}`] ||= new Set()).add(o.property_id);
-    if (o.checkin) (byIn[`${g}|${o.checkin}`] ||= new Set()).add(o.property_id);
+    for (const g of nameKeys(o.guest_name)) {
+      if (o.checkout) (byOut[`${g}|${o.checkout}`] ||= new Set()).add(o.property_id);
+      if (o.checkin) (byIn[`${g}|${o.checkin}`] ||= new Set()).add(o.property_id);
+    }
   }
   return { byOut, byIn };
 }
-
-const only = (s?: Set<string>) => (s && s.size === 1 ? Array.from(s)[0] : null);
 
 /** 回房源 id；對不到或不唯一 → null。`how` 說是哪一關對到的（給統計用） */
 export function matchStay(
   idx: ReturnType<typeof buildStayIndex>,
   guest: string | null | undefined, checkin: string | null, checkout: string | null,
 ): { propertyId: string | null; how: 'checkout' | 'checkin' | 'checkout±1' | null } {
-  const g = norm(guest);
-  if (!g) return { propertyId: null, how: null };
+  const keys = nameKeys(guest);
+  if (!keys.length) return { propertyId: null, how: null };
+  /** 同一關裡，全名與「名」各查一次；兩個都對到但不同間 → 不猜 */
+  const look = (tbl: Record<string, Set<string>>, d: string) => {
+    // 先用全名：全名就分得出來的（Amy Lin vs Amy Wang）不要被「名」拖下水
+    const exact = tbl[`${keys[0]}|${d}`];
+    if (exact && exact.size === 1) return Array.from(exact)[0];
+    const c = new Set<string>();
+    for (const g of keys) { const s = tbl[`${g}|${d}`]; if (s) s.forEach((x) => c.add(x)); }
+    return c.size === 1 ? Array.from(c)[0] : null;
+  };
   if (checkout) {
-    const p = only(idx.byOut[`${g}|${checkout}`]);
+    const p = look(idx.byOut, checkout);
     if (p) return { propertyId: p, how: 'checkout' };
   }
   if (checkin) {
-    const p = only(idx.byIn[`${g}|${checkin}`]);
+    const p = look(idx.byIn, checkin);
     if (p) return { propertyId: p, how: 'checkin' };
   }
   if (checkout) {
     // 差一天：兩邊各看一次，兩邊都對到但不同間 → 不猜
     const cands = new Set<string>();
     for (const d of [shiftDay(checkout, -1), shiftDay(checkout, 1)]) {
-      const p = only(idx.byOut[`${g}|${d}`]);
+      const p = look(idx.byOut, d);
       if (p) cands.add(p);
     }
     if (cands.size === 1) return { propertyId: Array.from(cands)[0], how: 'checkout±1' };

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildStayIndex, matchStay } from './review-match.ts';
+import { buildStayIndex, matchStay, nameKeys } from './review-match.ts';
 
 const orders = [
   { guest_name: 'Ka Chun', checkin: '2026-09-05', checkout: '2026-09-24', property_id: 'T4' },
@@ -41,5 +41,30 @@ describe('matchStay', () => {
   it('Ka Chun 9/24 是兩張單的交界：退房日 9/24 對到 T4、入住日 9/24 對到 T3，各走各的關', () => {
     assert.equal(matchStay(idx, 'Ka Chun', '2026-09-20', '2026-09-24').propertyId, 'T4');
     assert.equal(matchStay(idx, 'Ka Chun', '2026-09-24', '2026-09-30').propertyId, 'T3');
+  });
+});
+
+describe('訂單是全名、評價只有名（2026-10-03 Kevin A17）', () => {
+  const idx = buildStayIndex([
+    { guest_name: 'Kevin Chen', checkin: '2026-08-28', checkout: '2026-09-30', property_id: 'A17' },
+    { guest_name: 'Amy Lin', checkin: '2026-09-01', checkout: '2026-09-05', property_id: 'X1' },
+    { guest_name: 'Amy Wang', checkin: '2026-09-01', checkout: '2026-09-05', property_id: 'X2' },
+  ]);
+  it('名對全名的第一段 → 對到', () => {
+    assert.equal(matchStay(idx, 'Kevin', '2026-08-28', '2026-09-30').propertyId, 'A17');
+  });
+  it('評價給全名也對得到', () => {
+    assert.equal(matchStay(idx, 'Kevin Chen', '2026-08-28', '2026-09-30').propertyId, 'A17');
+  });
+  it('同一天兩個 Amy 住不同間 → 不猜', () => {
+    assert.equal(matchStay(idx, 'Amy', '2026-09-01', '2026-09-05').propertyId, null);
+  });
+  it('全名能分辨的就用全名分辨', () => {
+    assert.equal(matchStay(idx, 'Amy Lin', '2026-09-01', '2026-09-05').propertyId, 'X1');
+  });
+  it('nameKeys：全名＋第一段、大小寫與多個空白都收掉', () => {
+    assert.deepEqual(nameKeys('  Kevin   CHEN '), ['kevin chen', 'kevin']);
+    assert.deepEqual(nameKeys('陳月明'), ['陳月明']);
+    assert.deepEqual(nameKeys(''), []);
   });
 });

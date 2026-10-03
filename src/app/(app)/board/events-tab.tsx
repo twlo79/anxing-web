@@ -7,11 +7,11 @@ import { ReqMark } from '@/components/Req';
 import {
   EVENT_KINDS, KIND_LABEL, parseEventKind, kindLabel,
   eventOrder, nextEvent, isPast, untilLabel, fmtEventWhen,
-  FILE_ACCEPT, fileKind, KIND_BADGE, canPreview, whyNoPreview, KIND_EXTS,
-  fmtSize, fileTooBig, type EventKind,
+  FILE_ACCEPT, fileKind, KIND_BADGE, canPreview, whyNoPreview,
+  fmtSize, type EventKind,
   linkify, urlHref, urlLabel, eventShareText, lineShareUrl, shareVia, type ShareVia,
   canUpload, filesByPerson, saveBlob, docxFitZoom, docxTableLayout, docxGutterPt, type DocxTableLayout,
-  uploadForLabel, splitUploadPeople, UPLOAD_BACK_LABEL, type UploadPerson,
+  uploadForLabel, splitUploadPeople, UPLOAD_BACK_LABEL, type UploadPerson, uploadRejectReason,
 } from '@/lib/board';
 import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
 import { useJustSaved } from '@/lib/use-just-saved';
@@ -76,6 +76,9 @@ type Fl = {
   created_at: string;
 };
 
+/** 按了上傳、還沒傳完的那幾份 —— 先畫在清單上，傳完換成真的那一列（2026-10-03 David：「要等一陣才知道上傳」） */
+type Pend = { key: string; evId: string; name: string; author: string };
+
 type Draft = {
   id?: string;
   kind: EventKind;
@@ -108,6 +111,7 @@ export default function EventsTab({ meId, isAdmin, onMsg }: {
   const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [view, setView] = useState<Fl | null>(null);
+  const [pending, setPending] = useState<Pend[]>([]);
   const { markSaved, isJust } = useJustSaved(events);
 
   const load = useCallback(async () => {
@@ -133,6 +137,16 @@ export default function EventsTab({ meId, isAdmin, onMsg }: {
   }, [supabase, onMsg]);
 
   useEffect(() => { load(); }, [load]);
+
+  /**
+   * 只重抓檔案，不重畫整頁。
+   * ★ load() 會先把整個列表換成「載入中…」—— 上傳完用它刷新，畫面會整片閃一下再回來，
+   *   看起來像「按了之後要等一陣」。檔案變動只抓檔案。
+   */
+  const refreshFiles = useCallback(async () => {
+    const { data, error } = await supabase.from('board_files').select('*').order('created_at');
+    if (!error && data) setFiles(data as Fl[]);
+  }, [supabase]);
 
   /* ★ 排序與「下一場」全部走 lib —— 這裡不自己算 */
   const rows = useMemo(() => eventOrder(events), [events]);
@@ -208,17 +222,21 @@ export default function EventsTab({ meId, isAdmin, onMsg }: {
     savedToast(savedText(want ? '已開放上傳' : '已關閉上傳', ev.title));
   };
 
-  /** 上傳（可以一次選好幾份） */
-  const upload = async (ev: Ev, picked: FileList, authorId: string) => {
-    const list = Array.from(picked);
+  /**
+   * 上傳（可以一次好幾份）。
+   *
+   * ★ 2026-10-03：視窗按下去就關，檔案先以「上傳中⋯」畫在卡片上（pending），
+   *   一份傳完就換成真的那一列 —— 不要讓人對著關掉的視窗猜有沒有傳上去。
+   */
+  const upload = async (ev: Ev, list: File[], authorId: string) => {
+    const author = authorId || meId;
+    const jobs = list.map((f, i) => ({ f, key: `${Date.now()}_${i}_${f.name}` }));
+    setPending((p) => [...p, ...jobs.map(({ f, key }) => ({ key, evId: ev.id, name: f.name, author }))]);
     let ok = 0, okName = '';
-    for (const f of list) {
-      const tooBig = fileTooBig(f.size);
-      if (tooBig.bad) { onMsg(`${f.name}：${tooBig.why}`, true); continue; }
-      if (fileKind(f.name) === 'other') {
-        onMsg(`${f.name} 這種檔案收不了。可以傳：${Object.values(KIND_EXTS).flat().join('　')}`, true);
-        continue;
-      }
+    for (const { f, key } of jobs) {
+      const done = () => setPending((p) => p.filter((x) => x.key !== key));
+      const why = uploadRejectReason(f.name, f.size);
+      if (why) { onMsg(`${f.name}：${why}`, true); done(); continue; }
       /*
        * ★★ 路徑用 uuid，不是原始檔名。中文檔名在 storage 上會被轉義，
        *   而同一場會兩個人傳同名的檔會互相蓋掉。
@@ -228,11 +246,11 @@ export default function EventsTab({ meId, isAdmin, onMsg }: {
       const path = `${ev.id}/${Date.now()}_${crypto.randomUUID()}.${ext}`;
       const { error: ue } = await supabase.storage.from(BUCKET)
         .upload(path, f, { contentType: f.type || undefined, upsert: false });
-      if (ue) { onMsg(`${f.name} 傳不上去：${ue.message}`, true); continue; }
+      if (ue) { onMsg(`${f.name} 傳不上去：${ue.message}`, true); done(); continue; }
       const { data, error } = await supabase.from('board_files').insert({
         event_id: ev.id, path, name: f.name, size_bytes: f.size,
         /* ★ 誰按的上傳 vs 這是誰的 —— 代傳時兩個不一樣 */
-        uploaded_by: meId, author_id: authorId || meId,
+        uploaded_by: meId, author_id: author,
       }).select('id');
       if (error || !data?.length) {
         /*
@@ -241,15 +259,18 @@ export default function EventsTab({ meId, isAdmin, onMsg }: {
          */
         await supabase.storage.from(BUCKET).remove([path]);
         onMsg(`${f.name} 沒有掛上去：${error?.message ?? '你的帳號沒有這個權限。'}`, true);
+        done();
         continue;
       }
       ok++; okName = f.name;
+      // 先抓到真的那一列再拿掉「上傳中」—— 反過來的話中間會有一瞬間兩邊都沒有
+      await refreshFiles();
+      done();
     }
     if (ok) {
       savedToast(savedText('已上傳', ok === 1 ? okName : `${ok} 份檔案`));
       markSaved(ev.id);
     }
-    load();
   };
 
   const delFile = async (f: Fl) => {
@@ -261,7 +282,7 @@ export default function EventsTab({ meId, isAdmin, onMsg }: {
     /* ★ 資料庫那一列刪掉了才收 storage —— 反過來的話列還在但檔沒了 */
     await supabase.storage.from(BUCKET).remove([f.path]);
     savedToast(savedText('已刪除', f.name));
-    load();
+    refreshFiles();
   };
 
   return (
@@ -295,7 +316,7 @@ export default function EventsTab({ meId, isAdmin, onMsg }: {
       <div className="grid gap-2">
         {rows.map((e) => (
           <EventRow key={e.id} ev={e} just={isJust(e.id)} files={filesOf(e.id)} names={names} meId={meId}
-            isAdmin={isAdmin} people={people}
+            isAdmin={isAdmin} people={people} pending={pending.filter((p) => p.evId === e.id)}
             onEdit={() => setDraft({
               id: e.id, kind: parseEventKind(e.kind), title: e.title,
               date: dateOf(e.starts_at), time: e.all_day ? '' : timeOf(e.starts_at),
@@ -342,31 +363,47 @@ function timeOf(iso: string): string {
 
 /* ══════════════════════════════════════════════════════════ */
 
-function EventRow({ ev, just, files, names, meId, isAdmin, people,
+function EventRow({ ev, just, files, names, meId, isAdmin, people, pending,
   onEdit, onToggle, onUpload, onDelFile, onView }: {
   ev: Ev; just: boolean; files: Fl[]; names: Map<string, string>; meId: string; isAdmin: boolean;
-  people: { id: string; name: string }[];
+  people: UploadPerson[];
+  /** 這一場還在上傳中的檔案 */
+  pending: Pend[];
   onEdit: () => void;
   onToggle: () => void;
   /** 第二個參數是「這份資料是誰的」—— 代傳時不等於自己 */
-  onUpload: (f: FileList, authorId: string) => void;
+  onUpload: (f: File[], authorId: string) => void;
   onDelFile: (f: Fl) => void;
   onView: (f: Fl) => void;
 }) {
-  const pick = useRef<HTMLInputElement>(null);
-  /** 「代誰傳」。預設自己 —— 九成的情況零個額外動作 */
-  const [forWho, setForWho] = useState(meId);
-  /** 前段是會開會的人、後段是房務（還是選得到，只是排後面）—— 規則在 lib */
-  const who2 = useMemo(() => splitUploadPeople(people, meId), [people, meId]);
+  /** 上傳視窗：null＝關著；陣列＝打開，裡面是拖進來的檔案（按鈕打開的話是空陣列） */
+  const [modal, setModal] = useState<File[] | null>(null);
+  /** 有檔案拖在這張卡上面 */
+  const [drag, setDrag] = useState(false);
   const kind = parseEventKind(ev.kind);
   const past = isPast(ev.starts_at);
+  /** 「會議資料」收合。還沒過的預設打開，已過的預設收起來（2026-10-03 David：「有 toggle 可以收納」） */
+  const [listOpen, setListOpen] = useState(!past);
   const mine = ev.created_by === meId;
   const canEdit = mine || isAdmin;
   const open = canUpload(ev);
   const who = (id: string | null) => names.get(id ?? '') ?? '—';
+  /** 拖檔上傳只在開會、而且開放上傳時才接 */
+  const dropOK = kind === 'meeting' && open;
+  const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes('Files');
 
   return (
-    <div {...justRow(just)} className={`rounded-xl border ${just ? SAVED_HL : 'bg-white'} px-4 py-3 ${
+    <>
+    <div {...justRow(just)}
+      onDragOver={dropOK ? (e) => { if (hasFiles(e)) { e.preventDefault(); setDrag(true); } } : undefined}
+      onDragLeave={dropOK ? (e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDrag(false); } : undefined}
+      onDrop={dropOK ? (e) => {
+        if (!hasFiles(e)) return;
+        e.preventDefault(); setDrag(false);
+        const fs = Array.from(e.dataTransfer.files);
+        if (fs.length) setModal(fs);
+      } : undefined}
+      className={`relative rounded-xl border ${just ? SAVED_HL : 'bg-white'} px-4 py-3 ${
       past ? 'border-mor-line opacity-60'
            : `border-mor-line border-l-[3px] ${
                kind === 'meeting' ? 'border-l-mor-slate' : 'border-l-[#C9A227]'}`}`}>
@@ -401,123 +438,126 @@ function EventRow({ ev, just, files, names, meId, isAdmin, people,
       */}
       {kind === 'meeting' && (
         <div className="mt-2 border-t border-dashed border-mor-line pt-2">
+          {/*
+            ★ 2026-10-03 David：「上傳資料叫會議資料，有 toggle 可以收納」。
+              標題列：左邊「會議資料 · N 份」點一下收合；右邊是開放上傳的開關。
+          */}
           <div className="flex items-center gap-2">
-            {canEdit ? (
-              <button onClick={onToggle} role="switch" aria-checked={ev.uploads_open}
-                className={`w-9 h-5 rounded-full relative shrink-0 transition-colors ${
-                  ev.uploads_open ? 'bg-mor-greendark' : 'bg-[#D6D3CC]'}`}>
-                <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
-                  ev.uploads_open ? 'left-[18px]' : 'left-0.5'}`} />
-              </button>
-            ) : (
-              <span className={`w-9 h-5 rounded-full relative shrink-0 ${
-                ev.uploads_open ? 'bg-mor-greendark' : 'bg-[#D6D3CC]'}`}>
-                <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow ${
-                  ev.uploads_open ? 'left-[18px]' : 'left-0.5'}`} />
-              </span>
-            )}
-            <span className="text-[12.5px]">開放上傳資料</span>
-            <span className="text-[11px] text-gray-400">
-              {ev.uploads_open ? '已開放' : '開了大家才能傳'}
+            <button onClick={() => setListOpen((v) => !v)} aria-expanded={listOpen}
+              className="flex items-center gap-1.5 text-[12.5px] font-semibold text-mor-ink">
+              <span aria-hidden className={`inline-block text-[9px] text-gray-400 transition-transform ${
+                listOpen ? 'rotate-90' : ''}`}>▶</span>
+              會議資料
+              <span className="font-normal text-gray-400">· {files.length + pending.length} 份</span>
+            </button>
+            <span className="ml-auto flex items-center gap-1.5">
+                {canEdit ? (
+                  <button onClick={onToggle} role="switch" aria-checked={ev.uploads_open}
+                    className={`w-9 h-5 rounded-full relative shrink-0 transition-colors ${
+                      ev.uploads_open ? 'bg-mor-greendark' : 'bg-[#D6D3CC]'}`}>
+                    <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
+                      ev.uploads_open ? 'left-[18px]' : 'left-0.5'}`} />
+                  </button>
+                ) : (
+                  <span className={`w-9 h-5 rounded-full relative shrink-0 ${
+                    ev.uploads_open ? 'bg-mor-greendark' : 'bg-[#D6D3CC]'}`}>
+                    <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow ${
+                      ev.uploads_open ? 'left-[18px]' : 'left-0.5'}`} />
+                  </span>
+                )}
+              <span className="text-[11.5px] text-gray-500">開放上傳</span>
             </span>
           </div>
 
-          {/*
-            ★ 關著的時候要說出**為什麼**不能傳、**誰**能打開 ——
-              一塊沒有解釋的空白會被當成壞掉。
-          */}
-          {!ev.uploads_open && (
-            <div className="mt-1.5 rounded-lg bg-[#FAFAF8] px-2.5 py-1.5 text-[11.5px] text-gray-500">
-              還沒開放 —— 由{mine ? '你' : `排這場會的人（${who(ev.created_by)}）`}或主管打開。
-            </div>
-          )}
+          {listOpen && (<>
+            {/*
+              ★ 關著的時候要說出**為什麼**不能傳、**誰**能打開 ——
+                一塊沒有解釋的空白會被當成壞掉。
+            */}
+            {!ev.uploads_open && (
+              <div className="mt-1.5 rounded-lg bg-[#FAFAF8] px-2.5 py-1.5 text-[11.5px] text-gray-500">
+                還沒開放 —— 由{mine ? '你' : `排這場會的人（${who(ev.created_by)}）`}或主管打開。
+              </div>
+            )}
 
-          {/* ★★ 照「這是誰的」分組，不是照誰按的按鈕 */}
-          {filesByPerson(files.map((f) => ({ ...f, uploaded_by: f.author_id ?? f.uploaded_by })))
-            .map((g) => (
-              <div key={g.who ?? '—'}>
-                <div className="text-[11.5px] font-bold text-gray-600 mt-2 mb-0.5">
-                  {who(g.who)}
-                  <span className="font-normal text-gray-400 ml-1.5">· {g.items.length} 份</span>
+            {/* ★★ 照「這是誰的」分組，不是照誰按的按鈕 */}
+            {filesByPerson(files.map((f) => ({ ...f, uploaded_by: f.author_id ?? f.uploaded_by })))
+              .map((g) => (
+                <div key={g.who ?? '—'}>
+                  <div className="text-[11.5px] font-bold text-gray-600 mt-2 mb-0.5">
+                    {who(g.who)}
+                    <span className="font-normal text-gray-400 ml-1.5">· {g.items.length} 份</span>
+                  </div>
+                  {g.items.map((f) => {
+                    const k = fileKind(f.name);
+                    const badge = KIND_BADGE[k];
+                    const canOpen = canPreview(f.name);
+                    /* 代傳：這份的作者不是按上傳的那個人 */
+                    const proxy = f.author_id && f.uploaded_by && f.author_id !== f.uploaded_by;
+                    return (
+                      <div key={f.id} className="flex items-center gap-1.5 py-[3px] pl-2.5 text-xs">
+                        <span className="w-4 text-center shrink-0">{k === 'pdf' ? '📕' : '📘'}</span>
+                        {canOpen ? (
+                          <button onClick={() => onView(f)}
+                            className="flex-1 min-w-0 truncate text-left text-mor-slate hover:underline">
+                            {f.name}
+                          </button>
+                        ) : (
+                          <span className="flex-1 min-w-0 truncate text-gray-500"
+                            title={whyNoPreview(f.name)}>{f.name}</span>
+                        )}
+                        {badge && (
+                          <span title={badge.hint.replace(/\*\*/g, '')}
+                            className={`rounded px-1 text-[9.5px] font-bold shrink-0 ${
+                              k === 'pdf' ? 'bg-[#FDE7E5] text-[#B3423C]'
+                                          : 'bg-[#EDE7F6] text-[#5E35B1]'}`}>{badge.t}</span>
+                        )}
+                        {proxy && (
+                          <span className="rounded bg-[#F5F4F1] px-1.5 text-[10px] text-gray-400 shrink-0">
+                            {who(f.uploaded_by)}代傳
+                          </span>
+                        )}
+                        <span className="text-[10.5px] text-gray-400 shrink-0">{fmtSize(f.size_bytes)}</span>
+                        {(f.uploaded_by === meId || isAdmin) && (
+                          <button onClick={() => onDelFile(f)} title="刪掉"
+                            className="text-gray-300 hover:text-red-500 shrink-0">✕</button>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
-                {g.items.map((f) => {
-                  const k = fileKind(f.name);
-                  const badge = KIND_BADGE[k];
-                  const canOpen = canPreview(f.name);
-                  /* 代傳：這份的作者不是按上傳的那個人 */
-                  const proxy = f.author_id && f.uploaded_by && f.author_id !== f.uploaded_by;
-                  return (
-                    <div key={f.id} className="flex items-center gap-1.5 py-[3px] pl-2.5 text-xs">
-                      <span className="w-4 text-center shrink-0">{k === 'pdf' ? '📕' : '📘'}</span>
-                      {canOpen ? (
-                        <button onClick={() => onView(f)}
-                          className="flex-1 min-w-0 truncate text-left text-mor-slate hover:underline">
-                          {f.name}
-                        </button>
-                      ) : (
-                        <span className="flex-1 min-w-0 truncate text-gray-500"
-                          title={whyNoPreview(f.name)}>{f.name}</span>
-                      )}
-                      {badge && (
-                        <span title={badge.hint.replace(/\*\*/g, '')}
-                          className={`rounded px-1 text-[9.5px] font-bold shrink-0 ${
-                            k === 'pdf' ? 'bg-[#FDE7E5] text-[#B3423C]'
-                                        : 'bg-[#EDE7F6] text-[#5E35B1]'}`}>{badge.t}</span>
-                      )}
-                      {proxy && (
-                        <span className="rounded bg-[#F5F4F1] px-1.5 text-[10px] text-gray-400 shrink-0">
-                          {who(f.uploaded_by)}代傳
-                        </span>
-                      )}
-                      <span className="text-[10.5px] text-gray-400 shrink-0">{fmtSize(f.size_bytes)}</span>
-                      {(f.uploaded_by === meId || isAdmin) && (
-                        <button onClick={() => onDelFile(f)} title="刪掉"
-                          className="text-gray-300 hover:text-red-500 shrink-0">✕</button>
-                      )}
-                    </div>
-                  );
-                })}
+              ))}
+
+
+            {/* 上傳中 —— 視窗一關就先畫出來，傳完換成上面真的那一列 */}
+            {pending.map((p) => (
+              <div key={p.key} className="flex items-center gap-1.5 py-[3px] pl-2.5 text-xs">
+                <span className="w-4 text-center shrink-0">{fileKind(p.name) === 'pdf' ? '📕' : '📘'}</span>
+                <span className="flex-1 min-w-0 truncate text-gray-400">{p.name}</span>
+                {p.author !== meId && (
+                  <span className="rounded bg-[#F5F4F1] px-1.5 text-[10px] text-gray-400 shrink-0">代 {who(p.author)}</span>
+                )}
+                <span className="text-[10.5px] text-mor-slate shrink-0">上傳中⋯</span>
+                <span className="w-14 h-1 rounded bg-mor-bluelight overflow-hidden shrink-0">
+                  <span className="block h-full w-full bg-mor-blue animate-pulse" />
+                </span>
               </div>
             ))}
 
-          {/*
-            ★ 「可以讓大家上傳」—— 所以不分角色、也不管這場會是誰排的。
-              但要開關打開（資料庫那邊同一條規則）。
-          */}
-          {open && (
-            <div className="mt-2 flex gap-2 items-center">
-              <select value={forWho} onChange={(e) => setForWho(e.target.value)}
-                title="代別人傳的話改這裡"
-                className="rounded-lg border border-mor-line px-2 py-1.5 text-[11.5px]
-                           bg-white text-gray-600 max-w-[8.5rem]">
-                {/*
-                  ★ 「代 ○ 傳」不是「傳給 ○」—— 選到的人是檔案的署名，不是收件人
-                    （2026-10-01 使用者）。房務一段排最後、灰字：平常不開會，但偶爾要代她們傳。
-                */}
-                <option value={meId}>我自己</option>
-                {who2.front.map((p) => (
-                  <option key={p.id} value={p.id}>{uploadForLabel(p.name)}</option>
-                ))}
-                {who2.back.length > 0 && (
-                  <optgroup label={UPLOAD_BACK_LABEL}>
-                    {who2.back.map((p) => (
-                      <option key={p.id} value={p.id} className="text-gray-400">{uploadForLabel(p.name)}</option>
-                    ))}
-                  </optgroup>
-                )}
-              </select>
-              <input ref={pick} type="file" accept={FILE_ACCEPT} hidden multiple
-                onChange={(e) => {
-                  if (e.target.files?.length) onUpload(e.target.files, forWho);
-                  e.target.value = '';
-                }} />
-              <button onClick={() => pick.current?.click()}
-                className="flex-1 rounded-lg border border-dashed border-mor-line py-1.5
-                           text-[11.5px] text-gray-500 hover:bg-mor-sand/50">
-                ＋ 上傳資料　<span className="text-gray-400">PDF・Word</span>
-              </button>
-            </div>
-          )}
+            {/*
+              ★ 「可以讓大家上傳」—— 所以不分角色、也不管這場會是誰排的。
+                但要開關打開（資料庫那邊同一條規則）。
+              ★ 2026-10-03：代誰傳、選檔都搬進彈出視窗；卡片上只留一顆鈕與一行提示。
+            */}
+            {open && (
+              <div className="mt-2 flex items-center gap-2 flex-wrap">
+                <button onClick={() => setModal([])}
+                  className="rounded-lg border border-mor-line bg-white px-3 py-1.5 text-[12px]
+                             text-mor-slate hover:bg-mor-sand/50">⬆ 上傳會議資料</button>
+                <span className="text-[11px] text-gray-400 hidden md:inline">或把檔案拖到這張卡上</span>
+              </div>
+            )}
+          </>)}
         </div>
       )}
 
@@ -533,6 +573,139 @@ function EventRow({ ev, just, files, names, meId, isAdmin, people,
             className="text-xs text-mor-slate hover:text-mor-slatedark">編輯</button>
         )}
         <ShareButton ev={ev} />
+      </div>
+
+      {drag && (
+        <div className="pointer-events-none absolute inset-0 rounded-xl border-2 border-dashed border-mor-slate
+                        bg-mor-bluelight/85 flex items-center justify-center text-sm font-medium text-mor-slatedark">
+          放開就上傳到「{ev.title}」
+        </div>
+      )}
+    </div>
+
+    {/* ★ 視窗放在卡片外面 —— 放裡面的話，在視窗裡拖放會一路冒泡到卡片的 onDrop */}
+    {modal && (
+      <UploadModal ev={ev} people={people} meId={meId} initial={modal}
+        onClose={() => setModal(null)}
+        onSubmit={(fs, author) => { setModal(null); setListOpen(true); onUpload(fs, author); }} />
+    )}
+    </>
+  );
+}
+
+/**
+ * 上傳會議資料（2026-10-03 David：「按鈕上傳資料後彈出表單：代誰傳、上傳」「拖拉式上傳」）。
+ *
+ * ★ 拖到卡片上也是開這個視窗、把檔案放好 —— 不直接傳，因為一定要先問「代誰傳」。
+ * ★ 收不了的檔案（格式、太大）在**選的時候**就講，不要等按了上傳才一份一份跳錯。
+ */
+function UploadModal({ ev, people, meId, initial, onClose, onSubmit }: {
+  ev: Ev; people: UploadPerson[]; meId: string; initial: File[];
+  onClose: () => void;
+  onSubmit: (files: File[], authorId: string) => void;
+}) {
+  /** 「代誰傳」。預設自己 —— 九成的情況零個額外動作 */
+  const [who, setWho] = useState(meId);
+  const [list, setList] = useState<File[]>([]);
+  const [bad, setBad] = useState<string[]>([]);
+  const [tried, setTried] = useState(false);
+  const [over, setOver] = useState(false);
+  const pick = useRef<HTMLInputElement>(null);
+  /** 前段是會開會的人、後段是房務（還是選得到，只是排後面）—— 規則在 lib */
+  const who2 = useMemo(() => splitUploadPeople(people, meId), [people, meId]);
+
+  const add = useCallback((fs: File[]) => {
+    const ok: File[] = []; const no: string[] = [];
+    for (const f of fs) {
+      const why = uploadRejectReason(f.name, f.size);
+      if (why) no.push(`${f.name}：${why}`); else ok.push(f);
+    }
+    setList((l) => [...l, ...ok.filter((f) => !l.some((x) => x.name === f.name && x.size === f.size))]);
+    setBad(no);
+  }, []);
+  useEffect(() => { if (initial.length) add(initial); }, [initial, add]);
+
+  const go = () => {
+    setTried(true);
+    if (!list.length) return;
+    onSubmit(list, who);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/30" onClick={onClose} />
+      <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[85vh] overflow-y-auto">
+        <div className="sticky top-0 bg-white px-5 py-3.5 border-b border-mor-line font-bold flex items-center gap-2">
+          上傳會議資料
+          <span className="text-xs font-normal text-gray-400 truncate">{ev.title}</span>
+          <button onClick={onClose} className="ml-auto text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+        </div>
+
+        <div className="px-5 py-4 grid gap-3 text-sm">
+          <label className="grid gap-1">
+            <span className="text-xs text-gray-600">代誰傳</span>
+            <select value={who} onChange={(e) => setWho(e.target.value)}
+              className="rounded-lg border border-gray-300 px-2 py-1.5 bg-white">
+              {/*
+                ★ 「代 ○ 傳」不是「傳給 ○」—— 選到的人是檔案的署名，不是收件人
+                  （2026-10-01 使用者）。房務一段排最後：平常不開會，但偶爾要代她們傳。
+              */}
+              <option value={meId}>我自己</option>
+              {who2.front.map((p) => (
+                <option key={p.id} value={p.id}>{uploadForLabel(p.name)}</option>
+              ))}
+              {who2.back.length > 0 && (
+                <optgroup label={UPLOAD_BACK_LABEL}>
+                  {who2.back.map((p) => (
+                    <option key={p.id} value={p.id}>{uploadForLabel(p.name)}</option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
+          </label>
+
+          <input ref={pick} type="file" accept={FILE_ACCEPT} hidden multiple
+            onChange={(e) => { if (e.target.files?.length) add(Array.from(e.target.files)); e.target.value = ''; }} />
+          <button type="button" onClick={() => pick.current?.click()}
+            onDragOver={(e) => { e.preventDefault(); setOver(true); }}
+            onDragLeave={() => setOver(false)}
+            onDrop={(e) => { e.preventDefault(); setOver(false); add(Array.from(e.dataTransfer.files)); }}
+            className={`rounded-xl border-2 border-dashed px-4 py-6 text-center transition-colors ${
+              over ? 'border-mor-slate bg-mor-bluelight/60' : 'border-mor-line hover:bg-mor-sand/40'} ${
+              tried && !list.length ? 'border-red-300' : ''}`}>
+            <div className="text-2xl leading-none text-gray-400">⬆</div>
+            <div className="mt-1.5 text-gray-600">把檔案拖到這裡，或點一下選檔案</div>
+            <div className="text-[11px] text-gray-400 mt-0.5">PDF・Word，可以一次好幾份</div>
+          </button>
+
+          {list.length > 0 && (
+            <div className="grid gap-0.5">
+              {list.map((f, i) => (
+                <div key={f.name + f.size} className="flex items-center gap-1.5 text-xs">
+                  <span className="w-4 text-center shrink-0">{fileKind(f.name) === 'pdf' ? '📕' : '📘'}</span>
+                  <span className="flex-1 min-w-0 truncate">{f.name}</span>
+                  <span className="text-[10.5px] text-gray-400 shrink-0">{fmtSize(f.size)}</span>
+                  <button onClick={() => setList((l) => l.filter((_, j) => j !== i))} title="拿掉"
+                    className="text-gray-300 hover:text-red-500 shrink-0">✕</button>
+                </div>
+              ))}
+            </div>
+          )}
+          {bad.length > 0 && (
+            <div className="rounded-lg bg-red-50 px-2.5 py-1.5 text-[11.5px] text-red-600 whitespace-pre-line">
+              {'收不了：\n' + bad.join('\n')}
+            </div>
+          )}
+          {tried && !list.length && <div className="text-[11.5px] text-red-600 -mt-1">先選檔案</div>}
+
+          <div className="flex justify-end gap-2 pt-1">
+            <button onClick={onClose} className="h-9 rounded-lg border border-mor-line px-4 text-sm">取消</button>
+            <button onClick={go}
+              className="h-9 rounded-lg bg-mor-slate text-white px-4 text-sm font-medium hover:bg-mor-slatedark">
+              {list.length ? `上傳 ${list.length} 份` : '上傳'}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

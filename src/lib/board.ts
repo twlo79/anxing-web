@@ -126,7 +126,12 @@ export function nextEvent<T extends BoardEvent>(
 
 /** 過去了沒 */
 export function isPast(startsAt: string, now: Date = new Date()): boolean {
-  return ts(startsAt) < now.getTime();
+  /*
+   * ★ 2026-10-03 David：「當天過完後才過期」。
+   *   以前是「開始時間過了就算過」—— 13:30 的會，14:00 卡片就變灰、會議資料收起來，
+   *   而那時候大家正在會議室裡要打開資料。改成看台北的日期：那一天過完才算過。
+   */
+  return daysUntil(startsAt, now) < 0;
 }
 
 /* ── 時區 ─────────────────────────────────────────────────── */
@@ -954,4 +959,14 @@ export function boardEventRecipients(wanted: string[], createdBy: string | null)
     push: uniq.filter((id) => id !== createdBy),
     storeOnly: createdBy && uniq.includes(createdBy) ? [createdBy] : [],
   };
+}
+
+/**
+ * 這份檔案收不收得了；收得了回 null，收不了回原因（一句話）。
+ * 上傳視窗選檔時就用它擋，不要等按了上傳才一份一份跳錯。
+ */
+export function uploadRejectReason(name: string, bytes: number): string | null {
+  if (fileKind(name) === 'other') return `這種檔案收不了。可以傳：${Object.values(KIND_EXTS).flat().join('　')}`;
+  const big = fileTooBig(bytes);
+  return big.bad ? big.why : null;
 }

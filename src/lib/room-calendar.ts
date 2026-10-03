@@ -177,6 +177,18 @@ export function lastNightOf(s: Pick<Stay, 'kind' | 'end'>): Ymd | null {
   return s.kind === 'order' ? addDays(s.end, -1) : s.end;
 }
 
+/**
+ * 已經退房了沒（2026-10-03 David：「多一種顏色，已退房變灰色」）。
+ * 看的是**最後一晚**：最後一晚在今天之前 ＝ 已經走了。
+ *   訂單　退房日 ≤ 今天（今天退房的，色條本來就只畫到昨晚）
+ *   契約　最後一晚 < 今天
+ * ★ 走 lastNightOf，不自己 ±1（見上面那支的說明）。
+ */
+export function checkedOut(s: Pick<Stay, 'kind' | 'end'>, today: Ymd): boolean {
+  const last = lastNightOf(s);
+  return !!last && last < today;
+}
+
 /** 這一天這筆佔用在不在 */
 export function occupies(s: Stay, day: Ymd): boolean {
   const last = lastNightOf(s);

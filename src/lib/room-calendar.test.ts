@@ -5,8 +5,7 @@ import {
   compareRoomName, sortRooms, matchRoom, rowOf, hasFreeDay, hasStay,
   overlaps, overlapRanges, staysInRange, dropContractOrders, exitsSoon,
   monthRange, rangeDays, eachDay, ymd, weekdayOf, MAX_RANGE_DAYS,
-  type Stay, type Room, type Range,
-} from './room-calendar.ts';
+  type Stay, type Room, type Range, checkedOut } from './room-calendar.ts';
 
 /*
  * ══════════════════════════════════════════════════════════
@@ -468,4 +467,13 @@ describe('★★★ 退租／退房提醒 exitsSoon', () => {
     assert.equal(exitsSoon([s], '2026-09-16', 'contract', 45).length, 1);
     assert.equal(exitsSoon([s], '2026-12-01', 'contract', 45).length, 0, '已經過去了');
   });
+});
+
+test('checkedOut：已退房變灰（2026-10-03）', () => {
+  const T = '2026-10-03';
+  assert.equal(checkedOut({ kind: 'order', end: '2026-10-03' }, T), true, '今天退房 → 已退房（最後一晚是昨晚）');
+  assert.equal(checkedOut({ kind: 'order', end: '2026-10-04' }, T), false, '明天退房 → 今晚還在');
+  assert.equal(checkedOut({ kind: 'contract', end: '2026-10-03' }, T), false, '契約最後一晚是今天 → 還在');
+  assert.equal(checkedOut({ kind: 'contract', end: '2026-10-02' }, T), true);
+  assert.equal(checkedOut({ kind: 'order', end: null }, T), false, '沒有退房日不算');
 });

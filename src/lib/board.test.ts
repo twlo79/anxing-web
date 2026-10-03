@@ -6,7 +6,7 @@ import {
   eventOrder, nextEvent, isPast, daysUntil, untilLabel, fmtEventWhen,
   FILE_ACCEPT, fileKind, KIND_BADGE, canPreview, whyNoPreview, KIND_EXTS, FILE_BADGE,
   fmtSize, FILE_MAX_MB, fileTooBig, downloadName, fileExt,
-  uploadForLabel, splitUploadPeople, docxFitZoom, docxTableLayout, docxGutterPt, boardEventRecipients } from './board.ts';
+  uploadForLabel, splitUploadPeople, docxFitZoom, docxTableLayout, docxGutterPt, boardEventRecipients, uploadRejectReason } from './board.ts';
 
 /* ── 誰看得到帳密 ─────────────────────────────────────────── */
 
@@ -859,4 +859,17 @@ test('boardEventRecipients：不知道是誰排的 → 全部推', () => {
 });
 test('boardEventRecipients：重複的 id 只算一次', () => {
   assert.deepEqual(boardEventRecipients(['a', 'a'], null).push, ['a']);
+});
+
+test('isPast：當天過完才算過（2026-10-03）', () => {
+  const at = '2026-10-02T13:30:00+08:00';
+  assert.equal(isPast(at, new Date('2026-10-02T18:00:00+08:00')), false, '同一天晚上還沒過');
+  assert.equal(isPast(at, new Date('2026-10-02T23:59:00+08:00')), false, '23:59 還沒過');
+  assert.equal(isPast(at, new Date('2026-10-03T00:00:00+08:00')), true, '隔天 00:00 才過');
+});
+test('uploadRejectReason：格式與大小', () => {
+  assert.equal(uploadRejectReason('a.pdf', 1000), null);
+  assert.equal(uploadRejectReason('a.docx', 1000), null);
+  assert.match(uploadRejectReason('a.exe', 1000) ?? '', /收不了/);
+  assert.match(uploadRejectReason('a.pdf', 500 * 1024 * 1024) ?? '', /MB/);
 });
