@@ -186,7 +186,7 @@ commit 訊息一行，中文，動詞開頭或「主題：內容」。
 | 固定加費（＝契約每月自動加的費用，**一個月一張**，不看主約繳別，migration_306）| 每期加費、加費（單獨用，那是收租時臨時加的）|
 | 實收（＝Airbnb 的 You earn／Total Payout，`airbnb_snapshots.earnings`）| 淨額、入帳、payout |
 | 搭檔（＝Airbnb 的 Co-host payout，`airbnb_snapshots.cohost`；訂單金額＝實收＋搭檔）| co-host、分潤、共同房東 |
-| 調價軟體（＝每張 Airbnb 訂單金額 × 1.5% 的系統支出，日期＝入住日，`expenses.auto_key = pricing:order:<訂單id>`，訂單觸發器自動產生，migration_311）| PriceLabs、定價工具、動態定價 |
+| 調價軟體（＝每張 Airbnb 訂單金額 × 1.5% 的支出，日期＝入住日，`expenses.auto_key = pricing:order:<訂單id>`；在短租訂單「調價支出」**人勾選、預覽、產生**，一批可撤銷，migration_312）| PriceLabs、定價工具、動態定價 |
 | 通訊（＝佈告欄那一格，存電話、email 的地方，`board_contacts`）| 電話簿、通訊錄、聯絡人 |
 | 簡介（＝檔案名稱底下那一行）／使用步驟（＝點 ▸ 才展開的那一段，怎麼填、交給誰）| 說明、使用說明（2026-09-30 改名）|
 

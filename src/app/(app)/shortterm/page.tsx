@@ -54,6 +54,8 @@ import { payStatus, remaining, isExempt, STATUS_LABEL, STATUS_CLASS, STATUS_FILT
 import { softDelete } from '@/lib/trash';
 import { feeFilterOptions, feeFilterPredicate, feeFilterOnSearch, feeSourceConflict, ONEOFF_SOURCES, FEE_F_ALL, FEE_F_RENT } from '@/lib/order-filter';
 import TrashLink from '@/components/TrashLink';
+import PricingFeeModal from './pricing-fee-modal';
+import { canPricingFee } from '@/lib/pricing-fee';
 import Fold from '@/components/Fold';
 import { checkDates, checkPrice, checkRequired, isEarnestStage, lookbackFrom, type PastOrder } from '@/lib/order-check';
 import MoneyInput from '@/components/MoneyInput';
@@ -341,6 +343,8 @@ export default function ShortTermPage() {
   // 定期收費的設定只有會計/主管/總經理能改 —— 跟 recurring_charges 的 RLS 一致。
   // 前端擋只是少讓人白按一次,真正的把關在資料庫。
   const role = useProfile().role ?? '';
+  /** 調價支出視窗（migration_312） */
+  const [pricingOpen, setPricingOpen] = useState(false);
 
   /*
    * 剛剛存好的那一筆（2026-08-22 使用者:「輸入完先出現在第一列，或是有標記」）。
@@ -1555,6 +1559,7 @@ export default function ShortTermPage() {
         而且側邊選單每多一項,真正每天要用的功能就被往下擠一格。
       */}
       <RecurringPanel canEdit={canEditOrders(role)} />
+      {pricingOpen && <PricingFeeModal onClose={() => setPricingOpen(false)} />}
 
       <FilterToggle active={!!(src || kw || estF || fromD || toD || payF || invF)} />
       <div className="filter-bar collapsible-filters rounded-xl glass p-4 mb-4 flex flex-wrap items-end gap-3">
@@ -1624,6 +1629,13 @@ export default function ShortTermPage() {
 
       {/* 動作列。自成一行,不跟篩選欄位搶寬度 —— 1280px 下七個篩選加五顆鈕放不進同一行 */}
       <div className="flex flex-wrap items-center justify-end gap-3 mb-4">
+        {/* ★ 2026-10-03 David：「按鈕排在動作列」—— 共 N 筆的左邊。只給會計／主管／總經理（支出的權限） */}
+        {canPricingFee(role) && (
+          <button onClick={() => setPricingOpen(true)}
+            className="h-10 rounded-lg border border-mor-line bg-white px-3.5 text-uisub text-gray-700 hover:bg-mor-sand/60">
+            調價支出
+          </button>
+        )}
         <div className="text-xs text-gray-400 whitespace-nowrap mr-auto md:mr-0">
           共 {total.toLocaleString()} 筆
         </div>
