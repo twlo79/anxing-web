@@ -4,8 +4,7 @@ import {
   ALERT_WINDOWS, DEFAULT_WINDOW, WIN_ALL, winLabel, winDays, parseWin,
   contractTypeLabel, isBizContract, splitContractExits,
   daysLabel, exitTone, HOT_DAYS, WARM_DAYS,
-  canSeeAlerts, ALERT_ROLES,
-} from './hk-alerts.ts';
+  canSeeAlerts, ALERT_ROLES, parseWinOr, DEFAULT_END_WINDOW, DEFAULT_OUT_WINDOW } from './hk-alerts.ts';
 import { exitsSoon, type Stay, type Exit } from './room-calendar.ts';
 
 function c(id: string, room: string, end: string, ctype: string | null): Stay {
@@ -202,4 +201,12 @@ test('★ 沒登入／沒讀到權限的時候看不到，不是預設看得到'
 
 test('★★ 名單裡有管家 —— 房務管理現有的 canEdit 沒有他', () => {
   assert.ok((ALERT_ROLES as readonly string[]).includes('housekeeper'));
+});
+
+test('parseWinOr：退房認不得回 7、退租回 45', () => {
+  assert.equal(parseWinOr(null, DEFAULT_OUT_WINDOW), 7);
+  assert.equal(parseWinOr('abc', DEFAULT_END_WINDOW), 45);
+  assert.equal(parseWinOr('14', DEFAULT_OUT_WINDOW), 14);
+  assert.equal(parseWinOr('0', DEFAULT_END_WINDOW), 0);
+  assert.equal(parseWinOr('8', DEFAULT_OUT_WINDOW), 7);
 });

@@ -18,9 +18,12 @@ import {
  *   兩邊各寫一組的話，同一件事會有兩排長得不一樣的膠囊。
  */
 import {
-  ALERT_WINDOWS, DEFAULT_WINDOW, winLabel, winDays, parseWin, type AlertWindow,
+  ALERT_WINDOWS, OUT_WINDOWS, DEFAULT_END_WINDOW, DEFAULT_OUT_WINDOW, winLabel, winDays, parseWinOr, type AlertWindow,
 } from '@/lib/hk-alerts';
 import ToggleInfo from '@/components/ToggleInfo';
+import {
+  ancestryOf, occupancyOf, occupancyByRoom, totalOccupancy, fmtPct, occTone, type RoomNode,
+} from '@/lib/occupancy';
 
 /*
  * ══════════════════════════════════════════════════════════
@@ -135,13 +138,13 @@ function Pill({ on, onClick, swatch, children, warn }: {
   );
 }
 
-type View = '' | 'any' | Stay['tone'] | 'free' | 'dup' | 'ending' | 'leaving';
+type View = '' | 'any' | Stay['tone'] | 'free' | 'done' | 'dup' | 'ending' | 'leaving';
 
 /** 藥丸上的字。`''` 是沒有選 */
 const VIEW_LABEL: Record<string, string> = {
   any: '所有客戶', free: '空房', dup: '重疊',
   short: '短租', private: '私下', longterm: '長租契約', earnest: '訂金／未確認',
-  ending: '快退租', leaving: '快退房',
+  ending: '快退租', leaving: '快退房', done: '已退房',
 };
 
 /**
@@ -159,6 +162,8 @@ const VIEW_LABEL: Record<string, string> = {
 function matchPill(x: { real: readonly Stay[]; dups: readonly unknown[] }, view: View): boolean {
   if (!view || view === 'ending' || view === 'leaving') return true;
   if (view === 'free') return x.real.length === 0;
+  /* ★ 已退房（2026-10-04 David：「已退房獨立一個膠囊」）：這段期間裡有一筆已經退房的 */
+  if (view === 'done') { const t = todayStr(); return x.real.some((s) => checkedOut(s, t)); }
   if (view === 'dup') return x.dups.length > 0;
   if (view === 'any') return x.real.length > 0;
   return x.real.some((s) => s.tone === view);
@@ -223,19 +228,23 @@ export default function RoomStatusPage() {
   const [ending, setEnding] = useState<Exit[]>([]);
   const [leaving, setLeaving] = useState<Exit[]>([]);
   /*
-   * ★★ 退租與退房**共用一個天數**（使用者 2026-09-16:「共同一組就好」）。
-   *   記在網址上（`?win=45`）—— 重新整理、或把連結丟給會計，看到的是同一份。
-   *   `parseWin` 認不得就回預設,不是回 0（＝全部）。
+   * ★★ 退租與退房**各自一個天數**（2026-10-04 David：「預設退租未來 45 天、退房未來 7 天」）。
+   *   以前共用一個（2026-09-16「共同一組就好」）—— 兩件事要看的長度本來就不同：
+   *   退租要提早一個多月找新房客，退房只要看這週排哪些清潔。
+   *   記在網址上（`?ewin=45&owin=7`）—— 重新整理、或把連結丟給會計，看到的是同一份。
    */
-  const [win, setWin] = useState<AlertWindow>(() => {
-    if (typeof window === 'undefined') return DEFAULT_WINDOW;
-    return parseWin(new URLSearchParams(window.location.search).get('win'));
-  });
-  function pickWin(w: AlertWindow) {
-    setWin(w);
+  const [endWin, setEndWin] = useState<AlertWindow>(() =>
+    typeof window === 'undefined' ? DEFAULT_END_WINDOW
+      : parseWinOr(new URLSearchParams(window.location.search).get('ewin'), DEFAULT_END_WINDOW));
+  const [outWin, setOutWin] = useState<AlertWindow>(() =>
+    typeof window === 'undefined' ? DEFAULT_OUT_WINDOW
+      : parseWinOr(new URLSearchParams(window.location.search).get('owin'), DEFAULT_OUT_WINDOW));
+  function pickWin(which: 'ewin' | 'owin', w: AlertWindow) {
+    (which === 'ewin' ? setEndWin : setOutWin)(w);
     if (typeof window === 'undefined') return;
     const u = new URL(window.location.href);
-    u.searchParams.set('win', String(w));
+    u.searchParams.set(which, String(w));
+    u.searchParams.delete('win');
     window.history.replaceState(null, '', u.toString());
   }
   /** 點同一顆就清除 —— 使用者:「再點一下 就清除」 */
@@ -243,6 +252,8 @@ export default function RoomStatusPage() {
 
   const [estates, setEstates] = useState<Est[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
+  /** 住房率用的房源樹（含父子、間數、算不算住房率） */
+  const [occNodes, setOccNodes] = useState<RoomNode[]>([]);
   /** 還在用、但沒設物業的房源名稱 —— 畫不出來，所以列出來 */
   const [noEstate, setNoEstate] = useState<string[]>([]);
   const [stays, setStays] = useState<Stay[]>([]);
@@ -290,8 +301,10 @@ export default function RoomStatusPage() {
        *   停用會讓它從房務、清潔、採購一起消失，而支出還要繼續記。
        *   所以是兩個開關，不是一個。
        */
-      supabase.from('properties').select('id, name, estate_id')
-        .eq('active', true).eq('show_in_room_calendar', true).order('name'),
+      /* ★ 2026-10-04：住房率要整個物業的房（含沒勾排房表、但要算住房率的），所以撈全部在用的，畫的時候再篩 */
+      supabase.from('properties')
+        .select('id, name, estate_id, show_in_room_calendar, parent_property_id, units, count_in_occupancy')
+        .eq('active', true).order('name'),
     ]);
     /*
      * ★★★ 停用的物業不畫（使用者 2026-09-15：「我只需要這一頁不要顯示」）。
@@ -310,7 +323,23 @@ export default function RoomStatusPage() {
       setEstF(shown[0].name);
     }
 
-    const ownEst = ((ps ?? []) as any[]).map((p) => ({
+    const allProps = (ps ?? []) as any[];
+    /*
+     * 住房率的房源樹（跟儀表板同一套規則，lib/occupancy）：
+     *   count_in_occupancy 關掉的不算、停用物業的不算、整棟／整層只當祖先不進分母、打通房算兩間。
+     */
+    const nameOf: Record<string, string> = {};
+    allProps.forEach((p) => { nameOf[p.id] = p.name; });
+    setOccNodes(allProps
+      .filter((p) => p.count_in_occupancy !== false)
+      .filter((p) => !p.estate_id || estById[p.estate_id]?.active)
+      .map((p) => ({
+        name: p.name as string,
+        estate: p.estate_id ? (estById[p.estate_id]?.name ?? null) : null,
+        parent: p.parent_property_id ? (nameOf[p.parent_property_id] ?? null) : null,
+        units: p.units ?? 1,
+      })));
+    const ownEst = allProps.filter((p) => p.show_in_room_calendar !== false).map((p) => ({
       name: p.name as string, est: estById[p.estate_id] as Est | undefined,
     }));
     setRooms(ownEst
@@ -396,7 +425,7 @@ export default function RoomStatusPage() {
      */
     const t0 = todayStr();
     /* ★ 「全部」＝ 往後不設上界,實際傳一個有限的大數（`winDays()` 的說明） */
-    const n = winDays(win);
+    const nEnd = winDays(endWin), nOut = winDays(outWin);
     const [{ rows: ce }, { rows: oe }] = await Promise.all([
       /*
        * ★★★ 契約也要分頁。Supabase 預設最多回 1000 列而且不報錯 ——
@@ -405,12 +434,12 @@ export default function RoomStatusPage() {
        */
       fetchAll<any>((a, b) => supabase.from('contracts')
         .select('id, room, tenant_name, display_name, start_date, end_date')
-        .eq('active', true).gte('end_date', t0).lte('end_date', addDays(t0, n)).range(a, b)),
+        .eq('active', true).gte('end_date', t0).lte('end_date', addDays(t0, nEnd)).range(a, b)),
       fetchAll<any>((a, b) => supabase.from('orders')
         .select('id, property_raw, guest_name, checkin, checkout, source, contract_id')
         .not('source', 'in', '(oneoff,airbnb_cancelled)')
         .is('contract_id', null)
-        .gte('checkout', t0).lte('checkout', addDays(t0, n)).range(a, b)),
+        .gte('checkout', t0).lte('checkout', addDays(t0, nOut)).range(a, b)),
     ]);
 
     const eStays: Stay[] = ((ce ?? []) as any[])
@@ -428,9 +457,9 @@ export default function RoomStatusPage() {
         tone: (o.source === 'private' ? 'private' : 'short') as Stay['tone'],
       }));
 
-    setEnding(exitsSoon(eStays, t0, 'contract', n));
-    setLeaving(exitsSoon(lStays, t0, 'order', n));
-  }, [supabase, win]);
+    setEnding(exitsSoon(eStays, t0, 'contract', nEnd));
+    setLeaving(exitsSoon(lStays, t0, 'order', nOut));
+  }, [supabase, endWin, outWin]);
   useEffect(() => { loadAlerts(); }, [loadAlerts]);
 
 
@@ -529,6 +558,31 @@ export default function RoomStatusPage() {
    */
   const nOccupied = useMemo(() => base.filter((x) => x.real.length > 0).length, [base]);
   const nFree = base.length - nOccupied;
+  /** 這段期間裡有已退房住宿的間數（跟空房一樣數「間」） */
+  const nDone = useMemo(() => base.filter((x) => matchPill(x, 'done')).length, [base]);
+
+  /*
+   * ══════════ 住房率（2026-10-04 David）══════════
+   * 「有住宿的晚數 ÷ 期間總晚數」，期間就是上面篩選列那一段 —— 換期間就重算。
+   * ★ 訂金／未確認不算有人住（還沒確定會來）。
+   * ★★ 每一列：自己的佔用 ＋ 祖先（整棟／整層）的佔用，逐日去重 —— 跟色條同一套 occupies()。
+   * ★★ 物業：只算葉子、打通房算兩間、count_in_occupancy 關掉的不算 —— 跟儀表板同一份 lib，數字一樣。
+   */
+  const occStaysBy = useMemo(() => {
+    const m: Record<string, Stay[]> = {};
+    stays.filter((s) => s.tone !== 'earnest').forEach((s) => { (m[s.room] ??= []).push(s); });
+    return m;
+  }, [stays]);
+  const occOfRow = useCallback((name: string) => {
+    const st = ancestryOf(occNodes.length ? occNodes : [{ name, estate: null }], name)
+      .flatMap((n) => occStaysBy[n] ?? []);
+    return occupancyOf(st, range);
+  }, [occNodes, occStaysBy, range]);
+  const estOcc = useMemo(() => {
+    if (!canDraw || !estF) return null;
+    const list = occupancyByRoom(occNodes.filter((n) => n.estate === estF), occStaysBy, range);
+    return totalOccupancy(list);
+  }, [occNodes, occStaysBy, range, estF, canDraw]);
 
   const visible = useMemo(() => base.filter((x) => {
     /*
@@ -731,10 +785,6 @@ export default function RoomStatusPage() {
               {TONE[k].label}
             </Pill>
           ))}
-          {/* 圖例而已，不是篩選 —— 所以不做成藥丸（點了不會有反應的東西不要長得像按鈕） */}
-          <span className="inline-flex items-center gap-1.5 px-1 text-uisub text-gray-500 whitespace-nowrap">
-            <i className={`w-3 h-3 rounded-sm shrink-0 ${DONE_BAR}`} />已退房
-          </span>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {/*
@@ -744,6 +794,8 @@ export default function RoomStatusPage() {
           */}
           <Pill on={view === 'free'} onClick={() => pick('free')}
             swatch="bg-white border border-mor-line">空房 {nFree}</Pill>
+          {/* ★ 2026-10-04 David：「已退房獨立一個膠囊」—— 跟空房同一排（都是「什麼狀態」） */}
+          <Pill on={view === 'done'} onClick={() => pick('done')} swatch={DONE_BAR}>已退房 {nDone}</Pill>
 
           {/*
             ★★ 三顆提醒被篩選中時，這裡出現一顆可以關掉的籤。
@@ -811,30 +863,39 @@ export default function RoomStatusPage() {
                 　退租 0　＝ 接下來這段時間沒有人要退租。那是一個**答案**,而且是會變的答案。
                 前者是警報，後者是儀表 —— 警報平常要安靜，儀表平常就該看得到。
             */}
-            <ToggleInfo tone="red" on={showEnd} onToggle={() => setShowEnd((v) => !v)}
-              label={<>退租提醒 <b className="tabular-nums">{endList.length}</b></>}
-              infoLabel="退租提醒怎麼算">
-              <b>契約</b>在 {winLabel(win)}內到期的（底下那排膠囊可以換）。
-              算的是<b>今天</b>起算，不是你正在看的那個月 ——
-              這個數字問的是「接下來會空出哪幾間」。
-            </ToggleInfo>
-            <ToggleInfo tone="red" on={showOut} onToggle={() => setShowOut((v) => !v)}
-              label={<>退房提醒 <b className="tabular-nums">{outList.length}</b></>}
-              infoLabel="退房提醒怎麼算">
-              <b>短租訂單</b>在 {winLabel(win)}內退房的（跟退租共用同一排膠囊）。
-              月租單不算 —— 那是契約每個月長出來的帳，不是真的有人要走。
-            </ToggleInfo>
-            {/* ★ 2026-10-03 David：「往後移」—— 提醒範圍放最後，管的是前面那兩顆的天數 */}
-            <label className="flex items-center gap-1.5">
-              <span className="text-uisub text-gray-500 whitespace-nowrap">提醒範圍</span>
-              <select value={win} onChange={(e) => pickWin(Number(e.target.value) as AlertWindow)}
-                className="h-9 rounded-full border border-mor-line bg-white px-3 text-uisub
-                           text-gray-700 hover:bg-mor-sand/60">
-                {ALERT_WINDOWS.map((w) => (
-                  <option key={w} value={w}>{winLabel(w)}</option>
-                ))}
+            {/*
+              ★ 2026-10-04 David：「退房提醒、提醒期間 UI 合在一起，知道是同一件事」
+                ＋「退租預設 45 天、退房預設 7 天」。一個框：每個提醒緊接著**自己的**天數。
+              ★★ 框裡一律不換行（whitespace-nowrap ＋ flex-none）。放不下時整個框一起換到下一行 ——
+                上一版框太窄，「提醒」「退租」被擠成直排。
+            */}
+            <span className="inline-flex flex-none items-center gap-1 whitespace-nowrap rounded-full
+                             border border-mor-line bg-white pl-1 pr-2 py-0.5">
+              <ToggleInfo tone="red" on={showEnd} onToggle={() => setShowEnd((v) => !v)}
+                label={<>退租提醒 <b className="tabular-nums">{endList.length}</b></>}
+                infoLabel="退租提醒怎麼算">
+                <b>契約</b>在{endWin === 0 ? '之後全部' : `未來 ${winLabel(endWin)}`}內到期的（後面的下拉可以換）。
+                算的是<b>今天</b>起算，不是你正在看的那個月 ——
+                這個數字問的是「接下來會空出哪幾間」。
+              </ToggleInfo>
+              <select value={endWin} onChange={(e) => pickWin('ewin', Number(e.target.value) as AlertWindow)}
+                aria-label="退租提醒看未來幾天"
+                className="h-8 rounded-full border border-mor-line bg-white px-2 text-uisub text-gray-700 hover:bg-mor-sand/60">
+                {ALERT_WINDOWS.map((w) => <option key={w} value={w}>{w === 0 ? '全部' : `未來 ${winLabel(w)}`}</option>)}
               </select>
-            </label>
+              <i aria-hidden className="mx-1.5 h-5 w-px bg-mor-line" />
+              <ToggleInfo tone="red" on={showOut} onToggle={() => setShowOut((v) => !v)}
+                label={<>退房提醒 <b className="tabular-nums">{outList.length}</b></>}
+                infoLabel="退房提醒怎麼算">
+                <b>短租訂單</b>在{outWin === 0 ? '之後全部' : `未來 ${winLabel(outWin)}`}內退房的（後面的下拉可以換）。
+                月租單不算 —— 那是契約每個月長出來的帳，不是真的有人要走。
+              </ToggleInfo>
+              <select value={outWin} onChange={(e) => pickWin('owin', Number(e.target.value) as AlertWindow)}
+                aria-label="退房提醒看未來幾天"
+                className="h-8 rounded-full border border-mor-line bg-white px-2 text-uisub text-gray-700 hover:bg-mor-sand/60">
+                {OUT_WINDOWS.map((w) => <option key={w} value={w}>{`未來 ${winLabel(w)}`}</option>)}
+              </select>
+            </span>
           </span>
         </div>
       </div>
@@ -891,16 +952,31 @@ export default function RoomStatusPage() {
       )}
 
       {showEnd && (
-        <ExitList kind="ending" list={endList} days={winDays(win)} all={win === 0}
+        <ExitList kind="ending" list={endList} days={winDays(endWin)} all={endWin === 0}
           narrow={narrow} drawn={drawnIds}
           onFilter={() => setView('ending')}
           onRange={(n) => { setMode('custom'); setFrom(today); setTo(addDays(today, n)); }} />
       )}
       {showOut && (
-        <ExitList kind="leaving" list={outList} days={winDays(win)} all={win === 0}
+        <ExitList kind="leaving" list={outList} days={winDays(outWin)} all={outWin === 0}
           narrow={narrow} drawn={drawnIds}
           onFilter={() => setView('leaving')}
           onRange={(n) => { setMode('custom'); setFrom(today); setTo(addDays(today, n)); }} />
+      )}
+
+      {/*
+        ★ 2026-10-04 物業住房率：期間跟著上面的篩選列，算式寫出來 —— 看得出分母是幾間 × 幾晚。
+      */}
+      {estOcc && estOcc.rooms > 0 && (
+        <div className="mb-2 flex flex-wrap items-baseline gap-x-4 gap-y-1 rounded-xl border border-mor-line bg-white px-4 py-2.5">
+          <span className="text-uisub text-gray-500">{estF} 住房率</span>
+          <span className={`text-2xl font-bold tabular-nums ${occTone(estOcc.rate) === 'low' ? 'text-red-600' : 'text-mor-ink'}`}>
+            {fmtPct(estOcc.rate)}
+          </span>
+          <span className="text-xs text-gray-400 tabular-nums">
+            {estOcc.used.toLocaleString()} 晚有人住 ÷（{estOcc.rooms} 間 × {nDays} 晚）・{range.from} ~ {range.to}
+          </span>
+        </div>
       )}
 
       {/* ① 範圍不能畫的兩種情形分開講 —— 見上面 `badRange` / `tooLong` 的說明 */}
@@ -958,6 +1034,9 @@ export default function RoomStatusPage() {
                   </th>
                 );
               })}
+              {/* ★ 2026-10-04 住房率欄：釘在最右邊，捲日期時不動 */}
+              <th className="sticky right-0 top-0 z-30 bg-mor-sand border-b border-l border-mor-line
+                             min-w-[64px] px-2 py-1.5 text-right font-semibold whitespace-nowrap">住房率</th>
             </tr>
           </thead>
           <tbody>
@@ -980,7 +1059,8 @@ export default function RoomStatusPage() {
                     ★★★ 那幾天還是有人。整條拿掉的話畫面會說那間房空著 ——
                       而有人會照著它排房。淡掉＝「不是你現在在找的，但它佔著」。
                   */
-                  const dimmed = view !== '' && view !== 'any' && view !== 'free'
+                  const dimmed = view === 'done' ? !checkedOut(c.stay, today)
+                    : view !== '' && view !== 'any' && view !== 'free'
                     && view !== 'dup' && view !== 'ending' && view !== 'leaving'
                     && c.stay.tone !== view;
                   /*
@@ -1012,10 +1092,21 @@ export default function RoomStatusPage() {
                     </td>
                   );
                 })}
+                {(() => {
+                  const o = occOfRow(room.name);
+                  return (
+                    <td title={`${o.used} 晚有人住 ÷ ${o.days} 晚`}
+                      className={`sticky right-0 z-10 border-b border-l border-mor-line px-2 text-right text-sm
+                                  tabular-nums whitespace-nowrap ${dups.length ? 'bg-[#FFFDF6]' : 'bg-white'} ${
+                        occTone(o.rate) === 'low' ? 'text-red-600' : 'text-mor-ink'}`}>
+                      {fmtPct(o.rate, 0)}
+                    </td>
+                  );
+                })()}
               </tr>
             ))}
             {!loading && visible.length === 0 && (
-              <tr><td colSpan={days.length + 1} className="px-4 py-8 text-center text-gray-400">
+              <tr><td colSpan={days.length + 2} className="px-4 py-8 text-center text-gray-400">
                 沒有符合的房源
               </td></tr>
             )}

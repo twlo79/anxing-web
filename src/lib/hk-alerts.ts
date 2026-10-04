@@ -189,3 +189,19 @@ export function canSeeAlerts(role: string | null | undefined): boolean {
 }
 
 export type { Exit, Stay };
+
+/**
+ * 退租與退房各自的預設天數（2026-10-04 David：「退租未來 45 天、退房未來 7 天」）。
+ * 退房的選項比較短 —— 要看的是這週、這兩週排哪些清潔，不會看到半年後。
+ */
+export const DEFAULT_END_WINDOW: AlertWindow = 45;
+export const DEFAULT_OUT_WINDOW: AlertWindow = 7;
+export const OUT_WINDOWS = [7, 14, 30, 45] as const satisfies readonly AlertWindow[];
+
+/** 跟 parseWin 一樣，但認不得時回呼叫端給的預設（退房要回 7，不是 45） */
+export function parseWinOr(raw: string | null | undefined, def: AlertWindow): AlertWindow {
+  const s = (raw ?? '').trim();
+  if (!s) return def;
+  const n = Number(s);
+  return (ALERT_WINDOWS as readonly number[]).includes(n) ? (n as AlertWindow) : def;
+}
