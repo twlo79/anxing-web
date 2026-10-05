@@ -1,4 +1,5 @@
 'use client';
+import { useFold } from '@/lib/use-fold';
 import { periodSplit, periodAmounts } from '@/lib/period-split';
 import { type RentLine, RENT_LINE_SUGGEST, normalizeLines, linesSum, linesProblem, linesTitle } from '@/lib/rent-lines';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -229,6 +230,9 @@ export default function ContractsPage() {
   const [invAdjusts, setInvAdjusts] = useState<(InvAdjust & { contract_id: string })[]>([]);
   /** 待開發票從哪個月起算（work_settings.invoice_from_ym；沒設就本月往前兩個月，跟舊行為一樣）。載入後才有值 */
   const [invFromYm, setInvFromYm] = useState<string>('');
+  /** 跨月欠款、待開發票收起來／展開（記在這台瀏覽器，預設收起來） */
+  const [arrearsOpen, toggleArrears] = useFold('contracts-arrears');
+  const [invOpen, toggleInv] = useFold('contracts-invoice');
   // 改完租期後「掉在租期外但已收款」的提示。null = 沒有。
   const [stray, setStray] = useState<{ name: string; n: number; amt: number; months: string } | null>(null);
   // 表單是 `{edit && …}` 條件渲染的，關掉就整個卸載，再開一定是乾淨的
@@ -973,8 +977,11 @@ const nameOf = (c: Contract) =>
 
       {arrears.length > 0 && (
         <div className="rounded-xl border border-red-200 bg-red-50/40 mb-3 overflow-hidden">
-          <div className="px-4 py-2 border-b border-red-200/70 flex items-center justify-between">
+          {/* ★ 2026-10-05 David：「收納」—— 點標題列收起／展開；收起來數字還在標題列上 */}
+          <div onClick={toggleArrears} role="button" aria-expanded={arrearsOpen}
+            className={`px-4 py-2 ${arrearsOpen ? 'border-b border-red-200/70' : ''} flex items-center justify-between cursor-pointer select-none hover:bg-red-100/30`}>
             <div className="text-ui font-semibold text-red-700">
+              <span aria-hidden className="mr-1.5 inline-block w-3 text-[10px] text-red-400">{arrearsOpen ? '▼' : '▶'}</span>
               跨月欠款
               <span className="ml-2 text-xs font-normal text-red-500">
                 {arrears.length} 間・共 {arrears.reduce((s, g) => s + g.periods, 0)} 期(不含本月未收)
@@ -992,7 +999,7 @@ const nameOf = (c: Contract) =>
             ★ 高度用 `max-h-80`（320px ≈ 9 列），跟分項面板的十列門檻同一個量級 ——
               全站的「長清單摘要」大概都露這麼多。
           */}
-          <div className="max-h-80 overflow-y-auto overscroll-contain">
+          {arrearsOpen && <div className="max-h-80 overflow-y-auto overscroll-contain">
             {arrears.map((g) => {
               const c = rows.find((r) => r.room === g.room);
               return (
@@ -1017,14 +1024,16 @@ const nameOf = (c: Contract) =>
                 </div>
               );
             })}
-          </div>
+          </div>}
         </div>
       )}
 
       {invPending.length > 0 && (
         <div className="rounded-xl border border-amber-200 bg-amber-50/40 mb-3 overflow-hidden">
-          <div className="px-4 py-2 border-b border-amber-200/70 flex items-center justify-between">
+          <div onClick={toggleInv} role="button" aria-expanded={invOpen}
+            className={`px-4 py-2 ${invOpen ? 'border-b border-amber-200/70' : ''} flex items-center justify-between cursor-pointer select-none hover:bg-amber-100/30`}>
             <div className="text-ui font-semibold text-amber-700">
+              <span aria-hidden className="mr-1.5 inline-block w-3 text-[10px] text-amber-400">{invOpen ? '▼' : '▶'}</span>
               待開發票
               <span className="ml-2 text-xs font-normal text-amber-600">
                 {invPending.length} 張
@@ -1032,7 +1041,7 @@ const nameOf = (c: Contract) =>
               </span>
             </div>
             {/* 起算月在「設定 → 發票」改（migration_307）。之前的月份不列、不算逾期 */}
-            <a href="/settings?tab=invoice" className="text-xs text-amber-600 hover:underline" title="到「設定 → 發票」改起算月">
+            <a href="/settings?tab=invoice" onClick={(e) => e.stopPropagation()} className="text-xs text-amber-600 hover:underline" title="到「設定 → 發票」改起算月">
               {fmtYm(invFromYm)} 起算
             </a>
           </div>
@@ -1046,7 +1055,7 @@ const nameOf = (c: Contract) =>
             ★ 高度用 `max-h-80`（320px ≈ 9 列），跟分項面板的十列門檻同一個量級 ——
               全站的「長清單摘要」大概都露這麼多。
           */}
-          <div className="max-h-80 overflow-y-auto overscroll-contain">
+          {invOpen && <div className="max-h-80 overflow-y-auto overscroll-contain">
             {invPending.map((p) => (
               <div key={p.c.id + p.ym + (p.extra ? 'x' + p.note : '')}
                 onClick={() => setCollect(p.c)}
@@ -1074,7 +1083,7 @@ const nameOf = (c: Contract) =>
                 </div>
               </div>
             ))}
-          </div>
+          </div>}
         </div>
       )}
 

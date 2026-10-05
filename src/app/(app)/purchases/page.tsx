@@ -1,4 +1,5 @@
 'use client';
+import { useFold } from '@/lib/use-fold';
 import { paySchedule } from '@/lib/pay-schedule';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { looksLikeError } from '@/lib/flash-kind';
@@ -899,6 +900,8 @@ export default function PurchasesPage() {
   const sched = useMemo(() => paySchedule(schedule), [schedule]);
   /** 展開看是哪幾張單的那幾組（key = 日期|帳號|核可） */
   const [schedOpen, setSchedOpen] = useState<Set<string>>(new Set());
+  /** 整張請款排程收起來／展開（記在這台瀏覽器，預設收起來） */
+  const [schedFold, toggleSched] = useFold('purchases-schedule');
 
   /*
    * ★★★ 金額是 `null`（待填）不是 0（migration_218）。
@@ -2201,15 +2204,17 @@ export default function PurchasesPage() {
           {/* 付款排程：依預定付款日，獨立於上面的篩選。點一列展開看是哪幾張單 */}
           {sched.days.length > 0 && (
             <div className="rounded-xl glass mb-4 md:mb-5 overflow-hidden">
-              <div className="px-4 py-2.5 text-sm font-medium border-b border-mor-line bg-white/45 flex flex-wrap items-center justify-between gap-2">
-                <span>{month} 付款排程</span>
+              {/* ★ 2026-10-05 David：「整張可以收納、叫請款排程」—— 收起來時三個數字還在標題列 */}
+              <div onClick={toggleSched} role="button" aria-expanded={schedFold}
+                className={`px-4 py-2.5 text-sm font-medium ${schedFold ? 'border-b border-mor-line' : ''} bg-white/45 flex flex-wrap items-center justify-between gap-2 cursor-pointer select-none hover:bg-white/70`}>
+                <span><span aria-hidden className="mr-1.5 inline-block w-3 text-[10px] text-gray-400">{schedFold ? '▼' : '▶'}</span>請款排程 <span className="text-xs font-normal text-gray-400">{month}</span></span>
                 <span className="text-xs font-normal text-gray-500 tabular-nums">
                   尚未支付・<span className="text-mor-greendark">已核可 NT$ {fmt(sched.approvedAmt)}</span>
                   ・<span className="text-amber-700">待核可 NT$ {fmt(sched.pendingAmt)}</span>
                   ・共 NT$ {fmt(sched.approvedAmt + sched.pendingAmt)}
                 </span>
               </div>
-              <div className="overflow-x-auto">
+              {schedFold && <div className="overflow-x-auto">
                 <table className="w-full min-w-[640px] text-sm">
                   <thead>
                     <tr className="text-left text-xs text-gray-500 border-b border-mor-line/60">
@@ -2265,7 +2270,7 @@ export default function PurchasesPage() {
                     </Fragment>))}
                   </tbody>
                 </table>
-              </div>
+              </div>}
             </div>
           )}
         </>
