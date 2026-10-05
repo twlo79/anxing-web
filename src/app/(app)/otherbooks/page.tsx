@@ -487,7 +487,7 @@ export default function OtherBooksPage() {
 
       {/* ★ 分頁列 ＋ 面板包在同一個 `<TabShell>` 裡 —— 選第幾本帳都對 */}
       <TabShell tone="paper" className="mb-4" tabs={
-        <Tabs variant="browser" tone="paper"
+        <Tabs urlKey="tab" variant="browser" tone="paper"
           value={book} onChange={(b) => { setBook(b); setF({}); setKwDraft(''); }}
           items={OTHER_BOOKS.map((b) => ({ key: b, label: BOOK_LABEL[b] }))} />
       }>

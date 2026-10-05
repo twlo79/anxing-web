@@ -141,7 +141,7 @@ function BoardInner() {
     <div>
       <h1 className="mb-3">佈告欄</h1>
 
-      <Tabs variant="browser" tone="page" className="mb-4" value={tab}
+      <Tabs urlKey="tab" variant="browser" tone="page" className="mb-4" value={tab}
         onChange={(k) => { setTab(k); setMsg(null); }}
         items={TABS.map((t) => ({
           key: t.key,

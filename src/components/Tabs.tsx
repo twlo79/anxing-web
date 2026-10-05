@@ -1,5 +1,6 @@
 'use client';
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
+import { tabFromSearch, searchWithTab } from '@/lib/url-tab';
 
 /**
  * 分頁籤 —— 全站唯一一份（2026-08-29 使用者:「tab 有好幾種形式 也要統一」）。
@@ -75,7 +76,7 @@ export type TabItem<T extends string> = {
 };
 
 export function Tabs<T extends string>({
-  items, value, onChange, variant = 'segment', size = 'md', className = '',
+  items, value, onChange: onChangeRaw, variant = 'segment', size = 'md', className = '', urlKey,
 }: {
   items: readonly TabItem<T>[];
   value: T;
@@ -101,8 +102,27 @@ export function Tabs<T extends string>({
    */
   tone?: 'paper' | 'page';
   className?: string;
+  /**
+   * 給了的話，分頁記在網址的這個參數上（例 `tab`）—— 重新整理、或把連結丟給別人，都停在同一個分頁。
+   * （2026-10-05 David：「重新整理後都會回到行事曆，可以都在自己那頁嗎？」）
+   */
+  urlKey?: string;
 }) {
   const md = size === 'md';
+  const applied = useRef(false);
+  /* 第一次拿到分頁清單時，從網址讀回來（清單是非同步載入的也接得到） */
+  useEffect(() => {
+    if (!urlKey || applied.current || !items.length || typeof window === 'undefined') return;
+    applied.current = true;
+    const want = tabFromSearch(window.location.search, urlKey, items.map((t) => t.key));
+    if (want && want !== value) onChangeRaw(want as T);
+  }, [urlKey, items, value, onChangeRaw]);
+  const onChange = (k: T) => {
+    onChangeRaw(k);
+    if (!urlKey || typeof window === 'undefined') return;
+    const u = window.location.pathname + searchWithTab(window.location.search, urlKey, k) + window.location.hash;
+    window.history.replaceState(window.history.state, '', u);
+  };
 
   /*
    * ══════════════════════════════════════════════════════════

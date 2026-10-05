@@ -953,7 +953,7 @@ export default function AccountsPage() {
           **選第幾個都對**,不需要底色條去襯。
       */}
       <TabShell tone="paper" tabs={
-        <Tabs variant="browser" tone="paper" value={tab} onChange={setTab}
+        <Tabs urlKey="tab" variant="browser" tone="paper" value={tab} onChange={setTab}
           items={accounts.map((a) => ({ key: a.id, label: a.name }))} />
       }>
         {/*

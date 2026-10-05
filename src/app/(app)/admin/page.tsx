@@ -1220,7 +1220,7 @@ export default function AdminPage() {
         <Toast msg={msg} error={msgErr} onClose={clearMsg} />
       </div>
 
-      <Tabs variant="browser" tone="page" className="mb-5" value={tab} onChange={setTab}
+      <Tabs urlKey="tab" variant="browser" tone="page" className="mb-5" value={tab} onChange={setTab}
         items={canSee.map((k) => ({ key: k, label: TAB_LABEL[k] }))} />
 
       {/* ===== 人員管理 ===== */}

@@ -769,7 +769,7 @@ export default function TaxPage() {
 
       {/* ══════════ Chrome 式分頁 ＋ 明細 ══════════ */}
       <TabShell tabs={
-        <Tabs variant="browser" items={[
+        <Tabs urlKey="tab" variant="browser" items={[
           { key: 'out' as TaxKind, label: '銷項', badge: outCounts.active },
           { key: 'in' as TaxKind, label: '進項', badge: inCounts.active },
         ]} value={kind} onChange={setKind} />

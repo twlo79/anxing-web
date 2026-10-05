@@ -135,7 +135,7 @@ export default function AttendancePage() {
         ★ 手機橫向捲動不換行:換行會讓標題列變兩排、
           把打卡按鈕推到摺線以下,而打卡是這頁最主要的動作。
       */}
-      <Tabs variant="browser" tone="page" className="mb-4"
+      <Tabs urlKey="tab" variant="browser" tone="page" className="mb-4"
         value={cur} onChange={(k) => { setTab(k); setMsg(null); }}
         items={canSee.map((k) => ({
           key: k,
