@@ -3,6 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { todayStr } from '@/lib/period';
 import { createClient } from '@/lib/supabase';
 import { fetchAll } from '@/lib/fetch-all';
+import { useProfile } from '@/lib/profile';
+import { canEditOrders } from '@/lib/roles';
+import { noteTable, normNote, noteChanged, noteSaveError } from '@/lib/stay-note';
 import { FilterBar, Field, FilterSelect, FilterSearch, FilterClear, FilterCount } from '@/lib/filters';
 import {
   isWeekend, weekdayOf, sortRooms, matchRoom, rowOf, exitsSoon,
@@ -259,6 +262,8 @@ export default function RoomStatusPage() {
   const [stays, setStays] = useState<Stay[]>([]);
   const [loading, setLoading] = useState(true);
   const [picked, setPicked] = useState<Picked | null>(null);
+  /** 卡片上能不能改備註（管家以上，跟訂單／契約編輯同一組） */
+  const canNote = canEditOrders(useProfile().role);
 
   /*
    * ★★ 一進來就選好物業（使用者 2026-09-15：「預設物業選正隆」）。
@@ -356,12 +361,12 @@ export default function RoomStatusPage() {
      *   9/1 退房的單最後一晚是 8/31，跟九月沒有交集。
      */
     const { rows: os } = await fetchAll<any>((a, b) => supabase.from('orders')
-      .select('id, property_raw, guest_name, checkin, checkout, source, imported_via, contract_id')
+      .select('id, property_raw, guest_name, checkin, checkout, source, imported_via, contract_id, note')
       .not('source', 'in', '(oneoff,airbnb_cancelled)')
       .lte('checkin', t).gt('checkout', f).range(a, b));
 
     const { data: cs } = await supabase.from('contracts')
-      .select('id, room, tenant_name, display_name, start_date, end_date, active, earnest_only')
+      .select('id, room, tenant_name, display_name, start_date, end_date, active, earnest_only, note')
       .lte('start_date', t).gte('end_date', f);
 
     const oStays: Stay[] = ((os ?? []) as any[])
@@ -372,6 +377,7 @@ export default function RoomStatusPage() {
         start: o.checkin, end: o.checkout, guest: o.guest_name,
         tone: (o.source === 'private' ? 'private' : 'short') as Stay['tone'],
         contractId: o.contract_id as string | null,
+        note: (o.note as string | null) ?? null,
       }));
 
     const cStays: Stay[] = ((cs ?? []) as any[])
@@ -388,6 +394,7 @@ export default function RoomStatusPage() {
          */
         tone: (c.earnest_only ? 'earnest' : 'longterm') as Stay['tone'],
         contractId: c.id as string,
+        note: (c.note as string | null) ?? null,
       }));
 
     /*
@@ -649,8 +656,8 @@ export default function RoomStatusPage() {
   const openCard = (e: React.MouseEvent, stay: Stay, room: Room) => {
     e.stopPropagation();
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const W = 264;
-    const H = 190;
+    const W = 296;
+    const H = 300;
     setPicked({
       stay, room: room.name, estate: room.estate,
       x: Math.max(8, Math.min(r.left, window.innerWidth - W - 8)),
@@ -1126,7 +1133,12 @@ export default function RoomStatusPage() {
       </p>
 
       {/* ③ 點開的卡片 —— 見上面 `openCard()` */}
-      {picked && <StayCard p={picked} today={today} onClose={() => setPicked(null)} />}
+      {picked && <StayCard p={picked} today={today} canNote={canNote} onClose={() => setPicked(null)}
+        onNoteSaved={(id, note) => {
+          /* 存好之後把畫面上那一筆換掉 —— 不重抓整個月，卡片也不用關 */
+          setStays((ss) => ss.map((s) => (s.id === id ? { ...s, note } : s)));
+          setPicked((pk) => (pk && pk.stay.id === id ? { ...pk, stay: { ...pk.stay, note } } : pk));
+        }} />}
     </div>
   );
 }
@@ -1145,8 +1157,29 @@ export default function RoomStatusPage() {
  *   這一頁最常被誤會的就是這件事（「9/18 退房那格為什麼是空的」）。
  *   把最後一晚直接寫出來，那一格為什麼空著就不用再問了。
  */
-function StayCard({ p, today, onClose }: { p: Picked; today: string; onClose: () => void }) {
+function StayCard({ p, today, canNote, onClose, onNoteSaved }: {
+  p: Picked; today: string; canNote: boolean; onClose: () => void;
+  onNoteSaved: (stayId: string, note: string | null) => void;
+}) {
   const s = p.stay;
+  const supabase = useMemo(() => createClient(), []);
+  /** null ＝ 沒在編輯；字串 ＝ 編輯中的內容 */
+  const [draft, setDraft] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [noteErr, setNoteErr] = useState('');
+  const [saved, setSaved] = useState(false);
+  const saveNote = async () => {
+    if (draft === null || saving || !s.srcId) return;
+    if (!noteChanged(s.note, draft)) { setDraft(null); return; }
+    setSaving(true); setNoteErr(''); setSaved(false);
+    const val = normNote(draft);
+    const { data, error } = await supabase.from(noteTable(s.kind)).update({ note: val }).eq('id', s.srcId).select('id');
+    setSaving(false);
+    const bad = noteSaveError(error, data);
+    if (bad) { setNoteErr(bad); return; }
+    onNoteSaved(s.id, val);
+    setDraft(null); setSaved(true);
+  };
   const done = checkedOut(s, today);
   const last = lastNightOf(s);
   const nights = s.start && last ? daysBetween(s.start, last) + 1 : 0;
@@ -1157,7 +1190,7 @@ function StayCard({ p, today, onClose }: { p: Picked; today: string; onClose: ()
       <div className="fixed inset-0 z-40" onClick={onClose} />
       <div onClick={(e) => e.stopPropagation()}
         style={{ left: p.x, top: p.y }}
-        className="fixed z-50 w-[264px] rounded-xl border border-mor-line bg-white p-3 shadow-xl">
+        className="fixed z-50 w-[296px] rounded-xl border border-mor-line bg-white p-3 shadow-xl">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 font-bold text-sm">
@@ -1180,6 +1213,41 @@ function StayCard({ p, today, onClose }: { p: Picked; today: string; onClose: ()
             {last ?? '—'}{nights > 0 && <span className="text-gray-400 ml-1">（住 {nights} 晚）</span>}
           </dd>
         </dl>
+
+        {/*
+          備註（2026-10-05 David 過審）：寫的是訂單／契約本身的 note，跟那一頁編輯的是同一欄。
+          管家以上看得到「編輯」；其他人只讀。錯誤留在卡片裡。
+        */}
+        {(s.note || canNote) && (
+          <div className="mt-2.5 pt-2 border-t border-dashed border-mor-line text-xs">
+            <div className="flex items-center justify-between">
+              <span className="text-gray-400">備註</span>
+              {canNote && draft === null && (
+                <button onClick={() => { setDraft(s.note ?? ''); setNoteErr(''); setSaved(false); }}
+                  className="text-mor-slate hover:text-mor-slatedark">{s.note ? '編輯' : '＋ 加備註'}</button>
+              )}
+            </div>
+            {draft === null ? (
+              s.note && <div className="mt-1 whitespace-pre-wrap break-words leading-relaxed max-h-[9rem] overflow-y-auto">{s.note}</div>
+            ) : (
+              <>
+                <textarea value={draft} onChange={(e) => setDraft(e.target.value)} autoFocus rows={4}
+                  onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); setDraft(null); } }}
+                  className="mt-1.5 w-full rounded-lg border border-mor-line px-2 py-1.5 text-xs leading-relaxed focus:outline-none focus:border-mor-slate" />
+                <div className="mt-1.5 flex items-center gap-1.5">
+                  <span className="text-[11px] text-gray-400 mr-auto">存到這張{KIND[s.kind]}的備註</span>
+                  <button onClick={() => { setDraft(null); setNoteErr(''); }} disabled={saving}
+                    className="h-7 rounded-md border border-mor-line px-2.5">取消</button>
+                  <button onClick={saveNote} disabled={saving}
+                    className="h-7 rounded-md bg-mor-slate px-2.5 text-white hover:bg-mor-slatedark disabled:opacity-60">
+                    {saving ? '儲存中⋯' : '儲存'}</button>
+                </div>
+              </>
+            )}
+            {noteErr && <div className="mt-1 text-red-600">{noteErr}</div>}
+            {saved && !noteErr && draft === null && <div className="mt-1 text-mor-greendark">已儲存</div>}
+          </div>
+        )}
 
         <a href={href} target="_blank" rel="noreferrer"
           className="block mt-2.5 pt-2 border-t border-mor-line text-xs text-mor-slate hover:text-mor-slatedark">

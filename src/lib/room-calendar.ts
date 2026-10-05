@@ -53,6 +53,8 @@ export type Stay = {
    *   哪天前綴變成兩個字,連結會安靜地指到一個不存在的 id。
    */
   srcId?: string;
+  /** 訂單／契約的備註（房源狀態卡片上讀與改，2026-10-05）。只給卡片用，排版不看它 */
+  note?: string | null;
   /**
    * 契約的類別（`contracts.type`:`longterm` ／ `company` ／ `office`）。
    * 只有 `kind === 'contract'` 才有值。
