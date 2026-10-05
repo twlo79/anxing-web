@@ -55,7 +55,7 @@ import { softDelete } from '@/lib/trash';
 import { feeFilterOptions, feeFilterPredicate, feeFilterOnSearch, feeSourceConflict, ONEOFF_SOURCES, FEE_F_ALL, FEE_F_RENT } from '@/lib/order-filter';
 import TrashLink from '@/components/TrashLink';
 import PricingFeeModal from './pricing-fee-modal';
-import { canPricingFee } from '@/lib/pricing-fee';
+import { canPricingFee, PRICING_TITLE } from '@/lib/pricing-fee';
 import Fold from '@/components/Fold';
 import { checkDates, checkPrice, checkRequired, isEarnestStage, lookbackFrom, type PastOrder } from '@/lib/order-check';
 import MoneyInput from '@/components/MoneyInput';
@@ -1634,7 +1634,7 @@ export default function ShortTermPage() {
           <button onClick={() => setPricingOpen(true)}
             /* ★ 2026-10-03 David：「按鈕左移」—— 靠動作列最左邊，跟新增／下載分開 */
             className="mr-auto h-10 rounded-lg border border-mor-line bg-white px-3.5 text-uisub text-gray-700 hover:bg-mor-sand/60">
-            調價支出
+            {PRICING_TITLE}
           </button>
         )}
         <div className="text-xs text-gray-400 whitespace-nowrap mr-auto md:mr-0">

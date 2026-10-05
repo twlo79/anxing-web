@@ -19,6 +19,7 @@ import { ExportButton } from '@/components/Actions';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import FilterToggle from '@/components/FilterToggle';
 import { Tabs, TabShell } from '@/components/Tabs';
+import { cardBalance, stmtDiffers } from '@/lib/account-balance';
 import Receipts, { type ReceiptsHandle } from '@/components/Receipts';
 import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
 import { useJustSaved } from '@/lib/use-just-saved';
@@ -582,8 +583,7 @@ export default function AccountsPage() {
          *   對帳單之後才記進來的流水（10/05 三筆 8088→4145 調撥）卡片完全不知道，
          *   於是 24145 卡片 2,728,106、表格最上面一列 4,775,684。
          */
-        if (isManual(a)) cb[a.id] = row ? Number(row.balance) : Number(a.opening_balance) || 0;
-        else if (row && row.balance != null) cb[a.id] = Number(row.balance);
+        if (row && row.balance != null) cb[a.id] = Number(row.balance);
       }),
     );
     setLastTxn(lt);
@@ -692,7 +692,7 @@ export default function AccountsPage() {
             ★ 用 isManual 不是 isCash —— 08311 也沒有對帳單，
               它的餘額同樣要從最後一筆流水來，而且不該進日期區間。
           */
-          balance: isManual(a) ? cashBal[a.id] ?? null : cashBal[a.id] ?? latest[a.id]?.closing_balance ?? null,
+          balance: cardBalance({ manual: isManual(a), lastTxnBalance: cashBal[a.id], stmtClosing: latest[a.id]?.closing_balance, opening: a.opening_balance }),
           asOf: isManual(a) ? null : latest[a.id]?.period_to ?? null,
           dated: !isManual(a),
         })),
@@ -920,11 +920,13 @@ export default function AccountsPage() {
           */
           const cash = isManual(a);
           const has = cash ? cashBal[a.id] != null : !!st;
+          /* ★ 餘額規則只有一份：lib/account-balance 的 cardBalance()（以最後一筆流水為準） */
+          const bal = cardBalance({ manual: cash, lastTxnBalance: cashBal[a.id], stmtClosing: st?.closing_balance, opening: a.opening_balance });
           return (
             <StatCard key={a.id}
               label={a.name}
               /* ★ 2026-10-05：餘額一律看最後一筆流水（跟表格最上面那一列同一個數）；沒有流水才退回對帳單期末 */
-              value={money(cash ? cashBal[a.id] : cashBal[a.id] ?? st?.closing_balance)}
+              value={money(bal)}
               /*
                 ★ 只給一個數字的話,看的人不知道那是今天的還是三個月前的 ——
                   餘額是「最後一次上傳的對帳單的期末」,不是即時的。
@@ -940,9 +942,7 @@ export default function AccountsPage() {
                 ? (lastTxn[a.id] ? `最後異動 ${ymd(lastTxn[a.id]!).slice(5)}` : '還沒有紀錄')
                 : !st ? '還沒上傳對帳單'
                 : lastTxn[a.id] ? `最後異動 ${ymd(lastTxn[a.id]!).slice(5)}${
-                    cashBal[a.id] != null && st.closing_balance != null
-                      && Math.round(Number(cashBal[a.id])) !== Math.round(Number(st.closing_balance))
-                      ? `・對帳單期末 ${money(st.closing_balance)}` : ''}`
+                    stmtDiffers(bal, st.closing_balance) ? `・對帳單期末 ${money(st.closing_balance)}` : ''}`
                 : '沒有流水'}
               active={tab === a.id}
               muted={!has}

@@ -5,11 +5,11 @@ import { createClient } from '@/lib/supabase';
 import { fetchAll } from '@/lib/fetch-all';
 import { savedToast } from '@/lib/saved-feedback';
 import { todayStr } from '@/lib/period';
-import { feeOf, ymOfCheckin, orderIdOfKey, recentYms, rowsOfMonth, pickMonth } from '@/lib/pricing-fee';
+import { feeOf, PRICING_TITLE, pricingAccountOf, totalsByAccount, ymOfCheckin, orderIdOfKey, recentYms, rowsOfMonth, pickMonth } from '@/lib/pricing-fee';
 
 /*
  * ══════════════════════════════════════════════════════════
- * 調價支出（migration_312，2026-10-03 David 過審第三版）
+ * 調價費支出（migration_312；313 改無條件進位＋自動繳款 4145／8088，2026-10-05 David 過審）
  *
  *   ① 勾選 → ② 預覽 → ③ 產生；歷史紀錄是標題列右邊的連結（不是分頁 ——
  *     「勾選訂單」分頁跟步驟提示講的是同一件事，David：「這邊有點多餘」）。
@@ -27,7 +27,7 @@ type Batch = {
   id: string; created_at: string; created_by: string | null; n: number; total: number;
   yms: string | null; undone_at: string | null;
 };
-type GenRow = { order_id: string; spent_on: string; item: string; estate_id: string; amount: number };
+type GenRow = { order_id: string; spent_on: string; item: string; estate_id: string; amount: number; pay_account?: string | null };
 type GenSkip = { order_id: string; room: string | null; guest: string | null; checkin: string | null; why: string };
 type GenResult = { ok: boolean; n: number; total: number; rows: GenRow[]; skipped: GenSkip[]; message: string };
 
@@ -132,11 +132,9 @@ export default function PricingFeeModal({ onClose }: { onClose: () => void }) {
   const step = (n: number, t: string, on: boolean) => (
     <span className={on ? 'font-semibold text-mor-ink' : ''}>{n === 1 ? '①' : n === 2 ? '②' : '③'} {t}</span>
   );
-  const byEst = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const r of pv?.rows ?? []) m.set(r.estate_id, (m.get(r.estate_id) ?? 0) + Number(r.amount));
-    return Array.from(m.entries());
-  }, [pv]);
+  /** 每一列的付款帳戶：資料庫回的為準（313），舊版函式沒回就照物業名稱推 */
+  const acctOf = useCallback((r: GenRow) => r.pay_account || pricingAccountOf(estName.get(r.estate_id)), [estName]);
+  const byAcct = useMemo(() => totalsByAccount((pv?.rows ?? []).map((r) => ({ pay_account: acctOf(r), amount: Number(r.amount) }))), [pv, acctOf]);
 
   const body = (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -150,8 +148,8 @@ export default function PricingFeeModal({ onClose }: { onClose: () => void }) {
             </>
           ) : (
             <>
-              <b>調價支出</b>
-              <span className="text-xs text-gray-400 truncate">Airbnb 訂單金額 × {+(rate * 100).toFixed(2)}%・一張訂單一筆・日期記入住日</span>
+              <b className="whitespace-nowrap">{PRICING_TITLE}</b>
+              <span className="text-xs text-gray-400 truncate">訂單金額 × {+(rate * 100).toFixed(2)}%（無條件進位）・一張訂單一筆・日期記入住日</span>
               <button onClick={() => { setView('history'); setErr(''); }}
                 className="ml-auto text-xs text-mor-slate whitespace-nowrap">歷史紀錄 {live} →</button>
             </>
@@ -186,6 +184,8 @@ export default function PricingFeeModal({ onClose }: { onClose: () => void }) {
                   </select>
                 )}
                 <span className="ml-auto text-[11px] text-gray-400 hidden md:inline">點月份 ＝ 只列那個月，並把還沒產生的全勾起來</span>
+                {/* 2026-10-05 David：「只有 Airbnb 的可以調價」—— 清單與資料庫本來就只收 Airbnb，這顆讓人看得到 */}
+                <span className="rounded-md bg-mor-bluelight px-2 py-0.5 text-[11px] text-mor-slate whitespace-nowrap">只列 Airbnb 訂單</span>
               </div>
             )}
           </div>
@@ -236,6 +236,7 @@ export default function PricingFeeModal({ onClose }: { onClose: () => void }) {
                 <thead><tr className="text-gray-500 border-b border-mor-line">
                   <th className="text-left font-medium py-1.5">日期</th><th className="text-left font-medium">項目</th>
                   <th className="text-left font-medium">用途</th><th className="text-left font-medium">會計科目</th>
+                  <th className="text-left font-medium">付款</th>
                   <th className="text-right font-medium">金額</th>
                 </tr></thead>
                 <tbody>
@@ -243,13 +244,14 @@ export default function PricingFeeModal({ onClose }: { onClose: () => void }) {
                     <tr key={r.order_id} className="border-b border-mor-line/60">
                       <td className="py-1.5 tabular-nums">{r.spent_on}</td><td>{r.item}</td>
                       <td>{estName.get(r.estate_id) ?? '—'}</td><td>專業服務費</td>
+                      <td className={`whitespace-nowrap ${acctOf(r) === '4145' ? 'text-mor-slate' : ''}`}>自動繳款・{acctOf(r)}</td>
                       <td className="text-right tabular-nums">{money(Number(r.amount))}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
               <div className="mt-1.5 text-[11.5px] text-gray-500">
-                合計 {money(pv.total)}{byEst.length > 0 && <>　依物業：{byEst.map(([k, v]) => `${estName.get(k) ?? '—'} ${money(v)}`).join('・')}</>}
+                {pv.n} 筆・合計 {money(pv.total)}{byAcct.length > 0 && <>　｜　{byAcct.map(([k, v]) => `${k} ${money(v)}`).join('・')}</>}
               </div>
               {pv.skipped.length > 0 && (
                 <div className="mt-3 rounded-lg bg-[#FAFAF8] px-3 py-2 text-[11.5px] text-gray-500">
