@@ -1,4 +1,5 @@
 'use client';
+import { paySchedule } from '@/lib/pay-schedule';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { looksLikeError } from '@/lib/flash-kind';
 import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
@@ -529,7 +530,8 @@ export default function PurchasesPage() {
       const [from, to] = monthRange(month);
       const { data: sc } = await supabase.from('purchase_requests')
         .select('*, purchase_request_items(*)')
-        .eq('status', 'approved').is('purchased_on', null)
+        /* ★ 2026-10-05：待核可也列（分開加總）—— David：「我要看哪些，小計要準備多少」 */
+        .in('status', ['approved', 'pending']).is('purchased_on', null)
         .gte('planned_transfer_on', from).lt('planned_transfer_on', to)
         .order('planned_transfer_on');
       setSchedule((sc as Req[]) ?? []);
@@ -893,17 +895,10 @@ export default function PurchasesPage() {
     autopay: counted.filter((r) => r.payment_method === 'autopay'),
   }), [counted]);
 
-  // 匯款排程:日期 × 帳號 分組
-  const scheduleRows = useMemo(() => {
-    const m: Record<string, { date: string; acct: string; n: number; amt: number }> = {};
-    schedule.forEach((r) => {
-      const key = `${r.planned_transfer_on}|${r.payout_account ?? '—'}`;
-      if (!m[key]) m[key] = { date: r.planned_transfer_on ?? '', acct: r.payout_account ?? '—', n: 0, amt: 0 };
-      m[key].n += 1;
-      m[key].amt += Number(r.total_amount) || 0;
-    });
-    return Object.values(m).sort((a, b) => a.date.localeCompare(b.date) || a.acct.localeCompare(b.acct));
-  }, [schedule]);
+  // 付款排程：日期 → 帳號 → 已核可／待核可（lib/pay-schedule，有測試）
+  const sched = useMemo(() => paySchedule(schedule), [schedule]);
+  /** 展開看是哪幾張單的那幾組（key = 日期|帳號|核可） */
+  const [schedOpen, setSchedOpen] = useState<Set<string>>(new Set());
 
   /*
    * ★★★ 金額是 `null`（待填）不是 0（migration_218）。
@@ -2203,35 +2198,71 @@ export default function PurchasesPage() {
             </div>
           </div>
 
-          {/* 匯款排程:依預定付款日,獨立於上面的篩選 */}
-          {scheduleRows.length > 0 && (
+          {/* 付款排程：依預定付款日，獨立於上面的篩選。點一列展開看是哪幾張單 */}
+          {sched.days.length > 0 && (
             <div className="rounded-xl glass mb-4 md:mb-5 overflow-hidden">
-              <div className="px-4 py-2.5 text-sm font-medium border-b border-mor-line bg-white/45 flex items-center justify-between">
+              <div className="px-4 py-2.5 text-sm font-medium border-b border-mor-line bg-white/45 flex flex-wrap items-center justify-between gap-2">
                 <span>{month} 付款排程</span>
-                <span className="text-xs font-normal text-gray-500">
-                  依預定付款日・尚未支付・共 NT$ {fmt(scheduleRows.reduce((a, s) => a + s.amt, 0))}
+                <span className="text-xs font-normal text-gray-500 tabular-nums">
+                  尚未支付・<span className="text-mor-greendark">已核可 NT$ {fmt(sched.approvedAmt)}</span>
+                  ・<span className="text-amber-700">待核可 NT$ {fmt(sched.pendingAmt)}</span>
+                  ・共 NT$ {fmt(sched.approvedAmt + sched.pendingAmt)}
                 </span>
               </div>
-              {/* 手機放不下這幾欄 —— 沒有這層捲軸容器，欄位會被壓到只剩幾個 px 而不是可以滑動 */}
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[640px] text-sm">
                   <thead>
                     <tr className="text-left text-xs text-gray-500 border-b border-mor-line/60">
                       <th className="px-4 py-2">預定付款日</th>
                       <th className="px-4 py-2">帳號 / 卡別</th>
+                      <th className="px-4 py-2">核可</th>
                       <th className="px-4 py-2 text-right">筆數</th>
                       <th className="px-4 py-2 text-right">金額</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {scheduleRows.map((s) => (
-                      <tr key={s.date + s.acct} className="border-b border-mor-line/40 last:border-0">
-                        <td className="px-4 py-2 whitespace-nowrap">{s.date}</td>
-                        <td className="px-4 py-2">{s.acct}</td>
-                        <td className="px-4 py-2 text-right text-gray-500">{s.n}</td>
-                        <td className="px-4 py-2 text-right font-medium">NT$ {fmt(s.amt)}</td>
+                    {sched.days.map((d) => (<Fragment key={d.date}>
+                      {d.groups.map((g) => {
+                        const k = `${g.date}|${g.acct}|${g.approved ? 1 : 0}`;
+                        const open = schedOpen.has(k);
+                        return (<Fragment key={k}>
+                          <tr onClick={() => setSchedOpen((o) => { const n = new Set(o); n.has(k) ? n.delete(k) : n.add(k); return n; })}
+                            className="border-b border-mor-line/40 cursor-pointer hover:bg-mor-sand/30">
+                            <td className="px-4 py-2 whitespace-nowrap">
+                              <span className="inline-block w-3 text-[9px] text-gray-400">{open ? '▼' : '▶'}</span>{g.date || '（沒填日期）'}
+                            </td>
+                            <td className="px-4 py-2">{g.acct}</td>
+                            <td className="px-4 py-2">
+                              <span className={`rounded px-1.5 py-0.5 text-[11px] ${g.approved
+                                ? 'bg-mor-greenlight text-mor-greendark' : 'bg-amber-50 text-amber-700'}`}>
+                                {g.approved ? '已核可' : '待核可'}</span>
+                            </td>
+                            <td className="px-4 py-2 text-right text-gray-500">{g.reqs.length}</td>
+                            <td className={`px-4 py-2 text-right tabular-nums ${g.approved ? 'font-medium' : 'text-gray-500'}`}>NT$ {fmt(g.amt)}</td>
+                          </tr>
+                          {open && g.reqs.map((r) => (
+                            <tr key={r.id} className="border-b border-mor-line/30 bg-white/40 text-xs">
+                              <td className="pl-9 pr-4 py-1.5 text-gray-400 whitespace-nowrap">{r.req_no}</td>
+                              <td className="px-4 py-1.5 text-gray-600" colSpan={2}>
+                                {(r.purchase_request_items ?? []).map((i) => i.item_name).filter(Boolean).join('、') || '—'}
+                                <span className="ml-2 text-gray-400">{personName[r.requester_id] ?? ''}</span>
+                              </td>
+                              <td />
+                              <td className="px-4 py-1.5 text-right tabular-nums text-gray-600">NT$ {fmt(Number(r.total_amount) || 0)}</td>
+                            </tr>
+                          ))}
+                        </Fragment>);
+                      })}
+                      {/* 每天小計：那一天要準備多少（已核可＋待核可分開寫） */}
+                      <tr className="border-b border-mor-line bg-mor-sand/30 text-xs">
+                        <td className="px-4 py-1.5 text-gray-500" colSpan={3}>{d.date} 小計</td>
+                        <td />
+                        <td className="px-4 py-1.5 text-right tabular-nums">
+                          <b>NT$ {fmt(d.approvedAmt + d.pendingAmt)}</b>
+                          {d.pendingAmt > 0 && <span className="ml-1.5 text-amber-700">（待核可 {fmt(d.pendingAmt)}）</span>}
+                        </td>
                       </tr>
-                    ))}
+                    </Fragment>))}
                   </tbody>
                 </table>
               </div>
