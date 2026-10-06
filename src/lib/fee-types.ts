@@ -153,6 +153,11 @@ export const CONTRACT_FEE_PRESETS: { label: string; fee_type: string; item_name:
   // 只是沒放進固定加費的預設清單 —— 加在這裡就好，不用動資料庫。
   { label: '網路費',        fee_type: '網路費', item_name: null },
   { label: '水費',          fee_type: '水費',   item_name: null },
+  /*
+   * 瓦斯費（2026-10-06 David：「多加瓦斯費」）—— 跟電費同一個作法：
+   * 科目「水電瓦斯」（資料庫對到 utility，migration_229），項目「瓦斯費」。
+   */
+  { label: '瓦斯費',        fee_type: '水電瓦斯', item_name: '瓦斯費' },
   // 垃圾代收歸在清潔費底下（使用者指定）—— 科目看清潔費，
   // 要單獨知道垃圾代收收了多少就看項目。另立科目要改資料庫的科目對應表，
   // 為一個小金額的細目不值得。

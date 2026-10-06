@@ -257,3 +257,11 @@ describe('運費（2026-08-19 新增）', () => {
     assert.equal(ONEOFF_PRESETS[ONEOFF_PRESETS.length - 1].label, '其它');
   });
 });
+
+test('★ 瓦斯費：科目水電瓦斯、項目瓦斯費（跟電費一樣），固定加費與一次性都選得到', () => {
+  const c = CONTRACT_FEE_PRESETS.find((p) => p.label === '瓦斯費');
+  assert.equal(c?.fee_type, '水電瓦斯');
+  assert.equal(c?.item_name, '瓦斯費');
+  assert.deepEqual(presetOf('瓦斯費'), { fee_type: '水電瓦斯', item_name: '瓦斯費' });
+  assert.equal(feeLabel('水電瓦斯', '瓦斯費'), '瓦斯費');
+});
