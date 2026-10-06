@@ -453,7 +453,7 @@ export default function ExpensesPage() {
 
   async function del(e: Expense) {
     const extra = e.source_item_id ? '\n\n這筆支出來自請款單。刪除後不會回寫請款單,若之後重填採購日也不會重新產生。' : '';
-    if (!confirm(`確定刪除「${e.item_name}」($${fmt(e.amount)})?${extra}\n\n會移到回收桶,可以復原。`)) return;
+    if (!confirm(`確定刪除「${e.item_name}」($${fmt(e.amount)})?${extra}\n\n會移到回收桶，可以復原。`)) return;
     const r = await softDelete(supabase, 'expenses', e.id);
     if (r.ok) { savedToast(savedText('已刪除', e.item_name)); load(); } else flash(r.message);
   }
@@ -478,7 +478,7 @@ export default function ExpensesPage() {
      * ★★ 沒指定房源的留**空白**不要寫「整個物業」——
      *   Excel 裡那四個字會被當成一個房源名，篩選時多一個假選項。
      */
-    const header = ['關注', '非營運', '支出日期', '支出項目', '認列金額', '實際支出', '遞延', '會計科目', '用途', '房源', '憑證號碼', '支付方式', '安幸付款帳號', '備註'];
+    const header = ['關注', '非營運', '支出日期', '支出項目', '認列金額', '實際支出', '遞延', '會計科目', '用途', '房源', '憑證號碼', '付款方式', '安幸付款帳號', '備註'];
     const aoa: any[][] = [header.map((h) => T(h, stHead))];
     for (const r of sorted) {
       aoa.push([
@@ -799,7 +799,7 @@ export default function ExpensesPage() {
               <th className="px-3 py-2.5">會計科目</th>
               <th className="px-3 py-2.5">用途</th>
               <SortTh label="憑證號碼" sortKey="voucher_no" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
-              <th className="px-3 py-2.5">支付方式</th>
+              <th className="px-3 py-2.5">付款方式</th>
               <th className="px-3 py-2.5">備註</th>
               {/*
                 ★ 操作欄釘在右邊。九欄的表在窄視窗要橫向捲，
@@ -984,7 +984,7 @@ export default function ExpensesPage() {
                 {row('用途', d.purpose_type === 'office' ? '安幸辦公室'
                   : (d.estate_id ? (estateName[d.estate_id] ?? '—') : '—'))}
                 {row('房源', d.property_id ? (properties.find((x) => x.id === d.property_id)?.name ?? '—') : '整個物業（不指定房源）')}
-                {row('支付方式', d.payment_method
+                {row('安幸付款帳號', d.payment_method
                   ? `${PAY_LABEL[d.payment_method] ?? d.payment_method}${d.pay_account ? `・${acctName[d.pay_account] ?? d.pay_account}` : ''}`
                   : '—')}
                 {/* 憑證號碼與「無憑證」是兩件事 —— 空白代表還沒有人填，是待辦 */}
@@ -1033,8 +1033,6 @@ export default function ExpensesPage() {
                       編輯
                     </button>
                   )}
-                  <button onClick={() => setDetail(null)}
-                    className="flex-1 h-11 rounded-lg border border-gray-300 text-sm">關閉</button>
                 </div>
                 {!d.parent_expense_id && (
                   canDelete(d)

@@ -956,7 +956,7 @@ export default function OtherBooksPage() {
                 placeholder="例：8月東京團" className={CTRL} />
             </label>
             <label className="flex flex-col gap-1">
-              <span className="text-xs text-gray-500">收款方式</span>
+              <span className="text-xs text-gray-500">收款帳號</span>
               <select value={inc.account} onChange={(e) => setInc({ ...inc, account: e.target.value })} className={CTRL}>
                 <option value="">—</option>
                 <option value="現金">現金</option>
@@ -1016,7 +1016,7 @@ export default function OtherBooksPage() {
                 className={CTRL + ' text-right'} />
             </label>
             <label className="flex flex-col gap-1">
-              <span className="text-xs text-gray-500">支出方式</span>
+              <span className="text-xs text-gray-500">付款方式</span>
               <select value={exp.method} onChange={(e) => setExp({ ...exp, method: e.target.value })} className={CTRL}>
                 <option value="cash">現金</option>
                 <option value="transfer">匯款</option>

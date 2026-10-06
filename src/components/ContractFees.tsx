@@ -239,7 +239,7 @@ export default function ContractFees({
           + `若只是要停止收費，請改按「暫停」或「停止收費」——\n`
           + `刪掉設定之後就看不出這筆費用曾經存在過。\n`
         : `尚未收款的 ${s?.n ?? 0} 個月會一併刪除。\n`)
-      + `\n會移到回收桶,可以復原。`
+      + `\n會移到回收桶，可以復原。`
     )) return;
     setBusy(true);
     const res = await softDelete(supabase, 'contract_recurring_charges', r.id, '契約固定加費設定刪除');

@@ -1112,7 +1112,7 @@ export default function DepositsPage() {
 
   async function del(d: Dep) {
     // ★ 訂金與押金都走這裡 —— 訊息要講對是哪一種,不然刪訂金卻看到「押金」會以為按錯了
-    if (!confirm(`刪除這筆${wordOf(d)}紀錄（${d.room ?? ''} ${d.guest_name ?? ''}）?\n\n會移到回收桶,可以復原。`)) return;
+    if (!confirm(`刪除這筆${wordOf(d)}紀錄（${d.room ?? ''} ${d.guest_name ?? ''}）?\n\n會移到回收桶，可以復原。`)) return;
     const r = await softDelete(supabase, 'deposits', d.id);
     if (r.ok) savedToast(savedText(r.message, savedName(d))); else flash(r.message);
     if (r.ok) { setEdit(null); setTriedRefund(false); setDetail(null); load(); }
@@ -1891,7 +1891,7 @@ export default function DepositsPage() {
                   </span>
                 ))}
                 {row('收滿日', d.received_on ?? '—')}
-                {row('收款方式', recvMethodText(d))}
+                {row('安幸收款帳號', recvMethodText(d))}
                 {/*
                   移轉的來龍去脈。**要在退款狀態上面** ——
                   移轉的 A 那筆 refund_status 是 approved（dep_refund_chk 逼的）,
@@ -1936,7 +1936,7 @@ export default function DepositsPage() {
                   {d.reject_reason ? row('駁回原因', <span className="text-red-600 text-xs">{d.reject_reason}</span>) : null}
                 </>}
                 {row('退款日', d.returned_on ?? '—')}
-                {row('退款方式', d.returned_method
+                {row('安幸付款帳號', d.returned_method
                   ? `${METHOD_LABEL[d.returned_method] ?? d.returned_method}${d.returned_account ? `・${acctName[d.returned_account] ?? d.returned_account}` : ''}`
                   : '—')}
                 {row('備註', d.note ? <span className="whitespace-pre-wrap">{d.note}</span> : '—')}
@@ -2119,11 +2119,8 @@ export default function DepositsPage() {
                     {/* ⑤ 分享 —— 連結指向請款頁的待核可分頁,不是這一頁。
                            核可統一在那裡做,主管點進去就能直接投票,不用自己找那一筆。 */}
                     <button onClick={() => shareDep(d)}
-                      className={`${btn} border border-mor-line`}>↗ 分享</button>
-
-                    {/* ⑥ 關閉 */}
-                    <button onClick={() => setDetail(null)}
-                      className={`${btn} border border-gray-300`}>關閉</button>
+                      className={`${btn} border border-mor-line`}>分享</button>
+                    {/* 關閉只留右上 ✕（2026-10-06 全站統一：底下不再多一顆「關閉」） */}
                   </>;
                 })()}
                 {/*
@@ -2146,7 +2143,7 @@ export default function DepositsPage() {
                   <div className="mt-2 text-center">
                     <button onClick={() => del(d)}
                       className="text-xs text-red-400 underline hover:text-red-600">
-                      刪除這筆{wordOf(d)}（會移到回收桶,可以復原）
+                      刪除這筆{wordOf(d)}（會移到回收桶，可以復原）
                     </button>
                   </div>
                 )}

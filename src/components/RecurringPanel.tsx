@@ -196,7 +196,7 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
       `刪除定期收費「${r.item_name}」?\n\n`
       + `已記的月份會留在營收表 —— 那是真的收入（migration_317）。\n`
       + `要拿掉某一個月，到短租訂單把那一筆刪掉。\n\n`
-      + `會移到回收桶,可以復原。`
+      + `會移到回收桶，可以復原。`
     )) return;
     const res = await softDelete(supabase, 'recurring_charges', r.id);
     if (res.ok) { savedToast(savedText('已刪除', r.item_name)); load(); } else flash(res.message);

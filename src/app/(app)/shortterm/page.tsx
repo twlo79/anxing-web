@@ -1985,7 +1985,7 @@ export default function ShortTermPage() {
                       <span className="rounded bg-[#F6EFD5] text-[#8a6d1f] px-1.5 py-0.5 text-[11px]">訂金</span>
                     </span>)
                   : null}
-                {row('收款方式', d.account ?? '—')}
+                {row('安幸收款帳號', d.account ?? '—')}
                 {d.fx_revenue?.length ? row('外幣營收', d.fx_revenue.map((f, i) => <div key={i}>{f.cur} {fmt(f.amt)} × {f.rate}</div>)) : null}
                 {d.fx_deposit?.length ? row('外幣押金', d.fx_deposit.map((f, i) => <div key={i}>{f.cur} {fmt(f.amt)}</div>)) : null}
                 {d.invoice_required ? row('發票',
@@ -2029,11 +2029,11 @@ export default function ShortTermPage() {
                     if (!canCollect) return flash(collectDeniedMsg('這筆訂單的款'));
                     setDetail(null); setCollect(d);
                   }}
-                    className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-green text-mor-green text-sm font-medium hover:bg-mor-greenlight">收款</button>
+                    className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-green text-mor-greendark text-sm font-medium hover:bg-mor-greenlight">收款</button>
                 )}
                 {canMove && !isLocked({ checkin: d.checkin, checkout: d.checkout, imported_via: d.imported_via }, lockedYms) && (
                   <button onClick={() => { setDetail(null); openMove(d); }}
-                    className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-green text-mor-green text-sm font-medium hover:bg-mor-greenlight">移房</button>
+                    className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-green text-mor-greendark text-sm font-medium hover:bg-mor-greenlight">移房</button>
                 )}
                 {/*
                   帶訂單 id 而不是押金 id —— 一張訂單可能有台幣與多種外幣好幾筆押金。
@@ -2072,19 +2072,27 @@ export default function ShortTermPage() {
                   <button onClick={() => { setDetail(null); setCancelOf(d); }}
                     className="basis-full h-11 rounded-lg border border-red-300 text-red-600 text-sm font-medium hover:bg-red-50">取消訂單・結算退款</button>
                 )}
-                {(() => {
-                  const blocked = orderDeleteBlockedReason(role, d.book, lockReason);
-                  return blocked ? (
-                    <span title={blocked}
-                      className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-line bg-gray-50 text-gray-400 text-sm flex items-center justify-center cursor-not-allowed">
-                      🔒 刪除
-                    </span>
-                  ) : (
-                    <button onClick={() => { del(d); setDetail(null); }}
-                      className="flex-1 min-w-[6rem] h-11 rounded-lg border border-red-300 text-red-500 text-sm font-medium hover:bg-red-50">刪除</button>
-                  );
-                })()}
               </div>
+              {/*
+                ★ 刪除是底下一行紅色小字，不是按鈕（2026-10-06 全站統一；契約、押金、支出早就是這樣）。
+                  跟「取消訂單・結算退款」分開：那是一個真的動作，刪除是毀掉這筆。
+                  擋住時不藏起來，灰字 ＋ 寫出原因。
+              */}
+              {(() => {
+                const blocked = orderDeleteBlockedReason(role, d.book, lockReason);
+                return (
+                  <div className="mt-3 text-center">
+                    {blocked ? (
+                      <span className="text-xs text-gray-400">🔒 {blocked}</span>
+                    ) : (
+                      <button onClick={() => { del(d); setDetail(null); }}
+                        className="text-xs text-red-400 underline hover:text-red-600">
+                        刪除這筆訂單（會移到回收桶，可以復原）
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           </div>
         );
@@ -2559,7 +2567,7 @@ export default function ShortTermPage() {
 
                 {/* 收款方式屬於「這筆錢怎麼進來的」，本來就該在錢這一區 */}
                 <div className="flex flex-wrap items-center gap-2 mt-3">
-                  <span className={`${ML_LABEL} flex items-center`}>收款方式</span>
+                  <span className={`${ML_LABEL} flex items-center`}>安幸收款帳號</span>
                   <select value={edit.account ?? ''}
                     onChange={(e) => setEdit({ ...edit, account: e.target.value || null })}
                     className="h-11 md:h-8 flex-1 min-w-[8rem] rounded-lg border border-mor-line

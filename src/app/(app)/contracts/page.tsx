@@ -363,15 +363,6 @@ export default function ContractsPage() {
   const activeCount = useMemo(() => filtered.filter((r) => r.active).length, [filtered]);
   const monthAR = useMemo(() => filtered.filter((r) => r.active).reduce((s, r) => s + (curLT[r.id]?.amount ?? 0), 0), [filtered, curLT]);
   const monthPaid = useMemo(() => filtered.filter((r) => r.active).reduce((s, r) => s + (curLT[r.id]?.paid ? curLT[r.id].amount : 0), 0), [filtered, curLT]);
-  const roomLists = useMemo(() => {
-    const rk = (x: string) => { const m = String(x || '').match(/^(\d+)/); return [m ? parseInt(m[1]) : 999, String(x || '')] as [number, string]; };
-    const cmp = (a: { room: string }, b: { room: string }) => { const ka = rk(a.room), kb = rk(b.room); return ka[0] - kb[0] || (ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0); };
-    const paid: { room: string; label: string }[] = [], unpaid: { room: string; label: string }[] = [];
-    // label 依序退回 顯示名稱 → 房號 → 租戶 —— 三個都空的話會是一個看不見的項目,
-    // 使用者只會看到清單裡多了一個空白列而不知道那是什麼。沒有房號的契約靠租戶名認。
-    filtered.filter((r) => r.active && r.watch).forEach((r) => { const lt = curLT[r.id]; if (!lt) return; const it = { room: r.room ?? '', label: (r.display_name || r.room || r.tenant_name || '(未命名契約)') as string }; (lt.paid ? paid : unpaid).push(it); });
-    return { paid: paid.sort(cmp), unpaid: unpaid.sort(cmp) };
-  }, [filtered, curLT]);
 
   // 跨月欠款:依房源彙總,連續月份合併顯示(2026/4,5,6 → 2026/4~6)
   const arrears = useMemo(() => {
@@ -453,12 +444,6 @@ export default function ContractsPage() {
       a.day - b.day);
   }, [rows, invoices, invOrders, invAdjusts, invFromYm, curYm]);
 
-  async function togglePin(c: Contract) {
-    // ★ 數列數（🔴3）：RLS 擋下來回成功且 0 列，下面那行會把畫面改成假的
-    const r = await supabase.from('contracts').update({ watch: !c.watch }).eq('id', c.id).select('id');
-    const bad = writeError(r, '更新'); if (bad) return flash(bad);
-    setRows((rs) => rs.map((x) => x.id === c.id ? { ...x, watch: !c.watch } : x));
-  }
   /** 新增契約時 ContractFees 暫存的設定 —— 契約 insert 成功後才補寫 */
   const [pendingFees, setPendingFees] = useState<Rc[]>([]);
 
@@ -570,7 +555,7 @@ export default function ContractsPage() {
        */
       first_payment_date: edit.first_payment_date || null,
       pay_day: edit.pay_day ?? null,
-      account: edit.account, note: edit.note, active: edit.active, watch: edit.watch ?? false, display_name: edit.display_name || null, name: `${edit.tenant_name ?? ''}-${edit.room ?? ''}`,
+      account: edit.account, note: edit.note, active: edit.active, display_name: edit.display_name || null, name: `${edit.tenant_name ?? ''}-${edit.room ?? ''}`,
       /*
        * ★★★ 未稅就強制關掉開發票（migration_204 的 check 約束也擋）。
        *   前端先對齊是因為約束擋下來的訊息是約束名稱，沒人看得懂。
@@ -964,17 +949,6 @@ const nameOf = (c: Contract) =>
           muted={monthAR - monthPaid === 0} />
       </StatRow>
 
-      <div className="grid grid-cols-2 gap-3 mb-3 text-sm">
-        <div className="rounded-xl bg-white border border-mor-line p-3">
-          <div className="text-uisub text-gray-500 mb-1.5">本月({curMon}) 已收房源(關注) <span className="text-mor-greendark font-medium">{roomLists.paid.length}</span></div>
-          <div className="flex flex-wrap gap-1">{roomLists.paid.map((it) => <span key={it.room} className="inline-block rounded-md bg-mor-greenlight/50 text-mor-greendark px-2 py-0.5 text-sm">{it.label}</span>)}{!roomLists.paid.length && <span className="text-xs text-gray-300">—</span>}</div>
-        </div>
-        <div className="rounded-xl bg-white border border-mor-line p-3">
-          <div className="text-uisub text-gray-500 mb-1.5">本月({curMon}) 未收房源(關注) <span className="text-orange-600 font-medium">{roomLists.unpaid.length}</span></div>
-          <div className="flex flex-wrap gap-1">{roomLists.unpaid.map((it) => <span key={it.room} className="inline-block rounded-md bg-orange-50 text-orange-600 px-2 py-0.5 text-sm">{it.label}</span>)}{!roomLists.unpaid.length && <span className="text-xs text-gray-300">—</span>}</div>
-        </div>
-      </div>
-
       {arrears.length > 0 && (
         <div className="rounded-xl border border-red-200 bg-red-50/40 mb-3 overflow-hidden">
           {/* ★ 2026-10-05 David：「收納」—— 點標題列收起／展開；收起來數字還在標題列上 */}
@@ -1231,11 +1205,9 @@ const nameOf = (c: Contract) =>
                   收租視窗會列出整份租期的每一期、能改金額、能折讓、能開發票,
                   那是進去做事的地方,不該在列表上一鍵就打開。
                   真的要快速收款的話,左邊「收租」欄的「本月已收/未收」標籤本來就點得開。
-
-                  關注(★)留在列上:它是一鍵切換的顯示偏好,不是要進去做的事。
+                  （關注 ★ 於 2026-10-06 拿掉 —— David：「星星機制用不到」。欄位 watch 留在資料庫，畫面不讀）
                 */}
                 <td className="px-3 py-2 text-right whitespace-nowrap space-x-2" onClick={(e) => e.stopPropagation()}>
-                  <button onClick={() => togglePin(c)} title={c.watch ? '已關注(顯示於已收/未收清單)' : '關注收租(釘選)'} className={`text-xs ${c.watch ? 'text-amber-500' : 'text-gray-300 hover:text-amber-400'}`}>{c.watch ? '★' : '☆'}</button>
                   <button onClick={() => setDetail(c)} className="text-xs text-mor-slate underline hover:text-mor-blue">檢視</button>
                 </td>
               </tr>
@@ -1263,8 +1235,9 @@ const nameOf = (c: Contract) =>
               <div className="sticky top-0 z-10 bg-white border-b border-mor-line px-6 py-4 flex items-start justify-between"
                 style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
                 <div className="min-w-0">
-                  <div className="font-bold truncate">{c.room} <span className="text-sm font-normal text-gray-500">{c.estates?.name}</span></div>
-                  <div className="text-xs text-gray-500 mt-0.5">{c.tenant_name}{c.display_name ? `・${c.display_name}` : ''}</div>
+                  {/* 人在上、房源在下 —— 跟訂單、押金抽屜一致（2026-10-06 全站統一） */}
+                  <div className="font-bold truncate">{c.display_name || c.tenant_name || '—'}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">{c.estates?.name ?? ''} {c.room}{c.display_name && c.tenant_name && c.display_name !== c.tenant_name ? `・${c.tenant_name}` : ''}</div>
                 </div>
                 <button onClick={() => setDetail(null)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
               </div>
@@ -1290,7 +1263,6 @@ const nameOf = (c: Contract) =>
                 {row('狀態', (
                   <span className="space-x-1">
                     <span className={`inline-block rounded px-1.5 py-0.5 text-[11px] ${c.active ? 'bg-mor-greenlight text-mor-greendark' : 'bg-gray-100 text-gray-500'}`}>{c.active ? '啟用' : '停用'}</span>
-                    {c.watch && <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-amber-50 text-amber-600">已關注</span>}
                     {c.auto_renew && <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-mor-bluelight text-mor-slate">自動續約</span>}
                   </span>
                 ))}
@@ -1793,10 +1765,6 @@ const nameOf = (c: Contract) =>
                   </div>
                 </details>
               </div>
-              <label className="col-span-2 flex items-center gap-2 text-sm cursor-pointer">
-                <input type="checkbox" checked={edit.watch ?? false} onChange={(e) => setEdit({ ...edit, watch: e.target.checked })} />
-                釘選到收租關注清單
-              </label>
               {/*
                 ══════════ 其他功能的四個摺疊（2026-09-24 使用者指定）══════════
                 發票、折讓約定、展延租期、顯示名稱與備註 —— 多數契約用不到，收起來。
@@ -2660,7 +2628,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
     setInvDraft(null); loadInvoices();
   }
   async function delInvoice(id: string) {
-    if (!confirm('刪除這筆發票紀錄?(不會影響已在平台開立的發票)\n\n會移到回收桶,可以復原。')) return;
+    if (!confirm('刪除這筆發票紀錄?(不會影響已在平台開立的發票)\n\n會移到回收桶，可以復原。')) return;
     const r = await softDelete(supabase, 'invoices', id);
     if (!r.ok) { alert(r.message); return; }
     setInvDraft(null); loadInvoices();

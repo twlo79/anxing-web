@@ -619,7 +619,7 @@ export default function PurchasesPage() {
     if (!pendingReqNo || loading) return;
     const hit = rows.find((r) => r.req_no === pendingReqNo);
     if (hit) { setDetail(hit); setPendingReqNo(null); }
-    else if (rows.length) { flash(`找不到單號 ${pendingReqNo}`); setPendingReqNo(null); }
+    else if (rows.length) { flash(`找不到請款單號 ${pendingReqNo}`); setPendingReqNo(null); }
   }, [pendingReqNo, rows, loading]);
 
   const SORT_COLS: SortCols<Req> = useMemo(() => ({
@@ -1596,7 +1596,7 @@ export default function PurchasesPage() {
   // 這條同時寫在 RLS 裡,不只靠前端藏按鈕。
   async function cancel(r: Req) {
     if (r.expense_generated_at) return flashErr('已產生支出,不能撤銷。請到支出頁處理。');
-    if (!confirm(`確定撤銷請款單 ${r.req_no}?\n\n會移到回收桶,可以復原。`)) return;
+    if (!confirm(`確定撤銷請款單 ${r.req_no}?\n\n會移到回收桶，可以復原。`)) return;
     const res = await softDelete(supabase, 'purchase_requests', r.id, '撤銷請款單');
     if (!res.ok) return flash(res.message.replace('刪除', '撤銷'));
     savedToast(savedText('已撤銷', r.req_no) + ',可到刪除紀錄復原'); load();
@@ -1620,8 +1620,8 @@ export default function PurchasesPage() {
     // 錢那一段先「我方安幸付款帳號」再「對方收款資訊」,跟實際匯款時填的順序一致。
     // 類型放第一欄:會計拿這份去網銀匯款,押金退款跟請款單的錢一起出去,
     // 但一個是公司的費用、一個是退還代收的錢,對帳時必須分得出來。
-    const header = ['類型', '單號', '申請人', '狀態', '送出日', '採購日', '項目', '金額', '會計科目',
-      '用途', '房源', '支付方式', '預定付款日', '安幸付款帳號',
+    const header = ['類型', '請款單號', '申請人', '狀態', '送出日', '採購日', '項目', '金額', '會計科目',
+      '用途', '房源', '付款方式', '預定付款日', '安幸付款帳號',
       '銀行代號', '戶名', '廠商收款帳號', '項目備註'];
     const aoa: any[][] = [header.map((h) => T(h, stHead))];
     for (const r of sorted) {
@@ -2322,7 +2322,7 @@ export default function PurchasesPage() {
         </Field>
         <FilterSearch value={kwIn} onChange={setKwIn}
           onSubmit={() => setKw(kwIn.trim())}
-          placeholder="單號／項目／備註／廠商" />
+          placeholder="請款單號／項目／備註／廠商" />
         <FilterClear active={!!(stF || reqF || estateF || methodF || kw)}
           onClear={() => { setStF(''); setReqF(''); setEstateF(''); setMethodF(''); setKw(''); setKwIn(''); }} />
       </FilterBar>
@@ -2435,7 +2435,7 @@ export default function PurchasesPage() {
               <th className="px-3 py-2.5 align-middle">申請人</th>
               <th className="px-3 py-2.5 align-middle">項目</th>
               <SortTh label="總額" sortKey="total_amount" type="number" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="text-right" align="right" />
-              <th className="px-3 py-2.5 align-middle">支出方式</th>
+              <th className="px-3 py-2.5 align-middle">付款方式</th>
               <SortTh label="狀態" sortKey="status" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <SortTh label="付款日" sortKey="purchased_on" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <th className="px-3 py-2.5 text-right align-middle">操作</th>
@@ -2694,7 +2694,7 @@ export default function PurchasesPage() {
                         </span>
                         : <span className="text-gray-400">—</span>)}
                       {row('預計匯款日', d.planned_refund_on ?? <span className="text-gray-400">—</span>)}
-                      {row('安幸付款', d.returned_method
+                      {row('安幸付款帳號', d.returned_method
                         ? <span>
                           {DEP_METHOD[d.returned_method] ?? d.returned_method}
                           {d.returned_account && (
@@ -2827,7 +2827,7 @@ export default function PurchasesPage() {
           </div>
         );
         const its = (d.purchase_request_items ?? []).slice().sort((a, b) => a.sort - b.sort);
-        const btn = 'flex-1 min-w-[5rem] h-11 rounded-lg text-sm font-medium';
+        const btn = 'flex-1 min-w-[6rem] h-11 rounded-lg text-sm font-medium';
         return (
           <div className="fixed inset-0 z-50" onClick={() => setDetail(null)}>
             <div className="absolute inset-0 bg-black/30" />
@@ -2863,7 +2863,7 @@ export default function PurchasesPage() {
                     {d.currency !== 'TWD' && <div className="text-xs text-gray-400">{d.currency} × 匯率 {d.fx_rate}</div>}
                   </span>
                 ))}
-                {row('支出方式', (
+                {row('安幸付款帳號', (
                   <span>
                     {d.payment_method ? PAY_LABEL[d.payment_method] ?? d.payment_method : '—'}
                     {d.payout_account && <span className="text-gray-500 ml-1">・{acctName[d.payout_account] ?? d.payout_account}</span>}
@@ -3392,7 +3392,7 @@ export default function PurchasesPage() {
                     只藏欄位不清值的話，舊值會留在資料庫繼續產生郵電費支出，
                     而畫面上完全看不到它（pr_fee_chk 也會擋，但錯誤訊息是約束名稱，沒人看得懂）。
                   */}
-                  <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">支出方式</span>
+                  <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">付款方式</span>
                     <select disabled={readOnly} value={edit.payment_method ?? 'cash'}
                       onChange={(e) => setEdit({
                         ...edit, payment_method: e.target.value,

@@ -556,7 +556,7 @@ export default function RevenuesPage() {
      * 認列是 2026-07-01~2026-07-31(這個月分到的那一段)。
      * 只寫訂單起訖的話,看的人會問「這是七月的表,為什麼日期是六月」。
      */
-    const MHEAD = ['物業', '房源', '分類', '客戶',
+    const MHEAD = ['物業', '房源', '分類', '房客／租戶',
       '訂單起日', '訂單迄日', '認列起日', '認列迄日',
       '訂單總額', '當月收入', '當月天數', '總天數', '均價', '負責人', '評價', '入帳', '帳戶', '押金'];
     const MC = MHEAD.length;
@@ -848,7 +848,7 @@ export default function RevenuesPage() {
             onChange={(f, t) => { setFromM(f); setToM(t); }} />
         </div>
         <FilterSearch value={kwInput} onChange={setKwInput}
-          onSubmit={() => setKw(kwInput.trim())} placeholder="客戶／房源" />
+          onSubmit={() => setKw(kwInput.trim())} placeholder="房客／租戶／房源" />
         {(estateFilter || roomFilter || sourceFilter || kw) && <button onClick={() => { setEstateFilter(''); setRoomFilter(''); setSourceFilter(''); setKw(''); setKwInput(''); }} className="text-gray-500 underline pb-1.5">清除</button>}
       </div>
 
@@ -892,7 +892,7 @@ export default function RevenuesPage() {
               */}
               <SortTh label="來源" sortKey="source" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <SortTh label="房源" sortKey="property_raw" type="room" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
-              <SortTh label="客戶" sortKey="guest_name" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
+              <SortTh label="房客／租戶" sortKey="guest_name" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} />
               <SortTh label="期間" sortKey="period_start" type="date" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="whitespace-nowrap" />
               <SortTh label="天數" sortKey="month_nights" type="number" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="text-right whitespace-nowrap" align="right" />
               <SortTh label="認列 / 總額" sortKey="month_amount" type="number" state={sort} onSort={(k, d) => setSort({ key: k, dir: d })} className="text-right whitespace-nowrap" align="right" />
