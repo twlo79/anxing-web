@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { todayStr } from '@/lib/period';
 import { createClient } from '@/lib/supabase';
 import { fetchAll } from '@/lib/fetch-all';
@@ -262,6 +262,8 @@ export default function RoomStatusPage() {
   const [stays, setStays] = useState<Stay[]>([]);
   const [loading, setLoading] = useState(true);
   const [picked, setPicked] = useState<Picked | null>(null);
+  /** 展開的房源（同一間有兩筆以上時，一筆一條；2026-10-06 David） */
+  const [openRooms, setOpenRooms] = useState<Set<string>>(new Set());
   /** 卡片上能不能改備註（管家以上，跟訂單／契約編輯同一組） */
   const canNote = canEditOrders(useProfile().role);
 
@@ -667,6 +669,50 @@ export default function RoomStatusPage() {
     });
   };
 
+  /** 一格（空格或色條）。主列與展開的子列共用 */
+  const drawCell = (c: Cell, room: Room) => {
+                  const cls = `relative border-b border-r border-mor-line min-w-[42px]
+                    ${isWeekend(c.day) ? 'bg-mor-bg/50' : ''}`;
+                  if (c.type === 'free') return <td key={c.day} className={cls} />;
+                  /*
+                    ② 沒被選到的色條**淡掉，不是消失**。
+                    ★★★ 那幾天還是有人。整條拿掉的話畫面會說那間房空著 ——
+                      而有人會照著它排房。淡掉＝「不是你現在在找的，但它佔著」。
+                  */
+                  const dimmed = view === 'done' ? !checkedOut(c.stay, today)
+                    : view !== '' && view !== 'any' && view !== 'free'
+                    && view !== 'dup' && view !== 'ending' && view !== 'leaving'
+                    && c.stay.tone !== view;
+                  /*
+                   * ★★★ 快結束的畫成紅色。
+                   *   ★ 只有**旋鈕打開**的時候才紅 —— 平常不紅,因為這一頁最常做的事
+                   *     是看整體調性,而一排紅色會蓋過那件事。
+                   *   ★★ 尾巴直接寫「還有 N 天退房」:訂單的色條畫到 checkout 的
+                   *     **前一天**為止,而提醒說的是 checkout 當天 ——
+                   *     那個差一天是對的,但不寫出來的話看起來就是畫錯。
+                   */
+                  const hit = hot.get(c.stay.id);
+                  return (
+                    <td key={c.day} colSpan={c.span} className={cls}>
+                      <button type="button" onClick={(e) => openCard(e, c.stay, room)}
+                        style={hit ? { background: ALERT } : undefined}
+                        className={`absolute inset-y-1 inset-x-0.5 rounded-md px-1.5
+                          flex items-center text-[11px] font-semibold text-white
+                          whitespace-nowrap overflow-hidden transition-opacity
+                          ${hit ? '' : checkedOut(c.stay, today) ? DONE_BAR : TONE[c.stay.tone].bar}
+                          ${dimmed ? 'opacity-20' : 'hover:brightness-110'}`}>
+                        <span className="truncate">{c.stay.guest ?? ''}</span>
+                        {hit && (
+                          <span className="ml-auto pl-1.5 text-[9px] font-extrabold opacity-90
+                                           shrink-0 tabular-nums">
+                            {hit.days === 0 ? `今天${hit.word}` : `還有 ${hit.days} 天${hit.word}`}
+                          </span>
+                        )}
+                      </button>
+                    </td>
+                  );
+  };
+
   return (
     <div onClick={() => picked && setPicked(null)}>
       <div className="flex items-center justify-between mb-4">
@@ -1049,58 +1095,28 @@ export default function RoomStatusPage() {
             </tr>
           </thead>
           <tbody>
-            {visible.map(({ room, cells, dups }) => (
-              <tr key={`${room.estate}/${room.name}`}
+            {visible.map(({ room, cells, dups, real }) => {
+              const rk = `${room.estate}/${room.name}`;
+              const multi = real.length > 1;
+              const isOpen = multi && openRooms.has(rk);
+              return (
+              <Fragment key={rk}>
+              <tr
                 className={`h-8 ${dups.length ? 'bg-[#FFFDF6]' : ''}`}>
                 <td className={`sticky left-0 z-10 border-b border-r border-mor-line
                                min-w-[150px] max-w-[150px] px-2.5 font-medium text-sm whitespace-nowrap
                                overflow-hidden text-ellipsis ${dups.length ? 'bg-[#FFFDF6]' : 'bg-white'}`}>
-                  {room.name}
+                  {multi ? (
+                    <button type="button" className="inline-flex items-center gap-1"
+                      onClick={() => setOpenRooms((m) => { const n = new Set(m); n.has(rk) ? n.delete(rk) : n.add(rk); return n; })}>
+                      <span className="text-gray-400 text-[10px] w-2.5">{isOpen ? '▾' : '▸'}</span>{room.name}
+                      <span className="rounded-full bg-amber-50 px-1.5 text-[10px] font-medium text-amber-700">{real.length} 筆</span>
+                    </button>
+                  ) : room.name}
                   {/* ★ 物業維持小字 —— 它是附註,跟房號一起放大的話兩個一樣重,反而更難掃 */}
                   <span className="text-gray-400 font-normal text-[11px] ml-1.5">{room.estate}</span>
                 </td>
-                {cells.map((c: Cell) => {
-                  const cls = `relative border-b border-r border-mor-line min-w-[42px]
-                    ${isWeekend(c.day) ? 'bg-mor-bg/50' : ''}`;
-                  if (c.type === 'free') return <td key={c.day} className={cls} />;
-                  /*
-                    ② 沒被選到的色條**淡掉，不是消失**。
-                    ★★★ 那幾天還是有人。整條拿掉的話畫面會說那間房空著 ——
-                      而有人會照著它排房。淡掉＝「不是你現在在找的，但它佔著」。
-                  */
-                  const dimmed = view === 'done' ? !checkedOut(c.stay, today)
-                    : view !== '' && view !== 'any' && view !== 'free'
-                    && view !== 'dup' && view !== 'ending' && view !== 'leaving'
-                    && c.stay.tone !== view;
-                  /*
-                   * ★★★ 快結束的畫成紅色。
-                   *   ★ 只有**旋鈕打開**的時候才紅 —— 平常不紅,因為這一頁最常做的事
-                   *     是看整體調性,而一排紅色會蓋過那件事。
-                   *   ★★ 尾巴直接寫「還有 N 天退房」:訂單的色條畫到 checkout 的
-                   *     **前一天**為止,而提醒說的是 checkout 當天 ——
-                   *     那個差一天是對的,但不寫出來的話看起來就是畫錯。
-                   */
-                  const hit = hot.get(c.stay.id);
-                  return (
-                    <td key={c.day} colSpan={c.span} className={cls}>
-                      <button type="button" onClick={(e) => openCard(e, c.stay, room)}
-                        style={hit ? { background: ALERT } : undefined}
-                        className={`absolute inset-y-1 inset-x-0.5 rounded-md px-1.5
-                          flex items-center text-[11px] font-semibold text-white
-                          whitespace-nowrap overflow-hidden transition-opacity
-                          ${hit ? '' : checkedOut(c.stay, today) ? DONE_BAR : TONE[c.stay.tone].bar}
-                          ${dimmed ? 'opacity-20' : 'hover:brightness-110'}`}>
-                        <span className="truncate">{c.stay.guest ?? ''}</span>
-                        {hit && (
-                          <span className="ml-auto pl-1.5 text-[9px] font-extrabold opacity-90
-                                           shrink-0 tabular-nums">
-                            {hit.days === 0 ? `今天${hit.word}` : `還有 ${hit.days} 天${hit.word}`}
-                          </span>
-                        )}
-                      </button>
-                    </td>
-                  );
-                })}
+                {cells.map((c: Cell) => drawCell(c, room))}
                 {(() => {
                   const o = occOfRow(room.name);
                   return (
@@ -1113,7 +1129,20 @@ export default function RoomStatusPage() {
                   );
                 })()}
               </tr>
-            ))}
+              {/* 展開：同一間的每一筆各畫一條（重疊時被蓋住的那筆也看得到） */}
+              {isOpen && [...real].sort((x, y) => (x.start ?? '').localeCompare(y.start ?? '')).map((st) => (
+                <tr key={`${rk}/${st.id}`} className="h-7 bg-mor-bg/30">
+                  <td className="sticky left-0 z-10 border-b border-r border-mor-line bg-[#FAFAF8] min-w-[150px] max-w-[150px]
+                                 pl-6 pr-2 text-[11px] text-gray-500 whitespace-nowrap overflow-hidden text-ellipsis">
+                    └ {TONE[st.tone].label.replace(/（.*）/, '')}
+                  </td>
+                  {rowOf([st], range).map((c: Cell) => drawCell(c, room))}
+                  <td className="sticky right-0 z-10 border-b border-l border-mor-line bg-[#FAFAF8]" />
+                </tr>
+              ))}
+              </Fragment>
+              );
+            })}
             {!loading && visible.length === 0 && (
               <tr><td colSpan={days.length + 2} className="px-4 py-8 text-center text-gray-400">
                 沒有符合的房源
@@ -1251,10 +1280,16 @@ function StayCard({ p, today, canNote, onClose, onNoteSaved }: {
           </div>
         )}
 
-        <a href={href} target="_blank" rel="noreferrer"
-          className="block mt-2.5 pt-2 border-t border-mor-line text-xs text-mor-slate hover:text-mor-slatedark">
-          打開這張{KIND[s.kind]} →
-        </a>
+        <div className="mt-2.5 pt-2 border-t border-mor-line flex items-center justify-between text-xs">
+          <a href={href} target="_blank" rel="noreferrer" className="text-mor-slate hover:text-mor-slatedark">
+            打開這張{KIND[s.kind]} →
+          </a>
+          {/* 找房移房（2026-10-06）：開訂單頁的移房視窗，房源下拉只列整段都空的房。契約不在這裡移 */}
+          {s.kind === 'order' && canNote && s.srcId && (
+            <a href={`/shortterm?move=${s.srcId}`} target="_blank" rel="noreferrer"
+              className="font-medium text-mor-slate hover:text-mor-slatedark">找房移房 →</a>
+          )}
+        </div>
       </div>
     </>
   );

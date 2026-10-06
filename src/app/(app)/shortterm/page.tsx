@@ -57,6 +57,7 @@ import TrashLink from '@/components/TrashLink';
 import PricingFeeModal from './pricing-fee-modal';
 import CancelSettleModal from './cancel-settle-modal';
 import { cancelBlockedReason } from '@/lib/cancel-settle';
+import { busyOfOrder, busyOfContract, roomFree, nightsLabel, dayBefore, type Busy } from '@/lib/room-free';
 import { canPricingFee, PRICING_TITLE } from '@/lib/pricing-fee';
 import Fold from '@/components/Fold';
 import { checkDates, checkPrice, checkRequired, isEarnestStage, lookbackFrom, type PastOrder } from '@/lib/order-check';
@@ -196,6 +197,11 @@ type MoveState = {
   origRooms: string[];
   /** 原本的備註。★ 移房要**追加**不是覆蓋（見 doMove） */
   origNote: string | null;
+  /**
+   * 這段期間其他人佔著哪些房（2026-10-06 找空房移房）。不含這一組自己、不含已取消。
+   * null ＝ 還在載入（下拉先列全部，載完才篩）
+   */
+  busy: Busy[] | null;
 };
 
 /*
@@ -470,6 +476,11 @@ export default function ShortTermPage() {
    * 直接查那一筆而不是篩選列表 —— 那筆可能不在目前的日期範圍、
    * 可能在第 3 頁，而篩選會被記住,下次打開會看到被篩過的清單卻不知道為什麼。
    */
+  /* `/shortterm?move=<id>` 直接開那一筆的移房視窗（房源狀態卡片的「找房移房」） */
+  useOpenFromUrl<Order>('move', async (id) => {
+    const { data } = await supabase.from('orders').select('*, properties(name)').eq('id', id).maybeSingle();
+    return (data as Order) ?? null;
+  }, (o) => { openMove(o); });
   useOpenFromUrl<Order>('order', async (id) => {
     const { data } = await supabase.from('orders')
       .select('*, properties(name)').eq('id', id).maybeSingle();
@@ -1231,7 +1242,30 @@ export default function ShortTermPage() {
        *   而蓋掉不會有任何提示。
        */
       origNote: (list[0]?.note ?? null),
+      busy: null,
     });
+    /*
+     * 找空房（2026-10-06 David：「要整段都空著的才能移」）：
+     *   撈跟這張單期間有交集的訂單與契約，排掉這一組自己（不然原房永遠不空）與已取消的。
+     */
+    const ids = new Set(list.map((x) => x.id as string));
+    const [{ data: os }, { data: cs }] = await Promise.all([
+      supabase.from('orders').select('id, move_group, property_id, estate_id, property_raw, checkin, checkout')
+        .not('source', 'in', '(oneoff,airbnb_cancelled)').is('cancelled_on', null)
+        .lt('checkin', checkout).gt('checkout', checkin),
+      supabase.from('contracts').select('property_id, estate_id, room, start_date, end_date, active')
+        .lte('start_date', checkout).gte('end_date', checkin),
+    ]);
+    const busy: Busy[] = [];
+    for (const x of (os ?? []) as any[]) {
+      if (ids.has(x.id) || x.move_group === grp) continue;
+      const b = busyOfOrder(x); if (b) busy.push(b);
+    }
+    for (const c of (cs ?? []) as any[]) {
+      if (c.active === false) continue;
+      const b = busyOfContract(c); if (b) busy.push(b);
+    }
+    setMove((m) => (m && m.grp === grp ? { ...m, busy } : m));
   }
   function moveWithAmounts(m: MoveState) {
     const segs = m.stays.map((s, i) => {
@@ -1249,6 +1283,14 @@ export default function ShortTermPage() {
     if (segs.some((s) => !s.room)) return '每段都要選房源';
     for (let i = 1; i < segs.length; i++) { if (!m.stays[i].from) return '每個移房都要填移入日期'; if (new Date(segs[i].from) <= new Date(segs[i - 1].from)) return '移入日期需晚於前一段'; }
     if (segs.some((s) => s.nights < 1)) return '每段至少 1 晚(日期需在期間內)';
+    // 選到的房那一段有人住 → 擋（2026-10-06：整段都空才能移）
+    if (m.busy) {
+      for (let i = 0; i < segs.length; i++) {
+        const sg = segs[i];
+        const ref = { id: sg.propertyId ?? '', name: sg.room, estate_id: sg.estateId };
+        if (!roomFree(m.busy, ref, sg.from, sg.to)) return `第 ${i + 1} 段 ${sg.room} 在 ${nightsLabel(sg.from, sg.to)} 有人住 —— 換一間`;
+      }
+    }
     return null;
   }
   async function doMove() {
@@ -2794,7 +2836,8 @@ export default function ShortTermPage() {
           <div onClick={(e) => e.stopPropagation()} className="relative bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[85vh] overflow-y-auto">
             <div className="sticky top-0 z-10 bg-white border-b border-mor-line px-6 py-4 font-bold flex items-center justify-between">移房 · {move.guest ?? ''}<button onClick={() => setMove(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button></div>
             <div className="px-6 py-4 flex flex-col gap-3 text-sm">
-              <div className="text-xs text-gray-500">整筆:{move.checkin}~{move.checkout} · 共 {move.totalNights} 晚 · 總營收 ${fmt(move.totalAmount)}(按晚數比例分攤各段)</div>
+              {/* 日期一律寫「第一晚 ～ 最後一晚」，不寫退房日（2026-10-06 David：「以實際住的晚數，不算退房日」） */}
+              <div className="text-xs text-gray-500">整筆：<b className="text-mor-ink">{move.origRooms[0] ?? ''}</b>　{move.checkin} ~ {dayBefore(move.checkout)}（最後一晚）· 共 {move.totalNights} 晚 · 總營收 ${fmt(move.totalAmount)}</div>
               {move.stays.map((s, i) => {
                 const seg = segs[i];
                 return (
@@ -2805,14 +2848,18 @@ export default function ShortTermPage() {
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <select value={s.estateId ?? ''} onChange={(e) => updStay(i, { estateId: e.target.value || null, room: '', propertyId: null })} className="rounded border border-gray-300 px-2 py-1 text-xs"><option value="">物業</option>{estates.map((es) => <option key={es.id} value={es.id}>{es.name}{es.active ? '' : '(停用)'}</option>)}</select>
-                      <select value={s.room} onChange={(e) => { const nm = e.target.value; const pr = properties.find((x) => x.estate_id === s.estateId && x.name === nm); updStay(i, { room: nm, propertyId: pr?.id ?? null }); }} className="rounded border border-gray-300 px-2 py-1 text-xs"><option value="">房源</option>{properties.filter((x) => x.estate_id === s.estateId).map((x) => <option key={x.id} value={x.name}>{x.name}</option>)}</select>
+                      <select value={s.room} onChange={(e) => { const nm = e.target.value; const pr = properties.find((x) => x.estate_id === s.estateId && x.name === nm); updStay(i, { room: nm, propertyId: pr?.id ?? null }); }} className="rounded border border-gray-300 px-2 py-1 text-xs"><option value="">房源</option>{properties.filter((x) => x.estate_id === s.estateId)
+                        // 只列這一段每晚都空的房；目前選的那間就算有人也留著（下面會寫原因）
+                        .filter((x) => !move.busy || x.name === s.room || roomFree(move.busy, x, seg.from, seg.to))
+                        .map((x) => <option key={x.id} value={x.name}>{x.name}{move.busy && !roomFree(move.busy, x, seg.from, seg.to) ? '（有人）' : ''}</option>)}</select>
+                      {!move.busy && <span className="text-[11px] text-gray-400">查空房中…</span>}
                       {i === 0 ? <span className="text-xs text-gray-500">入住日 {move.checkin}</span> : <input type="date" value={s.from} min={move.checkin} max={move.checkout} onChange={(e) => updStay(i, { from: e.target.value })} className="rounded border border-gray-300 px-2 py-1 text-xs" />}
                     </div>
-                    <div className="text-xs text-gray-600">{seg.from}~{seg.to} · {seg.nights}晚 · 認列 <span className="font-semibold">${fmt(seg.amount)}</span></div>
+                    <div className="text-xs text-gray-600"><b className="text-mor-ink">{seg.room || '—'}</b>　{nightsLabel(seg.from, seg.to)} · {seg.nights} 晚</div>
                   </div>
                 );
               })}
-              <button type="button" onClick={addStay} className="text-xs text-mor-blue underline self-start">+ 增加移房</button>
+              <button type="button" onClick={addStay} className="text-xs text-mor-blue underline self-start">+ 增加移房（切細）</button>
               {err && <p className="text-xs text-red-500">{err}</p>}
               {/*
                 ★★★ 這一行以前是**無條件**印的（2026-09-14 修）:
