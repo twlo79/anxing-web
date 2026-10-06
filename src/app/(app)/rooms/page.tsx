@@ -1097,7 +1097,13 @@ export default function RoomStatusPage() {
           <tbody>
             {visible.map(({ room, cells, dups, real }) => {
               const rk = `${room.estate}/${room.name}`;
-              const multi = real.length > 1;
+              /*
+               * ★ 只有**真的重疊**才給展開（2026-10-06 David：「看不出來重疊衝到的是哪裡」）。
+               *   同一間兩筆但日期沒交集（Mego 9/4–10/5、Daniel 10/18–）本來就畫得出來，不用展開。
+               */
+              const multi = dups.length > 0;
+              const dupDays = dups.reduce((n, d) => n + daysBetween(d.from, d.to) + 1, 0);
+              const dupIds = new Set(dups.flatMap((d) => d.stays.map((x) => x.id)));
               const isOpen = multi && openRooms.has(rk);
               return (
               <Fragment key={rk}>
@@ -1109,8 +1115,10 @@ export default function RoomStatusPage() {
                   {multi ? (
                     <button type="button" className="inline-flex items-center gap-1"
                       onClick={() => setOpenRooms((m) => { const n = new Set(m); n.has(rk) ? n.delete(rk) : n.add(rk); return n; })}>
-                      <span className="text-gray-400 text-[10px] w-2.5">{isOpen ? '▾' : '▸'}</span>{room.name}
-                      <span className="rounded-full bg-amber-50 px-1.5 text-[10px] font-medium text-amber-700">{real.length} 筆</span>
+                      {room.name}
+                      <span className="rounded-full bg-red-50 px-1.5 text-[10px] font-medium text-red-600">⚠ 重疊 {dupDays} 天</span>
+                      {/* 箭頭放後面（2026-10-06 David：「toggle 移到後方」）—— 房號維持跟其他列同一條左邊線 */}
+                      <span className="text-gray-400 text-[10px]">{isOpen ? '▾' : '▸'}</span>
                     </button>
                   ) : room.name}
                   {/* ★ 物業維持小字 —— 它是附註,跟房號一起放大的話兩個一樣重,反而更難掃 */}
@@ -1129,17 +1137,46 @@ export default function RoomStatusPage() {
                   );
                 })()}
               </tr>
-              {/* 展開：同一間的每一筆各畫一條（重疊時被蓋住的那筆也看得到） */}
-              {isOpen && [...real].sort((x, y) => (x.start ?? '').localeCompare(y.start ?? '')).map((st) => (
+              {/*
+                展開：撞在一起的那幾筆各畫一條，最下面一條紅色標出「撞在哪幾天」。
+                只列有參與重疊的訂單 —— 沒撞到的本來就畫在主列上。
+              */}
+              {isOpen && [...real].filter((x) => dupIds.has(x.id))
+                .sort((x, y) => (x.start ?? '').localeCompare(y.start ?? '')).map((st) => (
                 <tr key={`${rk}/${st.id}`} className="h-7 bg-mor-bg/30">
                   <td className="sticky left-0 z-10 border-b border-r border-mor-line bg-[#FAFAF8] min-w-[150px] max-w-[150px]
                                  pl-6 pr-2 text-[11px] text-gray-500 whitespace-nowrap overflow-hidden text-ellipsis">
-                    └ {TONE[st.tone].label.replace(/（.*）/, '')}
+                    └ {st.guest || '（沒有名字）'}
                   </td>
                   {rowOf([st], range).map((c: Cell) => drawCell(c, room))}
                   <td className="sticky right-0 z-10 border-b border-l border-mor-line bg-[#FAFAF8]" />
                 </tr>
               ))}
+              {isOpen && (
+                <tr className="h-7">
+                  <td className="sticky left-0 z-10 border-b border-r border-mor-line bg-red-50 min-w-[150px] max-w-[150px]
+                                 pl-6 pr-2 text-[11px] font-medium text-red-600 whitespace-nowrap">└ 撞在這幾天</td>
+                  {(() => {
+                    // 重疊的日子畫成紅條（連續的併成一段），其餘空格
+                    const hitDay = new Set(dups.flatMap((d) => eachDay({ from: d.from, to: d.to })));
+                    const out: React.ReactNode[] = [];
+                    for (let i = 0; i < days.length;) {
+                      if (!hitDay.has(days[i])) { out.push(<td key={days[i]} className="border-b border-r border-mor-line min-w-[42px]" />); i++; continue; }
+                      let n = 1; while (i + n < days.length && hitDay.has(days[i + n])) n++;
+                      const a = days[i], b = days[i + n - 1];
+                      out.push(
+                        <td key={a} colSpan={n} className="relative border-b border-r border-mor-line">
+                          <div className="absolute inset-y-1 inset-x-0.5 rounded-md bg-red-500 px-1.5 flex items-center text-[10px] font-semibold text-white whitespace-nowrap overflow-hidden">
+                            {a.slice(5).replace('-', '/')}{n > 1 ? ` ～ ${b.slice(5).replace('-', '/')}` : ''}（{n} 晚）
+                          </div>
+                        </td>);
+                      i += n;
+                    }
+                    return out;
+                  })()}
+                  <td className="sticky right-0 z-10 border-b border-l border-mor-line bg-red-50" />
+                </tr>
+              )}
               </Fragment>
               );
             })}
