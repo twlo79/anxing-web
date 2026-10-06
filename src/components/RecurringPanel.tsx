@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Req from '@/components/Req';
 import MoneyInput from '@/components/MoneyInput';
 import { fmtInt as fmt } from '@/lib/fmt';
-import { missingFields, missingMessage } from '@/lib/required';
+import { missingMessage } from '@/lib/required';
 import { createClient } from '@/lib/supabase';
 import { fetchAll } from '@/lib/fetch-all';
 import { DEFAULT_BOOK } from '@/lib/book';
@@ -14,10 +14,13 @@ import { softDelete } from '@/lib/trash';
 import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
 import { useJustSaved } from '@/lib/use-just-saved';
 import { SavedBadge } from '@/components/SavedToast';
-import { groupRcByYear, rcYearOpenByDefault } from '@/lib/recurring-years';
+import { groupRcByYear, rcYearOpenByDefault, missingYms, defaultEntryYm, entryMissing } from '@/lib/recurring-years';
 
 /**
  * 定期收費面板。**嵌在短租訂單頁裡,不佔側邊選單一格。**
+ *
+ * ★★ 2026-10-06 起（migration_317）**不再自動產生月份**：月結時「記一筆」選月份、填金額、送出，
+ *   營收表當下就有那一筆。下面「設定一次、每月自動長出一列」那段是舊做法的紀錄。
  *
  * 【這在解決什麼】
  * 洗衣機、烘衣機、垃圾代收費這類收入每個月都會發生,以前只能一筆一筆開
@@ -46,6 +49,8 @@ type Rc = {
 };
 type Ord = { id: string; order_key: string; checkin: string; amount: number; paid: boolean };
 type Estate = { id: string; name: string };
+/** 記一筆（2026-10-06 David：「選月份、填金額、送出就好」） */
+type Entry = { estate_id: string; property_id: string | null; item: string; fee_type: string; ym: string; amount: number; note: string };
 type Property = { id: string; name: string; estate_id: string | null };
 
 const thisYm = () => { const d = new Date(); return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`; };
@@ -61,7 +66,8 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
   const [properties, setProperties] = useState<Property[]>([]);
   const [orders, setOrders] = useState<Record<string, Ord[]>>({});
   const [loaded, setLoaded] = useState(false);
-  const [edit, setEdit] = useState<Rc | null>(null);
+  /** 記一筆的表單（migration_317）。null ＝ 沒開 */
+  const [entry, setEntry] = useState<Entry | null>(null);
   const [expand, setExpand] = useState<string | null>(null);
   /** 年份的開關（'<設定id>:<年>' → 開/關）。沒記錄的用 rcYearOpenByDefault() */
   const [yearOpen, setYearOpen] = useState<Record<string, boolean>>({});
@@ -111,7 +117,6 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
   useEffect(() => { if (open && !loaded) load(); }, [open, loaded, load]);
 
   const estateName = useMemo(() => Object.fromEntries(estates.map((e) => [e.id, e.name])), [estates]);
-  const usedItems = useMemo(() => Array.from(new Set(rows.map((r) => r.item_name).filter(Boolean))).sort(), [rows]);
 
   /** 每筆設定的本月與今年累計。這是「時兆固定有多少額外收入」的答案。 */
   const stat = useCallback((rcId: string) => {
@@ -120,7 +125,6 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
     return {
       month: os.filter((o) => ymOfKey(o.order_key) === ym).reduce((a, o) => a + Number(o.amount || 0), 0),
       year: os.filter((o) => ymOfKey(o.order_key).startsWith(yr)).reduce((a, o) => a + Number(o.amount || 0), 0),
-      zero: os.filter((o) => !Number(o.amount)).length,
       n: os.length,
     };
   }, [orders]);
@@ -141,70 +145,61 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
   const totalMonth = byEstate.reduce((a, e) => a + e.month, 0);
   const totalYear = byEstate.reduce((a, e) => a + e.year, 0);
 
-  function blank(): Rc {
-    return {
-      id: '', estate_id: estates[0]?.id ?? '', property_id: null, property_raw: null,
-      fee_type: '清潔費', item_name: '', amount: 0,
-      start_ym: thisYm(), end_ym: null, active: true, note: null,
-    };
+  /** 這個設定記過哪幾個月 */
+  const recordedOf = useCallback((rcId: string) => (orders[rcId] ?? []).map((o) => ymOfKey(o.order_key)), [orders]);
+  /** 表單上打的項目對到哪一筆設定（同物業、同名；房源不管 —— 選了項目就帶它的房源） */
+  const matchOf = (e: Entry) => rows.find((r) => r.estate_id === e.estate_id && r.item_name === e.item.trim()) ?? null;
+
+  function openEntry(r?: Rc) {
+    setTried(false);
+    if (r) {
+      setEntry({ estate_id: r.estate_id, property_id: r.property_id, item: r.item_name, fee_type: r.fee_type,
+        ym: defaultEntryYm(recordedOf(r.id), thisYm()), amount: 0, note: '' });
+    } else {
+      setEntry({ estate_id: estates[0]?.id ?? '', property_id: null, item: '', fee_type: '清潔費',
+        ym: defaultEntryYm([], thisYm()), amount: 0, note: '' });
+    }
+  }
+  /** 項目改了：對到用過的就帶它的科目、房源、預設月份 */
+  function setItem(e: Entry, item: string) {
+    const m = rows.find((r) => r.estate_id === e.estate_id && r.item_name === item.trim());
+    setEntry(m ? { ...e, item, fee_type: m.fee_type, property_id: m.property_id, ym: defaultEntryYm(recordedOf(m.id), thisYm()) }
+               : { ...e, item });
   }
 
-  /** 按過儲存了沒 —— 紅框只在他表達「我填完了」之後才出現 */
+  /** 按過送出了沒 —— 紅框只在他表達「我填完了」之後才出現 */
   const [tried, setTried] = useState(false);
-  /*
-   * 缺哪些必填。
-   *
-   * 金額不在裡面 —— 這張表單的「收入金額」本來就可以是 0：
-   * 水費、電費那種每月變動的項目，就是先產生出來再逐月填。
-   * 那不是漏填，是這個功能的用法。
-   */
-  const missing = edit ? missingFields([
-    { label: '物業', value: edit.estate_id },
-    { label: '項目', value: edit.item_name },
-    { label: '起始月', value: edit.start_ym },
-  ]) : [];
+  const missing = entry ? entryMissing(entry) : [];
   const err = (f: string) => tried && missing.includes(f);
 
-  async function save() {
-    if (!edit) return;
+  async function submit() {
+    if (!entry || busy) return;
     setTried(true);
     if (missing.length) return flash(missingMessage(missing));
     setBusy('save');
-    const payload = {
-      estate_id: edit.estate_id, property_id: edit.property_id, property_raw: edit.property_raw,
-      fee_type: edit.fee_type, item_name: edit.item_name.trim(), amount: edit.amount || 0,
-      // 結束月拿掉了（2026-10-06 David 選 B，migration_315）—— 要停就取消「啟用中」
-      start_ym: edit.start_ym, end_ym: null, active: edit.active, note: edit.note || null,
-    };
-    const { data, error } = edit.id
-      ? await supabase.from('recurring_charges').update(payload).eq('id', edit.id).select('id')
-      : await supabase.from('recurring_charges').insert(payload).select('id');
+    const { data, error } = await supabase.rpc('record_recurring', {
+      p_estate: entry.estate_id, p_property: entry.property_id, p_item: entry.item.trim(),
+      p_fee_type: entry.fee_type, p_ym: entry.ym, p_amount: entry.amount, p_note: entry.note || null,
+    });
     setBusy('');
-    if (error) return flash('儲存失敗:' + error.message);
-    setEdit(null); setTried(false);
-    markSaved(edit.id || (data as { id: string }[] | null)?.[0]?.id);
-    savedToast(`${savedText(edit.id ? '已儲存' : '已新增', payload.item_name)}，月份已產生`);
+    if (error) return flash('送出失敗:' + error.message);
+    const r = data as { ok: boolean; message: string; rc_id?: string };
+    if (!r?.ok) return flash(r?.message ?? '送出失敗');
+    setEntry(null); setTried(false);
+    if (r.rc_id) { markSaved(r.rc_id); setExpand(r.rc_id); }
+    savedToast(r.message);
     load();
   }
 
   async function del(r: Rc) {
     if (!confirm(
       `刪除定期收費「${r.item_name}」?\n\n`
-      + `已經產生但還沒收款的月份會一併刪除。\n`
-      + `已收款的月份會留著 —— 那是真的收過的錢,不該因為設定被刪就消失。\n\n`
+      + `已記的月份會留在營收表 —— 那是真的收入（migration_317）。\n`
+      + `要拿掉某一個月，到短租訂單把那一筆刪掉。\n\n`
       + `會移到回收桶,可以復原。`
     )) return;
     const res = await softDelete(supabase, 'recurring_charges', r.id);
     if (res.ok) { savedToast(savedText('已刪除', r.item_name)); load(); } else flash(res.message);
-  }
-
-  /** 補產到本月。冪等 —— 重複按只會補缺的月份,已填的金額不會被蓋掉。 */
-  async function rebuild() {
-    setBusy('rebuild');
-    const { data, error } = await supabase.rpc('rebuild_recurring_orders');
-    setBusy('');
-    if (error) return flash('產生失敗:' + error.message);
-    savedToast(`已補到本月（涵蓋 ${data ?? 0} 個月份）`); load();
   }
 
   async function setAmount(o: Ord, v: number) {
@@ -225,7 +220,7 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
           <span className="text-gray-400 mr-1">{open ? '▾' : '▸'}</span>
           定期收費
           <span className="ml-2 text-xs font-normal text-gray-500">
-            每月自動產生的其他收入（洗衣機、垃圾代收費…）
+            每月結算時記一筆的其他收入（洗衣機、垃圾代收費…）
           </span>
         </span>
         {loaded && rows.length > 0 && (
@@ -242,11 +237,8 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
           {msg && <div className="mb-2 rounded-lg bg-mor-greenlight text-mor-green px-3 py-1.5 text-xs">{msg}</div>}
           {canEdit && (
             <div className="flex flex-wrap gap-2 mb-3">
-              <button onClick={() => setEdit(blank())}
-                className="rounded-lg bg-mor-slate text-white px-3 py-1.5 text-xs font-medium hover:bg-mor-slatedark">+ 新增定期收費</button>
-              <button onClick={rebuild} disabled={!!busy}
-                className="rounded-lg border border-mor-line px-3 py-1.5 text-xs font-medium hover:bg-mor-sand/60 disabled:opacity-40">
-                {busy === 'rebuild' ? '產生中…' : '補產到本月'}</button>
+              <button onClick={() => openEntry()}
+                className="rounded-lg bg-mor-slate text-white px-3 py-1.5 text-xs font-medium hover:bg-mor-slatedark">＋ 記一筆</button>
             </div>
           )}
 
@@ -280,19 +272,19 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
                             <span className="rounded px-1.5 py-0.5 text-[11px] bg-mor-bluelight text-mor-slate">{r.fee_type}</span>
                             <span className="font-medium">{r.item_name}</span>
                             <span className="text-xs text-gray-400">
-                              {r.property_raw || '整棟'}・{ymShow(r.start_ym)} 起
-                              {!r.active && '・已停用'}
+                              {r.property_raw || '整棟'}
                             </span>
                             <span className="ml-auto text-xs text-gray-500 whitespace-nowrap">
                               本月 <span className="font-medium text-gray-700">${fmt(s.month)}</span>
                               <span className="mx-1.5 text-gray-300">|</span>
                               年累計 <span className="font-medium text-gray-700">${fmt(s.year)}</span>
-                              {/* 產生了但金額還是 0 = 還沒填,不是真的收 0 */}
-                              {s.zero > 0 && <span className="text-amber-600 ml-1.5">・{s.zero} 個月未填</span>}
+                              {/* 最後記到的月份之後、到上個月為止沒記的（migration_317；不再先產生 $0 的空月份） */}
+                              {(() => { const miss = missingYms(recordedOf(r.id), thisYm());
+                                return miss.length > 0 && <span className="text-amber-600 ml-1.5">・缺 {miss.length > 2 ? `${ymShow(miss[0])} 起 ${miss.length} 個月` : miss.map(ymShow).join('、')}</span>; })()}
                             </span>
                             {canEdit && (
                               <span className="flex gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
-                                <button onClick={() => setEdit({ ...r })} className="text-xs text-mor-slate underline">設定</button>
+                                <button onClick={() => openEntry(r)} className="text-xs text-mor-slate">記一筆</button>
                                 <button onClick={() => del(r)} className="text-xs text-red-500 underline">刪除</button>
                               </span>
                             )}
@@ -300,7 +292,7 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
                           {isOpen && (
                             <div className="px-1 py-2 bg-mor-sand/20">
                               {os.length === 0
-                                ? <div className="text-xs text-gray-400 py-2">還沒產生任何月份 —— 按上面的「補產到本月」</div>
+                                ? <div className="text-xs text-gray-400 py-2">還沒記任何月份 —— 按右邊的「記一筆」</div>
                                 : <div className="space-y-1">
                                     {/* 分年 → 月份（2026-10-06 David 過審）：今年與有未填的年份預設展開 */}
                                     {groupRcByYear(os).map((g) => {
@@ -351,74 +343,75 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
         </div>
       )}
 
-      {/* 設定視窗 */}
-      {edit && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/30" />
-          <div onClick={(e) => e.stopPropagation()} className="relative bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[85vh] overflow-y-auto">
+      {/* 記一筆（migration_317，2026-10-06 David 過審）：選月份、填金額、送出 —— 營收表當下就有那一筆 */}
+      {entry && (() => {
+        const m = matchOf(entry);
+        const miss = m ? missingYms(recordedOf(m.id), thisYm()) : [];
+        const had = m ? (orders[m.id] ?? []).find((o) => ymOfKey(o.order_key) === entry.ym) : undefined;
+        return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/30" onClick={busy ? undefined : () => setEntry(null)} />
+          <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[88vh] overflow-y-auto">
             <div className="sticky top-0 z-10 bg-white border-b border-mor-line px-6 py-4 font-bold flex items-center justify-between">
-              {edit.id ? '編輯定期收費' : '新增定期收費'}
-              <button onClick={() => setEdit(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+              記一筆定期收費
+              <button onClick={() => setEntry(null)} disabled={!!busy} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
             </div>
             <div className="px-6 py-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
               <label className="flex flex-col gap-1"><span className="flex items-center">物業<Req /></span>
-                <select value={edit.estate_id}
-                  onChange={(e) => setEdit({ ...edit, estate_id: e.target.value, property_id: null, property_raw: null })}
+                <select value={entry.estate_id}
+                  onChange={(e) => setItem({ ...entry, estate_id: e.target.value, property_id: null }, entry.item)}
                   className={`rounded-lg border px-2 py-1.5 ${err('物業') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}>
                   {estates.map((es) => <option key={es.id} value={es.id}>{es.name}</option>)}
                 </select></label>
               {/* 留白 = 整棟。垃圾代收、公區清潔本來就不屬於某一間房。 */}
               <label className="flex flex-col gap-1">房源
-                <select value={edit.property_raw ?? ''}
-                  onChange={(e) => {
-                    const nm = e.target.value;
-                    const pr = properties.find((x) => x.estate_id === edit.estate_id && x.name === nm);
-                    setEdit({ ...edit, property_raw: nm || null, property_id: pr?.id ?? null });
-                  }}
+                <select value={entry.property_id ?? ''} onChange={(e) => setEntry({ ...entry, property_id: e.target.value || null })}
                   className="rounded-lg border border-gray-300 px-2 py-1.5">
-                  <option value="">整棟(不指定房源)</option>
-                  {properties.filter((x) => x.estate_id === edit.estate_id).map((x) => <option key={x.id} value={x.name}>{x.name}</option>)}
-                </select></label>
-              <label className="flex flex-col gap-1">會計科目
-                <select value={edit.fee_type} onChange={(e) => setEdit({ ...edit, fee_type: e.target.value })}
-                  className="rounded-lg border border-gray-300 px-2 py-1.5">
-                  {FEE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                  <option value="">整棟（不指定房源）</option>
+                  {properties.filter((x) => x.estate_id === entry.estate_id).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
                 </select></label>
               {/* 自由輸入但提示用過的 —— 「洗衣機」跟「洗衣機費」會變成報表上兩列 */}
               <label className="flex flex-col gap-1"><span className="flex items-center">項目<Req /></span>
-                <input list="rc-items" value={edit.item_name} placeholder="例:洗衣機"
-                  onChange={(e) => setEdit({ ...edit, item_name: e.target.value })}
+                <input list="rc-items" value={entry.item} placeholder="洗衣機"
+                  onChange={(e) => setItem(entry, e.target.value)}
                   className={`rounded-lg border px-2 py-1.5 ${err('項目') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} />
-                <datalist id="rc-items">{usedItems.map((i) => <option key={i} value={i} />)}</datalist>
+                <datalist id="rc-items">
+                  {rows.filter((r) => r.estate_id === entry.estate_id).map((r) => <option key={r.id} value={r.item_name} />)}
+                </datalist>
+                <span className="text-[11px] text-gray-400">{m ? '用過的項目，科目與房源已帶入' : entry.item.trim() ? '新項目 —— 送出後就會出現在清單' : '選用過的；打新的就是新項目'}</span>
               </label>
-              <label className="flex flex-col gap-1">收入金額
-                <MoneyInput value={edit.amount || 0}
-                  onChange={(n) => setEdit({ ...edit, amount: n })}
-                  className="rounded-lg border border-gray-300 px-2 py-1.5 text-right" />
-                <span className="text-xs text-gray-400">每月產生時帶的金額,之後可逐月改。變動的填 0 就好。</span>
+              <label className="flex flex-col gap-1">會計科目
+                <select value={entry.fee_type} onChange={(e) => setEntry({ ...entry, fee_type: e.target.value })}
+                  className="rounded-lg border border-gray-300 px-2 py-1.5">
+                  {FEE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select></label>
+              <label className="flex flex-col gap-1"><span className="flex items-center">月份<Req /></span>
+                <input type="month" value={entry.ym ? `${entry.ym.slice(0, 4)}-${entry.ym.slice(4)}` : ''}
+                  onChange={(e) => setEntry({ ...entry, ym: e.target.value.replace('-', '') })}
+                  className={`rounded-lg border px-2 py-1.5 ${err('月份') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} />
+                {had ? <span className="text-[11px] text-amber-700">這個月已記 ${fmt(Number(had.amount) || 0)}，送出會改成新的金額</span>
+                  : miss.length > 0 ? <span className="text-[11px] text-amber-700">{entry.item.trim()} 還缺 {miss.map(ymShow).join('、')}</span>
+                  : <span className="text-[11px] text-gray-400">記在這個月的最後一天</span>}
               </label>
-              <label className="flex flex-col gap-1"><span className="flex items-center">起始月<Req /></span>
-                <input type="month" value={edit.start_ym ? `${edit.start_ym.slice(0, 4)}-${edit.start_ym.slice(4)}` : ''}
-                  onChange={(e) => setEdit({ ...edit, start_ym: e.target.value.replace('-', '') })}
-                  className={`rounded-lg border px-2 py-1.5 ${err('起始月') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} />
-                <span className="text-xs text-gray-400">從這個月起每月產生一筆，一直到停用</span></label>
+              <label className="flex flex-col gap-1"><span className="flex items-center">收入金額<Req /></span>
+                <MoneyInput value={entry.amount || 0} placeholder="0"
+                  onChange={(n) => setEntry({ ...entry, amount: n })}
+                  className={`rounded-lg border px-2 py-1.5 text-right ${err('收入金額') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} /></label>
               <label className="flex flex-col gap-1 col-span-1 md:col-span-2">備註
-                <input value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })}
+                <input value={entry.note} onChange={(e) => setEntry({ ...entry, note: e.target.value })}
                   className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
-              <label className="flex items-center gap-2 col-span-1 md:col-span-2">
-                <input type="checkbox" checked={edit.active} onChange={(e) => setEdit({ ...edit, active: e.target.checked })} />
-                <span>啟用中<span className="text-xs text-gray-400 ml-1">取消勾選＝下個月起不再產生，已產生的月份都留著</span></span>
-              </label>
+              {msg && looksLikeError(msg) && <div className="col-span-1 md:col-span-2 text-xs text-red-600">{msg}</div>}
             </div>
             <div className="sticky bottom-0 bg-white border-t border-mor-line px-6 py-3 flex justify-end gap-2">
-              <button onClick={() => setEdit(null)} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>
-              <button onClick={save} disabled={!!busy}
+              <button onClick={() => setEntry(null)} disabled={!!busy} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>
+              <button onClick={submit} disabled={!!busy}
                 className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium hover:bg-mor-slatedark disabled:opacity-40">
-                {busy === 'save' ? '儲存中…' : '儲存'}</button>
+                {busy === 'save' ? '送出中…' : '送出'}</button>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

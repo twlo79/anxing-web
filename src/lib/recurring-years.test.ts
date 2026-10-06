@@ -17,3 +17,24 @@ test('預設展開：今年；往年有未填也展開', () => {
   assert.equal(rcYearOpenByDefault({ year: '2025', zero: 0 }, '2026'), false);
   assert.equal(rcYearOpenByDefault({ year: '2025', zero: 2 }, '2026'), true);
 });
+
+import { ymAdd, missingYms, defaultEntryYm, entryMissing } from './recurring-years.ts';
+test('ymAdd 跨年', () => {
+  assert.equal(ymAdd('202612', 1), '202701');
+  assert.equal(ymAdd('202601', -1), '202512');
+});
+test('缺：最後一筆之後到上個月；新項目不算缺；這個月不算', () => {
+  assert.deepEqual(missingYms(['202607', '202608'], '202610'), ['202609']);
+  assert.deepEqual(missingYms(['202609'], '202610'), []);
+  assert.deepEqual(missingYms([], '202610'), []);
+  assert.deepEqual(missingYms(['202610'], '202610'), []);
+});
+test('記一筆的預設月份', () => {
+  assert.equal(defaultEntryYm(['202607', '202608'], '202610'), '202609');
+  assert.equal(defaultEntryYm(['202609'], '202610'), '202610');
+  assert.equal(defaultEntryYm([], '202610'), '202609');
+});
+test('記一筆必填：金額要 > 0', () => {
+  assert.deepEqual(entryMissing({ estate_id: 'x', item: '烘衣機', ym: '202609', amount: 2600 }), []);
+  assert.deepEqual(entryMissing({ estate_id: '', item: ' ', ym: '2026', amount: 0 }), ['物業', '項目', '月份', '收入金額']);
+});
