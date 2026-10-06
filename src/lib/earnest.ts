@@ -159,17 +159,17 @@ export function convertPlan(
 /**
  * 沒收訂金要產生的那筆一次性收入。
  *
- * ★ 會計科目用**「其他」**，不是新開一個「違約金」。
- *   `fee-types.ts` 的檔頭寫著取消相關的收入本來就歸在「其他」
- *   （Airbnb 取消收入 73 筆、約 150 萬都是這樣處理的）——
- *   那是既有的業務決定，沒收訂金歸同一處才一致。
+ * ★ 名目「取消入住」→ 會計科目「其他收入」（migration_318，2026-10-06 David：
+ *   「會計科目也創一個其他收入，把 Airbnb 取消預定跟沒入歸在這」「訂金沒收 > 要」）。
+ *   以前是名目「其他」；Airbnb 取消費（名目「取消費」）也一起搬到「其他收入」。
+ *   資料庫那支 forfeit_earnest() 寫的欄位跟這裡逐字一致。
  *
  * ★ 起訖同一天:一次性收入沒有住宿天數。
  *   填成一段期間的話，營收認列會把它拆到好幾個月。
  */
 export type ForfeitOrder = {
   source: 'oneoff';
-  fee_type: '其他';
+  fee_type: '取消入住';
   item_name: string;
   amount: number;
   checkin: string;
@@ -189,7 +189,7 @@ export function forfeitOrder(
 ): ForfeitOrder {
   return {
     source: 'oneoff',
-    fee_type: '其他',
+    fee_type: '取消入住',
     item_name: '取消入住',
     amount: Math.max(0, Number(dep.amount) || 0),
     checkin: onDate,

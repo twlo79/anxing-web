@@ -590,6 +590,7 @@ export default function DashboardPage() {
     const oq = await fetchAll<any>((a, b) => supabase.from('orders')
       .select('id, property_raw, guest_name, checkin, checkout, source, contract_id')
       .not('source', 'in', '(oneoff,airbnb_cancelled)')
+      .is('cancelled_on', null)   // 已取消的私下訂單不算住房（migration_319）
       .lte('checkin', toD).gt('checkout', fromD).range(a, b));
     /*
      * ★★★ 契約也要分頁。Supabase 預設最多回 1000 列而且不報錯 ——

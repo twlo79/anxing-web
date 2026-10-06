@@ -139,11 +139,9 @@ describe('forfeitOrder', () => {
   const dep = { id: 'e1', amount: 10000, estate_id: 'est1', property_id: 'p1',
                 room: 'B08', guest_name: 'Lilian' };
 
-  test('★★ 科目是「其他」不是「違約金」', () => {
-    // fee-types.ts 檔頭:取消相關的收入本來就歸在「其他」
-    // （Airbnb 取消收入 73 筆、約 150 萬都是這樣處理的）
+  test('★★ 名目「取消入住」→ 科目其他收入（migration_318）', () => {
     const o = forfeitOrder(dep, '2026-08-24');
-    assert.equal(o.fee_type, '其他');
+    assert.equal(o.fee_type, '取消入住');
     assert.equal(o.item_name, '取消入住');
   });
 

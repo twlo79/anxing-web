@@ -65,7 +65,8 @@ export function isExempt(o: PayableOrder | string): boolean {
   if (typeof o === 'string') return (EXEMPT_SOURCES as readonly string[]).includes(o);
   if ((EXEMPT_SOURCES as readonly string[]).includes(o.source)) return true;
   if (o.source !== 'oneoff') return false;
-  return o.fee_type === '取消費' || /取消/.test(o.item_name ?? '');
+  // 取消入住（訂金沒收、取消結算的沒入，migration_318/319）：錢本來就在手上，不是應收
+  return o.fee_type === '取消費' || o.fee_type === '取消入住' || /取消/.test(o.item_name ?? '');
 }
 
 /** 四捨五入到整數再比較。金額是台幣,小數點只會製造「差 0.001 所以永遠收不完」。 */

@@ -83,6 +83,8 @@ type Dep = {
   /** 沒收產生的那筆收入。★ 冪等靠它 —— 有值就不再產生第二筆 */
   forfeit_order_id?: string | null;
   converted_to_deposit_id?: string | null;
+  /** 這一列承載哪張私下訂單的「取消結算」（migration_319）。有值時退款金額＝結算的退還，不在這裡改 */
+  cancel_order_id?: string | null;
   /** 押金這一列是訂金轉過來的（convert_earnest 寫的） */
   converted_from_earnest_id?: string | null;
   order_id: string | null; contract_id: string | null;
@@ -709,7 +711,7 @@ export default function DepositsPage() {
     const on = todayStr();
     if (!confirm(
       `沒收這筆訂金？\n\n${depName(d)}・NT$ ${fmt(d.amount)}\n\n`
-      + `會變成一筆「取消入住」的一次性收入（會計科目：其他），計入 ${on.slice(0, 7)} 的營收。\n\n`
+      + `會變成一筆「取消入住」的一次性收入（會計科目：其他收入），計入 ${on.slice(0, 7)} 的營收。\n\n`
       + `★ 這個動作不能復原 —— 產生的那筆收入之後也改不動、刪不掉。`
     )) return;
 
@@ -898,6 +900,8 @@ export default function DepositsPage() {
 
   async function submitRefund() {
     if (!edit) return;
+    // ★ 取消結算的退款（押金＋房費 − 沒入）不在這裡改金額 —— 這裡改的話會蓋回押金原額（migration_319）
+    if (edit.cancel_order_id) return flash('這筆是訂單「取消結算」的退款 —— 金額由結算決定。要改請到短租訂單那一張重新結算（被駁回之後才能重來）。');
     const wasSubmitted = edit.refund_status === 'pending' || edit.refund_status === 'approved';
     const hadVotes = !!edit.manager_approved_at || !!edit.admin_approved_at;
     if (wasSubmitted && hadVotes && !confirm(
@@ -1259,6 +1263,8 @@ export default function DepositsPage() {
       }
       // 其餘（未付/已收/審核中）跟押金講法一樣,往下走共用的那幾行
     }
+    // 押金沒入（取消結算全部沒入，migration_319）—— 錢沒有退出去，不能共用「已退款」那個灰標籤
+    if (r.kind !== 'earnest' && r.forfeited_on) return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-red-50 text-red-700">已沒入</span>;
     if (r.returned_on) return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-gray-100 text-gray-500">已退款</span>;
     if (st === 'approved') return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-mor-greenlight text-mor-greendark">已核可・待匯款</span>;
     if (st === 'pending') return <span className="inline-block rounded px-1.5 py-0.5 text-[11px] bg-amber-50 text-amber-700">退款審核中</span>;

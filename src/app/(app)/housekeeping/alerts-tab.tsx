@@ -133,6 +133,7 @@ export default function AlertsTab() {
       fetchAll<any>((a, b) => supabase.from('orders')
         .select('id, property_raw, guest_name, checkin, checkout, source, contract_id')
         .not('source', 'in', '(oneoff,airbnb_cancelled)')
+        .is('cancelled_on', null)   // 已取消的私下訂單不提醒（migration_319）
         .is('contract_id', null)
         .gte('checkout', t0).lte('checkout', until).range(a, b)),
     ]);

@@ -55,6 +55,8 @@ import { softDelete } from '@/lib/trash';
 import { feeFilterOptions, feeFilterPredicate, feeFilterOnSearch, feeSourceConflict, ONEOFF_SOURCES, FEE_F_ALL, FEE_F_RENT } from '@/lib/order-filter';
 import TrashLink from '@/components/TrashLink';
 import PricingFeeModal from './pricing-fee-modal';
+import CancelSettleModal from './cancel-settle-modal';
+import { cancelBlockedReason } from '@/lib/cancel-settle';
 import { canPricingFee, PRICING_TITLE } from '@/lib/pricing-fee';
 import Fold from '@/components/Fold';
 import { checkDates, checkPrice, checkRequired, isEarnestStage, lookbackFrom, type PastOrder } from '@/lib/order-check';
@@ -96,6 +98,10 @@ type Order = {
    * **存檔時算出來的**，不是使用者另外勾的 —— 見 `isEarnestStage`。
    */
   earnest_only?: boolean | null;
+  /** 私下訂單取消（migration_319）。有值＝已取消：金額歸 0、不認列、房源狀態不畫 */
+  cancelled_on?: string | null;
+  cancel_reason?: string | null;
+  cancel_settle?: { status?: string; total?: number; forfeit?: number; refund?: number; orig_amount?: number; path?: string } | null;
   /**
    * 怎麼進系統的:`'contract'` = 契約產的月租單、`'manual'` = 手動建、
    * 其餘是匯入。★ 關帳判定要用它 —— **月租單不鎖**（migration_223）。
@@ -345,6 +351,8 @@ export default function ShortTermPage() {
   const role = useProfile().role ?? '';
   /** 調價支出視窗（migration_312） */
   const [pricingOpen, setPricingOpen] = useState(false);
+  /** 取消訂單・結算退款（migration_319） */
+  const [cancelOf, setCancelOf] = useState<Order | null>(null);
 
   /*
    * 剛剛存好的那一筆（2026-08-22 使用者:「輸入完先出現在第一列，或是有標記」）。
@@ -1560,6 +1568,8 @@ export default function ShortTermPage() {
       */}
       <RecurringPanel canEdit={canEditOrders(role)} />
       {pricingOpen && <PricingFeeModal onClose={() => setPricingOpen(false)} />}
+      {cancelOf && <CancelSettleModal order={cancelOf} onClose={() => setCancelOf(null)}
+        onDone={() => { setCancelOf(null); load(); }} />}
 
       <FilterToggle active={!!(src || kw || estF || fromD || toD || payF || invF)} />
       <div className="filter-bar collapsible-filters rounded-xl glass p-4 mb-4 flex flex-wrap items-end gap-3">
@@ -1719,6 +1729,7 @@ export default function ShortTermPage() {
                       SRC_COLOR[o.source] ?? 'bg-gray-100 text-gray-600'}`}>
                       {SRC_LABEL[o.source] ?? o.source}
                     </span>
+                    {o.cancelled_on && <span className="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium bg-red-50 text-red-600">已取消</span>}
                     <RoomCell o={o} className="font-medium min-w-0" />
                   </div>
                   <div className="text-[11px] text-gray-600 mt-1 truncate">{o.guest_name ?? '—'}</div>
@@ -1813,7 +1824,8 @@ export default function ShortTermPage() {
                 className={`border-b border-mor-line/60 cursor-pointer ${
                   savedMode === 'inline' && saved?.id === String(o.id)
                     ? SAVED_HL : 'hover:bg-mor-bluelight/30'}`}>
-                <td className="px-3 py-2 whitespace-nowrap"><span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${SRC_COLOR[o.source]}`}>{SRC_LABEL[o.source] ?? o.source}</span></td>
+                <td className="px-3 py-2 whitespace-nowrap"><span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${SRC_COLOR[o.source]}`}>{SRC_LABEL[o.source] ?? o.source}</span>
+                  {o.cancelled_on && <span className="ml-1 inline-block rounded-md px-1.5 py-0.5 text-[11px] font-medium bg-red-50 text-red-600">已取消</span>}</td>
                 <td className="px-3 py-2 whitespace-nowrap">
                   <RoomCell o={o} />
                   <div className="text-[11px] text-gray-400">{o.estate_id ? estateName[o.estate_id] ?? '' : ''}</div>
@@ -1895,6 +1907,14 @@ export default function ShortTermPage() {
 
               <div className="px-6 py-4">
                 {row('來源', <span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${SRC_COLOR[d.source]}`}>{SRC_LABEL[d.source] ?? d.source}</span>)}
+                {/* 已取消（migration_319）：講清楚錢怎麼分的 —— 金額欄現在是 0，原金額在這裡 */}
+                {d.cancelled_on && row('已取消', <span className="text-red-600">
+                  {d.cancelled_on}{d.cancel_reason ? `・${d.cancel_reason}` : ''}
+                  <span className="block text-xs text-gray-500 mt-0.5">
+                    原訂單 ${Math.round(d.cancel_settle?.orig_amount ?? 0).toLocaleString()}・已收 ${Math.round(d.cancel_settle?.total ?? 0).toLocaleString()}
+                    ・沒入 ${Math.round(d.cancel_settle?.forfeit ?? 0).toLocaleString()}・退還 ${Math.round(d.cancel_settle?.refund ?? 0).toLocaleString()}
+                    {d.cancel_settle?.status === 'review' ? '（退款審核中）' : d.cancel_settle?.status === 'rejected' ? '（退款被駁回 —— 可以重新結算）' : ''}
+                  </span></span>)}
                 {row('訂單起訖', <span>{dateRange(d)}
                   {d.nights ? <span className="text-gray-400 ml-2">{d.nights} 晚</span> : null}
                   {d.earnest_only && (
@@ -2043,6 +2063,15 @@ export default function ShortTermPage() {
                     ★ 擋住時不藏起來,變灰 ＋ 寫出原因 —— 跟旁邊的押金同一個做法。
                       藏掉的話使用者會問「刪除鈕去哪了」,而答案畫面上一個字都沒有。
                 */}
+                {/*
+                  取消訂單・結算退款（migration_319，2026-10-06 David 過審）：私下訂單才有。
+                  已收的押金＋房費 → 沒入多少、退還多少；退還 0 結案、未滿 3,000 免審、3,000 以上送審。
+                  ★ 取消就用這顆，不要刪訂單 —— 刪了押金會變孤兒。
+                */}
+                {d.source === 'private' && canEditOrders(role) && !cancelBlockedReason(d) && (
+                  <button onClick={() => { setDetail(null); setCancelOf(d); }}
+                    className="basis-full h-11 rounded-lg border border-red-300 text-red-600 text-sm font-medium hover:bg-red-50">取消訂單・結算退款</button>
+                )}
                 {(() => {
                   const blocked = orderDeleteBlockedReason(role, d.book, lockReason);
                   return blocked ? (

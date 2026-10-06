@@ -363,6 +363,7 @@ export default function RoomStatusPage() {
     const { rows: os } = await fetchAll<any>((a, b) => supabase.from('orders')
       .select('id, property_raw, guest_name, checkin, checkout, source, imported_via, contract_id, note')
       .not('source', 'in', '(oneoff,airbnb_cancelled)')
+      .is('cancelled_on', null)   // 已取消的私下訂單不畫（migration_319）—— 那幾晚空出來了
       .lte('checkin', t).gt('checkout', f).range(a, b));
 
     const { data: cs } = await supabase.from('contracts')
@@ -445,6 +446,7 @@ export default function RoomStatusPage() {
       fetchAll<any>((a, b) => supabase.from('orders')
         .select('id, property_raw, guest_name, checkin, checkout, source, contract_id')
         .not('source', 'in', '(oneoff,airbnb_cancelled)')
+        .is('cancelled_on', null)   // 已取消的不提醒退房（migration_319）
         .is('contract_id', null)
         .gte('checkout', t0).lte('checkout', addDays(t0, nOut)).range(a, b)),
     ]);

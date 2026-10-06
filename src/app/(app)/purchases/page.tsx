@@ -1,4 +1,5 @@
 'use client';
+import { CANCEL_REVIEW_AT } from '@/lib/cancel-settle';
 import { useFold } from '@/lib/use-fold';
 import { paySchedule } from '@/lib/pay-schedule';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -139,6 +140,8 @@ type Dep = {
   refund_amount?: number | null;
   /** 加費區塊要用 —— 它自己去查 orders where deposit_id。 */
   order_id?: string | null; contract_id?: string | null; property_id?: string | null;
+  /** 私下訂單「取消結算」的退款（migration_319）—— 金額＝押金＋房費 − 沒入，不是押金 − 加費 */
+  cancel_order_id?: string | null;
 };
 /** kind：expense=只用於支出 / income=只用於收入 / both=兩邊都用（migration_90） */
 type AccountCode = { code: string; name: string; kind?: string; active?: boolean; book?: string };
@@ -579,7 +582,7 @@ export default function PurchasesPage() {
       const { data: dp } = await supabase.from('deposits')
         // refund_amount / order_id / contract_id / property_id 是加費那套要的（migration_157）——
         // 少撈任何一個，抽屜的應退金額或加費清單就會是空的，而且不會報錯
-        .select('id, estate_id, room, guest_name, currency, amount, refund_status, payee_bank_code, payee_name, payee_account, planned_refund_on, received_on, returned_on, returned_method, returned_account, manager_approved_by, manager_approved_at, admin_approved_by, admin_approved_at, refund_requested_by, reject_reason, note, created_at, refund_amount, order_id, contract_id, property_id')
+        .select('id, estate_id, room, guest_name, currency, amount, refund_status, payee_bank_code, payee_name, payee_account, planned_refund_on, received_on, returned_on, returned_method, returned_account, manager_approved_by, manager_approved_at, admin_approved_by, admin_approved_at, refund_requested_by, reject_reason, note, created_at, refund_amount, order_id, contract_id, property_id, cancel_order_id')
         .in('refund_status', ['pending', 'approved'])
         // 跟請款單同一條規則:還沒退的全部,加上本月已退的
         .or(`returned_on.is.null,returned_on.gte.${mStart}`)
@@ -2560,7 +2563,13 @@ export default function PurchasesPage() {
                   refund_amount 是送審當下記下來的數字，null = 舊資料或沒走審核。
                 */}
                 <div className="rounded-lg bg-mor-sand/60 px-3 py-2 text-xs text-gray-600">
-                  {d.refund_amount != null && Math.round(d.refund_amount) !== Math.round(d.amount) ? (
+                  {d.cancel_order_id && d.refund_amount != null ? (
+                    <>
+                      應退 <span className="font-bold text-base">NT$ {fmt(d.refund_amount)}</span>
+                      {d.refund_amount < CANCEL_REVIEW_AT && <span className="ml-2 rounded bg-amber-50 px-1.5 py-0.5 text-[11px] text-amber-700">免審（未滿 {fmt(CANCEL_REVIEW_AT)}）</span>}
+                      <div className="text-gray-500 mt-0.5">訂單取消結算：已收的押金＋房費，扣掉沒入（沒入轉其他收入）</div>
+                    </>
+                  ) : d.refund_amount != null && Math.round(d.refund_amount) !== Math.round(d.amount) ? (
                     <>
                       應退 <span className="font-bold text-base">{d.currency === 'TWD' ? 'NT$' : d.currency} {fmt(d.refund_amount)}</span>
                       <div className="text-gray-500 mt-0.5">
