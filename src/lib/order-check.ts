@@ -49,10 +49,12 @@ export function checkRequired(o: {
    * 「勾了訂金的可以先不填起訖」）。
    */
   earnest?: number | null;
+  /** 'office' ＝ 物業選了「安幸辦公室」（2026-10-06）：它不是一棟樓，estate_id 是空的也算有填 */
+  purpose_type?: string | null;
 }): string[] {
   const miss: string[] = [];
   if (!o.source) miss.push('來源');
-  if (!o.estate_id) miss.push('物業');
+  if (!o.estate_id && o.purpose_type !== 'office') miss.push('物業');
   if (!(o.guest_name ?? '').trim()) miss.push('房客');
 
   /*

@@ -907,7 +907,7 @@ export default function ShortTermPage() {
       for (const o of all) {
         aoa.push([
           T(SRC_LABEL[o.source] ?? o.source, stCell),
-          T(o.estate_id ? estateName[o.estate_id] ?? '' : '', stCell),
+          T(o.estate_id ? estateName[o.estate_id] ?? '' : (o.purpose_type === 'office' ? OFFICE_NAME : ''), stCell),
           T(o.property_raw ?? o.properties?.name ?? '', stCell),
           T(o.guest_name ?? '', stCell),
           /*
@@ -1409,8 +1409,9 @@ export default function ShortTermPage() {
     checkin: edit.checkin, checkout: edit.checkout, amount: totalTwd(revLines),
     // ★ 訂金階段的必填規則不一樣（migration_257）—— 判定在 lib/order-check
     earnest,
+    purpose_type: edit.purpose_type,
   }) : [], [edit?.source, edit?.estate_id, edit?.guest_name, edit?.checkin, edit?.checkout,
-    revLines, earnest]);
+    revLines, earnest, edit?.purpose_type]);
   /** 這一格要不要畫紅框 */
   const err = (f: string) => tried && missing.includes(f);
   /**
@@ -1828,7 +1829,7 @@ export default function ShortTermPage() {
                   {o.cancelled_on && <span className="ml-1 inline-block rounded-md px-1.5 py-0.5 text-[11px] font-medium bg-red-50 text-red-600">已取消</span>}</td>
                 <td className="px-3 py-2 whitespace-nowrap">
                   <RoomCell o={o} />
-                  <div className="text-[11px] text-gray-400">{o.estate_id ? estateName[o.estate_id] ?? '' : ''}</div>
+                  <div className="text-[11px] text-gray-400">{o.estate_id ? estateName[o.estate_id] ?? '' : (o.purpose_type === 'office' ? OFFICE_NAME : '')}</div>
                 </td>
                 <td className="px-3 py-2 whitespace-nowrap">
                   {o.guest_name ?? '—'}
@@ -1899,7 +1900,7 @@ export default function ShortTermPage() {
                 <div className="min-w-0">
                   <div className="font-bold truncate">{d.guest_name ?? '—'}</div>
                   <div className="text-xs text-gray-500 mt-0.5">
-                    {d.estate_id ? estateName[d.estate_id] ?? '' : ''} {d.property_raw ?? d.properties?.name ?? ''}
+                    {d.estate_id ? estateName[d.estate_id] ?? '' : (d.purpose_type === 'office' ? OFFICE_NAME : '')} {d.property_raw ?? d.properties?.name ?? ''}
                   </div>
                 </div>
                 <button onClick={() => setDetail(null)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
@@ -2183,7 +2184,23 @@ export default function ShortTermPage() {
                     {OTHER_BOOKS.map((b) => <option key={b} value={b}>{BOOK_LABEL[b]}</option>)}
                   </select>
                 ) : (
-                  <select value={edit.estate_id ?? ''} onChange={(e) => setEdit({ ...edit, estate_id: e.target.value || null, property_raw: null, property_id: null })} className={`rounded-lg border px-2 py-1.5 ${err('物業') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}><option value="">—</option>{estates.map((es) => <option key={es.id} value={es.id}>{es.name}{es.active ? '' : '(停用)'}</option>)}</select>
+                  /*
+                    物業下拉可以直接選「安幸辦公室」（2026-10-06 David：「一次性收入可以選到安幸辦公室」）。
+                    ★ 它不是一棟樓：選了就是 purpose_type='office'、estate_id 空、房源空 —— 跟底下那個勾選同一件事，
+                      所以選了它時勾選那一列不再顯示（同一件事不寫兩次）。只有一次性收入給選。
+                  */
+                  <select value={edit.purpose_type === 'office' && !edit.estate_id ? EST_F_OFFICE : (edit.estate_id ?? '')}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v === EST_F_OFFICE) setEdit({ ...edit, estate_id: null, property_raw: null, property_id: null, purpose_type: 'office' });
+                      else setEdit({ ...edit, estate_id: v || null, property_raw: null, property_id: null,
+                                     purpose_type: edit.purpose_type === 'office' && !edit.estate_id ? 'estate' : edit.purpose_type });
+                    }}
+                    className={`rounded-lg border px-2 py-1.5 ${err('物業') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}>
+                    <option value="">—</option>
+                    {edit.source === 'oneoff' && <option value={EST_F_OFFICE}>{OFFICE_NAME}</option>}
+                    {estates.map((es) => <option key={es.id} value={es.id}>{es.name}{es.active ? '' : '(停用)'}</option>)}
+                  </select>
                 )}
               </label>
               {/*
@@ -2223,7 +2240,7 @@ export default function ShortTermPage() {
                   讓他勾得動的話，存下去看起來成功、重開又變回來。
                   這一種狀態少見而且重要，所以說明**直接攤開**，不收進 ⓘ。
               */}
-              {edit.source !== OTHER_BIZ_SOURCE && (
+              {edit.source !== OTHER_BIZ_SOURCE && !(edit.purpose_type === 'office' && !edit.estate_id) && (
                 <div className="sm:col-span-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
                   <label className={`flex items-center gap-2 ${edit.contract_id ? 'cursor-default text-gray-500' : 'cursor-pointer'}`}>
                     <input type="checkbox"
@@ -2266,7 +2283,8 @@ export default function ShortTermPage() {
                 所以空的那個選項寫「整棟」而不是「—」—— 寫「—」的話,
                 看的人分不出是刻意留白還是漏填,報表上也解讀不了。
               */}
-              {!hideFields.property && (
+              {/* 物業選「安幸辦公室」時沒有房源可選（它不是一棟樓）；選了房源還會把物業扳回去 */}
+              {!hideFields.property && !(edit.purpose_type === 'office' && !edit.estate_id) && (
               <label className="flex flex-col gap-1">
                 {/* ★ 2026-09-16 拿掉「(非必填)」—— 必填有紅星,沒星就是選填。
                     再寫一次等於用兩套規則講同一件事,而兩套規則遲早會不一致。 */}

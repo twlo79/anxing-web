@@ -356,3 +356,9 @@ test('★ 沒勾訂金：三個都要擋（避免放寬放過頭）', () => {
   }));
   assert.deepEqual(m, ['每期租金', '租期起', '租期迄']);
 });
+
+test('物業選「安幸辦公室」（purpose_type=office、estate_id 空）不算缺物業（2026-10-06）', () => {
+  const base = { source: 'oneoff', estate_id: null, guest_name: 'x', checkin: '2026-10-01', checkout: '2026-10-01', amount: 100 };
+  assert.ok(checkRequired(base).includes('物業'));
+  assert.ok(!checkRequired({ ...base, purpose_type: 'office' }).includes('物業'));
+});
