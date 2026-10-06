@@ -14,6 +14,7 @@ import { softDelete } from '@/lib/trash';
 import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
 import { useJustSaved } from '@/lib/use-just-saved';
 import { SavedBadge } from '@/components/SavedToast';
+import { groupRcByYear, rcYearOpenByDefault } from '@/lib/recurring-years';
 
 /**
  * 定期收費面板。**嵌在短租訂單頁裡,不佔側邊選單一格。**
@@ -62,6 +63,8 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
   const [loaded, setLoaded] = useState(false);
   const [edit, setEdit] = useState<Rc | null>(null);
   const [expand, setExpand] = useState<string | null>(null);
+  /** 年份的開關（'<設定id>:<年>' → 開/關）。沒記錄的用 rcYearOpenByDefault() */
+  const [yearOpen, setYearOpen] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState('');
   const { markSaved, isJust } = useJustSaved(rows);
@@ -151,7 +154,7 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
   /*
    * 缺哪些必填。
    *
-   * 金額不在裡面 —— 這張表單的「預設金額」本來就可以是 0：
+   * 金額不在裡面 —— 這張表單的「收入金額」本來就可以是 0：
    * 水費、電費那種每月變動的項目，就是先產生出來再逐月填。
    * 那不是漏填，是這個功能的用法。
    */
@@ -170,7 +173,8 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
     const payload = {
       estate_id: edit.estate_id, property_id: edit.property_id, property_raw: edit.property_raw,
       fee_type: edit.fee_type, item_name: edit.item_name.trim(), amount: edit.amount || 0,
-      start_ym: edit.start_ym, end_ym: edit.end_ym || null, active: edit.active, note: edit.note || null,
+      // 結束月拿掉了（2026-10-06 David 選 B，migration_315）—— 要停就取消「啟用中」
+      start_ym: edit.start_ym, end_ym: null, active: edit.active, note: edit.note || null,
     };
     const { data, error } = edit.id
       ? await supabase.from('recurring_charges').update(payload).eq('id', edit.id).select('id')
@@ -277,7 +281,6 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
                             <span className="font-medium">{r.item_name}</span>
                             <span className="text-xs text-gray-400">
                               {r.property_raw || '整棟'}・{ymShow(r.start_ym)} 起
-                              {r.end_ym ? ` ~ ${ymShow(r.end_ym)}` : ''}
                               {!r.active && '・已停用'}
                             </span>
                             <span className="ml-auto text-xs text-gray-500 whitespace-nowrap">
@@ -298,18 +301,40 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
                             <div className="px-1 py-2 bg-mor-sand/20">
                               {os.length === 0
                                 ? <div className="text-xs text-gray-400 py-2">還沒產生任何月份 —— 按上面的「補產到本月」</div>
-                                : <div className="flex flex-wrap gap-2">
-                                    {os.map((o) => (
+                                : <div className="space-y-1">
+                                    {/* 分年 → 月份（2026-10-06 David 過審）：今年與有未填的年份預設展開 */}
+                                    {groupRcByYear(os).map((g) => {
+                                      const k = `${r.id}:${g.year}`;
+                                      const yo = yearOpen[k] ?? rcYearOpenByDefault(g, thisYear());
+                                      return (
+                                        <div key={g.year}>
+                                          <button onClick={() => setYearOpen((m) => ({ ...m, [k]: !yo }))}
+                                            className="w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-white/70 text-left">
+                                            <span className="text-gray-400 text-xs w-3">{yo ? '▾' : '▸'}</span>
+                                            <span className="font-medium">{g.year}</span>
+                                            <span className="text-xs text-gray-400">{g.list.length} 個月</span>
+                                            <span className="ml-auto tabular-nums">${fmt(g.total)}</span>
+                                            <span className={`text-xs w-24 text-right ${g.zero ? 'text-amber-600' : 'text-transparent'}`}>
+                                              {g.zero ? `・${g.zero} 個月未填` : '—'}</span>
+                                          </button>
+                                          {yo && (
+                                            <div className="flex flex-wrap gap-2 pl-7 pr-1 pt-1 pb-2">
+                                              {g.list.map((o) => (
                                       <div key={o.id} className={`rounded-lg border px-2 py-1 ${
                                         o.paid ? 'border-mor-greenlight bg-mor-greenlight/30'
                                           : Number(o.amount) ? 'border-mor-line bg-white' : 'border-amber-300 bg-amber-50/60'}`}>
-                                        <div className="text-[11px] text-gray-500">{ymShow(ymOfKey(o.order_key))}</div>
+                                        <div className="text-[11px] text-gray-500">{ymOfKey(o.order_key).slice(4)} 月</div>
                                         <MoneyInput value={Number(o.amount) || 0} placeholder="0"
                                           disabled={!canEdit || o.paid}
                                           onChange={(n) => setAmount(o, n)}
                                           className="w-20 rounded border border-gray-300 px-1 py-0.5 text-sm text-right disabled:bg-gray-100 disabled:text-gray-500" />
                                       </div>
-                                    ))}
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
                                   </div>}
                               <p className="text-[11px] text-gray-400 mt-2">
                                 已收款的月份不能改金額 —— 錢收了之後金額是既成事實。要改請先取消收款。
@@ -343,7 +368,7 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
                   {estates.map((es) => <option key={es.id} value={es.id}>{es.name}</option>)}
                 </select></label>
               {/* 留白 = 整棟。垃圾代收、公區清潔本來就不屬於某一間房。 */}
-              <label className="flex flex-col gap-1">房源<span className="text-xs text-gray-400 ml-1">(非必填)</span>
+              <label className="flex flex-col gap-1">房源
                 <select value={edit.property_raw ?? ''}
                   onChange={(e) => {
                     const nm = e.target.value;
@@ -366,28 +391,23 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
                   className={`rounded-lg border px-2 py-1.5 ${err('項目') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} />
                 <datalist id="rc-items">{usedItems.map((i) => <option key={i} value={i} />)}</datalist>
               </label>
-              <label className="flex flex-col gap-1">預設金額
+              <label className="flex flex-col gap-1">收入金額
                 <MoneyInput value={edit.amount || 0}
                   onChange={(n) => setEdit({ ...edit, amount: n })}
                   className="rounded-lg border border-gray-300 px-2 py-1.5 text-right" />
                 <span className="text-xs text-gray-400">每月產生時帶的金額,之後可逐月改。變動的填 0 就好。</span>
               </label>
-              <div className="grid grid-cols-2 gap-3">
-                <label className="flex flex-col gap-1"><span className="flex items-center">起始月<Req /></span>
-                  <input type="month" value={edit.start_ym ? `${edit.start_ym.slice(0, 4)}-${edit.start_ym.slice(4)}` : ''}
-                    onChange={(e) => setEdit({ ...edit, start_ym: e.target.value.replace('-', '') })}
-                    className={`rounded-lg border px-2 py-1.5 ${err('起始月') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} /></label>
-                <label className="flex flex-col gap-1">結束月<span className="text-xs text-gray-400">(空=無限期)</span>
-                  <input type="month" value={edit.end_ym ? `${edit.end_ym.slice(0, 4)}-${edit.end_ym.slice(4)}` : ''}
-                    onChange={(e) => setEdit({ ...edit, end_ym: e.target.value ? e.target.value.replace('-', '') : null })}
-                    className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
-              </div>
+              <label className="flex flex-col gap-1"><span className="flex items-center">起始月<Req /></span>
+                <input type="month" value={edit.start_ym ? `${edit.start_ym.slice(0, 4)}-${edit.start_ym.slice(4)}` : ''}
+                  onChange={(e) => setEdit({ ...edit, start_ym: e.target.value.replace('-', '') })}
+                  className={`rounded-lg border px-2 py-1.5 ${err('起始月') ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} />
+                <span className="text-xs text-gray-400">從這個月起每月產生一筆，一直到停用</span></label>
               <label className="flex flex-col gap-1 col-span-1 md:col-span-2">備註
                 <input value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })}
                   className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               <label className="flex items-center gap-2 col-span-1 md:col-span-2">
                 <input type="checkbox" checked={edit.active} onChange={(e) => setEdit({ ...edit, active: e.target.checked })} />
-                <span>啟用中<span className="text-xs text-gray-400 ml-1">停用會清掉還沒收款的月份,已收款的留著</span></span>
+                <span>啟用中<span className="text-xs text-gray-400 ml-1">取消勾選＝下個月起不再產生，已產生的月份都留著</span></span>
               </label>
             </div>
             <div className="sticky bottom-0 bg-white border-t border-mor-line px-6 py-3 flex justify-end gap-2">
