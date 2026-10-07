@@ -84,7 +84,7 @@ const Receipts = forwardRef<ReceiptsHandle, {
    *   都掛在押金底下的話分不出哪張對哪筆 ——
    *   而金額對不上時，那正是唯一能查的東西。
    */
-  kind: 'pr' | 'pri' | 'exp' | 'dep' | 'op' | 'dp' | 'of' | 'td' | 'cash';
+  kind: 'pr' | 'pri' | 'exp' | 'dep' | 'op' | 'dp' | 'of' | 'td' | 'cash' | 'sh';
   parentId: string | null | undefined;
   canEdit?: boolean;
   label?: string;
@@ -155,6 +155,8 @@ const Receipts = forwardRef<ReceiptsHandle, {
      * ★ `td/` 只有 super_admin 看得到（migration_179 在 can_see_receipt 加的分支）。
      */
     : kind === 'td' ? 'tender_id'
+    // 股東往來的匯款水單（migration_321）。前綴 sh/，會計與總經理看得到
+    : kind === 'sh' ? 'shareholder_txn_id'
     /*
      * 現金流水的收據照片（migration_185）。
      *

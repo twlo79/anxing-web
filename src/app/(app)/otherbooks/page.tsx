@@ -6,6 +6,7 @@ import { useFlash } from '@/lib/use-flash';
 import { createClient } from '@/lib/supabase';
 import { todayStr } from '@/lib/period';
 import AdvanceLedger from '@/components/AdvanceLedger';
+import ShareholderTab from './shareholder-tab';
 import { useProfile } from '@/lib/profile';
 import { fetchAll } from '@/lib/fetch-all';
 import { accountsForBook } from '@/lib/purchase-pay';
@@ -90,6 +91,8 @@ export default function OtherBooksPage() {
   const canSee = isFinance(role);
 
   const [book, setBook] = useState<Book>('aipi');
+  /** 第三個頁籤「安幸・股東往來」（migration_321）。它不是一本帳，是安幸的負債明細，所以不塞進 book */
+  const [sh, setSh] = useState(false);
   const [tab, setTab] = useState<'ledger' | 'dash'>('ledger');
   const [ym] = useState(thisYmDash());
   /*
@@ -452,7 +455,7 @@ export default function OtherBooksPage() {
       <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3">
         <h1>其他收支帳</h1>
         <span className="text-xs text-gray-400">
-          {BOOK_LABEL[book]}・{BOOK_BIZ[book]}
+          {sh ? '安幸・股東借款與還款' : `${BOOK_LABEL[book]}・${BOOK_BIZ[book]}`}
         </span>
       </div>
 
@@ -487,11 +490,14 @@ export default function OtherBooksPage() {
 
       {/* ★ 分頁列 ＋ 面板包在同一個 `<TabShell>` 裡 —— 選第幾本帳都對 */}
       <TabShell tone="paper" className="mb-4" tabs={
-        <Tabs urlKey="tab" variant="browser" tone="paper"
-          value={book} onChange={(b) => { setBook(b); setF({}); setKwDraft(''); }}
-          items={OTHER_BOOKS.map((b) => ({ key: b, label: BOOK_LABEL[b] }))} />
+        <Tabs<Book | 'sh'> urlKey="tab" variant="browser" tone="paper"
+          value={sh ? 'sh' : book}
+          onChange={(b) => { if (b === 'sh') { setSh(true); return; } setSh(false); setBook(b); setF({}); setKwDraft(''); }}
+          items={[...OTHER_BOOKS.map((b) => ({ key: b as Book | 'sh', label: BOOK_LABEL[b] })),
+                  { key: 'sh' as const, label: '安幸・股東往來' }]} />
       }>
         <div className="p-4">
+        {sh ? <ShareholderTab /> : <>
           {/* ★ 第二層只有兩項 → 小分段（側欄要吃掉 126px,為兩個選項不划算）*/}
           <Tabs size="sm" className="mb-3" value={tab} onChange={setTab}
             items={[{ key: 'ledger' as const, label: '收支帳' },
@@ -837,6 +843,7 @@ export default function OtherBooksPage() {
         ) : (
           <Dashboard rows={rows} cur={cur} ym={ym} nameOf={nameOf} loading={loading} book={book} />
         )}
+        </>}
         </div>
       </TabShell>
 

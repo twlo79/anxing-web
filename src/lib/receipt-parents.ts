@@ -49,6 +49,8 @@ export const RECEIPT_COL = {
   td: 'tender_id',
   /** 現金流水的收據 */
   cash: 'bank_transaction_id',
+  /** 股東往來的匯款水單（migration_321）*/
+  sh: 'shareholder_txn_id',
 } as const;
 
 export type ReceiptKind = keyof typeof RECEIPT_COL;
