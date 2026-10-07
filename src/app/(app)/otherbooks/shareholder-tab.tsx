@@ -66,7 +66,8 @@ export default function ShareholderTab() {
   const owedAt = useMemo(() => runningOwed(rows), [rows]);
   const shown = useMemo(() => (who ? rows.filter((r) => r.shareholder.trim() === who) : rows), [rows, who]);
   const acctName = useMemo(() => Object.fromEntries(accts.map((a) => [a.code, a.name])), [accts]);
-  const acctsFor = (m: ShMethod) => accts.filter((a) => (m === 'cash' ? a.method === 'cash' : a.method !== 'cash'));
+  // 匯款只列銀行帳戶（JIM 的信用卡不列）；現金只列現金帳戶
+  const acctsFor = (m: ShMethod) => accts.filter((a) => (m === 'cash' ? a.method === 'cash' : a.method !== 'cash' && a.method !== 'credit_card'));
 
   const missing = d ? shMissing(d) : [];
   const bad = (f: string) => tried && missing.includes(f);

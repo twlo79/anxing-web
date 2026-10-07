@@ -76,6 +76,7 @@ import {
 } from '@/lib/purchase-pay';
 import RangeInput from '@/components/RangeInput';
 import StatHero from '@/components/StatHero';
+import NoncashModal from './noncash-modal';
 
 const CURRENCIES = ['TWD', 'USD', 'JPY', 'CNY', 'EUR'];
 
@@ -105,8 +106,9 @@ const CURRENCIES = ['TWD', 'USD', 'JPY', 'CNY', 'EUR'];
  */
 function HkTag() {
   return (
-    <span className="ml-1.5 inline-block rounded-md bg-mor-bluelight px-2 py-0.5
-                     text-xs font-medium text-mor-slate align-middle">
+    /* 橘色虛線框 ＝「記了帳、錢還沒出去」（2026-10-07 David：「非實支用不同顏色」—— 原本的藍底跟主色撞） */
+    <span className="ml-1.5 inline-block rounded-md border border-dashed border-orange-400 bg-white px-2 py-0.5
+                     text-xs font-medium text-orange-700 align-middle">
       {TAG_NON_CASH}
     </span>
   );
@@ -192,6 +194,15 @@ export default function ExpensesPage() {
 
   // 支出筆數遠少於訂單,一次載完走前端排序即可(與契約頁同策略)。
   // 若日後量大到需要分頁,要改成伺服器端排序,並比照 /shortterm 讓匯出重新向伺服器取完整結果。
+  /** 💸 轉成實支（migration_322）：視窗開關、目前還有幾筆非實支（按鈕上的數字） */
+  const [ncOpen, setNcOpen] = useState(false);
+  const [ncCount, setNcCount] = useState<number | null>(null);
+  const loadNc = useCallback(async () => {
+    const { count } = await supabase.from('expenses').select('id', { count: 'exact', head: true }).contains('tags', [TAG_NON_CASH]);
+    setNcCount(count ?? 0);
+  }, [supabase]);
+  useEffect(() => { loadNc(); }, [loadNc]);
+
   const load = useCallback(async () => {
     setLoading(true);
     let all: Expense[] = [];
@@ -727,11 +738,18 @@ export default function ExpensesPage() {
           全站每一頁都是這個順序。
       */}
       <ActionRow>
+        {/* 💸 轉成實支（2026-10-07 David；跟短租「📈 調價費支出」同一個位置：動作列最左邊） */}
+        <button onClick={() => setNcOpen(true)}
+          className="md:mr-auto h-10 rounded-lg border border-mor-line bg-white px-3.5 text-uisub text-gray-700 hover:bg-mor-sand/60 inline-flex items-center gap-1.5">
+          💸 轉成實支
+          {ncCount ? <span className="rounded-md border border-dashed border-orange-400 px-1.5 text-[11px] text-orange-700">{ncCount} 筆</span> : null}
+        </button>
         <div className="mr-auto md:mr-0"><FilterCount n={rows.length} /></div>
         <AddButton onClick={() => setEdit(blank())}>新增支出</AddButton>
         <ExportButton onClick={exportXlsx} disabled={!rows.length} />
         <TrashLink table="expenses" label="支出" />
       </ActionRow>
+      {ncOpen && <NoncashModal onClose={() => setNcOpen(false)} onDone={() => { load(); loadNc(); }} />}
 
       {/*
         ══════════ 手機卡片（2026-08-22）══════════
