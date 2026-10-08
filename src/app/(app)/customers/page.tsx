@@ -450,7 +450,7 @@ function CustomerContracts({ c }: { c: Customer }) {
                     {on ? '啟用中' : '已結束'}</span>
                 </span>
                 {seeDocs && (docs[k.id] ?? 0) > 0
-                  ? <ContractDocIcon contractId={k.id} count={docs[k.id]} title={`${k.room ?? ''} ${k.tenant_name ?? ''}`} />
+                  ? <ContractDocIcon parentId={k.id} count={docs[k.id]} title={`${k.room ?? ''} ${k.tenant_name ?? ''}`} />
                   : seeDocs && <span className="text-[11px] text-gray-400">沒有文件</span>}
                 <a href={`/contracts?contract=${k.id}`} className="text-xs text-mor-slate hover:underline shrink-0">開契約 →</a>
               </div>

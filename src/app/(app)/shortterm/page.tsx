@@ -60,6 +60,9 @@ import { cancelBlockedReason } from '@/lib/cancel-settle';
 import { busyOfOrder, busyOfContract, roomFree, nightsLabel, dayBefore, type Busy } from '@/lib/room-free';
 import { canPricingFee, PRICING_TITLE } from '@/lib/pricing-fee';
 import Fold from '@/components/Fold';
+// 訂單的合約 PDF（migration_325，跟契約文件同一套）
+import ContractDocs, { ContractDocIcon } from '@/components/ContractDocs';
+import { canSeeContractDocs, countBy, docsSummary } from '@/lib/contract-docs';
 import { checkDates, checkPrice, checkRequired, isEarnestStage, lookbackFrom, type PastOrder } from '@/lib/order-check';
 import MoneyInput from '@/components/MoneyInput';
 import RangeInput from '@/components/RangeInput';
@@ -355,6 +358,23 @@ export default function ShortTermPage() {
   // 定期收費的設定只有會計/主管/總經理能改 —— 跟 recurring_charges 的 RLS 一致。
   // 前端擋只是少讓人白按一次,真正的把關在資料庫。
   const role = useProfile().role ?? '';
+  /*
+   * 訂單的合約 PDF（migration_325，2026-10-08 David：「訂單也加入放合約的功能，同樣模式」）。
+   * 主管、會計、總經理才看得到（合約有身分證字號）。docCount = 每筆訂單幾份。
+   */
+  const seeDocs = canSeeContractDocs(role);
+  const [docCount, setDocCount] = useState<Record<string, number>>({});
+  useEffect(() => {
+    if (!seeDocs) return;
+    let live = true;
+    supabase.from('attachments').select('order_doc_id').not('order_doc_id', 'is', null)
+      .then(({ data }) => { if (live) setDocCount(countBy((data ?? []) as { order_doc_id: string | null }[], 'order_doc_id')); });
+    return () => { live = false; };
+  }, [supabase, seeDocs, rows]);
+  const onDocCount = useCallback((n: number) => {
+    const id = edit?.id;
+    if (id) setDocCount((m) => (m[id] === n ? m : { ...m, [id]: n }));
+  }, [edit?.id]);
   /** 調價支出視窗（migration_312） */
   const [pricingOpen, setPricingOpen] = useState(false);
   /** 取消訂單・結算退款（migration_319） */
@@ -1775,7 +1795,8 @@ export default function ShortTermPage() {
                     {o.cancelled_on && <span className="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium bg-red-50 text-red-600">已取消</span>}
                     <RoomCell o={o} className="font-medium min-w-0" />
                   </div>
-                  <div className="text-[11px] text-gray-600 mt-1 truncate">{o.guest_name ?? '—'}</div>
+                  <div className="text-[11px] text-gray-600 mt-1 truncate">{o.guest_name ?? '—'}
+                    {seeDocs && <ContractDocIcon parentId={o.id} parent="od" count={docCount[o.id] ?? 0} title={`${o.property_raw ?? ''} ${o.guest_name ?? ''}`} />}</div>
                   <div className="text-[11px] text-gray-400 mt-0.5 tabular-nums">
                     {dateRange(o)}
                     {o.nights ? `　${o.nights} 晚` : ''}
@@ -1875,6 +1896,7 @@ export default function ShortTermPage() {
                 </td>
                 <td className="px-3 py-2 whitespace-nowrap">
                   {o.guest_name ?? '—'}
+                  {seeDocs && <ContractDocIcon parentId={o.id} parent="od" count={docCount[o.id] ?? 0} title={`${o.property_raw ?? ''} ${o.guest_name ?? ''}`} />}
                   {audit && auditResult && (
                     <div className="mt-0.5"><AuditBadges entry={auditResult.byId[o.id]} /></div>
                   )}
@@ -2814,6 +2836,14 @@ export default function ShortTermPage() {
               <Fold title="備註" defaultOpen={!!edit.note} summary={edit.note || '沒有'}>
               <label className="flex flex-col gap-1 col-span-2"><input value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5" /></label>
               </Fold>
+              {/* 合約 PDF（migration_325）—— 放最下面，跟契約頁同一個位置 */}
+              {seeDocs && (
+                <Fold title="合約文件" defaultOpen={!!edit.id && (docCount[edit.id] ?? 0) > 0}
+                  summary={edit.id ? docsSummary(docCount[edit.id] ?? 0) : '存檔後可上傳'}>
+                  <ContractDocs parentId={edit.id || null} parent="od" canEdit
+                    title={`${edit.property_raw ?? ''} ${edit.guest_name ?? ''}`} onCount={onDocCount} />
+                </Fold>
+              )}
             </div>
             <div className="sticky bottom-0 bg-white border-t border-mor-line px-6 py-3 flex justify-end gap-2">
               <button onClick={() => setEdit(null)} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>

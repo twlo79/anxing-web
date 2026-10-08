@@ -84,7 +84,7 @@ const Receipts = forwardRef<ReceiptsHandle, {
    *   都掛在押金底下的話分不出哪張對哪筆 ——
    *   而金額對不上時，那正是唯一能查的東西。
    */
-  kind: 'pr' | 'pri' | 'exp' | 'dep' | 'op' | 'dp' | 'of' | 'td' | 'cash' | 'sh' | 'ct';
+  kind: 'pr' | 'pri' | 'exp' | 'dep' | 'op' | 'dp' | 'of' | 'td' | 'cash' | 'sh' | 'ct' | 'od';
   parentId: string | null | undefined;
   canEdit?: boolean;
   label?: string;
@@ -159,6 +159,7 @@ const Receipts = forwardRef<ReceiptsHandle, {
     : kind === 'sh' ? 'shareholder_txn_id'
     // 契約文件 PDF（migration_324）。平常走 ContractDocs.tsx，這裡只是讓對應表完整
     : kind === 'ct' ? 'contract_id'
+    : kind === 'od' ? 'order_doc_id'   // 訂單的合約 PDF（migration_325）
     /*
      * 現金流水的收據照片（migration_185）。
      *

@@ -1162,7 +1162,7 @@ const nameOf = (c: Contract) =>
                     {st === 'disabled' && <span className="rounded px-1.5 py-0.5 text-[10px] bg-gray-100 text-gray-500">已停用</span>}
                   </div>
                   <div className="text-[11px] text-gray-600 mt-1 truncate">{c.tenant_name ?? '—'}
-                    {seeDocs && <ContractDocIcon contractId={c.id} count={docCount[c.id] ?? 0} title={`${c.room ?? ''} ${c.tenant_name ?? ''}`} />}</div>
+                    {seeDocs && <ContractDocIcon parentId={c.id} count={docCount[c.id] ?? 0} title={`${c.room ?? ''} ${c.tenant_name ?? ''}`} />}</div>
                   <div className="text-[11px] text-gray-400 mt-0.5 tabular-nums">
                     {c.start_date ?? '—'} ~ {c.end_date ?? '—'}
                   </div>
@@ -1210,7 +1210,7 @@ const nameOf = (c: Contract) =>
                 className={`border-b border-mor-line/60 cursor-pointer ${isJust(c.id) ? SAVED_HL : 'hover:bg-mor-bluelight/30'} ${c.active ? '' : 'opacity-50'}`}>
                 <td className="px-3 py-2 font-medium whitespace-nowrap">{isJust(c.id) && <SavedBadge />}{c.room}<span className="ml-1 text-xs text-gray-400">{c.estates?.name}</span>{statusOf(c) === 'expired' && <span className="ml-1 rounded px-1.5 py-0.5 text-[10px] bg-amber-50 text-amber-600">已到期</span>}{statusOf(c) === 'disabled' && <span className="ml-1 rounded px-1.5 py-0.5 text-[10px] bg-gray-100 text-gray-500">已停用</span>}</td>
                 <td className="px-3 py-2 whitespace-nowrap">{c.tenant_name}
-                  {seeDocs && <ContractDocIcon contractId={c.id} count={docCount[c.id] ?? 0} title={`${c.room ?? ''} ${c.tenant_name ?? ''}`} />}</td>
+                  {seeDocs && <ContractDocIcon parentId={c.id} count={docCount[c.id] ?? 0} title={`${c.room ?? ''} ${c.tenant_name ?? ''}`} />}</td>
                 <td className="px-3 py-2 text-right">{(() => { const step = STEP_OF[c.cadence] || 1; const per = c.amount_per_period || (c.monthly_rent || 0) * step; const mo = Math.round(per / step); return (<><div className="font-medium">${fmt(per)}</div><div className="text-xs text-gray-400">{CAD_LABEL[c.cadence] ?? c.cadence}・月 ${fmt(mo)}</div></>); })()}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-500">{c.start_date ?? '—'} ~ {c.end_date ?? '—'}</td>
                 <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
@@ -1967,7 +1967,7 @@ const nameOf = (c: Contract) =>
               {seeDocs && (
                 <Fold title="契約文件" defaultOpen={!!edit.id && (docCount[edit.id] ?? 0) > 0}
                   summary={edit.id ? docsSummary(docCount[edit.id] ?? 0) : '存檔後可上傳'}>
-                  <ContractDocs contractId={edit.id || null} canEdit
+                  <ContractDocs parentId={edit.id || null} canEdit
                     title={`${edit.room ?? ''} ${edit.tenant_name ?? ''}`} onCount={onDocCount} />
                 </Fold>
               )}

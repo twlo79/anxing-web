@@ -13,10 +13,20 @@ export type DocKind = (typeof DOC_KINDS)[number];
 
 /** storage 路徑前綴（RECEIPT_COL 的 ct） */
 export const CONTRACT_DOC_PREFIX = 'ct';
+
+/**
+ * 文件掛在哪一種母體上（2026-10-08 David：「訂單也加入放合約的功能，同樣模式」）。
+ *   ct → 契約   attachments.contract_id    路徑 ct/{id}/…（migration_324）
+ *   od → 訂單   attachments.order_doc_id   路徑 od/{id}/…（migration_325）
+ * ★ 訂單**不用** order_id —— 那一欄是加費憑證（of/），管家看得到；合約是個資，要分開。
+ */
+export type DocParent = 'ct' | 'od';
+export const DOC_PARENT_COL: Record<DocParent, string> = { ct: 'contract_id', od: 'order_doc_id' };
 export const CONTRACT_DOC_MAX = 10 * 1024 * 1024;   // 跟 receipts bucket 上限一樣
 
 export type ContractDoc = {
-  id: string; contract_id: string; path: string; file_name: string | null;
+  /** 母體 id（查詢時用 PostgREST 別名 parent_id:contract_id／parent_id:order_doc_id） */
+  id: string; parent_id: string; path: string; file_name: string | null;
   doc_kind: string | null; size_bytes: number | null; created_at: string;
 };
 
@@ -25,8 +35,8 @@ export function canSeeContractDocs(role: string | null | undefined): boolean {
   return role === 'accountant' || role === 'manager' || role === 'super_admin';
 }
 
-export function docPath(contractId: string, uuid: string): string {
-  return `${CONTRACT_DOC_PREFIX}/${contractId}/${uuid}.pdf`;
+export function docPath(parentId: string, uuid: string, parent: DocParent = 'ct'): string {
+  return `${parent}/${parentId}/${uuid}.pdf`;
 }
 
 /** 上傳前擋門：只收 PDF、10 MB 以內。回 null 才能傳 */
@@ -48,6 +58,13 @@ export function defaultDocKind(existing: { doc_kind: string | null }[]): DocKind
 export function sortDocs<T extends { doc_kind: string | null; created_at: string }>(rows: T[]): T[] {
   const rank = (k: string | null) => { const i = DOC_KINDS.indexOf((k ?? '其他') as DocKind); return i < 0 ? 99 : i; };
   return [...rows].sort((a, b) => rank(a.doc_kind) - rank(b.doc_kind) || a.created_at.localeCompare(b.created_at));
+}
+
+/** 列表用：每個母體幾份（訂單用 order_doc_id） */
+export function countBy<T>(rows: T[], key: keyof T): Record<string, number> {
+  const m: Record<string, number> = {};
+  for (const r of rows) { const v = r[key] as unknown as string | null; if (v) m[v] = (m[v] ?? 0) + 1; }
+  return m;
 }
 
 /** 列表用：每張契約幾份 */

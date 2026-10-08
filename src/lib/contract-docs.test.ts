@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   DOC_KINDS, canSeeContractDocs, docPath, contractDocError, defaultDocKind, sortDocs,
-  countByContract, docsSummary, fmtSize, nameKey, contractsOfCustomer,
+  countByContract, countBy, docsSummary, fmtSize, nameKey, contractsOfCustomer,
 } from './contract-docs.ts';
 
 test('★ DOC_KINDS 跟 migration_324 的 check 同步', () => {
@@ -21,6 +21,8 @@ test('權限：主管、會計、總經理；管家不行', () => {
 
 test('路徑前綴 ct/', () => {
   assert.equal(docPath('c1', 'u1'), 'ct/c1/u1.pdf');
+  assert.equal(docPath('o1', 'u1', 'od'), 'od/o1/u1.pdf');
+  assert.deepEqual(countBy([{ order_doc_id: 'a' }, { order_doc_id: 'a' }, { order_doc_id: null }], 'order_doc_id'), { a: 2 });
 });
 
 test('只收 PDF、10 MB', () => {

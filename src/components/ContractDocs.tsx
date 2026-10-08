@@ -4,14 +4,16 @@ import { createPortal } from 'react-dom';
 import { createClient } from '@/lib/supabase';
 import { softDelete } from '@/lib/trash';
 import {
-  DOC_KINDS, type DocKind, type ContractDoc, docPath, contractDocError, defaultDocKind, sortDocs, fmtSize,
+  DOC_KINDS, DOC_PARENT_COL, type DocKind, type DocParent, type ContractDoc, docPath, contractDocError,
+  defaultDocKind, sortDocs, fmtSize,
 } from '@/lib/contract-docs';
 
 /*
  * ══════════════════════════════════════════════════════════
  * 契約文件（PDF）—— migration_324，2026-10-08 David 過審
  *
- *   <ContractDocs>        編輯契約最下面的那一區：列表、上傳、預覽、刪除
+ *   <ContractDocs>        編輯契約／訂單最下面的那一區：列表、上傳、預覽、刪除
+ *                         parent='ct' 契約（contract_id）、'od' 訂單（order_doc_id，migration_325）
  *   <ContractDocIcon>     契約列表與客戶頁：租戶名後面的文件圖示，點了直接預覽
  *   <ContractDocPreview>  預覽視窗（瀏覽器內建 PDF 檢視器），好幾份時上方可以切換
  *
@@ -21,11 +23,12 @@ import {
  */
 
 const BUCKET = 'receipts';
-const COLS = 'id, contract_id, path, file_name, doc_kind, size_bytes, created_at';
-
-export async function loadContractDocs(supabase: ReturnType<typeof createClient>, contractId: string): Promise<ContractDoc[]> {
-  const { data } = await supabase.from('attachments').select(COLS).eq('contract_id', contractId);
-  return sortDocs((data ?? []) as ContractDoc[]);
+export async function loadContractDocs(supabase: ReturnType<typeof createClient>, parentId: string,
+  parent: DocParent = 'ct'): Promise<ContractDoc[]> {
+  const col = DOC_PARENT_COL[parent];
+  const { data } = await supabase.from('attachments')
+    .select(`id, parent_id:${col}, path, file_name, doc_kind, size_bytes, created_at`).eq(col, parentId);
+  return sortDocs((data ?? []) as unknown as ContractDoc[]);
 }
 
 /* ══════ 預覽 ══════ */
@@ -95,17 +98,19 @@ export function ContractDocPreview({ docs, startId, title, onClose }: {
 }
 
 /* ══════ 列表上的圖示 ══════ */
-export function ContractDocIcon({ contractId, count, title }: { contractId: string; count: number; title?: string }) {
+export function ContractDocIcon({ parentId, parent = 'ct', count, title }: {
+  parentId: string; parent?: DocParent; count: number; title?: string;
+}) {
   const supabase = useMemo(() => createClient(), []);
   const [docs, setDocs] = useState<ContractDoc[] | null>(null);
   if (!(count > 0)) return null;
   const open = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    setDocs(await loadContractDocs(supabase, contractId));
+    setDocs(await loadContractDocs(supabase, parentId, parent));
   };
   return (
     <>
-      <button onClick={open} title="預覽契約文件" aria-label="預覽契約文件"
+      <button onClick={open} title={parent === 'od' ? '預覽合約' : '預覽契約文件'} aria-label="預覽文件"
         className="ml-1 inline-flex items-center gap-0.5 rounded-md px-1 py-0.5 align-middle text-mor-slate hover:bg-mor-bluelight">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="M14 3v4a1 1 0 0 0 1 1h4" /><path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z" />
@@ -119,8 +124,8 @@ export function ContractDocIcon({ contractId, count, title }: { contractId: stri
 }
 
 /* ══════ 編輯契約裡的那一區 ══════ */
-export default function ContractDocs({ contractId, canEdit, title, onCount }: {
-  contractId: string | null; canEdit: boolean; title?: string; onCount?: (n: number) => void;
+export default function ContractDocs({ parentId, parent = 'ct', canEdit, title, onCount }: {
+  parentId: string | null; parent?: DocParent; canEdit: boolean; title?: string; onCount?: (n: number) => void;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [docs, setDocs] = useState<ContractDoc[]>([]);
@@ -132,14 +137,14 @@ export default function ContractDocs({ contractId, canEdit, title, onCount }: {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
-    if (!contractId) { setDocs([]); return; }
-    const d = await loadContractDocs(supabase, contractId);
+    if (!parentId) { setDocs([]); return; }
+    const d = await loadContractDocs(supabase, parentId, parent);
     setDocs(d); setKind(defaultDocKind(d)); onCount?.(d.length);
-  }, [supabase, contractId, onCount]);
+  }, [supabase, parentId, parent, onCount]);
   useEffect(() => { load(); }, [load]);
 
   const upload = async (files: FileList | File[] | null) => {
-    if (!contractId || !files) return;
+    if (!parentId || !files) return;
     const list = Array.from(files);
     if (!list.length) return;
     setErr('');
@@ -148,11 +153,11 @@ export default function ContractDocs({ contractId, canEdit, title, onCount }: {
     try {
       const { data: u } = await supabase.auth.getUser();
       for (const f of list) {
-        const path = docPath(contractId, crypto.randomUUID());
+        const path = docPath(parentId, crypto.randomUUID(), parent);
         const { error: ue } = await supabase.storage.from(BUCKET).upload(path, f, { contentType: 'application/pdf', upsert: false });
         if (ue) return setErr(`「${f.name}」上傳失敗：${ue.message}`);
         const { error: ie } = await supabase.from('attachments').insert({
-          contract_id: contractId, path, file_name: f.name, mime_type: 'application/pdf',
+          [DOC_PARENT_COL[parent]]: parentId, path, file_name: f.name, mime_type: 'application/pdf',
           size_bytes: f.size, uploaded_by: u.user?.id ?? null, doc_kind: kind,
         });
         if (ie) {
@@ -183,8 +188,8 @@ export default function ContractDocs({ contractId, canEdit, title, onCount }: {
     load();
   };
 
-  if (!contractId) {
-    return <div className="col-span-2 text-xs text-gray-400">契約存檔後才能上傳文件。</div>;
+  if (!parentId) {
+    return <div className="col-span-2 text-xs text-gray-400">{parent === 'od' ? '訂單' : '契約'}存檔後才能上傳文件。</div>;
   }
 
   return (
