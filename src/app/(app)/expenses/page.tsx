@@ -6,7 +6,7 @@ import { isBoss } from '@/lib/roles';
 import { useFlash } from '@/lib/use-flash';
 import { ActionRow, FilterCount, FieldSpacer, FilterSearch, FILTER_BTN_H } from '@/lib/filters';
 import { todayStr } from '@/lib/period';
-import { TAG_NON_CASH, TAG_NON_CASH_PG, isNonCash, withNonCash } from '@/lib/expense-tags';
+import { TAG_NON_CASH, TAG_NON_CASH_PG, isNonCash, withNonCash, isPartialPay } from '@/lib/expense-tags';
 import Req from '@/components/Req';
 import MoneyInput from '@/components/MoneyInput';
 import { missingFields, missingMessage, submitGate, gateCls } from '@/lib/required';
@@ -778,7 +778,7 @@ export default function ExpensesPage() {
                   {isJust(r.id) && <SavedBadge />}
                   <span className="truncate align-middle">{r.item_name}</span>
                   {r.non_operating && <NonOpTag />}
-                  {isNonCash(r.tags) && <HkTag />}
+                  {isNonCash(r.tags) && <HkTag />}{isPartialPay(r.tags) && <span className="ml-2 inline-block rounded-md border border-amber-200 bg-amber-50 text-amber-700 px-1.5 py-0.5 text-[10px] align-middle">部分付款</span>}
                 </div>
                 <div className="text-[11px] text-gray-500 mt-1">
                   {r.spent_on}・{r.account_code ? codeName[r.account_code] ?? r.account_code : '未分類'}
@@ -854,7 +854,7 @@ export default function ExpensesPage() {
                   {isJust(r.id) && <SavedBadge />}
                   {r.item_name}
                   {r.non_operating && <NonOpTag />}
-                  {isNonCash(r.tags) && <HkTag />}
+                  {isNonCash(r.tags) && <HkTag />}{isPartialPay(r.tags) && <span className="ml-2 inline-block rounded-md border border-amber-200 bg-amber-50 text-amber-700 px-1.5 py-0.5 text-[10px] align-middle">部分付款</span>}
                   {r.source_item_id && <span className="ml-2 inline-block rounded-md bg-mor-bluelight text-mor-slate px-1.5 py-0.5 text-[10px]">請款</span>}
                   {/* 母單 —— 沙色，跟子單的藍色分得開 */}
                   {r.deferred && (
@@ -984,7 +984,7 @@ export default function ExpensesPage() {
                   <div className="font-bold">
                     <span className="align-middle">{d.item_name}</span>
                     {d.non_operating && <NonOpTag />}
-                    {isNonCash(d.tags) && <HkTag />}
+                    {isNonCash(d.tags) && <HkTag />}{isPartialPay(d.tags) && <span className="ml-2 inline-block rounded-md border border-amber-200 bg-amber-50 text-amber-700 px-1.5 py-0.5 text-[10px] align-middle">部分付款</span>}
                   </div>
                   <div className="text-xs text-gray-500 mt-0.5">
                     {d.spent_on}

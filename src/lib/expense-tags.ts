@@ -77,3 +77,12 @@ export function withNonCash(
   const rest = (tags ?? []).filter((t) => t !== TAG_NON_CASH);
   return on ? [...rest, TAG_NON_CASH] : rest;
 }
+
+/**
+ * 請款單分次付款、那一項還沒付滿 —— 它的每一筆支出都掛這個（migration_323）。
+ * ★ 寫入的是資料庫 pr_partial_retag()，字串跟這裡同步；付滿那一刻資料庫會拿掉。
+ */
+export const TAG_PARTIAL = '部分付款';
+export function isPartialPay(tags: string[] | null | undefined): boolean {
+  return (tags ?? []).includes(TAG_PARTIAL);
+}

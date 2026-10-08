@@ -14,7 +14,6 @@ import { fmtIntOrBlank as fmt } from '@/lib/fmt';
 import { isBoss, isManager as isManagerRole, isAccountant as isAccountantRole } from '@/lib/roles';
 import { writeError } from '@/lib/write-guard';
 import { submitBlockedBy, requestTotal } from '@/lib/demand-to-request';
-import { todayStr } from '@/lib/period';
 import { submitGate, gateCls } from '@/lib/required';
 import {
   FilterBar, Field, FilterSelect, FilterSearch, FilterClear, FilterCount,
@@ -55,6 +54,9 @@ import {
 import DepositRefundStep, { type StepMode } from '@/components/DepositRefundStep';
 import { refundPerms as depPerms, cancelPatch, refundView, refundNote } from '@/lib/deposit-refund';
 import { MANUAL_CATEGORIES as ADVANCE_CATEGORIES } from '@/lib/advance';
+// 付款（先排日期／部分付款／付清）—— migration_323
+import PayModal, { PayProgress, ItemPayTag } from './pay-modal';
+import { payButtonLabel } from '@/lib/partial-pay';
 
 type Item = {
   /** ★★★ `amount` 可以是 null =「還沒填」，**不是 0**（migration_218） */
@@ -109,6 +111,8 @@ type Req = {
    * ★ 勾在**整張單**不是項目（2026-09-02 使用者指定）。
    */
   advance_category?: string | null;
+  /** 部分付款累計已付（migration_323）。一次付清的單是 0 */
+  paid_amount?: number | null;
   /** 安幸代墊給哪一本帳（migration_236）。必定等於 book —— 見 lib/book.lendFor */
   advance_for_book?: string | null;
   advance_usage?: string | null;
@@ -228,6 +232,10 @@ export default function PurchasesPage() {
   const [rejecting, setRejecting] = useState<Req | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const [dating, setDating] = useState<Req | null>(null);
+  /** 付款彈窗（先排日期／部分付款／付清尚差，migration_323） */
+  const [paying, setPaying] = useState<Req | null>(null);
+  /** 抽屜裡每一項部分付款付了多少（PayProgress 讀完回傳） */
+  const [itemPaid, setItemPaid] = useState<Record<string, number>>({});
   const [dateVal, setDateVal] = useState('');
   const [dateAcct, setDateAcct] = useState('');
   /**
@@ -2406,6 +2414,8 @@ export default function PurchasesPage() {
                   <div className="text-gray-500 shrink-0 text-right">
                     {r.purchased_on
                       ? <>付款日 {r.purchased_on}</>
+                      : (Number(r.paid_amount) || 0) > 0
+                        ? <span className="text-amber-700">部分付款・已付 ${fmt(Number(r.paid_amount))}／${fmt(Number(r.total_amount))}</span>
                       : r.planned_transfer_on
                         ? <span className="text-mor-blue">預定 {r.planned_transfer_on}{r.payout_account ? `・${acctName[r.payout_account] ?? r.payout_account}` : ''}</span>
                         : null}
@@ -2492,6 +2502,10 @@ export default function PurchasesPage() {
                     {r.purchased_on ?? (r.planned_transfer_on
                       ? <span className="text-mor-blue text-xs">預定 {r.planned_transfer_on}</span>
                       : '—')}
+                    {/* 分次付到一半（migration_323） */}
+                    {!r.purchased_on && (Number(r.paid_amount) || 0) > 0 && (
+                      <div className="text-[11px] text-amber-700">部分付款・已付 ${fmt(Number(r.paid_amount))}</div>
+                    )}
                   </td>
                   <td className="px-3 py-2 text-right whitespace-nowrap space-x-2" onClick={(e) => e.stopPropagation()}>
                     {(canVoteMgr || canVoteAdm) && <button onClick={() => vote(r)} className="text-xs text-mor-green underline hover:text-mor-slate font-medium">核可</button>}
@@ -2943,12 +2957,18 @@ export default function PurchasesPage() {
                       : '單頭的憑證圖片（未使用 —— 這張單走逐項憑證，圖在下面每一項裡）'} />
                 </div>
 
+                {/* 付款進度：分次付過才出現（migration_323） */}
+                <PayProgress req={d} accountName={acctName} canUndo={canSetDate}
+                  onPaid={setItemPaid}
+                  onChanged={(m) => { savedToast(m); markSaved(d.id); setDetail(null); load(); }} />
+
                 <div className="mt-4 text-xs text-gray-400 mb-1">請款項目（{its.length}）</div>
                 <div className="rounded-lg border border-mor-line divide-y divide-mor-line/40">
                   {its.map((i, idx) => (
                     <div key={idx} className="px-3 py-2 text-sm">
                       <div className="flex justify-between gap-2">
-                        <span className="font-medium">{i.item_name}</span>
+                        <span className="font-medium">{i.item_name}
+                          {(Number(d.paid_amount) || 0) > 0 && <ItemPayTag amount={Number(i.amount) || 0} paid={itemPaid[i.id ?? ''] ?? 0} />}</span>
                         <span className="shrink-0">
                           {/* ★ null = 還沒填。印 NT$ 0 的話跟「真的 0 元」分不開 */}
                           {i.amount == null ? <span className="text-amber-600">待填</span> : (<>
@@ -3043,13 +3063,15 @@ export default function PurchasesPage() {
                   <button onClick={() => { setDetail(null); setRejecting(d); setRejectReason(''); }}
                     className={`${btn} border border-amber-400 text-amber-700`}>駁回</button>
                 )}
-                {p.canPlan && (
-                  <button onClick={() => { setDetail(null); setPlanning(d); setPlanDate(d.planned_transfer_on ?? todayStr()); setPlanAcct(d.payout_account ?? ''); setPlanMethod(d.payment_method ?? ''); }}
-                    className={`${btn} border border-mor-slate text-mor-slate`}>{d.planned_transfer_on ? '改付款計畫' : `排${dateWord(d.payment_method)}`}</button>
-                )}
-                {p.canDate && (
-                  <button onClick={() => { setDetail(null); setDating(d); setDateVal(d.purchased_on ?? d.planned_transfer_on ?? todayStr()); setDateAcct(d.payout_account ?? ''); setDateMethod(d.payment_method ?? ''); setDateErr(''); }}
-                    className={`${btn} border border-mor-blue text-mor-blue`}>{d.purchased_on ? `改${dateWord(d.payment_method)}` : `確認${dateWord(d.payment_method)}`}</button>
+                {/*
+                  ★ 2026-10-07 David（A 版）：「改付款計畫」「確認付款日」併成一顆「付款」，
+                    彈窗裡三頁：先排日期／部分付款／付清尚差。
+                    綠框＝錢出去了（anxing-ui 按鈕顏色表）。
+                */}
+                {(p.canPlan || p.canDate) && (
+                  <button onClick={() => { setDetail(null); setPaying(d); }}
+                    className={`${btn} border border-mor-green text-mor-greendark hover:bg-mor-greenlight`}>
+                    {payButtonLabel(Number(d.paid_amount) || 0, (Number(d.total_amount) || 0) - (Number(d.paid_amount) || 0))}</button>
                 )}
                 {p.canCancel && (
                   <button onClick={() => { cancel(d); setDetail(null); }} className={`${btn} border border-red-300 text-red-500`}>撤銷</button>
@@ -3811,6 +3833,12 @@ export default function PurchasesPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* 付款：先排日期／部分付款／付清尚差（migration_323） */}
+      {paying && (
+        <PayModal req={paying} payAccounts={payAccounts} onClose={() => setPaying(null)}
+          onDone={(m) => { const id = paying.id; setPaying(null); savedToast(m); markSaved(id); load(); }} />
       )}
 
       {/* 採購日 */}
