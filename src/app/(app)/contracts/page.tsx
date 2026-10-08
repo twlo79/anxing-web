@@ -60,6 +60,9 @@ import * as XLSX from 'xlsx-js-style';
 import { softDelete } from '@/lib/trash';
 import TrashLink from '@/components/TrashLink';
 import Fold from '@/components/Fold';
+// 契約文件 PDF（migration_324）
+import ContractDocs, { ContractDocIcon } from '@/components/ContractDocs';
+import { canSeeContractDocs, countByContract, docsSummary } from '@/lib/contract-docs';
 
 type Contract = {
   id: string; estate_id: string | null; room: string | null; tenant_name: string | null;
@@ -200,6 +203,12 @@ export default function ContractsPage() {
   const [feeTotal, setFeeTotal] = useState(0);
   const [collect, setCollect] = useState<Contract | null>(null);
   const [detail, setDetail] = useState<Contract | null>(null);
+  /*
+   * 契約文件（migration_324）：主管、會計、總經理才看得到（契約有身分證字號）。
+   * docCount = 每張契約幾份 PDF —— 列表上的圖示與編輯視窗的摘要都讀它。
+   */
+  const seeDocs = canSeeContractDocs(useProfile().profile?.role);
+  const [docCount, setDocCount] = useState<Record<string, number>>({});
   const [kw, setKw] = useState('');
   // 輸入框與實際查詢分開 —— 邊打邊查會在每個字上跑一次全表比對,
   // 而前幾次的結果沒有人要看。跟短租頁同一套。
@@ -249,6 +258,18 @@ export default function ContractsPage() {
       .select('*, estates(name)').eq('id', id).maybeSingle();
     return (data as Contract) ?? null;
   }, openEdit);
+  /* 契約文件數（migration_324）—— 列表重載時一起重算 */
+  useEffect(() => {
+    if (!seeDocs) return;
+    let live = true;
+    supabase.from('attachments').select('contract_id').not('contract_id', 'is', null)
+      .then(({ data }) => { if (live) setDocCount(countByContract((data ?? []) as { contract_id: string | null }[])); });
+    return () => { live = false; };
+  }, [supabase, seeDocs, rows]);
+  const onDocCount = useCallback((n: number) => {
+    const id = edit?.id;
+    if (id) setDocCount((m) => (m[id] === n ? m : { ...m, [id]: n }));
+  }, [edit?.id]);
   const curFirst = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`; })();
   /*
    * 下個月 1 號。用來把「本月」表達成半開區間 [curFirst, nextFirst)。
@@ -1140,7 +1161,8 @@ const nameOf = (c: Contract) =>
                     {st === 'expired' && <span className="rounded px-1.5 py-0.5 text-[10px] bg-amber-50 text-amber-600">已到期</span>}
                     {st === 'disabled' && <span className="rounded px-1.5 py-0.5 text-[10px] bg-gray-100 text-gray-500">已停用</span>}
                   </div>
-                  <div className="text-[11px] text-gray-600 mt-1 truncate">{c.tenant_name ?? '—'}</div>
+                  <div className="text-[11px] text-gray-600 mt-1 truncate">{c.tenant_name ?? '—'}
+                    {seeDocs && <ContractDocIcon contractId={c.id} count={docCount[c.id] ?? 0} title={`${c.room ?? ''} ${c.tenant_name ?? ''}`} />}</div>
                   <div className="text-[11px] text-gray-400 mt-0.5 tabular-nums">
                     {c.start_date ?? '—'} ~ {c.end_date ?? '—'}
                   </div>
@@ -1187,7 +1209,8 @@ const nameOf = (c: Contract) =>
               <tr key={c.id} onClick={() => setDetail(c)} {...justRow(isJust(c.id))}
                 className={`border-b border-mor-line/60 cursor-pointer ${isJust(c.id) ? SAVED_HL : 'hover:bg-mor-bluelight/30'} ${c.active ? '' : 'opacity-50'}`}>
                 <td className="px-3 py-2 font-medium whitespace-nowrap">{isJust(c.id) && <SavedBadge />}{c.room}<span className="ml-1 text-xs text-gray-400">{c.estates?.name}</span>{statusOf(c) === 'expired' && <span className="ml-1 rounded px-1.5 py-0.5 text-[10px] bg-amber-50 text-amber-600">已到期</span>}{statusOf(c) === 'disabled' && <span className="ml-1 rounded px-1.5 py-0.5 text-[10px] bg-gray-100 text-gray-500">已停用</span>}</td>
-                <td className="px-3 py-2 whitespace-nowrap">{c.tenant_name}</td>
+                <td className="px-3 py-2 whitespace-nowrap">{c.tenant_name}
+                  {seeDocs && <ContractDocIcon contractId={c.id} count={docCount[c.id] ?? 0} title={`${c.room ?? ''} ${c.tenant_name ?? ''}`} />}</td>
                 <td className="px-3 py-2 text-right">{(() => { const step = STEP_OF[c.cadence] || 1; const per = c.amount_per_period || (c.monthly_rent || 0) * step; const mo = Math.round(per / step); return (<><div className="font-medium">${fmt(per)}</div><div className="text-xs text-gray-400">{CAD_LABEL[c.cadence] ?? c.cadence}・月 ${fmt(mo)}</div></>); })()}</td>
                 <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-500">{c.start_date ?? '—'} ~ {c.end_date ?? '—'}</td>
                 <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
@@ -1940,6 +1963,14 @@ const nameOf = (c: Contract) =>
               <label className="flex flex-col gap-1 col-span-2">備註<input value={edit.note ?? ''} onChange={(e) => setEdit({ ...edit, note: e.target.value })} className={FIELD_IN} /></label>
 
               </Fold>
+              {/* 契約文件 PDF（migration_324，2026-10-08 David：「契約放最下方」） */}
+              {seeDocs && (
+                <Fold title="契約文件" defaultOpen={!!edit.id && (docCount[edit.id] ?? 0) > 0}
+                  summary={edit.id ? docsSummary(docCount[edit.id] ?? 0) : '存檔後可上傳'}>
+                  <ContractDocs contractId={edit.id || null} canEdit
+                    title={`${edit.room ?? ''} ${edit.tenant_name ?? ''}`} onCount={onDocCount} />
+                </Fold>
+              )}
             </div>
             <div className="sticky bottom-0 bg-white border-t border-mor-line px-6 py-3 flex justify-end gap-2">
               <button onClick={() => setEdit(null)} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>

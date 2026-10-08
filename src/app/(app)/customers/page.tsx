@@ -10,6 +10,10 @@ import { Tabs } from '@/components/Tabs';
 import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
 import { useJustSaved } from '@/lib/use-just-saved';
 import { SavedBadge } from '@/components/SavedToast';
+import { useProfile } from '@/lib/profile';
+// 客戶 → 契約（2026-10-08 David：「客戶管理連動過去也有契約」）
+import { ContractDocIcon } from '@/components/ContractDocs';
+import { canSeeContractDocs, contractsOfCustomer, countByContract } from '@/lib/contract-docs';
 
 /**
  * 客戶管理。
@@ -382,9 +386,76 @@ function EditBox({ c, onSave }: { c: Customer; onSave: (p: Partial<Customer>) =>
         </span>
       </div>
 
+      {(c.src_kind === 'contract' || c.src_kind === 'both') && <CustomerContracts c={c} />}
+
       {c.stale && (
         <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800 leading-relaxed">
           <b>對不到任何訂單或契約。</b>多半是訂單那邊改了客戶名，備註留在這一列。
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 這位客戶的契約（2026-10-08）。
+ *
+ * ★ customers 沒有存 contract_id —— 它是 sync_customers 用「物業＋租戶名」彙整出來的。
+ *   這裡用同一個鍵反查：同物業、租戶名正規化後一樣（lib/contract-docs.ts contractsOfCustomer，有測試）。
+ * ★ 已結束的也列出來 —— 續約過的客戶要看得到上一份。
+ */
+type CtRow = { id: string; room: string | null; tenant_name: string | null; estate_id: string | null;
+  start_date: string | null; end_date: string | null; active: boolean | null };
+function CustomerContracts({ c }: { c: Customer }) {
+  const supabase = useMemo(() => createClient(), []);
+  const seeDocs = canSeeContractDocs(useProfile().profile?.role);
+  const [rows, setRows] = useState<CtRow[] | null>(null);
+  const [docs, setDocs] = useState<Record<string, number>>({});
+  const today = twToday();
+
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      let q = supabase.from('contracts').select('id, room, tenant_name, estate_id, start_date, end_date, active');
+      if (c.estate_id) q = q.eq('estate_id', c.estate_id);
+      const { data } = await q;
+      const mine = contractsOfCustomer({ name: c.name, estate_id: c.estate_id }, (data ?? []) as CtRow[]);
+      if (!live) return;
+      setRows(mine);
+      if (seeDocs && mine.length) {
+        const { data: ad } = await supabase.from('attachments').select('contract_id').in('contract_id', mine.map((x) => x.id));
+        if (live) setDocs(countByContract((ad ?? []) as { contract_id: string | null }[]));
+      }
+    })();
+    return () => { live = false; };
+  }, [supabase, c.estate_id, c.name, seeDocs]);
+
+  if (!rows) return <div className="text-xs text-gray-400">契約載入中…</div>;
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-1">
+        <span className="text-[11px] font-bold tracking-wide text-gray-500">契約</span><i className="flex-1 h-px bg-mor-line" />
+      </div>
+      {rows.length === 0 ? (
+        <div className="text-xs text-gray-400">對不到契約（可能是契約上的租戶名跟這裡不一樣）</div>
+      ) : (
+        <div className="divide-y divide-mor-line/60">
+          {rows.map((k) => {
+            const on = k.active !== false && (!k.end_date || k.end_date >= today);
+            return (
+              <div key={k.id} className="flex items-center gap-2 py-1.5 text-sm">
+                <span className={`flex-1 min-w-0 truncate tabular-nums ${on ? '' : 'text-gray-500'}`}>
+                  {k.room || '—'}・{k.start_date ?? '—'} ～ {k.end_date ?? '—'}
+                  <span className={`ml-1.5 rounded px-1.5 py-0.5 text-[10px] ${on ? 'bg-mor-greenlight text-mor-greendark' : 'bg-gray-100 text-gray-500'}`}>
+                    {on ? '啟用中' : '已結束'}</span>
+                </span>
+                {seeDocs && (docs[k.id] ?? 0) > 0
+                  ? <ContractDocIcon contractId={k.id} count={docs[k.id]} title={`${k.room ?? ''} ${k.tenant_name ?? ''}`} />
+                  : seeDocs && <span className="text-[11px] text-gray-400">沒有文件</span>}
+                <a href={`/contracts?contract=${k.id}`} className="text-xs text-mor-slate hover:underline shrink-0">開契約 →</a>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
