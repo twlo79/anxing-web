@@ -37,6 +37,12 @@ test('房源與物業都沒有時是破折號，不是空字串', () => {
   assert.deepEqual(roomCell(r({ property_raw: null, estate_name: null })), { main: '—', sub: '' });
 });
 
+test('不掛物業、算安幸辦公室的：破折號＋底下灰字安幸辦公室', () => {
+  assert.deepEqual(roomCell(r({ property_raw: null, estate_name: null, purpose_type: 'office' })), { main: '—', sub: '安幸辦公室' });
+  // 有物業的照舊顯示物業（契約勾了屬安幸辦公室的那種）
+  assert.deepEqual(roomCell(r({ property_raw: null, estate_name: '正隆', purpose_type: 'office' })), { main: '正隆', sub: '' });
+});
+
 test('房源留白（只有空格）視同沒有', () => {
   assert.deepEqual(roomCell(r({ property_raw: '   ' })), { main: '時兆', sub: '' });
 });

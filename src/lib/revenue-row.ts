@@ -16,7 +16,7 @@
  * 版面歪了看一眼就知道，這些錯不會。
  */
 
-import { isOffice, isCompany } from './revenue-report.ts';
+import { isOffice, isCompany, OFFICE_NAME } from './revenue-report.ts';
 
 export type RevRow = {
   source: string;
@@ -29,6 +29,8 @@ export type RevRow = {
   period_end: string | null;
   fee_type?: string | null;
   item_name?: string | null;
+  /** 這筆錢算誰的：estate／office（安幸辦公室）—— 房源格的灰字要用 */
+  purpose_type?: string | null;
   total_amount: number;
   total_nights: number;
   month_nights: number;
@@ -58,6 +60,12 @@ export function roomCell(r: RevRow): TwoLine {
   const estate = (r.estate_name ?? '').trim();
   // 沒有房源時把物業提上來當主要那行 —— 不然主要那行是空的而第二行有字,
   // 整張表會看起來像少了一格
+  /*
+   * ★ 2026-10-08 David：不掛物業、算安幸辦公室的（房務清潔、人事費、時兆四項定期收費）
+   *   房源寫破折號、底下灰字「安幸辦公室」—— 跟「房源在上、物業在下」同一個樣子。
+   *   原本整格只有一個破折號，看不出這筆錢算誰的。
+   */
+  if (!room && !estate && r.purpose_type === 'office') return { main: DASH, sub: OFFICE_NAME };
   if (!room) return { main: estate || DASH, sub: '' };
   return { main: room, sub: estate };
 }
