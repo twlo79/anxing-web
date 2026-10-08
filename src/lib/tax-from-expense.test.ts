@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   looksLikeInvoice, splitTax, toInvoiceDraft, importable,
   pickedOf, importError, importSummary, toRows,
+  markExisting, groupByMonth, checkState, setPicked, toInvoiceRows,
   type ExpenseSrc,
 } from './tax-from-expense.ts';
 
@@ -76,10 +77,11 @@ describe('looksLikeInvoice —— 兩個英文字母 ＋ 八個數字', () => {
 });
 
 describe('toInvoiceDraft —— 欄位怎麼對過去', () => {
-  test('合格式的:稅碼 25、預設勾、稅額反推', () => {
+  test('合格式的:稅碼 25、稅額反推；★ 2026-10-08 起預設不勾', () => {
     const d = toInvoiceDraft(E(), '202609', TAX_ID);
     assert.equal(d.tax_code, '25');
-    assert.equal(d.picked, true);
+    assert.equal(d.picked, false);
+    assert.equal(d.eligible, true);
     assert.equal(d.net_amount, 2000);
     assert.equal(d.tax_amount, 100);
     assert.equal(d.total_amount, 2100);
@@ -94,6 +96,7 @@ describe('toInvoiceDraft —— 欄位怎麼對過去', () => {
     const d = toInvoiceDraft(E({ voucher_no: '免用統一收據', amount: 300 }), '202609', TAX_ID);
     assert.equal(d.tax_code, 'X');
     assert.equal(d.picked, false);
+    assert.equal(d.eligible, false);
     assert.equal(d.tax_amount, 0);
     assert.equal(d.net_amount, 300);
     assert.equal(d.total_amount, 300);
@@ -206,7 +209,9 @@ describe('importable —— 三道過濾（2026-09-05）', () => {
 });
 
 describe('importError / importSummary', () => {
-  const ok = () => importable([E()], '202609', TAX_ID);
+  // ★ 2026-10-08 起預設不勾 —— 測試裡自己勾
+  const pickAll = (ds: ReturnType<typeof importable>) => ds.map((d) => ({ ...d, picked: d.eligible }));
+  const ok = () => pickAll(importable([E()], '202609', TAX_ID));
 
   test('一筆都沒勾就擋', () => {
     const ds = importable([E({ voucher_no: '0346' })], '202609', TAX_ID);
@@ -242,16 +247,63 @@ describe('importError / importSummary', () => {
   });
 
   test('沒勾的不算進摘要', () => {
-    const ds = importable([E({ id: 'a' }), E({ id: 'b', voucher_no: '0346' })], '202609', TAX_ID);
+    const ds = pickAll(importable([E({ id: 'a' }), E({ id: 'b', voucher_no: '0346' })], '202609', TAX_ID));
     assert.equal(pickedOf(ds).length, 1);
     assert.match(importSummary(ds), /1 筆/);
   });
 
   test('toRows 只給勾起來的,而且拿掉 picked', () => {
-    const ds = importable([E({ id: 'a' }), E({ id: 'b', voucher_no: '0346' })], '202609', TAX_ID);
+    const ds = pickAll(importable([E({ id: 'a' }), E({ id: 'b', voucher_no: '0346' })], '202609', TAX_ID));
     const rows = toRows(ds);
     assert.equal(rows.length, 1);
     assert.equal('picked' in rows[0], false);
     assert.equal((rows[0] as { expense_id: string }).expense_id, 'a');
+  });
+});
+
+describe('2026-10-08：分月、全選、同一張發票併成一列、已經在表裡的擋', () => {
+  const rows = [
+    E({ id: 'a', spent_on: '2026-08-05', voucher_no: 'DU68730014', amount: 5700, item_name: '管理費-2F' }),
+    E({ id: 'b', spent_on: '2026-08-05', voucher_no: 'du68730014 ', amount: 73500, item_name: '租金-2F' }),
+    E({ id: 'c', spent_on: '2026-09-02', voucher_no: 'CA32032857', amount: 30000, item_name: '畫軌' }),
+    E({ id: 'd', spent_on: '2026-09-03', voucher_no: 'DJ14395301', amount: 8431, item_name: '員工聚餐' }),
+  ];
+  const ds = () => importable(rows, '202609', TAX_ID);
+
+  test('預設一筆都沒勾', () => {
+    assert.equal(pickedOf(ds()).length, 0);
+    assert.equal(checkState(ds()), 'none');
+  });
+
+  test('分月', () => {
+    assert.deepEqual(groupByMonth(ds()).map((g) => [g.ym, g.rows.length]), [['2026-08', 2], ['2026-09', 2]]);
+  });
+
+  test('全選／某個月全選／狀態', () => {
+    const all = setPicked(ds(), new Set(ds().map((d) => d.expense_id)), true);
+    assert.equal(checkState(all), 'all');
+    const aug = setPicked(ds(), new Set(['a', 'b']), true);
+    assert.equal(checkState(aug), 'some');
+    assert.equal(checkState(aug.filter((d) => d.invoice_date.startsWith('2026-08'))), 'all');
+  });
+
+  test('★★★ 同一張發票的兩筆支出併成一列（金額、稅額相加，兩筆支出都記著）', () => {
+    const all = setPicked(ds(), new Set(['a', 'b']), true);
+    const r = toInvoiceRows(all);
+    assert.equal(r.length, 1);
+    assert.equal(r[0].invoice_no, 'DU68730014');
+    assert.equal(r[0].total_amount, 79200);
+    assert.equal(r[0].tax_amount, 271 + 3500);
+    assert.deepEqual(r[0].expense_ids, ['a', 'b']);
+    assert.equal(r[0].item_name, '管理費-2F、租金-2F');
+  });
+
+  test('★★★ 已經在稅務表裡的號碼：標出來、勾不起來、不會送出', () => {
+    const m = markExisting(ds(), ['ca32032857']);
+    assert.match(m.find((d) => d.expense_id === 'c')!.blocked!, /已經在稅務表/);
+    const all = setPicked(m, new Set(m.map((d) => d.expense_id)), true);
+    assert.equal(all.find((d) => d.expense_id === 'c')!.picked, false);
+    assert.deepEqual(toInvoiceRows(all).map((x) => x.invoice_no).sort(), ['DJ14395301', 'DU68730014']);
+    assert.equal(checkState(all), 'all');
   });
 });

@@ -88,8 +88,12 @@ export type InvoiceDraft = {
   voucher_ref: string | null;
   source: 'expense';
   expense_id: string;
-  /** 畫面用:預設要不要勾起來。不寫進資料庫 */
+  /** 畫面用:有沒有勾。不寫進資料庫。★ 2026-10-08 起預設**不勾**（David：「預設不要全勾」） */
   picked: boolean;
+  /** 憑證號碼合不合統一發票格式（原本的「預設勾」那條判斷，現在只拿來排序與提示） */
+  eligible: boolean;
+  /** 不能帶的原因（例：這個發票號碼已經在稅務表裡了）。有值就不能勾 */
+  blocked?: string | null;
 };
 
 /**
@@ -159,7 +163,9 @@ export function toInvoiceDraft(
     voucher_ref: e.id,
     source: 'expense',
     expense_id: e.id,
-    picked: ok,
+    picked: false,
+    eligible: ok,
+    blocked: null,
   };
 }
 
@@ -203,12 +209,13 @@ export function importable(
     .filter((e) => !taken.has(e.id))
     .filter((e) => e.spent_on >= lo && e.spent_on <= hi)
     .map((e) => toInvoiceDraft(e, period, companyTaxId))
-    .sort((a, b) => Number(b.picked) - Number(a.picked)
-      || a.invoice_date.localeCompare(b.invoice_date));
+    // ★ 2026-10-08：照日期排（畫面分月），同一天合格式的在前
+    .sort((a, b) => a.invoice_date.localeCompare(b.invoice_date)
+      || Number(b.eligible) - Number(a.eligible));
 }
 
 /** 勾起來的那幾筆。 */
-export const pickedOf = (ds: InvoiceDraft[]) => (ds ?? []).filter((d) => d.picked);
+export const pickedOf = (ds: InvoiceDraft[]) => (ds ?? []).filter((d) => d.picked && !d.blocked);
 
 /**
  * 按下「帶入」之前的檢查。`null` = 可以帶。
@@ -247,4 +254,88 @@ export function importSummary(ds: InvoiceDraft[]): string {
 /** 寫進資料庫的那一份（拿掉畫面用的 `picked`）。 */
 export function toRows(ds: InvoiceDraft[]): Omit<InvoiceDraft, 'picked'>[] {
   return pickedOf(ds).map(({ picked, ...rest }) => rest);
+}
+
+/* ══════════════════════════════════════════════════════════
+ * 2026-10-08 David：「1. 可以勾 全選 分月  2. 預設不要全勾  3. 無法匯進去  4. 歷史紀錄可以撤」
+ * ══════════════════════════════════════════════════════════ */
+
+/** 發票號碼正規化：去空白、大寫（DU68730014 與 du68730014 是同一張） */
+export const normNo = (no: string | null | undefined) => String(no ?? '').trim().toUpperCase();
+
+/**
+ * 已經在稅務表裡的發票號碼 → 那幾列標成不能帶。
+ * ★★★ 「帶入失敗：tax_invoice_uniq」就是這個：同一家公司、同一個發票號碼只能有一列，
+ *   而那張發票先前已經手 key 或上傳過了。整批送出去會整批失敗，所以先在畫面上講。
+ */
+export function markExisting(ds: InvoiceDraft[], existingNos: Iterable<string>): InvoiceDraft[] {
+  const ex = new Set(Array.from(existingNos, normNo));
+  return ds.map((d) => (ex.has(normNo(d.invoice_no))
+    ? { ...d, picked: false, blocked: '這張發票已經在稅務表裡了' } : d));
+}
+
+/** 分月：YYYY-MM → 那個月的列（照日期） */
+export function groupByMonth(ds: InvoiceDraft[]): { ym: string; rows: InvoiceDraft[] }[] {
+  const m = new Map<string, InvoiceDraft[]>();
+  for (const d of ds) {
+    const k = d.invoice_date.slice(0, 7);
+    if (!m.has(k)) m.set(k, []);
+    m.get(k)!.push(d);
+  }
+  return Array.from(m, ([ym, rows]) => ({ ym, rows })).sort((a, b) => a.ym.localeCompare(b.ym));
+}
+
+/** 勾選狀態：全勾／部分／沒勾（給全選與月份那一格用；不能帶的不算） */
+export function checkState(ds: InvoiceDraft[]): 'all' | 'some' | 'none' {
+  const ok = ds.filter((d) => !d.blocked);
+  const n = ok.filter((d) => d.picked).length;
+  return n === 0 ? 'none' : n === ok.length ? 'all' : 'some';
+}
+
+/** 把一批（全部或某個月）勾起來或取消。不能帶的不動 */
+export function setPicked(ds: InvoiceDraft[], ids: Set<string>, on: boolean): InvoiceDraft[] {
+  return ds.map((d) => (ids.has(d.expense_id) && !d.blocked ? { ...d, picked: on } : d));
+}
+
+export type InvoiceRow = Omit<InvoiceDraft, 'picked' | 'eligible' | 'blocked' | 'expense_id'> & {
+  /** 這張發票是哪幾筆支出（第一筆也寫進 tax_invoice.expense_id，舊的「帶過了沒」照樣認得） */
+  expense_ids: string[];
+  expense_id: string;
+};
+
+/**
+ * ★★★ 同一張發票拆在好幾筆支出上（DU68730014：管理費 5,700＋租金 73,500）→ 併成一列。
+ *   一張發票在稅務表只能有一列（tax_invoice_uniq），而 401 申報的也是「一張發票」。
+ *   金額、稅額相加；品名用「、」串；物業房源一樣才帶，不一樣就空著。
+ */
+export function toInvoiceRows(ds: InvoiceDraft[]): InvoiceRow[] {
+  const by = new Map<string, InvoiceDraft[]>();
+  for (const d of pickedOf(ds)) {
+    const k = normNo(d.invoice_no);
+    if (!by.has(k)) by.set(k, []);
+    by.get(k)!.push(d);
+  }
+  return Array.from(by.values()).map((g) => {
+    const f = g[0];
+    const same = <K extends keyof InvoiceDraft>(k: K) => (g.every((x) => x[k] === f[k]) ? f[k] : null);
+    const uniq = (xs: (string | null)[]) => Array.from(new Set(xs.filter(Boolean))) as string[];
+    const { picked: _p, eligible: _e, blocked: _b, ...base } = f;
+    return {
+      ...base,
+      invoice_no: normNo(f.invoice_no),
+      invoice_date: g.map((x) => x.invoice_date).sort()[0],
+      item_name: uniq(g.map((x) => x.item_name)).join('、'),
+      summary: uniq(g.map((x) => x.summary)).join('；') || null,
+      counterparty: g.find((x) => x.counterparty)?.counterparty ?? null,
+      counterparty_tax_id: g.find((x) => x.counterparty_tax_id)?.counterparty_tax_id ?? null,
+      estate_id: same('estate_id') as string | null,
+      property_id: same('property_id') as string | null,
+      net_amount: g.reduce((a, x) => a + (Number(x.net_amount) || 0), 0),
+      tax_amount: g.reduce((a, x) => a + (Number(x.tax_amount) || 0), 0),
+      total_amount: g.reduce((a, x) => a + (Number(x.total_amount) || 0), 0),
+      voucher_ref: g.map((x) => x.expense_id).join(','),
+      expense_id: f.expense_id,
+      expense_ids: g.map((x) => x.expense_id),
+    };
+  });
 }

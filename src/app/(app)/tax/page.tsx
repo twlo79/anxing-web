@@ -1,6 +1,6 @@
 'use client';
 import { looksLikeError } from '@/lib/flash-kind';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx-js-style';
 import { createClient } from '@/lib/supabase';
 import { todayStr } from '@/lib/period';
@@ -15,7 +15,8 @@ import {
   type TaxInvoice, type TaxKind, type PeriodRow, type ParsedUpload,
 } from '@/lib/tax';
 import {
-  importable, importError, importSummary, toRows, pickedOf,
+  importable, importError, importSummary, pickedOf,
+  markExisting, groupByMonth, checkState, setPicked, toInvoiceRows,
   type ExpenseSrc, type InvoiceDraft,
 } from '@/lib/tax-from-expense';
 import { useOnce } from '@/lib/once';
@@ -92,6 +93,20 @@ type EstateRow = { id: string; name: string };
 
 const fmt = (n: number) => (Number(n) || 0).toLocaleString('en-US');
 
+/** 全選／某個月那一格：全勾、部分（半勾）、沒勾（2026-10-08） */
+function TriBox({ state, onChange, disabled, label }: {
+  state: 'all' | 'some' | 'none'; onChange: (on: boolean) => void; disabled?: boolean; label: string;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (ref.current) ref.current.indeterminate = state === 'some'; }, [state]);
+  return <input ref={ref} type="checkbox" aria-label={label} disabled={disabled}
+    checked={state === 'all'} onChange={() => onChange(state !== 'all')} />;
+}
+
+/** 從支出帶入的一批（migration_328） */
+type ImportBatch = { id: string; period: string; n: number; total: number; tax: number;
+  created_at: string; undone_at: string | null };
+
 export default function TaxPage() {
   const supabase = useMemo(() => createClient(), []);
   const [msg, setMsg] = useState('');
@@ -118,6 +133,7 @@ export default function TaxPage() {
    *   （CLAUDE.md:一個靜默的讀 ＋ 一個靜默的寫 ＝ 一個不存在的功能）。
    */
   const [loadErr, setLoadErr] = useState<string | null>(null);
+  const [batches, setBatches] = useState<ImportBatch[]>([]);
 
   /*
    * ★ 用 taxId 當 state 而不是整個物件 —— 物件每次 render 都是新的參考,
@@ -145,6 +161,11 @@ export default function TaxPage() {
     setLoadErr(null);
     setRows((inv.data ?? []) as TaxInvoice[]);
     setPeriodsAll((per.data ?? []) as PeriodRow[]);
+    // 從支出帶入的紀錄（migration_328）—— 沒跑 328 的話查不到，就是空的
+    const { data: bs } = await supabase.from('tax_import_batches')
+      .select('id, period, n, total, tax, created_at, undone_at')
+      .eq('company_tax_id', COMPANY.taxId).order('created_at', { ascending: false }).limit(30);
+    setBatches((bs ?? []) as ImportBatch[]);
   }, [supabase, period, COMPANY.taxId]);
   useEffect(() => { void load(); }, [load]);
 
@@ -364,13 +385,19 @@ export default function TaxPage() {
        * ★ 用**整家公司**的紀錄，不是只有這一期 ——
        *   同一筆支出被帶到別期去過的話，這裡也不該再出現。
        */
-      const { data: taken } = await supabase.from('tax_invoice')
-        .select('expense_id')
-        .eq('company_tax_id', COMPANY.taxId)
-        .not('expense_id', 'is', null);
+      const [{ data: taken }, { data: linked }, { data: nos }] = await Promise.all([
+        supabase.from('tax_invoice').select('expense_id')
+          .eq('company_tax_id', COMPANY.taxId).not('expense_id', 'is', null),
+        /* ★ migration_328：一張發票可以是好幾筆支出 —— 第二筆以後只記在關聯表裡 */
+        supabase.from('tax_invoice_expenses').select('expense_id, tax_invoice!inner(company_tax_id)')
+          .eq('tax_invoice.company_tax_id', COMPANY.taxId),
+        /* ★★★ 號碼已經在表裡的（手 key／上傳過）—— 不標出來的話整批會撞 tax_invoice_uniq 一起失敗 */
+        supabase.from('tax_invoice').select('invoice_no').eq('company_tax_id', COMPANY.taxId).eq('kind', 'in'),
+      ]);
 
-      const ds = importable(rows, period, COMPANY.taxId,
-        (taken ?? []).map((t: any) => t.expense_id));
+      const ds = markExisting(importable(rows, period, COMPANY.taxId,
+        [...(taken ?? []).map((t: any) => t.expense_id), ...(linked ?? []).map((t: any) => t.expense_id)]),
+        (nos ?? []).map((t: any) => t.invoice_no));
       if (!ds.length) {
         /*
          * ★ 講「這個年度」不是「這一期」（2026-09-07）。
@@ -390,23 +417,38 @@ export default function TaxPage() {
     if (err) { setPickErr(err); return; }
     setBusy(true);
     try {
-      const { data, error } = await supabase.from('tax_invoice')
-        .insert(toRows(pick)).select('id');
-      if (error) return flash('帶入失敗：' + error.message);
       /*
-       * ★★ 一定要數影響列數。RLS 擋下的 insert 不會這樣回，
-       *   但寫少了幾列的話合計就少了幾筆稅額，而畫面看起來很正常。
+       * ★★★ 2026-10-08（migration_328）：同一張發票的幾筆支出先併成一列（toInvoiceRows），
+       *   整批交給 import_tax_from_expense() —— 任一張失敗整批退回，並記成一批（可以整批撤銷）。
+       *   原本一筆支出寫一列：DU68730014 拆在管理費與租金兩筆上 → 撞 tax_invoice_uniq，216 筆一起失敗。
        */
-      if ((data?.length ?? 0) !== toRows(pick).length) {
-        return flash(`要帶 ${toRows(pick).length} 筆，實際只進去 ${data?.length ?? 0} 筆`
-          + ' —— 先不要結算，找管理員');
-      }
+      const invs = toInvoiceRows(pick);
+      const { data, error } = await supabase.rpc('import_tax_from_expense', {
+        p_company: COMPANY.taxId, p_period: period, p_rows: invs,
+      });
+      if (error) { setPickErr('帶入失敗：' + error.message); return; }
+      const r = data as { ok: boolean; message: string; n?: number } | null;
+      if (!r?.ok) { setPickErr(r?.message ?? '帶入失敗'); return; }
       setPick(null);
       await load();
-      savedToast(`已帶入 ${data!.length} 筆進項發票`);
+      savedToast(r.message);
     } finally { setBusy(false); }
   }
   const [doImportExpense] = useOnce(importExpenseInner);
+
+  /** 整批撤銷（migration_328）：刪掉那一批帶進來的發票，那些支出就又可以帶 */
+  async function undoBatch(b: ImportBatch) {
+    if (!confirm(`撤銷 ${b.created_at.slice(0, 10)} 帶入的這一批？\n\n${b.n} 張發票、稅額 $${fmt(Number(b.tax))} 會從稅務表刪掉，`
+      + '那些支出可以重新帶入。帶進來之後手改過的內容也會一起刪掉。')) return;
+    setBusy(true);
+    try {
+      const { data, error } = await supabase.rpc('undo_tax_import', { p_batch: b.id });
+      const r = data as { ok: boolean; message: string } | null;
+      if (error || !r?.ok) return flash('撤銷失敗：' + (error?.message ?? r?.message ?? ''));
+      await load();
+      savedToast(r.message);
+    } finally { setBusy(false); }
+  }
 
   /* ══════════ 抽屜:檢視 / 編輯 / 新增 ══════════ */
   const [detail, setDetail] = useState<TaxInvoice | null>(null);
@@ -646,7 +688,10 @@ export default function TaxPage() {
             <table className="w-full text-xs">
               <thead className="sticky top-0 z-10 bg-gray-50 text-gray-500 text-left">
                 <tr>
-                  <th className="px-2 py-1.5 w-8"></th>
+                  <th className="px-2 py-1.5 w-8">
+                    <TriBox label="全選" state={checkState(pick)}
+                      onChange={(on) => setPick(setPicked(pick, new Set(pick.map((x) => x.expense_id)), on))} />
+                  </th>
                   <th className="px-2 py-1.5 w-20">日期</th>
                   <th className="px-2 py-1.5">項目</th>
                   <th className="px-2 py-1.5 w-28">憑證號碼</th>
@@ -656,15 +701,32 @@ export default function TaxPage() {
                 </tr>
               </thead>
               <tbody>
-                {pick.map((d, i) => (
-                  <tr key={d.expense_id} className="border-t border-mor-line/60">
+                {/* ★ 2026-10-08 分月：月份那一列可以整月勾／取消 */}
+                {groupByMonth(pick).map((g) => {
+                  const ids = new Set(g.rows.map((x) => x.expense_id));
+                  const sum = g.rows.reduce((a2, x) => a2 + (Number(x.total_amount) || 0), 0);
+                  return (
+                    <Fragment key={g.ym}>
+                      <tr className="border-t border-mor-line bg-mor-sand/40">
+                        <td className="px-2 py-1">
+                          <TriBox label={`${g.ym} 全選`} state={checkState(g.rows)}
+                            disabled={g.rows.every((x) => !!x.blocked)}
+                            onChange={(on) => setPick(setPicked(pick, ids, on))} />
+                        </td>
+                        <td colSpan={6} className="px-2 py-1 text-[11px] font-medium text-gray-600">
+                          {Number(g.ym.slice(5))} 月・{g.rows.length} 筆・${fmt(sum)}
+                        </td>
+                      </tr>
+                      {g.rows.map((d) => (
+                  <tr key={d.expense_id} className={`border-t border-mor-line/60 ${d.blocked ? 'opacity-50' : ''}`}>
                     <td className="px-2 py-1.5">
-                      <input type="checkbox" checked={d.picked}
-                        onChange={() => setPick(pick.map((x, n) =>
-                          n === i ? { ...x, picked: !x.picked } : x))} />
+                      <input type="checkbox" checked={d.picked} disabled={!!d.blocked}
+                        title={d.blocked ?? undefined}
+                        onChange={() => setPick(setPicked(pick, new Set([d.expense_id]), !d.picked))} />
                     </td>
                     <td className="px-2 py-1.5 text-gray-600 whitespace-nowrap">{d.invoice_date.slice(5)}</td>
-                    <td className="px-2 py-1.5 max-w-0 truncate" title={d.item_name}>{d.item_name}</td>
+                    <td className="px-2 py-1.5 max-w-0 truncate" title={d.blocked ?? d.item_name}>{d.item_name}
+                      {d.blocked && <span className="ml-1.5 text-[10px] text-gray-400">（{d.blocked}）</span>}</td>
                     <td className={`px-2 py-1.5 whitespace-nowrap ${d.tax_code === 'X' ? 'text-amber-700' : ''}`}>
                       {d.invoice_no}
                     </td>
@@ -689,13 +751,16 @@ export default function TaxPage() {
                         value={String(d.tax_amount)}
                         onChange={(e) => {
                           const t = Math.max(0, Math.round(Number(e.target.value) || 0));
-                          setPick(pick.map((x, n) => n === i
+                          setPick(pick.map((x) => x.expense_id === d.expense_id
                             ? { ...x, tax_amount: t, net_amount: x.total_amount - t } : x));
                         }}
                         className="w-20 rounded border border-mor-line px-1.5 py-0.5 text-right" />
                     </td>
                   </tr>
-                ))}
+                      ))}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -719,11 +784,40 @@ export default function TaxPage() {
               <button onClick={() => void doImportExpense()}
                 disabled={busy || !pickedOf(pick).length}
                 className={`${BTN} ${PRIMARY} disabled:opacity-40`}>
-                {busy ? '帶入中…' : `帶入 ${pickedOf(pick).length} 筆`}
+                {busy ? '帶入中…' : `帶入 ${pickedOf(pick).length} 筆（${toInvoiceRows(pick).length} 張發票）`}
               </button>
             </div>
           </div>
         </div>
+      )}
+
+      {/* ══════════ 從支出帶入的紀錄（migration_328，2026-10-08 David：「歷史紀錄可以撤」）══════════ */}
+      {kind === 'in' && COMPANY.fromExpense && batches.length > 0 && (
+        <details className="mb-3 rounded-lg bg-white border border-mor-line">
+          <summary className="list-none cursor-pointer select-none px-3 py-2 text-sm flex items-center gap-2">
+            <span className="text-[10px] text-gray-400">▶</span>
+            <span className="font-medium">從支出帶入的紀錄</span>
+            <span className="ml-auto text-xs text-gray-400">{batches.filter((b) => !b.undone_at).length} 批</span>
+          </summary>
+          <div className="border-t border-mor-line divide-y divide-mor-line/60">
+            {batches.map((b) => {
+              const lock = periodsAll.find((x) => x.period === b.period)?.status === 'closed';
+              return (
+                <div key={b.id} className={`flex flex-wrap items-center gap-x-3 gap-y-0.5 px-3 py-1.5 text-xs ${b.undone_at ? 'text-gray-400' : ''}`}>
+                  <span className="tabular-nums">{b.created_at.slice(0, 16).replace('T', ' ')}</span>
+                  <span>申報在 {periodLabel(b.period)}</span>
+                  <span className="tabular-nums">{b.n} 張・${fmt(Number(b.total))}・稅額 ${fmt(Number(b.tax))}</span>
+                  <span className="ml-auto">
+                    {b.undone_at ? <span>已撤銷 {b.undone_at.slice(5, 10)}</span>
+                      : lock ? <span className="text-gray-400">已結算，不能撤</span>
+                      : <button onClick={() => void undoBatch(b)} disabled={busy}
+                          className="text-red-400 underline hover:text-red-600 disabled:opacity-50">撤銷這一批</button>}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </details>
       )}
 
       {/* ══════════ 上傳預覽 ══════════ */}
