@@ -681,6 +681,36 @@ export default function TaxPage() {
             <div className="text-[11px] text-gray-500 mt-0.5">
               申報在 {periodLabel(period)}・支出日期 {invoiceDateRange(period, 'in')[0]} ~ {invoiceDateRange(period, 'in')[1]}・有憑證號碼且還沒帶過
             </div>
+            {/*
+              ★ 2026-10-08 David：「可以在上方嗎 有快捷 8月 或各月」
+                點一下＝整月勾起來，再點一下＝整月取消（跟全站藥丸同一個規矩）。
+                亮著＝那個月全勾；半亮＝勾了一部分。
+            */}
+            <div className="flex flex-wrap items-center gap-1.5 mt-2">
+              <span className="text-[11px] text-gray-400 mr-0.5">快選</span>
+              {(() => {
+                const st = checkState(pick);
+                return (
+                  <button onClick={() => setPick(setPicked(pick, new Set(pick.map((x) => x.expense_id)), st !== 'all'))}
+                    className={`rounded-md border px-2 py-0.5 text-[11px] ${st === 'all'
+                      ? 'border-mor-slate bg-mor-bluelight text-mor-slate font-medium' : 'border-mor-line text-mor-slate hover:bg-mor-sand/50'}`}>
+                    全部</button>
+                );
+              })()}
+              {groupByMonth(pick).map((g) => {
+                const st = checkState(g.rows);
+                const ids = new Set(g.rows.map((x) => x.expense_id));
+                return (
+                  <button key={g.ym} onClick={() => setPick(setPicked(pick, ids, st !== 'all'))}
+                    disabled={g.rows.every((x) => !!x.blocked)}
+                    className={`rounded-md border px-2 py-0.5 text-[11px] tabular-nums disabled:opacity-40 ${st === 'all'
+                      ? 'border-mor-slate bg-mor-bluelight text-mor-slate font-medium'
+                      : st === 'some' ? 'border-mor-slate/50 bg-mor-bluelight/40 text-mor-slate'
+                        : 'border-mor-line text-mor-slate hover:bg-mor-sand/50'}`}>
+                    {Number(g.ym.slice(5))} 月 <span className="text-gray-400">{g.rows.length}</span></button>
+                );
+              })}
+            </div>
           </div>
 
           {/* ★ overflow-auto：七欄，窄視窗要能橫向捲（2026-09-23）*/}
