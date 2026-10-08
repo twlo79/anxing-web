@@ -20,12 +20,19 @@
 export type Purpose = 'estate' | 'office' | 'other_biz';
 
 /**
- * 這兩種契約類別**本來就是安幸自己的生意**，不是幫股東收的房租，
+ * 公司登記**本來就是安幸自己的生意**，不是幫股東收的房租，
  * 所以用途一定是 office，勾不勾都一樣。
  *
- * 值對應契約頁的 TYPE_LABEL：office＝辦公室、company＝公司登記。
+ * ★★ 2026-10-08（migration_327）辦公室（type='office'）拿出來了：
+ *   時兆 2F-2 美商炒飯吧是辦公室租約，但租金算時兆的（David 指定）。
+ *   辦公室契約**預設**還是勾著（沒填的時候），只是可以取消。
+ *
+ * 值對應契約頁的 TYPE_LABEL：company＝公司登記。
  */
-export const TYPE_ALWAYS_OFFICE = ['office', 'company'];
+export const TYPE_ALWAYS_OFFICE = ['company'];
+
+/** 沒填的時候預設勾著的類別（可以取消） */
+export const TYPE_DEFAULT_OFFICE = ['office'];
 
 /** 契約類別是不是「一定屬安幸辦公室」的那兩種 */
 export const purposeLockedByType = (type: string | null | undefined) =>
@@ -39,6 +46,7 @@ export function contractPurpose(
   c: { type?: string | null; purpose_type?: string | null },
 ): Purpose {
   if (purposeLockedByType(c.type)) return 'office';
+  if (c.purpose_type == null) return TYPE_DEFAULT_OFFICE.includes(c.type ?? '') ? 'office' : 'estate';
   return c.purpose_type === 'office' ? 'office' : 'estate';
 }
 

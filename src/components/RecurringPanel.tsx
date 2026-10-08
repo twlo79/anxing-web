@@ -46,6 +46,8 @@ type Rc = {
   estate_id: string; property_id: string | null; property_raw: string | null;
   fee_type: string; item_name: string; amount: number;
   start_ym: string; end_ym: string | null; active: boolean; note: string | null;
+  /** 記進營收掛哪（migration_326）：estate＝這個物業、office＝安幸辦公室 */
+  purpose_type?: string | null;
 };
 type Ord = { id: string; order_key: string; checkin: string; amount: number; paid: boolean };
 type Estate = { id: string; name: string };
@@ -272,7 +274,8 @@ export default function RecurringPanel({ canEdit }: { canEdit: boolean }) {
                             <span className="rounded px-1.5 py-0.5 text-[11px] bg-mor-bluelight text-mor-slate">{r.fee_type}</span>
                             <span className="font-medium">{r.item_name}</span>
                             <span className="text-xs text-gray-400">
-                              {r.property_raw || '整棟'}
+                              {/* office：記進營收時物業是安幸辦公室，不算這個物業（migration_326） */}
+                              {r.purpose_type === 'office' ? '營收記到安幸辦公室' : (r.property_raw || '整棟')}
                             </span>
                             <span className="ml-auto text-xs text-gray-500 whitespace-nowrap">
                               本月 <span className="font-medium text-gray-700">${fmt(s.month)}</span>

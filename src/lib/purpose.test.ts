@@ -19,15 +19,21 @@ describe('契約用途（migration_247）', () => {
    *   前端算出 estate、資料庫存成 office 的話，
    *   使用者打開契約會看到勾選框是空的 —— 而報表算的是 office。
    */
-  test('辦公室登記與公司登記：勾不勾都是 office', () => {
-    assert.equal(contractPurpose({ type: 'office', purpose_type: 'estate' }), 'office');
+  test('公司登記：勾不勾都是 office', () => {
     assert.equal(contractPurpose({ type: 'company', purpose_type: 'estate' }), 'office');
-    assert.equal(contractPurpose({ type: 'office' }), 'office');
     assert.equal(contractPurpose({ type: 'company', purpose_type: 'office' }), 'office');
   });
 
-  test('那兩種類別的勾選框是鎖住的，長租不是', () => {
-    assert.equal(purposeLockedByType('office'), true);
+  /* ★ 2026-10-08（migration_327）：辦公室租約預設勾著，但可以取消（時兆 2F-2 算時兆的） */
+  test('辦公室：沒填預設 office，取消了就是 estate', () => {
+    assert.equal(contractPurpose({ type: 'office' }), 'office');
+    assert.equal(contractPurpose({ type: 'office', purpose_type: null }), 'office');
+    assert.equal(contractPurpose({ type: 'office', purpose_type: 'estate' }), 'estate');
+    assert.equal(contractPurpose({ type: 'office', purpose_type: 'office' }), 'office');
+  });
+
+  test('只有公司登記的勾選框是鎖住的', () => {
+    assert.equal(purposeLockedByType('office'), false);
     assert.equal(purposeLockedByType('company'), true);
     assert.equal(purposeLockedByType('longterm'), false);
     assert.equal(purposeLockedByType(null), false);
