@@ -449,8 +449,17 @@ function FixForm({ busy, setBusy, onMsg, onDone, prefill }: {
       return onMsg('補登一定要寫原因。\n\n出勤是薪資的依據，事後只看得到「這一天被改過」是不夠的。', true);
     }
     setBusy(true);
+    /*
+     * ★★★ user_id 一定要帶（2026-10-08 修）。
+     *   權限規則 afix_self 是 `with check (user_id = auth.uid())`，而這一欄沒有預設值 ——
+     *   不帶的話 user_id 是空的，規則判不過，每一個人送補登都被擋
+     *   （花送 10/06 下班卡：new row violates row-level security policy）。
+     *   migration_329 也補了預設值 auth.uid()，兩層都有。
+     */
+    const { data: u } = await supabase.auth.getUser();
+    if (!u.user) { setBusy(false); return onMsg('登入過期了，請重新登入再送一次。', true); }
     const { data, error } = await supabase.from('attendance_fixes')
-      .insert({ work_date: date, kind, fix_time: time, reason: reason.trim() })
+      .insert({ user_id: u.user.id, work_date: date, kind, fix_time: time, reason: reason.trim() })
       .select('id');
     setBusy(false);
     if (error) return onMsg('送出失敗：' + error.message, true);

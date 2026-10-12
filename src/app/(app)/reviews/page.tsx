@@ -286,6 +286,15 @@ export default function ReviewsPage() {
       .then(({ data }) => setMgrStats((data as MgrStat[]) ?? []));
   }, [supabase, dateFrom, dateTo]);
 
+  /** 現任管家：任期沒有結束日、或結束日還沒到（管家評分只列這些人） */
+  const currentMgrs = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    return new Set(tenures
+      .filter((t) => !t.end_date || t.end_date >= today)
+      .map((t) => staffNames[t.staff_id])
+      .filter(Boolean) as string[]);
+  }, [tenures, staffNames]);
+
   const overall = useMemo(() => {
     const cnt = stats.reduce((s, x) => s + Number(x.review_count), 0);
     if (!cnt) return { avg: 0, cnt: 0 };
@@ -606,8 +615,14 @@ export default function ReviewsPage() {
               {exportingMgr ? '產生中…' : '⬇ Excel'}
             </button>
           }>
-            {mgrStats.length === 0 ? <BarEmpty /> : (
-              [...mgrStats].sort((a, b) => mgrOrder(a.manager) - mgrOrder(b.manager)).map((m, _, arr) => {
+            {/*
+              ★ 2026-10-12 David：「可以留這邊有出現的管家嗎」——
+                只列**現任**管家（物業管理裡有掛著、任期還沒結束的人）。
+                離職的、測試帳號、未指派都不列；總分與 5～1 星分佈照舊算全部。
+            */}
+            {mgrStats.filter((m) => currentMgrs.has(m.manager)).length === 0 ? <BarEmpty /> : (
+              [...mgrStats].filter((m) => currentMgrs.has(m.manager))
+                .sort((a, b) => mgrOrder(a.manager) - mgrOrder(b.manager)).map((m, _, arr) => {
                 const max = Math.max(...arr.map((y) => Number(y.total))) || 1;
                 return (
                   <BarRow key={m.manager} tone="green"

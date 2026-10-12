@@ -1,6 +1,6 @@
 'use client';
 import { looksLikeError } from '@/lib/flash-kind';
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx-js-style';
 import { createClient } from '@/lib/supabase';
 import { todayStr } from '@/lib/period';
@@ -436,6 +436,25 @@ export default function TaxPage() {
   }
   const [doImportExpense] = useOnce(importExpenseInner);
 
+  /**
+   * 刪掉一筆**已撤銷**的帶入紀錄（2026-10-08 David：「我要刪掉紀錄」）。
+   * ★ 只有撤銷過的才給刪 —— 那一批的發票已經不在了，紀錄只剩說明用途。
+   *   還有效的批次要先撤銷：直接刪紀錄的話發票還在、卻再也撤不掉。
+   */
+  async function deleteBatch(b: ImportBatch) {
+    if (!b.undone_at) return;
+    if (!confirm(`刪除 ${b.created_at.slice(0, 16).replace('T', ' ')} 這筆已撤銷的紀錄？`)) return;
+    setBusy(true);
+    try {
+      const { data, error } = await supabase.from('tax_import_batches').delete()
+        .eq('id', b.id).not('undone_at', 'is', null).select('id');
+      if (error) return flash('刪除失敗：' + error.message);
+      if (!data?.length) return flash('沒有刪到 —— 可能是權限，或這一批還沒撤銷');
+      setBatches((xs) => xs.filter((x) => x.id !== b.id));
+      savedToast('已刪除紀錄');
+    } finally { setBusy(false); }
+  }
+
   /** 整批撤銷（migration_328）：刪掉那一批帶進來的發票，那些支出就又可以帶 */
   async function undoBatch(b: ImportBatch) {
     if (!confirm(`撤銷 ${b.created_at.slice(0, 10)} 帶入的這一批？\n\n${b.n} 張發票、稅額 $${fmt(Number(b.tax))} 會從稅務表刪掉，`
@@ -731,23 +750,8 @@ export default function TaxPage() {
                 </tr>
               </thead>
               <tbody>
-                {/* ★ 2026-10-08 分月：月份那一列可以整月勾／取消 */}
-                {groupByMonth(pick).map((g) => {
-                  const ids = new Set(g.rows.map((x) => x.expense_id));
-                  const sum = g.rows.reduce((a2, x) => a2 + (Number(x.total_amount) || 0), 0);
-                  return (
-                    <Fragment key={g.ym}>
-                      <tr className="border-t border-mor-line bg-mor-sand/40">
-                        <td className="px-2 py-1">
-                          <TriBox label={`${g.ym} 全選`} state={checkState(g.rows)}
-                            disabled={g.rows.every((x) => !!x.blocked)}
-                            onChange={(on) => setPick(setPicked(pick, ids, on))} />
-                        </td>
-                        <td colSpan={6} className="px-2 py-1 text-[11px] font-medium text-gray-600">
-                          {Number(g.ym.slice(5))} 月・{g.rows.length} 筆・${fmt(sum)}
-                        </td>
-                      </tr>
-                      {g.rows.map((d) => (
+                {/* 月份的快選在上方（2026-10-08 David：表格裡的月份列拿掉） */}
+                {pick.map((d) => (
                   <tr key={d.expense_id} className={`border-t border-mor-line/60 ${d.blocked ? 'opacity-50' : ''}`}>
                     <td className="px-2 py-1.5">
                       <input type="checkbox" checked={d.picked} disabled={!!d.blocked}
@@ -787,10 +791,7 @@ export default function TaxPage() {
                         className="w-20 rounded border border-mor-line px-1.5 py-0.5 text-right" />
                     </td>
                   </tr>
-                      ))}
-                    </Fragment>
-                  );
-                })}
+                ))}
               </tbody>
             </table>
           </div>
@@ -838,7 +839,10 @@ export default function TaxPage() {
                   <span>申報在 {periodLabel(b.period)}</span>
                   <span className="tabular-nums">{b.n} 張・${fmt(Number(b.total))}・稅額 ${fmt(Number(b.tax))}</span>
                   <span className="ml-auto">
-                    {b.undone_at ? <span>已撤銷 {b.undone_at.slice(5, 10)}</span>
+                    {b.undone_at ? <span>已撤銷 {b.undone_at.slice(5, 10)}
+                        {/* 2026-10-08 David：「我要刪掉紀錄」—— 只有撤銷過的可以刪（裡面已經沒有發票了） */}
+                        <button onClick={() => void deleteBatch(b)} disabled={busy}
+                          className="ml-3 text-red-400 underline hover:text-red-600 disabled:opacity-50">刪除紀錄</button></span>
                       : lock ? <span className="text-gray-400">已結算，不能撤</span>
                       : <button onClick={() => void undoBatch(b)} disabled={busy}
                           className="text-red-400 underline hover:text-red-600 disabled:opacity-50">撤銷這一批</button>}
