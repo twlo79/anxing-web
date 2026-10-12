@@ -11,6 +11,7 @@ import {
 } from './types';
 import { savedToast, savedText } from '@/lib/saved-feedback';
 import QuotaSection from './quota-section';
+import PunchWhoSection from './punch-who-section';
 import RangeInput from '@/components/RangeInput';
 import { EXPORT_TONE } from '@/components/Actions';
 
@@ -21,9 +22,9 @@ import { EXPORT_TONE } from '@/components/Actions';
  * 不再往下切。每天要用的在「打卡」，每週要看的在「核可」。
  */
 
-type Sub = 'gps' | 'hours' | 'quota' | 'report';
+type Sub = 'gps' | 'who' | 'hours' | 'quota' | 'report';
 const SUB: Record<Sub, string> = {
-  gps: '打卡位置', hours: '上下班時間', quota: '假別額度', report: '出勤表',
+  gps: '打卡位置', who: '誰可以在哪打卡', hours: '上下班時間', quota: '假別額度', report: '出勤表',
 };
 
 type Person = {
@@ -79,6 +80,7 @@ export default function AdminTab({ onMsg }: TabProps) {
       {/* ★ min-w-0:不加的話裡面的寬表格會把側欄擠扁（flex 子項預設不縮） */}
       <div className="min-w-0 flex-1 p-3 md:p-4">
         {sub === 'gps' && <GpsSection onMsg={onMsg} />}
+        {sub === 'who' && <PunchWhoSection onMsg={onMsg} />}
         {sub === 'hours' && <HoursSection onMsg={onMsg} />}
         {sub === 'quota' && <QuotaSection onMsg={onMsg} />}
         {sub === 'report' && <ReportSection onMsg={onMsg} />}
