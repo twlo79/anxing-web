@@ -24,6 +24,11 @@ import {
   ALERT_WINDOWS, OUT_WINDOWS, DEFAULT_END_WINDOW, DEFAULT_OUT_WINDOW, winLabel, winDays, parseWinOr, type AlertWindow,
 } from '@/lib/hk-alerts';
 import ToggleInfo from '@/components/ToggleInfo';
+import { savedToast } from '@/lib/saved-feedback';
+import { isManagerOrBoss, isFinance } from '@/lib/roles';
+import { airbnbLinks } from '@/lib/airbnb-link';
+import { parseRoomsPrefs, serializeRoomsPrefs, shiftYm, ROOMS_PREFS_KEY } from '@/lib/rooms-prefs';
+import MovePanel, { type MoveRoom } from './move-panel';
 import {
   ancestryOf, occupancyOf, occupancyByRoom, totalOccupancy, fmtPct, occTone, type RoomNode,
 } from '@/lib/occupancy';
@@ -172,6 +177,23 @@ function matchPill(x: { real: readonly Stay[]; dups: readonly unknown[] }, view:
   return x.real.some((s) => s.tone === view);
 }
 
+/**
+ * 手機版（< md）。卡片與移房在手機上是**底部抽屜**，桌機是貼著色條的小卡片／右側抽屜。
+ * ★ 一開始回 false（伺服器端沒有視窗），掛上之後才量 —— 不在 render 裡讀 window。
+ */
+function useIsMobile(): boolean {
+  const [m, setM] = useState(false);
+  useEffect(() => {
+    const q = window.matchMedia('(max-width: 767px)');
+    const f = () => setM(q.matches);
+    f(); q.addEventListener('change', f);
+    return () => q.removeEventListener('change', f);
+  }, []);
+  return m;
+}
+/** 手機卡片抽屜佔螢幕高度的比例（2026-10-12 David 過審「約 2/5」）。改這裡要一起改 StayCard 的 h-[42vh] */
+const SHEET_RATIO = 0.42;
+
 /** ③ 點開的那張卡片。位置用 `fixed` —— 見下面 `openCard()` 的說明 */
 type Picked = { stay: Stay; room: string; estate: string | null; x: number; y: number };
 
@@ -265,7 +287,20 @@ export default function RoomStatusPage() {
   /** 展開的房源（同一間有兩筆以上時，一筆一條；2026-10-06 David） */
   const [openRooms, setOpenRooms] = useState<Set<string>>(new Set());
   /** 卡片上能不能改備註（管家以上，跟訂單／契約編輯同一組） */
-  const canNote = canEditOrders(useProfile().role);
+  const { role } = useProfile();
+  const canNote = canEditOrders(role);
+  /** 卡片上的金額只給主管、總經理、會計看（管家看排房不看錢） */
+  const canMoney = isManagerOrBoss(role) || isFinance(role);
+  /** 本頁移房（2026-10-12）：可以移到哪些房（在用、勾排房表、物業在用） */
+  const [moveRooms, setMoveRooms] = useState<MoveRoom[]>([]);
+  /** `物業/房號` → Airbnb 房源頁 */
+  const [abByRoom, setAbByRoom] = useState<Record<string, string>>({});
+  /** 訂單 id → 卡片上的來源編號與金額（不放進 Stay —— Stay 是日曆算法的型別，跟錢無關） */
+  const [orderInfo, setOrderInfo] = useState<Record<string, { key: string | null; amount: number | null }>>({});
+  /** 正在移房的訂單 id */
+  const [moving, setMoving] = useState<string | null>(null);
+  const isMobile = useIsMobile();
+  const gridRef = useRef<HTMLDivElement>(null);
 
   /*
    * ★★ 一進來就選好物業（使用者 2026-09-15：「預設物業選正隆」）。
@@ -273,6 +308,44 @@ export default function RoomStatusPage() {
    *   把它的 `sort` 調到前面就好，不用再改一次程式。
    */
   const defaulted = useRef(false);
+
+  /*
+   * ══════════ 篩選記憶（2026-10-12 David：「要有 local storage 不要把記憶洗掉」）══════════
+   *
+   * ★★ 「存」寫在「讀」**前面**：同一次掛載時兩支依序跑，存的那支先看到 ready=false 就跳過，
+   *   讀完、state 換成記憶裡的值之後才開始存 —— 反過來的話，第一次會先把預設值蓋上去。
+   * ★ 網址帶的 `?ewin=` `?owin=` 優先（丟給會計的連結要看到同一份）。
+   * ★ 讀寫都包 try：無痕視窗、存滿、被擋都可能丟例外 —— 記不住不該讓整頁壞掉。
+   */
+  const prefsReady = useRef(false);
+  useEffect(() => {
+    if (!prefsReady.current) return;
+    try {
+      window.localStorage.setItem(ROOMS_PREFS_KEY, serializeRoomsPrefs({
+        estF, mode, ym, from, to, kw, view, showDup, showEnd, showOut, ewin: endWin, owin: outWin,
+      }));
+    } catch { /* 記不住就算了 */ }
+  }, [estF, mode, ym, from, to, kw, view, showDup, showEnd, showOut, endWin, outWin]);
+  useEffect(() => {
+    let p: ReturnType<typeof parseRoomsPrefs> = null;
+    try { p = parseRoomsPrefs(window.localStorage.getItem(ROOMS_PREFS_KEY), Object.keys(VIEW_LABEL)); } catch { p = null; }
+    if (p) {
+      if (p.estF !== undefined) { setEstF(p.estF); defaulted.current = true; }
+      if (p.mode) setMode(p.mode);
+      if (p.ym) setYm(p.ym);
+      if (p.from) setFrom(p.from);
+      if (p.to) setTo(p.to);
+      if (p.kw !== undefined) { setKw(p.kw); setKwInput(p.kw); }
+      if (p.view !== undefined) setView(p.view as View);
+      if (p.showDup !== undefined) setShowDup(p.showDup);
+      if (p.showEnd !== undefined) setShowEnd(p.showEnd);
+      if (p.showOut !== undefined) setShowOut(p.showOut);
+      const q = new URLSearchParams(window.location.search);
+      if (p.ewin != null && !q.get('ewin')) setEndWin(parseWinOr(String(p.ewin), DEFAULT_END_WINDOW));
+      if (p.owin != null && !q.get('owin')) setOutWin(parseWinOr(String(p.owin), DEFAULT_OUT_WINDOW));
+    }
+    prefsReady.current = true;
+  }, []);
   const defEst = estates[0]?.name ?? '';
 
   const range: Range = useMemo(
@@ -299,7 +372,7 @@ export default function RoomStatusPage() {
     const f = range.from;
     const t = range.to;
 
-    const [{ data: es }, { data: ps }] = await Promise.all([
+    const [{ data: es }, { data: ps }, { data: pl }] = await Promise.all([
       supabase.from('estates').select('id, name, sort, active').order('sort'),
       /*
        * ★ 停用的房源不畫（使用者 2026-09-15：「物業只有正隆」）。
@@ -310,8 +383,10 @@ export default function RoomStatusPage() {
        */
       /* ★ 2026-10-04：住房率要整個物業的房（含沒勾排房表、但要算住房率的），所以撈全部在用的，畫的時候再篩 */
       supabase.from('properties')
-        .select('id, name, estate_id, show_in_room_calendar, parent_property_id, units, count_in_occupancy')
+        .select('id, name, estate_id, show_in_room_calendar, parent_property_id, units, count_in_occupancy, airbnb_listing_id')
         .eq('active', true).order('name'),
+      /* Airbnb 連結用（一間房掛多個 listing 時多的在這裡）。讀不到就是沒有連結，不擋整頁 */
+      supabase.from('property_listings').select('listing_id, property_id, is_current'),
     ]);
     /*
      * ★★★ 停用的物業不畫（使用者 2026-09-15：「我只需要這一頁不要顯示」）。
@@ -354,6 +429,19 @@ export default function RoomStatusPage() {
       .map((r) => ({ name: r.name, estate: r.est!.name, estateSort: r.est!.sort })));
     setNoEstate(ownEst.filter((r) => !r.est).map((r) => r.name));
 
+    /* 本頁移房的候選房、Airbnb 連結（2026-10-12）—— 跟日曆畫的是同一批房 */
+    const links = airbnbLinks(allProps, (pl ?? []) as any[]);
+    const ab: Record<string, string> = {};
+    const mr: MoveRoom[] = [];
+    for (const p of allProps) {
+      const est = p.estate_id ? estById[p.estate_id] : undefined;
+      if (!est?.active || p.show_in_room_calendar === false) continue;
+      if (links[p.id]) ab[`${est.name}/${p.name}`] = links[p.id];
+      mr.push({ id: p.id, name: p.name, estate_id: p.estate_id, estate: est.name });
+    }
+    setAbByRoom(ab);
+    setMoveRooms(mr);
+
     /*
      * ★★ 撈的是「跟這段有交集」的，不是「起日在這段裡」的 ——
      *   後者會漏掉跨進來的長住（8/20 住到 9/10 那種），
@@ -363,7 +451,7 @@ export default function RoomStatusPage() {
      *   9/1 退房的單最後一晚是 8/31，跟九月沒有交集。
      */
     const { rows: os } = await fetchAll<any>((a, b) => supabase.from('orders')
-      .select('id, property_raw, guest_name, checkin, checkout, source, imported_via, contract_id, note')
+      .select('id, property_raw, guest_name, checkin, checkout, source, imported_via, contract_id, note, order_key, amount')
       .not('source', 'in', '(oneoff,airbnb_cancelled)')
       .is('cancelled_on', null)   // 已取消的私下訂單不畫（migration_319）—— 那幾晚空出來了
       .lte('checkin', t).gt('checkout', f).range(a, b));
@@ -371,6 +459,10 @@ export default function RoomStatusPage() {
     const { data: cs } = await supabase.from('contracts')
       .select('id, room, tenant_name, display_name, start_date, end_date, active, earnest_only, note')
       .lte('start_date', t).gte('end_date', f);
+
+    const info: Record<string, { key: string | null; amount: number | null }> = {};
+    for (const o of (os ?? []) as any[]) info[o.id] = { key: o.order_key ?? null, amount: o.amount == null ? null : Number(o.amount) };
+    setOrderInfo(info);
 
     const oStays: Stay[] = ((os ?? []) as any[])
       .filter((o) => o.property_raw)
@@ -660,6 +752,19 @@ export default function RoomStatusPage() {
   const openCard = (e: React.MouseEvent, stay: Stay, room: Room) => {
     e.stopPropagation();
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    /*
+     * ★★ 手機：卡片是底部抽屜（約 2/5 螢幕）。點的那一列在抽屜會蓋到的位置時，
+     *   先捲表格、不夠再捲整頁，讓那一列停在抽屜正上方（2026-10-12 過審）。
+     */
+    if (isMobile) {
+      const delta = r.bottom - (window.innerHeight * (1 - SHEET_RATIO) - 12);
+      if (delta > 0) requestAnimationFrame(() => {
+        const c = gridRef.current;
+        const d1 = c ? Math.max(0, Math.min(delta, c.scrollHeight - c.clientHeight - c.scrollTop)) : 0;
+        if (c && d1) c.scrollBy({ top: d1, behavior: 'smooth' });
+        if (delta - d1 > 0) window.scrollBy({ top: delta - d1, behavior: 'smooth' });
+      });
+    }
     const W = 296;
     const H = 300;
     setPicked({
@@ -669,9 +774,28 @@ export default function RoomStatusPage() {
     });
   };
 
+  /*
+   * 桌機鍵盤 ← → 換月（2026-10-12）。
+   * ★ 正在打字（輸入框、下拉）、卡片或移房開著的時候不換 —— 那時候的 ← → 是給那個東西用的。
+   */
+  useEffect(() => {
+    if (mode !== 'month') return;
+    const f = (e: KeyboardEvent) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t?.closest?.('input, textarea, select, [contenteditable="true"]')) return;
+      if (picked || moving) return;
+      e.preventDefault();
+      setYm((y) => shiftYm(y, e.key === 'ArrowLeft' ? -1 : 1));
+    };
+    window.addEventListener('keydown', f);
+    return () => window.removeEventListener('keydown', f);
+  }, [mode, picked, moving]);
+
   /** 一格（空格或色條）。主列與展開的子列共用 */
   const drawCell = (c: Cell, room: Room) => {
-                  const cls = `relative border-b border-r border-mor-line min-w-[42px]
+                  const cls = `relative border-b border-r border-mor-line min-w-[36px] md:min-w-[42px]
                     ${isWeekend(c.day) ? 'bg-mor-bg/50' : ''}`;
                   if (c.type === 'free') return <td key={c.day} className={cls} />;
                   /*
@@ -714,7 +838,9 @@ export default function RoomStatusPage() {
   };
 
   return (
-    <div onClick={() => picked && setPicked(null)}>
+    <div onClick={() => picked && setPicked(null)}
+      /* 手機抽屜開著時底下多留一段，最後幾列才捲得到抽屜上方 */
+      className={picked && isMobile ? 'pb-[45vh]' : ''}>
       <div className="flex items-center justify-between mb-4">
         <h1>房源狀態
           <span className="text-sm font-normal text-gray-400 ml-2">
@@ -722,6 +848,24 @@ export default function RoomStatusPage() {
           </span>
         </h1>
       </div>
+
+      {/*
+        手機的換月放在最上面一整排（2026-10-12 過審）—— 篩選列在手機上是收起來的，
+        換月是這一頁最常做的事，不該藏在「篩選」裡面。
+      */}
+      {mode === 'month' && (
+        <div className="md:hidden flex items-center gap-2 mb-3">
+          <div className="flex-1 flex items-center justify-between h-11 rounded-lg border border-gray-300 bg-white">
+            <button type="button" onClick={() => setYm(shiftYm(ym, -1))} aria-label="上個月"
+              className="w-12 h-full text-xl text-mor-slate">‹</button>
+            <b className="tabular-nums text-ui">{ym}</b>
+            <button type="button" onClick={() => setYm(shiftYm(ym, 1))} aria-label="下個月"
+              className="w-12 h-full text-xl text-mor-slate">›</button>
+          </div>
+          <button type="button" onClick={() => setYm(thisYm())} disabled={ym === thisYm()}
+            className="h-11 rounded-lg border border-gray-300 bg-white px-3 text-uisub text-mor-slate disabled:text-gray-300">本月</button>
+        </div>
+      )}
 
       <FilterBar active={active} right={<FilterCount n={visible.length} unit="間" />}>
         <FilterSelect label="物業" value={estF} onChange={setEstF}
@@ -745,8 +889,20 @@ export default function RoomStatusPage() {
         </Field>
         {mode === 'month' ? (
           <Field label="月份">
-            <input type="month" value={ym} onChange={(e) => setYm(e.target.value || thisYm())}
-              className="h-12 md:h-10 rounded-lg border border-gray-300 px-2 text-ui" />
+            {/* ‹ › 換月（2026-10-12 David：「有左右可以看上個月下個月」）。桌機鍵盤 ← → 也能翻 */}
+            <div className="flex items-center gap-1.5">
+              <div className="flex h-12 md:h-10 rounded-lg border border-gray-300 overflow-hidden bg-white">
+                <button type="button" onClick={() => setYm(shiftYm(ym, -1))} aria-label="上個月" title="上個月（←）"
+                  className="w-10 text-lg text-mor-slate hover:bg-mor-sand">‹</button>
+                <input type="month" value={ym} onChange={(e) => setYm(e.target.value || thisYm())}
+                  className="border-x border-gray-300 px-2 text-ui" />
+                <button type="button" onClick={() => setYm(shiftYm(ym, 1))} aria-label="下個月" title="下個月（→）"
+                  className="w-10 text-lg text-mor-slate hover:bg-mor-sand">›</button>
+              </div>
+              <button type="button" onClick={() => setYm(thisYm())} disabled={ym === thisYm()}
+                className="h-12 md:h-10 rounded-lg border border-gray-300 bg-white px-3 text-uisub text-mor-slate
+                           hover:bg-mor-sand disabled:text-gray-300 disabled:hover:bg-white">本月</button>
+            </div>
           </Field>
         ) : (
           <>
@@ -1054,12 +1210,12 @@ export default function RoomStatusPage() {
           橫軸三十天一定要橫向捲動，不釘住的話捲到第 20 天
           就看不出這是哪一間、哪一號（anxing-ui 第二節）。
       */
-      <div className="rounded-xl border border-mor-line bg-white overflow-auto max-h-[70vh]">
+      <div ref={gridRef} className="rounded-xl border border-mor-line bg-white overflow-auto max-h-[70vh]">
         <table className="border-separate border-spacing-0 text-xs w-max min-w-full">
           <thead>
             <tr>
               <th className="sticky left-0 top-0 z-30 bg-mor-sand border-b border-r border-mor-line
-                             min-w-[150px] max-w-[150px] px-2.5 py-1.5 text-left font-semibold">房源</th>
+                             min-w-[104px] max-w-[104px] md:min-w-[150px] md:max-w-[150px] px-2.5 py-1.5 text-left font-semibold">房源</th>
               {/*
                 ★★★ 「今天」畫在**表頭**，不是畫在格子上。
                   有人住的那幾天會被合併成**一個** `td`（`colSpan`），
@@ -1077,7 +1233,7 @@ export default function RoomStatusPage() {
                 const first = d === 1;
                 return (
                   <th key={day} className={`sticky top-0 z-20 border-b border-r border-mor-line
-                      min-w-[42px] py-1 text-center font-semibold
+                      min-w-[36px] md:min-w-[42px] py-1 text-center font-semibold
                       ${isToday ? 'bg-mor-slate text-white'
                                 : `bg-mor-sand ${isWeekend(day) ? 'text-[#C25B5B]' : ''}`}`}>
                     {first && !isToday
@@ -1105,13 +1261,15 @@ export default function RoomStatusPage() {
               const dupDays = dups.reduce((n, d) => n + daysBetween(d.from, d.to) + 1, 0);
               const dupIds = new Set(dups.flatMap((d) => d.stays.map((x) => x.id)));
               const isOpen = multi && openRooms.has(rk);
+              /* 卡片開著的那一列加黃底 —— 手機抽屜蓋住半個畫面時，還看得出點的是哪一間 */
+              const isPicked = !!picked && picked.room === room.name && picked.estate === room.estate;
               return (
               <Fragment key={rk}>
               <tr
-                className={`h-8 ${dups.length ? 'bg-[#FFFDF6]' : ''}`}>
+                className={`h-8 ${isPicked ? 'bg-amber-50' : dups.length ? 'bg-[#FFFDF6]' : ''}`}>
                 <td className={`sticky left-0 z-10 border-b border-r border-mor-line
-                               min-w-[150px] max-w-[150px] px-2.5 font-medium text-sm whitespace-nowrap
-                               overflow-hidden text-ellipsis ${dups.length ? 'bg-[#FFFDF6]' : 'bg-white'}`}>
+                               min-w-[104px] max-w-[104px] md:min-w-[150px] md:max-w-[150px] px-2.5 font-medium text-sm whitespace-nowrap
+                               overflow-hidden text-ellipsis ${isPicked ? 'bg-amber-100' : dups.length ? 'bg-[#FFFDF6]' : 'bg-white'}`}>
                   {multi ? (
                     <button type="button" className="inline-flex items-center gap-1"
                       onClick={() => setOpenRooms((m) => { const n = new Set(m); n.has(rk) ? n.delete(rk) : n.add(rk); return n; })}>
@@ -1121,8 +1279,15 @@ export default function RoomStatusPage() {
                       <span className="text-gray-400 text-[10px]">{isOpen ? '▾' : '▸'}</span>
                     </button>
                   ) : room.name}
+                  {/* Airbnb（2026-10-12）：有對應 listing 才出現，沒有就整顆不畫 */}
+                  {abByRoom[rk] && (
+                    <a href={abByRoom[rk]} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}
+                      title="在 Airbnb 打開" aria-label={`${room.name} 的 Airbnb 頁`}
+                      className="ml-1.5 inline-flex h-4 w-4 items-center justify-center rounded bg-[#E0484E] align-middle
+                                 text-[9px] font-bold text-white hover:brightness-90">A</a>
+                  )}
                   {/* ★ 物業維持小字 —— 它是附註,跟房號一起放大的話兩個一樣重,反而更難掃 */}
-                  <span className="text-gray-400 font-normal text-[11px] ml-1.5">{room.estate}</span>
+                  <span className="hidden md:inline text-gray-400 font-normal text-[11px] ml-1.5">{room.estate}</span>
                 </td>
                 {cells.map((c: Cell) => drawCell(c, room))}
                 {(() => {
@@ -1144,7 +1309,7 @@ export default function RoomStatusPage() {
               {isOpen && [...real].filter((x) => dupIds.has(x.id))
                 .sort((x, y) => (x.start ?? '').localeCompare(y.start ?? '')).map((st) => (
                 <tr key={`${rk}/${st.id}`} className="h-7 bg-mor-bg/30">
-                  <td className="sticky left-0 z-10 border-b border-r border-mor-line bg-[#FAFAF8] min-w-[150px] max-w-[150px]
+                  <td className="sticky left-0 z-10 border-b border-r border-mor-line bg-[#FAFAF8] min-w-[104px] max-w-[104px] md:min-w-[150px] md:max-w-[150px]
                                  pl-6 pr-2 text-[11px] text-gray-500 whitespace-nowrap overflow-hidden text-ellipsis">
                     └ {st.guest || '（沒有名字）'}
                   </td>
@@ -1154,14 +1319,14 @@ export default function RoomStatusPage() {
               ))}
               {isOpen && (
                 <tr className="h-7">
-                  <td className="sticky left-0 z-10 border-b border-r border-mor-line bg-red-50 min-w-[150px] max-w-[150px]
+                  <td className="sticky left-0 z-10 border-b border-r border-mor-line bg-red-50 min-w-[104px] max-w-[104px] md:min-w-[150px] md:max-w-[150px]
                                  pl-6 pr-2 text-[11px] font-medium text-red-600 whitespace-nowrap">└ 撞在這幾天</td>
                   {(() => {
                     // 重疊的日子畫成紅條（連續的併成一段），其餘空格
                     const hitDay = new Set(dups.flatMap((d) => eachDay({ from: d.from, to: d.to })));
                     const out: React.ReactNode[] = [];
                     for (let i = 0; i < days.length;) {
-                      if (!hitDay.has(days[i])) { out.push(<td key={days[i]} className="border-b border-r border-mor-line min-w-[42px]" />); i++; continue; }
+                      if (!hitDay.has(days[i])) { out.push(<td key={days[i]} className="border-b border-r border-mor-line min-w-[36px] md:min-w-[42px]" />); i++; continue; }
                       let n = 1; while (i + n < days.length && hitDay.has(days[i + n])) n++;
                       const a = days[i], b = days[i + n - 1];
                       out.push(
@@ -1202,11 +1367,20 @@ export default function RoomStatusPage() {
 
       {/* ③ 點開的卡片 —— 見上面 `openCard()` */}
       {picked && <StayCard p={picked} today={today} canNote={canNote} onClose={() => setPicked(null)}
+        sheet={isMobile} abUrl={abByRoom[`${picked.estate}/${picked.room}`] ?? null}
+        info={picked.stay.kind === 'order' && picked.stay.srcId ? orderInfo[picked.stay.srcId] ?? null : null}
+        canMoney={canMoney}
+        onMove={() => { const id = picked.stay.srcId; setPicked(null); if (id) setMoving(id); }}
         onNoteSaved={(id, note) => {
           /* 存好之後把畫面上那一筆換掉 —— 不重抓整個月，卡片也不用關 */
           setStays((ss) => ss.map((s) => (s.id === id ? { ...s, note } : s)));
           setPicked((pk) => (pk && pk.stay.id === id ? { ...pk, stay: { ...pk.stay, note } } : pk));
         }} />}
+
+      {/* 本頁移房（2026-10-12）：跟訂單頁同一套算法與 RPC，存好之後日曆與提醒都重抓 */}
+      {moving && <MovePanel srcId={moving} sheet={isMobile} rooms={moveRooms}
+        onClose={() => setMoving(null)}
+        onDone={(msg) => { setMoving(null); savedToast(msg); load(); loadAlerts(); }} />}
     </div>
   );
 }
@@ -1225,9 +1399,15 @@ export default function RoomStatusPage() {
  *   這一頁最常被誤會的就是這件事（「9/18 退房那格為什麼是空的」）。
  *   把最後一晚直接寫出來，那一格為什麼空著就不用再問了。
  */
-function StayCard({ p, today, canNote, onClose, onNoteSaved }: {
+function StayCard({ p, today, canNote, onClose, onNoteSaved, sheet, abUrl, info, canMoney, onMove }: {
   p: Picked; today: string; canNote: boolean; onClose: () => void;
   onNoteSaved: (stayId: string, note: string | null) => void;
+  /** 手機：底部抽屜（2026-10-12 David：「貼著底部往上彈出，佔比較多的區域」） */
+  sheet: boolean;
+  abUrl: string | null;
+  info: { key: string | null; amount: number | null } | null;
+  canMoney: boolean;
+  onMove: () => void;
 }) {
   const s = p.stay;
   const supabase = useMemo(() => createClient(), []);
@@ -1252,16 +1432,30 @@ function StayCard({ p, today, canNote, onClose, onNoteSaved }: {
   const last = lastNightOf(s);
   const nights = s.start && last ? daysBetween(s.start, last) + 1 : 0;
   const href = s.kind === 'contract' ? `/contracts?contract=${s.srcId}` : `/shortterm?order=${s.srcId}`;
+  /* 找房移房：只有訂單（契約不在這裡移），管家以上 */
+  const canMove = s.kind === 'order' && canNote && !!s.srcId;
+  const y0 = useRef<number | null>(null);
   return (
     <>
       {/* 點外面關掉。★ 蓋滿整個視窗 —— 只靠色條自己的 blur 的話，捲動時會關不掉 */}
       <div className="fixed inset-0 z-40" onClick={onClose} />
       <div onClick={(e) => e.stopPropagation()}
-        style={{ left: p.x, top: p.y }}
-        className="fixed z-50 w-[296px] rounded-xl border border-mor-line bg-white p-3 shadow-xl">
+        style={sheet ? undefined : { left: p.x, top: p.y }}
+        className={sheet
+          ? 'fixed inset-x-0 bottom-0 z-50 h-[42vh] flex flex-col rounded-t-2xl border-t border-mor-line bg-white shadow-[0_-8px_28px_rgba(0,0,0,0.16)]'
+          : 'fixed z-50 w-[296px] rounded-xl border border-mor-line bg-white p-3 shadow-xl'}>
+        {/* 手機抽屜的把手：往下拉關掉 */}
+        {sheet && (
+          <div className="pt-2 pb-1 shrink-0 touch-none"
+            onPointerDown={(e) => { y0.current = e.clientY; }}
+            onPointerUp={(e) => { if (y0.current != null && e.clientY - y0.current > 60) onClose(); y0.current = null; }}>
+            <i className="block mx-auto w-10 h-1.5 rounded-full bg-mor-line" />
+          </div>
+        )}
+        <div className={sheet ? 'flex-1 overflow-y-auto px-4 pb-3' : ''}>
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <div className="flex items-center gap-1.5 font-bold text-sm">
+            <div className={`flex items-center gap-1.5 font-bold ${sheet ? 'text-base' : 'text-sm'}`}>
               <i className={`w-2.5 h-2.5 rounded-sm shrink-0 ${done ? DONE_BAR : TONE[s.tone].bar}`} />
               <span className="truncate">{s.guest || '（沒有名字）'}</span>
             </div>
@@ -1270,10 +1464,26 @@ function StayCard({ p, today, canNote, onClose, onNoteSaved }: {
             </div>
           </div>
           <button onClick={onClose} aria-label="關閉"
-            className="text-gray-400 hover:text-gray-600 text-base leading-none shrink-0">✕</button>
+            className={sheet ? 'w-8 h-8 rounded-full bg-mor-bg text-gray-500 text-base leading-none shrink-0'
+                             : 'text-gray-400 hover:text-gray-600 text-base leading-none shrink-0'}>✕</button>
         </div>
 
-        <dl className="mt-2.5 grid grid-cols-[auto_1fr] gap-x-2.5 gap-y-1 text-xs">
+        <dl className={`mt-2.5 grid grid-cols-[auto_1fr] gap-x-2.5 ${sheet ? 'gap-y-1.5 text-sm' : 'gap-y-1 text-xs'}`}>
+          {/* 房源＋Airbnb（2026-10-12）*/}
+          <dt className="text-gray-400">房源</dt>
+          <dd>
+            <b className="font-semibold">{p.room}</b>
+            {abUrl && <a href={abUrl} target="_blank" rel="noreferrer"
+              className="ml-2 text-mor-slate hover:text-mor-slatedark">Airbnb ↗</a>}
+          </dd>
+          {info?.key && (<>
+            <dt className="text-gray-400">訂單編號</dt>
+            <dd className="font-mono">{info.key}</dd>
+          </>)}
+          {canMoney && info?.amount != null && (<>
+            <dt className="text-gray-400">金額</dt>
+            <dd className="tabular-nums">NT$ {info.amount.toLocaleString()}</dd>
+          </>)}
           <dt className="text-gray-400">期間</dt>
           <dd className="tabular-nums">{s.start ?? '—'} ~ {s.end ?? '—'}</dd>
           <dt className="text-gray-400">最後一晚</dt>
@@ -1317,16 +1527,31 @@ function StayCard({ p, today, canNote, onClose, onNoteSaved }: {
           </div>
         )}
 
+        {!sheet && (
         <div className="mt-2.5 pt-2 border-t border-mor-line flex items-center justify-between text-xs">
           <a href={href} target="_blank" rel="noreferrer" className="text-mor-slate hover:text-mor-slatedark">
             打開這張{KIND[s.kind]} →
           </a>
-          {/* 找房移房（2026-10-06）：開訂單頁的移房視窗，房源下拉只列整段都空的房。契約不在這裡移 */}
-          {s.kind === 'order' && canNote && s.srcId && (
-            <a href={`/shortterm?move=${s.srcId}`} target="_blank" rel="noreferrer"
-              className="font-medium text-mor-slate hover:text-mor-slatedark">找房移房 →</a>
+          {/* 找房移房（2026-10-12 改成本頁抽屜）—— 跟訂單頁同一套算法與 RPC。契約不在這裡移 */}
+          {canMove && (
+            <button type="button" onClick={onMove}
+              className="font-medium text-mor-slate hover:text-mor-slatedark">找房移房</button>
           )}
         </div>
+        )}
+        </div>
+        {/* 手機：兩顆大按鈕。「打開」實心排第一（抽屜按鈕的規矩），移房外框 */}
+        {sheet && (
+          <div className="shrink-0 flex gap-2 border-t border-mor-line px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+            <a href={href} target="_blank" rel="noreferrer"
+              className="flex-1 h-12 rounded-xl bg-mor-slate text-white text-sm font-medium flex items-center justify-center">
+              打開這張{KIND[s.kind]}</a>
+            {canMove && (
+              <button type="button" onClick={onMove}
+                className="flex-1 h-12 rounded-xl border border-mor-line bg-white text-sm font-medium">找房移房</button>
+            )}
+          </div>
+        )}
       </div>
     </>
   );

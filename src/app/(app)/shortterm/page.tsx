@@ -57,7 +57,9 @@ import TrashLink from '@/components/TrashLink';
 import PricingFeeModal from './pricing-fee-modal';
 import CancelSettleModal from './cancel-settle-modal';
 import { cancelBlockedReason } from '@/lib/cancel-settle';
-import { busyOfOrder, busyOfContract, roomFree, nightsLabel, dayBefore, type Busy } from '@/lib/room-free';
+import { roomFree, nightsLabel, dayBefore } from '@/lib/room-free';
+import { moveSegments, moveError, moveChain, type MoveStay, type MoveState } from '@/lib/order-move';
+import { loadMove, commitMove } from '@/lib/order-move-io';
 import { canPricingFee, PRICING_TITLE } from '@/lib/pricing-fee';
 import Fold from '@/components/Fold';
 // 訂單的合約 PDF（migration_325，跟契約文件同一套）
@@ -186,26 +188,7 @@ type Fee = {
    */
   deposit_id?: string | null;
 };
-type Stay = { room: string; estateId: string | null; propertyId: string | null; from: string };
-type MoveState = {
-  grp: string; checkin: string; checkout: string;
-  totalNights: number; totalAmount: number;
-  guest: string | null; source: string; account: string | null; stays: Stay[];
-  /**
-   * 打開視窗**當下**的房號與備註（migration_246）。
-   *
-   * ★★★ `stays` 會被使用者改掉，所以「原本住哪」只能在開視窗時記下來。
-   *   少了它就算不出 `B01>B03` 的第一段 —— 而那正是使用者要看的東西。
-   */
-  origRooms: string[];
-  /** 原本的備註。★ 移房要**追加**不是覆蓋（見 doMove） */
-  origNote: string | null;
-  /**
-   * 這段期間其他人佔著哪些房（2026-10-06 找空房移房）。不含這一組自己、不含已取消。
-   * null ＝ 還在載入（下拉先列全部，載完才篩）
-   */
-  busy: Busy[] | null;
-};
+type Stay = MoveStay;
 
 /*
  * 這一頁列哪些來源。
@@ -1240,170 +1223,23 @@ export default function ShortTermPage() {
     flash(r.message); if (r.ok) load();
   }
   async function openMove(o: Order) {
-    const grp = o.move_group || o.id;
-    const { data: segs } = await supabase.from('orders').select('*').or(`id.eq.${grp},move_group.eq.${grp}`).order('checkin');
-    const list = (segs && segs.length ? segs : [o]) as any[];
-    const stays: Stay[] = list.map((x) => ({ room: x.property_raw ?? '', estateId: x.estate_id, propertyId: x.property_id ?? null, from: x.checkin }));
-    const checkin = list[0].checkin, checkout = list[list.length - 1].checkout;
-    const totalNights = Math.max(1, Math.round((new Date(checkout).getTime() - new Date(checkin).getTime()) / 86400000));
-    const totalAmount = list.reduce((a, x) => a + Number(x.amount || 0), 0);
-    setMove({
-      grp, checkin, checkout, totalNights, totalAmount,
-      guest: o.guest_name, source: o.source, account: o.account, stays,
-      // ★ 原本住哪、原本的備註 —— 兩個都會被下面的編輯蓋掉，先存起來
-      origRooms: list.map((x) => (x.property_raw ?? '').trim()).filter(Boolean),
-      /*
-       * ★★★ 備註要拿**第一段**的，不是 `o` 的。
-       *
-       *   移房視窗可以從**任何一段**打開（`openMove` 會把整組載進來），
-       *   而 `patch.note` 是寫回第一段（`.eq('id', grp)`）。
-       *   這裡用 `o.note` 的話，從第二段打開就會把第二段的備註
-       *   複製到第一段上，**把第一段原本的備註蓋掉** ——
-       *   而蓋掉不會有任何提示。
-       */
-      origNote: (list[0]?.note ?? null),
-      busy: null,
-    });
     /*
-     * 找空房（2026-10-06 David：「要整段都空著的才能移」）：
-     *   撈跟這張單期間有交集的訂單與契約，排掉這一組自己（不然原房永遠不空）與已取消的。
+     * ★★ 載入與找空房搬到 `lib/order-move-io.ts`（2026-10-12）—— 房源狀態頁也要在本頁移房，
+     *   兩頁各寫一份的話，改了一邊另一邊會安靜地留在舊答案。
+     *   ★ 備註拿**第一段**的（move_order 把備註寫回第一段）—— 規則在 moveStateOf()。
      */
-    const ids = new Set(list.map((x) => x.id as string));
-    const [{ data: os }, { data: cs }] = await Promise.all([
-      supabase.from('orders').select('id, move_group, property_id, estate_id, property_raw, checkin, checkout')
-        .not('source', 'in', '(oneoff,airbnb_cancelled)').is('cancelled_on', null)
-        .lt('checkin', checkout).gt('checkout', checkin),
-      supabase.from('contracts').select('property_id, estate_id, room, start_date, end_date, active')
-        .lte('start_date', checkout).gte('end_date', checkin),
-    ]);
-    const busy: Busy[] = [];
-    for (const x of (os ?? []) as any[]) {
-      if (ids.has(x.id) || x.move_group === grp) continue;
-      const b = busyOfOrder(x); if (b) busy.push(b);
-    }
-    for (const c of (cs ?? []) as any[]) {
-      if (c.active === false) continue;
-      const b = busyOfContract(c); if (b) busy.push(b);
-    }
-    setMove((m) => (m && m.grp === grp ? { ...m, busy } : m));
+    const m = await loadMove(supabase, o.id, o.move_group ?? null);
+    if (!m) return flash('讀不到這筆訂單的分段');
+    setMove(m);
   }
-  function moveWithAmounts(m: MoveState) {
-    const segs = m.stays.map((s, i) => {
-      const from = i === 0 ? m.checkin : s.from;
-      const to = i < m.stays.length - 1 ? m.stays[i + 1].from : m.checkout;
-      const nights = from && to ? Math.round((new Date(to).getTime() - new Date(from).getTime()) / 86400000) : 0;
-      return { ...s, from, to, nights, amount: 0 };
-    });
-    let used = 0;
-    segs.forEach((seg, i) => { seg.amount = i < segs.length - 1 ? Math.round(m.totalAmount * seg.nights / m.totalNights) : m.totalAmount - used; used += seg.amount; });
-    return segs;
-  }
-  function moveErr(m: MoveState): string | null {
-    const segs = moveWithAmounts(m);
-    if (segs.some((s) => !s.room)) return '每段都要選房源';
-    for (let i = 1; i < segs.length; i++) { if (!m.stays[i].from) return '每個移房都要填移入日期'; if (new Date(segs[i].from) <= new Date(segs[i - 1].from)) return '移入日期需晚於前一段'; }
-    if (segs.some((s) => s.nights < 1)) return '每段至少 1 晚(日期需在期間內)';
-    // 選到的房那一段有人住 → 擋（2026-10-06：整段都空才能移）
-    if (m.busy) {
-      for (let i = 0; i < segs.length; i++) {
-        const sg = segs[i];
-        const ref = { id: sg.propertyId ?? '', name: sg.room, estate_id: sg.estateId };
-        if (!roomFree(m.busy, ref, sg.from, sg.to)) return `第 ${i + 1} 段 ${sg.room} 在 ${nightsLabel(sg.from, sg.to)} 有人住 —— 換一間`;
-      }
-    }
-    return null;
-  }
+  const moveWithAmounts = moveSegments;
+  const moveErr = moveError;
   async function doMove() {
     if (!move) return;
-    const err = moveErr(move);
-    if (err) return flash(err);
-    const segs = moveWithAmounts(move);
-    const grp = move.grp, isMulti = segs.length > 1;
-    const s0 = segs[0];
-    /*
-     * 【移房會動到收款紀錄，動手前一定要講清楚】
-     *
-     * 底下的流程是：主段（id = grp）用 update 改掉，其他分段一律 delete 再重建。
-     * order_payments 的外鍵是 on delete cascade，所以**被重建的那些分段，
-     * 它們身上的收款紀錄會一起消失**，而且不會有任何錯誤訊息。
-     *
-     * 主段的收款會留著，但金額通常會變小（10,000 拆成 4,000 + 6,000），
-     * 觸發器重算之後可能變成「超收」—— 那不是錯，只是要先讓人知道。
-     *
-     * 不擋，只問一聲 —— 跟契約刪除的處理一致：使用者決定要做就做得到，
-     * 但不能在不知情的狀況下把收過的錢弄不見。
-     */
-    const { data: segIds } = await supabase.from('orders')
-      .select('id').eq('move_group', grp).neq('id', grp);
-    const doomed = (segIds ?? []).map((x: any) => x.id);
-    if (doomed.length) {
-      const { data: lost } = await supabase.from('order_payments')
-        .select('amount').in('order_id', doomed);
-      const n = (lost ?? []).length;
-      if (n) {
-        const amt = (lost ?? []).reduce((a: number, p: any) => a + (Number(p.amount) || 0), 0);
-        if (!confirm(
-          `這次移房會重建分段，其中 ${n} 筆收款紀錄（$${fmt(amt)}）會一併刪除。\n\n`
-          + `主段的收款會保留，但金額改變後收款狀態會重新計算。\n\n`
-          + `確定要繼續嗎？`
-        )) return;
-      }
-    }
-
-    /*
-     * ★★★ 完整的移房鏈（migration_246）。
-     *
-     *   `chain` 只有**這次視窗裡的那幾段**。原本住哪不在裡面 ——
-     *   所以「只改房號、不拆段」的情況（B01 → B03）算出來的 chain
-     *   是「B03」，一段而已，看不出移過房。
-     *
-     * ★★ 把打開視窗當下的房號接在前面，重複的去掉:
-     *     B01 → B03          → ['B01','B03']
-     *     B01 → B01>B03（拆段）→ ['B01','B03']   （第一段沒變，不重複記）
-     */
-    const fullChain: string[] = [];
-    for (const r of [...(move.origRooms ?? []), ...segs.map((x) => x.room)]) {
-      const room = (r ?? '').trim();
-      if (room && room !== fullChain[fullChain.length - 1]) fullChain.push(room);
-    }
-    const moved = fullChain.length > 1;
-    const chainText = fullChain.join('>');
-
-    const patch: any = { estate_id: s0.estateId, property_id: s0.propertyId, property_raw: s0.room, checkin: s0.from, checkout: s0.to, nights: s0.nights, amount: s0.amount, move_group: isMulti ? grp : null };
-
-    if (moved) {
-      patch.move_chain = chainText;
-      /*
-       * ★★★ 備註**追加**，不是覆蓋（2026-09-14 使用者指定）。
-       *
-       *   原本這裡是 `patch.note = \`移房 ${chain}\`` —— 直接蓋掉。
-       *   而備註是使用者手打的地方（Jasmine 那筆寫著「舊舊B1，移到B5」），
-       *   那句話是他自己的判斷，系統不該擦掉，而且**擦掉不會有任何提示**。
-       *
-       * ★★ 已經有同一條鏈就不再加一次 —— 移房視窗按兩次不該長出兩行。
-       */
-      const line = `移房 ${chainText}`;
-      const prev = (move.origNote ?? '').trim();
-      patch.note = prev.includes(line) ? prev : (prev ? `${prev}\n${line}` : line);
-    }
-    /*
-     * ★★★ 2026-09-22（migration_295）：三步包成一支 RPC。
-     *   以前是 主段 update → 其他分段 delete（硬刪，連錯誤都沒接）→ 逐段 insert。
-     *   第三步任一段失敗就是「舊分段已經刪了、新的只建一半」，那幾晚的營收憑空消失。
-     *   現在任一步失敗（含關帳守衛、認列觸發器 raise）整批退回，舊分段還在。
-     *   移房鏈與備註追加的規則還是在這裡算（上面那段），RPC 只負責寫。
-     */
-    const { data, error } = await supabase.rpc('move_order', {
-      p_grp: grp,
-      p_segs: segs.map((sg) => ({
-        estate_id: sg.estateId, property_id: sg.propertyId, room: sg.room,
-        from: sg.from, to: sg.to, nights: sg.nights, amount: sg.amount,
-      })),
-      p_patch: moved ? { move_chain: patch.move_chain, note: patch.note } : {},
-    });
-    if (error) return flash('移房失敗:' + error.message);
-    const r = data as { ok: boolean; message: string };
-    if (!r?.ok) return flash(r?.message ?? '移房失敗');
+    /* 算法與寫入在 lib/order-move(-io).ts —— 收款紀錄會被刪的時候先問、整批走 move_order RPC */
+    const r = await commitMove(supabase, move, (t) => confirm(t));
+    if (r.cancelled) return;
+    if (!r.ok) return flash(r.message);
     flash(r.message); setMove(null); load();
   }
   const addStay = () => move && setMove({ ...move, stays: [...move.stays, { room: '', estateId: move.stays[move.stays.length - 1]?.estateId ?? null, propertyId: null, from: '' }] });
@@ -2900,11 +2736,7 @@ export default function ShortTermPage() {
               */}
               {(() => {
                 // ★ 跟 doMove 同一套算法：原本住哪 ＋ 這次的各段，去掉重複
-                const preview: string[] = [];
-                for (const r of [...(move.origRooms ?? []), ...segs.map((x) => x.room)]) {
-                  const room = (r ?? '').trim();
-                  if (room && room !== preview[preview.length - 1]) preview.push(room);
-                }
+                const preview = moveChain(move.origRooms ?? [], segs.map((x) => x.room));
                 const chainText = preview.join('>');
                 return (
                   <p className="text-xs text-gray-400">
