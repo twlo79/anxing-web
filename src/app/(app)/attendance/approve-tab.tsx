@@ -7,8 +7,9 @@ import {
   BTN2, CARD, TONE, fmtDT, noRowsMsg,
   type FixReq, type LeaveReq, type LeaveType, type OtReq, type TabProps,
 } from './types';
-import { Tabs } from '@/components/Tabs';
-import { groupBatches } from '@/lib/leave-days';
+import { groupBatches, type LeaveBatch } from '@/lib/leave-days';
+import { mixRequests, countByKind, filterKind, emptyText, type ReqKind } from '@/lib/request-mix';
+import { KindTag, KindChips } from './kind-chips';
 import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
 import { useJustSaved } from '@/lib/use-just-saved';
 import { SavedBadge } from '@/components/SavedToast';
@@ -26,8 +27,6 @@ import { SavedBadge } from '@/components/SavedToast';
  * 下次同一個人送同樣的單，還是會被駁回，還是不知道為什麼。
  */
 
-type Sub = 'leave' | 'ot' | 'fix';
-
 /**
  * 姓名是另外撈的，不是用 PostgREST 的 join。
  *
@@ -38,16 +37,20 @@ type Sub = 'leave' | 'ot' | 'fix';
  */
 type WithName<T> = T & { name?: string };
 
-export default function ApproveTab({ me, onMsg, kind }: TabProps & {
-  /**
-   * 種類由母層決定（2026-09-29：核可併進「申請」分頁，種類藥丸在最上面共用）。
-   * 有給就不畫自己那排小分頁；沒給（單獨使用）行為跟以前一樣。
-   */
-  kind?: Sub;
-}) {
+/** 混在一起的一張單（2026-10-12：三種同一張清單）。請假是一整批 */
+type Item =
+  | { kind: 'leave'; key: string; at: string; row: LeaveBatch<WithName<LeaveReq>> }
+  | { kind: 'ot'; key: string; at: string; row: WithName<OtReq> }
+  | { kind: 'fix'; key: string; at: string; row: WithName<FixReq> };
+
+export default function ApproveTab({ me, onMsg }: TabProps) {
   const supabase = useMemo(() => createClient(), []);
-  const [subOwn, setSub] = useState<Sub>('leave');
-  const sub: Sub = kind ?? subOwn;
+  /*
+   * 種類篩選（2026-10-12 David：「審核、狀態整合一起」）——
+   *   以前種類由母層的藥丸決定，紅點 13 點進來只看得到其中一種。
+   *   現在三種混在同一張清單，這裡的藥丸只是收窄；'' ＝ 全部。
+   */
+  const [f, setF] = useState<ReqKind | ''>('');
   /**
    * 簽核中 / 已結束。
    *
@@ -138,11 +141,17 @@ export default function ApproveTab({ me, onMsg, kind }: TabProps & {
     write(table, id, { status: 'rejected', [field]: why.trim() }, '已駁回', batchId, name);
   }
 
-  const tabs: [Sub, string, number][] = [
-    ['leave', '請假', leaves.length],
-    ['ot', '加班', ots.length],
-    ['fix', '補登', fixes.length],
-  ];
+  /*
+   * ★ 待審：最舊的在上（放最久的先處理）；已結束：最新的在上。規則在 lib/request-mix。
+   * ★ 藥丸數字算在篩選之前 —— 按下去數字還是全部的。
+   */
+  const items = useMemo(() => mixRequests<Item>([
+    ...groupBatches(leaves).map((g) => ({ kind: 'leave' as const, key: g.key, at: g.rows[0].created_at, row: g })),
+    ...ots.map((r) => ({ kind: 'ot' as const, key: r.id, at: r.created_at, row: r })),
+    ...fixes.map((r) => ({ kind: 'fix' as const, key: r.id, at: r.created_at, row: r })),
+  ], !done), [leaves, ots, fixes, done]);
+  const counts = useMemo(() => countByKind(items), [items]);
+  const shown = useMemo(() => filterKind(items, f), [items, f]);
 
   return (
     <div className="space-y-4">
@@ -156,21 +165,15 @@ export default function ApproveTab({ me, onMsg, kind }: TabProps & {
         ))}
         <span className="text-xs text-gray-300">|</span>
         <span className="text-xs text-gray-400">
-          {done ? '最近 60 天' : `等你處理的${kind != null ? `・${tabs.find(([k]) => k === sub)?.[2] ?? 0} 張` : ''}`}
+          {done ? '最近 60 天' : `等你處理的・${items.length} 張`}
         </span>
       </div>
 
       {/*
-        ★ size="sm" —— 分頁裡的分頁。
-        ★ 數字直接標在分頁上（徽章）—— 沒有數字就不用點進去。
-          看「已處理」時不標,那些數字對「還要不要做事」沒有意義。
+        ★ 種類藥丸（2026-10-12）：三種混在下面同一張清單，這裡只是收窄 —— 點一下只看那一種，再點一下清除。
+          數字算在篩選之前；看「已結束」時是最近 60 天的張數。
       */}
-      {kind == null && (
-        <Tabs size="sm" value={sub} onChange={setSub}
-          items={tabs.map(([k, label, n]) => ({
-            key: k, label, badge: done ? undefined : n,
-          }))} />
-      )}
+      <KindChips value={f} onChange={setF} counts={counts} />
 
       <div className={CARD}>
         <div className="divide-y divide-mor-line/60">
@@ -179,7 +182,9 @@ export default function ApproveTab({ me, onMsg, kind }: TabProps & {
             ★★ 同批收成一張卡（migration_291）：資料庫一天一列，主管看到的是「一次送出」。
               核可、駁回都是整批一起 —— 一次 update where batch_id。
           */}
-          {sub === 'leave' && groupBatches(leaves).map((g) => {
+          {shown.map((it) => {
+            if (it.kind === 'leave') {
+            const g = it.row;
             const r = g.rows[0];
             const v = leaveVote(r);
             const one = g.rows.length === 1;
@@ -191,7 +196,7 @@ export default function ApproveTab({ me, onMsg, kind }: TabProps & {
                 <div className="flex items-start gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium">
-                      {isJust(g.key) && <SavedBadge />}{r.name}・{typeName(r.type_code)} {one ? `${r.hours} 小時` : `${g.days} 天・${g.hours} 小時`}
+                      {isJust(g.key) && <SavedBadge />}<KindTag kind="leave" />{r.name}・{typeName(r.type_code)} {one ? `${r.hours} 小時` : `${g.days} 天・${g.hours} 小時`}
                     </div>
                     {one ? (
                       <div className="text-xs text-gray-500 mt-0.5">
@@ -233,17 +238,18 @@ export default function ApproveTab({ me, onMsg, kind }: TabProps & {
                 </div>}
               </div>
             );
-          })}
+            }
 
           {/* ── 加班：一票 ─────────────────────────── */}
-          {sub === 'ot' && ots.map((r) => {
+          if (it.kind === 'ot') {
+            const r = it.row;
             const v = otVote(r);
             return (
               <div key={r.id} {...justRow(isJust(r.id))} className={`px-4 py-3 ${isJust(r.id) ? SAVED_HL : ''}`}>
                 <div className="flex items-start gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium">
-                      {isJust(r.id) && <SavedBadge />}{r.name}・加班 {r.hours} 小時
+                      {isJust(r.id) && <SavedBadge />}<KindTag kind="ot" />{r.name}・加班 {r.hours} 小時
                     </div>
                     <div className="text-xs text-gray-500 mt-0.5">
                       {fmtDT(r.start_at)} → {fmtDT(r.end_at)}・{r.reason}
@@ -265,13 +271,14 @@ export default function ApproveTab({ me, onMsg, kind }: TabProps & {
                 </div>}
               </div>
             );
-          })}
+            }
 
           {/* ── 補登 ───────────────────────────────── */}
-          {sub === 'fix' && fixes.map((r) => (
+          const r = it.row;
+            return (
             <div key={r.id} {...justRow(isJust(r.id))} className={`px-4 py-3 ${isJust(r.id) ? SAVED_HL : ''}`}>
               <div className="text-sm font-medium">
-                {isJust(r.id) && <SavedBadge />}{r.name}・{r.work_date} 補{r.kind === 'in' ? '上班' : '下班'}{' '}
+                {isJust(r.id) && <SavedBadge />}<KindTag kind="fix" />{r.name}・{r.work_date} 補{r.kind === 'in' ? '上班' : '下班'}{' '}
                 {r.fix_time.slice(0, 5)}
               </div>
               <div className="text-xs text-gray-500 mt-0.5">{r.reason}</div>
@@ -286,13 +293,12 @@ export default function ApproveTab({ me, onMsg, kind }: TabProps & {
                   className={`${BTN2} text-red-600 border-red-200`}>駁回</button>
               </div>}
             </div>
-          ))}
+            );
+          })}
 
-          {((sub === 'leave' && !leaves.length) || (sub === 'ot' && !ots.length)
-            || (sub === 'fix' && !fixes.length)) && (
+          {!shown.length && (
             <div className="px-4 py-8 text-center text-sm text-gray-400">
-              {done ? '最近 60 天沒有已結束的' : '沒有待處理的'}
-              {sub === 'leave' ? '請假' : sub === 'ot' ? '加班' : '補登'}
+              {done ? emptyText(f, '最近 60 天沒有已結束的') : emptyText(f, '沒有待處理的')}
             </div>
           )}
         </div>

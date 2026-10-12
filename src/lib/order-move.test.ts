@@ -99,7 +99,7 @@ test('splitDays／nightsIn', () => {
   assert.deepEqual(splitDays({ ...base(), checkout: '2026-10-09' }), []);
 });
 
-test('moveCandidates：同物業優先、排掉自己、部分空只列同物業', () => {
+test('moveCandidates：只列同物業、排掉自己', () => {
   const rooms = [R('p5', '9A5'), R('p6', '9A6'), R('p3', '9A3'), R('p10', '10A1'), R('x1', '1F', 'E2'), R('x2', '2F', 'E2'), R('p7', '9A7')];
   const busy: Busy[] = [
     { propertyId: 'p6', estateId: 'E1', room: '9A6', first: '2026-10-01', last: '2026-10-10' }, // 部分
@@ -107,6 +107,9 @@ test('moveCandidates：同物業優先、排掉自己、部分空只列同物業
     { propertyId: 'x2', estateId: 'E2', room: '2F', first: '2026-10-09', last: '2026-10-09' },  // 別物業部分
   ];
   const c = moveCandidates(busy, rooms, '2026-10-08', '2026-10-13', 'p5', 'E1');
-  assert.deepEqual(c.free.map((r) => r.name), ['9A3', '10A1', '1F']);
+  assert.deepEqual(c.free.map((r) => r.name), ['9A3', '10A1']);   // 別物業的 1F 整段空也不列
   assert.deepEqual(c.partly.map((x) => [x.room.name, x.busyNights]), [['9A6', 3]]);
+  // 原房沒設物業 → 一間都不列
+  const none = moveCandidates(busy, rooms, '2026-10-08', '2026-10-13', 'p5', null);
+  assert.deepEqual([none.free.length, none.partly.length], [0, 0]);
 });

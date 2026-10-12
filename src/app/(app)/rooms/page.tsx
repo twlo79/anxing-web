@@ -29,6 +29,7 @@ import { isManagerOrBoss, isFinance } from '@/lib/roles';
 import { airbnbLinks } from '@/lib/airbnb-link';
 import { parseRoomsPrefs, serializeRoomsPrefs, shiftYm, ROOMS_PREFS_KEY } from '@/lib/rooms-prefs';
 import MovePanel, { type MoveRoom } from './move-panel';
+import { useIsMobile } from '@/lib/use-is-mobile';
 import {
   ancestryOf, occupancyOf, occupancyByRoom, totalOccupancy, fmtPct, occTone, type RoomNode,
 } from '@/lib/occupancy';
@@ -177,20 +178,6 @@ function matchPill(x: { real: readonly Stay[]; dups: readonly unknown[] }, view:
   return x.real.some((s) => s.tone === view);
 }
 
-/**
- * 手機版（< md）。卡片與移房在手機上是**底部抽屜**，桌機是貼著色條的小卡片／右側抽屜。
- * ★ 一開始回 false（伺服器端沒有視窗），掛上之後才量 —— 不在 render 裡讀 window。
- */
-function useIsMobile(): boolean {
-  const [m, setM] = useState(false);
-  useEffect(() => {
-    const q = window.matchMedia('(max-width: 767px)');
-    const f = () => setM(q.matches);
-    f(); q.addEventListener('change', f);
-    return () => q.removeEventListener('change', f);
-  }, []);
-  return m;
-}
 /** 手機卡片抽屜佔螢幕高度的比例（2026-10-12 David 過審「約 2/5」）。改這裡要一起改 StayCard 的 h-[42vh] */
 const SHEET_RATIO = 0.42;
 

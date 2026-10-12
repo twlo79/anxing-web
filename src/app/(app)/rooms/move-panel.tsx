@@ -16,7 +16,8 @@ import { loadMove, commitMove } from '@/lib/order-move-io';
  *   「找房源與移房功能在本頁做，同步狀態到訂單」
  *
  *   桌機　右側抽屜　　手機　底部抽屜（85%）
- *   兩個分頁：整段換一間 ／ 從某天起換
+ *   兩個分頁：1 整段移房 ／ 2 部分移房（2026-10-12 David 改名）
+ *   訂單頁的「移房」也是這一支（David：「請參考這邊做」）；多段的單才開訂單頁原本的手動視窗
  *
  * ★★★ 算法與寫入**跟訂單頁同一份**（lib/order-move.ts、order-move-io.ts）——
  *   金額照晚數拆、移房鏈、備註追加、收款紀錄會刪時先問、整批走 move_order RPC。
@@ -31,11 +32,32 @@ export type MoveRoom = RoomRef & { estate: string };
 
 const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
 
-export default function MovePanel({ srcId, sheet, rooms, onClose, onDone }: {
-  srcId: string; sheet: boolean; rooms: readonly MoveRoom[];
+export default function MovePanel({ srcId, sheet, rooms: roomsIn, onClose, onDone, onAdvanced }: {
+  srcId: string; sheet: boolean;
+  /** 可以移到哪些房。沒給就自己撈（訂單頁用）—— 規則跟房源狀態一樣：在用、勾排房表、物業在用 */
+  rooms?: readonly MoveRoom[];
   onClose: () => void; onDone: (message: string) => void;
+  /** 有給（訂單頁）：多段或要切三段以上時，開原本的手動視窗；沒給（房源狀態）：連到訂單頁 */
+  onAdvanced?: (m: MoveState) => void;
 }) {
   const supabase = useMemo(() => createClient(), []);
+  const [roomsOwn, setRoomsOwn] = useState<MoveRoom[]>([]);
+  useEffect(() => {
+    if (roomsIn) return;
+    let alive = true;
+    Promise.all([
+      supabase.from('estates').select('id, name, active'),
+      supabase.from('properties').select('id, name, estate_id, show_in_room_calendar').eq('active', true),
+    ]).then(([{ data: es }, { data: ps }]) => {
+      if (!alive) return;
+      const est = new Map(((es ?? []) as any[]).filter((e) => e.active).map((e) => [e.id as string, e.name as string]));
+      setRoomsOwn(((ps ?? []) as any[])
+        .filter((p) => p.estate_id && est.has(p.estate_id) && p.show_in_room_calendar !== false)
+        .map((p) => ({ id: p.id, name: p.name, estate_id: p.estate_id, estate: est.get(p.estate_id)! })));
+    });
+    return () => { alive = false; };
+  }, [supabase, roomsIn]);
+  const rooms = roomsIn ?? roomsOwn;
   const [m, setM] = useState<MoveState | null>(null);
   const [loadErr, setLoadErr] = useState('');
   const [tab, setTab] = useState<'whole' | 'split'>('whole');
@@ -116,15 +138,19 @@ export default function MovePanel({ srcId, sheet, rooms, onClose, onDone }: {
 
               {!canQuickMove(m) ? (
                 <div className="mt-3 text-sm text-gray-600 leading-relaxed">
-                  這筆已經分成 {m.stays.length} 段，在這裡只看得到其中一段 ——
-                  到訂單頁一起調整：
-                  <a href={`/shortterm?move=${m.grp}`} target="_blank" rel="noreferrer"
-                    className="ml-1 font-medium text-mor-slate hover:text-mor-slatedark">打開訂單頁的移房 →</a>
+                  這筆已經分成 {m.stays.length} 段 —— 要一起看各段怎麼排，用手動調整：
+                  {onAdvanced ? (
+                    <button type="button" onClick={() => onAdvanced(m)}
+                      className="ml-1 font-medium text-mor-slate hover:text-mor-slatedark">手動調整分段 →</button>
+                  ) : (
+                    <a href={`/shortterm?move=${m.grp}`} target="_blank" rel="noreferrer"
+                      className="ml-1 font-medium text-mor-slate hover:text-mor-slatedark">打開訂單頁的移房 →</a>
+                  )}
                 </div>
               ) : (
                 <>
                   <div className="mt-3 flex rounded-lg bg-mor-sand p-1">
-                    {([['whole', '整段換一間'], ['split', '從某天起換']] as const).map(([k, t]) => (
+                    {([['whole', '1 整段移房'], ['split', '2 部分移房']] as const).map(([k, t]) => (
                       <button key={k} onClick={() => setTab(k)} disabled={k === 'split' && !splitDays(m).length}
                         title={k === 'split' && !splitDays(m).length ? '只住一晚，沒有「中途」可以換' : undefined}
                         className={`flex-1 rounded-md py-2 text-sm disabled:opacity-40 ${
@@ -143,11 +169,11 @@ export default function MovePanel({ srcId, sheet, rooms, onClose, onDone }: {
                   )}
 
                   <div className="mt-3 mb-1.5 text-[11px] text-gray-400">
-                    只列 {from ? nightsLabel(from, m.checkout) : '—'} 每一晚都空的房源
+                    只列{selfRoom ? ` ${selfRoom.estate} ` : '同物業'}{from ? nightsLabel(from, m.checkout) : '—'} 每一晚都空的房源（不跨物業）
                   </div>
                   {!m.busy && <div className="py-4 text-center text-xs text-gray-400">查空房中⋯</div>}
                   {m.busy && cands.free.length === 0 && (
-                    <div className="rounded-lg bg-mor-bg px-3 py-3 text-center text-xs text-gray-500">這段期間沒有整段都空的房源</div>
+                    <div className="rounded-lg bg-mor-bg px-3 py-3 text-center text-xs text-gray-500">同物業這段期間沒有整段都空的房源</div>
                   )}
                   <div className="space-y-1.5">
                     {cands.free.map((r) => (
@@ -155,7 +181,7 @@ export default function MovePanel({ srcId, sheet, rooms, onClose, onDone }: {
                         className={`w-full flex items-center gap-2 rounded-xl border px-3 py-2.5 text-left ${
                           pickId === r.id ? 'border-mor-slate bg-mor-bluelight' : 'border-mor-line bg-white hover:bg-mor-bg'}`}>
                         <b className="min-w-[3.5rem] text-sm">{r.name}</b>
-                        <span className="flex-1 text-xs text-gray-500">{r.estate}</span>
+                        <span className="flex-1" />
                         <span className="rounded bg-mor-greenlight px-1.5 text-[11px] text-mor-greendark">整段空</span>
                       </button>
                     ))}
@@ -170,7 +196,7 @@ export default function MovePanel({ srcId, sheet, rooms, onClose, onDone }: {
                           <div key={r.id} className="flex items-center gap-2 rounded-xl border border-mor-line px-3 py-2.5 opacity-50">
                             <b className="min-w-[3.5rem] text-sm">{r.name}</b>
                             <span className="flex-1 text-xs text-gray-500">
-                              {busyNights} 晚有人{tab === 'whole' ? ' —— 改用「從某天起換」' : ''}
+                              {busyNights} 晚有人{tab === 'whole' ? ' —— 改用「部分移房」' : ''}
                             </span>
                           </div>
                         ))}
@@ -197,6 +223,11 @@ export default function MovePanel({ srcId, sheet, rooms, onClose, onDone }: {
                 </>
               )}
               {(err || blocked) && <div className="mt-2 text-xs text-red-600">{err || blocked}</div>}
+              {/* 訂單頁：要切三段以上、或換到別的物業，走原本的手動視窗 */}
+              {onAdvanced && canQuickMove(m) && (
+                <button type="button" onClick={() => onAdvanced(m)}
+                  className="mt-3 text-xs text-gray-500 hover:text-mor-slate">要切三段以上？手動調整 →</button>
+              )}
             </>
           )}
         </div>

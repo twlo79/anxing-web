@@ -11,7 +11,9 @@ import {
 import { Tabs } from '@/components/Tabs';
 import ApproveTab from './approve-tab';
 import LeaveForm from '@/components/LeaveForm';
-import { groupBatches } from '@/lib/leave-days';
+import { groupBatches, type LeaveBatch } from '@/lib/leave-days';
+import { mixRequests, countByKind, filterKind, emptyText, type ReqKind } from '@/lib/request-mix';
+import { KindTag, KindChips } from './kind-chips';
 import { savedToast, savedText, SAVED_HL, justRow } from '@/lib/saved-feedback';
 import { useJustSaved } from '@/lib/use-just-saved';
 import { SavedBadge } from '@/components/SavedToast';
@@ -102,6 +104,22 @@ export default function ApplyTab({ me, onMsg, prefill, isAdmin, pending = 0 }: T
 
   const typeName = (code: string) => types.find((t) => t.code === code)?.name ?? code;
 
+  /*
+   * 「3 狀態」三種混在一起（2026-10-12）—— 最新送出的在上。藥丸只是收窄，數字算在篩選之前。
+   */
+  const [stf, setStf] = useState<ReqKind | ''>('');
+  type MyItem =
+    | { kind: 'leave'; key: string; at: string; row: LeaveBatch<LeaveReq> }
+    | { kind: 'ot'; key: string; at: string; row: OtReq }
+    | { kind: 'fix'; key: string; at: string; row: FixReq };
+  const myItems = useMemo(() => mixRequests<MyItem>([
+    ...groupBatches(leaves).map((g) => ({ kind: 'leave' as const, key: g.key, at: g.rows[0].created_at, row: g })),
+    ...ots.map((r) => ({ kind: 'ot' as const, key: r.id, at: r.created_at, row: r })),
+    ...fixes.map((r) => ({ kind: 'fix' as const, key: r.id, at: r.created_at, row: r })),
+  ], false), [leaves, ots, fixes]);
+  const myCounts = useMemo(() => countByKind(myItems), [myItems]);
+  const myShown = useMemo(() => filterKind(myItems, stf), [myItems, stf]);
+
   // 用字串前綴比月份就好 —— work_date 是 date，'2026-08' 開頭的就是八月，
   // 不用把時區問題再帶進來一次
   const otHours = useMemo(() => {
@@ -120,10 +138,12 @@ export default function ApplyTab({ me, onMsg, prefill, isAdmin, pending = 0 }: T
 
   return (
     <div className="space-y-4">
-      {/* ── 種類（三個階段共用）＋ 階段 ───────────────── */}
-      {/* ★ size="sm" —— 這是「分頁裡的分頁」,跟上一層一樣大的話看不出誰包誰 */}
-      <Tabs size="sm" value={sub} onChange={setSub}
-        items={(Object.keys(SUB) as Sub[]).map((k) => ({ key: k, label: SUB[k] }))} />
+      {/*
+        ── 階段在上、種類只在「1 申請」裡（2026-10-12 David 選 A）──
+        「審核、狀態整合一起，分三段就好；只有申請要分三種」：
+          以前先選種類再選階段 —— 紅點 13 點進「審核」只看到其中一種，另外幾張要切種類才找得到。
+          審核與狀態問的是「有哪些事」，三種混在同一張清單；只有填單時三種表單長得不一樣。
+      */}
       <div className="flex rounded-xl border border-mor-line bg-white overflow-hidden">
         {stages.map((k) => (
           <button key={k} type="button" onClick={() => setStage(k)}
@@ -140,7 +160,13 @@ export default function ApplyTab({ me, onMsg, prefill, isAdmin, pending = 0 }: T
         ))}
       </div>
 
-      {stage === 'review' && isAdmin && <ApproveTab me={me} onMsg={onMsg} isAdmin={isAdmin} kind={sub} />}
+      {/* ★ size="sm" —— 這是「分頁裡的分頁」,跟上一層一樣大的話看不出誰包誰 */}
+      {stage === 'apply' && (
+        <Tabs size="sm" value={sub} onChange={setSub}
+          items={(Object.keys(SUB) as Sub[]).map((k) => ({ key: k, label: SUB[k] }))} />
+      )}
+
+      {stage === 'review' && isAdmin && <ApproveTab me={me} onMsg={onMsg} isAdmin={isAdmin} />}
 
       {stage === 'apply' && sub === 'leave' && (<>
       {/* ── 我還剩多少假 ───────────────────────────── */}
@@ -273,11 +299,12 @@ export default function ApplyTab({ me, onMsg, prefill, isAdmin, pending = 0 }: T
         <FixForm busy={busy} setBusy={setBusy} onMsg={onMsg} onDone={doneWith} prefill={prefill} />
       )}
 
-      {/* ── 3 狀態：我送過的 ───────────────────────── */}
+      {/* ── 3 狀態：我送過的（三種混在一起，最新的在上）───────────── */}
       {stage === 'status' && (
       <div className={CARD}>
-        <div className="px-4 py-2.5 border-b border-mor-line bg-white/45 text-sm font-medium">
-          我的{SUB[sub]}紀錄
+        <div className="px-4 py-2.5 border-b border-mor-line bg-white/45 flex flex-wrap items-center gap-x-3 gap-y-2">
+          <span className="text-sm font-medium">我送過的</span>
+          <KindChips value={stf} onChange={setStf} counts={myCounts} />
         </div>
         <div className="divide-y divide-mor-line/60">
           {/*
@@ -285,12 +312,14 @@ export default function ApplyTab({ me, onMsg, prefill, isAdmin, pending = 0 }: T
               畫面上一次送出的算一張：標題寫共幾天幾小時，底下列出每一天。
             ★ 取消是整批一起 —— 一次 update where batch_id，一個請求一個交易。
           */}
-          {sub === 'leave' && groupBatches(leaves).map((g) => {
+          {myShown.map((it) => {
+            if (it.kind === 'leave') {
+            const g = it.row;
             const r = g.rows[0];
             const v = leaveVote(r);
             const one = g.rows.length === 1;
             return (
-              <Row key={g.key} just={isJust(g.key)} tone={v.tone} state={v.text}
+              <Row kind="leave" key={g.key} just={isJust(g.key)} tone={v.tone} state={v.text}
                 title={one
                   ? `${typeName(r.type_code)} ${r.hours} 小時`
                   : `${typeName(r.type_code)} ${g.days} 天・${g.hours} 小時`}
@@ -308,11 +337,12 @@ export default function ApplyTab({ me, onMsg, prefill, isAdmin, pending = 0 }: T
                   markSaved(g.key); load();
                 } : undefined} />
             );
-          })}
-          {sub === 'ot' && ots.map((r) => {
+            }
+            if (it.kind === 'ot') {
+            const r = it.row;
             const v = otVote(r);
             return (
-              <Row key={r.id} just={isJust(r.id)} tone={v.tone} state={v.text}
+              <Row kind="ot" key={r.id} just={isJust(r.id)} tone={v.tone} state={v.text}
                 title={`加班 ${r.hours} 小時`}
                 sub={`${fmtDT(r.start_at)} → ${fmtDT(r.end_at)}・${r.reason}`}
                 onCancel={r.status === 'pending' ? async () => {
@@ -324,19 +354,20 @@ export default function ApplyTab({ me, onMsg, prefill, isAdmin, pending = 0 }: T
                   markSaved(r.id); load();
                 } : undefined} />
             );
-          })}
-          {sub === 'fix' && fixes.map((r) => (
-            <Row key={r.id} just={isJust(r.id)}
+            }
+            const r = it.row;
+            return (
+            <Row kind="fix" key={r.id} just={isJust(r.id)}
               tone={r.status === 'approved' ? 'ok' : r.status === 'rejected' ? 'no' : 'wait'}
               state={r.status === 'approved' ? '已補上'
                 : r.status === 'rejected' ? (r.review_note ? `已駁回：${r.review_note}` : '已駁回')
                 : '等主管核可'}
               title={`${r.work_date} 補${r.kind === 'in' ? '上班' : '下班'} ${r.fix_time.slice(0, 5)}`}
               sub={r.reason} />
-          ))}
-          {((sub === 'leave' && !leaves.length) || (sub === 'ot' && !ots.length)
-            || (sub === 'fix' && !fixes.length)) && (
-            <div className="px-4 py-6 text-center text-sm text-gray-400">還沒有紀錄</div>
+            );
+          })}
+          {!myShown.length && (
+            <div className="px-4 py-6 text-center text-sm text-gray-400">{emptyText(stf, '還沒有送過')}</div>
           )}
         </div>
       </div>
@@ -345,13 +376,13 @@ export default function ApplyTab({ me, onMsg, prefill, isAdmin, pending = 0 }: T
   );
 }
 
-function Row({ title, sub, state, tone, onCancel, just = false }: {
-  title: string; sub: string; state: string; tone: string; onCancel?: () => void; just?: boolean;
+function Row({ kind, title, sub, state, tone, onCancel, just = false }: {
+  kind: ReqKind; title: string; sub: string; state: string; tone: string; onCancel?: () => void; just?: boolean;
 }) {
   return (
     <div {...justRow(just)} className={`px-4 py-3 flex items-start gap-3 ${just ? SAVED_HL : ''}`}>
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium">{just && <SavedBadge />}{title}</div>
+        <div className="text-sm font-medium">{just && <SavedBadge />}<KindTag kind={kind} />{title}</div>
         <div className="text-xs text-gray-500 mt-0.5 break-words">{sub}</div>
       </div>
       <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] ${TONE[tone]}`}>

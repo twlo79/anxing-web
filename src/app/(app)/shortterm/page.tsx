@@ -59,7 +59,9 @@ import CancelSettleModal from './cancel-settle-modal';
 import { cancelBlockedReason } from '@/lib/cancel-settle';
 import { roomFree, nightsLabel, dayBefore } from '@/lib/room-free';
 import { moveSegments, moveError, moveChain, type MoveStay, type MoveState } from '@/lib/order-move';
-import { loadMove, commitMove } from '@/lib/order-move-io';
+import { commitMove } from '@/lib/order-move-io';
+import MovePanel from '../rooms/move-panel';
+import { useIsMobile } from '@/lib/use-is-mobile';
 import { canPricingFee, PRICING_TITLE } from '@/lib/pricing-fee';
 import Fold from '@/components/Fold';
 // 訂單的合約 PDF（migration_325，跟契約文件同一套）
@@ -310,6 +312,9 @@ export default function ShortTermPage() {
   const [kwIn, setKwIn] = useState('');
   const [edit, setEdit] = useState<Order | null>(null);
   const [move, setMove] = useState<MoveState | null>(null);
+  /** 移房面板開著的那一筆（跟房源狀態同一個元件） */
+  const [quickMove, setQuickMove] = useState<string | null>(null);
+  const isMobile = useIsMobile();
   const [estF, setEstF] = useState('');
   const [fromD, setFromD] = useState('');
   /*
@@ -1228,9 +1233,12 @@ export default function ShortTermPage() {
      *   兩頁各寫一份的話，改了一邊另一邊會安靜地留在舊答案。
      *   ★ 備註拿**第一段**的（move_order 把備註寫回第一段）—— 規則在 moveStateOf()。
      */
-    const m = await loadMove(supabase, o.id, o.move_group ?? null);
-    if (!m) return flash('讀不到這筆訂單的分段');
-    setMove(m);
+    /*
+     * ★★ 2026-10-12（David：「改名 1 整段移房 2 部分移房，請參考這邊做」）：
+     *   先開跟房源狀態同一個移房面板（MovePanel）。多段的單、或要切三段以上，
+     *   面板裡按「手動調整」才開下面原本的視窗（setMove）。
+     */
+    setQuickMove(o.id);
   }
   const moveWithAmounts = moveSegments;
   const moveErr = moveError;
@@ -2692,6 +2700,11 @@ export default function ShortTermPage() {
           </div>
         </div>
       )}
+
+      {quickMove && <MovePanel srcId={quickMove} sheet={isMobile}
+        onClose={() => setQuickMove(null)}
+        onDone={(msg) => { setQuickMove(null); flash(msg); load(); }}
+        onAdvanced={(m) => { setQuickMove(null); setMove(m); }} />}
 
       {move && (() => {
         const segs = moveWithAmounts(move);

@@ -134,13 +134,13 @@ export function moveRpcSegs(segs: readonly MoveSeg[]) {
 
 /* ══════════ 房源狀態頁的兩種快速移房 ══════════ */
 
-/** 整段換一間：只剩一段、房換掉 */
+/** 整段移房：只剩一段、房換掉 */
 export function wholeMove(m: MoveState, r: RoomRef): MoveState {
   return { ...m, stays: [{ room: r.name, estateId: r.estate_id, propertyId: r.id, from: m.checkin }] };
 }
 
 /**
- * 從某天起換：第一段留在原房到 `day`，`day` 起住 `r`。
+ * 部分移房：第一段留在原房到 `day`，`day` 起住 `r`。
  * ★ 只給原本是一段的單用 —— 已經分段的單要到訂單頁調（`canQuickMove`）。
  */
 export function splitMove(m: MoveState, day: string, r: RoomRef): MoveState {
@@ -153,7 +153,7 @@ export function canQuickMove(m: MoveState): boolean {
   return m.stays.length === 1;
 }
 
-/** 「從某天起換」可以選的日子：第二晚 ～ 最後一晚（第一天換＝整段換，退房日換＝沒換） */
+/** 「部分移房」可以選的日子：第二晚 ～ 最後一晚（第一天換＝整段換，退房日換＝沒換） */
 export function splitDays(m: MoveState): string[] {
   const out: string[] = [];
   const t0 = new Date(m.checkin + 'T00:00:00Z').getTime();
@@ -172,23 +172,22 @@ export function nightsIn(from: string, to: string): string[] {
 }
 
 /**
- * 移房清單：同物業優先、房號排序。
+ * 移房清單：**只列同一個物業**（2026-10-12 David：「不要跨物業移房」），房號排序。
  *   free　　整段都空 —— 可以直接選
- *   partly　同物業、只有部分晚數空 —— 列出來但不能選，寫「幾晚有人」叫人改用「從某天起換」
+ *   partly　只有部分晚數空 —— 列出來但不能選，寫「幾晚有人」叫人改用「部分移房」
  * 每晚都有人的不列（列了也沒用）。`selfId` 是目前住的那間（不列）。
+ * ★ 原房沒設物業（estateId null）就一間都不列 —— 不知道是哪個物業，不能猜。
  */
 export function moveCandidates<T extends RoomRef>(
   busy: readonly Busy[], rooms: readonly T[], from: string, to: string,
   selfId: string | null, estateId: string | null,
 ): { free: T[]; partly: { room: T; busyNights: number }[] } {
-  const pool = rooms.filter((r) => r.id !== selfId)
-    .sort((a, b) => Number(b.estate_id === estateId) - Number(a.estate_id === estateId)
-      || a.name.localeCompare(b.name, 'zh-Hant', { numeric: true }));
+  const pool = rooms.filter((r) => r.id !== selfId && !!estateId && r.estate_id === estateId)
+    .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant', { numeric: true }));
   const nights = nightsIn(from, to);
   const free: T[] = [], partly: { room: T; busyNights: number }[] = [];
   for (const r of pool) {
     if (roomFree(busy, r, from, to)) { free.push(r); continue; }
-    if (r.estate_id !== estateId) continue;
     const busyNights = nights.filter((d) => !roomFree(busy, r, d, nightsIn(d, to)[1] ?? to)).length;
     if (busyNights < nights.length) partly.push({ room: r, busyNights });
   }
