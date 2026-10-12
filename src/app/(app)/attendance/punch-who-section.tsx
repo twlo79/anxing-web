@@ -23,7 +23,8 @@ import type { TabProps } from './types';
 type Person = { id: string; name: string; role: string; active: boolean | null; allow_remote_punch: boolean | null };
 type Est = { id: string; name: string; gps_lat: number | null; gps_lng: number | null };
 
-const ROLE_ORDER: Record<string, number> = { housekeeper: 0, manager: 1, accountant: 2 };
+/* 會打卡的人都列（2026-10-12 David：「怎麼沒 David？」—— 總經理也打卡） */
+const ROLE_ORDER: Record<string, number> = { housekeeper: 0, manager: 1, accountant: 2, super_admin: 3 };
 
 export default function PunchWhoSection({ onMsg }: { onMsg: TabProps['onMsg'] }) {
   const supabase = useMemo(() => createClient(), []);
