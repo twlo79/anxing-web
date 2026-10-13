@@ -118,7 +118,8 @@ export function contractInsert(d: BookingDraft) {
   const per = Math.round(Number(d.price) || 0);
   const type = 'longterm';
   return {
-    estate_id: d.estateId, property_id: d.propertyId, room: d.room,
+    // ★ contracts 沒有 property_id 欄 —— 契約靠 物業＋房號 對到房源（跟契約頁一樣）
+    estate_id: d.estateId, room: d.room,
     tenant_name: clean(d.name), phone: null,
     cadence: 'monthly', type,
     amount_per_period: per > 0 ? per : null,

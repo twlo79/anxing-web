@@ -53,18 +53,21 @@ import StatCard, { StatRow, StatTotal } from '@/components/StatCard';
 import { fetchAll } from '@/lib/fetch-all';
 import {
   summarize, needsTypedConfirm, deleteConfirmText, typedConfirmPrompt,
-  strayPaid, endLeaseRemoved, endLeaseConfirmText, type OrderLite,
+  strayPaid, type OrderLite,
 } from '@/lib/contract-lifecycle';
 import { SortTh, sortRows, type SortState, type SortCols } from '@/lib/sortable';
 import * as XLSX from 'xlsx-js-style';
 import { softDelete } from '@/lib/trash';
 import TrashLink from '@/components/TrashLink';
 import Fold from '@/components/Fold';
+import TerminateModal from './terminate-modal';
 // 契約文件 PDF（migration_324）
 import ContractDocs, { ContractDocIcon } from '@/components/ContractDocs';
 import { canSeeContractDocs, countByContract, docsSummary } from '@/lib/contract-docs';
 
 type Contract = {
+  /** 提前終止（migration_331）：有值＝走過「提前終止契約・結算退款」，營收認到這天 */
+  terminated_on?: string | null; terminate_settle?: Record<string, unknown> | null;
   id: string; estate_id: string | null; room: string | null; tenant_name: string | null;
   phone: string | null; cadence: string; type: string | null; monthly_rent: number | null; amount_per_period: number | null; deposit: number | null;
   start_date: string | null; end_date: string | null; pay_day: number | null; first_payment_date: string | null;
@@ -203,6 +206,8 @@ export default function ContractsPage() {
   const [feeTotal, setFeeTotal] = useState(0);
   const [collect, setCollect] = useState<Contract | null>(null);
   const [detail, setDetail] = useState<Contract | null>(null);
+  /** 提前終止結算中的契約（migration_331） */
+  const [terminateOf, setTerminateOf] = useState<Contract | null>(null);
   /*
    * 契約文件（migration_324）：主管、會計、總經理才看得到（契約有身分證字號）。
    * docCount = 每張契約幾份 PDF —— 列表上的圖示與編輯視窗的摘要都讀它。
@@ -681,39 +686,12 @@ const nameOf = (c: Contract) =>
     savedToast(im.total.n ? `已移到回收桶（契約與 ${im.total.n} 筆訂單）` : r.message); load();
   }
 
-  /**
-   * 結束租約 —— 這才是「租約完成」該走的路。
-   *
-   * 設迄日 + 停用,剩下的交給 gen_contract_orders:它會清掉迄日之後
-   * **未收款**的月租單,已收款的一列都不動。
-   *
-   * 為什麼要清未來的未收款:那些是還沒發生的應收,留著會讓營收預估虛高。
-   * 停用本身不會清 —— 觸發器看到 active=false 就 return 了,
-   * 是「改 end_date」這件事讓它清的,所以兩個一定要一起送。
+  /*
+   * ★ 2026-10-13 拿掉「結束租約」（David：「如果是這樣不需要結束租吧」）——
+   *   到期什麼都不用按；提前結束一律走「提前終止契約・結算退款」（terminate-modal.tsx、migration_331），
+   *   沒有錢要結的話沒收／退還都是 0，按下去就結案。
+   *   舊的結束租約只停用、不設 terminated_on，於是整張契約的營收被清光（6B5 周羽艾）。
    */
-  async function endLease(c: Contract) {
-    const name = nameOf(c);
-    const d = prompt(`結束租約「${name}」\n\n請輸入租約結束日 (YYYY-MM-DD)`,
-      c.end_date || todayStr());
-    if (d === null) return;
-    const end = d.trim();
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(end)) return flash('日期格式要像 2026-06-30');
-
-    const rows = await ordersOf(c.id);
-    if (!confirm(endLeaseConfirmText(name, end, endLeaseRemoved(rows, end)))) return;
-
-    const { data: upd, error } = await supabase.from('contracts')
-      .update({ end_date: end, active: false }).eq('id', c.id).select('id');
-    if (error) return flash('結束失敗:' + error.message);
-    if (!upd?.length) return flash('結束失敗：沒有任何一列被更新（多半是權限或關帳）。');
-    /*
-     * ★ 2026-09-22 拿掉 `setTimeout(500)`。觸發器是在**同一個交易裡**跑完才回的 ——
-     *   `gen_contract_orders()` 是 contracts 上的 AFTER trigger，update 回來時
-     *   月租單已經長好了。那 500ms 等的是一個不存在的非同步。
-     */
-    await warnStray({ ...c, end_date: end });
-    savedToast(savedText('已結束租約', `${c.room ?? ''} ${c.tenant_name ?? ''}`)); markSaved(c.id); load();
-  }
 
   /**
    * 改完租期之後,把「掉在租期外但已收款」的月租單指出來。
@@ -1329,11 +1307,28 @@ const nameOf = (c: Contract) =>
                     className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-green text-mor-greendark text-sm font-medium hover:bg-mor-greenlight">收租</button>
                   <a href={`/deposits?contract=${c.id}`}
                     className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-blue text-mor-blue text-sm font-medium hover:bg-mor-bluelight flex items-center justify-center">押金</a>
-                  {c.active && (
-                    <button onClick={() => { endLease(c); setDetail(null); }}
-                      className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-slate text-mor-slate text-sm font-medium hover:bg-white/45">結束租約</button>
+                  {/* 提前終止契約・結算退款（2026-10-13，照取消訂單的樣子）：還在用、還沒終止過的契約才有 */}
+                  {c.active && !c.terminated_on && (
+                    <button onClick={() => { setDetail(null); setTerminateOf(c); }}
+                      className="basis-full h-11 rounded-lg border border-red-300 text-red-600 text-sm font-medium hover:bg-red-50">提前終止契約・結算退款</button>
                   )}
                 </div>
+                {c.terminated_on && (() => {
+                  const st = (c.terminate_settle ?? {}) as Record<string, any>;
+                  const n = (k: string) => Number(st[k] ?? 0).toLocaleString();
+                  const stt = st.status === 'review' ? '退款審核中' : st.status === 'approved' ? '已核可待匯款'
+                    : st.status === 'rejected' ? '退款被駁回（可以重新結算）' : '已結案';
+                  return (
+                    <div className="mt-2 rounded-lg bg-mor-bg px-3 py-2 text-xs text-gray-600 leading-relaxed">
+                      已提前終止・{c.terminated_on}・退 ${n('refund')}（租金 ${n('rent_refund')}＋押金 ${n('dep_refund')}）・
+                      沒收 ${(Number(st.rent_forfeit ?? 0) + Number(st.dep_forfeit ?? 0)).toLocaleString()}・{stt}
+                      {st.status === 'rejected' && (
+                        <button onClick={() => { setDetail(null); setTerminateOf(c); }}
+                          className="ml-2 font-medium text-mor-slate hover:text-mor-slatedark">重新結算 →</button>
+                      )}
+                    </div>
+                  );
+                })()}
                 <div className="mt-2 text-center">
                   <button onClick={() => { del(c); setDetail(null); }}
                     className="text-xs text-red-400 underline hover:text-red-600">
@@ -1347,6 +1342,8 @@ const nameOf = (c: Contract) =>
       })()}
 
       {/* ★ payAccounts 由母層傳入 —— CollectModal 自己不撈,少一支查詢也少一份不同步的清單 */}
+      {terminateOf && <TerminateModal c={terminateOf} onClose={() => setTerminateOf(null)}
+        onDone={() => { const id = terminateOf.id; setTerminateOf(null); markSaved(id); load(); }} />}
       {collect && <CollectModal contract={collect} onClose={() => { setCollect(null); load(); }} supabase={supabase} payAccounts={payAccounts} invFromYm={invFromYm} />}
       {edit && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">

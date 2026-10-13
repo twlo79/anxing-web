@@ -32,7 +32,8 @@ export async function loadBusy(supabase: SupabaseClient, m: MoveState, ids: Set<
     supabase.from('orders').select('id, move_group, property_id, estate_id, property_raw, checkin, checkout')
       .not('source', 'in', '(oneoff,airbnb_cancelled)').is('cancelled_on', null)
       .lt('checkin', m.checkout).gt('checkout', m.checkin),
-    supabase.from('contracts').select('property_id, estate_id, room, start_date, end_date, active')
+    /* ★ contracts 沒有 property_id 欄（2026-10-13 查到）—— 帶了整支查詢會失敗、契約全被當成空房。用物業＋房號比 */
+      supabase.from('contracts').select('estate_id, room, start_date, end_date, active')
       .lte('start_date', m.checkout).gte('end_date', m.checkin),
   ]);
   const busy: Busy[] = [];
