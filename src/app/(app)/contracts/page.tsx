@@ -1307,8 +1307,12 @@ const nameOf = (c: Contract) =>
                     className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-green text-mor-greendark text-sm font-medium hover:bg-mor-greenlight">收租</button>
                   <a href={`/deposits?contract=${c.id}`}
                     className="flex-1 min-w-[6rem] h-11 rounded-lg border border-mor-blue text-mor-blue text-sm font-medium hover:bg-mor-bluelight flex items-center justify-center">押金</a>
-                  {/* 提前終止契約・結算退款（2026-10-13，照取消訂單的樣子）：還在用、還沒終止過的契約才有 */}
-                  {c.active && !c.terminated_on && (
+                  {/*
+                    提前終止契約・結算退款（2026-10-13，照取消訂單的樣子）：還沒終止過的契約才有。
+                    ★ 已停用的也要有 —— 6B5 周羽艾就是先被停用（營收被清光）、再來結算的（David：「沒終止耶」）。
+                      資料庫那支對停用的契約會把起租月～終止日的營收補回來。
+                  */}
+                  {!c.terminated_on && (
                     <button onClick={() => { setDetail(null); setTerminateOf(c); }}
                       className="basis-full h-11 rounded-lg border border-red-300 text-red-600 text-sm font-medium hover:bg-red-50">提前終止契約・結算退款</button>
                   )}
@@ -1764,27 +1768,12 @@ const nameOf = (c: Contract) =>
               </div>
 
               {/*
-                ══════════ 其他（2026-09-16）══════════
-
-                ★ 「啟用中」原本擠在收款帳號旁邊，只是因為兩欄的版面剛好空一格。
-                  它跟收款帳號沒有關係 —— 它是「這張契約還算不算數」，
-                  那是整份的狀態，不是某個欄位的附屬。
+                ★ 2026-10-13 拿掉「啟用中」勾選（David：「這功能好像有點沒意義，是不是可以拿掉」）——
+                  取消勾選＝停用，會把這張契約**從頭到尾**的營收清光（6B5 周羽艾就是這樣變 0）。
+                  到期不用按任何東西；提前退租走抽屜的「提前終止契約・結算退款」（migration_331）；
+                  打錯／沒成交就刪除（進回收桶）。`active` 欄位留著，存檔照原值寫回，不會被這張表單改掉。
               */}
               <FormSection title="其他功能" />
-              <div className="col-span-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={edit.active} onChange={(e) => setEdit({ ...edit, active: e.target.checked })} />
-                  啟用中
-                </label>
-                <details className="inline-block">
-                  <summary className="list-none cursor-pointer inline-flex w-[16px] h-[16px]
-                                      rounded-full bg-mor-sand text-[10px] font-bold text-[#6b5b3f]
-                                      items-center justify-center align-middle select-none">i</summary>
-                  <div className="mt-1.5 text-xs text-gray-500 leading-relaxed">
-                    停用的契約<b>不再產生月租單</b>，也不出現在收租清單上。已經產生的歷史紀錄留著。
-                  </div>
-                </details>
-              </div>
               {/*
                 ══════════ 其他功能的四個摺疊（2026-09-24 使用者指定）══════════
                 發票、折讓約定、展延租期、顯示名稱與備註 —— 多數契約用不到，收起來。
