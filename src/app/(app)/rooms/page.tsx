@@ -29,6 +29,7 @@ import { isManagerOrBoss, isFinance } from '@/lib/roles';
 import { airbnbLinks } from '@/lib/airbnb-link';
 import { parseRoomsPrefs, serializeRoomsPrefs, shiftYm, ROOMS_PREFS_KEY } from '@/lib/rooms-prefs';
 import MovePanel, { type MoveRoom } from './move-panel';
+import AddBookingPanel, { type Created } from './add-booking-panel';
 import { useIsMobile } from '@/lib/use-is-mobile';
 import {
   ancestryOf, occupancyOf, occupancyByRoom, totalOccupancy, fmtPct, occTone, type RoomNode,
@@ -286,6 +287,10 @@ export default function RoomStatusPage() {
   const [orderInfo, setOrderInfo] = useState<Record<string, { key: string | null; amount: number | null }>>({});
   /** 正在移房的訂單 id */
   const [moving, setMoving] = useState<string | null>(null);
+  /** ＋ 加訂單（2026-10-13）：開著時帶入的物業／房源／日子 */
+  const [adding, setAdding] = useState<{ estateId: string | null; propertyId?: string | null; day?: string | null } | null>(null);
+  /** 剛建好的那一筆 —— 上方綠條附連結去補押金 */
+  const [created, setCreated] = useState<Created | null>(null);
   const isMobile = useIsMobile();
   const gridRef = useRef<HTMLDivElement>(null);
 
@@ -772,19 +777,31 @@ export default function RoomStatusPage() {
       if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
       const t = e.target as HTMLElement | null;
       if (t?.closest?.('input, textarea, select, [contenteditable="true"]')) return;
-      if (picked || moving) return;
+      if (picked || moving || adding) return;
       e.preventDefault();
       setYm((y) => shiftYm(y, e.key === 'ArrowLeft' ? -1 : 1));
     };
     window.addEventListener('keydown', f);
     return () => window.removeEventListener('keydown', f);
-  }, [mode, picked, moving]);
+  }, [mode, picked, moving, adding]);
 
   /** 一格（空格或色條）。主列與展開的子列共用 */
   const drawCell = (c: Cell, room: Room) => {
                   const cls = `relative border-b border-r border-mor-line min-w-[36px] md:min-w-[42px]
                     ${isWeekend(c.day) ? 'bg-mor-bg/50' : ''}`;
-                  if (c.type === 'free') return <td key={c.day} className={cls} />;
+                  /* 空白格子：點了直接加訂單，帶入這間房與這一天（2026-10-13） */
+                  if (c.type === 'free') {
+                    if (!canNote) return <td key={c.day} className={cls} />;
+                    return (
+                      <td key={c.day} className={`${cls} cursor-pointer hover:bg-mor-bluelight/60`}
+                        title={`${room.name} ${c.day.slice(5).replace('-', '/')} 加訂單`}
+                        onClick={(e) => {
+                          e.stopPropagation(); setPicked(null);
+                          const mr = moveRooms.find((r) => r.name === room.name && r.estate === room.estate);
+                          setAdding({ estateId: mr?.estate_id ?? null, propertyId: mr?.id ?? null, day: c.day });
+                        }} />
+                    );
+                  }
                   /*
                     ② 沒被選到的色條**淡掉，不是消失**。
                     ★★★ 那幾天還是有人。整條拿掉的話畫面會說那間房空著 ——
@@ -834,7 +851,27 @@ export default function RoomStatusPage() {
             Airbnb　私下　契約　狀態
           </span>
         </h1>
+        {canNote && (
+          <button type="button"
+            onClick={() => setAdding({ estateId: estates.find((e) => e.name === estF)?.id ?? null })}
+            className="h-10 rounded-lg bg-mor-slate px-4 text-ui font-medium text-white hover:bg-mor-slatedark">
+            ＋ 加訂單
+          </button>
+        )}
       </div>
+
+      {/* 剛建好的那一筆：附連結去補押金等（2026-10-13） */}
+      {created && (
+        <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl bg-mor-greenlight px-4 py-2.5 text-sm text-mor-greendark">
+          <span>✓ 已建立{created.kind === 'private' ? '私下訂單' : '契約'}・{created.room}</span>
+          <a href={created.kind === 'private' ? `/shortterm?order=${created.id}` : `/contracts?contract=${created.id}`}
+            target="_blank" rel="noreferrer" className="font-medium hover:underline">
+            到{created.kind === 'private' ? '訂單頁' : '契約頁'}補押金 →
+          </a>
+          <button type="button" onClick={() => setCreated(null)} aria-label="關掉"
+            className="ml-auto text-mor-greendark/70 hover:text-mor-greendark">✕</button>
+        </div>
+      )}
 
       {/*
         手機的換月放在最上面一整排（2026-10-12 過審）—— 篩選列在手機上是收起來的，
@@ -1362,6 +1399,15 @@ export default function RoomStatusPage() {
           /* 存好之後把畫面上那一筆換掉 —— 不重抓整個月，卡片也不用關 */
           setStays((ss) => ss.map((s) => (s.id === id ? { ...s, note } : s)));
           setPicked((pk) => (pk && pk.stay.id === id ? { ...pk, stay: { ...pk.stay, note } } : pk));
+        }} />}
+
+      {/* ＋ 加訂單（2026-10-13）：私下訂單或契約。建好之後日曆與提醒重抓 */}
+      {adding && <AddBookingPanel sheet={isMobile} rooms={moveRooms} init={adding}
+        onClose={() => setAdding(null)}
+        onDone={(c) => {
+          setAdding(null); setCreated(c);
+          savedToast(`已建立${c.kind === 'private' ? '私下訂單' : '契約'} ${c.room}`);
+          load(); loadAlerts();
         }} />}
 
       {/* 本頁移房（2026-10-12）：跟訂單頁同一套算法與 RPC，存好之後日曆與提醒都重抓 */}
