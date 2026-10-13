@@ -128,15 +128,19 @@ export default function AddBookingPanel({ sheet, rooms, init, onClose, onDone }:
   const freeOf = (r: MoveRoom) => !busy || !range || roomFree(busy, r, range.from, range.to);
   const n = lengthOf(d);
   const y0 = useRef<number | null>(null);
+  /*
+   * ★ 2026-10-13 David：「右邊抽屜很怪，可以在中間嗎，然後不要有空」——
+   *   桌機改成置中視窗、高度跟著內容（最多 90vh 再捲）；手機照舊從底部出來，也是跟著內容高。
+   */
   const box = sheet
-    ? 'fixed inset-x-0 bottom-0 h-[88vh] rounded-t-2xl'
-    : 'fixed top-0 right-0 h-full w-[400px] max-w-full border-l border-mor-line';
+    ? 'fixed inset-x-0 bottom-0 max-h-[90vh] rounded-t-2xl'
+    : 'fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[440px] max-w-[calc(100vw-2rem)] max-h-[90vh] rounded-2xl';
   const inp = (b: boolean) => `h-10 w-full rounded-lg border px-2 text-ui bg-white ${b ? 'border-red-400 bg-red-50' : 'border-gray-300'}`;
   const lab = 'flex items-center text-uisub text-gray-500';
 
   return (
     <>
-      <div className="fixed inset-0 z-40" onClick={onClose} />
+      <div className="fixed inset-0 z-40 bg-black/30" onClick={onClose} />
       <div onClick={(e) => e.stopPropagation()} role="dialog" aria-label={isP ? '加私下訂單' : '加契約'}
         className={`${box} z-50 bg-white shadow-2xl flex flex-col`}>
         {sheet && (
@@ -146,7 +150,7 @@ export default function AddBookingPanel({ sheet, rooms, init, onClose, onDone }:
             <i className="block mx-auto w-10 h-1.5 rounded-full bg-mor-line" />
           </div>
         )}
-        <div className="flex-1 overflow-y-auto px-4 pb-3 pt-2 space-y-3">
+        <div className="min-h-0 shrink overflow-y-auto px-4 pb-3 pt-2 space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-base font-bold">{isP ? '加私下訂單' : '加契約'}</span>
             <button onClick={onClose} aria-label="關閉"
@@ -209,7 +213,8 @@ export default function AddBookingPanel({ sheet, rooms, init, onClose, onDone }:
           {/* 6 價格 */}
           <div className="flex flex-col gap-1">
             <span className={lab}>{isP ? '價格（整筆）' : '月租金'}{!isP && <Req />}</span>
-            <MoneyInput value={d.price ?? 0} onChange={(v) => set({ price: v > 0 ? v : null })} invalid={bad('price')} />
+            <MoneyInput value={d.price ?? 0} onChange={(v) => set({ price: v > 0 ? v : null })} invalid={bad('price')}
+              className="h-10 w-full rounded-lg border border-gray-300 px-2 text-right text-ui bg-white" />
             <div className="text-[11px] text-gray-400">
               {isP
                 ? (Number(d.price) > 0 && n > 0 ? `平均每晚 NT$ ${Math.round(Number(d.price) / n).toLocaleString()}` : '可以先空著，之後到訂單頁補（空著＝營收 0）')
