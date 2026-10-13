@@ -20,13 +20,13 @@ export function settlePath(refund: number): SettlePath {
 }
 
 export const PATH_LABEL: Record<SettlePath, string> = {
-  close: '全部沒入：不用請款，按下去就結案',
+  close: '不用退錢：不用請款，按下去就結案',
   direct: `退還未滿 $${CANCEL_REVIEW_AT.toLocaleString()}：不用審核，直接排匯款`,
   review: `退還 $${CANCEL_REVIEW_AT.toLocaleString()} 以上：送請款審核，兩票核可後才生效`,
 };
 
 export const PATH_BUTTON: Record<SettlePath, string> = {
-  close: '確認取消並沒入',
+  close: '確認取消',
   direct: '確認取消，直接退款',
   review: '送審',
 };
@@ -82,5 +82,51 @@ export function cancelBlockedReason(o: { source: string; cancelled_on?: string |
                                           cancel_settle?: { status?: string } | null }): string | null {
   if (o.source !== 'private') return '只有私下訂單在這裡取消 —— Airbnb／Agoda 的取消照平台同步';
   if (o.cancelled_on && o.cancel_settle?.status !== 'rejected') return '這張訂單已經取消了';
+  return null;
+}
+
+/* ══════════════════════════════════════════════════════════
+ * 2026-10-13（migration_332，David 過審）：房費、押金分開算
+ *
+ *   房費　保留／退還 —— 「房費不是沒入，是要不要退」：保留的直接改寫成訂單金額，
+ *         照原本住宿的月份算房費營收（不走折讓）
+ *   押金　沒入／退還 —— 沒入的記一筆一次性營收，名目「其他收入」
+ *   退還合計 ＝ 房費退還 ＋ 押金退還；0 結案、< 3,000 免審、≥ 3,000 送審（不變）
+ *
+ * ★ 資料庫 cancel_order_settle() 是真正的規則；這裡是畫面的試算與擋門訊息。
+ * ══════════════════════════════════════════════════════════ */
+
+export type SplitDraft = { keepFee: number; depForfeit: number };
+export type SplitResult = { feeRefund: number; depRefund: number; refund: number; kept: number };
+
+export function splitRefund(t: SettleTotals, d: SplitDraft): SplitResult {
+  const feeRefund = t.order - r0(d.keepFee);
+  const depRefund = t.deposit - r0(d.depForfeit);
+  return { feeRefund, depRefund, refund: feeRefund + depRefund, kept: r0(d.keepFee) + r0(d.depForfeit) };
+}
+
+/** 快選：全部不退／只退房費／只退押金／全退（某一邊是 0 時，跟別的重複的不列） */
+export function splitPicks(t: SettleTotals): ({ label: string } & SplitDraft)[] {
+  const out: ({ label: string } & SplitDraft)[] = [{ label: '全部不退', keepFee: t.order, depForfeit: t.deposit }];
+  if (t.order > 0 && t.deposit > 0) {
+    out.push({ label: '只退房費', keepFee: 0, depForfeit: t.deposit });
+    out.push({ label: '只退押金', keepFee: t.order, depForfeit: 0 });
+  }
+  if (t.total > 0) out.push({ label: '全退', keepFee: 0, depForfeit: 0 });
+  return out;
+}
+
+/** 擋門訊息；null ＝ 可以送。超過的先講（兩格連動，打太大時另一格會變負數） */
+export function splitError(t: SettleTotals, d: SplitDraft,
+                           payee?: { name?: string; account?: string }): string | null {
+  const m = (n: number) => `$${Math.round(n).toLocaleString()}`;
+  if (t.total <= 0) return '這張訂單一毛都還沒收到 —— 沒有東西可以保留或退還，直接刪掉訂單就好';
+  const kf = r0(d.keepFee), df = r0(d.depForfeit);
+  if (kf > t.order) return `房費保留 ${m(kf)} 超過已收房費 ${m(t.order)}`;
+  if (kf < 0) return `房費退還超過已收房費 ${m(t.order)} —— 最多只能退收到的錢`;
+  if (df > t.deposit) return `押金沒入 ${m(df)} 超過押金可結算 ${m(t.deposit)}`;
+  if (df < 0) return `押金退還超過押金可結算 ${m(t.deposit)} —— 最多只能退收到的錢`;
+  const { refund } = splitRefund(t, d);
+  if (refund > 0 && payee && (!payee.name?.trim() || !payee.account?.trim())) return '要退還的話，房客戶名與收款帳號要填';
   return null;
 }

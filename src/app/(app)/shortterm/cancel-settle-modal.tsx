@@ -6,7 +6,7 @@ import MoneyInput from '@/components/MoneyInput';
 import RefundFields, { type RefundDraft, type RefundPayAccount } from '@/components/RefundFields';
 import { savedToast } from '@/lib/saved-feedback';
 import {
-  depositAvail, settleTotals, quickPicks, settleError, settlePath, PATH_LABEL, PATH_BUTTON,
+  depositAvail, settleTotals, settlePath, PATH_LABEL, PATH_BUTTON, splitRefund, splitPicks, splitError,
 } from '@/lib/cancel-settle';
 
 /*
@@ -17,6 +17,10 @@ import {
  *   跟押金頁、請款頁同一組欄位，不另外刻（David：「這邊做分隔，最後有安幸出款帳號、預計退款日」）。
  *
  *   已收（押金＋房費）→ 沒入多少、退還多少 → 退還 0 結案／未滿 3,000 免審／3,000 以上送審
+ *
+ * ★★ 2026-10-13（migration_332，David）：房費、押金分兩列 ——
+ *   房費「保留／退還」：保留的改寫成訂單金額，照原本住宿月份算房費營收（不是沒入、不走折讓）
+ *   押金「沒入／退還」：沒入的記一筆一次性營收，名目「其他收入」
  *
  * ★ 金額怎麼分、走哪條路，真正的規則在資料庫 cancel_order_settle()；這裡只是試算與擋門訊息（lib/cancel-settle.ts）。
  * ★ 沒入與退還兩格都能打，互相連動；超過已收合計時直接講原因（David：「退還不能多於全部金額」）。
@@ -38,8 +42,9 @@ export default function CancelSettleModal({ order, onClose, onDone }: {
   const [loading, setLoading] = useState(true);
   const [dep, setDep] = useState<Dep | null>(null);
   const [fees, setFees] = useState(0);
-  const [forfeit, setForfeit] = useState(0);
-  const [refund, setRefund] = useState(0);
+  /** 房費保留多少（＝結算後的訂單金額）、押金沒入多少；退還＝已收 − 這兩個 */
+  const [keepFee, setKeepFee] = useState(0);
+  const [depForfeit, setDepForfeit] = useState(0);
   const [reason, setReason] = useState(REASONS[0]);
   const [rf, setRf] = useState<RefundDraft>({});
   const [payAccounts, setPayAccounts] = useState<RefundPayAccount[]>([]);
@@ -68,12 +73,14 @@ export default function CancelSettleModal({ order, onClose, onDone }: {
   }, [supabase, order.id]);
 
   const t = useMemo(() => settleTotals(depositAvail(dep, fees), order.paid_amount), [dep, fees, order.paid_amount]);
-  // 預設全部沒入
-  useEffect(() => { if (!loading) { setForfeit(t.total); setRefund(0); } }, [loading, t.total]);
+  // 預設全部不退（房費全保留、押金全沒入）
+  useEffect(() => { if (!loading) { setKeepFee(t.order); setDepForfeit(t.deposit); } }, [loading, t.order, t.deposit]);
 
+  const draft = { keepFee, depForfeit };
+  const { feeRefund, depRefund, refund } = splitRefund(t, draft);
   const path = settlePath(refund);
-  const showErr = settleError(forfeit, refund, t.total);                       // 金額的錯：一打就講
-  const submitErr = settleError(forfeit, refund, t.total, { name: rf.payee_name ?? '', account: rf.payee_account ?? '' });
+  const showErr = splitError(t, draft);                                      // 金額的錯：一打就講
+  const submitErr = splitError(t, draft, { name: rf.payee_name ?? '', account: rf.payee_account ?? '' });
   /* 送出後還缺的（RefundFields 用這個名字畫紅框）。預計匯款日與安幸付款不必填 —— 比照押金頁的退款申請 */
   const rfMissing = tried && refund > 0
     ? [!rf.payee_name?.trim() && '戶名', !rf.payee_account?.trim() && '房客收款帳號'].filter(Boolean) as string[] : [];
@@ -83,7 +90,7 @@ export default function CancelSettleModal({ order, onClose, onDone }: {
     if (submitErr) return setErr(submitErr);
     setBusy(true); setErr('');
     const { data, error } = await supabase.rpc('cancel_order_settle', {
-      p_order: order.id, p_forfeit: forfeit, p_reason: reason,
+      p_order: order.id, p_keep_fee: keepFee, p_dep_forfeit: depForfeit, p_reason: reason,
       p_payee_name: refund > 0 ? rf.payee_name : null, p_payee_bank_code: refund > 0 ? rf.payee_bank_code : null,
       p_payee_account: refund > 0 ? rf.payee_account : null,
       p_planned_on: refund > 0 ? (rf.planned_refund_on || null) : null,
@@ -126,22 +133,45 @@ export default function CancelSettleModal({ order, onClose, onDone }: {
               {line('已收合計', money(t.total), true)}
             </div>
 
-            <div className="flex items-center gap-2 pt-1"><span className="text-[11px] font-bold tracking-wide text-gray-500">沒入多少、退多少</span><i className="flex-1 h-px bg-mor-line" /></div>
-            <div className="grid grid-cols-2 gap-3">
-              <label className="flex flex-col gap-1"><span className="text-xs text-gray-600">沒入</span>
-                <MoneyInput value={forfeit} onChange={(n) => { setForfeit(n); setRefund(t.total - n); setErr(''); }}
-                  className={`h-10 rounded-lg border px-2 text-right ${showErr && forfeit > t.total ? 'border-red-400 bg-red-50' : 'border-mor-line'}`} /></label>
-              <label className="flex flex-col gap-1"><span className="text-xs text-gray-600">退還</span>
-                <MoneyInput value={Math.max(0, refund)} onChange={(n) => { setRefund(n); setForfeit(t.total - n); setErr(''); }}
-                  className={`h-10 rounded-lg border px-2 text-right ${showErr && refund > t.total ? 'border-red-400 bg-red-50' : 'border-mor-line'}`} /></label>
+            <div className="flex items-center gap-2 pt-1"><span className="text-[11px] font-bold tracking-wide text-gray-500">留多少、退多少</span><i className="flex-1 h-px bg-mor-line" /></div>
+            {/*
+              兩列各自連動：保留＋退還＝已收房費、沒入＋退還＝押金可結算。
+              ★ 房費叫「保留」不叫「沒入」—— 房費本來就是營收，問的只是要不要退（David 2026-10-13）。
+            */}
+            <div className="grid grid-cols-[4.5rem_1fr_1fr] gap-x-2 gap-y-1 items-center">
+              <span />
+              <span className="text-xs text-gray-600">保留／沒入</span>
+              <span className="text-xs text-gray-600">退還</span>
+
+              <span className="text-sm text-gray-600">房費<span className="block text-[11px] text-gray-400">{money(t.order)}</span></span>
+              <MoneyInput value={Math.max(0, keepFee)} onChange={(n) => { setKeepFee(n); setErr(''); }} disabled={t.order <= 0}
+                className={`h-10 rounded-lg border px-2 text-right ${showErr?.startsWith('房費保留') ? 'border-red-400 bg-red-50' : 'border-mor-line'}`} />
+              <MoneyInput value={Math.max(0, feeRefund)} onChange={(n) => { setKeepFee(t.order - n); setErr(''); }} disabled={t.order <= 0}
+                className={`h-10 rounded-lg border px-2 text-right ${showErr?.startsWith('房費退還') ? 'border-red-400 bg-red-50' : 'border-mor-line'}`} />
+              <span />
+              <span className="text-[11px] text-gray-400 -mt-0.5">保留（照算房費）</span>
+              <span />
+
+              <span className="text-sm text-gray-600">押金<span className="block text-[11px] text-gray-400">{money(t.deposit)}</span></span>
+              <MoneyInput value={Math.max(0, depForfeit)} onChange={(n) => { setDepForfeit(n); setErr(''); }} disabled={t.deposit <= 0}
+                className={`h-10 rounded-lg border px-2 text-right ${showErr?.startsWith('押金沒入') ? 'border-red-400 bg-red-50' : 'border-mor-line'}`} />
+              <MoneyInput value={Math.max(0, depRefund)} onChange={(n) => { setDepForfeit(t.deposit - n); setErr(''); }} disabled={t.deposit <= 0}
+                className={`h-10 rounded-lg border px-2 text-right ${showErr?.startsWith('押金退還') ? 'border-red-400 bg-red-50' : 'border-mor-line'}`} />
+              <span />
+              <span className="text-[11px] text-gray-400 -mt-0.5">沒入（其他收入）</span>
+              <span />
+
+              <span className="text-sm font-semibold">合計</span>
+              <b className="text-right pr-2 tabular-nums">{money(Math.max(0, keepFee) + Math.max(0, depForfeit))}</b>
+              <b className="text-right pr-2 tabular-nums">{money(Math.max(0, refund))}</b>
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="text-[11px] text-gray-400 mr-0.5">快選</span>
-              {quickPicks(t).map((q) => (
-                <button key={q.label} onClick={() => { setForfeit(q.forfeit); setRefund(t.total - q.forfeit); setErr(''); }}
-                  className={`rounded-md border px-2 py-0.5 text-[11px] ${forfeit === q.forfeit && refund === t.total - q.forfeit
+              {splitPicks(t).map((q) => (
+                <button key={q.label} onClick={() => { setKeepFee(q.keepFee); setDepForfeit(q.depForfeit); setErr(''); }}
+                  className={`rounded-md border px-2 py-0.5 text-[11px] ${keepFee === q.keepFee && depForfeit === q.depForfeit
                     ? 'border-mor-slate bg-mor-bluelight text-mor-slate' : 'border-mor-line text-mor-slate hover:bg-mor-sand/50'}`}>
-                  {q.label}{q.forfeit > 0 ? ` ${money(q.forfeit)}` : ''}
+                  {q.label}
                 </button>
               ))}
             </div>
@@ -164,8 +194,9 @@ export default function CancelSettleModal({ order, onClose, onDone }: {
 
             {!showErr && t.total > 0 && <div className={`rounded-lg px-3 py-2 text-xs ${tone}`}>{PATH_LABEL[path]}</div>}
             <div className="text-[11px] text-gray-400 leading-relaxed">
-              結算後：訂單標「已取消」、房源狀態空出那幾晚；原本的房費不再算營收，沒入的 {money(Math.max(0, forfeit))} 記成「其他收入・取消入住」
-              {path === 'review' ? '（核可後才記）' : ''}。
+              結算後：訂單標「已取消」、房源狀態空出那幾晚；<b className="text-gray-500">訂單金額改成保留的 {money(Math.max(0, keepFee))}</b>，
+              照原本住宿的月份算房費營收{keepFee <= 0 ? '（全退＝這張訂單營收 0）' : ''}。
+              {depForfeit > 0 ? `沒入的押金 ${money(depForfeit)} 記一筆一次性營收，名目「其他收入」${path === 'review' ? '（核可後才記）' : ''}。` : ''}
               {refund > 0 && '退還的錢在請款審核頁排匯款，確認匯款後押金變「已退」。'}
             </div>
             {err && <div className="text-xs text-red-600">{err}</div>}

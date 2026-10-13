@@ -42,3 +42,31 @@ test('只有私下訂單、還沒取消的才能結算；被駁回的可以重�
   assert.match(cancelBlockedReason({ source: 'private', cancelled_on: '2026-10-06', cancel_settle: { status: 'done' } })!, /已經取消/);
   assert.equal(cancelBlockedReason({ source: 'private', cancelled_on: '2026-10-06', cancel_settle: { status: 'rejected' } }), null);
 });
+
+import { splitRefund, splitPicks, splitError } from './cancel-settle.ts';
+
+test('分開算：房費保留／退還、押金沒入／退還', () => {
+  const t = settleTotals(20000, 108343);
+  assert.deepEqual(splitRefund(t, { keepFee: 108343, depForfeit: 0 }), { feeRefund: 0, depRefund: 20000, refund: 20000, kept: 108343 });
+  assert.deepEqual(splitRefund(t, { keepFee: 50000, depForfeit: 5000 }), { feeRefund: 58343, depRefund: 15000, refund: 73343, kept: 55000 });
+  assert.equal(settlePath(splitRefund(t, { keepFee: 108343, depForfeit: 20000 }).refund), 'close');
+});
+
+test('分開算的快選；只有一邊有錢時不重複', () => {
+  const t = settleTotals(20000, 108343);
+  assert.deepEqual(splitPicks(t).map((p) => [p.label, p.keepFee, p.depForfeit]), [
+    ['全部不退', 108343, 20000], ['只退房費', 0, 20000], ['只退押金', 108343, 0], ['全退', 0, 0]]);
+  assert.deepEqual(splitPicks(settleTotals(0, 5000)).map((p) => p.label), ['全部不退', '全退']);
+});
+
+test('分開算的擋門：超過、負數、退款要帳號', () => {
+  const t = settleTotals(20000, 108343);
+  assert.match(splitError(t, { keepFee: 200000, depForfeit: 0 }) ?? '', /房費保留/);
+  assert.match(splitError(t, { keepFee: -1, depForfeit: 0 }) ?? '', /房費退還超過/);
+  assert.match(splitError(t, { keepFee: 0, depForfeit: 30000 }) ?? '', /押金沒入/);
+  assert.match(splitError(t, { keepFee: 0, depForfeit: -5 }) ?? '', /押金退還超過/);
+  assert.equal(splitError(t, { keepFee: 0, depForfeit: 0 }), null);
+  assert.equal(splitError(t, { keepFee: 0, depForfeit: 0 }, { name: 'x', account: '' }), '要退還的話，房客戶名與收款帳號要填');
+  assert.equal(splitError(t, { keepFee: 108343, depForfeit: 20000 }, { name: '', account: '' }), null);
+  assert.match(splitError(settleTotals(0, 0), { keepFee: 0, depForfeit: 0 }) ?? '', /一毛都還沒收到/);
+});
