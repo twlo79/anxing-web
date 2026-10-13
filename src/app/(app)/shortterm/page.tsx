@@ -57,9 +57,6 @@ import TrashLink from '@/components/TrashLink';
 import PricingFeeModal from './pricing-fee-modal';
 import CancelSettleModal from './cancel-settle-modal';
 import { cancelBlockedReason } from '@/lib/cancel-settle';
-import { roomFree, nightsLabel, dayBefore } from '@/lib/room-free';
-import { moveSegments, moveError, moveChain, type MoveStay, type MoveState } from '@/lib/order-move';
-import { commitMove } from '@/lib/order-move-io';
 import MovePanel from '../rooms/move-panel';
 import { useIsMobile } from '@/lib/use-is-mobile';
 import { canPricingFee, PRICING_TITLE } from '@/lib/pricing-fee';
@@ -190,7 +187,6 @@ type Fee = {
    */
   deposit_id?: string | null;
 };
-type Stay = MoveStay;
 
 /*
  * 這一頁列哪些來源。
@@ -311,7 +307,6 @@ export default function ShortTermPage() {
   const [kw, setKw] = useState('');
   const [kwIn, setKwIn] = useState('');
   const [edit, setEdit] = useState<Order | null>(null);
-  const [move, setMove] = useState<MoveState | null>(null);
   /** 移房面板開著的那一筆（跟房源狀態同一個元件） */
   const [quickMove, setQuickMove] = useState<string | null>(null);
   const isMobile = useIsMobile();
@@ -1235,24 +1230,11 @@ export default function ShortTermPage() {
      */
     /*
      * ★★ 2026-10-12（David：「改名 1 整段移房 2 部分移房，請參考這邊做」）：
-     *   先開跟房源狀態同一個移房面板（MovePanel）。多段的單、或要切三段以上，
-     *   面板裡按「手動調整」才開下面原本的視窗（setMove）。
+     *   跟房源狀態同一個移房面板（MovePanel），三個分頁：1 整段移／2 部分移／3 手動移。
+     *   原本的移房視窗併進「3 手動移」，這一頁不再另外畫一份。
      */
     setQuickMove(o.id);
   }
-  const moveWithAmounts = moveSegments;
-  const moveErr = moveError;
-  async function doMove() {
-    if (!move) return;
-    /* 算法與寫入在 lib/order-move(-io).ts —— 收款紀錄會被刪的時候先問、整批走 move_order RPC */
-    const r = await commitMove(supabase, move, (t) => confirm(t));
-    if (r.cancelled) return;
-    if (!r.ok) return flash(r.message);
-    flash(r.message); setMove(null); load();
-  }
-  const addStay = () => move && setMove({ ...move, stays: [...move.stays, { room: '', estateId: move.stays[move.stays.length - 1]?.estateId ?? null, propertyId: null, from: '' }] });
-  const updStay = (i: number, patch: Partial<Stay>) => move && setMove({ ...move, stays: move.stays.map((s, idx) => idx === i ? { ...s, ...patch } : s) });
-  const delStay = (i: number) => move && setMove({ ...move, stays: move.stays.filter((_, idx) => idx !== i) });
   /*
    * 按過儲存了沒。
    *
@@ -2703,75 +2685,7 @@ export default function ShortTermPage() {
 
       {quickMove && <MovePanel srcId={quickMove} sheet={isMobile}
         onClose={() => setQuickMove(null)}
-        onDone={(msg) => { setQuickMove(null); flash(msg); load(); }}
-        onAdvanced={(m) => { setQuickMove(null); setMove(m); }} />}
-
-      {move && (() => {
-        const segs = moveWithAmounts(move);
-        const err = moveErr(move);
-        return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/30" />
-          <div onClick={(e) => e.stopPropagation()} className="relative bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[85vh] overflow-y-auto">
-            <div className="sticky top-0 z-10 bg-white border-b border-mor-line px-6 py-4 font-bold flex items-center justify-between">移房 · {move.guest ?? ''}<button onClick={() => setMove(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button></div>
-            <div className="px-6 py-4 flex flex-col gap-3 text-sm">
-              {/* 日期一律寫「第一晚 ～ 最後一晚」，不寫退房日（2026-10-06 David：「以實際住的晚數，不算退房日」） */}
-              <div className="text-xs text-gray-500">整筆：<b className="text-mor-ink">{move.origRooms[0] ?? ''}</b>　{move.checkin} ~ {dayBefore(move.checkout)}（最後一晚）· 共 {move.totalNights} 晚 · 總營收 ${fmt(move.totalAmount)}</div>
-              {move.stays.map((s, i) => {
-                const seg = segs[i];
-                return (
-                  <div key={i} className="bg-mor-sand/30 rounded-lg px-3 py-2 flex flex-col gap-1.5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-medium">{i === 0 ? '入住(第 1 間)' : `第 ${i + 1} 間`}</span>
-                      {i > 0 && <button type="button" onClick={() => delStay(i)} className="text-xs text-red-500 underline">刪除</button>}
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <select value={s.estateId ?? ''} onChange={(e) => updStay(i, { estateId: e.target.value || null, room: '', propertyId: null })} className="rounded border border-gray-300 px-2 py-1 text-xs"><option value="">物業</option>{estates.map((es) => <option key={es.id} value={es.id}>{es.name}{es.active ? '' : '(停用)'}</option>)}</select>
-                      <select value={s.room} onChange={(e) => { const nm = e.target.value; const pr = properties.find((x) => x.estate_id === s.estateId && x.name === nm); updStay(i, { room: nm, propertyId: pr?.id ?? null }); }} className="rounded border border-gray-300 px-2 py-1 text-xs"><option value="">房源</option>{properties.filter((x) => x.estate_id === s.estateId)
-                        // 只列這一段每晚都空的房；目前選的那間就算有人也留著（下面會寫原因）
-                        .filter((x) => !move.busy || x.name === s.room || roomFree(move.busy, x, seg.from, seg.to))
-                        .map((x) => <option key={x.id} value={x.name}>{x.name}{move.busy && !roomFree(move.busy, x, seg.from, seg.to) ? '（有人）' : ''}</option>)}</select>
-                      {!move.busy && <span className="text-[11px] text-gray-400">查空房中…</span>}
-                      {i === 0 ? <span className="text-xs text-gray-500">入住日 {move.checkin}</span> : <input type="date" value={s.from} min={move.checkin} max={move.checkout} onChange={(e) => updStay(i, { from: e.target.value })} className="rounded border border-gray-300 px-2 py-1 text-xs" />}
-                    </div>
-                    <div className="text-xs text-gray-600"><b className="text-mor-ink">{seg.room || '—'}</b>　{nightsLabel(seg.from, seg.to)} · {seg.nights} 晚</div>
-                  </div>
-                );
-              })}
-              <button type="button" onClick={addStay} className="text-xs text-mor-blue underline self-start">+ 增加移房（切細）</button>
-              {err && <p className="text-xs text-red-500">{err}</p>}
-              {/*
-                ★★★ 這一行以前是**無條件**印的（2026-09-14 修）:
-                  「各段各自認列到應收，備註『移房 B03』」——
-                  而程式只有在**兩段以上**才寫備註（`if (isMulti)`）。
-                  使用者只改房號、不拆段的時候，畫面承諾了一件不會發生的事，
-                  他回報「沒備註阿」。**畫面說的話要跟程式做的事一致。**
-              */}
-              {(() => {
-                // ★ 跟 doMove 同一套算法：原本住哪 ＋ 這次的各段，去掉重複
-                const preview = moveChain(move.origRooms ?? [], segs.map((x) => x.room));
-                const chainText = preview.join('>');
-                return (
-                  <p className="text-xs text-gray-400">
-                    {segs.length > 1
-                      ? '押金留在第 1 段。各段各自認列到應收。'
-                      : '只改房號，不會拆段、金額不變。'}
-                    {preview.length > 1
-                      ? <>備註會<b className="text-gray-500">加上一行</b>「移房 {chainText}」——
-                        原本的備註留著，不會被蓋掉。</>
-                      : '房號沒有變，不會動到備註。'}
-                  </p>
-                );
-              })()}
-            </div>
-            <div className="sticky bottom-0 bg-white border-t border-mor-line px-6 py-3 flex justify-end gap-2">
-              <button onClick={() => setMove(null)} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>
-              <button onClick={doMove} disabled={!!err} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium hover:bg-mor-slatedark disabled:opacity-40">確認移房</button>
-            </div>
-          </div>
-        </div>
-        );
-      })()}
+        onDone={(msg) => { setQuickMove(null); flash(msg); load(); }} />}
     </div>
   );
 }

@@ -1522,7 +1522,7 @@ function StayCard({ p, today, canNote, onClose, onNoteSaved, sheet, abUrl, info,
           {/* 找房移房（2026-10-12 改成本頁抽屜）—— 跟訂單頁同一套算法與 RPC。契約不在這裡移 */}
           {canMove && (
             <button type="button" onClick={onMove}
-              className="font-medium text-mor-slate hover:text-mor-slatedark">找房移房</button>
+              className="font-medium text-mor-slate hover:text-mor-slatedark">移房</button>
           )}
         </div>
         )}
@@ -1535,7 +1535,7 @@ function StayCard({ p, today, canNote, onClose, onNoteSaved, sheet, abUrl, info,
               打開這張{KIND[s.kind]}</a>
             {canMove && (
               <button type="button" onClick={onMove}
-                className="flex-1 h-12 rounded-xl border border-mor-line bg-white text-sm font-medium">找房移房</button>
+                className="flex-1 h-12 rounded-xl border border-mor-line bg-white text-sm font-medium">移房</button>
             )}
           </div>
         )}
