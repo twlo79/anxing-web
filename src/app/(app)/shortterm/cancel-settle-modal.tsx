@@ -124,7 +124,7 @@ export default function CancelSettleModal({ order, onClose, onDone }: {
           <button onClick={onClose} disabled={busy} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
         </div>
 
-        <div className="px-5 py-4 overflow-y-auto text-sm space-y-3">
+        <div className="px-5 py-4 overflow-y-auto overflow-x-hidden text-sm space-y-3">
           {loading ? <div className="py-8 text-center text-gray-400">載入中…</div> : <>
             <div className="flex items-center gap-2"><span className="text-[11px] font-bold tracking-wide text-gray-500">已收</span><i className="flex-1 h-px bg-mor-line" /></div>
             <div>
@@ -133,37 +133,38 @@ export default function CancelSettleModal({ order, onClose, onDone }: {
               {line('已收合計', money(t.total), true)}
             </div>
 
-            <div className="flex items-center gap-2 pt-1"><span className="text-[11px] font-bold tracking-wide text-gray-500">留多少、退多少</span><i className="flex-1 h-px bg-mor-line" /></div>
             {/*
-              兩列各自連動：保留＋退還＝已收房費、沒入＋退還＝押金可結算。
-              ★ 房費叫「保留」不叫「沒入」—— 房費本來就是營收，問的只是要不要退（David 2026-10-13）。
+              ★ 房費本來就是營收，只問退多少：已收 − 退還 ＝ 留下（算房費營收）。沒有「沒入」。
+              ★ 押金才有沒入（其他收入）。（David 2026-10-14）
             */}
-            <div className="grid grid-cols-[4.5rem_1fr_1fr] gap-x-2 gap-y-1 items-center">
-              <span />
-              <span className="text-xs text-gray-600">保留／沒入</span>
+            <div className="flex items-center gap-2 pt-1"><span className="text-[11px] font-bold tracking-wide text-gray-500">房費</span><i className="flex-1 h-px bg-mor-line" /></div>
+            <div className="rounded-xl border border-mor-line bg-[#FAFAF9] p-3 tabular-nums">
+              <div className="flex justify-between py-1"><span>已收房費</span><b>{money(t.order)}</b></div>
+              <div className="flex items-center justify-between gap-3 py-1">
+                <span className="shrink-0">− 退還</span>
+                <MoneyInput value={Math.max(0, feeRefund)} onChange={(n) => { setKeepFee(t.order - n); setErr(''); }} disabled={t.order <= 0}
+                  className={`w-full min-w-0 h-10 rounded-lg border px-2 text-right max-w-[9rem] ${showErr?.startsWith('房費') ? 'border-red-400 bg-red-50' : 'border-mor-line'}`} />
+              </div>
+              <div className="flex justify-between border-t border-dashed border-mor-line -mx-3 px-3 mt-2 pt-2">
+                <span>＝ 留下<span className="text-xs text-gray-400">（算房費營收）</span></span><b>{money(Math.max(0, keepFee))}</b>
+              </div>
+              <div className="text-[11px] text-gray-400 mt-0.5">訂單 {money(order.amount)} 取消後改成 {money(Math.max(0, keepFee))}</div>
+            </div>
+
+            <div className="flex items-center gap-2 pt-1"><span className="text-[11px] font-bold tracking-wide text-gray-500">押金 {money(t.deposit)}</span><i className="flex-1 h-px bg-mor-line" /></div>
+            <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-x-2 gap-y-1 items-center">
+              <span className="text-xs text-gray-600">沒入 <span className="rounded px-1.5 py-px text-[11px] bg-mor-greenlight text-mor-greendark">其他收入</span></span>
               <span className="text-xs text-gray-600">退還</span>
-
-              <span className="text-sm text-gray-600">房費<span className="block text-[11px] text-gray-400">{money(t.order)}</span></span>
-              <MoneyInput value={Math.max(0, keepFee)} onChange={(n) => { setKeepFee(n); setErr(''); }} disabled={t.order <= 0}
-                className={`h-10 rounded-lg border px-2 text-right ${showErr?.startsWith('房費保留') ? 'border-red-400 bg-red-50' : 'border-mor-line'}`} />
-              <MoneyInput value={Math.max(0, feeRefund)} onChange={(n) => { setKeepFee(t.order - n); setErr(''); }} disabled={t.order <= 0}
-                className={`h-10 rounded-lg border px-2 text-right ${showErr?.startsWith('房費退還') ? 'border-red-400 bg-red-50' : 'border-mor-line'}`} />
-              <span />
-              <span className="text-[11px] text-gray-400 -mt-0.5">保留（照算房費）</span>
-              <span />
-
-              <span className="text-sm text-gray-600">押金<span className="block text-[11px] text-gray-400">{money(t.deposit)}</span></span>
               <MoneyInput value={Math.max(0, depForfeit)} onChange={(n) => { setDepForfeit(n); setErr(''); }} disabled={t.deposit <= 0}
-                className={`h-10 rounded-lg border px-2 text-right ${showErr?.startsWith('押金沒入') ? 'border-red-400 bg-red-50' : 'border-mor-line'}`} />
+                className={`w-full min-w-0 h-10 rounded-lg border px-2 text-right ${showErr?.startsWith('押金沒入') ? 'border-red-400 bg-red-50' : 'border-mor-line'}`} />
               <MoneyInput value={Math.max(0, depRefund)} onChange={(n) => { setDepForfeit(t.deposit - n); setErr(''); }} disabled={t.deposit <= 0}
-                className={`h-10 rounded-lg border px-2 text-right ${showErr?.startsWith('押金退還') ? 'border-red-400 bg-red-50' : 'border-mor-line'}`} />
-              <span />
-              <span className="text-[11px] text-gray-400 -mt-0.5">沒入（其他收入）</span>
-              <span />
+                className={`w-full min-w-0 h-10 rounded-lg border px-2 text-right ${showErr?.startsWith('押金退還') ? 'border-red-400 bg-red-50' : 'border-mor-line'}`} />
+            </div>
 
-              <span className="text-sm font-semibold">合計</span>
-              <b className="text-right pr-2 tabular-nums">{money(Math.max(0, keepFee) + Math.max(0, depForfeit))}</b>
-              <b className="text-right pr-2 tabular-nums">{money(Math.max(0, refund))}</b>
+            <div className="flex items-center gap-2 pt-1"><span className="text-[11px] font-bold tracking-wide text-gray-500">合計</span><i className="flex-1 h-px bg-mor-line" /></div>
+            <div>
+              {line('房費營收＋其他收入', money(Math.max(0, keepFee) + Math.max(0, depForfeit)))}
+              {line('要退', money(Math.max(0, refund)), true)}
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="text-[11px] text-gray-400 mr-0.5">快選</span>
@@ -194,8 +195,8 @@ export default function CancelSettleModal({ order, onClose, onDone }: {
 
             {!showErr && t.total > 0 && <div className={`rounded-lg px-3 py-2 text-xs ${tone}`}>{PATH_LABEL[path]}</div>}
             <div className="text-[11px] text-gray-400 leading-relaxed">
-              結算後：訂單標「已取消」、房源狀態空出那幾晚；<b className="text-gray-500">訂單金額改成保留的 {money(Math.max(0, keepFee))}</b>，
-              照原本住宿的月份算房費營收{keepFee <= 0 ? '（全退＝這張訂單營收 0）' : ''}。
+              結算後：訂單標「已取消」、房源狀態空出那幾晚；<b className="text-gray-500">訂單金額改成留下的 {money(Math.max(0, keepFee))}</b>，
+              照原本住宿的月份算房費營收。
               {depForfeit > 0 ? `沒入的押金 ${money(depForfeit)} 記一筆一次性營收，名目「其他收入」${path === 'review' ? '（核可後才記）' : ''}。` : ''}
               {refund > 0 && '退還的錢在請款審核頁排匯款，確認匯款後押金變「已退」。'}
             </div>

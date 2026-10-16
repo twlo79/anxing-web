@@ -113,3 +113,28 @@ test('moveCandidates：只列同物業、排掉自己', () => {
   const none = moveCandidates(busy, rooms, '2026-10-08', '2026-10-13', 'p5', null);
   assert.deepEqual([none.free.length, none.partly.length], [0, 0]);
 });
+
+import { stripMoveLine, canClearMove, clearMovePatch, moveRevertPatch } from './order-move.ts';
+
+test('清掉移房紀錄：只拿掉那一行，其他備註留著', () => {
+  assert.equal(stripMoveLine('客人要求\n移房 A13>B03', 'A13>B03'), '客人要求');
+  assert.equal(stripMoveLine('移房 A13>B03', 'A13>B03'), null);
+  assert.equal(stripMoveLine('移房 A13>B03X\n移房 A1>B03', 'A13>B03'), '移房 A13>B03X\n移房 A1>B03');
+  assert.equal(stripMoveLine(null, 'A13>B03'), null);
+});
+
+test('清掉移房紀錄：拆段的與沒移過的不行', () => {
+  assert.equal(canClearMove({ move_chain: 'A13>B03' }), true);
+  assert.equal(canClearMove({ move_chain: 'A13>B03', move_group: 'g' }), false);
+  assert.equal(canClearMove({ move_chain: null }), false);
+  assert.deepEqual(clearMovePatch({ move_chain: 'A13>B03', note: 'x\n移房 A13>B03' }), { move_chain: null, note: 'x' });
+  assert.equal(clearMovePatch({ move_chain: 'A13>B03', move_group: 'g' }), null);
+});
+
+test('編輯改回原房 → 紀錄一起清；改去別間不清', () => {
+  const o = { move_chain: 'A13>B03', note: '移房 A13>B03' };
+  assert.deepEqual(moveRevertPatch({ ...o, property_raw: 'A13' }), { move_chain: null, note: null });
+  assert.equal(moveRevertPatch({ ...o, property_raw: 'B03' }), null);
+  assert.equal(moveRevertPatch({ ...o, property_raw: 'C01' }), null);
+  assert.equal(moveRevertPatch({ ...o, property_raw: 'A13', move_group: 'g' }), null);
+});

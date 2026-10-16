@@ -61,7 +61,7 @@ test('分開算的快選；只有一邊有錢時不重複', () => {
 
 test('分開算的擋門：超過、負數、退款要帳號', () => {
   const t = settleTotals(20000, 108343);
-  assert.match(splitError(t, { keepFee: 200000, depForfeit: 0 }) ?? '', /房費保留/);
+  assert.match(splitError(t, { keepFee: 200000, depForfeit: 0 }) ?? '', /房費留下/);
   assert.match(splitError(t, { keepFee: -1, depForfeit: 0 }) ?? '', /房費退還超過/);
   assert.match(splitError(t, { keepFee: 0, depForfeit: 30000 }) ?? '', /押金沒入/);
   assert.match(splitError(t, { keepFee: 0, depForfeit: -5 }) ?? '', /押金退還超過/);

@@ -120,9 +120,9 @@ export function splitPicks(t: SettleTotals): ({ label: string } & SplitDraft)[] 
 export function splitError(t: SettleTotals, d: SplitDraft,
                            payee?: { name?: string; account?: string }): string | null {
   const m = (n: number) => `$${Math.round(n).toLocaleString()}`;
-  if (t.total <= 0) return '這張訂單一毛都還沒收到 —— 沒有東西可以保留或退還，直接刪掉訂單就好';
+  if (t.total <= 0) return '這張訂單一毛都還沒收到 —— 沒有東西可以退還，直接刪掉訂單就好';
   const kf = r0(d.keepFee), df = r0(d.depForfeit);
-  if (kf > t.order) return `房費保留 ${m(kf)} 超過已收房費 ${m(t.order)}`;
+  if (kf > t.order) return `房費留下 ${m(kf)} 超過已收房費 ${m(t.order)}`;
   if (kf < 0) return `房費退還超過已收房費 ${m(t.order)} —— 最多只能退收到的錢`;
   if (df > t.deposit) return `押金沒入 ${m(df)} 超過押金可結算 ${m(t.deposit)}`;
   if (df < 0) return `押金退還超過押金可結算 ${m(t.deposit)} —— 最多只能退收到的錢`;

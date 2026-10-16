@@ -193,3 +193,39 @@ export function moveCandidates<T extends RoomRef>(
   }
   return { free, partly };
 }
+
+/* ══════════ 清掉移房紀錄（2026-10-14 David：「不然我要一直用 SQL」）══════════ */
+
+type MoveRec = { move_chain?: string | null; move_group?: string | null; note?: string | null };
+
+/** 拿掉 movePatch 追加的那一行「移房 A13>B03」；其他備註原封不動。空了回 null */
+export function stripMoveLine(note: string | null | undefined, chain: string): string | null {
+  const line = `移房 ${chain.trim()}`;
+  const out = (note ?? '').split('\n').filter((l) => l.trim() !== line).join('\n').trim();
+  return out || null;
+}
+
+/**
+ * 「不是移房，清掉紀錄」能不能按。
+ * ★ 拆成好幾段的（有 move_group）不行 —— 那是真的分兩間住，清標籤會讓另一段變成孤兒。
+ */
+export function canClearMove(o: MoveRec): boolean {
+  return !!(o.move_chain ?? '').trim() && !o.move_group;
+}
+
+/** 清掉移房紀錄要寫回的兩欄 */
+export function clearMovePatch(o: MoveRec): { move_chain: null; note: string | null } | null {
+  if (!canClearMove(o)) return null;
+  return { move_chain: null, note: stripMoveLine(o.note, o.move_chain as string) };
+}
+
+/**
+ * 「編輯」把房源改回移房前那一間（鏈的第一個）＝移錯了、搬回去 → 紀錄一起清掉。
+ * 不清的話會留著「A13>B03」而人其實住 A13，標籤在說謊。
+ */
+export function moveRevertPatch(o: MoveRec & { property_raw?: string | null }) {
+  if (!canClearMove(o)) return null;
+  const first = (o.move_chain as string).split('>')[0]?.trim();
+  if (!first || (o.property_raw ?? '').trim() !== first) return null;
+  return clearMovePatch(o);
+}

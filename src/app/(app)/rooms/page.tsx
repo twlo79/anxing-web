@@ -271,6 +271,14 @@ export default function RoomStatusPage() {
   const [noEstate, setNoEstate] = useState<string[]>([]);
   const [stays, setStays] = useState<Stay[]>([]);
   const [loading, setLoading] = useState(true);
+  /** 這一次讀取失敗的原因（畫面保留上一份，不清成空的） */
+  const [loadErr, setLoadErr] = useState('');
+  /*
+   * ★★★ 讀取序號（2026-10-16 David：「換月份會 lag、放久了晚讀入的消失」）。
+   *   連按換月時好幾份讀取同時在跑，**最慢回來的那一份會蓋掉最新的**；
+   *   每一份帶自己的序號，回來時不是最新的就丟掉。
+   */
+  const loadSeq = useRef(0);
   const [picked, setPicked] = useState<Picked | null>(null);
   /** 展開的房源（同一間有兩筆以上時，一筆一條；2026-10-06 David） */
   const [openRooms, setOpenRooms] = useState<Set<string>>(new Set());
@@ -359,12 +367,19 @@ export default function RoomStatusPage() {
   const canDraw = !noDates && !badRange && !tooLong;
 
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
     if (!canDraw) { setLoading(false); return; }
     setLoading(true);
     const f = range.from;
     const t = range.to;
 
-    const [{ data: es }, { data: ps }, { data: pl }] = await Promise.all([
+    /*
+     * ★★ 五支查詢**一起發、一起回來才畫**（2026-10-16）。
+     *   改版前是：房源先回來先畫 → 再等訂單（分頁、一頁一頁等）→ 再等契約。
+     *   中間那段畫面是「新月份的日期＋舊月份的色條」，長租（契約）的色條最後才補上 ——
+     *   就是「一部分晚一點讀入」。
+     */
+    const [r1, r2, r3, ro, rc] = await Promise.all([
       supabase.from('estates').select('id, name, sort, active').order('sort'),
       /*
        * ★ 停用的房源不畫（使用者 2026-09-15：「物業只有正隆」）。
@@ -379,7 +394,42 @@ export default function RoomStatusPage() {
         .eq('active', true).order('name'),
       /* Airbnb 連結用（一間房掛多個 listing 時多的在這裡）。讀不到就是沒有連結，不擋整頁 */
       supabase.from('property_listings').select('listing_id, property_id, is_current'),
+      /*
+       * ★★ 撈的是「跟這段有交集」的，不是「起日在這段裡」的 ——
+       *   後者會漏掉跨進來的長住（8/20 住到 9/10 那種），
+       *   而畫面上那間房會顯示成空的。
+       *
+       * ★ 訂單的 checkout 是**退房日**，所以條件要 `> from` 不是 `>= from`：
+       *   9/1 退房的單最後一晚是 8/31，跟九月沒有交集。
+       *
+       * ★ 分頁一定要 `.order('id')` —— 沒有排序的話每一頁的順序不保證一樣，跨頁會重複或漏掉。
+       */
+      fetchAll<any>((a, b) => supabase.from('orders')
+        .select('id, property_raw, guest_name, checkin, checkout, source, imported_via, contract_id, note, order_key, amount')
+        .not('source', 'in', '(oneoff,airbnb_cancelled)')
+        .is('cancelled_on', null)   // 已取消的私下訂單不畫（migration_319）—— 那幾晚空出來了
+        .lte('checkin', t).gt('checkout', f).order('id').range(a, b)),
+      fetchAll<any>((a, b) => supabase.from('contracts')
+        .select('id, room, tenant_name, display_name, start_date, end_date, active, earnest_only, note')
+        .lte('start_date', t).gte('end_date', f).order('id').range(a, b)),
     ]);
+
+    /* 已經有更新的一份在跑 → 這份丟掉（不然慢回來的舊月份會蓋掉新月份） */
+    if (seq !== loadSeq.current) return;
+
+    /*
+     * ★★★ 任何一支失敗就**整份不換**，留著上一份、講原因（2026-10-16）。
+     *   改版前錯誤全被吞掉：`data` 變 null → 當成「沒有資料」→ 那一類色條整排消失，
+     *   畫面看起來像房都空了。頁面放很久、登入過期之後最容易發生 —— 就是「放久了晚讀入的消失」。
+     */
+    const err = r1.error?.message ?? r2.error?.message ?? r3.error?.message ?? ro.error ?? rc.error;
+    if (err) {
+      setLoadErr(err);
+      setLoading(false);
+      return;
+    }
+    setLoadErr('');
+    const es = r1.data, ps = r2.data, pl = r3.data, os = ro.rows, cs = rc.rows;
     /*
      * ★★★ 停用的物業不畫（使用者 2026-09-15：「我只需要這一頁不要顯示」）。
      * ★★ 撈全部的物業，再自己篩 —— 停用的物業要能跟「根本沒設物業」分開:
@@ -434,23 +484,6 @@ export default function RoomStatusPage() {
     setAbByRoom(ab);
     setMoveRooms(mr);
 
-    /*
-     * ★★ 撈的是「跟這段有交集」的，不是「起日在這段裡」的 ——
-     *   後者會漏掉跨進來的長住（8/20 住到 9/10 那種），
-     *   而畫面上那間房會顯示成空的。
-     *
-     * ★ 訂單的 checkout 是**退房日**，所以條件要 `> from` 不是 `>= from`：
-     *   9/1 退房的單最後一晚是 8/31，跟九月沒有交集。
-     */
-    const { rows: os } = await fetchAll<any>((a, b) => supabase.from('orders')
-      .select('id, property_raw, guest_name, checkin, checkout, source, imported_via, contract_id, note, order_key, amount')
-      .not('source', 'in', '(oneoff,airbnb_cancelled)')
-      .is('cancelled_on', null)   // 已取消的私下訂單不畫（migration_319）—— 那幾晚空出來了
-      .lte('checkin', t).gt('checkout', f).range(a, b));
-
-    const { data: cs } = await supabase.from('contracts')
-      .select('id, room, tenant_name, display_name, start_date, end_date, active, earnest_only, note')
-      .lte('start_date', t).gte('end_date', f);
 
     const info: Record<string, { key: string | null; amount: number | null }> = {};
     for (const o of (os ?? []) as any[]) info[o.id] = { key: o.order_key ?? null, amount: o.amount == null ? null : Number(o.amount) };
@@ -556,6 +589,22 @@ export default function RoomStatusPage() {
     setLeaving(exitsSoon(lStays, t0, 'order', nOut));
   }, [supabase, endWin, outWin]);
   useEffect(() => { loadAlerts(); }, [loadAlerts]);
+
+  /*
+   * ★★ 分頁在背景放很久再切回來 → 自己重讀一次（2026-10-16）。
+   *   背景分頁的計時器會被瀏覽器放慢，登入憑證可能已經過期又換新；
+   *   畫面上那份是很久以前的，有人在這段時間排了房也看不到。
+   */
+  useEffect(() => {
+    let hiddenAt = 0;
+    const f = () => {
+      if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+      if (hiddenAt && Date.now() - hiddenAt > 5 * 60_000) { load(); loadAlerts(); }
+      hiddenAt = 0;
+    };
+    document.addEventListener('visibilitychange', f);
+    return () => document.removeEventListener('visibilitychange', f);
+  }, [load, loadAlerts]);
 
 
   /** 房源 → 這段的佔用 */
@@ -1234,7 +1283,16 @@ export default function RoomStatusPage() {
           橫軸三十天一定要橫向捲動，不釘住的話捲到第 20 天
           就看不出這是哪一間、哪一號（anxing-ui 第二節）。
       */
-      <div ref={gridRef} className="rounded-xl border border-mor-line bg-white overflow-auto max-h-[70vh]">
+      <>
+      {/* 讀取失敗：畫面留著上一份，這裡講原因（錯誤留在表格上方，不是 2.5 秒就消失的 flash） */}
+      {loadErr && (
+        <div className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 flex items-center gap-2">
+          <span className="flex-1">沒讀到最新的資料，下面是上一次的畫面：{loadErr}</span>
+          <button onClick={() => { load(); loadAlerts(); }} className="shrink-0 rounded-md border border-red-300 px-2 py-0.5">重新讀取</button>
+        </div>
+      )}
+      {/* ★ 讀取中淡掉：換月時舊的色條還在，不淡掉的話看起來像新月份的資料（2026-10-16） */}
+      <div ref={gridRef} className={`rounded-xl border border-mor-line bg-white overflow-auto max-h-[70vh] transition-opacity ${loading ? 'opacity-50' : ''}`}>
         <table className="border-separate border-spacing-0 text-xs w-max min-w-full">
           <thead>
             <tr>
@@ -1377,6 +1435,7 @@ export default function RoomStatusPage() {
           </tbody>
         </table>
       </div>
+      </>
       )}
 
       {/*

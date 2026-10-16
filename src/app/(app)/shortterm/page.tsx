@@ -57,6 +57,7 @@ import TrashLink from '@/components/TrashLink';
 import PricingFeeModal from './pricing-fee-modal';
 import CancelSettleModal from './cancel-settle-modal';
 import { cancelBlockedReason } from '@/lib/cancel-settle';
+import { canClearMove, clearMovePatch, moveRevertPatch } from '@/lib/order-move';
 import MovePanel from '../rooms/move-panel';
 import { useIsMobile } from '@/lib/use-is-mobile';
 import { canPricingFee, PRICING_TITLE } from '@/lib/pricing-fee';
@@ -268,6 +269,17 @@ export default function ShortTermPage() {
   }, [supabase]);
   const [estates, setEstates] = useState<Estate[]>([]);
   const [detail, setDetail] = useState<Order | null>(null);
+  /* 抽屜的「不是移房，清掉紀錄」 */
+  const [clearMove, clearingMove] = useOnce(async () => {
+    const d = detail;
+    const patch = d ? clearMovePatch(d) : null;
+    if (!d || !patch) return;
+    const { error } = await supabase.from('orders').update(patch).eq('id', d.id);
+    if (error) return flash('沒清成功：' + error.message);
+    setDetail({ ...d, ...patch });
+    flash('移房紀錄清掉了');
+    load();
+  });
   const [rows, setRows] = useState<Order[]>([]);
   /*
    * Airbnb 單的實收／搭檔（2026-10-02）。讀爬蟲快照，不在訂單上另存一份（lib/airbnb-split）。
@@ -1131,7 +1143,9 @@ export default function ShortTermPage() {
 
     let orderId = edit.id;
     if (edit.id) {
-      const { error } = await supabase.from('orders').update(payload).eq('id', edit.id);
+      // 房源改回移房前那一間 ＝ 移錯了搬回去 → 移房紀錄一起清（2026-10-14）
+      const revert = moveRevertPatch(edit);
+      const { error } = await supabase.from('orders').update(revert ? { ...payload, ...revert } : payload).eq('id', edit.id);
       if (error) return flash('儲存失敗:' + error.message);
     } else {
       const { data, error } = await supabase.from('orders').insert({ ...payload, order_key: `${edit.source === 'oneoff' ? 'OO' : 'PV'}_${edit.checkin || 'na'}_${edit.property_raw ?? ''}_${edit.guest_name ?? ''}_${Date.now()}`, imported_via: 'manual' }).select('id').single();
@@ -1887,6 +1901,21 @@ export default function ShortTermPage() {
                   </span>) : null}
                 {row('備註', d.note ? <span className="whitespace-pre-wrap">{d.note}</span> : '—')}
                 {row('訂單編號', <span className="text-xs text-gray-500 break-all">{d.order_key}</span>)}
+                {/*
+                  ★ 「不是移房，清掉紀錄」（2026-10-14 David：「不然我要一直用 SQL」）。
+                    只有一顆：要換房源用「編輯」；改回移房前那一間時紀錄會自動清（moveRevertPatch）。
+                    拆成好幾段的不出現 —— 那是真的分兩間住。關帳後也能按（move_chain 與備註鎖住時也能改，migration_254）。
+                */}
+                {canClearMove(d) && (
+                  <div className="mt-3 rounded-xl border border-mor-line bg-[#FAFAF9] p-3">
+                    <div className="text-sm font-bold">移房紀錄</div>
+                    <div className="text-sm text-mor-slate tabular-nums mt-0.5 mb-2">{(d.move_chain ?? '').split('>').join(' → ')}</div>
+                    <button onClick={clearMove} disabled={clearingMove}
+                      className="w-full h-10 rounded-lg border border-mor-line bg-white text-sm text-mor-slate hover:bg-mor-sand/50 disabled:opacity-50">
+                      {clearingMove ? '處理中⋯' : '不是移房，清掉紀錄'}</button>
+                    <div className="text-[11px] text-gray-400 mt-1.5">房源不動，只拿掉「移房」標籤和備註裡那一行。要換房源用「編輯」。</div>
+                  </div>
+                )}
               </div>
 
               {/*
