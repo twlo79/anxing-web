@@ -352,7 +352,16 @@ export default function RoomStatusPage() {
     () => (mode === 'month' ? monthRange(ym) : { from, to }),
     [mode, ym, from, to]);
   const nDays = rangeDays(range);
-  const days = useMemo(() => (nDays > MAX_RANGE_DAYS ? [] : eachDay(range)), [range, nDays]);
+  /*
+   * ★★★ 表格畫的是「資料是哪一段」，不是「選單選了哪一段」（2026-10-16 David：「還是分批讀入」）。
+   *   按 › 的當下日期列就換成下個月，但色條還是上個月讀來的那一份 ——
+   *   於是先冒出跨月的長住（上個月的資料剛好蓋到下個月的那幾條），三百毫秒後其他的才補上。
+   *   看起來就是「分批讀入」。現在表格等新資料回來，日期與色條一起換。
+   */
+  const [dataRange, setDataRange] = useState<Range | null>(null);
+  const shown: Range = dataRange ?? range;
+  const shownDays = rangeDays(shown);
+  const days = useMemo(() => (shownDays > MAX_RANGE_DAYS ? [] : eachDay(shown)), [shown.from, shown.to, shownDays]);
   const today = todayStr();
 
   /*
@@ -523,6 +532,7 @@ export default function RoomStatusPage() {
      *   （2026-09-15 上線第一天的樣子）。規則與理由在 `dropContractOrders()`。
      */
     setStays(dropContractOrders([...oStays, ...cStays]));
+    setDataRange({ from: f, to: t });   // 跟色條同一次換（見 `shown`）
 
     setLoading(false);
   }, [supabase, range.from, range.to, canDraw]);
@@ -629,11 +639,11 @@ export default function RoomStatusPage() {
       .filter((x) => matchRoom(x.room, x.stays, kw))
       .map((x) => ({
         ...x,
-        cells: rowOf(x.stays, range),
-        real: staysInRange(x.stays, range),
-        dups: overlapRanges(x.stays, range),
+        cells: rowOf(x.stays, shown),
+        real: staysInRange(x.stays, shown),
+        dups: overlapRanges(x.stays, shown),
       }));
-  }, [rooms, byRoom, estF, kw, range, canDraw]);
+  }, [rooms, byRoom, estF, kw, shown.from, shown.to, canDraw]);
 
   const dupRooms = useMemo(() => base.filter((x) => x.dups.length), [base]);
 
@@ -720,13 +730,13 @@ export default function RoomStatusPage() {
   const occOfRow = useCallback((name: string) => {
     const st = ancestryOf(occNodes.length ? occNodes : [{ name, estate: null }], name)
       .flatMap((n) => occStaysBy[n] ?? []);
-    return occupancyOf(st, range);
-  }, [occNodes, occStaysBy, range]);
+    return occupancyOf(st, shown);
+  }, [occNodes, occStaysBy, shown.from, shown.to]);
   const estOcc = useMemo(() => {
     if (!canDraw || !estF) return null;
-    const list = occupancyByRoom(occNodes.filter((n) => n.estate === estF), occStaysBy, range);
+    const list = occupancyByRoom(occNodes.filter((n) => n.estate === estF), occStaysBy, shown);
     return totalOccupancy(list);
-  }, [occNodes, occStaysBy, range, estF, canDraw]);
+  }, [occNodes, occStaysBy, shown.from, shown.to, estF, canDraw]);
 
   const visible = useMemo(() => base.filter((x) => {
     /*
@@ -1258,7 +1268,7 @@ export default function RoomStatusPage() {
             {fmtPct(estOcc.rate)}
           </span>
           <span className="text-xs text-gray-400 tabular-nums">
-            {estOcc.used.toLocaleString()} 晚有人住 ÷（{estOcc.rooms} 間 × {nDays} 晚）・{range.from} ~ {range.to}
+            {estOcc.used.toLocaleString()} 晚有人住 ÷（{estOcc.rooms} 間 × {shownDays} 晚）・{shown.from} ~ {shown.to}
           </span>
         </div>
       )}
@@ -1395,7 +1405,7 @@ export default function RoomStatusPage() {
                                  pl-6 pr-2 text-[11px] text-gray-500 whitespace-nowrap overflow-hidden text-ellipsis">
                     └ {st.guest || '（沒有名字）'}
                   </td>
-                  {rowOf([st], range).map((c: Cell) => drawCell(c, room))}
+                  {rowOf([st], shown).map((c: Cell) => drawCell(c, room))}
                   <td className="sticky right-0 z-10 border-b border-l border-mor-line bg-[#FAFAF8]" />
                 </tr>
               ))}
