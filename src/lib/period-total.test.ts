@@ -85,6 +85,8 @@ test('設備費要帶細目,否則三筆長得一模一樣', () => {
   assert.equal(feeLabel({ amount: 0, fee_type: '設備費', item_name: '冰箱' }), '設備費－冰箱');
   assert.equal(feeLabel({ amount: 0, fee_type: '管理費', item_name: null }), '管理費');
   assert.equal(feeLabel({ amount: 0, fee_type: null }), '加費');
+  assert.equal(feeLabel({ amount: -3000, fee_type: '折讓', item_name: '冷氣維修補償' }), '冷氣維修補償');
+  assert.equal(feeLabel({ amount: -3000, fee_type: '折讓', item_name: null }), '折讓');
 });
 
 test('金額 0 的加費不列出來 —— 那是雜訊', () => {

@@ -39,6 +39,7 @@ import { keyBase, onlyKeyOf } from '@/lib/ltKey';
 // 關帳：畫面上擋住的判斷跟資料庫那支守衛走**同一份規則**（migration_249）
 import { isLocked, lockedMsg, lockYmOf, ymLabel, type Ym } from '@/lib/period-lock';
 import { invoiceMissing } from '@/lib/invoice';
+import { allowanceError, allowanceFields, allowanceLabel } from '@/lib/allowance';
 import { extendEnd, extendYms, restoreEnd, isGuessedRestore } from '@/lib/contract-extend';
 import { ymOf, todayStr } from '@/lib/period';
 // 「這筆收入算誰的」—— 畫面與存檔共用同一份規則（migration_247）
@@ -2064,7 +2065,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
 
   const [payAsk, setPayAsk] = useState<
     { chunk: any[]; label: string; paidAt: string; t: PeriodTotal } | null>(null);
-  const [concDraft, setConcDraft] = useState<{ pi: number; date: string; amount: number; note: string; baseAmount: number; priorDisc: number } | null>(null);
+  const [concDraft, setConcDraft] = useState<{ pi: number; no: string; date: string; date0: string; label: string; amount: number; note: string; baseAmount: number; priorDisc: number } | null>(null);
   /**
    * 這份契約的所有發票，一次撈完在前端分。
    *
@@ -2475,7 +2476,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
     // paid 是「與租金一起收」需要的:確認收款要把該期的加費一併標記。
     const { data } = await supabase.from('orders')
       // ★ checkout 要撈 —— 關帳鎖是用退房日判月份的（migration_249）
-      .select('id, checkin, checkout, amount, fee_type, item_name, note, imported_via, paid, order_key, paid_amount')
+      .select('id, checkin, checkout, amount, fee_type, item_name, allowance_no, note, imported_via, paid, order_key, paid_amount')
       .eq('contract_id', c.id).eq('source', 'oneoff').order('checkin');
     setFeeRows(data ?? []);
 
@@ -2503,7 +2504,11 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
    * 備註寫明「原應收 − 折讓 = 淨額」，日後對帳看得出這筆是怎麼來的。
    */
   async function saveConcession() {
-    if (!concDraft || !concDraft.amount || !concDraft.date) { alert('請填折讓日期與金額'); return; }
+    if (!concDraft) return;
+    // 只有金額必填；單號有填才檢查格式、日期沒填用這一期第一天（lib/allowance，2026-10-18）
+    const bad = allowanceError(concDraft);
+    if (bad) { alert(bad); return; }
+    const af = allowanceFields(concDraft, concDraft.date0);
     const amt = Math.abs(Number(concDraft.amount));
     // 同一期可能折讓多次。備註要把先前已折讓的也寫進去，否則第二筆的算式會對不起來。
     const prior = Math.abs(Number(concDraft.priorDisc || 0));
@@ -2515,9 +2520,9 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
       order_key: `CDIS_${String(c.id).slice(0, 8)}_${Date.now()}`,
       source: 'oneoff', contract_id: c.id, estate_id: c.estate_id,
       property_raw: c.room, guest_name: c.tenant_name,
-      checkin: concDraft.date, checkout: concDraft.date, nights: 0,
+      checkin: af.checkin, checkout: af.checkin, nights: 0,
       amount: -amt,                 // 負數 —— 營收認列會跟著減少
-      fee_type: '折讓', note, imported_via: 'manual',
+      fee_type: '折讓', item_name: af.item_name, allowance_no: af.allowance_no, note, imported_via: 'manual',
     });
     if (error) { alert('失敗:' + error.message); return; }
     setConcDraft(null); loadFees();
@@ -3367,7 +3372,9 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                        */
                       const canInv = !auto && Number(f.amount) > 0 && canInvoiceFee(f.fee_type);
                       const fInv = invRows.filter((v: any) => v.order_id === f.id);
-                      const feeName = auto ? feeLabel(f.fee_type, f.item_name) : f.fee_type;
+                      // 折讓：有備註就顯示備註（2026-10-18 David），沒有就「折讓」
+                      const feeName = auto ? feeLabel(f.fee_type, f.item_name)
+                        : f.fee_type === '折讓' ? allowanceLabel(f.item_name) : f.fee_type;
                       /*
                        * ★★★ 2026-09-22 修：原本是 `.slice(0, 7)` → `'2026-08'`，
                        *   七碼帶橫線，而 `invoices_ym_chk` 只收六碼 ——
@@ -3384,6 +3391,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                             <span>
                               · {feeName} {Number(f.amount) < 0 ? '−' : ''}${fmt(Math.abs(Number(f.amount) || 0))}
                               <span className="text-gray-400"> ({f.checkin})</span>
+                              {f.allowance_no && <span className="ml-1 rounded bg-orange-50 text-orange-700 px-1 py-px text-[10px] font-medium">{f.allowance_no}</span>}
                               {auto && <span className="ml-1 text-[10px] text-gray-400">固定</span>}
                             </span>
                             {auto
@@ -3481,21 +3489,6 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                           </span>
                         )}
                       </div>
-                    ) : concDraft?.pi === i ? (
-                      <div className="flex flex-wrap items-center gap-1.5 mt-1">
-                        <span className="text-xs text-gray-500">折讓</span>
-                        <MoneyInput value={concDraft.amount || 0} placeholder="金額"
-                          onChange={(n) => setConcDraft({ ...concDraft, amount: n })}
-                          className="w-24 rounded border border-gray-300 px-1.5 py-0.5 text-xs text-right" />
-                        <input type="date" value={concDraft.date}
-                          onChange={(e) => setConcDraft({ ...concDraft, date: e.target.value })}
-                          className="rounded border border-gray-300 px-1.5 py-0.5 text-xs" />
-                        <input placeholder="原因(選填)" value={concDraft.note}
-                          onChange={(e) => setConcDraft({ ...concDraft, note: e.target.value })}
-                          className="w-28 rounded border border-gray-300 px-1.5 py-0.5 text-xs" />
-                        <button onClick={saveConcession} className="rounded bg-mor-slate text-white px-2 py-0.5 text-xs">儲存</button>
-                        <button onClick={() => setConcDraft(null)} className="text-gray-400 underline text-xs">取消</button>
-                      </div>
                     ) : (
                       /*
                         ══════════ 動作那一排（2026-09-16 改版）══════════
@@ -3527,7 +3520,8 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                         <button onClick={() => setFeeDraft({ pi: i, date: `${first.y}-${String(first.m).padStart(2, '0')}-01`, label: '電費', amount: 0 })}
                           disabled={frozen} title={frozen ? (lockMsg ?? '') : ''}
                           className="text-xs text-mor-slate hover:text-mor-slatedark disabled:text-gray-300 disabled:cursor-not-allowed">＋ 加費</button>
-                        <button onClick={() => setConcDraft({ pi: i, date: `${first.y}-${String(first.m).padStart(2, '0')}-01`, amount: 0, note: '', baseAmount: amount, priorDisc: discTotal })}
+                        <button onClick={() => setConcDraft({ pi: i, no: '', date: '', date0: `${first.y}-${String(first.m).padStart(2, '0')}-01`,
+                          label: `${first.y}/${String(first.m).padStart(2, '0')} 這一期`, amount: 0, note: '', baseAmount: amount, priorDisc: discTotal })}
                           disabled={frozen} title={frozen ? (lockMsg ?? '') : ''}
                           className="text-xs text-amber-700 hover:text-amber-800 disabled:text-gray-300 disabled:cursor-not-allowed">− 折讓</button>
                         {/*
@@ -3808,6 +3802,43 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                 className="flex-1 h-11 rounded-lg bg-mor-slate text-white text-sm font-medium disabled:opacity-40">
                 確認收款
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/*
+        折讓（2026-10-18 David：「改成跟發票功能一樣」）—— 跟「登錄發票」同一種視窗。
+        只有金額必填；單號跟發票號碼同格式；日期沒填＝這一期第一天；備註填了會取代列表上的「折讓」。
+      */}
+      {concDraft && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center" onClick={(e) => { e.stopPropagation(); setConcDraft(null); }}>
+          <div className="absolute inset-0 bg-black/40" />
+          <div onClick={(e) => e.stopPropagation()} className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm">
+            <div className="border-b border-mor-line px-5 py-3 font-bold text-sm flex items-center justify-between">
+              登錄折讓 — {concDraft.label}
+              <button onClick={() => setConcDraft(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+            </div>
+            <div className="px-5 py-4 space-y-3 text-sm">
+              <div className="rounded-lg bg-amber-50/60 px-3 py-2 text-xs space-y-0.5">
+                <div className="text-gray-600">這一期應收 <span className="font-medium text-gray-800">${fmt(concDraft.baseAmount)}</span></div>
+                {concDraft.priorDisc ? <div className="text-gray-600">已折讓 <span className="font-medium text-gray-800">${fmt(Math.abs(concDraft.priorDisc))}</span></div> : null}
+              </div>
+              <label className="flex flex-col gap-1 text-xs text-gray-500">折讓單號(2 碼英文 + 8 碼數字)
+                <input value={concDraft.no} onChange={(e) => setConcDraft({ ...concDraft, no: e.target.value.toUpperCase() })} placeholder="AB12345678" maxLength={10} className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm font-mono tracking-wide" /></label>
+              <label className="flex flex-col gap-1 text-xs text-gray-500 relative pb-4">日期
+                <input type="date" value={concDraft.date} onChange={(e) => setConcDraft({ ...concDraft, date: e.target.value })} className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm" />
+                <span className="absolute top-full -mt-4 left-0 text-[11px] text-gray-400">沒填＝{concDraft.date0}（這一期第一天）</span></label>
+              <label className="flex flex-col gap-1 text-xs text-gray-500"><span className="flex items-center">金額<Req /></span>
+                <MoneyInput value={concDraft.amount || 0} onChange={(n) => setConcDraft({ ...concDraft, amount: n })}
+                  className="h-9 rounded-lg border border-gray-300 px-2 text-sm text-right bg-white" /></label>
+              <label className="flex flex-col gap-1 text-xs text-gray-500 relative pb-4">備註
+                <input value={concDraft.note} onChange={(e) => setConcDraft({ ...concDraft, note: e.target.value })} placeholder="例：冷氣維修補償" className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm" />
+                <span className="absolute top-full -mt-4 left-0 text-[11px] text-gray-400">有填的話，列表上顯示「{concDraft.note.trim() || '備註'} −${fmt(Math.abs(Number(concDraft.amount) || 0))}」</span></label>
+            </div>
+            <div className="border-t border-mor-line px-5 py-3 flex justify-end gap-2">
+              <button onClick={() => setConcDraft(null)} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>
+              <button onClick={saveConcession} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium hover:bg-mor-slatedark">儲存</button>
             </div>
           </div>
         </div>

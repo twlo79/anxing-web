@@ -78,6 +78,8 @@ export const KIND_LABEL: Record<LineKind, string> = {
 export function feeLabel(o: PeriodOrder): string {
   const t = (o.fee_type ?? '').trim() || '加費';
   const i = (o.item_name ?? '').trim();
+  // 折讓的 item_name 是備註：填了就**取代**「折讓」顯示（2026-10-18 David），不是接在後面
+  if (t === '折讓') return i || t;
   return i ? `${t}－${i}` : t;
 }
 
