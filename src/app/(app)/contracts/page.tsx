@@ -2973,8 +2973,13 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
               const unlockIds = [...os, ...pfees].map((o: any) => o?.id).filter(Boolean);
               return (
                 <div key={i} className={`rounded-xl border px-4 py-2.5 text-sm ${allPaid ? 'border-mor-greenlight bg-mor-greenlight/30' : 'border-mor-line'}`}>
-                  <div className="flex items-center justify-between">
-                    <div>
+                  {/*
+                    ★★ 按鈕不准被擠成兩行（2026-10-18 David：「折行了，手機桌機都看一下」）。
+                      桌機：按鈕在右上、不縮；左邊的字自己換行。
+                      手機：按鈕掉到資訊下面，整排平分（sm 以下）。
+                  */}
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0 sm:flex-1">
                       {/*
                         期別要寫到「日」，不能只寫月份。
                         6/13 起租的年繳約第 1 期實際是 2026/6/13~2027/6/12，
@@ -3040,7 +3045,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                         <span className="text-[17px] font-bold text-mor-slate tabular-nums -ml-1">
                           ${fmt(netAmount)}
                         </span>
-                        {!allPaid && periodPaid > 0 && (
+                        {periodPaid > 0 && (!allPaid || periodPaid > netAmount) && (
                           <>
                             <span className="text-xs text-gray-500">已收 ${fmt(periodPaid)}</span>
                             {/*
@@ -3054,7 +3059,16 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
 
                                 所以這種狀態要**講出來**:錢在、標記不在。
                             */}
-                            {periodPaid >= netAmount ? (
+                            {/*
+                              ★★ 多收要直接講（2026-10-18 David）：收齊之後才加折讓，錢就多了那一筆。
+                                改版前這種情況也寫「收款紀錄還在，但這一期是『未收』」—— 那句是給按了「退回」的人看的，
+                                放在這裡看不懂。
+                            */}
+                            {periodPaid > netAmount ? (
+                              <span className="text-xs text-amber-700">
+                                多收 ${fmt(periodPaid - netAmount)}（要退或抵下一期）
+                              </span>
+                            ) : periodPaid >= netAmount ? (
                               <span className="text-xs text-amber-700">
                                 收款紀錄還在，但這一期是「未收」
                               </span>
@@ -3135,7 +3149,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                         按鈕留著不藏 —— 藏了他不知道這件事做得到，只會改用 LINE 問。
                     */}
                     {frozen && (
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 shrink-0">
                         {/*
                           ★ 收款日 2026-09-16 搬到上面那行灰字了 ——
                             它跟「應繳日」是同一格資訊的兩種狀態，本來就該在同一個位置。
@@ -3161,7 +3175,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                       </div>
                     )}
                     {os.length > 0 && !frozen && (allPaid
-                      ? <div className="flex items-center gap-1.5">
+                      ? <div className="flex items-center gap-1.5 shrink-0">
                           {/* ★ 收款日的輸入框 2026-09-16 搬到上面那行灰字（見那裡的說明） */}
                           {/*
                             ★★ 退回未收要先問一聲（2026-08-25 使用者指定）。
@@ -3186,9 +3200,9 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                               setPeriodPaid(chunk, false);
                             }}
                             disabled={!!busy}
-                            className="rounded-lg bg-mor-greenlight text-mor-greendark px-2.5 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">退回</button>
+                            className="whitespace-nowrap rounded-lg bg-mor-greenlight text-mor-greendark px-2.5 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">退回</button>
                         </div>
-                      : <div className="flex items-center gap-1.5">
+                      : <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
                           {/*
                             ══════════ 一顆按鈕（2026-08-25 使用者:「這裡可以合併」）══════════
 
@@ -3203,7 +3217,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
 
                             ★ 掛在這一期的**第一張**月租單上,目標金額用 pt.net（整期合計）。
                           */}
-                          <div className="relative">
+                          <div className="relative flex-1 sm:flex-none">
                             <button
                               onClick={() => {
                                 if (!canCollect(myRole)) return denyBtn(`p${i}`);
@@ -3213,7 +3227,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                                 });
                               }}
                               disabled={!!busy}
-                              className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">
+                              className="w-full sm:w-auto h-10 sm:h-auto whitespace-nowrap rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm sm:text-xs font-medium hover:bg-mor-slatedark disabled:opacity-40">
                               收款
                             </button>
                             {denied === `p${i}` && (
@@ -3242,7 +3256,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                             <button onClick={() => setPeriodPaid(chunk, true, `第 ${i + 1} 期 ${first.label}${STEP > 1 ? `~${last.label}` : ''}`)}
                               disabled={!!busy}
                               title="這一期的錢已經收齊了，按下去把整期標記為已收"
-                              className="rounded-lg border border-mor-slate text-mor-slate px-3 py-1.5 text-xs font-medium disabled:opacity-40">
+                              className="flex-1 sm:flex-none h-10 sm:h-auto whitespace-nowrap rounded-lg border border-mor-slate text-mor-slate px-3 py-1.5 text-sm sm:text-xs font-medium disabled:opacity-40">
                               {busy === first.ym ? '…' : '標記已收'}
                             </button>
                           )}
@@ -3390,7 +3404,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                           <div className={`flex items-center justify-between text-xs py-0.5 ${Number(f.amount) < 0 ? 'text-orange-600' : 'text-gray-600'}`}>
                             <span>
                               · {feeName} {Number(f.amount) < 0 ? '−' : ''}${fmt(Math.abs(Number(f.amount) || 0))}
-                              <span className="text-gray-400"> ({f.checkin})</span>
+                              <span className="text-gray-400"> (<span className="hidden sm:inline">{f.checkin}</span><span className="sm:hidden">{String(f.checkin ?? '').slice(5)}</span>)</span>
                               {f.allowance_no && <span className="ml-1 rounded bg-orange-50 text-orange-700 px-1 py-px text-[10px] font-medium">{f.allowance_no}</span>}
                               {auto && <span className="ml-1 text-[10px] text-gray-400">固定</span>}
                             </span>
@@ -3662,7 +3676,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                               setPeriodPaid(chunk, false);
                             }}
                             disabled={!!busy}
-                            className="rounded-lg bg-mor-greenlight text-mor-greendark px-2.5 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">退回</button>
+                            className="whitespace-nowrap rounded-lg bg-mor-greenlight text-mor-greendark px-2.5 py-1.5 text-xs font-medium hover:bg-red-50 hover:text-red-600">退回</button>
                         </div>
                       : <div className="relative">
                           <button

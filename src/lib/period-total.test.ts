@@ -94,3 +94,13 @@ test('金額 0 的加費不列出來 —— 那是雜訊', () => {
   assert.equal(t.lines.length, 1);
 });
 
+
+test('收齊之後才加折讓：折讓不用「收」，整期照樣是已收', () => {
+  const pt = periodTotal(
+    [{ amount: 2040000, paid: true } as PeriodOrder],
+    [{ amount: 1200, fee_type: '電費', paid: true }, { amount: -18000, fee_type: '折讓', paid: false }] as PeriodOrder[]);
+  assert.equal(pt.net, 2023200);
+  assert.equal(pt.allPaid, true);
+  // 只有折讓、沒有要收的行 → 不算收齊
+  assert.equal(periodTotal([], [{ amount: -100, fee_type: '折讓', paid: false }] as PeriodOrder[]).allPaid, false);
+});

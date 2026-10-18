@@ -140,7 +140,12 @@ export function periodTotal(rentOrders: PeriodOrder[], feeOrders: PeriodOrder[])
      * 改版前這裡只看月租單與固定加費 —— 手動加費沒收也算整期結清，
      * 那筆錢就靜靜留在未收清單裡而畫面是綠的。
      */
-    allPaid: lines.length > 0 && lines.every((l) => l.paid),
+    /*
+     * ★★ 折讓不算（2026-10-18 David：「收款紀錄還在，但這一期是『未收』這是甚麼意思？」）。
+     *   折讓是減項，不是一筆要收的錢 —— 收齊之後才加折讓的話，它永遠是「未收」，
+     *   整期就從綠色退回未收，而錢其實多收了。
+     */
+    allPaid: lines.some((l) => !l.negative) && lines.every((l) => l.negative || l.paid),
   };
 }
 
