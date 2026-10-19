@@ -2,6 +2,8 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { todayStr } from '@/lib/period';
 import { createClient } from '@/lib/supabase';
+import Req from '@/components/Req';
+import { findRooms, finderError, nightsBetween, type FinderSeg } from '@/lib/room-finder';
 import { fetchAll } from '@/lib/fetch-all';
 import { useProfile } from '@/lib/profile';
 import { canEditOrders } from '@/lib/roles';
@@ -188,6 +190,16 @@ const SHEET_RATIO = 0.42;
 /** ③ 點開的那張卡片。位置用 `fixed` —— 見下面 `openCard()` 的說明 */
 type Picked = { stay: Stay; room: string; estate: string | null; x: number; y: number };
 
+/** 跟篩選列的 Field 同一個樣子，只是標題後面掛紅星（Field 的標題只收字串） */
+function ReqField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <span className="flex items-center h-5 mb-1 text-uisub leading-5 text-gray-500 whitespace-nowrap">{label}<Req /></span>
+      {children}
+    </div>
+  );
+}
+
 export default function RoomStatusPage() {
   const supabase = useMemo(() => createClient(), []);
 
@@ -195,7 +207,13 @@ export default function RoomStatusPage() {
    * ① 期間。`month` 與 `custom` 兩種模式，但**算出來都是一個 Range** ——
    *   底下一律只認 `range`，沒有第二條路徑。
    */
-  const [mode, setMode] = useState<'month' | 'custom'>('month');
+  /* 'find' ＝ 找房（2026-10-19 David 過審 A 案）：期間的第三格，填住宿起／退房日找空房 */
+  const [mode, setMode] = useState<'month' | 'custom' | 'find'>('month');
+  const [fFrom, setFFrom] = useState('');
+  const [fTo, setFTo] = useState('');
+  /** 按了「找空房」的那一組（改日期不會馬上重找，按了才算） */
+  const [findQ, setFindQ] = useState<{ from: string; to: string } | null>(null);
+  const [planIdx, setPlanIdx] = useState(0);
   const [ym, setYm] = useState(thisYm());
   const [from, setFrom] = useState(todayStr());
   const [to, setTo] = useState(addDays(todayStr(), 30));
@@ -299,7 +317,7 @@ export default function RoomStatusPage() {
   /** 正在移房的訂單 id */
   const [moving, setMoving] = useState<string | null>(null);
   /** ＋ 加訂單（2026-10-13）：開著時帶入的物業／房源／日子 */
-  const [adding, setAdding] = useState<{ estateId: string | null; propertyId?: string | null; day?: string | null } | null>(null);
+  const [adding, setAdding] = useState<{ estateId: string | null; propertyId?: string | null; day?: string | null; to?: string | null; plan?: FinderSeg[] | null } | null>(null);
   /** 剛建好的那一筆 —— 上方綠條附連結去補押金 */
   const [created, setCreated] = useState<Created | null>(null);
   const isMobile = useIsMobile();
@@ -325,7 +343,7 @@ export default function RoomStatusPage() {
     if (!prefsReady.current) return;
     try {
       window.localStorage.setItem(ROOMS_PREFS_KEY, serializeRoomsPrefs({
-        estF, mode, ym, from, to, kw, view, showDup, showEnd, showOut, ewin: endWin, owin: outWin,
+        estF, mode: mode === 'find' ? 'month' : mode, ym, from, to, kw, view, showDup, showEnd, showOut, ewin: endWin, owin: outWin,
       }));
     } catch { /* 記不住就算了 */ }
   }, [estF, mode, ym, from, to, kw, view, showDup, showEnd, showOut, endWin, outWin]);
@@ -352,8 +370,11 @@ export default function RoomStatusPage() {
   const defEst = estates[0]?.name ?? '';
 
   const range: Range = useMemo(
-    () => (mode === 'month' ? monthRange(ym) : { from, to }),
-    [mode, ym, from, to]);
+    () => (mode === 'month' ? monthRange(ym)
+      /* 找房：日曆就是那幾晚（退房那天不算）；還沒按「找空房」時先看這個月 */
+      : mode === 'find' ? (findQ ? { from: findQ.from, to: addDays(findQ.to, -1) } : monthRange(ym))
+      : { from, to }),
+    [mode, ym, from, to, findQ]);
   const nDays = rangeDays(range);
   /*
    * ★★★ 表格畫的是「資料是哪一段」，不是「選單選了哪一段」（2026-10-16 David：「還是分批讀入」）。
@@ -743,7 +764,59 @@ export default function RoomStatusPage() {
     return totalOccupancy(list);
   }, [occNodes, occStaysBy, shown.from, shown.to, estF, canDraw]);
 
-  const visible = useMemo(() => base.filter((x) => {
+  /*
+   * ══════════ 找房（2026-10-19）══════════
+   * ★ 只在選定的那個物業裡找、只看資料真的是那一段的時候算（`shown` 跟 `range` 對上）——
+   *   不然按下去的那三百毫秒會拿上一個月的佔用去算，閃一下錯的答案。
+   */
+  const finding = mode === 'find' && !!findQ;
+  const fResult = useMemo(() => {
+    if (!finding || !findQ) return null;
+    if (!estF) return { kind: 'bad' as const, message: '先在「物業」選一個物業 —— 找房只在同一個物業裡找（不跨物業拼房）' };
+    if (shown.from !== range.from || shown.to !== range.to) return null;
+    const names = sortRooms(rooms.filter((r) => r.estate === estF)).map((r) => r.name);
+    const set = new Set(names);
+    return findRooms(names, stays.filter((x) => set.has(x.room)), findQ.from, findQ.to);
+  }, [finding, findQ, estF, shown.from, shown.to, range.from, range.to, rooms, stays]);
+  useEffect(() => { setPlanIdx(0); }, [fResult]);
+  /** 要亮的格子：房 → 哪幾晚、綠（整段）或黃（拼） */
+  const fHit = useMemo(() => {
+    const m = new Map<string, { tone: 'full' | 'part'; days: Set<string> }>();
+    if (!fResult || !findQ) return m;
+    const nights = (a: string, b: string) => { const out = new Set<string>(); for (let d = a; d < b; d = addDays(d, 1)) out.add(d); return out; };
+    if (fResult.kind === 'full') fResult.rooms.forEach((r) => m.set(r, { tone: 'full', days: nights(findQ.from, findQ.to) }));
+    if (fResult.kind === 'mix') (fResult.plans[planIdx] ?? []).forEach((sg) => m.set(sg.room, { tone: 'part', days: nights(sg.from, sg.to) }));
+    return m;
+  }, [fResult, findQ, planIdx]);
+  const fDim = fHit.size > 0;
+  const fErr = finderError(fFrom, fTo);
+  const fNights = nightsBetween(fFrom, fTo);
+  const doFind = () => { if (!fErr) { setFindQ({ from: fFrom, to: fTo }); setPicked(null); } };
+  /** 住宿起／退房日＋找空房。桌機在篩選列、手機在最上面那一塊 —— 同一份 */
+  const findInputs = (mobile: boolean) => (
+    <div className={mobile ? 'space-y-2' : 'flex flex-wrap items-end gap-3'}>
+      <div className={mobile ? 'grid grid-cols-2 gap-2' : 'contents'}>
+        <ReqField label="住宿起">
+          <input type="date" value={fFrom} onChange={(e) => { setFFrom(e.target.value); if (!fTo || e.target.value >= fTo) setFTo(addDays(e.target.value, 1)); }}
+            className={`${mobile ? 'h-11 w-full' : 'h-12 md:h-10'} rounded-lg border border-gray-300 px-2 text-ui bg-white`} />
+        </ReqField>
+        <ReqField label="退房日">
+          <input type="date" value={fTo} min={fFrom || undefined} onChange={(e) => setFTo(e.target.value)}
+            className={`${mobile ? 'h-11 w-full' : 'h-12 md:h-10'} rounded-lg border px-2 text-ui bg-white ${
+              fFrom && fTo && fNights <= 0 ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} />
+        </ReqField>
+      </div>
+      <div className={mobile ? 'flex items-center gap-3' : 'flex items-center gap-2'}>
+        <span className="text-xs text-mor-slate tabular-nums whitespace-nowrap">{fNights > 0 ? `${fNights} 晚` : fFrom && fTo ? '退房日要晚於入住' : ''}</span>
+        <button type="button" onClick={doFind} disabled={!!fErr} title={fErr ?? ''}
+          className={`${mobile ? 'flex-1 h-12 text-base' : 'h-12 md:h-10 text-uisub'} rounded-lg bg-mor-slate px-4 font-medium text-white hover:bg-mor-slatedark disabled:opacity-40`}>
+          找空房
+        </button>
+      </div>
+    </div>
+  );
+
+  const visible0 = useMemo(() => base.filter((x) => {
     /*
      * ★★ 一律看 `real`（這段裡真的佔到日子的每一筆），不看 `cells` ——
      *   `rowOf()` 同一天只畫第一筆，被壓住的那一筆在 `cells` 裡根本不存在。
@@ -762,6 +835,13 @@ export default function RoomStatusPage() {
     if (view === 'leaving') return outRooms.has(x.room.name);
     return matchPill(x, view);
   }), [base, view, endRooms, outRooms]);
+  /* 找房有結果時：找到的房排到最上面（手機不用往下捲去找），順序照結果 */
+  const visible = useMemo(() => {
+    if (!fDim) return visible0;
+    const order = fResult?.kind === 'full' ? fResult.rooms : fResult?.kind === 'mix' ? (fResult.plans[planIdx] ?? []).map((x) => x.room) : [];
+    const rank = (n: string) => { const i = order.indexOf(n); return i < 0 ? 1e6 : i; };
+    return [...visible0].sort((a, b) => rank(a.room.name) - rank(b.room.name));
+  }, [visible0, fDim, fResult, planIdx]);
 
   /*
    * ★★ 重疊清乾淨（或換了期間之後沒有重疊）時，那顆藥丸會消失 ——
@@ -792,6 +872,7 @@ export default function RoomStatusPage() {
     /* ★ 旋鈕也關掉 —— 「清除」是回到剛進來的樣子,而剛進來三顆都是關的 */
     setShowDup(false); setShowEnd(false); setShowOut(false);
     setMode('month'); setYm(thisYm());
+    setFindQ(null); setFFrom(''); setFTo('');
     setPicked(null);
   };
 
@@ -855,9 +936,14 @@ export default function RoomStatusPage() {
                     ${isWeekend(c.day) ? 'bg-mor-bg/50' : ''}`;
                   /* 空白格子：點了直接加訂單，帶入這間房與這一天（2026-10-13） */
                   if (c.type === 'free') {
-                    if (!canNote) return <td key={c.day} className={cls} />;
+                    /* 找房亮的格子：綠＝整段空、黃＝拼房的那一段 */
+                    const fh = fHit.get(room.name);
+                    const fcls = fh?.days.has(c.day)
+                      ? (fh.tone === 'full' ? '!bg-green-200 shadow-[inset_0_2px_0_#16a34a,inset_0_-2px_0_#16a34a]'
+                                            : '!bg-amber-200 shadow-[inset_0_2px_0_#d97706,inset_0_-2px_0_#d97706]') : '';
+                    if (!canNote) return <td key={c.day} className={`${cls} ${fcls}`} />;
                     return (
-                      <td key={c.day} className={`${cls} cursor-pointer hover:bg-mor-bluelight/60`}
+                      <td key={c.day} className={`${cls} ${fcls} cursor-pointer hover:bg-mor-bluelight/60`}
                         title={`${room.name} ${c.day.slice(5).replace('-', '/')} 加訂單`}
                         onClick={(e) => {
                           e.stopPropagation(); setPicked(null);
@@ -871,11 +957,12 @@ export default function RoomStatusPage() {
                     ★★★ 那幾天還是有人。整條拿掉的話畫面會說那間房空著 ——
                       而有人會照著它排房。淡掉＝「不是你現在在找的，但它佔著」。
                   */
-                  const dimmed = view === 'done' ? !checkedOut(c.stay, today)
+                  /* 找房有結果時，沒找到的房整排淡掉 */
+                  const dimmed = (fDim && !fHit.has(room.name)) || (view === 'done' ? !checkedOut(c.stay, today)
                     : view === 'moved' ? !c.stay.moveChain
                     : view !== '' && view !== 'any' && view !== 'free'
                     && view !== 'dup' && view !== 'ending' && view !== 'leaving'
-                    && c.stay.tone !== view;
+                    && c.stay.tone !== view);
                   /*
                    * ★★★ 快結束的畫成紅色。
                    *   ★ 只有**旋鈕打開**的時候才紅 —— 平常不紅,因為這一頁最常做的事
@@ -952,6 +1039,20 @@ export default function RoomStatusPage() {
         手機的換月放在最上面一整排（2026-10-12 過審）—— 篩選列在手機上是收起來的，
         換月是這一頁最常做的事，不該藏在「篩選」裡面。
       */}
+      {/* 手機：月／自訂／找房三格撐滿整排（找房 2026-10-19）—— 篩選列在手機上是收起來的 */}
+      <div className="md:hidden flex h-11 rounded-lg border border-gray-300 overflow-hidden mb-2">
+        {([['month', '月'], ['custom', '自訂'], ['find', '🔍 找房']] as const).map(([v, t]) => (
+          <button key={v} type="button" onClick={() => setMode(v)}
+            className={`flex-1 text-ui border-r border-gray-300 last:border-r-0 ${
+              mode === v ? 'bg-mor-slate text-white' : 'bg-white text-gray-600'}`}>{t}</button>
+        ))}
+      </div>
+      {mode === 'find' && (
+        <div className="md:hidden mb-3 rounded-xl border border-mor-line bg-white p-3">
+          {findInputs(true)}
+          <div className="mt-2 text-[11px] text-gray-400">物業：{estF || '（到「篩選」選一個）'}</div>
+        </div>
+      )}
       {mode === 'month' && (
         <div className="md:hidden flex items-center gap-2 mb-3">
           <div className="flex-1 flex items-center justify-between h-11 rounded-lg border border-gray-300 bg-white">
@@ -977,7 +1078,7 @@ export default function RoomStatusPage() {
         */}
         <Field label="期間">
           <div className="flex h-12 md:h-10 rounded-lg border border-gray-300 overflow-hidden">
-            {([['month', '月'], ['custom', '自訂']] as const).map(([v, t]) => (
+            {([['month', '月'], ['custom', '自訂'], ['find', '🔍 找房']] as const).map(([v, t]) => (
               <button key={v} onClick={() => setMode(v)}
                 className={`px-3.5 text-uisub border-r border-gray-300 last:border-r-0 ${
                   mode === v ? 'bg-mor-slate text-white' : 'bg-white text-gray-600 hover:bg-mor-sand'}`}>
@@ -1003,6 +1104,9 @@ export default function RoomStatusPage() {
                            hover:bg-mor-sand disabled:text-gray-300 disabled:hover:bg-white">本月</button>
             </div>
           </Field>
+        ) : mode === 'find' ? (
+          /* 找房（A 案）：月份那格換成住宿起／退房日＋找空房 */
+          findInputs(false)
         ) : (
           <>
             <Field label="起">
@@ -1047,6 +1151,66 @@ export default function RoomStatusPage() {
           ))}
         </div>
       )}
+
+      {/*
+        ══════════ 找房的結果（2026-10-19 A 案）══════════
+        綠＝整段空房（點房號＝用這間加訂單）；黃＝只能拼（選一組、用這組建單）；紅＝沒有空房（講出是哪幾晚滿）。
+      */}
+      {mode === 'find' && (() => {
+        const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
+        const est = estates.find((e) => e.name === estF);
+        const roomId = (n: string) => moveRooms.find((r) => r.name === n && r.estate === estF)?.id ?? null;
+        if (!findQ) return (
+          <div className="mb-3 rounded-xl border border-mor-line bg-white px-4 py-2.5 text-sm text-gray-500">
+            填<b>住宿起</b>與<b>退房日</b>（退房那晚不算），按「找空房」—— 日曆會換成那幾晚，空的房亮起來。
+          </div>);
+        if (!fResult) return <div className="mb-3 rounded-xl bg-white px-4 py-2.5 text-sm text-gray-400">找房中⋯</div>;
+        const span = `${md(findQ.from)}～${md(findQ.to)}`;
+        if (fResult.kind === 'bad') return <div className="mb-3 rounded-xl bg-amber-50 px-4 py-2.5 text-sm text-amber-800">{fResult.message}</div>;
+        if (fResult.kind === 'full') return (
+          <div className="mb-3 rounded-xl bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-900">
+            ✅ <b>整段空房 {fResult.rooms.length} 間</b>　{estF}・{span}（{fResult.nights} 晚）
+            <div className="mt-2 flex flex-wrap gap-2">
+              {fResult.rooms.map((n) => canNote ? (
+                <button key={n} type="button"
+                  onClick={() => setAdding({ estateId: est?.id ?? null, propertyId: roomId(n), day: findQ.from, to: findQ.to })}
+                  className="h-10 max-md:flex-1 rounded-lg border border-green-300 bg-white px-3 font-semibold text-green-800 hover:bg-green-100">
+                  {n}　＋ 用這間加訂單
+                </button>
+              ) : <span key={n} className="rounded-lg border border-green-300 bg-white px-3 py-1.5 font-semibold text-green-800">{n}</span>)}
+            </div>
+          </div>);
+        if (fResult.kind === 'mix') return (
+          <div className="mb-3 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-900">
+            ⚠ {estF}・{span} 沒有整段空的房，可以<b>拼</b>（換房次數少的排前面）：
+            <div className="mt-2 space-y-2">
+              {fResult.plans.map((pl, i) => (
+                <div key={i} onClick={() => setPlanIdx(i)}
+                  className={`rounded-lg border border-dashed bg-white px-3 py-2 cursor-pointer flex flex-wrap items-center gap-x-3 gap-y-1 ${
+                    i === planIdx ? 'border-amber-500 ring-1 ring-amber-400' : 'border-amber-300'}`}>
+                  <b className="text-amber-800">方案 {i + 1}</b>
+                  <span className="text-xs text-amber-700">換 {pl.length - 1} 次房</span>
+                  <span className="tabular-nums">{pl.map((sg) => `${sg.room} ${md(sg.from)}～${md(sg.to)}（${sg.nights} 晚）`).join(' → ')}</span>
+                  {canNote && (
+                    <button type="button" onClick={(e) => { e.stopPropagation(); setPlanIdx(i);
+                        setAdding({ estateId: est?.id ?? null, day: findQ.from, to: findQ.to, plan: pl }); }}
+                      className={`max-md:w-full md:ml-auto h-9 rounded-lg px-3 text-sm font-medium ${
+                        i === planIdx ? 'bg-mor-slate text-white' : 'border border-mor-slate text-mor-slate bg-white'}`}>
+                      用這組建單
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="mt-1.5 text-[11px] text-amber-700/80">只在同一個物業裡拼。建一張訂單、自動拆成這幾段，訂單上會掛移房紀錄。</div>
+          </div>);
+        return (
+          <div className="mb-3 rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800">
+            ✕ <b>這段沒有空房</b>　{estF}・{span}
+            {fResult.fullNights.length > 0 && <>　{fResult.fullNights.map(md).join('、')} 這 {fResult.fullNights.length} 晚整個物業都滿，拼也拼不起來。</>}
+            <div className="mt-1 text-xs text-red-700/80">試試別的物業，或把起迄挪開那幾晚。</div>
+          </div>);
+      })()}
 
       {/*
         ★★ 沒設物業的房源畫不出來（左邊那一欄要顯示物業、篩選也是按物業）。

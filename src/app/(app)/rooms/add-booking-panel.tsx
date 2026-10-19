@@ -11,6 +11,8 @@ import {
   type BookingDraft, type BookingKind,
 } from '@/lib/quick-booking';
 import type { MoveRoom } from './move-panel';
+import { splitPrice, type FinderSeg } from '@/lib/room-finder';
+import { softDelete } from '@/lib/trash';
 
 /*
  * ══════════════════════════════════════════════════════════
@@ -33,7 +35,11 @@ export default function AddBookingPanel({ sheet, rooms, init, onClose, onDone }:
   sheet: boolean;
   rooms: readonly MoveRoom[];
   /** 點空白格子帶進來的；按右上按鈕進來的只帶物業 */
-  init: { estateId: string | null; propertyId?: string | null; day?: string | null };
+  /**
+   * to：退房日（找房帶進來的）。plan：找房「只能拼」選的那一組 ——
+   *   有它的話房源不用選，建一張訂單後馬上拆成那幾段（跟部分移房同一支 move_order）。
+   */
+  init: { estateId: string | null; propertyId?: string | null; day?: string | null; to?: string | null; plan?: FinderSeg[] | null };
   onClose: () => void;
   onDone: (c: Created) => void;
 }) {
@@ -47,10 +53,20 @@ export default function AddBookingPanel({ sheet, rooms, init, onClose, onDone }:
   const day0 = init.day || new Date().toISOString().slice(0, 10);
   const initRoom = rooms.find((r) => r.id === init.propertyId);
   const [d, setD] = useState<BookingDraft>({
-    kind: 'private', name: '', from: day0, to: addDays(day0, 1),
+    kind: 'private', name: '', from: day0, to: init.to || addDays(day0, 1),
     estateId: initRoom?.estate_id ?? init.estateId ?? estates[0]?.id ?? null,
     propertyId: initRoom?.id ?? null, room: initRoom?.name ?? '', price: null, note: '',
   });
+  const plan = init.plan && init.plan.length > 1 ? init.plan : null;
+  /** 拼房的每一段對到哪一間（同一個物業裡照房號找） */
+  const planRooms = useMemo(() => (plan ?? []).map((sg) =>
+    rooms.find((r) => r.name === sg.room && r.estate_id === init.estateId) ?? null), [plan, rooms, init.estateId]);
+  useEffect(() => {
+    if (!plan) return;
+    const r0 = planRooms[0];
+    setD((x) => ({ ...x, kind: 'private', from: plan[0].from, to: plan[plan.length - 1].to,
+      estateId: r0?.estate_id ?? x.estateId, propertyId: r0?.id ?? null, room: plan[0].room }));
+  }, [plan, planRooms]);
   const set = (p: Partial<BookingDraft>) => setD((x) => ({ ...x, ...p }));
   /*
    * 切種類：私下預設住一晚、契約預設半年（最後一天＝起日＋6 個月−1 天）。
@@ -99,7 +115,16 @@ export default function AddBookingPanel({ sheet, rooms, init, onClose, onDone }:
       .then(({ data }) => setLocked(((data ?? []) as { ym: string }[]).map((r) => r.ym as Ym)));
   }, [supabase]);
 
-  const err = draftError(d, busy);
+  /*
+   * 拼房：整段一定不是同一間空（不然就不用拼），所以不拿整段去比 ——
+   *   改成每一段各自檢查那間房那幾晚還空不空（找完到按下去之間可能被訂走）。
+   */
+  const planErr = plan
+    ? (planRooms.some((r) => !r) ? '拼房的房源找不到了，重新找一次'
+      : busy && plan.some((sg, i) => !roomFree(busy, planRooms[i]!, sg.from, sg.to))
+        ? `${plan.find((sg, i) => !roomFree(busy, planRooms[i]!, sg.from, sg.to))!.room} 那幾晚剛被訂走了，重新找一次` : null)
+    : null;
+  const err = plan ? (planErr ?? draftError(d, [])) : draftError(d, busy);
   const lockErr = d.kind === 'private' && range
     ? lockedMsg({ checkin: d.from, checkout: d.to, imported_via: 'manual' }, locked) : null;
   const [saveErr, setSaveErr] = useState('');
@@ -116,7 +141,29 @@ export default function AddBookingPanel({ sheet, rooms, init, onClose, onDone }:
     if (d.kind === 'private') {
       const { data, error } = await supabase.from('orders').insert(orderInsert(d)).select('id').single();
       if (error || !data) { setSaveErr('建立失敗：' + (error?.message ?? '')); return; }
-      onDone({ kind: 'private', id: (data as any).id, room: d.room });
+      const id = (data as any).id as string;
+      if (plan) {
+        /* 拼房：馬上拆成那幾段。失敗的話剛建的那張收進回收桶，不留一張整段壓在第一間的單 */
+        const amounts = splitPrice(Number(d.price) || 0, plan);
+        const chain = plan.map((sg) => sg.room).join('>');
+        const { data: mv, error: me } = await supabase.rpc('move_order', {
+          p_grp: id,
+          p_segs: plan.map((sg, i) => ({
+            estate_id: d.estateId, property_id: planRooms[i]!.id, room: sg.room,
+            from: sg.from, to: sg.to, nights: sg.nights, amount: amounts[i],
+          })),
+          p_patch: { move_chain: chain, note: [d.note.trim(), `移房 ${chain}`].filter(Boolean).join('\n') },
+        });
+        const r = mv as { ok?: boolean; message?: string } | null;
+        if (me || !r?.ok) {
+          await softDelete(supabase, 'orders', id, '拼房拆段失敗，自動收回');
+          setSaveErr('拆段失敗：' + (me?.message ?? r?.message ?? '') + '（剛建的那張已收回，可以再試一次）');
+          return;
+        }
+        onDone({ kind: 'private', id, room: chain.split('>').join('→') });
+        return;
+      }
+      onDone({ kind: 'private', id, room: d.room });
     } else {
       const { data, error } = await supabase.from('contracts').insert(contractInsert(d)).select('id').single();
       if (error || !data) { setSaveErr('建立失敗：' + (error?.message ?? '')); return; }
@@ -158,16 +205,16 @@ export default function AddBookingPanel({ sheet, rooms, init, onClose, onDone }:
               className="w-8 h-8 rounded-full bg-mor-bg text-gray-500 text-base leading-none">✕</button>
           </div>
 
-          {/* 1 種類 */}
-          <div className="flex rounded-lg bg-mor-sand p-1">
-            {([['private', '私下訂單', 'bg-mor-green'], ['contract', '契約', 'bg-mor-slate']] as const).map(([k, t, sw]) => (
+          {/* 1 種類（拼房只能是私下訂單 —— 契約不拆段） */}
+          {!plan && <div className="flex rounded-lg bg-mor-sand p-1">
+            {([['private', '私下訂單', 'bg-[#8A6142]'], ['contract', '契約', 'bg-mor-slate']] as const).map(([k, t, sw]) => (
               <button key={k} type="button" onClick={() => setKind(k)}
                 className={`flex-1 rounded-md py-2 text-sm inline-flex items-center justify-center gap-1.5 ${
                   d.kind === k ? 'bg-white font-semibold shadow-sm' : 'text-gray-600'}`}>
                 <i className={`w-2.5 h-2.5 rounded-sm ${sw}`} />{t}
               </button>
             ))}
-          </div>
+          </div>}
 
           {/* 2 姓名 */}
           <label className="flex flex-col gap-1">
@@ -181,10 +228,10 @@ export default function AddBookingPanel({ sheet, rooms, init, onClose, onDone }:
             <span className={lab}>{isP ? '住宿起訖' : '租期起訖'}<Req /></span>
             <div className="grid grid-cols-2 gap-2">
               <label className="flex flex-col gap-0.5 text-[11px] text-gray-400">{isP ? '入住日' : '起租日'}
-                <input type="date" value={d.from} onChange={(e) => set({ from: e.target.value })} className={inp(bad('date'))} />
+                <input type="date" value={d.from} disabled={!!plan} onChange={(e) => set({ from: e.target.value })} className={inp(bad('date'))} />
               </label>
               <label className="flex flex-col gap-0.5 text-[11px] text-gray-400">{isP ? '退房日' : '最後一天（含）'}
-                <input type="date" value={d.to} min={d.from}
+                <input type="date" value={d.to} min={d.from} disabled={!!plan}
                   onChange={(e) => { toTouched.current = true; set({ to: e.target.value }); }} className={inp(bad('date'))} />
               </label>
             </div>
@@ -194,14 +241,27 @@ export default function AddBookingPanel({ sheet, rooms, init, onClose, onDone }:
           {/* 4 物業 */}
           <label className="flex flex-col gap-1">
             <span className={lab}>物業<Req /></span>
-            <select value={d.estateId ?? ''} onChange={(e) => set({ estateId: e.target.value || null, propertyId: null, room: '' })}
+            <select value={d.estateId ?? ''} disabled={!!plan} onChange={(e) => set({ estateId: e.target.value || null, propertyId: null, room: '' })}
               className={inp(bad('estate'))}>
               <option value="">選物業</option>
               {estates.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
             </select>
           </label>
 
-          {/* 5 房源 */}
+          {/* 5 房源（拼房：照找房選的那一組，不能改） */}
+          {plan ? (
+            <div className="flex flex-col gap-1">
+              <span className={lab}>房源（拼房・{plan.length} 段）</span>
+              <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm space-y-0.5">
+                {plan.map((sg) => (
+                  <div key={sg.from} className="flex justify-between tabular-nums">
+                    <b>{sg.room}</b><span className="text-gray-600">{sg.from.slice(5).replace('-', '/')} ～ {sg.to.slice(5).replace('-', '/')}（{sg.nights} 晚）</span>
+                  </div>
+                ))}
+              </div>
+              <div className="text-[11px] text-gray-400">建一張訂單，自動拆成這幾段；價格照晚數攤。訂單上會掛移房紀錄。</div>
+            </div>
+          ) : (
           <label className="flex flex-col gap-1">
             <span className={lab}>房源<Req /></span>
             <select value={d.propertyId ?? ''} className={inp(bad('room'))}
@@ -210,6 +270,7 @@ export default function AddBookingPanel({ sheet, rooms, init, onClose, onDone }:
               {opts.map((r) => <option key={r.id} value={r.id}>{r.name}{freeOf(r) ? '' : '（這段有人）'}</option>)}
             </select>
           </label>
+          )}
 
           {/* 6 價格 */}
           <div className="flex flex-col gap-1">
