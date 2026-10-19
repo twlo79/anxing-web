@@ -1160,16 +1160,21 @@ export default function RoomStatusPage() {
         const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
         const est = estates.find((e) => e.name === estF);
         const roomId = (n: string) => moveRooms.find((r) => r.name === n && r.estate === estF)?.id ?? null;
+        /* ✕ 關掉（2026-10-19 David：「多一個可以關掉」）：收掉結果與亮格，日曆回到月；填的日期留著，改一下再找 */
+        const x = (
+          <button type="button" onClick={() => { setFindQ(null); setPlanIdx(0); }} aria-label="關掉找房結果" title="關掉"
+            className="absolute top-2 right-2 w-8 h-8 rounded-full text-lg leading-none opacity-60 hover:opacity-100 hover:bg-black/5">✕</button>
+        );
         if (!findQ) return (
           <div className="mb-3 rounded-xl border border-mor-line bg-white px-4 py-2.5 text-sm text-gray-500">
             填<b>住宿起</b>與<b>退房日</b>（退房那晚不算），按「找空房」—— 日曆會換成那幾晚，空的房亮起來。
           </div>);
-        if (!fResult) return <div className="mb-3 rounded-xl bg-white px-4 py-2.5 text-sm text-gray-400">找房中⋯</div>;
+        if (!fResult) return <div className="relative mb-3 rounded-xl bg-white px-4 py-2.5 pr-12 text-sm text-gray-400">{x}找房中⋯</div>;
         const span = `${md(findQ.from)}～${md(findQ.to)}`;
-        if (fResult.kind === 'bad') return <div className="mb-3 rounded-xl bg-amber-50 px-4 py-2.5 text-sm text-amber-800">{fResult.message}</div>;
+        if (fResult.kind === 'bad') return <div className="relative mb-3 rounded-xl bg-amber-50 px-4 py-2.5 pr-12 text-sm text-amber-800">{x}{fResult.message}</div>;
         if (fResult.kind === 'full') return (
-          <div className="mb-3 rounded-xl bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-900">
-            ✅ <b>整段空房 {fResult.rooms.length} 間</b>　{estF}・{span}（{fResult.nights} 晚）
+          <div className="relative mb-3 rounded-xl bg-green-50 border border-green-200 px-4 py-3 pr-12 text-sm text-green-900">
+            {x}✅ <b>整段空房 {fResult.rooms.length} 間</b>　{estF}・{span}（{fResult.nights} 晚）
             <div className="mt-2 flex flex-wrap gap-2">
               {fResult.rooms.map((n) => canNote ? (
                 <button key={n} type="button"
@@ -1181,8 +1186,8 @@ export default function RoomStatusPage() {
             </div>
           </div>);
         if (fResult.kind === 'mix') return (
-          <div className="mb-3 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-900">
-            ⚠ {estF}・{span} 沒有整段空的房，可以<b>拼</b>（換房次數少的排前面）：
+          <div className="relative mb-3 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 pr-12 text-sm text-amber-900">
+            {x}⚠ {estF}・{span} 沒有整段空的房，可以<b>拼</b>（換房次數少的排前面）：
             <div className="mt-2 space-y-2">
               {fResult.plans.map((pl, i) => (
                 <div key={i} onClick={() => setPlanIdx(i)}
@@ -1205,8 +1210,8 @@ export default function RoomStatusPage() {
             <div className="mt-1.5 text-[11px] text-amber-700/80">只在同一個物業裡拼。建一張訂單、自動拆成這幾段，訂單上會掛移房紀錄。</div>
           </div>);
         return (
-          <div className="mb-3 rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800">
-            ✕ <b>這段沒有空房</b>　{estF}・{span}
+          <div className="relative mb-3 rounded-xl bg-red-50 border border-red-200 px-4 py-3 pr-12 text-sm text-red-800">
+            {x}✕ <b>這段沒有空房</b>　{estF}・{span}
             {fResult.fullNights.length > 0 && <>　{fResult.fullNights.map(md).join('、')} 這 {fResult.fullNights.length} 晚整個物業都滿，拼也拼不起來。</>}
             <div className="mt-1 text-xs text-red-700/80">試試別的物業，或把起迄挪開那幾晚。</div>
           </div>);
