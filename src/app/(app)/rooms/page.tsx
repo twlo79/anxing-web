@@ -69,7 +69,8 @@ const WD = ['日', '一', '二', '三', '四', '五', '六'];
 /** 顏色。跟藥丸是同一份 —— 兩邊各寫一次就會有對不起來的一天 */
 const TONE: Record<Stay['tone'], { bar: string; chip: string; label: string }> = {
   short:    { bar: 'bg-[#2F8C8C]',  chip: 'bg-[#2F8C8C]',  label: '短租（Airbnb／Agoda）' },
-  private:  { bar: 'bg-mor-green',  chip: 'bg-mor-green',  label: '私下' },
+  /* ★ 2026-10-19 David：「私下換顏色」—— 原本的綠跟短租的藍綠太像。看過稿選咖啡棕：跟訂金的黃、移房的紫、警示的紅都分得開，白字對比 5.4 */
+  private:  { bar: 'bg-[#8A6142]',  chip: 'bg-[#8A6142]',  label: '私下' },
   longterm: { bar: 'bg-mor-slate',  chip: 'bg-mor-slate',  label: '長租契約' },
   earnest:  { bar: 'bg-[#C9A227]',  chip: 'bg-[#C9A227]',  label: '訂金／未確認' },
 };
@@ -148,13 +149,13 @@ function Pill({ on, onClick, swatch, children, warn }: {
   );
 }
 
-type View = '' | 'any' | Stay['tone'] | 'free' | 'done' | 'dup' | 'ending' | 'leaving';
+type View = '' | 'any' | Stay['tone'] | 'free' | 'done' | 'dup' | 'ending' | 'leaving' | 'moved';
 
 /** 藥丸上的字。`''` 是沒有選 */
 const VIEW_LABEL: Record<string, string> = {
   any: '所有客戶', free: '空房', dup: '重疊',
   short: '短租', private: '私下', longterm: '長租契約', earnest: '訂金／未確認',
-  ending: '快退租', leaving: '快退房', done: '已退房',
+  ending: '快退租', leaving: '快退房', done: '已退房', moved: '移房',
 };
 
 /**
@@ -175,6 +176,8 @@ function matchPill(x: { real: readonly Stay[]; dups: readonly unknown[] }, view:
   /* ★ 已退房（2026-10-04 David：「已退房獨立一個膠囊」）：這段期間裡有一筆已經退房的 */
   if (view === 'done') { const t = todayStr(); return x.real.some((s) => checkedOut(s, t)); }
   if (view === 'dup') return x.dups.length > 0;
+  /* ★ 移房（2026-10-19 David 選 A 案）：這段期間裡有一筆移過房的 */
+  if (view === 'moved') return x.real.some((s) => !!s.moveChain);
   if (view === 'any') return x.real.length > 0;
   return x.real.some((s) => s.tone === view);
 }
@@ -414,7 +417,7 @@ export default function RoomStatusPage() {
        * ★ 分頁一定要 `.order('id')` —— 沒有排序的話每一頁的順序不保證一樣，跨頁會重複或漏掉。
        */
       fetchAll<any>((a, b) => supabase.from('orders')
-        .select('id, property_raw, guest_name, checkin, checkout, source, imported_via, contract_id, note, order_key, amount')
+        .select('id, property_raw, guest_name, checkin, checkout, source, imported_via, contract_id, note, order_key, amount, move_chain')
         .not('source', 'in', '(oneoff,airbnb_cancelled)')
         .is('cancelled_on', null)   // 已取消的私下訂單不畫（migration_319）—— 那幾晚空出來了
         .lte('checkin', t).gt('checkout', f).order('id').range(a, b)),
@@ -507,6 +510,7 @@ export default function RoomStatusPage() {
         tone: (o.source === 'private' ? 'private' : 'short') as Stay['tone'],
         contractId: o.contract_id as string | null,
         note: (o.note as string | null) ?? null,
+        moveChain: ((o.move_chain as string | null) ?? '').trim() || null,
       }));
 
     const cStays: Stay[] = ((cs ?? []) as any[])
@@ -714,6 +718,7 @@ export default function RoomStatusPage() {
   const nFree = base.length - nOccupied;
   /** 這段期間裡有已退房住宿的間數（跟空房一樣數「間」） */
   const nDone = useMemo(() => base.filter((x) => matchPill(x, 'done')).length, [base]);
+  const nMoved = useMemo(() => base.filter((x) => matchPill(x, 'moved')).length, [base]);
 
   /*
    * ══════════ 住房率（2026-10-04 David）══════════
@@ -867,6 +872,7 @@ export default function RoomStatusPage() {
                       而有人會照著它排房。淡掉＝「不是你現在在找的，但它佔著」。
                   */
                   const dimmed = view === 'done' ? !checkedOut(c.stay, today)
+                    : view === 'moved' ? !c.stay.moveChain
                     : view !== '' && view !== 'any' && view !== 'free'
                     && view !== 'dup' && view !== 'ending' && view !== 'leaving'
                     && c.stay.tone !== view;
@@ -888,6 +894,16 @@ export default function RoomStatusPage() {
                           whitespace-nowrap overflow-hidden transition-opacity
                           ${hit ? '' : checkedOut(c.stay, today) ? DONE_BAR : TONE[c.stay.tone].bar}
                           ${dimmed ? 'opacity-20' : 'hover:brightness-110'}`}>
+                        {/*
+                          ★ 移房小標（2026-10-19 A 案）：色條照來源顏色，前面加紫色「↪ A13→B03」。
+                            兩晚以下放不下，只留「↪」，點開卡片看完整。
+                        */}
+                        {c.stay.moveChain && (
+                          <span title={`移房 ${c.stay.moveChain.split('>').join(' → ')}`}
+                            className="shrink-0 mr-1 rounded bg-white px-1 text-[10px] font-semibold text-violet-700">
+                            ↪{c.span > 2 ? ` ${c.stay.moveChain.split('>').join('→')}` : ''}
+                          </span>
+                        )}
                         <span className="truncate">{c.stay.guest ?? ''}</span>
                         {hit && (
                           <span className="ml-auto pl-1.5 text-[9px] font-extrabold opacity-90
@@ -1090,6 +1106,8 @@ export default function RoomStatusPage() {
             swatch="bg-white border border-mor-line">空房 {nFree}</Pill>
           {/* ★ 2026-10-04 David：「已退房獨立一個膠囊」—— 跟空房同一排（都是「什麼狀態」） */}
           <Pill on={view === 'done'} onClick={() => pick('done')} swatch={DONE_BAR}>已退房 {nDone}</Pill>
+          {/* ★ 移房（2026-10-19 A 案）：紫色＝移轉，跟押金移房同一個意思。點了只亮移過房的那幾條 */}
+          <Pill on={view === 'moved'} onClick={() => pick('moved')} swatch="bg-violet-600">↪ 移房 {nMoved}</Pill>
 
           {/*
             ★★ 三顆提醒被篩選中時，這裡出現一顆可以關掉的籤。

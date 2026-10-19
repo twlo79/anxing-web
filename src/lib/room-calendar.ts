@@ -45,6 +45,8 @@ export type Stay = {
    * 只給 `dropContractOrders()` 用 —— 見那支的說明。
    */
   contractId?: string | null;
+  /** 移房過程（`orders.move_chain`，例：'A13>B03'）。沒移過＝null。房源狀態畫「↪ A13→B03」用（2026-10-19） */
+  moveChain?: string | null;
   /**
    * 這筆在資料庫裡的 id（不含 `id` 上面那個 `o`／`c` 前綴）。
    *
