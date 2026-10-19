@@ -193,7 +193,7 @@ type Picked = { stay: Stay; room: string; estate: string | null; x: number; y: n
 /** 跟篩選列的 Field 同一個樣子，只是標題後面掛紅星（Field 的標題只收字串） */
 function ReqField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div>
+    <div className="min-w-0">
       <span className="flex items-center h-5 mb-1 text-uisub leading-5 text-gray-500 whitespace-nowrap">{label}<Req /></span>
       {children}
     </div>
@@ -798,11 +798,11 @@ export default function RoomStatusPage() {
       <div className={mobile ? 'grid grid-cols-2 gap-2' : 'contents'}>
         <ReqField label="住宿起">
           <input type="date" value={fFrom} onChange={(e) => { setFFrom(e.target.value); if (!fTo || e.target.value >= fTo) setFTo(addDays(e.target.value, 1)); }}
-            className={`${mobile ? 'h-11 w-full' : 'h-12 md:h-10'} rounded-lg border border-gray-300 px-2 text-ui bg-white`} />
+            className={`${mobile ? 'h-11 w-full min-w-0 appearance-none' : 'h-12 md:h-10'} rounded-lg border border-gray-300 px-2 text-ui bg-white`} />
         </ReqField>
         <ReqField label="退房日">
           <input type="date" value={fTo} min={fFrom || undefined} onChange={(e) => setFTo(e.target.value)}
-            className={`${mobile ? 'h-11 w-full' : 'h-12 md:h-10'} rounded-lg border px-2 text-ui bg-white ${
+            className={`${mobile ? 'h-11 w-full min-w-0 appearance-none' : 'h-12 md:h-10'} rounded-lg border px-2 text-ui bg-white ${
               fFrom && fTo && fNights <= 0 ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} />
         </ReqField>
       </div>
@@ -1007,16 +1007,17 @@ export default function RoomStatusPage() {
     <div onClick={() => picked && setPicked(null)}
       /* 手機抽屜開著時底下多留一段，最後幾列才捲得到抽屜上方 */
       className={picked && isMobile ? 'pb-[45vh]' : ''}>
-      <div className="flex items-center justify-between mb-4">
-        <h1>房源狀態
-          <span className="text-sm font-normal text-gray-400 ml-2">
+      {/* ★ 手機上「＋ 加訂單」不准折行（2026-10-19）：按鈕不縮、副標題在手機收起來 */}
+      <div className="flex items-center justify-between gap-3 mb-4">
+        <h1 className="min-w-0">房源狀態
+          <span className="hidden sm:inline text-sm font-normal text-gray-400 ml-2">
             Airbnb　私下　契約　狀態
           </span>
         </h1>
         {canNote && (
           <button type="button"
             onClick={() => setAdding({ estateId: estates.find((e) => e.name === estF)?.id ?? null })}
-            className="h-10 rounded-lg bg-mor-slate px-4 text-ui font-medium text-white hover:bg-mor-slatedark">
+            className="shrink-0 whitespace-nowrap h-10 rounded-lg bg-mor-slate px-4 text-ui font-medium text-white hover:bg-mor-slatedark">
             ＋ 加訂單
           </button>
         )}
@@ -1047,6 +1048,30 @@ export default function RoomStatusPage() {
               mode === v ? 'bg-mor-slate text-white' : 'bg-white text-gray-600'}`}>{t}</button>
         ))}
       </div>
+      {mode === 'custom' && (
+        <div className="md:hidden mb-3 rounded-xl border border-mor-line bg-white p-3">
+          <div className="grid grid-cols-2 gap-2">
+            <label className="min-w-0 flex flex-col gap-1 text-uisub text-gray-500">起
+              <input type="date" value={from} onChange={(e) => setFrom(e.target.value)}
+                className="h-11 w-full min-w-0 appearance-none rounded-lg border border-gray-300 px-2 text-ui bg-white" /></label>
+            <label className="min-w-0 flex flex-col gap-1 text-uisub text-gray-500">迄
+              <input type="date" value={to} onChange={(e) => setTo(e.target.value)}
+                className={`h-11 w-full min-w-0 appearance-none rounded-lg border px-2 text-ui bg-white ${
+                  badRange || tooLong ? 'border-red-400 bg-red-50' : 'border-gray-300'}`} /></label>
+          </div>
+          <div className="mt-2.5 flex flex-wrap gap-1.5">
+            {([
+              ['本月', () => { const r = monthRange(thisYm()); setFrom(r.from); setTo(r.to); }],
+              ['未來 30 天', () => { setFrom(today); setTo(addDays(today, 30)); }],
+              ['未來 60 天', () => { setFrom(today); setTo(addDays(today, 60)); }],
+              ['未來 90 天', () => { setFrom(today); setTo(addDays(today, 90)); }],
+            ] as const).map(([t, fn]) => (
+              <button key={t} type="button" onClick={fn}
+                className="rounded-full border border-mor-line bg-white px-3 py-1 text-xs text-mor-slate">{t}</button>
+            ))}
+          </div>
+        </div>
+      )}
       {mode === 'find' && (
         <div className="md:hidden mb-3 rounded-xl border border-mor-line bg-white p-3">
           {findInputs(true)}
@@ -1076,7 +1101,8 @@ export default function RoomStatusPage() {
           ★ 「月／自訂」做成兩段式切換不是下拉 —— 只有兩個選項，
             下拉要點兩下才換得過去，而這一顆會被換來換去。
         */}
-        <Field label="期間">
+        {/* ★ 手機上期間與日期只在最上面那一塊（2026-10-19 David：「這邊不是一樣嗎」）—— 篩選裡不再放第二份 */}
+        <div className="hidden md:block"><Field label="期間">
           <div className="flex h-12 md:h-10 rounded-lg border border-gray-300 overflow-hidden">
             {([['month', '月'], ['custom', '自訂'], ['find', '🔍 找房']] as const).map(([v, t]) => (
               <button key={v} onClick={() => setMode(v)}
@@ -1086,7 +1112,8 @@ export default function RoomStatusPage() {
               </button>
             ))}
           </div>
-        </Field>
+        </Field></div>
+        <div className="hidden md:contents">
         {mode === 'month' ? (
           <Field label="月份">
             {/* ‹ › 換月（2026-10-12 David：「有左右可以看上個月下個月」）。桌機鍵盤 ← → 也能翻 */}
@@ -1120,6 +1147,7 @@ export default function RoomStatusPage() {
             </Field>
           </>
         )}
+        </div>
         {/*
           ★ placeholder 寫「可以搜哪些」—— 標題一律留「關鍵字」（filters.tsx 的規矩）。
             使用者 2026-09-15 指定要能打房客名字，所以那三個字一定要出現在這裡，
@@ -1137,7 +1165,7 @@ export default function RoomStatusPage() {
           再擺四顆按鈕只是兩套做同一件事。
       */}
       {mode === 'custom' && (
-        <div className="flex flex-wrap items-center gap-2 -mt-1 mb-3">
+        <div className="hidden md:flex flex-wrap items-center gap-2 -mt-1 mb-3">
           <span className="text-[11px] font-semibold text-gray-500">快捷</span>
           {([
             ['本月', () => { const r = monthRange(thisYm()); setFrom(r.from); setTo(r.to); }],
