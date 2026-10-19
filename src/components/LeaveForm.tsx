@@ -1,7 +1,8 @@
 'use client';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import { useOnce } from '@/lib/once';
+import Receipts, { type ReceiptsHandle } from '@/components/Receipts';
 import {
   DEFAULT_WS, dow, holidayMap, hoursWithinDay, isWorkday, leaveError, modeTimes,
   planDays, segments, toYmd, totals, workHours,
@@ -154,6 +155,8 @@ export default function LeaveForm({ types, remainOf, usedOf, onDone }: Props) {
   }
   function drop(d: Ymd) { setRows((m) => { const n = new Map(m); n.delete(d); return n; }); }
 
+  /* 附件（2026-10-19）：選了先留在瀏覽器，送出成功後才上傳到那一批最早的那一天 */
+  const attRef = useRef<ReceiptsHandle>(null);
   const [submit, submitting] = useOnce(async () => {
     setErr(null);
     if (blocker) { setErr(blocker); return; }
@@ -165,7 +168,18 @@ export default function LeaveForm({ types, remainOf, usedOf, onDone }: Props) {
     if (error) { setErr('送出失敗：' + error.message); return; }
     const r = data as { ok: boolean; message: string; batch_id?: string };
     if (!r?.ok) { setErr(r?.message ?? '送出失敗'); return; }
-    savedToast(r.message);
+    /*
+     * ★ 附件掛在這一批**最早的那一天**（groupBatches 也是照 start_at 排，rows[0] 就是它）。
+     *   假已經送出了 —— 附件傳失敗的話**不擋**，講清楚，讓他到「3 狀態」補上傳。
+     */
+    let attMsg = '';
+    if (r.batch_id && attRef.current?.hasStaged()) {
+      const { data: first } = await supabase.from('leave_requests').select('id')
+        .eq('batch_id', r.batch_id).order('start_at').limit(1).maybeSingle();
+      const e = first?.id ? await attRef.current.flush(first.id) : '找不到剛送出的假單';
+      if (e) attMsg = `；附件沒傳上去（${e}），請到「3 狀態」那一筆補上傳`;
+    }
+    savedToast(r.message + attMsg);
     setRows(new Map()); setReason('');
     onDone(r.batch_id);
   });
@@ -345,6 +359,12 @@ export default function LeaveForm({ types, remainOf, usedOf, onDone }: Props) {
           <input placeholder="例如：家裡有事、回診" value={reason} onChange={(e) => setReason(e.target.value)}
             className="mt-1 rounded-lg border border-mor-line px-3 py-2 text-sm w-full" />
         </label>
+
+        {/* 附件：診斷證明、收據照片（選填）。送出時一起上傳 */}
+        <div className="mt-3">
+          <Receipts ref={attRef} kind="lv" parentId={null} label="附件" />
+          <div className="text-[11px] text-gray-400 mt-1">診斷證明、收據照片等，圖片或 PDF。送出後也能到「3 狀態」補上傳。</div>
+        </div>
 
         {/* ★ 錯誤留在這裡：固定高度，出現或消失不推版面 */}
         <div className="min-h-[20px] mt-2">

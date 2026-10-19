@@ -1,5 +1,6 @@
 'use client';
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { createClient } from '@/lib/supabase';
 import { softDelete } from '@/lib/trash';
 import { emptyReceiptText } from '@/lib/receipt-parents';
@@ -84,7 +85,7 @@ const Receipts = forwardRef<ReceiptsHandle, {
    *   都掛在押金底下的話分不出哪張對哪筆 ——
    *   而金額對不上時，那正是唯一能查的東西。
    */
-  kind: 'pr' | 'pri' | 'exp' | 'dep' | 'op' | 'dp' | 'of' | 'td' | 'cash' | 'sh' | 'ct' | 'od';
+  kind: 'pr' | 'pri' | 'exp' | 'dep' | 'op' | 'dp' | 'of' | 'td' | 'cash' | 'sh' | 'ct' | 'od' | 'lv';
   parentId: string | null | undefined;
   canEdit?: boolean;
   label?: string;
@@ -121,8 +122,14 @@ const Receipts = forwardRef<ReceiptsHandle, {
    *   症狀是整頁不停閃爍，而且沒有任何錯誤訊息。
    */
   onImages?: (imgs: { path: string; url: string; name: string | null }[]) => void;
+  /**
+   * 沒有附件時安靜一點（2026-10-19，請假清單與審核卡片用）。
+   *   能傳的人：只剩標題列（「附件」＋「＋ 上傳」），不寫「尚未上傳」那一行
+   *   不能傳的人：整塊不畫 —— 一張張審核卡片下面各掛一行「尚未上傳」只是雜訊
+   */
+  quietEmpty?: boolean;
 }>(function Receipts({ kind, parentId, canEdit = true, label = '憑證',
-  inheritFromRequestId, inheritFromItemId, onImages }, ref) {
+  inheritFromRequestId, inheritFromItemId, onImages, quietEmpty = false }, ref) {
   const supabase = createClient();
   const [rows, setRows] = useState<Att[]>([]);
   const [inherited, setInherited] = useState<Att[]>([]);
@@ -131,6 +138,8 @@ const Receipts = forwardRef<ReceiptsHandle, {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
+  /** 放大看的那一張（圖片清單裡的第幾張）；null ＝ 沒開 */
+  const [zoom, setZoom] = useState<number | null>(null);
 
   const col = kind === 'pr' ? 'request_id'
     /*
@@ -160,6 +169,8 @@ const Receipts = forwardRef<ReceiptsHandle, {
     // 契約文件 PDF（migration_324）。平常走 ContractDocs.tsx，這裡只是讓對應表完整
     : kind === 'ct' ? 'contract_id'
     : kind === 'od' ? 'order_doc_id'   // 訂單的合約 PDF（migration_325）
+    // 請假單的附件（migration_334）。前綴 lv/，看得到那張假的人才看得到（跟假單同一套 RLS）
+    : kind === 'lv' ? 'leave_request_id'
     /*
      * 現金流水的收據照片（migration_185）。
      *
@@ -385,6 +396,38 @@ const Receipts = forwardRef<ReceiptsHandle, {
   }
 
   const total = rows.length + staged.length + inherited.length;
+  /** 可以放大看的圖（自己的＋借來的，PDF 不算、網址還沒換到的不算） */
+  const images = [...rows, ...inherited]
+    .filter((a) => a.mime_type !== 'application/pdf' && urls[a.path])
+    .map((a) => ({ path: a.path, url: urls[a.path], name: a.file_name }));
+
+  /* 放大時：← → 換張、Esc 關 */
+  useEffect(() => {
+    if (zoom == null) return;
+    const f = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setZoom(null);
+      else if (e.key === 'ArrowLeft') setZoom((z) => (z == null ? z : (z - 1 + images.length) % images.length));
+      else if (e.key === 'ArrowRight') setZoom((z) => (z == null ? z : (z + 1) % images.length));
+    };
+    window.addEventListener('keydown', f);
+    return () => window.removeEventListener('keydown', f);
+  }, [zoom, images.length]);
+
+  const shown = zoom != null ? images[zoom] : null;
+  const lightbox = shown && typeof document !== 'undefined' ? createPortal(
+    <div className="fixed inset-0 z-[90] bg-black/80 flex flex-col items-center justify-center p-4"
+      onClick={() => setZoom(null)}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={shown.url} alt={shown.name ?? '附件'} onClick={(e) => e.stopPropagation()}
+        className="max-h-[80vh] max-w-full rounded-md bg-white object-contain" />
+      <div className="mt-3 flex flex-wrap items-center justify-center gap-4 text-sm text-white" onClick={(e) => e.stopPropagation()}>
+        {images.length > 1 && <button onClick={() => setZoom((zoom! - 1 + images.length) % images.length)} className="px-2 py-1">‹ 上一張</button>}
+        {images.length > 1 && <span className="tabular-nums">{zoom! + 1} / {images.length}</span>}
+        {images.length > 1 && <button onClick={() => setZoom((zoom! + 1) % images.length)} className="px-2 py-1">下一張 ›</button>}
+        <a href={shown.url} target="_blank" rel="noopener noreferrer" className="px-2 py-1 text-white/80">開新分頁</a>
+        <button onClick={() => setZoom(null)} className="px-2 py-1">✕ 關閉</button>
+      </div>
+    </div>, document.body) : null;
 
   /** fromRequest：來自請款單的憑證，只能看不能刪 —— 那是請款單的東西 */
   function tile(a: Att, removable: boolean, fromRequest: boolean) {
@@ -393,7 +436,16 @@ const Receipts = forwardRef<ReceiptsHandle, {
     return (
       <div key={a.id} className="relative group">
         <a href={url ?? '#'} target="_blank" rel="noopener noreferrer"
-          onClick={(e) => { if (!url) e.preventDefault(); }}
+          onClick={(e) => {
+            if (!url) { e.preventDefault(); return; }
+            /*
+             * ★ 圖片在同一頁放大（2026-10-19 David：「圖片並可以預覽」）。PDF 照舊開新分頁 ——
+             *   瀏覽器自己的 PDF 檢視比我們做的好；按著 Ctrl／⌘ 點的話也照舊開新分頁。
+             */
+            if (isPdf || e.metaKey || e.ctrlKey) return;
+            const i = images.findIndex((x) => x.path === a.path);
+            if (i >= 0) { e.preventDefault(); setZoom(i); }
+          }}
           className={`block aspect-square rounded-lg border overflow-hidden bg-mor-sand/40
             ${fromRequest ? 'border-mor-blue/40' : 'border-mor-line'}`}>
           {isPdf || !url ? (
@@ -419,8 +471,11 @@ const Receipts = forwardRef<ReceiptsHandle, {
     );
   }
 
+  if (quietEmpty && total === 0 && !canEdit) return null;
+
   return (
     <div className="border-t border-mor-line pt-3">
+      {lightbox}
       <div className="flex items-center justify-between mb-1.5">
         <span className="text-xs text-gray-500">{label}{total > 0 ? `（${total}）` : ''}</span>
         {canEdit && (
@@ -437,7 +492,7 @@ const Receipts = forwardRef<ReceiptsHandle, {
         <div className="text-xs text-amber-600 mb-1.5">{staged.length} 張待上傳,存檔後才會送出。</div>
       )}
 
-      {total === 0 ? (
+      {total === 0 ? (quietEmpty ? null : (
         /*
           ★★★ 空狀態要**分兩種說法**（2026-09-09）。
             這筆如果來自請款單，憑證很可能在那邊 ——
@@ -451,7 +506,7 @@ const Receipts = forwardRef<ReceiptsHandle, {
             canEdit,
           })}
         </div>
-      ) : (
+      )) : (
         <div className="grid grid-cols-3 md:grid-cols-4 gap-2">
           {staged.map((s) => (
             <div key={s.key} className="relative">

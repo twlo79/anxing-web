@@ -11,6 +11,7 @@ import {
 import { Tabs } from '@/components/Tabs';
 import ApproveTab from './approve-tab';
 import LeaveForm from '@/components/LeaveForm';
+import Receipts from '@/components/Receipts';
 import { groupBatches, type LeaveBatch } from '@/lib/leave-days';
 import { mixRequests, countByKind, filterKind, emptyText, type ReqKind } from '@/lib/request-mix';
 import { KindTag, KindChips } from './kind-chips';
@@ -320,6 +321,8 @@ export default function ApplyTab({ me, onMsg, prefill, isAdmin, pending = 0 }: T
             const one = g.rows.length === 1;
             return (
               <Row kind="leave" key={g.key} just={isJust(g.key)} tone={v.tone} state={v.text}
+                /* ★ 附件掛在這一批最早的那一天（rows 照 start_at 排）。送出後任何狀態都能補上傳（2026-10-19） */
+                extra={<Receipts kind="lv" parentId={r.id} label="附件" quietEmpty />}
                 title={one
                   ? `${typeName(r.type_code)} ${r.hours} 小時`
                   : `${typeName(r.type_code)} ${g.days} 天・${g.hours} 小時`}
@@ -376,14 +379,17 @@ export default function ApplyTab({ me, onMsg, prefill, isAdmin, pending = 0 }: T
   );
 }
 
-function Row({ kind, title, sub, state, tone, onCancel, just = false }: {
+function Row({ kind, title, sub, state, tone, onCancel, just = false, extra }: {
   kind: ReqKind; title: string; sub: string; state: string; tone: string; onCancel?: () => void; just?: boolean;
+  /** 底下多掛的東西（請假的附件） */
+  extra?: React.ReactNode;
 }) {
   return (
     <div {...justRow(just)} className={`px-4 py-3 flex items-start gap-3 ${just ? SAVED_HL : ''}`}>
       <div className="flex-1 min-w-0">
         <div className="text-sm font-medium">{just && <SavedBadge />}<KindTag kind={kind} />{title}</div>
         <div className="text-xs text-gray-500 mt-0.5 break-words">{sub}</div>
+        {extra && <div className="mt-2">{extra}</div>}
       </div>
       <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] ${TONE[tone]}`}>
         {state}

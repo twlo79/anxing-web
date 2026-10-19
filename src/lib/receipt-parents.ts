@@ -52,6 +52,8 @@ export const RECEIPT_COL = {
   /** 股東往來的匯款水單（migration_321）*/
   sh: 'shareholder_txn_id',
   ct: 'contract_id',
+  /** 請假單的附件（migration_334）*/
+  lv: 'leave_request_id',
   od: 'order_doc_id',  // 訂單的合約 PDF（migration_325）。不跟加費憑證 of/order_id 混用   // 契約文件 PDF（migration_324）。畫面是 components/ContractDocs.tsx
 } as const;
 

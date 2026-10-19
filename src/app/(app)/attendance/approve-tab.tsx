@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { isBoss as isBossRole } from '@/lib/roles';
 import { createClient } from '@/lib/supabase';
+import Receipts from '@/components/Receipts';
 import { leaveVote, otVote } from '@/lib/attendance-ui';
 import {
   BTN2, CARD, TONE, fmtDT, noRowsMsg,
@@ -217,6 +218,8 @@ export default function ApproveTab({ me, onMsg }: TabProps) {
                     {v.text}
                   </span>
                 </div>
+                {/* 附件（2026-10-19）：審的人直接看，點縮圖放大。沒有附件就整塊不畫 */}
+                <div className="mt-2"><Receipts kind="lv" parentId={r.id} canEdit={false} label="附件" quietEmpty /></div>
                 {!done && <div className="flex gap-2 mt-2">
                   {mine ? (
                     <span className="text-xs text-gray-400 py-1.5">
