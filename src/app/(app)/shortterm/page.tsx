@@ -409,14 +409,24 @@ export default function ShortTermPage() {
     savedRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, [saved, rows]);
 
-  useEffect(() => { supabase.from('estates').select('id, name, sort, active').order('sort').then(({ data }) => setEstates(data ?? [])); }, [supabase]);
+  /*
+   * ★★ 等登入身分讀到了才撈（2026-10-20 David：「為何有的電腦無法顯示完整房源？」物業下拉只有「—」）。
+   *   頁面一打開就撈的話，比較慢的電腦或憑證剛好要換新時，那一次查詢還沒帶登入 ——
+   *   RLS 擋掉不會報錯，只回空陣列，於是物業、房源整個下拉都是空的，而且不會再撈第二次。
+   *   掛在 role 上：身分讀到（或換人登入）就重撈。
+   */
+  useEffect(() => {
+    if (!role) return;
+    supabase.from('estates').select('id, name, sort, active').order('sort').then(({ data }) => setEstates(data ?? []));
+  }, [supabase, role]);
   // 安幸收款帳號改讀主檔,不再寫死。現金與加密貨幣沒有帳號,直接列在選單上。
   const [payAccounts, setPayAccounts] = useState<{ code: string; name: string }[]>([]);
   useEffect(() => {
+    if (!role) return;   // 同上：等身分讀到再撈
     supabase.from('payment_accounts').select('code, name')
       .eq('for_income', true).eq('active', true).order('sort')
       .then(({ data }) => setPayAccounts(data ?? []));
-  }, [supabase]);
+  }, [supabase, role]);
   /*
    * 收款的角色清單跟 order_payments 的 RLS 一致 —— 見 lib/roles.ts。
    * 沒有這道的話,沒權限的角色點得到「收款」但視窗裡永遠是空的（RLS 擋掉查詢,
@@ -667,8 +677,11 @@ export default function ShortTermPage() {
   const delFee = (i: number) => setFees((fs) => fs.filter((_, idx) => idx !== i));
   const [properties, setProperties] = useState<{ id: string; name: string; estate_id: string | null;
     parent_property_id?: string | null }[]>([]);
-  useEffect(() => { supabase.from('properties').select('id, name, estate_id, parent_property_id').order('name')
-    .then(({ data }) => setProperties(data ?? [])); }, [supabase]);
+  useEffect(() => {
+    if (!role) return;   // 同上（物業的那一段說明）：等身分讀到再撈，不然慢的電腦房源下拉是空的
+    supabase.from('properties').select('id, name, estate_id, parent_property_id').order('name')
+      .then(({ data }) => setProperties(data ?? []));
+  }, [supabase, role]);
 
   /**
    * 房源名 → 它所有上層房源的名稱（開封2-1 → ['開封2F','開封整棟']）。
