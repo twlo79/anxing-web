@@ -187,8 +187,26 @@ jobs:
           done
           [ "$fail" -eq 0 ] || exit 1
 
+          # ══════════════════════════════════════════
+          # ★★ 還原前要先跑的那幾行（2026-10-20 還原演練抓到的）
+          #   備份只有 public 那一層，**擴充套件不在裡面**。沒有先裝的話：
+          #     · 3 條「不能重疊」的規則（物業負責人任期、請假、加班）建不起來 → 之後會重複
+          #     · 清潔備註的模糊搜尋索引建不起來
+          #   而且還原過程只會印一行 ERROR、不會停 —— 很容易沒看到。
+          # ══════════════════════════════════════════
+          cat > out/restore-prelude.sql <<'SQL'
+          -- 還原步驟（新的、空的 Supabase 專案；用 psql 18，不能貼 SQL Editor）
+          --   1. psql "$新專案連線" -f restore-prelude.sql        ← 這一份：先裝擴充
+          --   2. psql "$新專案連線" -f auth.sql                    ← 員工登入帳號（要在 3 之前，不然好幾張表的關聯建不起來）
+          --   3. psql "$新專案連線" -f anxing.sql                  ← 資料（「schema public already exists」那一行錯誤可以忽略）
+          --   4. storage.tar 解開，照 manifest.csv 上傳回各 bucket
+          create extension if not exists pg_trgm with schema public;
+          create extension if not exists btree_gist with schema extensions;
+          create extension if not exists pg_net;
+          SQL
+
           # 壓縮。SQL 是純文字，壓縮率很高（通常剩十分之一）。
-          gzip -9 out/*.sql
+          gzip -9 out/anxing.sql out/auth.sql
           echo "── 備份完成 ──"
           ls -lh out/
 

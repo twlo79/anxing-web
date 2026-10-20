@@ -63,6 +63,10 @@ trap { Say "✗ 出錯停下來了：$($_.Exception.Message)" 'Red'; exit 1 }
 function Gh {
     $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
     $errFile = [System.IO.Path]::GetTempFileName()
+    # ★★ gh 輸出是 UTF-8，Windows PowerShell 5.1 預設用 Big5 解 —— 中文標題會變亂碼、
+    #   把 JSON 的引號吃掉，ConvertFrom-Json 報「未結束的字串」（2026-10-20 踩到）
+    $prevEnc = [Console]::OutputEncoding
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
     try {
         $out = & $ghPath @args 2>$errFile
         $script:GhCode = $LASTEXITCODE
@@ -70,6 +74,7 @@ function Gh {
         return ($out -join "`n")
     } finally {
         Remove-Item $errFile -Force -ErrorAction SilentlyContinue
+        [Console]::OutputEncoding = $prevEnc
         $ErrorActionPreference = $prev
     }
 }
@@ -83,7 +88,9 @@ Write-Host ''
 # ══════════════════════════════════════════════════════════════
 # 一、gh 在不在、登入了沒
 # ══════════════════════════════════════════════════════════════
-$gh = Get-Command gh -ErrorAction SilentlyContinue
+# ★★ 只拿第一個、而且只要真的程式檔（2026-10-20 踩到）：電腦上找得到不只一個 gh 的時候，
+#   Get-Command 回的是一串，路徑變成好幾個字串的陣列，「& 路徑」就報「運算式產生的物件無效」。
+$gh = Get-Command gh -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $gh) {
     $guess = "$env:ProgramFiles\GitHub CLI\gh.exe"
     if (Test-Path $guess) { $gh = $guess }
@@ -100,7 +107,8 @@ if (-not $gh) {
     Write-Host ''
     exit 1
 }
-$ghPath = if ($gh -is [string]) { $gh } else { $gh.Source }
+$ghPath = if ($gh -is [string]) { $gh } else { $gh.Path }
+if (-not $ghPath) { Say '找不到 gh.exe 的路徑。' 'Red'; exit 1 }
 
 # ★ 先確認登入狀態。沒登入的話下面那句 `gh run list` 會回一段
 #   看起來像網路錯誤的訊息 —— 而真正的原因是沒登入。
@@ -122,8 +130,10 @@ if ($script:GhCode -ne 0) {
 #   而那看起來像「備份不見了」，其實是「那天沒備成功」。
 Say '找最新一次成功的備份⋯'
 $json = Gh run list --repo $Repo --workflow $Workflow `
-    --status success --limit 1 --json databaseId,createdAt,displayTitle
+    --status success --limit 1 --json 'databaseId,createdAt'
 
+# ★★ 上面那串欄位一定要加引號（2026-10-20 踩到）：PowerShell 會把沒加引號的 a,b,c 當成陣列拆開傳，
+#   gh 收到的是三個參數，回「unknown command "createdAt"」—— 8/31 起本機一直沒有新備份就是這個。
 if ($script:GhCode -ne 0) { Say "gh run list 失敗：$($script:GhErr)" 'Red'; exit 1 }
 
 $runs = $json | ConvertFrom-Json
