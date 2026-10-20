@@ -4,6 +4,7 @@ import { todayStr } from '@/lib/period';
 import { createClient } from '@/lib/supabase';
 import Req from '@/components/Req';
 import { findRooms, finderError, nightsBetween, type FinderSeg } from '@/lib/room-finder';
+import { suggestMoves, suggestionsText, smallGaps, type MoveSuggestion } from '@/lib/move-suggest';
 import { fetchAll } from '@/lib/fetch-all';
 import { useProfile } from '@/lib/profile';
 import { canEditOrders } from '@/lib/roles';
@@ -291,6 +292,14 @@ export default function RoomStatusPage() {
   /** 還在用、但沒設物業的房源名稱 —— 畫不出來，所以列出來 */
   const [noEstate, setNoEstate] = useState<string[]>([]);
   const [stays, setStays] = useState<Stay[]>([]);
+  /*
+   * 💡 移房建議（2026-10-20 David 過審）：只列出來，不動資料。
+   *   自己一份查詢 —— 看的是「今天起 60 天」，不是畫面上停的那個月。
+   */
+  const [sugStays, setSugStays] = useState<Stay[]>([]);
+  const [sugOpen, setSugOpen] = useState(false);
+  const [sugSel, setSugSel] = useState<string | null>(null);
+  const [sugPreview, setSugPreview] = useState(false);
   const [loading, setLoading] = useState(true);
   /** 這一次讀取失敗的原因（畫面保留上一份，不清成空的） */
   const [loadErr, setLoadErr] = useState('');
@@ -625,6 +634,31 @@ export default function RoomStatusPage() {
   }, [supabase, endWin, outWin]);
   useEffect(() => { loadAlerts(); }, [loadAlerts]);
 
+  /* 💡 移房建議的資料：今天起 60 天（多抓幾天，判斷空檔後面那一晚有沒有人） */
+  const loadSug = useCallback(async () => {
+    const t0 = todayStr(), t1 = addDays(t0, 60 + 5);
+    const [ro, rc] = await Promise.all([
+      fetchAll<any>((a, b) => supabase.from('orders')
+        .select('id, property_raw, guest_name, checkin, checkout, source, contract_id')
+        .not('source', 'in', '(oneoff,airbnb_cancelled)').is('cancelled_on', null)
+        .lte('checkin', t1).gt('checkout', t0).order('id').range(a, b)),
+      fetchAll<any>((a, b) => supabase.from('contracts')
+        .select('id, room, tenant_name, display_name, start_date, end_date, active, earnest_only')
+        .lte('start_date', t1).gte('end_date', t0).order('id').range(a, b)),
+    ]);
+    if (ro.error || rc.error) return;   // 建議讀不到就不給建議，不影響日曆
+    const os: Stay[] = ro.rows.filter((o) => o.property_raw).map((o) => ({
+      id: `o${o.id}`, srcId: o.id, room: o.property_raw, kind: 'order' as const, start: o.checkin, end: o.checkout,
+      guest: o.guest_name, tone: (o.source === 'private' ? 'private' : 'short') as Stay['tone'], contractId: o.contract_id,
+    }));
+    const cs: Stay[] = rc.rows.filter((c) => c.room && c.active !== false).map((c) => ({
+      id: `c${c.id}`, srcId: c.id, room: c.room, kind: 'contract' as const, start: c.start_date, end: c.end_date,
+      guest: c.display_name || c.tenant_name, tone: (c.earnest_only ? 'earnest' : 'longterm') as Stay['tone'], contractId: c.id,
+    }));
+    setSugStays(dropContractOrders([...os, ...cs]));
+  }, [supabase]);
+  useEffect(() => { loadSug(); }, [loadSug]);
+
   /*
    * ★★ 分頁在背景放很久再切回來 → 自己重讀一次（2026-10-16）。
    *   背景分頁的計時器會被瀏覽器放慢，登入憑證可能已經過期又換新；
@@ -634,7 +668,7 @@ export default function RoomStatusPage() {
     let hiddenAt = 0;
     const f = () => {
       if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
-      if (hiddenAt && Date.now() - hiddenAt > 5 * 60_000) { load(); loadAlerts(); }
+      if (hiddenAt && Date.now() - hiddenAt > 5 * 60_000) { load(); loadAlerts(); loadSug(); }
       hiddenAt = 0;
     };
     document.addEventListener('visibilitychange', f);
@@ -643,11 +677,39 @@ export default function RoomStatusPage() {
 
 
   /** 房源 → 這段的佔用 */
+  /* 移房建議 */
+  const SUG_DAYS = 60, SUG_GAP = 3;
+  const suggestions = useMemo<MoveSuggestion[]>(() => {
+    if (!estF) return [];
+    const names = rooms.filter((r) => r.estate === estF).map((r) => r.name);
+    const set = new Set(names);
+    return suggestMoves(names, sugStays.filter((x) => set.has(x.room)), today, SUG_DAYS, SUG_GAP);
+  }, [estF, rooms, sugStays, today]);
+  const sugPick = suggestions.find((x) => x.stayId === sugSel) ?? null;
+  /** 面板開著時：每間房的零碎空檔（畫斜線） */
+  const sugGapDays = useMemo(() => {
+    const m = new Map<string, Set<string>>();
+    if (!sugOpen || !estF) return m;
+    const by: Record<string, Stay[]> = {};
+    sugStays.forEach((x) => { (by[x.room] ??= []).push(x); });
+    for (const r of rooms.filter((x) => x.estate === estF)) {
+      for (const g of smallGaps(by[r.name] ?? [], today, addDays(today, SUG_DAYS), SUG_GAP)) {
+        const set = m.get(r.name) ?? new Set<string>();
+        for (let d = g.from; d < g.to; d = addDays(d, 1)) set.add(d);
+        m.set(r.name, set);
+      }
+    }
+    return m;
+  }, [sugOpen, estF, rooms, sugStays, today]);
+  useEffect(() => { if (!sugOpen) { setSugSel(null); setSugPreview(false); } }, [sugOpen]);
+
   const byRoom = useMemo(() => {
     const m: Record<string, Stay[]> = {};
-    stays.forEach((s) => { (m[s.room] ??= []).push(s); });
+    /* 「照建議移完」：只是預覽，把那一筆畫在新房間（資料不動） */
+    const view = sugPreview && sugPick ? stays.map((x) => (x.id === sugPick.stayId ? { ...x, room: sugPick.toRoom } : x)) : stays;
+    view.forEach((s) => { (m[s.room] ??= []).push(s); });
     return m;
-  }, [stays]);
+  }, [stays, sugPreview, sugPick]);
 
   /*
    * ★★ 兩層:`base` 只套物業與關鍵字，`visible` 再套藥丸。
@@ -938,12 +1000,15 @@ export default function RoomStatusPage() {
                   if (c.type === 'free') {
                     /* 找房亮的格子：綠＝整段空、黃＝拼房的那一段 */
                     const fh = fHit.get(room.name);
+                    /* 💡 移房建議開著：零碎空檔畫斜線 */
+                    const sg = sugGapDays.get(room.name)?.has(c.day)
+                      ? 'bg-[image:repeating-linear-gradient(135deg,#fde68a_0_4px,#fef3c7_4px_8px)]' : '';
                     const fcls = fh?.days.has(c.day)
                       ? (fh.tone === 'full' ? '!bg-green-200 shadow-[inset_0_2px_0_#16a34a,inset_0_-2px_0_#16a34a]'
                                             : '!bg-amber-200 shadow-[inset_0_2px_0_#d97706,inset_0_-2px_0_#d97706]') : '';
-                    if (!canNote) return <td key={c.day} className={`${cls} ${fcls}`} />;
+                    if (!canNote) return <td key={c.day} className={`${cls} ${fcls} ${sg}`} />;
                     return (
-                      <td key={c.day} className={`${cls} ${fcls} cursor-pointer hover:bg-mor-bluelight/60`}
+                      <td key={c.day} className={`${cls} ${fcls} ${sg} cursor-pointer hover:bg-mor-bluelight/60`}
                         title={`${room.name} ${c.day.slice(5).replace('-', '/')} 加訂單`}
                         onClick={(e) => {
                           e.stopPropagation(); setPicked(null);
@@ -980,7 +1045,8 @@ export default function RoomStatusPage() {
                           flex items-center text-[11px] font-semibold text-white
                           whitespace-nowrap overflow-hidden transition-opacity
                           ${hit ? '' : checkedOut(c.stay, today) ? DONE_BAR : TONE[c.stay.tone].bar}
-                          ${dimmed ? 'opacity-20' : 'hover:brightness-110'}`}>
+                          ${dimmed ? 'opacity-20' : 'hover:brightness-110'}
+                          ${sugPick && c.stay.id === sugPick.stayId ? (sugPreview ? 'outline-dashed outline-2 -outline-offset-2 outline-violet-600' : 'outline-dashed outline-2 -outline-offset-2 outline-amber-500') : ''}`}>
                         {/*
                           ★ 移房小標（2026-10-19 A 案）：色條照來源顏色，前面加紫色「↪ A13→B03」。
                             兩晚以下放不下，只留「↪」，點開卡片看完整。
@@ -1181,6 +1247,53 @@ export default function RoomStatusPage() {
       )}
 
       {/*
+        ══════════ 💡 移房建議（2026-10-20 David 過審）══════════
+        只列出來，不動資料。點一條：日曆標出要移的那一條；「照建議移完」只是預覽。
+      */}
+      {sugOpen && suggestions.length > 0 && (() => {
+        const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
+        const short = (a: string, b: string) => (a.slice(0, 7) === b.slice(0, 7) ? `${md(a)}～${Number(b.slice(8, 10))}` : `${md(a)}～${md(b)}`);
+        return (
+          <div className="mb-3 rounded-xl border border-amber-300 bg-white px-4 py-3">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2">
+              <b>💡 移房建議</b>
+              <span className="text-xs text-gray-500">{estF}・未來 {SUG_DAYS} 天・零碎空檔＝夾在兩筆中間、{SUG_GAP} 晚以下</span>
+              <button type="button" className="ml-auto text-xs text-mor-slate hover:underline"
+                onClick={() => { try { navigator.clipboard.writeText(suggestionsText(suggestions, estF)); savedToast('已複製移房建議'); } catch { /* 複製不了就算了 */ } }}>
+                📋 複製全部
+              </button>
+              <button type="button" onClick={() => setSugOpen(false)} aria-label="關掉" className="w-7 h-7 rounded-full text-gray-400 hover:bg-black/5">✕</button>
+            </div>
+            <div className="space-y-2">
+              {suggestions.map((x) => (
+                <div key={x.stayId} onClick={() => { setSugSel(x.stayId === sugSel ? null : x.stayId); setSugPreview(false); }}
+                  className={`cursor-pointer rounded-lg border px-3 py-2 text-sm ${x.stayId === sugSel ? 'border-amber-500 ring-1 ring-amber-400 bg-amber-50/40' : 'border-mor-line'}`}>
+                  <div className="flex flex-wrap items-center gap-x-2">
+                    <b>{x.fromRoom} → {x.toRoom}</b>
+                    <span className="text-gray-700">{x.guest ?? ''} {short(x.from, x.to)}</span>
+                    <span className="ml-auto rounded-full bg-green-100 px-2 text-xs font-bold text-green-800">−{x.gain} 晚</span>
+                  </div>
+                  <div className="text-xs text-gray-600 mt-0.5">
+                    {x.fromRoom} 空檔 <b className="text-amber-800">{short(x.gapFrom, x.gapTo)}（{x.gapNights} 晚）</b> → 移完 {x.fromRoom} 連續空 <b className="text-amber-800">{x.freedNights} 晚</b>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {sugPick && (
+              <div className="mt-2 flex items-center gap-2 text-xs">
+                <span className="text-gray-500">日曆：</span>
+                {([[false, '現在'], [true, '照建議移完（預覽）']] as const).map(([v, t]) => (
+                  <button key={t} type="button" onClick={() => setSugPreview(v)}
+                    className={`rounded-full border px-2.5 py-0.5 ${sugPreview === v ? 'border-mor-slate bg-mor-bluelight text-mor-slate' : 'border-mor-line bg-white text-gray-600'}`}>{t}</button>
+                ))}
+                <span className="text-gray-400">只是預覽，資料不會動</span>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/*
         ══════════ 找房的結果（2026-10-19 A 案）══════════
         綠＝整段空房（點房號＝用這間加訂單）；黃＝只能拼（選一組、用這組建單）；紅＝沒有空房（講出是哪幾晚滿）。
       */}
@@ -1305,6 +1418,14 @@ export default function RoomStatusPage() {
           <Pill on={view === 'done'} onClick={() => pick('done')} swatch={DONE_BAR}>已退房 {nDone}</Pill>
           {/* ★ 移房（2026-10-19 A 案）：紫色＝移轉，跟押金移房同一個意思。點了只亮移過房的那幾條 */}
           <Pill on={view === 'moved'} onClick={() => pick('moved')} swatch="bg-violet-600">↪ 移房 {nMoved}</Pill>
+          {/* 💡 移房建議（2026-10-20）：有建議才出現；點開是一塊清單，只列不動 */}
+          {suggestions.length > 0 && (
+            <button type="button" onClick={() => setSugOpen((v) => !v)}
+              className={`rounded-full border px-3 py-1.5 text-sm font-semibold ${sugOpen
+                ? 'border-amber-500 bg-amber-50 text-amber-800 ring-2 ring-amber-300' : 'border-amber-400 bg-amber-50 text-amber-800'}`}>
+              💡 移房建議 {suggestions.length}
+            </button>
+          )}
 
           {/*
             ★★ 三顆提醒被篩選中時，這裡出現一顆可以關掉的籤。
@@ -1513,7 +1634,7 @@ export default function RoomStatusPage() {
       {loadErr && (
         <div className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 flex items-center gap-2">
           <span className="flex-1">沒讀到最新的資料，下面是上一次的畫面：{loadErr}</span>
-          <button onClick={() => { load(); loadAlerts(); }} className="shrink-0 rounded-md border border-red-300 px-2 py-0.5">重新讀取</button>
+          <button onClick={() => { load(); loadAlerts(); loadSug(); }} className="shrink-0 rounded-md border border-red-300 px-2 py-0.5">重新讀取</button>
         </div>
       )}
       {/* ★ 讀取中淡掉：換月時舊的色條還在，不淡掉的話看起來像新月份的資料（2026-10-16） */}
@@ -1691,13 +1812,13 @@ export default function RoomStatusPage() {
         onDone={(c) => {
           setAdding(null); setCreated(c);
           savedToast(`已建立${c.kind === 'private' ? '私下訂單' : '契約'} ${c.room}`);
-          load(); loadAlerts();
+          load(); loadAlerts(); loadSug();
         }} />}
 
       {/* 本頁移房（2026-10-12）：跟訂單頁同一套算法與 RPC，存好之後日曆與提醒都重抓 */}
       {moving && <MovePanel srcId={moving} sheet={isMobile} rooms={moveRooms}
         onClose={() => setMoving(null)}
-        onDone={(msg) => { setMoving(null); savedToast(msg); load(); loadAlerts(); }} />}
+        onDone={(msg) => { setMoving(null); savedToast(msg); load(); loadAlerts(); loadSug(); }} />}
     </div>
   );
 }
