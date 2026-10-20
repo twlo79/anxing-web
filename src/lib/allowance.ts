@@ -36,3 +36,37 @@ export function allowanceFields(d: AllowanceDraft, periodStart: string) {
 export function allowanceLabel(item_name: string | null | undefined): string {
   return (item_name ?? '').trim() || '折讓';
 }
+
+/**
+ * ============================================================
+ * 折讓退款的「扣除」（請款審核抽屜的編輯，2026-10-20 David：「-900 金額 要可以修改金額」）
+ *
+ * 實退 ＝ 折讓金額 − 扣除。折讓金額來自契約那張折讓單（orders.amount 的絕對值），這裡不改它。
+ * 跟 migration_337 的 request_allowance_refund 同一條算法 —— 兩邊算出來一定要一樣。
+ * ============================================================
+ */
+
+/** 折讓金額：有讀到折讓單就用它（絕對值），還沒讀到就用這一列目前的 實退 ＋ 扣除 推回去 */
+export function allowanceBase(order: { amount: number } | null | undefined, dep: { refund_amount?: number | null; refund_deduct_amount?: number | null }): number {
+  if (order) return Math.abs(Number(order.amount) || 0);
+  return (Number(dep.refund_amount) || 0) + (Number(dep.refund_deduct_amount) || 0);
+}
+
+/** 擋門訊息；null ＝ 可以存 */
+export function allowanceDeductError(base: number, item: string, amount: number): string | null {
+  const ded = Math.round(Number(amount) || 0);
+  if (ded < 0) return '扣除金額不能是負數';
+  if (ded > base) return `扣除 ${ded.toLocaleString()} 超過折讓金額 ${base.toLocaleString()}`;
+  if (ded > 0 && !item.trim()) return '請填扣除項目（例：稅金）';
+  return null;
+}
+
+/** 寫進 deposits 的那三欄：扣什麼、扣多少、實退 */
+export function allowanceDeductFields(base: number, item: string, amount: number) {
+  const ded = Math.max(0, Math.round(Number(amount) || 0));
+  return {
+    refund_deduct_item: ded > 0 ? (item.trim() || null) : null,
+    refund_deduct_amount: ded,
+    refund_amount: base - ded,
+  };
+}

@@ -1,4 +1,5 @@
 'use client';
+import { allowanceBase, allowanceDeductError, allowanceDeductFields } from '@/lib/allowance';
 import { CANCEL_REVIEW_AT } from '@/lib/cancel-settle';
 import { useFold } from '@/lib/use-fold';
 import { paySchedule } from '@/lib/pay-schedule';
@@ -1468,6 +1469,13 @@ export default function PurchasesPage() {
     if (!d.payee_name?.trim()) return flashErr('請填戶名');
     if (!d.planned_refund_on) return flashErr('請填預計匯款日');
     if (!d.returned_method) return flashErr('請選安幸付款方式');
+    // 折讓退款：扣除 → 實退 ＝ 折讓 − 扣除（lib/allowance.ts，跟 migration_337 同一條）
+    const isAllow = !!d.allowance_order_id;
+    const base = isAllow ? allowanceBase(allowInfo?.id === d.allowance_order_id ? allowInfo : null, d) : 0;
+    if (isAllow) {
+      const bad = allowanceDeductError(base, d.refund_deduct_item ?? '', Number(d.refund_deduct_amount) || 0);
+      if (bad) return flashErr(bad);
+    }
     const hadVotes = !!d.manager_approved_at || !!d.admin_approved_at;
     if (hadVotes && !confirm(
       d.refund_status === 'approved'
@@ -1485,6 +1493,7 @@ export default function PurchasesPage() {
       returned_account: d.returned_method !== 'cash' ? (d.returned_account || null) : null,
       refund_requested_by: me.id,
       note: d.note || null,
+      ...(isAllow ? allowanceDeductFields(base, d.refund_deduct_item ?? '', Number(d.refund_deduct_amount) || 0) : {}),
       manager_approved_by: null, manager_approved_at: null,
       admin_approved_by: null, admin_approved_at: null,
     }).eq('id', d.id);
@@ -2568,7 +2577,8 @@ export default function PurchasesPage() {
          */
         const isAllow = !!d.allowance_order_id;
         const ded = Number(d.refund_deduct_amount) || 0;
-        const net = Number(d.refund_amount) || 0;
+        // 折讓金額：折讓單讀到就用它，還沒讀到就用 實退＋扣除 推回去（lib/allowance.ts）
+        const base = isAllow ? allowanceBase(allowInfo?.id === d.allowance_order_id ? allowInfo : null, d) : 0;
         const canVote = d.refund_status === 'pending'
           && ((isManager && !d.manager_approved_at) || (isAdmin && !d.admin_approved_at));
         const editable = !d.returned_on;
@@ -2659,11 +2669,28 @@ export default function PurchasesPage() {
                     </span>
                   ))}
                   <div className="mt-3 mb-1 text-xs font-semibold text-gray-500">退款明細</div>
+                  {/*
+                    扣除可以改（2026-10-20 David：「-900 金額 要可以修改金額」）——
+                    只在編輯模式開放，存檔走同一顆「儲存並重新送審」（會清票）。
+                    折讓金額來自契約的折讓單，這裡不改；算法在 lib/allowance.ts，跟 migration_337 同一條。
+                  */}
                   <div className="rounded-lg border border-mor-line bg-[#FAFAF9] px-3 py-1.5 tabular-nums">
-                    <div className="flex justify-between py-1"><span>折讓金額</span><span>{fmt(net + ded)}</span></div>
-                    {ded > 0 && <div className="flex justify-between py-1 text-red-700"><span>扣：{d.refund_deduct_item ?? '扣除'}</span><span>−{fmt(ded)}</span></div>}
-                    <div className="flex justify-between py-1.5 border-t border-mor-line mt-0.5 font-bold text-base"><span>實退</span><span>{fmt(net)}</span></div>
+                    <div className="flex justify-between py-1"><span>折讓金額</span><span>{fmt(base)}</span></div>
+                    {editable && depEditing ? (
+                      <div className="flex justify-between items-center gap-2 py-1 text-red-700">
+                        <span className="flex items-center gap-1.5 shrink-0">扣：
+                          <input value={d.refund_deduct_item ?? ''} placeholder="稅金"
+                            onChange={(e) => setDepDetail({ ...d, refund_deduct_item: e.target.value })}
+                            className="w-24 h-8 bg-white rounded-lg border border-mor-line px-2 text-sm text-gray-800" /></span>
+                        <span className="flex items-center gap-1">−
+                          <input type="number" min={0} step={1} value={ded || ''} placeholder="0"
+                            onChange={(e) => setDepDetail({ ...d, ...allowanceDeductFields(base, d.refund_deduct_item ?? '', Number(e.target.value)) })}
+                            className="w-24 h-8 bg-white rounded-lg border border-mor-line px-2 text-sm text-right text-gray-800" /></span>
+                      </div>
+                    ) : ded > 0 && <div className="flex justify-between py-1 text-red-700"><span>扣：{d.refund_deduct_item ?? '扣除'}</span><span>−{fmt(ded)}</span></div>}
+                    <div className="flex justify-between py-1.5 border-t border-mor-line mt-0.5 font-bold text-base"><span>實退</span><span>{fmt(base - ded)}</span></div>
                   </div>
+                  {editable && depEditing && <div className="mt-1 text-xs text-gray-400">扣 0 就是全額退。存檔會清掉核可票、重新送審。</div>}
                 </div>
                 ) : (
                 <div>
