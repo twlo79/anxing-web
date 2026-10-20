@@ -146,7 +146,13 @@ type Dep = {
   order_id?: string | null; contract_id?: string | null; property_id?: string | null;
   /** 私下訂單「取消結算」的退款（migration_319）—— 金額＝押金＋房費 − 沒入，不是押金 − 加費 */
   cancel_order_id?: string | null;
+  /** 契約折讓的退款（migration_335）—— 這一列不是押金，amount = 0，金額看 refund_amount */
+  allowance_order_id?: string | null;
 };
+/** 押金那一列是哪一種退款：折讓退款標「折讓」，其餘照舊「押金」 */
+const depTag = (d?: { allowance_order_id?: string | null } | null) => (d?.allowance_order_id ? '折讓' : '押金');
+const depTagCls = (d?: { allowance_order_id?: string | null } | null) =>
+  (d?.allowance_order_id ? 'bg-orange-50 text-orange-700' : 'bg-purple-50 text-purple-700');
 /** kind：expense=只用於支出 / income=只用於收入 / both=兩邊都用（migration_90） */
 type AccountCode = { code: string; name: string; kind?: string; active?: boolean; book?: string };
 /** 常用收款對象（migration_96）。請款單不掛外鍵 —— 填完就脫鉤,見該 migration 的說明。 */
@@ -359,7 +365,8 @@ export default function PurchasesPage() {
    * 待核可刻意排第一個,而且是唯一把請款與押金合在一起的地方 ——
    * 核可的人只關心「有什麼等我」,那筆錢的來源是採購還是退押金,對投票這個動作沒差別。
    */
-  const [tab, setTab] = useState<'approve' | 'pr'>('pr');
+  /* 'allowance'：折讓分頁（2026-10-20 David）—— 請款審核裡的折讓退款，單獨看 */
+  const [tab, setTab] = useState<'approve' | 'pr' | 'allowance'>('pr');
   // 待核可的請款單:獨立於列表的查詢,不受月份/狀態/申請人篩選影響(見 load)
   const [pendRows, setPendRows] = useState<Req[]>([]);
   /** 角色預設分頁只挑一次。分享連結進來時會先把它設成 true,免得預設把分頁搶走。 */
@@ -590,7 +597,7 @@ export default function PurchasesPage() {
       const { data: dp } = await supabase.from('deposits')
         // refund_amount / order_id / contract_id / property_id 是加費那套要的（migration_157）——
         // 少撈任何一個，抽屜的應退金額或加費清單就會是空的，而且不會報錯
-        .select('id, estate_id, room, guest_name, currency, amount, refund_status, payee_bank_code, payee_name, payee_account, planned_refund_on, received_on, returned_on, returned_method, returned_account, manager_approved_by, manager_approved_at, admin_approved_by, admin_approved_at, refund_requested_by, reject_reason, note, created_at, refund_amount, order_id, contract_id, property_id, cancel_order_id')
+        .select('id, estate_id, room, guest_name, currency, amount, refund_status, payee_bank_code, payee_name, payee_account, planned_refund_on, received_on, returned_on, returned_method, returned_account, manager_approved_by, manager_approved_at, admin_approved_by, admin_approved_at, refund_requested_by, reject_reason, note, created_at, refund_amount, order_id, contract_id, property_id, cancel_order_id, allowance_order_id')
         .in('refund_status', ['pending', 'approved'])
         // 跟請款單同一條規則:還沒退的全部,加上本月已退的
         .or(`returned_on.is.null,returned_on.gte.${mStart}`)
@@ -750,7 +757,7 @@ export default function PurchasesPage() {
     pr?: Req; dep?: Dep;
   };
 
-  const pendings = useMemo<Pend[]>(() => {
+  const pendAll = useMemo<Pend[]>(() => {
     const out: Pend[] = [];
     // pendRows 是獨立查詢的結果,不受列表篩選影響 —— 見 load() 裡的說明
     for (const r of pendRows) {
@@ -814,7 +821,8 @@ export default function PurchasesPage() {
          * ★ 規則在 `lib/deposit-refund` 的 `refundView`,抽屜與這裡共用同一支。
          */
         amount: refundView(d).amount,
-        amountSub: refundNote(refundView(d), (n) => fmt(n)),
+        // 折讓退款不是押金 —— 不寫「押金 0・應退多出…」那行
+        amountSub: d.allowance_order_id ? null : refundNote(refundView(d), (n) => fmt(n)),
         since: d.created_at,
         mgrAt: d.manager_approved_at, admAt: d.admin_approved_at,
         mine: d.refund_status === 'pending'
@@ -845,6 +853,16 @@ export default function PurchasesPage() {
    * 兩者要做的事完全不同:上面等的是投票,下面等的是把錢匯出去。
    * 混在一起的話,主管會一直滑過不需要他動作的列。
    */
+  /*
+   * 折讓分頁＝同一份清單只留折讓退款（核可、駁回、匯出都跟請款審核同一套按鈕）。
+   * 分頁上的徽章一律從全部算，不跟著目前停在哪一頁變。
+   */
+  const pendings = useMemo(() => (tab === 'allowance' ? pendAll.filter((p) => !!p.dep?.allowance_order_id) : pendAll), [pendAll, tab]);
+  const badgeAll = useMemo(() => {
+    const mine = pendAll.filter((p) => p.mine).length;
+    return mine > 0 ? mine : pendAll.filter((p) => p.stage === 'pending').length;
+  }, [pendAll]);
+  const badgeAllow = useMemo(() => pendAll.filter((p) => p.dep?.allowance_order_id && p.stage === 'pending').length, [pendAll]);
   const pendWait = useMemo(() => pendings.filter((p) => p.stage === 'pending'), [pendings]);
   const pendDone = useMemo(() => pendings.filter((p) => p.stage === 'approved'), [pendings]);
   const pendMine = useMemo(() => pendings.filter((p) => p.mine), [pendings]);
@@ -1682,7 +1700,7 @@ export default function PurchasesPage() {
     const depOut = deps.filter((d) => !stF || d.refund_status === stF);
     for (const d of depOut) {
       aoa.push([
-        T('押金退款', stCell),
+        T(d.allowance_order_id ? '折讓退款' : '押金退款', stCell),
         T('', stCell),                                        // 押金沒有單號
         T(d.refund_requested_by ? personName[d.refund_requested_by] ?? '' : '', stCell),
         // 已退款要排在已核可前面 —— 退款後 refund_status 仍然是 approved
@@ -1924,9 +1942,9 @@ export default function PurchasesPage() {
       {canSeeAll && (
         <Tabs variant="browser" tone="page" className="mb-4" value={tab} onChange={setTab}
           items={[
-            { key: 'approve' as const, label: '請款審核',
-              badge: pendMine.length > 0 ? pendMine.length : pendWait.length },
+            { key: 'approve' as const, label: '請款審核', badge: badgeAll },
             { key: 'pr' as const, label: '請款單' },
+            { key: 'allowance' as const, label: '折讓', badge: badgeAllow },
           ]} />
       )}
 
@@ -1937,11 +1955,11 @@ export default function PurchasesPage() {
         手機版是主要場景 —— 主管與總經理多半是在 LINE 收到連結後用手機投票,
         所以按鈕是滿版高 48px,不是右下角的小連結。
       */}
-      {canSeeAll && tab === 'approve' && (
+      {canSeeAll && (tab === 'approve' || tab === 'allowance') && (
         pendings.length === 0 ? (
           <div className="rounded-xl glass py-16 text-center">
-            <div className="text-gray-400 text-sm">目前沒有待處理的單</div>
-            <div className="text-gray-300 text-xs mt-1">請款單與押金退款都審完也付完了</div>
+            <div className="text-gray-400 text-sm">{tab === 'allowance' ? '目前沒有折讓退款' : '目前沒有待處理的單'}</div>
+            <div className="text-gray-300 text-xs mt-1">{tab === 'allowance' ? '契約折讓填了房客帳號才會到這裡；本月已匯出的也列在這' : '請款單與押金退款都審完也付完了'}</div>
           </div>
         ) : (
           <>
@@ -1973,8 +1991,8 @@ export default function PurchasesPage() {
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
                           <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
-                            p.kind === 'pr' ? 'bg-mor-bluelight text-mor-slate' : 'bg-purple-50 text-purple-700'}`}>
-                            {p.kind === 'pr' ? '請款' : '押金'}
+                            p.kind === 'pr' ? 'bg-mor-bluelight text-mor-slate' : depTagCls(p.dep)}`}>
+                            {p.kind === 'pr' ? '請款' : depTag(p.dep)}
                           </span>
                           {isJust(p.id) && <SavedBadge />}
                           <span className="font-medium truncate">{p.who}</span>
@@ -2057,8 +2075,8 @@ export default function PurchasesPage() {
                       <td className="px-3 py-2.5 whitespace-nowrap">
                         {isJust(p.id) && <SavedBadge />}
                         <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
-                          p.kind === 'pr' ? 'bg-mor-bluelight text-mor-slate' : 'bg-purple-50 text-purple-700'}`}>
-                          {p.kind === 'pr' ? '請款' : '押金'}
+                          p.kind === 'pr' ? 'bg-mor-bluelight text-mor-slate' : depTagCls(p.dep)}`}>
+                          {p.kind === 'pr' ? '請款' : depTag(p.dep)}
                         </span>
                       </td>
                       <td className="px-3 py-2.5 whitespace-nowrap font-medium">{p.who}</td>
@@ -2561,7 +2579,7 @@ export default function PurchasesPage() {
               <div className="sticky top-0 bg-white border-b border-mor-line px-4 md:px-6 py-4 font-bold flex items-center justify-between z-10"
                 style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
                 <span className="flex items-center gap-2 min-w-0">
-                  <span className="rounded px-1.5 py-0.5 text-[11px] font-medium bg-purple-50 text-purple-700 shrink-0">押金</span>
+                  <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium shrink-0 ${depTagCls(d)}`}>{depTag(d)}</span>
                   <span className="truncate">{d.room ?? '—'}・{d.guest_name ?? '—'}</span>
                 </span>
                 <button onClick={() => openDep(null)} aria-label="關閉"

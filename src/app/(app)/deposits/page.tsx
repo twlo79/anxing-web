@@ -314,7 +314,8 @@ export default function DepositsPage() {
      */
     const { rows: data } = await fetchAll<Dep>((f, t) =>
       supabase.from('deposits').select('*').range(f, t));
-    setRows(data);
+    /* ★ 契約折讓的退款（migration_335）掛在 deposits 上但不是押金（amount 0）—— 押金頁不列，到請款頁「折讓」看 */
+    setRows((data as any[]).filter((d) => !d.allowance_order_id) as Dep[]);
     setLoading(false);
   }, [supabase]);
 

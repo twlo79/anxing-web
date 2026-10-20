@@ -2,7 +2,7 @@
 import { useFold } from '@/lib/use-fold';
 import { periodSplit, periodAmounts } from '@/lib/period-split';
 import { type RentLine, RENT_LINE_SUGGEST, normalizeLines, linesSum, linesProblem, linesTitle } from '@/lib/rent-lines';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AddButton, ExportButton } from '@/components/Actions';
 import Req from '@/components/Req';
 import { fmtIntOrBlank as fmt } from '@/lib/fmt';
@@ -40,6 +40,7 @@ import { keyBase, onlyKeyOf } from '@/lib/ltKey';
 import { isLocked, lockedMsg, lockYmOf, ymLabel, type Ym } from '@/lib/period-lock';
 import { invoiceMissing } from '@/lib/invoice';
 import { allowanceError, allowanceFields, allowanceLabel } from '@/lib/allowance';
+import RefundFields, { type RefundDraft, type RefundPayAccount } from '@/components/RefundFields';
 import { extendEnd, extendYms, restoreEnd, isGuessedRestore } from '@/lib/contract-extend';
 import { ymOf, todayStr } from '@/lib/period';
 // 「這筆收入算誰的」—— 畫面與存檔共用同一份規則（migration_247）
@@ -2031,7 +2032,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
    * **不要把「水電瓦斯－電費」合成一個字串塞進 fee_type** ——
    * 那樣營收報表會把它當成一個獨立科目,算不出水電瓦斯的合計。
    */
-  const [feeDraft, setFeeDraft] = useState<{ pi: number; date: string; label: string; amount: number } | null>(null);
+  const [feeDraft, setFeeDraft] = useState<{ pi: number; id?: string | null; date: string; label: string; amount: number } | null>(null);
   /*
    * 收款確認視窗。自己畫而不是用 confirm() —— 見 setPeriodPaid 的註解：
    * confirm() 是比例字型，金額欄永遠對不齊。
@@ -2065,7 +2066,18 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
 
   const [payAsk, setPayAsk] = useState<
     { chunk: any[]; label: string; paidAt: string; t: PeriodTotal } | null>(null);
-  const [concDraft, setConcDraft] = useState<{ pi: number; no: string; date: string; date0: string; label: string; amount: number; note: string; baseAmount: number; priorDisc: number } | null>(null);
+  const [concDraft, setConcDraft] = useState<{ pi: number; id?: string | null; no: string; date: string; date0: string; label: string; amount: number; note: string; baseAmount: number; priorDisc: number; rf: RefundDraft } | null>(null);
+  /*
+   * 折讓的退款（migration_335）：折讓訂單 id → 掛在 deposits 的那一列（送審中／已核可／已匯出）。
+   * 填了房客帳號才有；沒有＝沒走請款，直接沖營收。
+   */
+  const [allowRefunds, setAllowRefunds] = useState<Record<string, any>>({});
+  /** 退款要選「安幸從哪個帳戶付」—— 付款帳戶（含方式），跟取消結算同一份 */
+  const [refundAccounts, setRefundAccounts] = useState<RefundPayAccount[]>([]);
+  useEffect(() => {
+    supabase.from('payment_accounts').select('code, name, method').eq('active', true).order('sort')
+      .then(({ data }: any) => setRefundAccounts((data ?? []) as RefundPayAccount[]));
+  }, [supabase]);
   /**
    * 這份契約的所有發票，一次撈完在前端分。
    *
@@ -2479,6 +2491,16 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
       .select('id, checkin, checkout, amount, fee_type, item_name, allowance_no, note, imported_via, paid, order_key, paid_amount')
       .eq('contract_id', c.id).eq('source', 'oneoff').order('checkin');
     setFeeRows(data ?? []);
+    /* 折讓退款（migration_335）。被駁回的不算 —— 那筆等於沒退 */
+    const allowIds = ((data ?? []) as any[]).filter((f) => f.fee_type === '折讓').map((f) => f.id);
+    if (allowIds.length) {
+      const { data: rd } = await supabase.from('deposits')
+        .select('id, allowance_order_id, refund_amount, refund_status, planned_refund_on, returned_on, returned_method, returned_account, payee_name, payee_bank_code, payee_account, manager_approved_at, admin_approved_at')
+        .in('allowance_order_id', allowIds).neq('refund_status', 'rejected').order('created_at');
+      const m: Record<string, any> = {};
+      for (const r of (rd ?? []) as any[]) m[r.allowance_order_id] = r;
+      setAllowRefunds(m);
+    } else setAllowRefunds({});
 
     // 固定加費的「設定」（不是產生出來的費用單）—— 上方明細用
     const { data: rc } = await supabase.from('contract_recurring_charges')
@@ -2488,6 +2510,14 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
   useEffect(() => { loadFees(); }, [loadFees]);
   async function saveFee() {
     if (!feeDraft || !feeDraft.amount || !feeDraft.date) { alert('請填費用日期與金額'); return; }
+    if (feeDraft.id) {
+      /* 編輯（2026-10-20）：只改日期、金額、名目 */
+      const { error } = await supabase.from('orders').update({
+        checkin: feeDraft.date, checkout: feeDraft.date, amount: feeDraft.amount, ...feeSplit(feeDraft.label),
+      }).eq('id', feeDraft.id);
+      if (error) { alert('失敗:' + error.message); return; }
+      setFeeDraft(null); loadFees(); return;
+    }
     const { error } = await supabase.from('orders').insert({ order_key: `CFEE_${String(c.id).slice(0, 8)}_${Date.now()}`, source: 'oneoff', contract_id: c.id, estate_id: c.estate_id, property_raw: c.room, guest_name: c.tenant_name, checkin: feeDraft.date, checkout: feeDraft.date, nights: 0, amount: feeDraft.amount, ...feeSplit(feeDraft.label), note: '契約加費', imported_via: 'manual' });
     if (error) { alert('失敗:' + error.message); return; }
     setFeeDraft(null); loadFees();
@@ -2516,18 +2546,52 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
       + (prior ? ` − 已折讓 $${fmt(prior)}` : '')
       + ` − 本次折讓 $${fmt(amt)} = $${fmt(concDraft.baseAmount - prior - amt)}`
       + (concDraft.note ? `・${concDraft.note}` : '');
-    const { error } = await supabase.from('orders').insert({
-      order_key: `CDIS_${String(c.id).slice(0, 8)}_${Date.now()}`,
-      source: 'oneoff', contract_id: c.id, estate_id: c.estate_id,
-      property_raw: c.room, guest_name: c.tenant_name,
-      checkin: af.checkin, checkout: af.checkin, nights: 0,
-      amount: -amt,                 // 負數 —— 營收認列會跟著減少
-      fee_type: '折讓', item_name: af.item_name, allowance_no: af.allowance_no, note, imported_via: 'manual',
-    });
-    if (error) { alert('失敗:' + error.message); return; }
+    /*
+     * ★ 退款（migration_335，2026-10-20 David）：
+     *   填了房客帳號 → 送請款審核（請款頁「折讓」分頁）；匯出後這筆折讓的日期自動改成實際退款日
+     *   沒填 → 不請款，直接沖營收（日期＝上面填的日期）
+     */
+    const rf = concDraft.rf;
+    const wantRefund = !!(rf.payee_account ?? '').trim();
+    if (wantRefund && !(rf.payee_name ?? '').trim()) { alert('要退款的話，房客戶名要填'); return; }
+    const old = concDraft.id ? allowRefunds[concDraft.id] : null;
+    const refundLocked = !!old && (old.returned_on || old.refund_status === 'approved');
+    let id = concDraft.id ?? null;
+    if (id) {
+      const { error } = await supabase.from('orders').update({
+        amount: -amt, item_name: af.item_name, allowance_no: af.allowance_no, note,
+        // ★ 已經匯出的退款：日期已經是實際退款日，不要被這裡蓋回去
+        ...(old?.returned_on ? {} : { checkin: af.checkin, checkout: af.checkin }),
+      }).eq('id', id);
+      if (error) { alert('失敗:' + error.message); return; }
+    } else {
+      const { data, error } = await supabase.from('orders').insert({
+        order_key: `CDIS_${String(c.id).slice(0, 8)}_${Date.now()}`,
+        source: 'oneoff', contract_id: c.id, estate_id: c.estate_id,
+        property_raw: c.room, guest_name: c.tenant_name,
+        checkin: af.checkin, checkout: af.checkin, nights: 0,
+        amount: -amt,                 // 負數 —— 營收認列會跟著減少
+        fee_type: '折讓', item_name: af.item_name, allowance_no: af.allowance_no, note, imported_via: 'manual',
+      }).select('id').single();
+      if (error || !data) { alert('失敗:' + (error?.message ?? '')); return; }
+      id = (data as any).id as string;
+    }
+    if (wantRefund && !refundLocked) {
+      const { data: rr, error: re } = await supabase.rpc('request_allowance_refund', {
+        p_order: id, p_payee_name: rf.payee_name, p_payee_bank_code: rf.payee_bank_code ?? null,
+        p_payee_account: rf.payee_account, p_planned_on: rf.planned_refund_on || null,
+        p_returned_method: rf.returned_method || null, p_returned_account: rf.returned_account || null,
+      });
+      const r = rr as { ok?: boolean; message?: string } | null;
+      if (re || !r?.ok) { alert('折讓存好了，但退款沒送出：' + (re?.message ?? r?.message ?? '')); setConcDraft(null); loadFees(); return; }
+      savedToast(r.message ?? '已送出折讓退款');
+    }
     setConcDraft(null); loadFees();
   }
   async function delFee(id: string) {
+    /* 折讓已經送了退款：先到請款頁撤銷（被駁回的不算），不然請款那邊會留一筆指不到折讓的退款 */
+    const rq = allowRefunds[id];
+    if (rq) { alert(rq.returned_on ? `這筆折讓的退款 ${rq.returned_on} 已經匯出了，不能刪。` : '這筆折讓已經送了退款請款 —— 先到請款頁撤銷或駁回，再回來刪。'); return; }
     const r = await softDelete(supabase, 'orders', id, '契約加費刪除');
     if (!r.ok) { alert(r.message); return; }
     loadFees();
@@ -2932,6 +2996,10 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                */
               const periodPaid = [...os, ...pfees]
                 .reduce((a: number, x: any) => a + Number(x?.paid_amount || 0), 0);
+              /* 折讓退款（migration_335）：這一期的折讓送過的退款。匯出了＝已退，其餘＝待退 */
+              const periodRefunds = (pfees as any[]).map((f) => allowRefunds[f?.id]).filter(Boolean);
+              const periodRefunded = periodRefunds.filter((r: any) => r.returned_on)
+                .reduce((a: number, r: any) => a + Number(r.refund_amount || 0), 0);
               const periodPays = [...os, ...pfees]
                 .flatMap((x: any) => payRows[x?.id] ?? [])
                 .sort((a: any, b: any) => String(a.paid_on).localeCompare(String(b.paid_on)));
@@ -3045,9 +3113,10 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                         <span className="text-[17px] font-bold text-mor-slate tabular-nums -ml-1">
                           ${fmt(netAmount)}
                         </span>
-                        {periodPaid > 0 && (!allPaid || periodPaid > netAmount) && (
+                        {periodPaid > 0 && (!allPaid || periodPaid - periodRefunded > netAmount || periodRefunded > 0) && (
                           <>
                             <span className="text-xs text-gray-500">已收 ${fmt(periodPaid)}</span>
+                            {periodRefunded > 0 && <span className="text-xs text-red-800">已退 ${fmt(periodRefunded)}</span>}
                             {/*
                               ★★ 收滿了卻沒結清,不能只寫「尚欠 $0」
                                 （2026-08-25 使用者:「我先收租滿租,取消後出現這個」）。
@@ -3064,11 +3133,11 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                                 改版前這種情況也寫「收款紀錄還在，但這一期是『未收』」—— 那句是給按了「退回」的人看的，
                                 放在這裡看不懂。
                             */}
-                            {periodPaid > netAmount ? (
+                            {periodPaid - periodRefunded > netAmount ? (
                               <span className="text-xs text-amber-700">
-                                多收 ${fmt(periodPaid - netAmount)}（要退或抵下一期）
+                                多收 ${fmt(periodPaid - periodRefunded - netAmount)}（要退或抵下一期）
                               </span>
-                            ) : periodPaid >= netAmount ? (
+                            ) : allPaid ? null : periodPaid - periodRefunded >= netAmount ? (
                               <span className="text-xs text-amber-700">
                                 收款紀錄還在，但這一期是「未收」
                               </span>
@@ -3281,7 +3350,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                     ★ 金額改用 table 的固定欄寬靠右對齊。原本每一列各自 `ml-auto`，
                       所以幾百塊跟幾萬塊的個位數對不齊，掃一眼加不起來。
                   */}
-                  {openPays === payKey && (pt.lines.length > 1 || periodPays.length > 0) && (
+                  {openPays === payKey && (pt.lines.length > 1 || periodPays.length > 0 || periodRefunds.length > 0) && (
                     <div className="mt-2 pt-2 border-t border-mor-line/60">
                       {pt.lines.length > 1 && (
                         <>
@@ -3361,6 +3430,37 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                           </table>
                         </>
                       )}
+                      {/*
+                        已退／待退（migration_335，2026-10-20 David：「排法跟已收一樣，深紅字」）。
+                        匯出了＝已退（深紅）；送審中／已核可＝待退（琥珀）。帳號是安幸付出去的那個帳戶。
+                      */}
+                      {(['done', 'wait'] as const).map((kind) => {
+                        const list = periodRefunds.filter((r: any) => (kind === 'done') === !!r.returned_on);
+                        if (!list.length) return null;
+                        const tone = kind === 'done' ? 'text-red-800' : 'text-amber-700';
+                        return (
+                          <Fragment key={kind}>
+                            <div className={`text-[11px] mb-0.5 mt-2 ${tone}`}>{kind === 'done' ? '已退' : '待退'} {list.length} 筆</div>
+                            <table className="w-full text-xs table-fixed">
+                              <tbody>
+                                {list.map((r: any) => (
+                                  <tr key={r.id} className={`align-top ${tone}`}>
+                                    <td className="py-0.5 w-14">{String(r.returned_on ?? r.planned_refund_on ?? '').slice(5) || '—'}</td>
+                                    <td className="py-0.5 w-14">{METHOD_LABEL[r.returned_method] ?? r.returned_method ?? '—'}</td>
+                                    <td className="py-0.5 truncate">
+                                      {r.returned_account
+                                        ? (refundAccounts.find((a) => a.code === r.returned_account)?.name ?? r.returned_account).replace(/^[（(]安幸[）)]\s*/, '')
+                                        : ''}
+                                      {kind === 'wait' && <span className="ml-1 rounded-full bg-amber-50 px-1.5 text-[10px]">{r.refund_status === 'approved' ? '已核可・待匯款' : '請款審核中'}</span>}
+                                    </td>
+                                    <td className="py-0.5 w-24 text-right tabular-nums">−${fmt(r.refund_amount)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </Fragment>
+                        );
+                      })}
                     </div>
                   )}
                   <div className="mt-2 border-t border-mor-line/50 pt-1.5">
@@ -3429,6 +3529,24 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                                     ★★ 關帳之後「刪」也要灰掉。守衛本來就會擋（migration_249），
                                       但一顆按得下去、按了跳錯誤的按鈕，使用者的結論是「系統壞了」。
                                   */}
+                                  {/* 編輯（2026-10-20 David）：折讓開「登錄折讓」視窗帶入原值；加費／稅費在這一期底下改日期、金額、名目 */}
+                                  <button onClick={() => {
+                                    if (f.fee_type === '折讓') {
+                                      const rq = allowRefunds[f.id];
+                                      setConcDraft({ pi: i, id: f.id, no: f.allowance_no ?? '', date: f.checkin ?? '',
+                                        date0: `${first.y}-${String(first.m).padStart(2, '0')}-01`,
+                                        label: `${first.y}/${String(first.m).padStart(2, '0')} 這一期`,
+                                        amount: Math.abs(Number(f.amount) || 0), note: f.item_name ?? '',
+                                        baseAmount: amount, priorDisc: discTotal - Math.abs(Number(f.amount) || 0),
+                                        rf: rq ? { payee_name: rq.payee_name, payee_bank_code: rq.payee_bank_code, payee_account: rq.payee_account,
+                                          planned_refund_on: rq.planned_refund_on, returned_method: rq.returned_method, returned_account: rq.returned_account } : {} });
+                                    } else {
+                                      setFeeDraft({ pi: i, id: f.id, date: f.checkin ?? '', amount: Number(f.amount) || 0,
+                                        label: feeLabel(f.fee_type, f.item_name) });
+                                    }
+                                  }}
+                                    disabled={frozen} title={frozen ? (lockMsg ?? '') : ''}
+                                    className="text-mor-slate hover:text-mor-slatedark disabled:text-gray-300 disabled:cursor-not-allowed">編輯</button>
                                   <button onClick={() => delFee(f.id)}
                                     disabled={frozen} title={frozen ? (lockMsg ?? '') : ''}
                                     className="text-red-400 underline disabled:text-gray-300 disabled:no-underline disabled:cursor-not-allowed">刪</button>
@@ -3535,7 +3653,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                           disabled={frozen} title={frozen ? (lockMsg ?? '') : ''}
                           className="text-xs text-mor-slate hover:text-mor-slatedark disabled:text-gray-300 disabled:cursor-not-allowed">＋ 加費</button>
                         <button onClick={() => setConcDraft({ pi: i, no: '', date: '', date0: `${first.y}-${String(first.m).padStart(2, '0')}-01`,
-                          label: `${first.y}/${String(first.m).padStart(2, '0')} 這一期`, amount: 0, note: '', baseAmount: amount, priorDisc: discTotal })}
+                          label: `${first.y}/${String(first.m).padStart(2, '0')} 這一期`, amount: 0, note: '', baseAmount: amount, priorDisc: discTotal, rf: {} })}
                           disabled={frozen} title={frozen ? (lockMsg ?? '') : ''}
                           className="text-xs text-amber-700 hover:text-amber-800 disabled:text-gray-300 disabled:cursor-not-allowed">− 折讓</button>
                         {/*
@@ -3543,7 +3661,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                             鎖的是「能不能改」，不是「能不能看」。
                             跟發票號碼照常顯示是同一條規則。
                         */}
-                        {(pt.lines.length > 1 || periodPays.length > 0) && (
+                        {(pt.lines.length > 1 || periodPays.length > 0 || periodRefunds.length > 0) && (
                           <button onClick={() => setOpenPays(openPays === payKey ? null : payKey)}
                             className="ml-auto text-xs text-mor-slate hover:text-mor-slatedark">
                             明細{openPays === payKey ? ' ▴' : ' ▾'}
@@ -3828,9 +3946,9 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
       {concDraft && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center" onClick={(e) => { e.stopPropagation(); setConcDraft(null); }}>
           <div className="absolute inset-0 bg-black/40" />
-          <div onClick={(e) => e.stopPropagation()} className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm">
+          <div onClick={(e) => e.stopPropagation()} className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm max-h-[90vh] overflow-y-auto">
             <div className="border-b border-mor-line px-5 py-3 font-bold text-sm flex items-center justify-between">
-              登錄折讓 — {concDraft.label}
+              {concDraft.id ? '修改折讓' : '登錄折讓'} — {concDraft.label}
               <button onClick={() => setConcDraft(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
             </div>
             <div className="px-5 py-4 space-y-3 text-sm">
@@ -3849,10 +3967,37 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
               <label className="flex flex-col gap-1 text-xs text-gray-500 relative pb-4">備註
                 <input value={concDraft.note} onChange={(e) => setConcDraft({ ...concDraft, note: e.target.value })} placeholder="例：冷氣維修補償" className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm" />
                 <span className="absolute top-full -mt-4 left-0 text-[11px] text-gray-400">有填的話，列表上顯示「{concDraft.note.trim() || '備註'} −${fmt(Math.abs(Number(concDraft.amount) || 0))}」</span></label>
+
+              {/*
+                ══════ 退給房客（選填，migration_335，2026-10-20 David）══════
+                填了房客帳號 → 送請款審核；匯出後營收沖銷日改成實際退款日。沒填 → 不請款，直接沖營收。
+                已核可或已匯出的不能在這裡改（改了請款那邊對不上）。
+              */}
+              {(() => {
+                const rq = concDraft.id ? allowRefunds[concDraft.id] : null;
+                if (rq && (rq.returned_on || rq.refund_status === 'approved')) return (
+                  <div className="rounded-lg bg-mor-sand/60 px-3 py-2 text-xs text-gray-600">
+                    退款 ${fmt(rq.refund_amount)}：{rq.returned_on ? `${rq.returned_on} 已匯出（營收沖銷日＝這一天）` : '已核可、等匯款'}
+                    ・退到 {rq.payee_name} {rq.payee_bank_code ?? ''} {rq.payee_account}
+                  </div>);
+                const wants = !!(concDraft.rf.payee_account ?? '').trim();
+                return (
+                  <div className="border-t border-mor-line pt-3">
+                    <div className="flex items-center gap-2 mb-2"><span className="text-[11px] font-bold tracking-wide text-gray-500">退給房客（選填）</span><i className="flex-1 h-px bg-mor-line" /></div>
+                    <RefundFields v={concDraft.rf} payAccounts={refundAccounts}
+                      onChange={(patch) => setConcDraft({ ...concDraft, rf: { ...concDraft.rf, ...patch } })} />
+                    <div className={`mt-2 rounded-lg px-3 py-2 text-xs ${wants ? 'bg-mor-bluelight text-mor-slate' : 'bg-mor-sand/60 text-gray-600'}`}>
+                      {wants
+                        ? <>填了房客帳號 → 存檔後<b>送請款審核</b>（請款頁「折讓」分頁）。匯出後，營收沖銷日改成實際退款日。{rq ? '（送審中，存檔會更新那一張、核可要重簽）' : ''}</>
+                        : <>沒填房客帳號 → <b>不送請款</b>，存檔就直接沖營收，日期＝上面的日期。</>}
+                    </div>
+                  </div>);
+              })()}
             </div>
             <div className="border-t border-mor-line px-5 py-3 flex justify-end gap-2">
               <button onClick={() => setConcDraft(null)} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>
-              <button onClick={saveConcession} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium hover:bg-mor-slatedark">儲存</button>
+              <button onClick={saveConcession} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium hover:bg-mor-slatedark">
+                {(concDraft.rf.payee_account ?? '').trim() && !(concDraft.id && allowRefunds[concDraft.id] && (allowRefunds[concDraft.id].returned_on || allowRefunds[concDraft.id].refund_status === 'approved')) ? '儲存並送請款' : '儲存'}</button>
             </div>
           </div>
         </div>
