@@ -1349,8 +1349,8 @@ export default function RoomStatusPage() {
           const ds: string[] = []; for (let d = vFrom; d < vTo; d = addDays(d, 1)) ds.push(d);
           const moving = sugStays.find((x) => x.id === pk.stayId);
           const rows: { room: string; label: string; tone: string; best: boolean; ghost: boolean }[] = [
-            { room: pk.fromRoom, label: '原房・要移', tone: 'text-amber-800', best: false, ghost: false },
-            ...pk.cands.map((c, i) => ({ room: c.toRoom, label: `${i === 0 ? '最佳' : '候選'}・移完閒置 ${c.after}${c.empty ? '・整段空房' : c.snug === 2 ? '・前後接上' : c.snug ? '・接上' : ''}`,
+            { room: pk.fromRoom, label: `原房・閒置 ${pk.before}`, tone: 'text-amber-800', best: false, ghost: false },
+            ...pk.cands.map((c, i) => ({ room: c.toRoom, label: `${i === 0 ? '最佳' : '候選'}・移完閒置 ${c.after}${c.after === 0 ? '・接上' : ''}`,
               tone: i === 0 ? 'text-green-800' : 'text-gray-500', best: i === 0, ghost: true })),
           ];
           mini = (
@@ -1402,7 +1402,7 @@ export default function RoomStatusPage() {
           <div className="mb-3 rounded-xl border border-amber-300 bg-white px-3 md:px-4 py-3 min-w-0 overflow-hidden">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2">
               <b>💡 移房建議</b>
-              <span className="text-xs text-gray-500">{estF}・未來 {SUG_DAYS} 天・閒置＝夾在兩筆中間、{SUG_GAP} 晚以下的空晚</span>
+              <span className="text-xs text-gray-500">{estF}・未來 {SUG_DAYS} 天・閒置＝這張單跟上一張（或下一張）單中間空幾晚</span>
               <button type="button" className="ml-auto text-xs text-mor-slate hover:underline"
                 onClick={() => { try { navigator.clipboard.writeText(suggestionsText(suggestions, estF)); savedToast('已複製移房建議'); } catch { /* 複製不了就算了 */ } }}>
                 📋 複製全部

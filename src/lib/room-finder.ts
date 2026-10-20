@@ -119,21 +119,30 @@ export function fitOf(st: readonly Stay[], from: Ymd, to: Ymd, maxGap = 3): { be
 
 export type FinderPick = { room: string; why: string };
 
+/** 排進 [from, to) 之後，前後哪一邊離別人的單最近（隔幾晚）。往前看 back 晚、往後看 fwd 晚都沒單 → null */
+export function nearOf(st: readonly Stay[], from: Ymd, to: Ymd, back = 7, fwd = 60): number | null {
+  const occ = (d: Ymd) => st.some((s) => occupies(s, d));
+  let gb: number | null = null, ga: number | null = null;
+  for (let k = 0; k < back; k++) if (occ(addDays(from, -1 - k))) { gb = k; break; }
+  for (let k = 0; k < fwd; k++) if (occ(addDays(to, k))) { ga = k; break; }
+  return gb == null ? ga : ga == null ? gb : Math.min(gb, ga);
+}
+
 /** A：好幾間都整段空的時候，推薦排進去最不留零碎空檔的那間。分不出高下 → null */
 export function recommendRoom(rooms: readonly string[], stays: readonly Stay[], from: Ymd, to: Ymd, maxGap = 3): FinderPick | null {
   if (rooms.length < 2) return null;
   const sc = rooms.map((r) => {
     const st = stays.filter((s) => s.room === r);
     const f = fitOf(st, from, to, maxGap);
-    // ★ 整段沒單的房最後（跟移房建議同一條，David 2026-10-20：「A04 應該盡量空著」）
-    return { r, f, adj: Number(f.before === 0) + Number(f.after === 0), empty: st.length === 0 };
+    return { r, f, adj: Number(f.before === 0) + Number(f.after === 0), near: nearOf(st, from, to) };
   });
-  const better = (a: typeof sc[0], b: typeof sc[0]) => Number(a.empty) - Number(b.empty) || a.f.waste - b.f.waste || b.adj - a.adj;
+  // ★ 離別人的單越近越好（跟移房建議同一條，David 2026-10-20：「A04 只是沒單，它是最差的」）；一樣近再比零碎空檔
+  const better = (a: typeof sc[0], b: typeof sc[0]) => (a.near ?? Infinity) - (b.near ?? Infinity) || a.f.waste - b.f.waste || b.adj - a.adj;
   const best = [...sc].sort(better)[0];
   if (!sc.some((x) => better(best, x) < 0)) return null;
-  const why = best.f.waste > 0 ? `排進去只留 ${best.f.waste} 晚零碎空檔（最少）`
-    : best.adj === 2 ? '前後都接著別人的訂單，排進去不留零碎空檔'
-    : best.adj === 1 ? '接著別人的訂單，排進去不留零碎空檔'
+  const why = best.adj === 2 ? '前後都接著別人的訂單，排進去不留零碎空檔'
+    : best.adj === 1 ? '接著別人的訂單，排進去不留縫'
+    : best.near != null ? `離最近的單只隔 ${best.near} 晚，不切開整段空房`
     : '排進去不留零碎空檔';
   return { room: best.r, why };
 }
@@ -163,13 +172,13 @@ export function freeByMoving(
     const last = lastNightOf(s);
     if (!s.start || !last) continue;
     const span = eachDay({ from: s.start, to: last });
-    // 搬去哪：整段沒單的房最後（盡量留著），其餘挑留下零碎空檔最少的
+    // 搬去哪：離別人的單最近的（不切開整段空房），一樣近再挑留下零碎空檔最少的
     let pick: { t: string; w: number } | null = null;
     for (const t of rooms) {
       if (t === r) continue;
       const ts = by.get(t) ?? [];
       if (span.some((d) => ts.some((x) => occupies(x, d)))) continue;
-      const w = fitOf(ts, s.start, addDays(last, 1), maxGap).waste + (ts.length ? 0 : 1000);
+      const w = (nearOf(ts, s.start, addDays(last, 1)) ?? 99) * 100 + fitOf(ts, s.start, addDays(last, 1), maxGap).waste;
       if (!pick || w < pick.w) pick = { t, w };
     }
     if (!pick) continue;
