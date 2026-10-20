@@ -64,12 +64,14 @@ export const KW_W = 'w-52';
  * @param active 目前有沒有套用任何條件。手機收起篩選時，
  *               這是「為什麼只有 3 筆」唯一的線索 —— 傳進來按鈕才會亮。
  */
-export function FilterBar({ children, right, active }: {
+export function FilterBar({ children, right, active, toggle = true }: {
   children: ReactNode; right?: ReactNode; active?: boolean;
+  /** false＝頁面自己放「篩選」開關（房源狀態放在「本月」旁邊） */
+  toggle?: boolean;
 }) {
   return (
     <>
-      <FilterToggle active={active} />
+      {toggle && <FilterToggle active={active} />}
       {/*
         ★ 用 `glass` 而不是 `bg-white` —— 訂單頁（使用者指定的版型基準）
           就是 glass。兩種白並排時看得出來其中一張比較「死」。

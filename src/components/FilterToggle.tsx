@@ -33,10 +33,12 @@ import { useEffect, useState } from 'react';
  * 使用者看不到自己昨天設了日期區間。所以有任何條件時,
  * 按鈕變成主色實心並帶一個點,那是收起狀態下唯一的提示。
  */
-export default function FilterToggle({ active, label = '篩選' }: {
+export default function FilterToggle({ active, label = '篩選', className }: {
   /** 目前有沒有套用任何條件 */
   active?: boolean;
   label?: string;
+  /** 換掉外框的排法（位置、大小）。顏色照舊由 active 決定。房源狀態把它塞在「本月」旁邊用（2026-10-20） */
+  className?: string;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -61,8 +63,8 @@ export default function FilterToggle({ active, label = '篩選' }: {
   return (
     <button type="button" onClick={() => setOpen((v) => !v)}
       aria-expanded={open}
-      className={`md:hidden mb-2 w-full flex items-center justify-center gap-1.5
-                  rounded-xl px-4 py-2.5 text-sm font-medium transition-colors ${
+      className={`${className ?? `md:hidden mb-2 w-full flex items-center justify-center gap-1.5
+                  rounded-xl px-4 py-2.5 text-sm font-medium`} transition-colors ${
         active
           ? 'bg-mor-slate text-white'
           : 'bg-white border border-mor-line text-gray-600 active:bg-mor-sand/60'

@@ -9,7 +9,8 @@ import { fetchAll } from '@/lib/fetch-all';
 import { useProfile } from '@/lib/profile';
 import { canEditOrders } from '@/lib/roles';
 import { noteTable, normNote, noteChanged, noteSaveError } from '@/lib/stay-note';
-import { FilterBar, Field, FilterSelect, FilterSearch, FilterClear, FilterCount } from '@/lib/filters';
+import { FilterBar, Field, FilterSelect, FilterCount } from '@/lib/filters';
+import FilterToggle from '@/components/FilterToggle';
 import {
   isWeekend, weekdayOf, sortRooms, matchRoom, rowOf, exitsSoon,
   overlapRanges, dropContractOrders, monthRange, rangeDays, eachDay,
@@ -80,6 +81,8 @@ const TONE: Record<Stay['tone'], { bar: string; chip: string; label: string }> =
   earnest:  { bar: 'bg-[#C9A227]',  chip: 'bg-[#C9A227]',  label: '訂金／未確認' },
 };
 const TONES = Object.keys(TONE) as Stay['tone'][];
+/** 藥丸上的短名字（2026-10-20 上方整理）。完整名字放滑過提示 */
+const TONE_SHORT: Record<Stay['tone'], string> = { short: '短租', private: '私下', longterm: '長租', earnest: '訂金' };
 
 /**
  * 已退房（2026-10-03 David：「多一種顏色，已退房變灰色」）。
@@ -131,17 +134,17 @@ type Est = { id: string; name: string; sort: number | null; active: boolean };
  * ★ 定在模組層不是元件裡:定在元件裡的話每一次 render 都是一個新的型別，
  *   React 會把整排拆掉重做，而且焦點會掉。
  */
-function Pill({ on, onClick, swatch, children, warn }: {
-  on: boolean; onClick: () => void; swatch?: string; children: React.ReactNode; warn?: boolean;
+function Pill({ on, onClick, swatch, children, warn, title }: {
+  on: boolean; onClick: () => void; swatch?: string; children: React.ReactNode; warn?: boolean; title?: string;
 }) {
   return (
-    <button type="button" onClick={onClick} aria-pressed={on}
+    <button type="button" onClick={onClick} aria-pressed={on} title={title}
       /*
        * ★ 字級用 `text-uisub`（15px）不是 `text-xs` —— 藥丸是**介面外框**不是資料
        *   （anxing-ui 第四節:xs/sm 給表格內文,ui/uisub 給外框）。
        *   直接寫死 `text-[15px]` 的話，哪天整站調外框字級就會漏掉這一排。
        */
-      className={`inline-flex items-center gap-1.5 rounded-full border px-3.5 py-2 text-uisub
+      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs md:px-3.5 md:py-1.5 md:text-uisub
                   transition-colors whitespace-nowrap ${
         on ? (warn ? 'bg-amber-700 border-amber-700 text-white'
                    : 'bg-mor-ink border-mor-ink text-white')
@@ -251,6 +254,8 @@ export default function RoomStatusPage() {
   const [estF, setEstF] = useState('');
   const [kwInput, setKwInput] = useState('');
   const [kw, setKw] = useState('');
+  /* 關鍵字打字就篩（2026-10-20 上方整理：拿掉「搜尋」鈕）。停 0.25 秒才套，不是每打一個字重算一次 */
+  useEffect(() => { const t = setTimeout(() => setKw(kwInput.trim()), 250); return () => clearTimeout(t); }, [kwInput]);
 
   /*
    * ② 藥丸。**全部是同一組單選**（2026-09-16 使用者:「空房 與 有訂單 是 MECE」）。
@@ -313,6 +318,8 @@ export default function RoomStatusPage() {
   }
   /** 點同一顆就清除 —— 使用者:「再點一下 就清除」 */
   const pick = (v: View) => setView((cur) => (cur === v ? '' : v));
+  /* 「所有客戶」那顆拿掉了（2026-10-20）—— 存下來的偏好如果還停在它，回到沒有篩選，不然沒有東西可以點掉 */
+  useEffect(() => { if (view === 'any') setView(''); }, [view]);
 
   const [estates, setEstates] = useState<Est[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -327,6 +334,8 @@ export default function RoomStatusPage() {
    */
   const [sugStays, setSugStays] = useState<Stay[]>([]);
   const [sugOpen, setSugOpen] = useState(false);
+  /** 🔔 提醒（退租／退房）收成一顆，點開才看到開關與天數（2026-10-20 上方整理） */
+  const [alertOpen, setAlertOpen] = useState(false);
   const [sugSel, setSugSel] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   /** 這一次讀取失敗的原因（畫面保留上一份，不清成空的） */
@@ -977,15 +986,6 @@ export default function RoomStatusPage() {
     || showDup || showEnd || showOut
     || mode !== 'month' || ym !== thisYm());
 
-  const clearAll = () => {
-    setEstF(defEst); setKw(''); setKwInput('');
-    setView('');
-    /* ★ 旋鈕也關掉 —— 「清除」是回到剛進來的樣子,而剛進來三顆都是關的 */
-    setShowDup(false); setShowEnd(false); setShowOut(false);
-    setMode('month'); setYm(thisYm());
-    setFindQ(null); setFFrom(''); setFTo('');
-    setPicked(null);
-  };
 
   /*
    * ③ 點色條開卡片。
@@ -1239,10 +1239,23 @@ export default function RoomStatusPage() {
           </div>
           <button type="button" onClick={() => setYm(thisYm())} disabled={ym === thisYm()}
             className="h-11 rounded-lg border border-gray-300 bg-white px-3 text-uisub text-mor-slate disabled:text-gray-300">本月</button>
+          {/* 篩選（物業、關鍵字）放在本月旁邊（2026-10-20 上方整理） */}
+          <FilterToggle active={active} className="h-11 shrink-0 inline-flex items-center gap-1 rounded-lg px-3 text-uisub" />
         </div>
       )}
+      {mode !== 'month' && <FilterToggle active={active} />}
 
-      <FilterBar active={active} right={<FilterCount n={visible.length} unit="間" />}>
+      {/*
+        ★ 住房率併進篩選卡右邊（2026-10-20 上方整理，原本「共 N 間」的位置）。算式收進 ⓘ。
+          手機不放這裡 —— 手機上篩選卡是收起來的，住房率另外一行（在藥丸上面）。
+      */}
+      <FilterBar active={active} toggle={false} right={isMobile ? undefined : estOcc && estOcc.rooms > 0 ? (
+        <div className="text-right leading-tight" title={`${estOcc.used.toLocaleString()} 晚有人住 ÷（${estOcc.rooms} 間 × ${shownDays} 晚）・${shown.from} ~ ${shown.to}`}>
+          <div className="text-xs text-gray-500">住房率 <span className="cursor-help text-gray-400">ⓘ</span></div>
+          <div className={`text-2xl font-bold tabular-nums ${occTone(estOcc.rate) === 'low' ? 'text-red-600' : 'text-mor-ink'}`}>{fmtPct(estOcc.rate)}</div>
+          <div className="text-[11px] text-gray-400 tabular-nums">{visible.length} 間・{mode === 'month' ? `${Number(ym.slice(5))} 月` : `${shown.from.slice(5)}～${shown.to.slice(5)}`}</div>
+        </div>
+      ) : <FilterCount n={visible.length} unit="間" />}>
         <FilterSelect label="物業" value={estF} onChange={setEstF}
           options={estates.map((e) => ({ value: e.name, label: e.name }))} />
         {/*
@@ -1271,8 +1284,13 @@ export default function RoomStatusPage() {
               <div className="flex h-12 md:h-10 rounded-lg border border-gray-300 overflow-hidden bg-white">
                 <button type="button" onClick={() => setYm(shiftYm(ym, -1))} aria-label="上個月" title="上個月（←）"
                   className="w-10 text-lg text-mor-slate hover:bg-mor-sand">‹</button>
-                <input type="month" value={ym} onChange={(e) => setYm(e.target.value || thisYm())}
-                  className="border-x border-gray-300 px-2 text-ui" />
+                {/* 顯示「2026-11」（跟手機一樣；原生的 month 欄位會照語系寫成 November 2026）。點一下照樣跳出選月份 */}
+                <label className="relative flex items-center border-x border-gray-300 px-3 text-ui tabular-nums cursor-pointer hover:bg-mor-sand/40">
+                  {ym}
+                  <input type="month" value={ym} onChange={(e) => setYm(e.target.value || thisYm())} aria-label="選月份"
+                    onClick={(e) => { try { (e.currentTarget as any).showPicker?.(); } catch { /* 不支援就算了 */ } }}
+                    className="absolute inset-0 opacity-0 cursor-pointer" />
+                </label>
                 <button type="button" onClick={() => setYm(shiftYm(ym, 1))} aria-label="下個月" title="下個月（→）"
                   className="w-10 text-lg text-mor-slate hover:bg-mor-sand">›</button>
               </div>
@@ -1303,11 +1321,18 @@ export default function RoomStatusPage() {
             使用者 2026-09-15 指定要能打房客名字，所以那三個字一定要出現在這裡，
             不然沒有人會知道搜得到。
         */}
-        <FilterSearch value={kwInput} onChange={setKwInput}
-          onSubmit={() => setKw(kwInput.trim())} placeholder="房源／房客" />
-        {/* ★ 清除也要把輸入框清掉 —— 只清 kw 的話框裡還留著字，看起來像沒生效 */}
-        {/* ★ 清除是回到「預設」，不是回到「全部」 */}
-        <FilterClear active={active} onClear={clearAll} />
+        {/* 關鍵字：打字就篩，Enter 也行；✕ 清掉（2026-10-20 上方整理，拿掉「搜尋」「清除」） */}
+        <Field label="關鍵字">
+          <div className="relative">
+            <input value={kwInput} onChange={(e) => setKwInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') setKw(kwInput.trim()); }}
+              placeholder="房源／房客" className="h-12 md:h-10 w-full md:w-56 rounded-lg border border-gray-300 pl-3 pr-9 text-ui" />
+            {kwInput && (
+              <button type="button" onClick={() => { setKwInput(''); setKw(''); }} aria-label="清掉關鍵字"
+                className="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 text-gray-400 hover:text-gray-600">✕</button>
+            )}
+          </div>
+        </Field>
       </FilterBar>
 
       {/*
@@ -1594,86 +1619,26 @@ export default function RoomStatusPage() {
           「只看空房」＝ 下排的空房，「只看有客」＝ 上排的「所有客戶」。
           同一件事留兩個入口的話，兩邊遲早會不一致。
       */}
-      <div className="space-y-2 mb-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <Pill on={view === 'any'} onClick={() => pick('any')}>
-            所有客戶 {nOccupied}
-          </Pill>
-          {TONES.map((k) => (
-            <Pill key={k} swatch={TONE[k].chip} on={view === k} onClick={() => pick(k)}>
-              {TONE[k].label}
-            </Pill>
-          ))}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {/*
-            ★★★ 空房 ＝ **整段都沒人**（`real.length === 0`），
-              不是「有任何一天是空的」。跟上面那顆「所有客戶」加起來
-              就是全部的房 —— 數字寫在藥丸上，看得出有沒有漏。
-          */}
-          <Pill on={view === 'free'} onClick={() => pick('free')}
-            swatch="bg-white border border-mor-line">空房 {nFree}</Pill>
-          {/* ★ 2026-10-04 David：「已退房獨立一個膠囊」—— 跟空房同一排（都是「什麼狀態」） */}
-          <Pill on={view === 'done'} onClick={() => pick('done')} swatch={DONE_BAR}>已退房 {nDone}</Pill>
-          {/* ★ 移房（2026-10-19 A 案）：紫色＝移轉，跟押金移房同一個意思。點了只亮移過房的那幾條 */}
-          <Pill on={view === 'moved'} onClick={() => pick('moved')} swatch="bg-violet-600">↪ 移房 {nMoved}</Pill>
-          {/* 💡 移房建議（2026-10-20）：有建議才出現；點開是一塊清單，只列不動 */}
-          {suggestions.length > 0 && (
-            <button type="button" onClick={() => setSugOpen((v) => !v)}
-              className={`rounded-full border px-3 py-1.5 text-sm font-semibold ${sugOpen
-                ? 'border-amber-500 bg-amber-50 text-amber-800 ring-2 ring-amber-300' : 'border-amber-400 bg-amber-50 text-amber-800'}`}>
-              💡 移房建議 {suggestions.length}
-            </button>
-          )}
-
-          {/*
-            ★★ 三顆提醒被篩選中時，這裡出現一顆可以關掉的籤。
-              沒有它的話，使用者按了明細裡的「只看這幾間」之後，
-              表格短了一截而畫面上**沒有任何東西說是誰做的** ——
-              然後他會以為資料不見了。
-          */}
-          {(view === 'dup' || view === 'ending' || view === 'leaving') && (
-            <button type="button" onClick={() => setView('')}
-              className="inline-flex items-center gap-1.5 rounded-full border border-amber-300
-                         bg-amber-50 px-3 py-1.5 text-xs text-amber-800 hover:bg-amber-100">
-              只看{view === 'dup' ? '重疊' : view === 'ending' ? '快退租' : '快退房'}的
-              <span className="opacity-70">✕</span>
-            </button>
-          )}
-
-          {/*
-            ══════════ 三顆提醒旋鈕（2026-09-16 使用者:「像一個旋鈕點開」）══════════
-
-            ★★★ 用 `ToggleInfo` —— 站上「👀 防呆」「★ 重要支出」就是這一顆。
-              同一種東西長同一個樣子,不另外發明。
-
-            ★★ 它們是**模式**不是篩選:打開＝標示 ＋ 展開明細,房間一間都不會少。
-              要縮表格走明細裡的「只看這幾間 →」。
-
-            ★ 沒有東西可以提醒的時候**整顆不出現**,不是顯示 0 ——
-              一顆永遠亮著的 0 會變成畫面的一部分,久了沒有人再看它。
-          */}
-          <span className="ml-auto flex flex-wrap items-center gap-2">
-            {/*
-              ══════════ 提醒的天數（2026-09-16 使用者:「有點多耶，有沒有 drop down」）══════════
-
-              ★★★ 第一版是**一排膠囊**（7／14／30／45／全部），跟上面那排房源藥丸
-                長得一模一樣 —— 而它們是兩種東西:
-                　藥丸　房源篩選，一天按十次　→ 一直切來切去的，攤開來才快
-                　天數　設一次就不太動　　　　→ 收進下拉
-
-                這一區看起來滿，不是因為東西多，是**同一種形狀用在兩種用途上**，
-                眼睛每次都要重讀一遍才知道哪一排管哪件事。
-
-              ★★ 換成下拉之後選項反而**加回 90／180**:
-                膠囊多一個就多佔一塊版面，下拉多一個只是清單長一列。
-                選項的數量本來就該由「畫面怎麼呈現」決定。
-
-              ★ 兩顆旋鈕上的數字**留在外面**，不收進下拉 ——
-                那兩個是**儀表**不是警報，而且退租與退房是兩件不同的工作
-                （一個要找新房客、一個要排清潔），合成一個數字等於把資訊丟掉。
-            */}
-            {dupRooms.length > 0 && (
+      {(() => {
+        /*
+         * ══════════ 上方整理（2026-10-20 David：「這邊好亂啊」）══════════
+         *   兩排藥丸 → 一排：左「種類」、中「狀態」、右 💡 移房建議＋🔔 提醒
+         *   「所有客戶」拿掉（一顆都沒亮＝沒有篩選）；退租／退房兩組開關收進 🔔（點開才看到）
+         *   ★ 🔔 上的數字＝退租＋退房；兩種各自的數字在點開的面板裡
+         *   手機：住房率一行，右邊放 💡 與 🔔；藥丸一排、放不下就左右滑
+         */
+        const nAlert = endList.length + outList.length;
+        const alertsOn = showEnd || showOut;
+        const cluster = (m: boolean) => (
+          <>
+            {suggestions.length > 0 && (
+              <button type="button" onClick={() => setSugOpen((v) => !v)}
+                className={`shrink-0 rounded-full border px-2.5 md:px-3 py-1 md:py-1.5 text-xs md:text-sm font-semibold whitespace-nowrap ${sugOpen
+                  ? 'border-amber-500 bg-amber-50 text-amber-800 ring-2 ring-amber-300' : 'border-amber-400 bg-amber-50 text-amber-800'}`}>
+                💡 {m ? '' : '移房建議 '}{suggestions.length}
+              </button>
+            )}
+            {!m && dupRooms.length > 0 && (
               <ToggleInfo tone="amber" on={showDup} onToggle={() => setShowDup((v) => !v)}
                 label={<>⚠ 重疊 <b className="tabular-nums">{dupRooms.length}</b></>}
                 infoLabel="什麼是重疊">
@@ -1681,53 +1646,104 @@ export default function RoomStatusPage() {
                 所以另一筆會安靜地不見 —— 這裡把它列出來。
               </ToggleInfo>
             )}
-            {/*
-              ★★★ 2026-09-16 改:退租／退房**永遠出現,就算是 0**。
-                第一版跟「⚠ 重疊」一樣「沒東西就整顆不見」,結果使用者回報
-                「退房按鈕還沒看到」—— 而它其實是對的（那七天真的沒有人要退房）。
-                **人分不出「沒事」跟「沒做出來」**,而分不出的時候他會假設是後者。
-
-              ★★ 跟「⚠ 重疊」的差別在於那兩種 0 的意思不一樣:
-                　重疊 0　＝ 沒有壞掉的資料。那是**正常狀態**,不需要一顆常駐的警報。
-                　退租 0　＝ 接下來這段時間沒有人要退租。那是一個**答案**,而且是會變的答案。
-                前者是警報，後者是儀表 —— 警報平常要安靜，儀表平常就該看得到。
-            */}
-            {/*
-              ★ 2026-10-04 David：「退房提醒、提醒期間 UI 合在一起，知道是同一件事」
-                ＋「退租預設 45 天、退房預設 7 天」。一個框：每個提醒緊接著**自己的**天數。
-              ★★ 框裡一律不換行（whitespace-nowrap ＋ flex-none）。放不下時整個框一起換到下一行 ——
-                上一版框太窄，「提醒」「退租」被擠成直排。
-            */}
-            <span className="inline-flex flex-none items-center gap-1 whitespace-nowrap rounded-full
-                             border border-mor-line bg-white pl-1 pr-2 py-0.5">
-              <ToggleInfo tone="red" on={showEnd} onToggle={() => setShowEnd((v) => !v)}
-                label={<>退租提醒 <b className="tabular-nums">{endList.length}</b></>}
-                infoLabel="退租提醒怎麼算">
-                <b>契約</b>在{endWin === 0 ? '之後全部' : `未來 ${winLabel(endWin)}`}內到期的（後面的下拉可以換）。
-                算的是<b>今天</b>起算，不是你正在看的那個月 ——
-                這個數字問的是「接下來會空出哪幾間」。
-              </ToggleInfo>
-              <select value={endWin} onChange={(e) => pickWin('ewin', Number(e.target.value) as AlertWindow)}
-                aria-label="退租提醒看未來幾天"
-                className="h-8 rounded-full border border-mor-line bg-white px-2 text-uisub text-gray-700 hover:bg-mor-sand/60">
-                {ALERT_WINDOWS.map((w) => <option key={w} value={w}>{w === 0 ? '全部' : `未來 ${winLabel(w)}`}</option>)}
-              </select>
-              <i aria-hidden className="mx-1.5 h-5 w-px bg-mor-line" />
-              <ToggleInfo tone="red" on={showOut} onToggle={() => setShowOut((v) => !v)}
-                label={<>退房提醒 <b className="tabular-nums">{outList.length}</b></>}
-                infoLabel="退房提醒怎麼算">
-                <b>短租訂單</b>在{outWin === 0 ? '之後全部' : `未來 ${winLabel(outWin)}`}內退房的（後面的下拉可以換）。
-                月租單不算 —— 那是契約每個月長出來的帳，不是真的有人要走。
-              </ToggleInfo>
-              <select value={outWin} onChange={(e) => pickWin('owin', Number(e.target.value) as AlertWindow)}
-                aria-label="退房提醒看未來幾天"
-                className="h-8 rounded-full border border-mor-line bg-white px-2 text-uisub text-gray-700 hover:bg-mor-sand/60">
-                {OUT_WINDOWS.map((w) => <option key={w} value={w}>{`未來 ${winLabel(w)}`}</option>)}
-              </select>
+            <span className="relative shrink-0">
+              <button type="button" onClick={(e) => { e.stopPropagation(); setAlertOpen((v) => !v); }} aria-expanded={alertOpen}
+                className={`rounded-full border px-2.5 md:px-3 py-1 md:py-1.5 text-xs md:text-sm whitespace-nowrap ${alertsOn
+                  ? 'border-red-300 bg-red-50 text-red-700' : 'border-mor-line bg-white text-gray-600 hover:bg-mor-sand/60'}`}>
+                🔔 {m ? '' : '提醒 '}<b className="tabular-nums">{m && dupRooms.length ? `${nAlert}・⚠${dupRooms.length}` : nAlert}</b> ▾
+              </button>
+              {alertOpen && (
+                <>
+                  <div className="fixed inset-0 z-30" onClick={(e) => { e.stopPropagation(); setAlertOpen(false); }} />
+                  <div onClick={(e) => e.stopPropagation()}
+                    className="absolute right-0 top-full mt-1.5 z-40 w-[20rem] max-w-[calc(100vw-2rem)] rounded-xl border border-mor-line bg-white p-3 shadow-lg space-y-2.5 whitespace-normal text-left">
+                    <div className="flex items-center gap-2">
+                      <ToggleInfo tone="red" on={showEnd} onToggle={() => setShowEnd((v) => !v)}
+                        label={<>退租提醒 <b className="tabular-nums">{endList.length}</b></>}
+                        infoLabel="退租提醒怎麼算">
+                        <b>契約</b>在{endWin === 0 ? '之後全部' : `未來 ${winLabel(endWin)}`}內到期的（後面的下拉可以換）。
+                        算的是<b>今天</b>起算，不是你正在看的那個月 ——
+                        這個數字問的是「接下來會空出哪幾間」。
+                      </ToggleInfo>
+                      <select value={endWin} onChange={(e) => pickWin('ewin', Number(e.target.value) as AlertWindow)}
+                        aria-label="退租提醒看未來幾天"
+                        className="ml-auto h-8 rounded-full border border-mor-line bg-white px-2 text-uisub text-gray-700 hover:bg-mor-sand/60">
+                        {ALERT_WINDOWS.map((w) => <option key={w} value={w}>{w === 0 ? '全部' : `未來 ${winLabel(w)}`}</option>)}
+                      </select>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <ToggleInfo tone="red" on={showOut} onToggle={() => setShowOut((v) => !v)}
+                        label={<>退房提醒 <b className="tabular-nums">{outList.length}</b></>}
+                        infoLabel="退房提醒怎麼算">
+                        <b>短租訂單</b>在{outWin === 0 ? '之後全部' : `未來 ${winLabel(outWin)}`}內退房的（後面的下拉可以換）。
+                        月租單不算 —— 那是契約每個月長出來的帳，不是真的有人要走。
+                      </ToggleInfo>
+                      <select value={outWin} onChange={(e) => pickWin('owin', Number(e.target.value) as AlertWindow)}
+                        aria-label="退房提醒看未來幾天"
+                        className="ml-auto h-8 rounded-full border border-mor-line bg-white px-2 text-uisub text-gray-700 hover:bg-mor-sand/60">
+                        {OUT_WINDOWS.map((w) => <option key={w} value={w}>{`未來 ${winLabel(w)}`}</option>)}
+                      </select>
+                    </div>
+                    {m && dupRooms.length > 0 && (
+                      <ToggleInfo tone="amber" on={showDup} onToggle={() => setShowDup((v) => !v)}
+                        label={<>⚠ 重疊 <b className="tabular-nums">{dupRooms.length}</b></>}
+                        infoLabel="什麼是重疊">
+                        同一間房在同一天有兩筆以上。日曆上<b>只畫得下其中一筆</b>，所以另一筆會安靜地不見。
+                      </ToggleInfo>
+                    )}
+                    <div className="text-[11px] text-gray-400">打開＝日曆上標出來、底下列明細；房間不會少。</div>
+                  </div>
+                </>
+              )}
             </span>
-          </span>
-        </div>
-      </div>
+          </>
+        );
+        return (
+          <>
+            {/* 手機：住房率一行，右邊 💡 🔔 */}
+            <div className="md:hidden mb-2 flex items-center gap-2 rounded-xl border border-mor-line bg-white px-3 py-1.5 whitespace-nowrap">
+              {estOcc && estOcc.rooms > 0 ? (
+                <>
+                  <span className="text-xs text-gray-500">住房率</span>
+                  <b className={`text-lg tabular-nums ${occTone(estOcc.rate) === 'low' ? 'text-red-600' : 'text-mor-ink'}`}>{fmtPct(estOcc.rate)}</b>
+                  <details className="relative">
+                    <summary className="list-none cursor-pointer text-[11px] text-gray-400 px-1">ⓘ</summary>
+                    <div className="absolute left-0 top-full mt-1 z-30 w-60 rounded-lg border border-mor-line bg-white p-2 text-[11px] text-gray-600 shadow whitespace-normal tabular-nums">
+                      {estOcc.used.toLocaleString()} 晚有人住 ÷（{estOcc.rooms} 間 × {shownDays} 晚）・{shown.from} ~ {shown.to}
+                    </div>
+                  </details>
+                </>
+              ) : <span className="text-xs text-gray-400">{visible.length} 間</span>}
+              <span className="ml-auto flex items-center gap-1.5">{cluster(true)}</span>
+            </div>
+            <div className="mb-2 flex items-center gap-2 max-md:overflow-x-auto max-md:pb-1 md:flex-wrap">
+              <span className="hidden md:inline text-[11px] font-semibold text-gray-400">種類</span>
+              {TONES.map((k) => (
+                <Pill key={k} swatch={TONE[k].chip} on={view === k} onClick={() => pick(k)} title={TONE[k].label}>
+                  {TONE_SHORT[k]}
+                </Pill>
+              ))}
+              <i aria-hidden className="mx-1 h-5 w-px shrink-0 bg-mor-line" />
+              <span className="hidden md:inline text-[11px] font-semibold text-gray-400">狀態</span>
+              {/* ★★★ 空房 ＝ 整段都沒人（real.length === 0），不是「有任何一天是空的」 */}
+              <Pill on={view === 'free'} onClick={() => pick('free')}
+                swatch="bg-white border border-mor-line">空房 {nFree}</Pill>
+              <Pill on={view === 'done'} onClick={() => pick('done')} swatch={DONE_BAR}>已退房 {nDone}</Pill>
+              <Pill on={view === 'moved'} onClick={() => pick('moved')} swatch="bg-violet-600">↪ 移房 {nMoved}</Pill>
+              {/* 提醒明細裡按了「只看這幾間」→ 這裡出現一顆可以關掉的籤（不然表格短了一截沒人知道為什麼） */}
+              {(view === 'dup' || view === 'ending' || view === 'leaving') && (
+                <button type="button" onClick={() => setView('')}
+                  className="shrink-0 inline-flex items-center gap-1.5 rounded-full border border-amber-300
+                             bg-amber-50 px-3 py-1 text-xs text-amber-800 hover:bg-amber-100 whitespace-nowrap">
+                  只看{view === 'dup' ? '重疊' : view === 'ending' ? '快退租' : '快退房'}的
+                  <span className="opacity-70">✕</span>
+                </button>
+              )}
+              <span className="hidden md:flex ml-auto items-center gap-2">{cluster(false)}</span>
+            </div>
+          </>
+        );
+      })()}
 
       {/* ── 明細：三顆旋鈕打開才出現 ── */}
       {showDup && dup.length > 0 && (
@@ -1791,25 +1807,6 @@ export default function RoomStatusPage() {
           narrow={narrow} drawn={drawnIds}
           onFilter={() => setView('leaving')}
           onRange={(n) => { setMode('custom'); setFrom(today); setTo(addDays(today, n)); }} />
-      )}
-
-      {/*
-        ★ 2026-10-04 物業住房率：期間跟著上面的篩選列，算式寫出來 —— 看得出分母是幾間 × 幾晚。
-      */}
-      {estOcc && estOcc.rooms > 0 && (
-        <div className="mb-2 flex max-md:flex-nowrap flex-wrap items-baseline gap-x-2 md:gap-x-4 gap-y-1 rounded-xl border border-mor-line bg-white px-3 md:px-4 py-1.5 md:py-2.5 max-md:whitespace-nowrap max-md:overflow-hidden">
-          <span className="text-xs md:text-uisub text-gray-500">{estF} 住房率</span>
-          <span className={`text-lg md:text-2xl font-bold tabular-nums ${occTone(estOcc.rate) === 'low' ? 'text-red-600' : 'text-mor-ink'}`}>
-            {fmtPct(estOcc.rate)}
-          </span>
-          <span className="hidden md:inline text-xs text-gray-400 tabular-nums">
-            {estOcc.used.toLocaleString()} 晚有人住 ÷（{estOcc.rooms} 間 × {shownDays} 晚）・{shown.from} ~ {shown.to}
-          </span>
-          {/* 手機縮成一行（2026-10-20 David）：算式小字靠右 */}
-          <span className="md:hidden ml-auto text-[10.5px] text-gray-400 tabular-nums truncate">
-            {estOcc.used.toLocaleString()} 晚 ÷（{estOcc.rooms} 間 × {shownDays} 晚）
-          </span>
-        </div>
       )}
 
       {/* ① 範圍不能畫的兩種情形分開講 —— 見上面 `badRange` / `tooLong` 的說明 */}
