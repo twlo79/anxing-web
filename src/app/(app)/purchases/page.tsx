@@ -368,8 +368,8 @@ export default function PurchasesPage() {
    * 待核可刻意排第一個,而且是唯一把請款與押金合在一起的地方 ——
    * 核可的人只關心「有什麼等我」,那筆錢的來源是採購還是退押金,對投票這個動作沒差別。
    */
-  /* 'allowance'：折讓分頁（2026-10-20 David）—— 請款審核裡的折讓退款，單獨看 */
-  const [tab, setTab] = useState<'approve' | 'pr' | 'allowance'>('pr');
+  /* 折讓退款跟押金退款一起列在「請款審核」（2026-10-20 David：單獨的折讓分頁拿掉了） */
+  const [tab, setTab] = useState<'approve' | 'pr'>('pr');
   // 待核可的請款單:獨立於列表的查詢,不受月份/狀態/申請人篩選影響(見 load)
   const [pendRows, setPendRows] = useState<Req[]>([]);
   /** 角色預設分頁只挑一次。分享連結進來時會先把它設成 true,免得預設把分頁搶走。 */
@@ -867,16 +867,11 @@ export default function PurchasesPage() {
    * 兩者要做的事完全不同:上面等的是投票,下面等的是把錢匯出去。
    * 混在一起的話,主管會一直滑過不需要他動作的列。
    */
-  /*
-   * 折讓分頁＝同一份清單只留折讓退款（核可、駁回、匯出都跟請款審核同一套按鈕）。
-   * 分頁上的徽章一律從全部算，不跟著目前停在哪一頁變。
-   */
-  const pendings = useMemo(() => (tab === 'allowance' ? pendAll.filter((p) => !!p.dep?.allowance_order_id) : pendAll), [pendAll, tab]);
+  const pendings = pendAll;
   const badgeAll = useMemo(() => {
     const mine = pendAll.filter((p) => p.mine).length;
     return mine > 0 ? mine : pendAll.filter((p) => p.stage === 'pending').length;
   }, [pendAll]);
-  const badgeAllow = useMemo(() => pendAll.filter((p) => p.dep?.allowance_order_id && p.stage === 'pending').length, [pendAll]);
   const pendWait = useMemo(() => pendings.filter((p) => p.stage === 'pending'), [pendings]);
   const pendDone = useMemo(() => pendings.filter((p) => p.stage === 'approved'), [pendings]);
   const pendMine = useMemo(() => pendings.filter((p) => p.mine), [pendings]);
@@ -1966,7 +1961,6 @@ export default function PurchasesPage() {
           items={[
             { key: 'approve' as const, label: '請款審核', badge: badgeAll },
             { key: 'pr' as const, label: '請款單' },
-            { key: 'allowance' as const, label: '折讓', badge: badgeAllow },
           ]} />
       )}
 
@@ -1977,11 +1971,11 @@ export default function PurchasesPage() {
         手機版是主要場景 —— 主管與總經理多半是在 LINE 收到連結後用手機投票,
         所以按鈕是滿版高 48px,不是右下角的小連結。
       */}
-      {canSeeAll && (tab === 'approve' || tab === 'allowance') && (
+      {canSeeAll && tab === 'approve' && (
         pendings.length === 0 ? (
           <div className="rounded-xl glass py-16 text-center">
-            <div className="text-gray-400 text-sm">{tab === 'allowance' ? '目前沒有折讓退款' : '目前沒有待處理的單'}</div>
-            <div className="text-gray-300 text-xs mt-1">{tab === 'allowance' ? '契約折讓填了房客帳號才會到這裡；本月已匯出的也列在這' : '請款單與押金退款都審完也付完了'}</div>
+            <div className="text-gray-400 text-sm">目前沒有待處理的單</div>
+            <div className="text-gray-300 text-xs mt-1">請款單與押金、折讓退款都審完也付完了</div>
           </div>
         ) : (
           <>
