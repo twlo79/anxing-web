@@ -50,3 +50,30 @@ test('移房建議：同一張單有多個候選，照移完閒置少的排', ()
   assert.deepEqual(s[0].cands.map((c) => c.toRoom), ['A09', 'A11']);
   assert.deepEqual(s[0].cands.map((c) => c.after), [0, 1]);
 });
+
+test('閒置一樣多時，接得上的排前面（David 2026-10-20：B05 應該是最好的）', () => {
+  const o2 = (room: string, start: string, end: string, guest = room): Stay =>
+    ({ id: `o${room}${start}`, room, kind: 'order', start, end, tone: 'short', guest });
+  const st = [
+    o2('B07', '2026-12-01', '2026-12-03', '姚'), o2('B07', '2026-12-06', '2027-01-03', 'Conan'),  // B07 空 12/3～6（3 晚）
+    o2('B05', '2026-12-01', '2026-12-06', 'Li'),                                                 // 12/6 退房 → 接得上
+    o2('A16', '2026-12-01', '2026-12-02', 'Ang'),                                                // 空 4 晚，還能賣
+  ];
+  const r = suggestMoves(['A04', 'A16', 'B05', 'B07'], st, '2026-11-30', 60);
+  const s = r.find((x) => x.guest === 'Conan')!;
+  assert.deepEqual(s.cands.map((c) => c.toRoom), ['B05', 'A16', 'A04']);   // A04 整段空著 → 排最後，盡量留著
+  assert.equal(s.cands[0].snug, 1);
+  assert.equal(s.cands[0].after, s.cands[1].after);
+});
+
+test('整段沒單的房排最後，就算算出來的閒置比較少（David：A04 是最差的）', () => {
+  const o2 = (room: string, start: string, end: string, guest = room): Stay =>
+    ({ id: `o${room}${start}`, room, kind: 'order', start, end, tone: 'short', guest });
+  const st = [
+    o2('B01', '2026-11-30', '2026-12-02', 'Seb'), o2('B01', '2026-12-05', '2027-01-01', 'Su'),   // B01 空 12/2～5
+    o2('A08', '2026-11-30', '2026-12-03', 'Bell'),                                               // 搬去會夾出 2 晚
+  ];
+  const s = suggestMoves(['A04', 'A08', 'B01'], st, '2026-11-29', 60).find((x) => x.guest === 'Su')!;
+  assert.deepEqual(s.cands.map((c) => c.toRoom), ['A08', 'A04']);
+  assert.equal(s.cands[1].empty, true);
+});

@@ -123,10 +123,12 @@ export type FinderPick = { room: string; why: string };
 export function recommendRoom(rooms: readonly string[], stays: readonly Stay[], from: Ymd, to: Ymd, maxGap = 3): FinderPick | null {
   if (rooms.length < 2) return null;
   const sc = rooms.map((r) => {
-    const f = fitOf(stays.filter((s) => s.room === r), from, to, maxGap);
-    return { r, f, adj: Number(f.before === 0) + Number(f.after === 0) };
+    const st = stays.filter((s) => s.room === r);
+    const f = fitOf(st, from, to, maxGap);
+    // ★ 整段沒單的房最後（跟移房建議同一條，David 2026-10-20：「A04 應該盡量空著」）
+    return { r, f, adj: Number(f.before === 0) + Number(f.after === 0), empty: st.length === 0 };
   });
-  const better = (a: typeof sc[0], b: typeof sc[0]) => a.f.waste - b.f.waste || b.adj - a.adj;
+  const better = (a: typeof sc[0], b: typeof sc[0]) => Number(a.empty) - Number(b.empty) || a.f.waste - b.f.waste || b.adj - a.adj;
   const best = [...sc].sort(better)[0];
   if (!sc.some((x) => better(best, x) < 0)) return null;
   const why = best.f.waste > 0 ? `排進去只留 ${best.f.waste} 晚零碎空檔（最少）`
@@ -161,12 +163,13 @@ export function freeByMoving(
     const last = lastNightOf(s);
     if (!s.start || !last) continue;
     const span = eachDay({ from: s.start, to: last });
+    // 搬去哪：整段沒單的房最後（盡量留著），其餘挑留下零碎空檔最少的
     let pick: { t: string; w: number } | null = null;
     for (const t of rooms) {
       if (t === r) continue;
       const ts = by.get(t) ?? [];
       if (span.some((d) => ts.some((x) => occupies(x, d)))) continue;
-      const w = fitOf(ts, s.start, addDays(last, 1), maxGap).waste;
+      const w = fitOf(ts, s.start, addDays(last, 1), maxGap).waste + (ts.length ? 0 : 1000);
       if (!pick || w < pick.w) pick = { t, w };
     }
     if (!pick) continue;

@@ -1350,7 +1350,7 @@ export default function RoomStatusPage() {
           const moving = sugStays.find((x) => x.id === pk.stayId);
           const rows: { room: string; label: string; tone: string; best: boolean; ghost: boolean }[] = [
             { room: pk.fromRoom, label: '原房・要移', tone: 'text-amber-800', best: false, ghost: false },
-            ...pk.cands.map((c, i) => ({ room: c.toRoom, label: `${i === 0 ? '最佳' : '候選'}・移完閒置 ${c.after}`,
+            ...pk.cands.map((c, i) => ({ room: c.toRoom, label: `${i === 0 ? '最佳' : '候選'}・移完閒置 ${c.after}${c.empty ? '・整段空房' : c.snug === 2 ? '・前後接上' : c.snug ? '・接上' : ''}`,
               tone: i === 0 ? 'text-green-800' : 'text-gray-500', best: i === 0, ghost: true })),
           ];
           mini = (
@@ -1399,7 +1399,7 @@ export default function RoomStatusPage() {
             </div>);
         }
         return (
-          <div className="mb-3 rounded-xl border border-amber-300 bg-white px-4 py-3">
+          <div className="mb-3 rounded-xl border border-amber-300 bg-white px-3 md:px-4 py-3 min-w-0 overflow-hidden">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2">
               <b>💡 移房建議</b>
               <span className="text-xs text-gray-500">{estF}・未來 {SUG_DAYS} 天・閒置＝夾在兩筆中間、{SUG_GAP} 晚以下的空晚</span>
@@ -1409,7 +1409,8 @@ export default function RoomStatusPage() {
               </button>
               <button type="button" onClick={() => setSugOpen(false)} aria-label="關掉" className="w-7 h-7 rounded-full text-gray-400 hover:bg-black/5">✕</button>
             </div>
-            <div className="grid gap-3 md:grid-cols-[minmax(0,360px)_minmax(0,1fr)] items-start">
+            {/* ★ 手機也要給欄寬上限（minmax(0,1fr)）—— 沒給的話小日曆的寬度會把整塊撐爆（2026-10-20 爆版） */}
+            <div className="grid gap-3 grid-cols-[minmax(0,1fr)] md:grid-cols-[minmax(0,360px)_minmax(0,1fr)] items-start">
               <div className="space-y-2">
                 {suggestions.map((x, i) => (
                   <div key={x.stayId} onClick={() => setSugSel(x.stayId)}
@@ -1427,7 +1428,7 @@ export default function RoomStatusPage() {
                   </div>
                 ))}
               </div>
-              <div>{pk && <div className="mb-1 text-sm font-semibold">{pk.guest ?? ''} {short(pk.from, pk.to)}（{pk.fromRoom}）</div>}{mini}</div>
+              <div className="min-w-0">{pk && <div className="mb-1 text-sm font-semibold">{pk.guest ?? ''} {short(pk.from, pk.to)}（{pk.fromRoom}）</div>}{mini}</div>
             </div>
           </div>
         );

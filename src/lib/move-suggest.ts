@@ -18,7 +18,19 @@ import { addDays, occupies, type Stay, type Ymd } from './room-calendar.ts';
  * ============================================================
  */
 
-export type MoveCandidate = { toRoom: string; after: number };
+/**
+ * snug：搬過去接得上幾邊（0～2）—— 前一晚、退房那晚有人住各算一邊。
+ * ★ 閒置一樣多時，接得上的排前面（2026-10-20 David：「B05 應該是最好的」——
+ *   B05 前一筆剛好在入住那天退房，搬過去不留縫；空房 A04 閒置一樣但把房間切開）。
+ */
+export type MoveCandidate = { toRoom: string; after: number; snug: number;
+  /** 搬過去會切開的那一段空房有幾晚（前後空著的加起來）。越短越好 —— 整段空著的房盡量留著（David：「A04 應該盡量空著」） */
+  room: number;
+  /**
+   * 這 60 天整段沒有單的房。★ 一律排最後（David 2026-10-20：「A04 只是沒單所以算不出閒置，它是最差的」）——
+   *   空房的閒置算出來是 0，只是因為沒有單可以夾出空檔；搬進去等於把一間完整的空房切開。
+   */
+  empty: boolean };
 /** 一張要移的訂單：原房間、旁邊的零碎空檔、移到各間之後整個物業的閒置晚數（少的在前，第一個是最佳） */
 export type MoveSuggestion = {
   stayId: string; guest: string | null;
@@ -84,10 +96,16 @@ export function suggestMoves(
           if (!ok) continue;
           const afterT = gapNightsOf([...stT, { ...X, room: T }], today, winTo, maxGap);
           const after = before - gapOf.get(R)! - gapOf.get(T)! + afterR + afterT;
-          if (after < before) cands.push({ toRoom: T, after });
+          const snug = Number(stT.some((s) => occupies(s, addDays(X.start!, -1)))) + Number(stT.some((s) => occupies(s, X.end!)));
+          const occT = (d: Ymd) => stT.some((s) => occupies(s, d));
+          let free = 0;
+          for (let d = addDays(X.start!, -1); d >= today && !occT(d); d = addDays(d, -1)) free++;
+          for (let d = X.end!; d < winTo && !occT(d); d = addDays(d, 1)) free++;
+          const empty = !stT.some((s) => !!s.start && !!s.end && s.start < winTo && (s.end > today || occupies(s, today)));
+          if (after < before) cands.push({ toRoom: T, after, snug, room: free, empty });
         }
         if (!cands.length) continue;
-        cands.sort((a, b) => a.after - b.after || a.toRoom.localeCompare(b.toRoom, 'en', { numeric: true }));
+        cands.sort((a, b) => Number(a.empty) - Number(b.empty) || a.after - b.after || b.snug - a.snug || a.room - b.room || a.toRoom.localeCompare(b.toRoom, 'en', { numeric: true }));
         out.set(X.id, {
           stayId: X.id, guest: X.guest ?? null, from: X.start!, to: X.end!, fromRoom: R,
           gapFrom: g.from, gapTo: g.to, gapNights: g.n, before, cands: cands.slice(0, maxCands),
