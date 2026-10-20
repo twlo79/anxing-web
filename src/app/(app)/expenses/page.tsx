@@ -460,7 +460,9 @@ export default function ExpensesPage() {
    */
   const [detail, setDetail] = useState<Expense | null>(null);
 
-  const canDelete = (e: Expense) => !e.source_item_id || isBoss(role);
+  /** 管家只能看（2026-10-20 David：「可以看得到，但不能編輯」；資料庫也只開了讀，migration_338） */
+  const canWrite = ['accountant', 'manager', 'super_admin'].includes(role);
+  const canDelete = (e: Expense) => canWrite && (!e.source_item_id || isBoss(role));
 
   async function del(e: Expense) {
     const extra = e.source_item_id ? '\n\n這筆支出來自請款單。刪除後不會回寫請款單,若之後重填採購日也不會重新產生。' : '';
@@ -739,15 +741,15 @@ export default function ExpensesPage() {
       */}
       <ActionRow>
         {/* 💸 轉成實支（2026-10-07 David；跟短租「📈 調價費支出」同一個位置：動作列最左邊） */}
-        <button onClick={() => setNcOpen(true)}
+        {canWrite && <button onClick={() => setNcOpen(true)}
           className="md:mr-auto h-10 rounded-lg border border-mor-line bg-white px-3.5 text-uisub text-gray-700 hover:bg-mor-sand/60 inline-flex items-center gap-1.5">
           💸 轉成實支
           {ncCount ? <span className="rounded-md border border-dashed border-orange-400 px-1.5 text-[11px] text-orange-700">{ncCount} 筆</span> : null}
-        </button>
+        </button>}
         <div className="mr-auto md:mr-0"><FilterCount n={rows.length} /></div>
-        <AddButton onClick={() => setEdit(blank())}>新增支出</AddButton>
+        {canWrite && <AddButton onClick={() => setEdit(blank())}>新增支出</AddButton>}
         <ExportButton onClick={exportXlsx} disabled={!rows.length} />
-        <TrashLink table="expenses" label="支出" />
+        {canWrite && <TrashLink table="expenses" label="支出" />}
       </ActionRow>
       {ncOpen && <NoncashModal onClose={() => setNcOpen(false)} onDone={() => { load(); loadNc(); }} />}
 
@@ -869,7 +871,7 @@ export default function ExpensesPage() {
                       那時退成一個不能點的標籤,文字也只剩「遞延子單」。
                   */}
                   {r.parent_expense_id && (byId[r.parent_expense_id] ? (
-                    <button onClick={(e) => { e.stopPropagation(); setEdit(byId[r.parent_expense_id!]); }}
+                    <button onClick={(e) => { e.stopPropagation(); const p = byId[r.parent_expense_id!]; if (canWrite) setEdit(p); else setDetail(p); }}
                       title="回到母單修改"
                       className="ml-2 inline-block rounded-md border border-[#c9dcf0] bg-white text-mor-slate hover:bg-mor-bluelight px-1.5 py-0.5 text-[10px] align-middle">
                       {childLabel(byId[r.parent_expense_id]!.spent_on)} ↗
@@ -1037,6 +1039,12 @@ export default function ExpensesPage() {
                 底部動作。刪除縮成一行小字、跟主要按鈕分開 ——
                 跟契約頁同一條規矩:破壞性的動作不做成正常大小的按鈕。
               */}
+              {!canWrite ? (
+              <div className="shrink-0 border-t border-mor-line px-6 py-3 text-center text-xs text-gray-400"
+                style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
+                只能檢視 —— 要修改請找會計
+              </div>
+              ) : (
               <div className="shrink-0 border-t border-mor-line px-6 py-3 space-y-2"
                 style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
                 <div className="flex gap-2">
@@ -1063,6 +1071,7 @@ export default function ExpensesPage() {
                       </div>
                 )}
               </div>
+              )}
             </div>
           </div>
         );

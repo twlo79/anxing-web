@@ -195,7 +195,8 @@ const NAV: { href: string; label: string; icon: string; roles: string[]; group?:
    * 💸 是「錢長翅膀飛走」,那就是支出的意思本身,
    * 而且外形是長方形紙鈔＋翅膀,跟 💰 那個圓袋子分得開。
    */
-  { href: '/expenses', label: '支出明細', icon: '💸', group: '支出', roles: ['accountant', 'manager', 'super_admin'] },
+  /* 管家只能看、不能改（2026-10-20 David，migration_338 只開了讀） */
+  { href: '/expenses', label: '支出明細', icon: '💸', group: '支出', roles: ['housekeeper', 'accountant', 'manager', 'super_admin'] },
   /*
    * 稅務管理（migration_217）。營業稅的進項、銷項與每期結算。
    *

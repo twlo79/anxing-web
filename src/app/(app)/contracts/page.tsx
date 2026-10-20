@@ -2068,7 +2068,9 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
     { chunk: any[]; label: string; paidAt: string; t: PeriodTotal } | null>(null);
   const [concDraft, setConcDraft] = useState<{ pi: number; id?: string | null; no: string; date: string; date0: string; label: string; amount: number; note: string; baseAmount: number; priorDisc: number; rf: RefundDraft;
     /** 要不要退錢給房客（2026-10-20 David：先二選一，選了「要退款」才出現欄位） */
-    refund: boolean } | null>(null);
+    refund: boolean;
+    /** 退款扣除（migration_337，例：稅金 900）。實退 ＝ 折讓 − 扣除 */
+    dItem: string; dAmt: number } | null>(null);
   /*
    * 折讓的退款（migration_335）：折讓訂單 id → 掛在 deposits 的那一列（送審中／已核可／已匯出）。
    * 填了房客帳號才有；沒有＝沒走請款，直接沖營收。
@@ -2497,7 +2499,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
     const allowIds = ((data ?? []) as any[]).filter((f) => f.fee_type === '折讓').map((f) => f.id);
     if (allowIds.length) {
       const { data: rd } = await supabase.from('deposits')
-        .select('id, allowance_order_id, refund_amount, refund_status, planned_refund_on, returned_on, returned_method, returned_account, payee_name, payee_bank_code, payee_account, manager_approved_at, admin_approved_at')
+        .select('id, allowance_order_id, refund_amount, refund_deduct_item, refund_deduct_amount, refund_status, planned_refund_on, returned_on, returned_method, returned_account, payee_name, payee_bank_code, payee_account, manager_approved_at, admin_approved_at')
         .in('allowance_order_id', allowIds).neq('refund_status', 'rejected').order('created_at');
       const m: Record<string, any> = {};
       for (const r of (rd ?? []) as any[]) m[r.allowance_order_id] = r;
@@ -2559,6 +2561,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
       const miss = [!(rf.payee_name ?? '').trim() && '戶名', !(rf.payee_account ?? '').trim() && '帳號',
         !rf.planned_refund_on && '預計匯款日', !rf.returned_method && '安幸付款方式'].filter(Boolean);
       if (miss.length) { alert(`選了「要退款」，這幾格要填：${miss.join('、')}\n不退錢給房客的話，選「不用退」`); return; }
+      if (concDraft.dAmt > 0 && concDraft.dAmt >= Math.abs(Number(concDraft.amount) || 0)) { alert('扣除金額要小於折讓金額'); return; }
     }
     const old = concDraft.id ? allowRefunds[concDraft.id] : null;
     const refundLocked = !!old && (old.returned_on || old.refund_status === 'approved');
@@ -2587,6 +2590,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
         p_order: id, p_payee_name: rf.payee_name, p_payee_bank_code: rf.payee_bank_code ?? null,
         p_payee_account: rf.payee_account, p_planned_on: rf.planned_refund_on || null,
         p_returned_method: rf.returned_method || null, p_returned_account: rf.returned_account || null,
+        p_deduct_item: concDraft.dAmt > 0 ? (concDraft.dItem.trim() || '扣除') : null, p_deduct_amount: concDraft.dAmt || 0,
       });
       const r = rr as { ok?: boolean; message?: string } | null;
       if (re || !r?.ok) { alert('折讓存好了，但退款沒送出：' + (re?.message ?? r?.message ?? '')); setConcDraft(null); loadFees(); return; }
@@ -3005,7 +3009,8 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
               /* 折讓退款（migration_335）：這一期的折讓送過的退款。匯出了＝已退，其餘＝待退 */
               const periodRefunds = (pfees as any[]).map((f) => allowRefunds[f?.id]).filter(Boolean);
               const periodRefunded = periodRefunds.filter((r: any) => r.returned_on)
-                .reduce((a: number, r: any) => a + Number(r.refund_amount || 0), 0);
+                // ★ 扣除（稅金）也算這筆折讓已經處理掉的錢 —— 不加的話會多出一筆「多收 $900」
+                .reduce((a: number, r: any) => a + Number(r.refund_amount || 0) + Number(r.refund_deduct_amount || 0), 0);
               const periodPays = [...os, ...pfees]
                 .flatMap((x: any) => payRows[x?.id] ?? [])
                 .sort((a: any, b: any) => String(a.paid_on).localeCompare(String(b.paid_on)));
@@ -3122,7 +3127,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                         {periodPaid > 0 && (!allPaid || periodPaid - periodRefunded > netAmount || periodRefunded > 0) && (
                           <>
                             <span className="text-xs text-gray-500">已收 ${fmt(periodPaid)}</span>
-                            {periodRefunded > 0 && <span className="text-xs text-red-800">已退 ${fmt(periodRefunded)}</span>}
+                            {periodRefunded > 0 && <span className="text-xs text-red-800">已退 ${fmt(periodRefunds.filter((r: any) => r.returned_on).reduce((x: number, r: any) => x + Number(r.refund_amount || 0), 0))}</span>}
                             {/*
                               ★★ 收滿了卻沒結清,不能只寫「尚欠 $0」
                                 （2026-08-25 使用者:「我先收租滿租,取消後出現這個」）。
@@ -3457,6 +3462,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                                       {r.returned_account
                                         ? (refundAccounts.find((a) => a.code === r.returned_account)?.name ?? r.returned_account).replace(/^[（(]安幸[）)]\s*/, '')
                                         : ''}
+                                      {Number(r.refund_deduct_amount) > 0 && <span className="ml-1 text-[10px] text-gray-500">扣{r.refund_deduct_item ?? ''} ${fmt(r.refund_deduct_amount)}</span>}
                                       {kind === 'wait' && <span className="ml-1 rounded-full bg-amber-50 px-1.5 text-[10px]">{r.refund_status === 'approved' ? '已核可・待匯款' : '請款審核中'}</span>}
                                     </td>
                                     <td className="py-0.5 w-24 text-right tabular-nums">−${fmt(r.refund_amount)}</td>
@@ -3546,7 +3552,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                                         baseAmount: amount, priorDisc: discTotal - Math.abs(Number(f.amount) || 0),
                                         rf: rq ? { payee_name: rq.payee_name, payee_bank_code: rq.payee_bank_code, payee_account: rq.payee_account,
                                           planned_refund_on: rq.planned_refund_on, returned_method: rq.returned_method, returned_account: rq.returned_account } : {},
-                                        refund: !!rq });
+                                        refund: !!rq, dItem: rq?.refund_deduct_item ?? '', dAmt: Number(rq?.refund_deduct_amount) || 0 });
                                     } else {
                                       setFeeDraft({ pi: i, id: f.id, date: f.checkin ?? '', amount: Number(f.amount) || 0,
                                         label: feeLabel(f.fee_type, f.item_name) });
@@ -3660,7 +3666,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                           disabled={frozen} title={frozen ? (lockMsg ?? '') : ''}
                           className="text-xs text-mor-slate hover:text-mor-slatedark disabled:text-gray-300 disabled:cursor-not-allowed">＋ 加費</button>
                         <button onClick={() => setConcDraft({ pi: i, no: '', date: '', date0: `${first.y}-${String(first.m).padStart(2, '0')}-01`,
-                          label: `${first.y}/${String(first.m).padStart(2, '0')} 這一期`, amount: 0, note: '', baseAmount: amount, priorDisc: discTotal, rf: {}, refund: false })}
+                          label: `${first.y}/${String(first.m).padStart(2, '0')} 這一期`, amount: 0, note: '', baseAmount: amount, priorDisc: discTotal, rf: {}, refund: false, dItem: '', dAmt: 0 })}
                           disabled={frozen} title={frozen ? (lockMsg ?? '') : ''}
                           className="text-xs text-amber-700 hover:text-amber-800 disabled:text-gray-300 disabled:cursor-not-allowed">− 折讓</button>
                         {/*
@@ -4008,6 +4014,20 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                       <div className="mt-1">
                         <RefundFields v={concDraft.rf} payAccounts={refundAccounts}
                           onChange={(patch) => setConcDraft({ ...concDraft, rf: { ...concDraft.rf, ...patch } })} />
+                        {/* 扣除（migration_337，David：「這筆是退 18000 − 900 稅費」）。營收照樣沖整筆折讓 */}
+                        <div className="grid grid-cols-[1fr_8rem] gap-2 mt-3">
+                          <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">扣除項目</span>
+                            <input value={concDraft.dItem} onChange={(e) => setConcDraft({ ...concDraft, dItem: e.target.value })}
+                              placeholder="例：稅金" className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm" /></label>
+                          <label className="flex flex-col gap-1"><span className="text-xs text-gray-500">金額</span>
+                            <MoneyInput value={concDraft.dAmt || 0} onChange={(n) => setConcDraft({ ...concDraft, dAmt: n > 0 ? n : 0 })} /></label>
+                        </div>
+                        {concDraft.dAmt > 0 && (
+                          <div className="mt-2 rounded-lg border border-mor-line bg-[#FAFAF9] px-3 py-2 text-sm tabular-nums flex justify-between">
+                            <span className="text-gray-600">折讓 ${fmt(Math.abs(Number(concDraft.amount) || 0))} − {concDraft.dItem.trim() || '扣除'} ${fmt(concDraft.dAmt)}</span>
+                            <b>實退 ${fmt(Math.max(0, Math.abs(Number(concDraft.amount) || 0) - concDraft.dAmt))}</b>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>);

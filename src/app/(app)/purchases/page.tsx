@@ -148,6 +148,8 @@ type Dep = {
   cancel_order_id?: string | null;
   /** 契約折讓的退款（migration_335）—— 這一列不是押金，amount = 0，金額看 refund_amount */
   allowance_order_id?: string | null;
+  /** 折讓退款的扣除（migration_337，例：稅金 900）。實退 refund_amount ＝ 折讓 − 這個 */
+  refund_deduct_item?: string | null; refund_deduct_amount?: number | null;
 };
 /** 押金那一列是哪一種退款：折讓退款標「折讓」，其餘照舊「押金」 */
 const depTag = (d?: { allowance_order_id?: string | null } | null) => (d?.allowance_order_id ? '折讓' : '押金');
@@ -378,6 +380,17 @@ export default function PurchasesPage() {
   const [depReason, setDepReason] = useState('');
   /** 押金抽屜。跟請款單一樣:列上只留最高頻的動作,其餘都在抽屜裡。 */
   const [depDetail, setDepDetail] = useState<Dep | null>(null);
+  /* 折讓退款的抽屜要顯示折讓本身（單號、日期、哪一期）—— 那些在 orders 上，打開時另外撈 */
+  const [allowInfo, setAllowInfo] = useState<{ id: string; allowance_no: string | null; checkin: string | null; item_name: string | null; amount: number } | null>(null);
+  useEffect(() => {
+    const oid = depDetail?.allowance_order_id;
+    if (!oid) { setAllowInfo(null); return; }
+    if (allowInfo?.id === oid) return;
+    let on = true;
+    supabase.from('orders').select('id, allowance_no, checkin, item_name, amount').eq('id', oid).maybeSingle()
+      .then(({ data }) => { if (on) setAllowInfo((data as any) ?? null); });
+    return () => { on = false; };
+  }, [depDetail?.allowance_order_id, allowInfo?.id, supabase]);
   /**
    * 押金抽屜在編輯模式嗎（2026-08-22）。
    *
@@ -597,7 +610,7 @@ export default function PurchasesPage() {
       const { data: dp } = await supabase.from('deposits')
         // refund_amount / order_id / contract_id / property_id 是加費那套要的（migration_157）——
         // 少撈任何一個，抽屜的應退金額或加費清單就會是空的，而且不會報錯
-        .select('id, estate_id, room, guest_name, currency, amount, refund_status, payee_bank_code, payee_name, payee_account, planned_refund_on, received_on, returned_on, returned_method, returned_account, manager_approved_by, manager_approved_at, admin_approved_by, admin_approved_at, refund_requested_by, reject_reason, note, created_at, refund_amount, order_id, contract_id, property_id, cancel_order_id, allowance_order_id')
+        .select('id, estate_id, room, guest_name, currency, amount, refund_status, payee_bank_code, payee_name, payee_account, planned_refund_on, received_on, returned_on, returned_method, returned_account, manager_approved_by, manager_approved_at, admin_approved_by, admin_approved_at, refund_requested_by, reject_reason, note, created_at, refund_amount, order_id, contract_id, property_id, cancel_order_id, allowance_order_id, refund_deduct_item, refund_deduct_amount')
         .in('refund_status', ['pending', 'approved'])
         // 跟請款單同一條規則:還沒退的全部,加上本月已退的
         .or(`returned_on.is.null,returned_on.gte.${mStart}`)
@@ -2548,6 +2561,14 @@ export default function PurchasesPage() {
       */}
       {depDetail && (() => {
         const d = depDetail;
+        /*
+         * ★ 折讓退款用自己的版型（2026-10-20 David：「有其他押金的用語很困惑」）——
+         *   沒有收押金日／退押金日／加費從押金扣除／押金 0・應退 0，也沒有「核可金額 ≠ 應退」那個警告
+         *   （那是拿押金的規則算折讓，算出來一定對不上）。
+         */
+        const isAllow = !!d.allowance_order_id;
+        const ded = Number(d.refund_deduct_amount) || 0;
+        const net = Number(d.refund_amount) || 0;
         const canVote = d.refund_status === 'pending'
           && ((isManager && !d.manager_approved_at) || (isAdmin && !d.admin_approved_at));
         const editable = !d.returned_on;
@@ -2594,7 +2615,7 @@ export default function PurchasesPage() {
                   就會以為要匯 100,000 —— 而他核的其實是 99,719。
                   refund_amount 是送審當下記下來的數字，null = 舊資料或沒走審核。
                 */}
-                <div className="rounded-lg bg-mor-sand/60 px-3 py-2 text-xs text-gray-600">
+                {!isAllow && <div className="rounded-lg bg-mor-sand/60 px-3 py-2 text-xs text-gray-600">
                   {d.cancel_order_id && d.refund_amount != null ? (
                     <>
                       應退 <span className="font-bold text-base">NT$ {fmt(d.refund_amount)}</span>
@@ -2614,8 +2635,37 @@ export default function PurchasesPage() {
                       <span className="text-gray-400 ml-1">(金額與房源請到押金管理頁修改)</span>
                     </>
                   )}
-                </div>
+                </div>}
 
+                {isAllow ? (
+                <div>
+                  {row('物業／房源', `${d.estate_id ? estateName[d.estate_id] ?? '—' : '—'}・${d.room ?? '—'}`)}
+                  {row('房客', d.guest_name ?? '—')}
+                  {row('折讓', allowInfo ? (
+                    <span>{[allowInfo.allowance_no, allowInfo.checkin].filter(Boolean).join('・') || '—'}
+                      {allowInfo.item_name && <span className="block text-xs text-gray-500">{allowInfo.item_name}</span>}</span>
+                  ) : <span className="text-gray-400">讀取中⋯</span>)}
+                  {row('核可進度', (
+                    <span className="text-xs">
+                      <span className={d.manager_approved_at ? 'text-mor-green' : 'text-gray-400'}>
+                        {d.manager_approved_at ? '✓' : '○'} 主管
+                        {d.manager_approved_by ? `・${personName[d.manager_approved_by] ?? ''}` : ''}
+                      </span>
+                      <span className="mx-2 text-gray-300">|</span>
+                      <span className={d.admin_approved_at ? 'text-mor-green' : 'text-gray-400'}>
+                        {d.admin_approved_at ? '✓' : '○'} 總經理
+                        {d.admin_approved_by ? `・${personName[d.admin_approved_by] ?? ''}` : ''}
+                      </span>
+                    </span>
+                  ))}
+                  <div className="mt-3 mb-1 text-xs font-semibold text-gray-500">退款明細</div>
+                  <div className="rounded-lg border border-mor-line bg-[#FAFAF9] px-3 py-1.5 tabular-nums">
+                    <div className="flex justify-between py-1"><span>折讓金額</span><span>{fmt(net + ded)}</span></div>
+                    {ded > 0 && <div className="flex justify-between py-1 text-red-700"><span>扣：{d.refund_deduct_item ?? '扣除'}</span><span>−{fmt(ded)}</span></div>}
+                    <div className="flex justify-between py-1.5 border-t border-mor-line mt-0.5 font-bold text-base"><span>實退</span><span>{fmt(net)}</span></div>
+                  </div>
+                </div>
+                ) : (
                 <div>
                   {row('物業', d.estate_id ? estateName[d.estate_id] ?? '—' : '—')}
                   {row('房源', d.room ?? '—')}
@@ -2644,6 +2694,7 @@ export default function PurchasesPage() {
                     </span>
                   ))}
                 </div>
+                )}
 
                 {d.refund_status === 'rejected' && d.reject_reason && (
                   <div className="rounded-lg bg-red-50 text-red-600 px-3 py-2 text-xs">駁回原因:{d.reject_reason}</div>
@@ -2660,7 +2711,7 @@ export default function PurchasesPage() {
                 )}
                 {d.returned_on && (
                   <div className="rounded-lg bg-gray-100 text-gray-500 px-3 py-2 text-xs">
-                    這筆押金已經退還完畢,內容不能再修改。
+                    {isAllow ? '這筆折讓已經退款完畢，內容不能再修改。' : '這筆押金已經退還完畢,內容不能再修改。'}
                   </div>
                 )}
 
@@ -2669,7 +2720,7 @@ export default function PurchasesPage() {
                   唯讀 —— 這裡是審核的地方，改加費要按「編輯」進去。
                   審的人要看得到「為什麼只退 99,719 而不是 100,000」。
                 */}
-                <DepositFees
+                {!isAllow && <DepositFees
                   dep={{
                     id: d.id, amount: d.amount, returned_on: d.returned_on,
                     planned_refund_on: d.planned_refund_on,
@@ -2678,7 +2729,7 @@ export default function PurchasesPage() {
                     room: d.room, guest_name: d.guest_name,
                     approved_amount: d.refund_amount,
                   }}
-                  canEdit={false} />
+                  canEdit={false} />}
 
                 {/*
                   ══════════ 唯讀優先 ══════════
@@ -2696,7 +2747,7 @@ export default function PurchasesPage() {
                 */}
                 <div className="border-t border-mor-line pt-3">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-semibold text-gray-500">退押金</span>
+                    <span className="text-xs font-semibold text-gray-500">{isAllow ? '匯款' : '退押金'}</span>
                     {editable && !depEditing && (
                       <button onClick={() => setDepEditing(true)}
                         className="text-xs text-mor-blue underline">編輯</button>
@@ -2719,7 +2770,7 @@ export default function PurchasesPage() {
                     </>
                   ) : (
                     <div>
-                      {row('房客收款帳號', d.payee_account
+                      {row(isAllow ? '退到' : '房客收款帳號', d.payee_account
                         ? <span className="text-xs">
                           {d.payee_name ?? ''}　{d.payee_bank_code ?? ''}
                           <div className="tabular-nums">{d.payee_account}</div>
@@ -2737,6 +2788,7 @@ export default function PurchasesPage() {
                       {row('備註', d.note
                         ? <span className="whitespace-pre-wrap">{d.note}</span>
                         : <span className="text-gray-400">—</span>)}
+                      {isAllow && row('實際退款日', <span className="text-gray-400">尚未匯出（匯出那天＝營收沖銷日）</span>)}
                     </div>
                   )}
                 </div>
