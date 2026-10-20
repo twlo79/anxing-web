@@ -39,7 +39,9 @@ export default function AddBookingPanel({ sheet, rooms, init, onClose, onDone }:
    * to：退房日（找房帶進來的）。plan：找房「只能拼」選的那一組 ——
    *   有它的話房源不用選，建一張訂單後馬上拆成那幾段（跟部分移房同一支 move_order）。
    */
-  init: { estateId: string | null; propertyId?: string | null; day?: string | null; to?: string | null; plan?: FinderSeg[] | null };
+  init: { estateId: string | null; propertyId?: string | null; day?: string | null; to?: string | null; plan?: FinderSeg[] | null;
+    /** 找房帶進來的基本定價報價（migration_336）。拼房時 segPrices 是每一段各自照那間的價算的 */
+    price?: number | null; segPrices?: number[] | null };
   onClose: () => void;
   onDone: (c: Created) => void;
 }) {
@@ -55,7 +57,7 @@ export default function AddBookingPanel({ sheet, rooms, init, onClose, onDone }:
   const [d, setD] = useState<BookingDraft>({
     kind: 'private', name: '', from: day0, to: init.to || addDays(day0, 1),
     estateId: initRoom?.estate_id ?? init.estateId ?? estates[0]?.id ?? null,
-    propertyId: initRoom?.id ?? null, room: initRoom?.name ?? '', price: null, note: '',
+    propertyId: initRoom?.id ?? null, room: initRoom?.name ?? '', price: init.price && init.price > 0 ? init.price : null, note: '',
   });
   const plan = init.plan && init.plan.length > 1 ? init.plan : null;
   /** 拼房的每一段對到哪一間（同一個物業裡照房號找） */
@@ -144,7 +146,10 @@ export default function AddBookingPanel({ sheet, rooms, init, onClose, onDone }:
       const id = (data as any).id as string;
       if (plan) {
         /* 拼房：馬上拆成那幾段。失敗的話剛建的那張收進回收桶，不留一張整段壓在第一間的單 */
-        const amounts = splitPrice(Number(d.price) || 0, plan);
+        /* 價錢沒改過 → 每一段用各自那間的定價；改過 → 照晚數攤 */
+        const sp = init.segPrices;
+        const amounts = sp && sp.length === plan.length && sp.reduce((a, b) => a + b, 0) === Math.round(Number(d.price) || 0)
+          ? sp : splitPrice(Number(d.price) || 0, plan);
         const chain = plan.map((sg) => sg.room).join('>');
         const { data: mv, error: me } = await supabase.rpc('move_order', {
           p_grp: id,

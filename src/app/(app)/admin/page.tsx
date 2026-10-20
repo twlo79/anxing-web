@@ -22,13 +22,20 @@ import { useProfile } from '@/lib/profile';
 import { softDelete } from '@/lib/trash';
 import { BOOKS, BOOK_LABEL, DEFAULT_BOOK, toBook } from '@/lib/book';
 import { Tabs } from '@/components/Tabs';
+import { DEFAULT_DOW, DAY_KIND_LABEL, dowOk, nextKind, setDow, priceWarn, parseBasePrice, type DayKind } from '@/lib/base-price';
 import {
   ymOf, ymLabel, ymOptions, nextCloseYm, closeConfirm, reopenConfirm,
   type LockRow,
 } from '@/lib/period-lock';
 
 type Staff = { id: string; name: string; aliases: string[]; staff_type: string; active: boolean; sort: number; role?: string; email?: string | null; auth_uid?: string | null };
-type Estate = { id: string; name: string; manager: string | null; sort: number; active: boolean };
+type Estate = { id: string; name: string; manager: string | null; sort: number; active: boolean;
+  /** 基本定價：日→六每一晚算哪一種（migration_336）。w 平日、h 假日、p 旺日 */
+  price_dow?: string };
+/** 基本定價那一頁的一列（migration_336）。另外撈 —— 沒跑 migration 時不拖垮整個設定頁 */
+type PriceRow = { id: string; name: string; estate_id: string | null;
+  price_weekday: number | null; price_holiday: number | null; price_peak: number | null };
+type PriceField = 'price_weekday' | 'price_holiday' | 'price_peak';
 type Property = {
   id: string; name: string; estate_id: string | null;
   /**
@@ -174,7 +181,7 @@ const METHOD_LABEL: Record<string, string> = {
 
 const TAB_LABEL = {
   people: '權限管理', estates: '物業與負責人', accounts: '收付款帳號',
-  payees: '常用帳號', props: '房源管理', clean: '清潔計算',
+  payees: '常用帳號', props: '房源管理', clean: '清潔計算', price: '基本定價',
   sync: '同步建議', audit: '編輯紀錄', close: '關帳',
 } as const;
 type TabKey = keyof typeof TAB_LABEL;
@@ -1099,6 +1106,39 @@ export default function AdminPage() {
     const r = parse(raw);
     if (!r.ok) { ev.target.value = cur; return flash(r.error!); }
     updateProperty(p.id, { [field]: r.value } as any);
+  }
+
+  // ---- 基本定價（migration_336，2026-10-20）----
+  const [priceRows, setPriceRows] = useState<PriceRow[] | null>(null);
+  const [priceErr, setPriceErr] = useState('');
+  const loadPrices = useCallback(async () => {
+    const { data, error } = await supabase.from('properties')
+      .select('id, name, estate_id, price_weekday, price_holiday, price_peak').eq('active', true).order('name');
+    if (error) {
+      setPriceErr(/price_/.test(error.message) ? '基本定價的欄位還不在 —— 先跑 migration_336' : '載入失敗：' + error.message);
+      setPriceRows([]); return;
+    }
+    setPriceErr(''); setPriceRows((data ?? []) as PriceRow[]);
+  }, [supabase]);
+  useEffect(() => { if (tab === 'price') loadPrices(); }, [tab, loadPrices]);
+  async function savePrice(ev: React.FocusEvent<HTMLInputElement>, row: PriceRow, field: PriceField) {
+    const cur = row[field] == null ? '' : String(row[field]);
+    const raw = ev.target.value.trim();
+    if (raw.replace(/,/g, '') === cur) return;
+    const r = parseBasePrice(raw);
+    const back = () => { ev.target.value = row[field] == null ? '' : Number(row[field]).toLocaleString(); };
+    if (!r.ok) { back(); return flash(r.error); }
+    const { error } = await supabase.from('properties').update({ [field]: r.value }).eq('id', row.id);
+    if (error) { back(); return flash('更新失敗:' + error.message); }
+    setPriceRows((rs) => rs?.map((x) => (x.id === row.id ? { ...x, [field]: r.value } : x)) ?? rs);
+    savedToast('已更新');
+  }
+  /** 點一下換：平日 → 旺日 → 假日 */
+  function cycleDow(i: number) {
+    const est = estates.find((e) => e.id === selEstate);
+    if (!est) return;
+    const cur = dowOk(est.price_dow) ? est.price_dow : DEFAULT_DOW;
+    updateEstate(est.id, { price_dow: setDow(cur, i, nextKind(cur[i] as DayKind)) });
   }
 
   async function updateProperty(id: string, patch: Partial<Property>) {
@@ -2249,6 +2289,102 @@ export default function AdminPage() {
                   不用付清潔費的房源留空是正常的。
                 </p>
               )}
+            </div>
+          );
+        })()}
+      </section>
+      )}
+
+      {/*
+        ══════════ 基本定價（migration_336，2026-10-20 David 過審）══════════
+        ★ 找房找到空房就照這張表逐晚加起來報價。沒填的那間不報價（不是報 0）。
+        ★ 先不做：國定假日、連假、特殊日期、清潔費、長住折扣。
+      */}
+      {tab === 'price' && (
+      <section className="mt-8">
+        <h2 className="text-sm font-semibold text-gray-700 mb-2">基本定價</h2>
+        <div className="flex items-center gap-2 mb-3 text-sm">
+          <span className="text-xs text-gray-500">物業</span>
+          <select value={selEstate} onChange={(e) => setSelEstate(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5">
+            {estates.map((e) => <option key={e.id} value={e.id}>{e.name}{e.active ? '' : '(停用)'}</option>)}
+          </select>
+        </div>
+        {priceErr ? (
+          <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">{priceErr}</div>
+        ) : priceRows === null ? (
+          <div className="text-gray-400 py-6 text-center text-sm">載入中…</div>
+        ) : (() => {
+          const est = estates.find((e) => e.id === selEstate);
+          const dow = est && dowOk(est.price_dow) ? est.price_dow : DEFAULT_DOW;
+          const rows = priceRows.filter((p) => p.estate_id === selEstate);
+          const val = (p: PriceRow) => ({ w: p.price_weekday, h: p.price_holiday, p: p.price_peak });
+          const has = (p: PriceRow) => p.price_weekday != null || p.price_holiday != null || p.price_peak != null;
+          const sorted = [...rows.filter(has), ...rows.filter((p) => !has(p))];
+          const warn = rows.filter((p) => priceWarn(val(p))).map((p) => p.name);
+          const none = rows.filter((p) => !has(p)).map((p) => p.name);
+          const KCLS: Record<DayKind, string> = {
+            w: 'bg-[#F4F2EC] text-gray-600 border-mor-line',
+            p: 'bg-amber-50 text-amber-800 border-amber-300',
+            h: 'bg-red-50 text-red-700 border-red-300',
+          };
+          const cell = (p: PriceRow, field: PriceField, hot: boolean) => (
+            <td className="px-3 py-1.5 text-right whitespace-nowrap">
+              <input key={`${p.id}-${field}-${p[field] ?? ''}`} inputMode="numeric" placeholder="未設"
+                defaultValue={p[field] == null ? '' : Number(p[field]).toLocaleString()}
+                onBlur={(ev) => savePrice(ev, p, field)}
+                className={`rounded-lg border px-2 py-1 w-24 text-right tabular-nums ${
+                  hot ? 'border-amber-400 text-amber-800' : 'border-gray-300'}`} />
+            </td>
+          );
+          return (
+            <div className="rounded-xl glass p-4">
+              <div className="text-sm font-semibold text-gray-700">平日／旺日／假日怎麼算
+                <span className="ml-2 text-xs font-normal text-gray-500">點一下換：平日 → 旺日 → 假日</span></div>
+              <div className="grid grid-cols-7 gap-1.5 mt-2 max-w-md">
+                {'日一二三四五六'.split('').map((d, i) => {
+                  const k = dow[i] as DayKind;
+                  return (
+                    <button key={d} type="button" onClick={() => cycleDow(i)} disabled={!est}
+                      className={`rounded-lg border py-1.5 text-center text-xs ${KCLS[k]}`}>
+                      <b className="block text-sm">{d}</b>{DAY_KIND_LABEL[k]}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="text-[11px] text-gray-400 mt-1">算的是「住哪一晚」：週五晚上住＝週五那一格的價。</div>
+              <div className="overflow-x-auto mt-3">
+                <table className="w-full min-w-[360px] text-sm">
+                  <thead>
+                    <tr className="text-xs text-gray-500 border-b border-mor-line">
+                      <th className="px-3 py-2 text-left">房源</th>
+                      <th className="px-3 py-2 text-right">平日</th>
+                      <th className="px-3 py-2 text-right">旺日</th>
+                      <th className="px-3 py-2 text-right">假日</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sorted.map((p) => {
+                      const w = priceWarn(val(p));
+                      return (
+                        <tr key={p.id} className={`border-b border-mor-line/60 last:border-0 ${w ? 'bg-amber-50/60' : ''}`}>
+                          <td className="px-3 py-1.5 whitespace-nowrap">{p.name}{w && <span className="text-amber-600"> ⚠</span>}</td>
+                          {cell(p, 'price_weekday', false)}
+                          {cell(p, 'price_peak', w)}
+                          {cell(p, 'price_holiday', w)}
+                        </tr>
+                      );
+                    })}
+                    {rows.length === 0 && (
+                      <tr><td colSpan={4} className="px-3 py-6 text-center text-gray-400">此物業尚無房源 —— 先到「房源管理」新增</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <div className="text-[11px] text-gray-400 mt-2 space-y-0.5">
+                <p>點欄位直接改，點空白處儲存。留空＝沒有定價。</p>
+                {none.length > 0 && <p>沒有定價、找房時不報價：{none.join('、')}</p>}
+                {warn.length > 0 && <p className="text-amber-700">⚠ 假日比旺日貴：{warn.join('、')} —— 看一下是不是填反了（存得進去，只是提醒）。</p>}
+              </div>
             </div>
           );
         })()}

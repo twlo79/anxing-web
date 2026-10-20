@@ -34,6 +34,7 @@ import { airbnbLinks } from '@/lib/airbnb-link';
 import { parseRoomsPrefs, serializeRoomsPrefs, shiftYm, ROOMS_PREFS_KEY } from '@/lib/rooms-prefs';
 import MovePanel, { type MoveRoom } from './move-panel';
 import AddBookingPanel, { type Created } from './add-booking-panel';
+import { DEFAULT_DOW, quoteStay, quotePlan, partsText, planText, quoteLine, type BasePrice } from '@/lib/base-price';
 import { useIsMobile } from '@/lib/use-is-mobile';
 import {
   ancestryOf, occupancyOf, occupancyByRoom, totalOccupancy, fmtPct, occTone, type RoomNode,
@@ -216,6 +217,28 @@ export default function RoomStatusPage() {
   /** 按了「找空房」的那一組（改日期不會馬上重找，按了才算） */
   const [findQ, setFindQ] = useState<{ from: string; to: string } | null>(null);
   const [planIdx, setPlanIdx] = useState(0);
+  /*
+   * 基本定價（migration_336）：找房找到空房就直接報價。
+   * ★ 另外撈、撈不到就是沒有報價 —— 沒跑 migration 或欄位壞了，找房照樣能用。
+   * ★ 每次切進「找房」重撈一次：設定頁剛改的價馬上算得到。
+   */
+  const [basePrice, setBasePrice] = useState<{ price: Map<string, BasePrice>; dow: Map<string, string> } | null>(null);
+  useEffect(() => {
+    if (mode !== 'find') return;
+    let on = true;
+    (async () => {
+      const [pr, es] = await Promise.all([
+        supabase.from('properties').select('id, price_weekday, price_holiday, price_peak').eq('active', true),
+        supabase.from('estates').select('id, price_dow'),
+      ]);
+      if (!on || pr.error || es.error) return;
+      setBasePrice({
+        price: new Map((pr.data ?? []).map((r: any) => [r.id as string, { w: r.price_weekday, h: r.price_holiday, p: r.price_peak }])),
+        dow: new Map((es.data ?? []).map((r: any) => [r.id as string, r.price_dow as string])),
+      });
+    })();
+    return () => { on = false; };
+  }, [mode, supabase]);
   const [ym, setYm] = useState(thisYm());
   const [from, setFrom] = useState(todayStr());
   const [to, setTo] = useState(addDays(todayStr(), 30));
@@ -326,7 +349,7 @@ export default function RoomStatusPage() {
   /** 正在移房的訂單 id */
   const [moving, setMoving] = useState<string | null>(null);
   /** ＋ 加訂單（2026-10-13）：開著時帶入的物業／房源／日子 */
-  const [adding, setAdding] = useState<{ estateId: string | null; propertyId?: string | null; day?: string | null; to?: string | null; plan?: FinderSeg[] | null } | null>(null);
+  const [adding, setAdding] = useState<{ estateId: string | null; propertyId?: string | null; day?: string | null; to?: string | null; plan?: FinderSeg[] | null; price?: number | null; segPrices?: number[] | null } | null>(null);
   /** 剛建好的那一筆 —— 上方綠條附連結去補押金 */
   const [created, setCreated] = useState<Created | null>(null);
   const isMobile = useIsMobile();
@@ -1356,6 +1379,10 @@ export default function RoomStatusPage() {
         const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
         const est = estates.find((e) => e.name === estF);
         const roomId = (n: string) => moveRooms.find((r) => r.name === n && r.estate === estF)?.id ?? null;
+        /* 基本定價報價（migration_336）。沒定價的房回 null ＝ 不報價，不是報 0 */
+        const dow = basePrice?.dow.get(est?.id ?? '') ?? DEFAULT_DOW;
+        const priceOf = (n: string) => basePrice?.price.get(roomId(n) ?? '') ?? null;
+        const copy = (t: string) => { try { navigator.clipboard.writeText(t); savedToast('已複製報價'); } catch { /* 複製不了就算了 */ } };
         /* ✕ 關掉（2026-10-19 David：「多一個可以關掉」）：收掉結果與亮格，日曆回到月；填的日期留著，改一下再找 */
         const x = (
           <button type="button" onClick={() => { setFindQ(null); setPlanIdx(0); }} aria-label="關掉找房結果" title="關掉"
@@ -1368,24 +1395,48 @@ export default function RoomStatusPage() {
         if (!fResult) return <div className="relative mb-3 rounded-xl bg-white px-4 py-2.5 pr-12 text-sm text-gray-400">{x}找房中⋯</div>;
         const span = `${md(findQ.from)}～${md(findQ.to)}`;
         if (fResult.kind === 'bad') return <div className="relative mb-3 rounded-xl bg-amber-50 px-4 py-2.5 pr-12 text-sm text-amber-800">{x}{fResult.message}</div>;
-        if (fResult.kind === 'full') return (
+        if (fResult.kind === 'full') {
+          /* 便宜的在前；沒定價的照房號排在最後 */
+          const list = fResult.rooms.map((n) => ({ n, q: quoteStay(findQ.from, findQ.to, priceOf(n), dow) }))
+            .sort((a, b) => (a.q?.total ?? Infinity) - (b.q?.total ?? Infinity));
+          return (
           <div className="relative mb-3 rounded-xl bg-green-50 border border-green-200 px-4 py-3 pr-12 text-sm text-green-900">
             {x}✅ <b>整段空房 {fResult.rooms.length} 間</b>　{estF}・{span}（{fResult.nights} 晚）
-            <div className="mt-2 flex flex-wrap gap-2">
-              {fResult.rooms.map((n) => canNote ? (
-                <button key={n} type="button"
-                  onClick={() => setAdding({ estateId: est?.id ?? null, propertyId: roomId(n), day: findQ.from, to: findQ.to })}
-                  className="h-10 max-md:flex-1 rounded-lg border border-green-300 bg-white px-3 font-semibold text-green-800 hover:bg-green-100">
-                  {n}　＋ 用這間加訂單
-                </button>
-              ) : <span key={n} className="rounded-lg border border-green-300 bg-white px-3 py-1.5 font-semibold text-green-800">{n}</span>)}
+            {list.some((r) => r.q) && <span className="text-xs text-green-700">　便宜的在前</span>}
+            <div className="mt-2 grid gap-2 md:grid-cols-2">
+              {list.map(({ n, q }) => (
+                <div key={n} className="rounded-lg border border-green-300 bg-white px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <b className="text-base text-green-900">{n}</b>
+                    {q ? <span className="ml-auto text-base font-extrabold text-green-800 tabular-nums">小計 ${q.total.toLocaleString()}</span>
+                       : <span className="ml-auto text-xs text-gray-400">沒有定價</span>}
+                  </div>
+                  {q && <div className="text-xs text-gray-600 tabular-nums mt-0.5">{partsText(q.parts)}</div>}
+                  {(canNote || q) && (
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5">
+                      {canNote && (
+                        <button type="button"
+                          onClick={() => setAdding({ estateId: est?.id ?? null, propertyId: roomId(n), day: findQ.from, to: findQ.to, price: q?.total ?? null })}
+                          className="h-9 max-md:flex-1 rounded-lg bg-mor-slate px-3 text-sm font-medium text-white hover:bg-mor-slatedark">
+                          ＋ 用這間加訂單
+                        </button>
+                      )}
+                      {q && (
+                        <button type="button" onClick={() => copy(quoteLine(estF, n, findQ.from, findQ.to, q.nights, q.total))}
+                          className="text-xs text-mor-slate hover:text-mor-blue">📋 複製報價</button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           </div>);
+        }
         if (fResult.kind === 'mix') return (
           <div className="relative mb-3 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 pr-12 text-sm text-amber-900">
             {x}⚠ {estF}・{span} 沒有整段空的房，可以<b>拼</b>（換房次數少的排前面）：
             <div className="mt-2 space-y-2">
-              {fResult.plans.map((pl, i) => (
+              {fResult.plans.map((pl, i) => { const pq = quotePlan(pl, priceOf, dow); return (
                 <div key={i} onClick={() => setPlanIdx(i)}
                   className={`rounded-lg border border-dashed bg-white px-3 py-2 cursor-pointer flex flex-wrap items-center gap-x-3 gap-y-1 ${
                     i === planIdx ? 'border-amber-500 ring-1 ring-amber-400' : 'border-amber-300'}`}>
@@ -1394,14 +1445,20 @@ export default function RoomStatusPage() {
                   <span className="tabular-nums">{pl.map((sg) => `${sg.room} ${md(sg.from)}～${md(sg.to)}（${sg.nights} 晚）`).join(' → ')}</span>
                   {canNote && (
                     <button type="button" onClick={(e) => { e.stopPropagation(); setPlanIdx(i);
-                        setAdding({ estateId: est?.id ?? null, day: findQ.from, to: findQ.to, plan: pl }); }}
+                        setAdding({ estateId: est?.id ?? null, day: findQ.from, to: findQ.to, plan: pl,
+                          price: pq?.total ?? null, segPrices: pq?.segs.map((q) => q.total) ?? null }); }}
                       className={`max-md:w-full md:ml-auto h-9 rounded-lg px-3 text-sm font-medium ${
                         i === planIdx ? 'bg-mor-slate text-white' : 'border border-mor-slate text-mor-slate bg-white'}`}>
                       用這組建單
                     </button>
                   )}
+                  {pq && (
+                    <div className="w-full text-xs text-amber-900 tabular-nums">
+                      {planText(pl, pq.segs)}　<b className="text-amber-800">小計 ${pq.total.toLocaleString()}</b>
+                    </div>
+                  )}
                 </div>
-              ))}
+              ); })}
             </div>
             <div className="mt-1.5 text-[11px] text-amber-700/80">只在同一個物業裡拼。建一張訂單、自動拆成這幾段，訂單上會掛移房紀錄。</div>
           </div>);
