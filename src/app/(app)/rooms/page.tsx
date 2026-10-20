@@ -15,6 +15,7 @@ import {
   overlapRanges, dropContractOrders, monthRange, rangeDays, eachDay,
   staysInRange, lastNightOf, daysBetween, addDays, MAX_RANGE_DAYS, checkedOut,
   type Stay, type Room, type Cell, type Range, type Exit,
+  occupies,
 } from '@/lib/room-calendar';
 /*
  * ★★★ 「幾天內」從寫死改成可以按（2026-09-16 使用者:
@@ -299,7 +300,6 @@ export default function RoomStatusPage() {
   const [sugStays, setSugStays] = useState<Stay[]>([]);
   const [sugOpen, setSugOpen] = useState(false);
   const [sugSel, setSugSel] = useState<string | null>(null);
-  const [sugPreview, setSugPreview] = useState(false);
   const [loading, setLoading] = useState(true);
   /** 這一次讀取失敗的原因（畫面保留上一份，不清成空的） */
   const [loadErr, setLoadErr] = useState('');
@@ -701,15 +701,14 @@ export default function RoomStatusPage() {
     }
     return m;
   }, [sugOpen, estF, rooms, sugStays, today]);
-  useEffect(() => { if (!sugOpen) { setSugSel(null); setSugPreview(false); } }, [sugOpen]);
+  /* 打開時預設選第一張（最佳）；關掉清掉 */
+  useEffect(() => { setSugSel(sugOpen ? (suggestions[0]?.stayId ?? null) : null); }, [sugOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const byRoom = useMemo(() => {
     const m: Record<string, Stay[]> = {};
-    /* 「照建議移完」：只是預覽，把那一筆畫在新房間（資料不動） */
-    const view = sugPreview && sugPick ? stays.map((x) => (x.id === sugPick.stayId ? { ...x, room: sugPick.toRoom } : x)) : stays;
-    view.forEach((s) => { (m[s.room] ??= []).push(s); });
+    stays.forEach((s) => { (m[s.room] ??= []).push(s); });
     return m;
-  }, [stays, sugPreview, sugPick]);
+  }, [stays]);
 
   /*
    * ★★ 兩層:`base` 只套物業與關鍵字，`visible` 再套藥丸。
@@ -1046,7 +1045,7 @@ export default function RoomStatusPage() {
                           whitespace-nowrap overflow-hidden transition-opacity
                           ${hit ? '' : checkedOut(c.stay, today) ? DONE_BAR : TONE[c.stay.tone].bar}
                           ${dimmed ? 'opacity-20' : 'hover:brightness-110'}
-                          ${sugPick && c.stay.id === sugPick.stayId ? (sugPreview ? 'outline-dashed outline-2 -outline-offset-2 outline-violet-600' : 'outline-dashed outline-2 -outline-offset-2 outline-amber-500') : ''}`}>
+                          ${sugPick && c.stay.id === sugPick.stayId ? 'outline-dashed outline-2 -outline-offset-2 outline-amber-500' : ''}`}>
                         {/*
                           ★ 移房小標（2026-10-19 A 案）：色條照來源顏色，前面加紫色「↪ A13→B03」。
                             兩晚以下放不下，只留「↪」，點開卡片看完整。
@@ -1253,42 +1252,98 @@ export default function RoomStatusPage() {
       {sugOpen && suggestions.length > 0 && (() => {
         const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
         const short = (a: string, b: string) => (a.slice(0, 7) === b.slice(0, 7) ? `${md(a)}～${Number(b.slice(8, 10))}` : `${md(a)}～${md(b)}`);
+        const pk = sugPick;
+        /*
+         * 右邊：原房 → 最佳 → 其他候選（移完閒置由少到多），排在同一張小日曆。
+         * 只畫那段日期（空檔與那張單前後各留兩晚）。紫虛線＝搬到這間會落在哪。
+         */
+        let mini: React.ReactNode = null;
+        if (pk) {
+          const vFrom = addDays(pk.from < pk.gapFrom ? pk.from : pk.gapFrom, -2);
+          const vTo = addDays(pk.to > pk.gapTo ? pk.to : pk.gapTo, 2);
+          const ds: string[] = []; for (let d = vFrom; d < vTo; d = addDays(d, 1)) ds.push(d);
+          const moving = sugStays.find((x) => x.id === pk.stayId);
+          const rows: { room: string; label: string; tone: string; best: boolean; ghost: boolean }[] = [
+            { room: pk.fromRoom, label: '原房・要移', tone: 'text-amber-800', best: false, ghost: false },
+            ...pk.cands.map((c, i) => ({ room: c.toRoom, label: `${i === 0 ? '最佳' : '候選'}・移完閒置 ${c.after}`,
+              tone: i === 0 ? 'text-green-800' : 'text-gray-500', best: i === 0, ghost: true })),
+          ];
+          mini = (
+            <div className="overflow-x-auto">
+              <table className="border-separate border-spacing-0 text-xs w-full min-w-max">
+                <thead><tr>
+                  <th className="sticky left-0 z-10 bg-mor-sand/80 px-2 py-1 text-left text-[10px] text-gray-500">{Number(vFrom.slice(5, 7))} 月</th>
+                  {ds.map((d) => <th key={d} className="bg-mor-sand/80 border-l border-mor-line px-0.5 py-1 min-w-[28px] font-normal text-gray-500">{Number(d.slice(8, 10))}</th>)}
+                </tr></thead>
+                <tbody>
+                  {rows.map((r) => {
+                    const st = sugStays.filter((x) => x.room === r.room);
+                    const cells: React.ReactNode[] = [];
+                    for (let i = 0; i < ds.length;) {
+                      const d = ds[i];
+                      const ghost = r.ghost && moving && occupies(moving, d) ? moving : null;
+                      const hit = ghost ?? st.find((x) => occupies(x, d)) ?? null;
+                      if (!hit) {
+                        const gap = !r.ghost && d >= pk.gapFrom && d < pk.gapTo;
+                        cells.push(<td key={d} className={`border-l border-t border-mor-line h-9 ${gap ? 'bg-[image:repeating-linear-gradient(135deg,#fde68a_0_4px,#fef3c7_4px_8px)]' : ''}`} />);
+                        i++; continue;
+                      }
+                      let j = i; while (j < ds.length && (ghost ? occupies(moving!, ds[j]) : occupies(hit, ds[j]) && !(r.ghost && moving && occupies(moving, ds[j])))) j++;
+                      const isMove = !r.ghost && hit.id === pk.stayId;
+                      cells.push(
+                        <td key={d} colSpan={j - i} className="relative border-l border-t border-mor-line h-9">
+                          <div className={`absolute inset-y-1 inset-x-0.5 rounded px-1.5 flex items-center text-[10px] font-semibold whitespace-nowrap overflow-hidden ${
+                            ghost ? 'border-2 border-dashed border-violet-600 bg-violet-50 text-violet-700'
+                              : `${TONE[hit.tone].bar} text-white ${isMove ? 'outline-dashed outline-2 -outline-offset-2 outline-amber-500' : ''}`}`}>
+                            {ghost ? '↪ ' : ''}{hit.guest ?? ''}
+                          </div>
+                        </td>);
+                      i = j;
+                    }
+                    return (
+                      <tr key={r.room} className={r.best ? 'bg-green-50' : ''}>
+                        <td className={`sticky left-0 z-10 border-t border-mor-line px-2 py-1 whitespace-nowrap ${r.best ? 'bg-green-50' : 'bg-white'}`}>
+                          <b className="text-sm">{r.room}</b><span className={`block text-[10.5px] leading-tight ${r.tone}`}>{r.label}</span>
+                        </td>
+                        {cells}
+                      </tr>);
+                  })}
+                </tbody>
+              </table>
+              <div className="mt-1.5 text-[11px] text-gray-400">琥珀虛線＝要移的那張；紫虛線＝搬到這間會落在哪；斜線＝原房的零碎空檔。綠底＝最佳。只是建議，資料不會動。</div>
+            </div>);
+        }
         return (
           <div className="mb-3 rounded-xl border border-amber-300 bg-white px-4 py-3">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2">
               <b>💡 移房建議</b>
-              <span className="text-xs text-gray-500">{estF}・未來 {SUG_DAYS} 天・零碎空檔＝夾在兩筆中間、{SUG_GAP} 晚以下</span>
+              <span className="text-xs text-gray-500">{estF}・未來 {SUG_DAYS} 天・閒置＝夾在兩筆中間、{SUG_GAP} 晚以下的空晚</span>
               <button type="button" className="ml-auto text-xs text-mor-slate hover:underline"
                 onClick={() => { try { navigator.clipboard.writeText(suggestionsText(suggestions, estF)); savedToast('已複製移房建議'); } catch { /* 複製不了就算了 */ } }}>
                 📋 複製全部
               </button>
               <button type="button" onClick={() => setSugOpen(false)} aria-label="關掉" className="w-7 h-7 rounded-full text-gray-400 hover:bg-black/5">✕</button>
             </div>
-            <div className="space-y-2">
-              {suggestions.map((x) => (
-                <div key={x.stayId} onClick={() => { setSugSel(x.stayId === sugSel ? null : x.stayId); setSugPreview(false); }}
-                  className={`cursor-pointer rounded-lg border px-3 py-2 text-sm ${x.stayId === sugSel ? 'border-amber-500 ring-1 ring-amber-400 bg-amber-50/40' : 'border-mor-line'}`}>
-                  <div className="flex flex-wrap items-center gap-x-2">
-                    <b>{x.fromRoom} → {x.toRoom}</b>
-                    <span className="text-gray-700">{x.guest ?? ''} {short(x.from, x.to)}</span>
-                    <span className="ml-auto rounded-full bg-green-100 px-2 text-xs font-bold text-green-800">−{x.gain} 晚</span>
+            <div className="grid gap-3 md:grid-cols-[minmax(0,360px)_minmax(0,1fr)] items-start">
+              <div className="space-y-2">
+                {suggestions.map((x, i) => (
+                  <div key={x.stayId} onClick={() => setSugSel(x.stayId)}
+                    className={`cursor-pointer rounded-lg border px-3 py-2 text-sm grid grid-cols-[20px_1fr_auto] gap-2 items-center ${
+                      x.stayId === sugSel ? 'border-amber-500 ring-1 ring-amber-400 bg-amber-50/40' : 'border-mor-line'}`}>
+                    <span className="w-5 h-5 rounded-full bg-green-600 text-white text-[11px] font-bold flex items-center justify-center">{i + 1}</span>
+                    <span className="min-w-0">
+                      {x.guest ?? ''} {short(x.from, x.to)}　<b>{x.fromRoom} → {x.cands[0].toRoom}</b>
+                      <span className="block text-[11.5px] text-amber-800">{x.fromRoom} 空 {short(x.gapFrom, x.gapTo)}（{x.gapNights} 晚）
+                        {x.cands.length > 1 && <span className="ml-2 text-gray-500">另 {x.cands.length - 1} 個候選</span>}</span>
+                    </span>
+                    <span className="text-right text-xs text-gray-600 leading-tight whitespace-nowrap">
+                      閒置 {x.before} → <b className="text-green-800">{x.cands[0].after}</b><br /><b className="text-green-800">−{x.before - x.cands[0].after}</b>
+                    </span>
                   </div>
-                  <div className="text-xs text-gray-600 mt-0.5">
-                    {x.fromRoom} 空檔 <b className="text-amber-800">{short(x.gapFrom, x.gapTo)}（{x.gapNights} 晚）</b> → 移完 {x.fromRoom} 連續空 <b className="text-amber-800">{x.freedNights} 晚</b>
-                  </div>
-                </div>
-              ))}
-            </div>
-            {sugPick && (
-              <div className="mt-2 flex items-center gap-2 text-xs">
-                <span className="text-gray-500">日曆：</span>
-                {([[false, '現在'], [true, '照建議移完（預覽）']] as const).map(([v, t]) => (
-                  <button key={t} type="button" onClick={() => setSugPreview(v)}
-                    className={`rounded-full border px-2.5 py-0.5 ${sugPreview === v ? 'border-mor-slate bg-mor-bluelight text-mor-slate' : 'border-mor-line bg-white text-gray-600'}`}>{t}</button>
                 ))}
-                <span className="text-gray-400">只是預覽，資料不會動</span>
               </div>
-            )}
+              <div>{pk && <div className="mb-1 text-sm font-semibold">{pk.guest ?? ''} {short(pk.from, pk.to)}（{pk.fromRoom}）</div>}{mini}</div>
+            </div>
           </div>
         );
       })()}

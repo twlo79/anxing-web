@@ -22,9 +22,10 @@ test('移房建議：把空檔後那筆整段搬到剛好接得上的房', () =>
   const s = suggestMoves(['A05', 'A09'], st, T);
   assert.equal(s.length, 1);
   assert.equal(s[0].stayId, 'w');
-  assert.equal(s[0].toRoom, 'A09');
-  assert.equal(s[0].gain, 2);
-  assert.match(suggestionsText(s, '時兆'), /A05→A09 w/);
+  assert.equal(s[0].cands[0].toRoom, 'A09');
+  assert.equal(s[0].before, 2);
+  assert.equal(s[0].cands[0].after, 0);
+  assert.match(suggestionsText(s, '時兆'), /w .*A05→A09（閒置 2→0）/);
 });
 
 test('移房建議：契約、已入住的不動；搬過去會製造新空檔的不建議', () => {
@@ -36,4 +37,16 @@ test('移房建議：契約、已入住的不動；搬過去會製造新空檔�
     o('l', 'A09', '2026-11-02', '2026-11-10'), o('m', 'A09', '2026-11-22', '2026-11-30')];
   const s2 = suggestMoves(['A05', 'A09'], st2, T);
   assert.equal(s2.length, 0);
+});
+
+test('移房建議：同一張單有多個候選，照移完閒置少的排', () => {
+  const st = [
+    o('x', 'A05', '2026-11-03', '2026-11-08'), o('w', 'A05', '2026-11-10', '2026-11-20'),
+    o('l', 'A09', '2026-11-02', '2026-11-10'),                          // 剛好接上 → 閒置 0
+    o('d', 'A11', '2026-11-02', '2026-11-09'),                          // 前面空 1 晚 → 閒置 1
+  ];
+  const s = suggestMoves(['A05', 'A09', 'A11'], st, T);
+  assert.equal(s.length, 1);
+  assert.deepEqual(s[0].cands.map((c) => c.toRoom), ['A09', 'A11']);
+  assert.deepEqual(s[0].cands.map((c) => c.after), [0, 1]);
 });
