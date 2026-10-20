@@ -2066,7 +2066,9 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
 
   const [payAsk, setPayAsk] = useState<
     { chunk: any[]; label: string; paidAt: string; t: PeriodTotal } | null>(null);
-  const [concDraft, setConcDraft] = useState<{ pi: number; id?: string | null; no: string; date: string; date0: string; label: string; amount: number; note: string; baseAmount: number; priorDisc: number; rf: RefundDraft } | null>(null);
+  const [concDraft, setConcDraft] = useState<{ pi: number; id?: string | null; no: string; date: string; date0: string; label: string; amount: number; note: string; baseAmount: number; priorDisc: number; rf: RefundDraft;
+    /** 要不要退錢給房客（2026-10-20 David：先二選一，選了「要退款」才出現欄位） */
+    refund: boolean } | null>(null);
   /*
    * 折讓的退款（migration_335）：折讓訂單 id → 掛在 deposits 的那一列（送審中／已核可／已匯出）。
    * 填了房客帳號才有；沒有＝沒走請款，直接沖營收。
@@ -2552,8 +2554,12 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
      *   沒填 → 不請款，直接沖營收（日期＝上面填的日期）
      */
     const rf = concDraft.rf;
-    const wantRefund = !!(rf.payee_account ?? '').trim();
-    if (wantRefund && !(rf.payee_name ?? '').trim()) { alert('要退款的話，房客戶名要填'); return; }
+    const wantRefund = concDraft.refund;
+    if (wantRefund) {
+      const miss = [!(rf.payee_name ?? '').trim() && '戶名', !(rf.payee_account ?? '').trim() && '帳號',
+        !rf.planned_refund_on && '預計匯款日', !rf.returned_method && '安幸付款方式'].filter(Boolean);
+      if (miss.length) { alert(`選了「要退款」，這幾格要填：${miss.join('、')}\n不退錢給房客的話，選「不用退」`); return; }
+    }
     const old = concDraft.id ? allowRefunds[concDraft.id] : null;
     const refundLocked = !!old && (old.returned_on || old.refund_status === 'approved');
     let id = concDraft.id ?? null;
@@ -3539,7 +3545,8 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                                         amount: Math.abs(Number(f.amount) || 0), note: f.item_name ?? '',
                                         baseAmount: amount, priorDisc: discTotal - Math.abs(Number(f.amount) || 0),
                                         rf: rq ? { payee_name: rq.payee_name, payee_bank_code: rq.payee_bank_code, payee_account: rq.payee_account,
-                                          planned_refund_on: rq.planned_refund_on, returned_method: rq.returned_method, returned_account: rq.returned_account } : {} });
+                                          planned_refund_on: rq.planned_refund_on, returned_method: rq.returned_method, returned_account: rq.returned_account } : {},
+                                        refund: !!rq });
                                     } else {
                                       setFeeDraft({ pi: i, id: f.id, date: f.checkin ?? '', amount: Number(f.amount) || 0,
                                         label: feeLabel(f.fee_type, f.item_name) });
@@ -3653,7 +3660,7 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                           disabled={frozen} title={frozen ? (lockMsg ?? '') : ''}
                           className="text-xs text-mor-slate hover:text-mor-slatedark disabled:text-gray-300 disabled:cursor-not-allowed">＋ 加費</button>
                         <button onClick={() => setConcDraft({ pi: i, no: '', date: '', date0: `${first.y}-${String(first.m).padStart(2, '0')}-01`,
-                          label: `${first.y}/${String(first.m).padStart(2, '0')} 這一期`, amount: 0, note: '', baseAmount: amount, priorDisc: discTotal, rf: {} })}
+                          label: `${first.y}/${String(first.m).padStart(2, '0')} 這一期`, amount: 0, note: '', baseAmount: amount, priorDisc: discTotal, rf: {}, refund: false })}
                           disabled={frozen} title={frozen ? (lockMsg ?? '') : ''}
                           className="text-xs text-amber-700 hover:text-amber-800 disabled:text-gray-300 disabled:cursor-not-allowed">− 折讓</button>
                         {/*
@@ -3969,8 +3976,9 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                 <span className="absolute top-full -mt-4 left-0 text-[11px] text-gray-400">有填的話，列表上顯示「{concDraft.note.trim() || '備註'} −${fmt(Math.abs(Number(concDraft.amount) || 0))}」</span></label>
 
               {/*
-                ══════ 退給房客（選填，migration_335，2026-10-20 David）══════
-                填了房客帳號 → 送請款審核；匯出後營收沖銷日改成實際退款日。沒填 → 不請款，直接沖營收。
+                ══════ 要不要退錢給房客（migration_335，2026-10-20 David）══════
+                ★ 先二選一（David：「選填底下卻是紅星，困惑」）。預設「不用退」＝沒有欄位、直接存、沖營收；
+                  選「要退款」才展開欄位，那時紅星就是真的必填 → 送請款審核；匯出後營收沖銷日改成實際退款日。
                 已核可或已匯出的不能在這裡改（改了請款那邊對不上）。
               */}
               {(() => {
@@ -3980,24 +3988,35 @@ function CollectModal({ contract: c, onClose, supabase, payAccounts, invFromYm }
                     退款 ${fmt(rq.refund_amount)}：{rq.returned_on ? `${rq.returned_on} 已匯出（營收沖銷日＝這一天）` : '已核可、等匯款'}
                     ・退到 {rq.payee_name} {rq.payee_bank_code ?? ''} {rq.payee_account}
                   </div>);
-                const wants = !!(concDraft.rf.payee_account ?? '').trim();
+                const wants = concDraft.refund;
+                const opt = (on: boolean, k: boolean, title: string, sub: string, disabled = false) => (
+                  <button type="button" disabled={disabled} onClick={() => setConcDraft({ ...concDraft, refund: k })}
+                    title={disabled ? '這筆已經送了退款請款 —— 要取消請到請款頁撤銷' : undefined}
+                    className={`rounded-lg border px-3 py-2 text-left disabled:opacity-40 ${on ? 'border-mor-slate ring-1 ring-mor-slate bg-[#F3F8FD]' : 'border-mor-line bg-white'}`}>
+                    <b className={`block text-sm ${on ? 'text-mor-slatedark' : 'text-mor-ink'}`}>{title}</b>
+                    <span className="text-[11px] text-gray-500">{sub}</span>
+                  </button>);
                 return (
                   <div className="border-t border-mor-line pt-3">
-                    <div className="flex items-center gap-2 mb-2"><span className="text-[11px] font-bold tracking-wide text-gray-500">退給房客（選填）</span><i className="flex-1 h-px bg-mor-line" /></div>
-                    <RefundFields v={concDraft.rf} payAccounts={refundAccounts}
-                      onChange={(patch) => setConcDraft({ ...concDraft, rf: { ...concDraft.rf, ...patch } })} />
-                    <div className={`mt-2 rounded-lg px-3 py-2 text-xs ${wants ? 'bg-mor-bluelight text-mor-slate' : 'bg-mor-sand/60 text-gray-600'}`}>
-                      {wants
-                        ? <>填了房客帳號 → 存檔後<b>送請款審核</b>（請款頁「折讓」分頁）。匯出後，營收沖銷日改成實際退款日。{rq ? '（送審中，存檔會更新那一張、核可要重簽）' : ''}</>
-                        : <>沒填房客帳號 → <b>不送請款</b>，存檔就直接沖營收，日期＝上面的日期。</>}
+                    <div className="flex items-center gap-2 mb-2"><span className="text-[11px] font-bold tracking-wide text-gray-500">要退錢給房客嗎？</span><i className="flex-1 h-px bg-mor-line" /></div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {opt(!wants, false, '不用退', '存檔直接沖營收', !!rq)}
+                      {opt(wants, true, '要退款', '送請款，匯出後才沖營收')}
                     </div>
+                    {rq && <div className="mt-1 text-[11px] text-gray-400">已經送了退款請款（送審中）—— 存檔會更新那一張、核可要重簽；要取消請到請款頁撤銷。</div>}
+                    {wants && (
+                      <div className="mt-1">
+                        <RefundFields v={concDraft.rf} payAccounts={refundAccounts}
+                          onChange={(patch) => setConcDraft({ ...concDraft, rf: { ...concDraft.rf, ...patch } })} />
+                      </div>
+                    )}
                   </div>);
               })()}
             </div>
             <div className="border-t border-mor-line px-5 py-3 flex justify-end gap-2">
               <button onClick={() => setConcDraft(null)} className="rounded-lg border border-gray-300 px-4 py-1.5 text-sm">取消</button>
               <button onClick={saveConcession} className="rounded-lg bg-mor-slate text-white px-4 py-1.5 text-sm font-medium hover:bg-mor-slatedark">
-                {(concDraft.rf.payee_account ?? '').trim() && !(concDraft.id && allowRefunds[concDraft.id] && (allowRefunds[concDraft.id].returned_on || allowRefunds[concDraft.id].refund_status === 'approved')) ? '儲存並送請款' : '儲存'}</button>
+                {concDraft.refund && !(concDraft.id && allowRefunds[concDraft.id] && (allowRefunds[concDraft.id].returned_on || allowRefunds[concDraft.id].refund_status === 'approved')) ? '儲存並送請款' : '儲存'}</button>
             </div>
           </div>
         </div>
