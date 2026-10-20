@@ -122,11 +122,16 @@ jobs:
           # ★ 跟本機那支同一組參數。
           #   `--schema=public`             我們自己的表:訂單、支出、流水、契約…
           #   `--schema=supabase_migrations` migration 的執行紀錄
-          #   `--no-owner --no-privileges`   不要帶 supabase_admin 那些擁有者資訊,
+          #   `--no-owner`                   不要帶 supabase_admin 那些擁有者資訊,
+          #   ★ 2026-10-20 起**保留權限**（拿掉 --no-privileges）：
+          #     Supabase 10/30 起新表不再自動開放，沒帶 grant 的備份還原後整站讀不到；
+          #     而且 app_secrets 那種刻意 revoke 的表，不帶權限還原會變成人人讀得到。
+          #     grant 的對象（anon／authenticated／service_role）每個 Supabase 專案都有。
+          #  （舊說明：
           #                                  帶著的話還原到新專案會一路噴 role does not exist
           echo "→ public ＋ supabase_migrations"
           $PG "$DB_URL" \
-            --no-owner --no-privileges \
+            --no-owner \
             --schema=public --schema=supabase_migrations \
             --quote-all-identifiers \
             > out/anxing.sql
@@ -200,3 +205,87 @@ jobs:
           # ★ 檔案不見時要**失敗**,不要靜靜上傳一個空的 artifact。
           if-no-files-found: error
           compression-level: 0  # 已經 gzip 過了，再壓一次只是浪費時間
+
+      # ══════════════════════════════════════════════════════
+      # ★★ 檔案備份（2026-10-20 David：「GitHub 自動備份含圖片」）
+      #
+      #   資料庫裡只存了圖片的**路徑**，檔案本身在 Supabase Storage ——
+      #   沒有這一段的話，還原回來的憑證、佈告欄附件、報表、社群圖片全部是破圖。
+      #
+      #   做法：從資料庫撈 storage.objects 的清單（每個檔案的 bucket、路徑、大小），
+      #   用 service key 逐一下載，**大小一個一個對**，有任何一個沒下載到就整步失敗（紅燈）。
+      #
+      #   ★ 放在資料庫那份上傳之後 —— 這一步失敗時，資料庫備份照樣已經存好了。
+      #   ★ 要兩個 Secret（數值跟主機上的 .env 一樣，不要貼給任何人）：
+      #       SUPABASE_URL          ＝ NEXT_PUBLIC_SUPABASE_URL 那一串
+      #       SUPABASE_SERVICE_KEY  ＝ SUPABASE_SERVICE_KEY 那一串
+      #   ★ 保留 7 天不是 30 天：GitHub 免費方案 artifact 總共 500 MB，
+      #     圖片每天一整份、留 30 天會超過。長期保存靠電腦那份（fetch-backup.ps1 留 30 天）。
+      # ══════════════════════════════════════════════════════
+      - name: 檔案（憑證圖片、佈告欄、報表、社群）
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SB_URL: ${{ secrets.SUPABASE_URL }}
+          SB_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SB_URL}" ] || [ -z "${SB_KEY}" ]; then
+            echo "::error::找不到 SUPABASE_URL／SUPABASE_SERVICE_KEY 這兩個 Secret —— 檔案沒有備份到（資料庫那份已經存好了）"
+            exit 1
+          fi
+          mkdir -p files/objects out-files
+          docker run --rm -i postgres:18-alpine psql "$DB_URL" -X -v ON_ERROR_STOP=1 -c \
+            "\copy (select bucket_id, name, coalesce((metadata->>'size')::bigint, -1) from storage.objects where name not like '%.emptyFolderPlaceholder' order by 1, 2) to stdout with (format csv)" \
+            > files/manifest.csv
+          python3 - files/manifest.csv files/objects <<'PY'
+          import csv, os, sys, collections, urllib.request, urllib.parse, concurrent.futures as cf
+          man, dest = sys.argv[1], sys.argv[2]
+          base, key = os.environ['SB_URL'].rstrip('/'), os.environ['SB_KEY']
+          rows = list(csv.reader(open(man, encoding='utf-8')))
+          def get(r):
+              b, name, size = r[0], r[1], int(r[2])
+              if '..' in name.split('/'):
+                  return f'{b}/{name}: 路徑不正常，跳過'
+              url = f"{base}/storage/v1/object/{urllib.parse.quote(b)}/{urllib.parse.quote(name)}"
+              req = urllib.request.Request(url, headers={'Authorization': f'Bearer {key}', 'apikey': key})
+              p = os.path.join(dest, b, *name.split('/'))
+              os.makedirs(os.path.dirname(p), exist_ok=True)
+              err = None
+              for _ in range(3):
+                  try:
+                      n = 0
+                      with urllib.request.urlopen(req, timeout=120) as resp, open(p, 'wb') as f:
+                          while True:
+                              chunk = resp.read(1 << 16)
+                              if not chunk:
+                                  break
+                              f.write(chunk); n += len(chunk)
+                      if size >= 0 and n != size:
+                          raise IOError(f'大小 {n} ≠ 清單上的 {size}')
+                      return None
+                  except Exception as e:
+                      err = e
+              return f'{b}/{name}: {err}'
+          with cf.ThreadPoolExecutor(8) as ex:
+              errs = [e for e in ex.map(get, rows) if e]
+          by = collections.Counter(r[0] for r in rows)
+          mb = sum(max(int(r[2]), 0) for r in rows) / 1048576
+          print(f'清單 {len(rows)} 個檔案、{mb:.1f} MB；下載失敗 {len(errs)} 個')
+          for b, n in sorted(by.items()):
+              print(f'  {b}: {n} 個')
+          for e in errs[:30]:
+              print('::error::' + e)
+          sys.exit(1 if errs else 0)
+          PY
+          # 圖片本來就壓縮過，tar 不再 gzip
+          tar -cf out-files/storage.tar -C files .
+          ls -lh out-files/
+
+      - name: 上傳檔案備份（保留 7 天）
+        uses: actions/upload-artifact@v4
+        with:
+          name: files-backup-${{ github.run_id }}
+          path: out-files/
+          retention-days: 7
+          if-no-files-found: error
+          compression-level: 0

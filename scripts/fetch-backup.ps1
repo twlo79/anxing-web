@@ -50,6 +50,30 @@ function Say($msg, $color = 'Gray') {
     try { Add-Content -Path $LogFile -Value $line -Encoding UTF8 } catch { }
 }
 
+# ══════════════════════════════════════════════════════════════
+# ★★★ 任何沒接住的錯誤都要寫進 fetch.log（2026-10-20）
+#   8/31～10/19 這支每次都停在「找最新一次成功的備份⋯」之後，log 裡什麼都沒有 ——
+#   $ErrorActionPreference = 'Stop' 下，gh 往 stderr 印的東西（例如「有新版 gh」）
+#   被 2>&1 併進來之後讓 ConvertFrom-Json 爆掉，而那個錯誤只出現在一個隱藏的視窗裡。
+#   結果是本機 49 天沒有新備份，而沒有人知道。
+# ══════════════════════════════════════════════════════════════
+trap { Say "✗ 出錯停下來了：$($_.Exception.Message)" 'Red'; exit 1 }
+
+# 跑 gh：stdout 與 stderr 分開收，stderr 不會變成會讓整支停下來的錯誤
+function Gh {
+    $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    $errFile = [System.IO.Path]::GetTempFileName()
+    try {
+        $out = & $ghPath @args 2>$errFile
+        $script:GhCode = $LASTEXITCODE
+        $script:GhErr = (Get-Content $errFile -Raw -ErrorAction SilentlyContinue)
+        return ($out -join "`n")
+    } finally {
+        Remove-Item $errFile -Force -ErrorAction SilentlyContinue
+        $ErrorActionPreference = $prev
+    }
+}
+
 New-Item -ItemType Directory -Force -Path $BackupDir | Out-Null
 
 Write-Host ''
@@ -80,8 +104,8 @@ $ghPath = if ($gh -is [string]) { $gh } else { $gh.Source }
 
 # ★ 先確認登入狀態。沒登入的話下面那句 `gh run list` 會回一段
 #   看起來像網路錯誤的訊息 —— 而真正的原因是沒登入。
-& $ghPath auth status 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) {
+$null = Gh auth status
+if ($script:GhCode -ne 0) {
     Say 'gh 還沒登入。' 'Red'
     Write-Host '    gh auth login' -ForegroundColor Yellow
     Write-Host '  選 GitHub.com → HTTPS → 用瀏覽器登入（只要做一次）'
@@ -97,10 +121,10 @@ if ($LASTEXITCODE -ne 0) {
 #   抓下去只會得到一句「no artifacts found」，
 #   而那看起來像「備份不見了」，其實是「那天沒備成功」。
 Say '找最新一次成功的備份⋯'
-$json = & $ghPath run list --repo $Repo --workflow $Workflow `
-    --status success --limit 1 --json databaseId,createdAt,displayTitle 2>&1
+$json = Gh run list --repo $Repo --workflow $Workflow `
+    --status success --limit 1 --json databaseId,createdAt,displayTitle
 
-if ($LASTEXITCODE -ne 0) { Say "gh run list 失敗：$json" 'Red'; exit 1 }
+if ($script:GhCode -ne 0) { Say "gh run list 失敗：$($script:GhErr)" 'Red'; exit 1 }
 
 $runs = $json | ConvertFrom-Json
 if (-not $runs -or $runs.Count -eq 0) {
@@ -145,9 +169,9 @@ New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 # ★ 先下載到暫存再搬過去。直接下載到目的地的話，
 #   下載到一半斷線會留下一個**看起來像備份的半成品** ——
 #   而下次執行看到那個資料夾存在就會跳過。
-& $ghPath run download $run.databaseId --repo $Repo --dir $tmp 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    Say "下載失敗（代碼 $LASTEXITCODE）" 'Red'
+$null = Gh run download $run.databaseId --repo $Repo --dir $tmp
+if ($script:GhCode -ne 0) {
+    Say "下載失敗（代碼 $($script:GhCode)）：$($script:GhErr)" 'Red'
     Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
     exit 1
 }
@@ -180,6 +204,10 @@ if ($gz.Length -lt 300KB) {
 }
 
 # 搬到正式位置（原子性:先確認都對了再搬）
+# 檔案備份（憑證圖片等，2026-10-20 起）—— 沒有的話提醒，不擋（資料庫那份才是主體）
+$tar = Get-ChildItem $tmp -Recurse -Filter 'storage.tar' | Select-Object -First 1
+if ($tar) { Say ("  含檔案備份（圖片等）$([math]::Round($tar.Length / 1MB, 1)) MB") 'DarkGray' }
+else { Say '  ⚠ 這一份沒有檔案備份（storage.tar）—— 圖片沒備到，去 Actions 看「檔案」那一步' 'Yellow' }
 Move-Item $tmp $destDir
 Say "✓ 下載完成　$sizeMB MB　→　$destDir" 'Green'
 

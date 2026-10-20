@@ -218,7 +218,8 @@ $outFile = Join-Path $BackupDir $fileName
 Write-Host "備份到：$outFile"
 Write-Host '匯出中⋯（幾千筆流水大約十幾秒）'
 
-# ★ `--no-owner --no-privileges`:不要帶 supabase_admin 那些擁有者資訊。
+# ★ `--no-owner`:不要帶 supabase_admin 那些擁有者資訊。
+# ★ 2026-10-20 起保留權限（拿掉 --no-privileges）—— 跟 GitHub 那支一致，理由寫在 backup.yml。
 #   帶著的話還原到新專案時會一路噴 "role does not exist"。
 # ★ `--schema=public`:只有我們自己的表。
 #   `--schema=supabase_migrations`:migration 的執行紀錄 ——
@@ -256,7 +257,7 @@ Push-Location $BackupDir
 try {
     & $pgDumpPath `
         "$dbUrl" `
-        --no-owner --no-privileges `
+        --no-owner `
         --schema=public --schema=supabase_migrations `
         --quote-all-identifiers `
         --file=$fileName
