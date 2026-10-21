@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
 import { ProfileProvider, useProfile, clearProfileCache } from '@/lib/profile';
 import SavedToast from '@/components/SavedToast';
+import DragClickGuard from '@/components/DragClickGuard';
 import {
   visibleNav, currentNav, groupNav, groupOpen, toggleGroup, parseCollapsed,
 } from '@/lib/nav';
@@ -308,7 +309,8 @@ const UNREAD_HREF = '/board';
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   // ★ SavedToast：全站唯一一份「已儲存」綠字，z-[60] 蓋在所有視窗之上（lib/saved-feedback.ts，2026-09-30）
-  return <ProfileProvider><AppShell>{children}</AppShell><SavedToast /></ProfileProvider>;
+  /* DragClickGuard：在表單裡拖曳選字、放開在外面時，不會被當成「點背景關掉」（2026-10-21） */
+  return <ProfileProvider><AppShell>{children}</AppShell><SavedToast /><DragClickGuard /></ProfileProvider>;
 }
 
 function AppShell({ children }: { children: React.ReactNode }) {

@@ -265,7 +265,9 @@ jobs:
               if '..' in name.split('/'):
                   return f'{b}/{name}: 路徑不正常，跳過'
               url = f"{base}/storage/v1/object/{urllib.parse.quote(b)}/{urllib.parse.quote(name)}"
-              req = urllib.request.Request(url, headers={'Authorization': f'Bearer {key}', 'apikey': key})
+              # 舊的 service_role（eyJ…）放兩個標頭；新的 secret key（sb_secret_…）只放 apikey —— 兩種都能用
+              hdr = {'apikey': key} if key.startswith('sb_') else {'Authorization': f'Bearer {key}', 'apikey': key}
+              req = urllib.request.Request(url, headers=hdr)
               p = os.path.join(dest, b, *name.split('/'))
               os.makedirs(os.path.dirname(p), exist_ok=True)
               err = None
