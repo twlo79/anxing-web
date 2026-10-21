@@ -364,10 +364,16 @@ function Detail({ s, shown, who, onBack, onReveal, onHide, onEdit, onDel, onMsg 
             {s.secret && (
               <Field label="密碼">
                 <Val mono>{shown ? s.secret : '•'.repeat(Math.min(14, s.secret.length))}</Val>
+                {/* 2026-10-21 David：「看密碼 畫眼睛」—— 字換成眼睛圖示；遮著＝睜眼（按了看）、看著＝劃掉的眼睛（按了蓋回去） */}
                 <button onClick={() => (shown ? onHide() : onReveal())}
-                  title={shown ? '蓋回去' : '看密碼（會記一筆）'}
-                  className="shrink-0 text-uisub text-mor-slate hover:text-mor-slatedark">
-                  {shown ? '蓋回去' : '看密碼'}
+                  title={shown ? '蓋回去' : '看密碼（會記一筆）'} aria-label={shown ? '蓋回去' : '看密碼'}
+                  className="shrink-0 inline-flex h-8 w-8 items-center justify-center rounded-lg text-mor-slate hover:bg-mor-sand/60 hover:text-mor-slatedark">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}
+                    strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5" aria-hidden>
+                    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+                    <circle cx="12" cy="12" r="3" />
+                    {shown && <path d="M4 4l16 16" />}
+                  </svg>
                 </button>
                 {shown && <CopyBtn text={s.secret} onMsg={onMsg} />}
               </Field>

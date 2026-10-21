@@ -55,6 +55,11 @@ on:
   # ★ 手動也要能跑。只有排程的話，「我現在想要一份」就得等到明天，
   #   而想備份的時刻通常正是「等一下要做一件危險的事」。
   workflow_dispatch:
+    inputs:
+      full:
+        description: '檔案（圖片）整份備份？不勾＝只備最近 3 天新增／改過的'
+        type: boolean
+        default: true
 
 # ★ 一次只准跑一個（跟 deploy.yml 同一個理由）。
 #   手動按下去時剛好排程也在跑的話，兩個 job 會同時對資料庫拉全量資料。
@@ -245,6 +250,10 @@ jobs:
           DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           SB_URL: ${{ secrets.SUPABASE_URL }}
           SB_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          # ★ 每天排程只備「最近 3 天新增／改過的檔案」；手動 Run workflow 預設整份（2026-10-21）
+          #   整份有 400 多 MB —— 每天整份、留 7 天會吃掉 GitHub 的備份空間。
+          #   電腦上的 fetch-backup.ps1 會把每天那一小包併進同一個資料夾，再拿完整清單對有沒有缺。
+          FULL: ${{ github.event_name == 'workflow_dispatch' && inputs.full }}
         run: |
           set -euo pipefail
           if [ -z "${SB_URL}" ] || [ -z "${SB_KEY}" ]; then
@@ -253,13 +262,17 @@ jobs:
           fi
           mkdir -p files/objects out-files
           docker run --rm -i postgres:18-alpine psql "$DB_URL" -X -v ON_ERROR_STOP=1 -c \
-            "\copy (select bucket_id, name, coalesce((metadata->>'size')::bigint, -1) from storage.objects where name not like '%.emptyFolderPlaceholder' order by 1, 2) to stdout with (format csv)" \
+            "\copy (select bucket_id, name, coalesce((metadata->>'size')::bigint, -1), greatest(created_at, updated_at) >= now() - interval '3 days' from storage.objects where name not like '%.emptyFolderPlaceholder' order by 1, 2) to stdout with (format csv)" \
             > files/manifest.csv
           python3 - files/manifest.csv files/objects <<'PY'
           import csv, os, sys, collections, urllib.request, urllib.parse, concurrent.futures as cf
           man, dest = sys.argv[1], sys.argv[2]
-          base, key = os.environ['SB_URL'].rstrip('/'), os.environ['SB_KEY']
-          rows = list(csv.reader(open(man, encoding='utf-8')))
+          # ★ strip()：Secret 貼上時常帶到換行（2026-10-21 踩到：網址後面多一個換行，706 個全部失敗）
+          base, key = os.environ['SB_URL'].strip().rstrip('/'), os.environ['SB_KEY'].strip()
+          full = os.environ.get('FULL', '') == 'true'
+          allrows = list(csv.reader(open(man, encoding='utf-8')))
+          rows = allrows if full else [r for r in allrows if r[3] == 't']
+          print(f"{'整份' if full else '只備最近 3 天的'}：清單共 {len(allrows)} 個，這次下載 {len(rows)} 個")
           def get(r):
               b, name, size = r[0], r[1], int(r[2])
               if '..' in name.split('/'):
@@ -306,6 +319,7 @@ jobs:
         with:
           name: files-backup-${{ github.run_id }}
           path: out-files/
-          retention-days: 7
+          # 整份留 1 天（夠電腦當天抓下來，又不佔 GitHub 空間）；每天的小包留 7 天
+          retention-days: ${{ (github.event_name == 'workflow_dispatch' && inputs.full) && 1 || 7 }}
           if-no-files-found: error
           compression-level: 0

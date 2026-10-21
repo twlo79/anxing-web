@@ -216,7 +216,34 @@ if ($gz.Length -lt 300KB) {
 # 搬到正式位置（原子性:先確認都對了再搬）
 # 檔案備份（憑證圖片等，2026-10-20 起）—— 沒有的話提醒，不擋（資料庫那份才是主體）
 $tar = Get-ChildItem $tmp -Recurse -Filter 'storage.tar' | Select-Object -First 1
-if ($tar) { Say ("  含檔案備份（圖片等）$([math]::Round($tar.Length / 1MB, 1)) MB") 'DarkGray' }
+if ($tar) {
+    Say ("  含檔案備份（圖片等）$([math]::Round($tar.Length / 1MB, 1)) MB") 'DarkGray'
+    # ══════════════════════════════════════════════════════════════
+    # ★★ 檔案併進同一個資料夾（2026-10-21）
+    #   GitHub 每天只備「最近 3 天新增／改過的檔案」（整份 400 多 MB 太大），
+    #   所以電腦這邊把每天那一小包**解到同一個資料夾**累積起來，
+    #   再拿那一包裡的完整清單（manifest.csv）一個一個對有沒有缺。
+    #   缺的話（例如電腦超過一週沒開），去 Actions 手動跑一次「整份」。
+    # ══════════════════════════════════════════════════════════════
+    $mirror = Join-Path $BackupDir 'files'
+    New-Item -ItemType Directory -Force -Path $mirror | Out-Null
+    $prevEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    & tar -xf $tar.FullName -C $mirror 2>$null
+    $tarCode = $LASTEXITCODE; $ErrorActionPreference = $prevEap
+    if ($tarCode -ne 0) { Say "  ⚠ 檔案解開失敗（代碼 $tarCode）" 'Yellow' }
+    else {
+        $man = Join-Path $mirror 'manifest.csv'
+        if (Test-Path $man) {
+            $rows = @(Import-Csv -Path $man -Header 'bucket','name','size','recent' -Encoding UTF8)
+            $miss = @($rows | Where-Object { -not (Test-Path -LiteralPath (Join-Path (Join-Path $mirror 'objects') (Join-Path $_.bucket ($_.name -replace '/', '\')))) })
+            if ($miss.Count -eq 0) { Say "  ✓ 檔案齊全：$($rows.Count) 個都在 $mirror" 'Green' }
+            else {
+                Say "  ⚠ 檔案缺 $($miss.Count) 個（共 $($rows.Count) 個）—— 去 Actions → 每日資料庫備份 → Run workflow（勾「整份」）再抓一次" 'Yellow'
+                $miss | Select-Object -First 5 | ForEach-Object { Say "      缺：$($_.bucket)/$($_.name)" 'DarkGray' }
+            }
+        }
+    }
+}
 else { Say '  ⚠ 這一份沒有檔案備份（storage.tar）—— 圖片沒備到，去 Actions 看「檔案」那一步' 'Yellow' }
 Move-Item $tmp $destDir
 Say "✓ 下載完成　$sizeMB MB　→　$destDir" 'Green'
