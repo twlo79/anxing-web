@@ -4,7 +4,7 @@ import { todayStr } from '@/lib/period';
 import { createClient } from '@/lib/supabase';
 import Req from '@/components/Req';
 import { findRooms, finderError, nightsBetween, recommendRoom, freeByMoving, type FinderSeg } from '@/lib/room-finder';
-import { suggestMoves, suggestionsText, smallGaps, type MoveSuggestion } from '@/lib/move-suggest';
+import { suggestMoves, suggestionsText, type MoveSuggestion } from '@/lib/move-suggest';
 import { fetchAll } from '@/lib/fetch-all';
 import { useProfile } from '@/lib/profile';
 import { canEditOrders } from '@/lib/roles';
@@ -16,7 +16,6 @@ import {
   overlapRanges, dropContractOrders, monthRange, rangeDays, eachDay,
   staysInRange, lastNightOf, daysBetween, addDays, MAX_RANGE_DAYS, checkedOut,
   type Stay, type Room, type Cell, type Range, type Exit,
-  occupies,
 } from '@/lib/room-calendar';
 /*
  * ★★★ 「幾天內」從寫死改成可以按（2026-09-16 使用者:
@@ -415,12 +414,20 @@ export default function RoomStatusPage() {
   }, []);
   const defEst = estates[0]?.name ?? '';
 
+  /*
+   * 💡 移房建議點了一筆 → 大日曆換到那張單的日期（2026-10-20 David：「上面選 12 月、下面畫 11 月」）。
+   *   入住前 5 天～退房後 3 天（空檔在單後面的話涵蓋到空檔）。按「✕ 回到全部房」或關掉面板就回原本的期間。
+   *   ★ 放成 state：建議是後面才算出來的，這裡（期間）要先決定。
+   */
+  const [sugRange, setSugRange] = useState<Range | null>(null);
+  /** 其他房：藏起來（預設）或淡淡顯示 */
+  const [sugOthers, setSugOthers] = useState<'hide' | 'dim'>('hide');
   const range: Range = useMemo(
-    () => (mode === 'month' ? monthRange(ym)
+    () => (sugRange && mode !== 'find' ? sugRange : mode === 'month' ? monthRange(ym)
       /* 找房：日曆就是那幾晚（退房那天不算）；還沒按「找空房」時先看這個月 */
       : mode === 'find' ? (findQ ? { from: findQ.from, to: addDays(findQ.to, -1) } : monthRange(ym))
       : { from, to }),
-    [mode, ym, from, to, findQ]);
+    [mode, ym, from, to, findQ, sugRange]);
   const nDays = rangeDays(range);
   /*
    * ★★★ 表格畫的是「資料是哪一段」，不是「選單選了哪一段」（2026-10-16 David：「還是分批讀入」）。
@@ -728,21 +735,32 @@ export default function RoomStatusPage() {
     return suggestMoves(names, sugStays.filter((x) => set.has(x.room)), today, SUG_DAYS, SUG_GAP);
   }, [estF, rooms, sugStays, today]);
   const sugPick = suggestions.find((x) => x.stayId === sugSel) ?? null;
-  /** 面板開著時：每間房的零碎空檔（畫斜線） */
+  /** 斜線：只畫點的那一筆旁邊的空檔（2026-10-20：原本整個月所有房都畫，跟點的是哪一筆對不起來） */
   const sugGapDays = useMemo(() => {
     const m = new Map<string, Set<string>>();
-    if (!sugOpen || !estF) return m;
-    const by: Record<string, Stay[]> = {};
-    sugStays.forEach((x) => { (by[x.room] ??= []).push(x); });
-    for (const r of rooms.filter((x) => x.estate === estF)) {
-      for (const g of smallGaps(by[r.name] ?? [], today, addDays(today, SUG_DAYS), SUG_GAP)) {
-        const set = m.get(r.name) ?? new Set<string>();
-        for (let d = g.from; d < g.to; d = addDays(d, 1)) set.add(d);
-        m.set(r.name, set);
-      }
-    }
+    if (!sugOpen || !sugPick) return m;
+    const set = new Set<string>();
+    for (let d = sugPick.gapFrom; d < sugPick.gapTo; d = addDays(d, 1)) set.add(d);
+    m.set(sugPick.fromRoom, set);
     return m;
-  }, [sugOpen, estF, rooms, sugStays, today]);
+  }, [sugOpen, sugPick]);
+  /** 點了一筆：原房 → 最佳 → 候選，各自的標籤；大日曆只留這幾間 */
+  const sugFocus = useMemo(() => {
+    if (!sugOpen || !sugPick || mode === 'find') return null;
+    const labels = new Map<string, { text: string; tone: string; best: boolean }>();
+    labels.set(sugPick.fromRoom, { text: `原房・閒置 ${sugPick.before}`, tone: 'text-amber-800', best: false });
+    sugPick.cands.forEach((c, i) => labels.set(c.toRoom, {
+      text: `${i === 0 ? '最佳' : '候選'}・移完閒置 ${c.after}${c.after === 0 ? '・接上' : ''}`,
+      tone: i === 0 ? 'text-green-800' : 'text-gray-500', best: i === 0 }));
+    return { pick: sugPick, order: [...labels.keys()], labels };
+  }, [sugOpen, sugPick, mode]);
+  useEffect(() => {
+    if (!sugFocus) { setSugRange(null); return; }
+    const p = sugFocus.pick;
+    const a = addDays(p.from < p.gapFrom ? p.from : p.gapFrom, -5);
+    const b = addDays(p.to > p.gapTo ? p.to : p.gapTo, 3);
+    setSugRange((r) => (r && r.from === a && r.to === b ? r : { from: a, to: b }));
+  }, [sugFocus]);
   /* 打開時預設選第一張（最佳）；關掉清掉 */
   useEffect(() => { setSugSel(sugOpen ? (suggestions[0]?.stayId ?? null) : null); }, [sugOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -957,11 +975,23 @@ export default function RoomStatusPage() {
   }), [base, view, endRooms, outRooms]);
   /* 找房有結果時：找到的房排到最上面（手機不用往下捲去找），順序照結果 */
   const visible = useMemo(() => {
+    if (sugFocus) {
+      const p = sugFocus.pick;
+      const rank = (n: string) => { const i = sugFocus.order.indexOf(n); return i < 0 ? 1e6 : i; };
+      const pool = sugOthers === 'hide' ? base.filter((x) => sugFocus.labels.has(x.room.name)) : base;
+      return [...pool].sort((a, b) => rank(a.room.name) - rank(b.room.name)).map((x) => {
+        const lab = sugFocus.labels.get(x.room.name);
+        if (!lab || x.room.name === p.fromRoom) return x;
+        /* 候選房：畫一條紫虛線＝搬過去會落在哪（id 開頭 ghost:，drawCell 認得） */
+        const ghost: Stay = { id: `ghost:${p.stayId}`, room: x.room.name, kind: 'order', start: p.from, end: p.to, guest: p.guest, tone: 'short' };
+        return { ...x, cells: rowOf([...x.stays, ghost], shown) };
+      });
+    }
     if (!fDim) return visible0;
     const order = fResult?.kind === 'full' ? fResult.rooms : fResult?.kind === 'mix' ? (fResult.plans[planIdx] ?? []).map((x) => x.room) : [];
     const rank = (n: string) => { const i = order.indexOf(n); return i < 0 ? 1e6 : i; };
     return [...visible0].sort((a, b) => rank(a.room.name) - rank(b.room.name));
-  }, [visible0, fDim, fResult, planIdx]);
+  }, [visible0, fDim, fResult, planIdx, sugFocus, sugOthers, base, shown]);
 
   /*
    * ★★ 重疊清乾淨（或換了期間之後沒有重疊）時，那顆藥丸會消失 ——
@@ -1107,7 +1137,7 @@ export default function RoomStatusPage() {
                       而有人會照著它排房。淡掉＝「不是你現在在找的，但它佔著」。
                   */
                   /* 找房有結果時，沒找到的房整排淡掉 */
-                  const dimmed = (fDim && !fHit.has(room.name)) || (view === 'done' ? !checkedOut(c.stay, today)
+                  const dimmed = (fDim && !fHit.has(room.name)) || (!!sugFocus && !sugFocus.labels.has(room.name)) || (view === 'done' ? !checkedOut(c.stay, today)
                     : view === 'moved' ? !c.stay.moveChain
                     : view !== '' && view !== 'any' && view !== 'free'
                     && view !== 'dup' && view !== 'ending' && view !== 'leaving'
@@ -1120,6 +1150,13 @@ export default function RoomStatusPage() {
                    *     **前一天**為止,而提醒說的是 checkout 當天 ——
                    *     那個差一天是對的,但不寫出來的話看起來就是畫錯。
                    */
+                  if (c.stay.id.startsWith('ghost:')) return (
+                    <td key={c.day} colSpan={c.span} className={cls}>
+                      <div className="absolute inset-y-1 inset-x-0.5 rounded-md border-2 border-dashed border-violet-600 bg-violet-50 px-1 md:px-1.5
+                                      flex items-center text-[10px] md:text-[11px] font-semibold text-violet-700 whitespace-nowrap overflow-hidden">
+                        ↪ {c.stay.guest ?? ''}
+                      </div>
+                    </td>);
                   const hit = hot.get(c.stay.id);
                   return (
                     <td key={c.day} colSpan={c.span} className={cls}>
@@ -1363,66 +1400,6 @@ export default function RoomStatusPage() {
         const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
         const short = (a: string, b: string) => (a.slice(0, 7) === b.slice(0, 7) ? `${md(a)}～${Number(b.slice(8, 10))}` : `${md(a)}～${md(b)}`);
         const pk = sugPick;
-        /*
-         * 右邊：原房 → 最佳 → 其他候選（移完閒置由少到多），排在同一張小日曆。
-         * 只畫那段日期（空檔與那張單前後各留兩晚）。紫虛線＝搬到這間會落在哪。
-         */
-        let mini: React.ReactNode = null;
-        if (pk) {
-          const vFrom = addDays(pk.from < pk.gapFrom ? pk.from : pk.gapFrom, -2);
-          const vTo = addDays(pk.to > pk.gapTo ? pk.to : pk.gapTo, 2);
-          const ds: string[] = []; for (let d = vFrom; d < vTo; d = addDays(d, 1)) ds.push(d);
-          const moving = sugStays.find((x) => x.id === pk.stayId);
-          const rows: { room: string; label: string; tone: string; best: boolean; ghost: boolean }[] = [
-            { room: pk.fromRoom, label: `原房・閒置 ${pk.before}`, tone: 'text-amber-800', best: false, ghost: false },
-            ...pk.cands.map((c, i) => ({ room: c.toRoom, label: `${i === 0 ? '最佳' : '候選'}・移完閒置 ${c.after}${c.after === 0 ? '・接上' : ''}`,
-              tone: i === 0 ? 'text-green-800' : 'text-gray-500', best: i === 0, ghost: true })),
-          ];
-          mini = (
-            <div className="overflow-x-auto">
-              <table className="border-separate border-spacing-0 text-xs w-full min-w-max">
-                <thead><tr>
-                  <th className="sticky left-0 z-10 bg-mor-sand/80 px-2 py-1 text-left text-[10px] text-gray-500">{Number(vFrom.slice(5, 7))} 月</th>
-                  {ds.map((d) => <th key={d} className="bg-mor-sand/80 border-l border-mor-line px-0.5 py-1 min-w-[28px] font-normal text-gray-500">{Number(d.slice(8, 10))}</th>)}
-                </tr></thead>
-                <tbody>
-                  {rows.map((r) => {
-                    const st = sugStays.filter((x) => x.room === r.room);
-                    const cells: React.ReactNode[] = [];
-                    for (let i = 0; i < ds.length;) {
-                      const d = ds[i];
-                      const ghost = r.ghost && moving && occupies(moving, d) ? moving : null;
-                      const hit = ghost ?? st.find((x) => occupies(x, d)) ?? null;
-                      if (!hit) {
-                        const gap = !r.ghost && d >= pk.gapFrom && d < pk.gapTo;
-                        cells.push(<td key={d} className={`border-l border-t border-mor-line h-9 ${gap ? 'bg-[image:repeating-linear-gradient(135deg,#fde68a_0_4px,#fef3c7_4px_8px)]' : ''}`} />);
-                        i++; continue;
-                      }
-                      let j = i; while (j < ds.length && (ghost ? occupies(moving!, ds[j]) : occupies(hit, ds[j]) && !(r.ghost && moving && occupies(moving, ds[j])))) j++;
-                      const isMove = !r.ghost && hit.id === pk.stayId;
-                      cells.push(
-                        <td key={d} colSpan={j - i} className="relative border-l border-t border-mor-line h-9">
-                          <div className={`absolute inset-y-1 inset-x-0.5 rounded px-1.5 flex items-center text-[10px] font-semibold whitespace-nowrap overflow-hidden ${
-                            ghost ? 'border-2 border-dashed border-violet-600 bg-violet-50 text-violet-700'
-                              : `${TONE[hit.tone].bar} text-white ${isMove ? 'outline-dashed outline-2 -outline-offset-2 outline-amber-500' : ''}`}`}>
-                            {ghost ? '↪ ' : ''}{hit.guest ?? ''}
-                          </div>
-                        </td>);
-                      i = j;
-                    }
-                    return (
-                      <tr key={r.room} className={r.best ? 'bg-green-50' : ''}>
-                        <td className={`sticky left-0 z-10 border-t border-mor-line px-2 py-1 whitespace-nowrap ${r.best ? 'bg-green-50' : 'bg-white'}`}>
-                          <b className="text-sm">{r.room}</b><span className={`block text-[10.5px] leading-tight ${r.tone}`}>{r.label}</span>
-                        </td>
-                        {cells}
-                      </tr>);
-                  })}
-                </tbody>
-              </table>
-              <div className="mt-1.5 text-[11px] text-gray-400">琥珀虛線＝要移的那張；紫虛線＝搬到這間會落在哪；斜線＝原房的零碎空檔。綠底＝最佳。只是建議，資料不會動。</div>
-            </div>);
-        }
         return (
           <div className="mb-3 rounded-xl border border-amber-300 bg-white px-3 md:px-4 py-3 min-w-0 overflow-hidden">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2">
@@ -1434,12 +1411,14 @@ export default function RoomStatusPage() {
               </button>
               <button type="button" onClick={() => setSugOpen(false)} aria-label="關掉" className="w-7 h-7 rounded-full text-gray-400 hover:bg-black/5">✕</button>
             </div>
-            {/* ★ 手機也要給欄寬上限（minmax(0,1fr)）—— 沒給的話小日曆的寬度會把整塊撐爆（2026-10-20 爆版） */}
-            <div className="grid gap-3 grid-cols-[minmax(0,1fr)] md:grid-cols-[minmax(0,360px)_minmax(0,1fr)] items-start">
-              <div className="space-y-2">
+            {/*
+              ★ 小日曆拿掉了（2026-10-20 David 過審）：點一筆 → 下面的大日曆換到那張單的日期、只留原房／最佳／候選。
+              ★ 手機也要給欄寬上限 —— 不然會撐爆（2026-10-20 爆版）
+            */}
+            <div className="grid gap-2 grid-cols-[minmax(0,1fr)] md:grid-cols-2 xl:grid-cols-3 items-start">
                 {suggestions.map((x, i) => (
                   <div key={x.stayId} onClick={() => setSugSel(x.stayId)}
-                    className={`cursor-pointer rounded-lg border px-3 py-2 text-sm grid grid-cols-[20px_1fr_auto] gap-2 items-center ${
+                    className={`min-w-0 cursor-pointer rounded-lg border px-3 py-2 text-sm grid grid-cols-[20px_1fr_auto] gap-2 items-center ${
                       x.stayId === sugSel ? 'border-amber-500 ring-1 ring-amber-400 bg-amber-50/40' : 'border-mor-line'}`}>
                     <span className="w-5 h-5 rounded-full bg-green-600 text-white text-[11px] font-bold flex items-center justify-center">{i + 1}</span>
                     <span className="min-w-0">
@@ -1452,9 +1431,22 @@ export default function RoomStatusPage() {
                     </span>
                   </div>
                 ))}
-              </div>
-              <div className="min-w-0">{pk && <div className="mb-1 text-sm font-semibold">{pk.guest ?? ''} {short(pk.from, pk.to)}（{pk.fromRoom}）</div>}{mini}</div>
             </div>
+            {pk && sugFocus && (
+              <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                <span>💡 正在看：<b>{pk.guest ?? ''} {short(pk.from, pk.to)}</b>　{pk.fromRoom} → {pk.cands[0].toRoom}</span>
+                <span className="inline-flex items-center gap-1 text-xs">
+                  <span className="text-amber-800/80">其他房</span>
+                  {(['hide', 'dim'] as const).map((v) => (
+                    <button key={v} type="button" onClick={() => setSugOthers(v)}
+                      className={`rounded-full border px-2 py-0.5 ${sugOthers === v ? 'border-mor-slate bg-mor-bluelight text-mor-slate' : 'border-mor-line bg-white text-gray-600'}`}>
+                      {v === 'hide' ? '先藏起來' : '淡淡顯示'}</button>
+                  ))}
+                </span>
+                <button type="button" onClick={() => setSugSel(null)} className="md:ml-auto text-xs text-mor-slate hover:underline">✕ 回到全部房</button>
+                <span className="w-full text-[11px] text-amber-800/70">琥珀虛線＝要移的那張；紫虛線＝搬過去落在哪；斜線＝它旁邊的空檔；綠底＝最佳。只是建議，資料不會動。</span>
+              </div>
+            )}
           </div>
         );
       })()}
@@ -1896,7 +1888,7 @@ export default function RoomStatusPage() {
               return (
               <Fragment key={rk}>
               <tr
-                className={`h-8 ${isPicked ? 'bg-amber-50' : dups.length ? 'bg-[#FFFDF6]' : ''}`}>
+                className={`h-8 ${isPicked ? 'bg-amber-50' : sugFocus?.labels.get(room.name)?.best ? 'bg-green-50' : dups.length ? 'bg-[#FFFDF6]' : ''}`}>
                 <td className={`sticky left-0 z-10 border-b border-r border-mor-line
                                min-w-[30px] max-w-[30px] md:min-w-[150px] md:max-w-[150px] px-0.5 md:px-2.5 font-medium text-[11px] md:text-sm whitespace-nowrap
                                max-md:text-center
@@ -1920,7 +1912,9 @@ export default function RoomStatusPage() {
                                  text-[9px] font-bold text-white hover:brightness-90">A</a>
                   )}
                   {/* ★ 物業維持小字 —— 它是附註,跟房號一起放大的話兩個一樣重,反而更難掃 */}
-                  <span className="hidden md:inline text-gray-400 font-normal text-[11px] ml-1.5">{room.estate}</span>
+                  {sugFocus?.labels.get(room.name) ? (
+                    <span className={`hidden md:block font-normal text-[10.5px] leading-tight ${sugFocus.labels.get(room.name)!.tone}`}>{sugFocus.labels.get(room.name)!.text}</span>
+                  ) : <span className="hidden md:inline text-gray-400 font-normal text-[11px] ml-1.5">{room.estate}</span>}
                 </td>
                 {cells.map((c: Cell) => drawCell(c, room))}
                 {(() => {
