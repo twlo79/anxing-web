@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
-import { parseOtaEmail, matchEstate, matchProperty, otaOrderRow, type OtaEmailBody } from '@/lib/ota-email';
+import { parseOtaEmail, matchEstate, matchProperty, otaOrderRow, otaCancelDecision, otaModifyDecision, type OtaEmailBody } from '@/lib/ota-email';
 
 /**
  * OTA 訂房通知信 → 訂單（Make.com 的 HTTP 模組打這裡；2026-10-06 David：「看信，然後導入訂單」）。
@@ -22,6 +22,49 @@ export async function POST(req: Request) {
 
   let body: OtaEmailBody;
   try { body = await req.json(); } catch { return NextResponse.json({ ok: false, error: 'body 不是 JSON' }, { status: 400 }); }
+  /*
+   * ══ 取消通知信（event: 'cancel'，2026-10-21）══ 規則在 lib/ota-email.ts 的 otaCancelDecision
+   *   Make 的取消那一條：Body 多帶 "event": "cancel"，其餘欄位跟訂房那條一樣（只有 ota_no 是必填）
+   */
+  if ((body.event ?? '').trim().toLowerCase() === 'cancel') {
+    const key = (body.ota_no ?? '').trim();
+    if (!key) return NextResponse.json({ ok: false, error: 'ota_no（訂房編號）是空的 —— Text parser 沒抓到' }, { status: 422 });
+    const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY);
+    const { data: ex } = await sb.from('orders').select('id, source, paid, checkin, checkout, note').eq('order_key', key).maybeSingle();
+    const today = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
+    const d = otaCancelDecision(ex as any, body, today);
+    if (d.kind === 'not_found') return NextResponse.json({ ok: true, action: 'not_found', order_key: key, message: `系統裡沒有 ${key}，不用作廢` });
+    if (d.kind === 'skip') return NextResponse.json({ ok: true, action: 'skip', order_key: key, message: `${key}：${d.reason}` });
+    if (d.kind === 'attention') return NextResponse.json({ ok: true, action: 'attention', order_key: key, order_id: ex!.id, message: `${key}：${d.reason}` });
+    const { error } = await sb.from('orders').update(d.patch).eq('id', ex!.id);
+    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: true, action: 'cancelled', order_key: key, order_id: ex!.id, warnings: d.warnings,
+      message: `已把 ${key} 標成 Airbnb 取消（金額 0）` });
+  }
+
+  /*
+   * ══ 修改通知信（event: 'modify'，2026-10-21）══ 規則在 lib/ota-email.ts 的 otaModifyDecision
+   *   系統裡沒有這張 → 往下走一般建單（用修改後的資料）
+   */
+  if ((body.event ?? '').trim().toLowerCase() === 'modify') {
+    const key = (body.ota_no ?? '').trim();
+    if (!key) return NextResponse.json({ ok: false, error: 'ota_no（訂房編號）是空的 —— Text parser 沒抓到' }, { status: 422 });
+    const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY);
+    const { data: ex } = await sb.from('orders').select('id, source, amount, checkin, checkout, note, move_chain').eq('order_key', key).maybeSingle();
+    const today = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
+    const d = otaModifyDecision(ex as any, body, today);
+    if (d.kind === 'bad') return NextResponse.json({ ok: false, error: d.error }, { status: 422 });
+    if (d.kind === 'skip') return NextResponse.json({ ok: true, action: 'skip', order_key: key, message: `${key}：${d.reason}` });
+    if (d.kind === 'attention') return NextResponse.json({ ok: true, action: 'attention', order_key: key, order_id: ex!.id, message: `${key}：${d.reason}` });
+    if (d.kind === 'update') {
+      const { error } = await sb.from('orders').update(d.patch).eq('id', ex!.id);
+      if (error) return NextResponse.json({ ok: false, error: `改不動（可能那個月已關帳）：${error.message}` }, { status: 500 });
+      return NextResponse.json({ ok: true, action: 'modified', order_key: key, order_id: ex!.id, changes: d.changes, warnings: d.warnings,
+        message: `已更新 ${key}：${d.changes.join('・')}` });
+    }
+    // not_found → 下面照一般訂房信建一張
+  }
+
   const parsed = parseOtaEmail(body);
   if (!parsed.ok) return NextResponse.json({ ok: false, error: parsed.error }, { status: 422 });
   const v = parsed.v;
