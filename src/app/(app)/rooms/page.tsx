@@ -229,19 +229,22 @@ export default function RoomStatusPage() {
    *   日曆只畫那幾晚，看不到前後是不是接著別人，也看不到要移走的那張單整段在哪。
    */
   const [fStays, setFStays] = useState<{ key: string; stays: Stay[] } | null>(null);
-  const [basePrice, setBasePrice] = useState<{ price: Map<string, BasePrice>; dow: Map<string, string> } | null>(null);
+  const [basePrice, setBasePrice] = useState<{ price: Map<string, BasePrice>; dow: Map<string, string>; clean: Map<string, number> } | null>(null);
   useEffect(() => {
     if (mode !== 'find') return;
     let on = true;
     (async () => {
-      const [pr, es] = await Promise.all([
+      const [pr, es, cl] = await Promise.all([
         supabase.from('properties').select('id, price_weekday, price_holiday, price_peak').eq('active', true),
         supabase.from('estates').select('id, price_dow'),
+        /* 清潔費（migration_339）另外撈：沒跑那支的話只是沒有清潔費，房價照樣報 */
+        supabase.from('estates').select('id, price_clean'),
       ]);
       if (!on || pr.error || es.error) return;
       setBasePrice({
         price: new Map((pr.data ?? []).map((r: any) => [r.id as string, { w: r.price_weekday, h: r.price_holiday, p: r.price_peak }])),
         dow: new Map((es.data ?? []).map((r: any) => [r.id as string, r.price_dow as string])),
+        clean: new Map(cl.error ? [] : (cl.data ?? []).map((r: any) => [r.id as string, Number(r.price_clean) || 0])),
       });
     })();
     return () => { on = false; };
@@ -1461,6 +1464,8 @@ export default function RoomStatusPage() {
         const roomId = (n: string) => moveRooms.find((r) => r.name === n && r.estate === estF)?.id ?? null;
         /* 基本定價報價（migration_336）。沒定價的房回 null ＝ 不報價，不是報 0 */
         const dow = basePrice?.dow.get(est?.id ?? '') ?? DEFAULT_DOW;
+        /* 清潔費：一筆一次（2026-10-22，時兆 1,000，設定頁可改） */
+        const clean = basePrice?.clean.get(est?.id ?? '') ?? 0;
         const priceOf = (n: string) => basePrice?.price.get(roomId(n) ?? '') ?? null;
         const copy = (t: string, m = '已複製報價') => { try { navigator.clipboard.writeText(t); savedToast(m); } catch { /* 複製不了就算了 */ } };
         /* ✕ 關掉（2026-10-19 David：「多一個可以關掉」）：收掉結果與亮格，日曆回到月；填的日期留著，改一下再找 */
@@ -1477,7 +1482,7 @@ export default function RoomStatusPage() {
         if (fResult.kind === 'bad') return <div className="relative mb-3 rounded-xl bg-amber-50 px-4 py-2.5 pr-12 text-sm text-amber-800">{x}{fResult.message}</div>;
         if (fResult.kind === 'full') {
           /* 便宜的在前；沒定價的照房號排在最後 */
-          const list = fResult.rooms.map((n) => ({ n, q: quoteStay(findQ.from, findQ.to, priceOf(n), dow) }))
+          const list = fResult.rooms.map((n) => ({ n, q: quoteStay(findQ.from, findQ.to, priceOf(n), dow, clean) }))
             .sort((a, b) => (a.q?.total ?? Infinity) - (b.q?.total ?? Infinity));
           return (
           <div className="relative mb-3 rounded-xl bg-green-50 border border-green-200 px-4 py-3 pr-12 text-sm text-green-900">
@@ -1492,7 +1497,7 @@ export default function RoomStatusPage() {
                     {q ? <span className="ml-auto text-base font-extrabold text-green-800 tabular-nums">小計 ${q.total.toLocaleString()}</span>
                        : <span className="ml-auto text-xs text-gray-400">沒有定價</span>}
                   </div>
-                  {q && <div className="text-xs text-gray-600 tabular-nums mt-0.5">{partsText(q.parts)}</div>}
+                  {q && <div className="text-xs text-gray-600 tabular-nums mt-0.5">{partsText(q.parts, q.clean)}</div>}
                   {rec && <div className="text-[11.5px] text-green-800 mt-0.5">{rec.why}</div>}
                   {(canNote || q) && (
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5">
@@ -1518,7 +1523,7 @@ export default function RoomStatusPage() {
           <div className="relative mb-3 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 pr-12 text-sm text-amber-900">
             {x}⚠ {estF}・{span} 沒有整段空的房，可以<b>拼</b>（換房次數少的排前面）：
             <div className="mt-2 space-y-2">
-              {fResult.plans.map((pl, i) => { const pq = quotePlan(pl, priceOf, dow); return (
+              {fResult.plans.map((pl, i) => { const pq = quotePlan(pl, priceOf, dow, clean); return (
                 <div key={i} onClick={() => setPlanIdx(i)}
                   className={`rounded-lg border border-dashed bg-white px-3 py-2 cursor-pointer flex flex-wrap items-center gap-x-3 gap-y-1 ${
                     i === planIdx ? 'border-amber-500 ring-1 ring-amber-400' : 'border-amber-300'}`}>
@@ -1528,7 +1533,7 @@ export default function RoomStatusPage() {
                   {canNote && (
                     <button type="button" onClick={(e) => { e.stopPropagation(); setPlanIdx(i);
                         setAdding({ estateId: est?.id ?? null, day: findQ.from, to: findQ.to, plan: pl,
-                          price: pq?.total ?? null, segPrices: pq?.segs.map((q) => q.total) ?? null }); }}
+                          price: pq?.total ?? null, segPrices: pq?.segs.map((q, j) => q.total + (j === 0 ? pq.clean : 0)) ?? null }); }}
                       className={`max-md:w-full md:ml-auto h-9 rounded-lg px-3 text-sm font-medium ${
                         i === planIdx ? 'bg-mor-slate text-white' : 'border border-mor-slate text-mor-slate bg-white'}`}>
                       用這組建單
@@ -1536,7 +1541,7 @@ export default function RoomStatusPage() {
                   )}
                   {pq && (
                     <div className="w-full text-xs text-amber-900 tabular-nums">
-                      {planText(pl, pq.segs)}　<b className="text-amber-800">小計 ${pq.total.toLocaleString()}</b>
+                      {planText(pl, pq.segs, pq.clean)}　<b className="text-amber-800">小計 ${pq.total.toLocaleString()}</b>
                     </div>
                   )}
                 </div>
@@ -1546,7 +1551,7 @@ export default function RoomStatusPage() {
               <div className="mt-3">
                 <div className="text-[11px] font-bold text-violet-700">💡 或者：先移一張單，客人就能整段住同一間</div>
                 {fSug.moves.map((m) => {
-                  const q = quoteStay(findQ.from, findQ.to, priceOf(m.room), dow);
+                  const q = quoteStay(findQ.from, findQ.to, priceOf(m.room), dow, clean);
                   const who = `${m.guest || '（沒有名字）'} ${md(m.start)}～${md(m.end)}`;
                   return (
                     <div key={m.stayId} className="mt-2 rounded-lg border border-violet-300 bg-white px-3 py-2 text-mor-ink">
@@ -1554,7 +1559,7 @@ export default function RoomStatusPage() {
                         {q && <span className="ml-auto font-extrabold text-green-800 tabular-nums">${q.total.toLocaleString()}</span>}</div>
                       <div className="text-[12.5px] mt-0.5">① 把 <b className="text-violet-700">{who}</b> 從 {m.room} 移到 <b className="text-violet-700">{m.toRoom}</b>（那幾晚空著）</div>
                       <div className="text-[12.5px]">② 這位客人整段住 {m.room}，不用換房</div>
-                      {q && <div className="text-xs text-gray-500 tabular-nums mt-0.5">{partsText(q.parts)}</div>}
+                      {q && <div className="text-xs text-gray-500 tabular-nums mt-0.5">{partsText(q.parts, q.clean)}</div>}
                       <button type="button" className="mt-1 text-xs text-mor-slate hover:text-mor-blue"
                         onClick={() => copy(`${estF} ${span}：把 ${who} 從 ${m.room} 移到 ${m.toRoom}，客人整段住 ${m.room}${q ? `（NT$ ${q.total.toLocaleString()}）` : ''}`, '已複製')}>
                         📋 複製（記下來）</button>

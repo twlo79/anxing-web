@@ -21,7 +21,8 @@ export const DEFAULT_DOW = 'wwwwwhp';
 
 export type BasePrice = { w: number | null; h: number | null; p: number | null };
 export type QuotePart = { kind: DayKind; nights: number; sum: number };
-export type Quote = { total: number; nights: number; parts: QuotePart[] };
+/** total 含清潔費；clean＝這一筆的清潔費（一次性，2026-10-22 migration_339），0＝不收 */
+export type Quote = { total: number; nights: number; parts: QuotePart[]; clean: number };
 
 export function dowOk(s: unknown): s is string {
   return typeof s === 'string' && /^[whp]{7}$/.test(s);
@@ -50,8 +51,11 @@ function addDay(d: Ymd): Ymd {
   return t.toISOString().slice(0, 10);
 }
 
-/** 住 from 到 to（退房日，不算）的報價。缺價或日期不對 → null */
-export function quoteStay(from: Ymd, to: Ymd, price: BasePrice | null | undefined, dow: string): Quote | null {
+/** 清潔費正規化：正整數才算，其他當 0 */
+const cleanOf = (c: number | null | undefined) => (c != null && c > 0 ? Math.round(c) : 0);
+
+/** 住 from 到 to（退房日，不算）的報價。缺價或日期不對 → null。clean＝一次性清潔費（加在總價上，不是每晚） */
+export function quoteStay(from: Ymd, to: Ymd, price: BasePrice | null | undefined, dow: string, clean?: number | null): Quote | null {
   if (!price || !from || !to || to <= from) return null;
   const cnt: Record<DayKind, number> = { w: 0, h: 0, p: 0 };
   let n = 0;
@@ -66,34 +70,38 @@ export function quoteStay(from: Ymd, to: Ymd, price: BasePrice | null | undefine
     if (v == null || !(v > 0)) return null;
     parts.push({ kind: k, nights: cnt[k], sum: v * cnt[k] });
   }
-  return { total: parts.reduce((a, b) => a + b.sum, 0), nights: n, parts };
+  const c = cleanOf(clean);
+  return { total: parts.reduce((a, b) => a + b.sum, 0) + c, nights: n, parts, clean: c };
 }
 
-/** 拼房：每一段照那一間的價算。任何一段算不出 → null */
+/** 拼房：每一段照那一間的價算；清潔費整筆只收一次。任何一段算不出 → null */
 export function quotePlan(
   segs: readonly { room: string; from: Ymd; to: Ymd }[],
   priceOf: (room: string) => BasePrice | null | undefined,
   dow: string,
-): { total: number; segs: Quote[] } | null {
+  clean?: number | null,
+): { total: number; segs: Quote[]; clean: number } | null {
   const qs: Quote[] = [];
   for (const sg of segs) {
     const q = quoteStay(sg.from, sg.to, priceOf(sg.room), dow);
     if (!q) return null;
     qs.push(q);
   }
-  return { total: qs.reduce((a, b) => a + b.total, 0), segs: qs };
+  const c = cleanOf(clean);
+  return { total: qs.reduce((a, b) => a + b.total, 0) + c, segs: qs, clean: c };
 }
 
 const money = (n: number) => `$${Math.round(n).toLocaleString('en-US')}`;
 
-/** 平日×5 $6,500 · 假日×1 $1,750 · 旺日×1 $2,100 */
-export function partsText(parts: readonly QuotePart[]): string {
-  return parts.map((p) => `${DAY_KIND_LABEL[p.kind]}×${p.nights} ${money(p.sum)}`).join(' · ');
+/** 平日×5 $6,500 · 假日×1 $1,750 · 旺日×1 $2,100（· 清潔費 $1,000）*/
+export function partsText(parts: readonly QuotePart[], clean = 0): string {
+  return [...parts.map((p) => `${DAY_KIND_LABEL[p.kind]}×${p.nights} ${money(p.sum)}`),
+    ...(clean > 0 ? [`清潔費 ${money(clean)}`] : [])].join(' · ');
 }
 
 /** A09 平日×3 $5,250 → A04 平日×2 $2,800 · 假日×1 $2,250 */
-export function planText(segs: readonly { room: string }[], qs: readonly Quote[]): string {
-  return segs.map((sg, i) => `${sg.room} ${partsText(qs[i]?.parts ?? [])}`).join(' → ');
+export function planText(segs: readonly { room: string }[], qs: readonly Quote[], clean = 0): string {
+  return segs.map((sg, i) => `${sg.room} ${partsText(qs[i]?.parts ?? [])}`).join(' → ') + (clean > 0 ? ` · 清潔費 ${money(clean)}` : '');
 }
 
 /** 📋 複製報價：時兆 A11　11/17～11/24（7 晚）NT$ 10,350 */

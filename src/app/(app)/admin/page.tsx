@@ -31,7 +31,9 @@ import {
 type Staff = { id: string; name: string; aliases: string[]; staff_type: string; active: boolean; sort: number; role?: string; email?: string | null; auth_uid?: string | null };
 type Estate = { id: string; name: string; manager: string | null; sort: number; active: boolean;
   /** 基本定價：日→六每一晚算哪一種（migration_336）。w 平日、h 假日、p 旺日 */
-  price_dow?: string };
+  price_dow?: string;
+  /** 基本定價・清潔費：一筆一次（migration_339）。空＝不收 */
+  price_clean?: number | null };
 /** 基本定價那一頁的一列（migration_336）。另外撈 —— 沒跑 migration 時不拖垮整個設定頁 */
 type PriceRow = { id: string; name: string; estate_id: string | null;
   price_weekday: number | null; price_holiday: number | null; price_peak: number | null };
@@ -2352,6 +2354,23 @@ export default function AdminPage() {
                 })}
               </div>
               <div className="text-[11px] text-gray-400 mt-1">算的是「住哪一晚」：週五晚上住＝週五那一格的價。</div>
+              {/* 清潔費（2026-10-22 David：「時兆多做一個清潔費，一次性的 1000，可以再調整」） */}
+              <label className="mt-3 flex items-center gap-2 text-sm text-gray-700">
+                <span className="font-semibold">清潔費</span>
+                <input key={`clean-${est?.id ?? ''}-${est?.price_clean ?? ''}`} inputMode="numeric" placeholder="不收"
+                  defaultValue={est?.price_clean ? Number(est.price_clean).toLocaleString() : ''} disabled={!est}
+                  onBlur={(ev) => {
+                    if (!est) return;
+                    const cur = est.price_clean ? String(est.price_clean) : '';
+                    const raw = ev.target.value.trim();
+                    if (raw.replace(/,/g, '') === cur) return;
+                    const r = parseBasePrice(raw);
+                    if (!r.ok) { ev.target.value = cur ? Number(cur).toLocaleString() : ''; return flash(r.error); }
+                    updateEstate(est.id, { price_clean: r.value });
+                  }}
+                  className="w-24 rounded-lg border border-gray-300 px-2 py-1 text-right tabular-nums" />
+                <span className="text-[11px] text-gray-400">一筆訂單收一次（不是每晚），找房報價會加上去。留空＝不收</span>
+              </label>
               <div className="overflow-x-auto mt-3">
                 <table className="w-full min-w-[360px] text-sm">
                   <thead>

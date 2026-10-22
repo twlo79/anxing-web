@@ -65,3 +65,20 @@ test('parseBasePrice', () => {
   assert.equal(parseBasePrice('0').ok, false);
   assert.equal(parseBasePrice('abc').ok, false);
 });
+
+test('清潔費（2026-10-22）：一次性、加在總價；David 對過的 A07 Nikolaos 45 晚 ＝ 76,200 ＋ 1,000', () => {
+  const A07 = { w: 1500, h: 2050, p: 2400 };
+  const q = quoteStay('2026-11-08', '2026-12-23', A07, DEFAULT_DOW, 1000)!;
+  assert.equal(q.nights, 45);
+  assert.equal(q.total - q.clean, 76200);
+  assert.equal(q.total, 77200);
+  assert.equal(partsText(q.parts, q.clean), '平日×33 $49,500 · 假日×6 $12,300 · 旺日×6 $14,400 · 清潔費 $1,000');
+  assert.equal(quoteStay('2026-11-08', '2026-12-23', A07, DEFAULT_DOW, null)!.clean, 0);
+});
+
+test('清潔費：拼房整筆只收一次', () => {
+  const segs = [{ room: 'A09', from: '2026-11-15', to: '2026-11-18' }, { room: 'A04', from: '2026-11-18', to: '2026-11-22' }];
+  const r = quotePlan(segs, (n) => (n === 'A09' ? A09 : A04), DEFAULT_DOW, 1000)!;
+  assert.equal(r.total, 13200);
+  assert.equal(planText(segs, r.segs, r.clean), 'A09 平日×3 $5,250 → A04 平日×2 $2,800 · 假日×1 $2,250 · 旺日×1 $1,900 · 清潔費 $1,000');
+});
